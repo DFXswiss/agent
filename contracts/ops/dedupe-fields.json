@@ -1,0 +1,135 @@
+{
+  "description": "Dedupe field sets and windows per operation type (03-api.md section 9, 04-crypto.md section 4.10, ADR-012). Normalisation: repo lowercased, SHAs lowercased, branch/head/base without a leading refs/heads/, text that is not printable ASCII replaced by sha256:<hex of its UTF-8>. Equal to agent_hub.crypto.dedupe and contracts/vectors/dedupe.json. Types without an entry have no duplicate protection. A duplicate is a slot held by an operation in accepted, executing or succeeded within window_seconds; failed, rejected and expired operations release the slot.",
+  "idempotency_key": {
+    "fields": [
+      {
+        "name": "idempotency_key",
+        "source": "the key as given (non-ASCII: sha256:<hex>)"
+      },
+      {
+        "name": "task",
+        "source": "task ID of the requesting session"
+      }
+    ],
+    "window_seconds": null,
+    "window_rule": "the window of the operation type; for a type without dedupe fields 86400"
+  },
+  "types": {
+    "github.checkout": {
+      "fields": [
+        {
+          "name": "repo",
+          "source": "params.repo, lowercased"
+        },
+        {
+          "name": "ref",
+          "source": "commit SHA the ref resolved to, lowercased"
+        },
+        {
+          "name": "session",
+          "source": "ID of the requesting session"
+        }
+      ],
+      "window_seconds": 600
+    },
+    "github.create_branch": {
+      "fields": [
+        {
+          "name": "repo",
+          "source": "params.repo, lowercased"
+        },
+        {
+          "name": "branch",
+          "source": "params.branch without refs/heads/"
+        }
+      ],
+      "window_seconds": 86400
+    },
+    "github.commit": {
+      "fields": [
+        {
+          "name": "repo",
+          "source": "params.repo, lowercased"
+        },
+        {
+          "name": "branch",
+          "source": "params.branch without refs/heads/"
+        },
+        {
+          "name": "parent_sha",
+          "source": "parent commit determined at check time"
+        },
+        {
+          "name": "tree_sha",
+          "source": "tree SHA computed locally from the snapshot"
+        }
+      ],
+      "window_seconds": 86400
+    },
+    "github.push": {
+      "fields": [
+        {
+          "name": "repo",
+          "source": "params.repo, lowercased"
+        },
+        {
+          "name": "branch",
+          "source": "params.branch without refs/heads/"
+        },
+        {
+          "name": "commit_sha",
+          "source": "params.commit_sha, lowercased"
+        }
+      ],
+      "window_seconds": 86400
+    },
+    "github.create_pull_request": {
+      "fields": [
+        {
+          "name": "repo",
+          "source": "params.repo, lowercased"
+        },
+        {
+          "name": "head",
+          "source": "params.head without refs/heads/"
+        },
+        {
+          "name": "base",
+          "source": "params.base without refs/heads/"
+        }
+      ],
+      "window_seconds": 604800,
+      "existing_pull_request_check": true
+    },
+    "github.comment": {
+      "fields": [
+        {
+          "name": "repo",
+          "source": "params.repo, lowercased"
+        },
+        {
+          "name": "number",
+          "source": "params.number"
+        },
+        {
+          "name": "body",
+          "source": "sha256_hex(UTF-8 params.body)"
+        }
+      ],
+      "window_seconds": 86400
+    },
+    "subagent.request": {
+      "fields": [
+        {
+          "name": "session",
+          "source": "ID of the parent (requesting) session"
+        },
+        {
+          "name": "prompt",
+          "source": "sha256_hex(UTF-8 purpose || 0x00 || UTF-8 prompt)"
+        }
+      ],
+      "window_seconds": 600
+    }
+  }
+}

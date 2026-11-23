@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/pending-answer.request.json",
+  "title": "guest POST /v1/pending/{id}/answer request",
+  "description": "answer to an operation.request (result: request_operation output) or platform.query (result: the tool's output)",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "ok"
+        },
+        "result": {
+          "$ref": "../mcp/objects.json#/$defs/tool_result"
+        }
+      },
+      "required": [
+        "status",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "error"
+        },
+        "error": {
+          "$ref": "../mcp/objects.json#/$defs/tool_error"
+        }
+      },
+      "required": [
+        "status",
+        "error"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

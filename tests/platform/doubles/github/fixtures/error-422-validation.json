@@ -1,0 +1,16 @@
+{
+ "body": {
+  "documentation_url": "s",
+  "errors": [
+   {
+    "code": "s",
+    "message": "s",
+    "resource": "s"
+   }
+  ],
+  "message": "Validation Failed",
+  "status": "s"
+ },
+ "route": "POST /repos/{owner}/{repo}/pulls",
+ "source": "docs.github.com REST reference example (values neutralised)"
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/hooks/PostToolUse.response.json",
+  "title": "hook PostToolUse response",
+  "description": "{} or, with pending pings, the notice",
+  "type": "object",
+  "properties": {
+    "hookSpecificOutput": {
+      "type": "object",
+      "properties": {
+        "hookEventName": {
+          "type": "string",
+          "const": "PostToolUse"
+        },
+        "additionalContext": {
+          "$ref": "../objects.json#/$defs/notice"
+        }
+      },
+      "required": [
+        "hookEventName",
+        "additionalContext"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

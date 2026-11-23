@@ -1,0 +1,120 @@
+{
+  "POST /v1/messages?beta=true": {
+    "count": 8,
+    "headers": {
+      "accept": [
+        "application/json"
+      ],
+      "content-type": [
+        "application/json"
+      ],
+      "user-agent": [
+        "claude-cli/2.1.330 (external, sdk-cli)"
+      ],
+      "x-claude-code-session-id": [
+        "<varies>"
+      ],
+      "x-stainless-arch": [
+        "arm64"
+      ],
+      "x-stainless-lang": [
+        "js"
+      ],
+      "x-stainless-os": [
+        "MacOS"
+      ],
+      "x-stainless-package-version": [
+        "0.128.0"
+      ],
+      "x-stainless-retry-count": [
+        "<varies>"
+      ],
+      "x-stainless-runtime": [
+        "node"
+      ],
+      "x-stainless-runtime-version": [
+        "v26.12.1"
+      ],
+      "x-stainless-timeout": [
+        "600"
+      ],
+      "anthropic-beta": [
+        "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,mid-conversation-tool-changes-2026-07-01,thinking-token-count-2026-05-13,effort-2025-11-24,thinking-display-updates-2026-08-18"
+      ],
+      "anthropic-dangerous-direct-browser-access": [
+        "true"
+      ],
+      "anthropic-version": [
+        "2023-06-01"
+      ],
+      "x-api-key": [
+        "<redacted 15 chars>"
+      ],
+      "x-app": [
+        "cli"
+      ],
+      "connection": [
+        "<varies>"
+      ],
+      "host": [
+        "<varies>"
+      ],
+      "accept-encoding": [
+        "gzip, deflate, br, zstd"
+      ],
+      "content-length": [
+        "<varies>"
+      ]
+    },
+    "body_keys": [
+      "context_management",
+      "max_tokens",
+      "messages",
+      "metadata",
+      "model",
+      "output_config",
+      "stream",
+      "system",
+      "thinking",
+      "tools"
+    ],
+    "fields": {
+      "model": [
+        "\"double-model\""
+      ],
+      "max_tokens": [
+        "32000"
+      ],
+      "stream": [
+        "true"
+      ],
+      "thinking": [
+        "{\"display\": \"updates\", \"type\": \"adaptive\"}"
+      ],
+      "output_config": [
+        "{\"effort\": \"high\"}"
+      ],
+      "context_management": [
+        "{\"edits\": [{\"keep\": \"all\", \"type\": \"clear_thinking_20251015\"}]}"
+      ],
+      "message_roles": [
+        "[\"assistant\", \"system\", \"user\"]",
+        "[\"system\", \"user\"]"
+      ],
+      "message_block_types": [
+        "text",
+        "tool_result",
+        "tool_use"
+      ],
+      "system_blocks_with_cache_control": [
+        "2"
+      ],
+      "tool_keys": [
+        "defer_loading",
+        "description",
+        "input_schema",
+        "name"
+      ]
+    }
+  }
+}

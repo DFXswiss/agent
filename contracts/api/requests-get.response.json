@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/requests-get.response.json",
+  "title": "GET /v1/device-requests/{id} response",
+  "description": "Body of a successful response to GET /v1/device-requests/{id} (03-api.md section 4.10).",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "kind": {
+      "$ref": "../common.json#/$defs/request_kind"
+    },
+    "device_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "state": {
+      "$ref": "../common.json#/$defs/request_state"
+    },
+    "created_at": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "expires_at": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "responses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "$ref": "../common.json#/$defs/positive"
+          },
+          "envelope": {
+            "$ref": "../common.json#/$defs/device_response_envelope"
+          },
+          "created_at": {
+            "$ref": "../common.json#/$defs/time"
+          }
+        },
+        "required": [
+          "seq",
+          "envelope",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100
+    }
+  },
+  "required": [
+    "request_id",
+    "kind",
+    "device_id",
+    "state",
+    "created_at",
+    "expires_at",
+    "responses"
+  ],
+  "additionalProperties": false
+}

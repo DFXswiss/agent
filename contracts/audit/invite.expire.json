@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/invite.expire.json",
+  "title": "audit detail invite.expire",
+  "description": "detail of audit rows with action invite.expire: invitation (org or platform). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "invite_id": {
+      "$ref": "../common.json#/$defs/invite_id"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "user",
+        "device"
+      ]
+    }
+  },
+  "required": [
+    "invite_id",
+    "kind"
+  ],
+  "additionalProperties": false
+}

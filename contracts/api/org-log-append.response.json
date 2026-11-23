@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-log-append.response.json",
+  "title": "POST /v1/orgs/{org}/log response",
+  "description": "Body of a successful response to POST /v1/orgs/{org}/log (03-api.md section 4.3).",
+  "type": "object",
+  "properties": {
+    "head": {
+      "$ref": "../common.json#/$defs/log_head"
+    }
+  },
+  "required": [
+    "head"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/passkeys-register-finish.request.json",
+  "title": "POST /v1/passkeys/register/finish request",
+  "description": "first passkey: identity, recovery, cred_wrap and the invitation proof inv_sig together; further passkeys: none of them",
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "first passkey of a new user",
+      "properties": {
+        "ceremony_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "credential": {
+          "$ref": "objects.json#/$defs/attestation_credential"
+        },
+        "identity": {
+          "type": "object",
+          "properties": {
+            "kem_pub": {
+              "$ref": "../common.json#/$defs/b64u_32"
+            },
+            "sig_pub": {
+              "$ref": "../common.json#/$defs/b64u_32"
+            }
+          },
+          "required": [
+            "kem_pub",
+            "sig_pub"
+          ],
+          "additionalProperties": false
+        },
+        "recovery": {
+          "type": "object",
+          "properties": {
+            "recovery_id": {
+              "$ref": "../common.json#/$defs/recovery_id"
+            },
+            "bundle_ct": {
+              "$ref": "../common.json#/$defs/bundle_ct"
+            }
+          },
+          "required": [
+            "recovery_id",
+            "bundle_ct"
+          ],
+          "additionalProperties": false
+        },
+        "cred_wrap": {
+          "type": "object",
+          "description": "self-wrap of CK_1, signed by the new identity",
+          "properties": {
+            "epoch": {
+              "type": "integer",
+              "const": 1
+            },
+            "wrap": {
+              "$ref": "../common.json#/$defs/b64u_80"
+            },
+            "sig": {
+              "$ref": "../common.json#/$defs/b64u_64"
+            }
+          },
+          "required": [
+            "epoch",
+            "wrap",
+            "sig"
+          ],
+          "additionalProperties": false
+        },
+        "inv_sig": {
+          "$ref": "../common.json#/$defs/b64u_64",
+          "description": "Ed25519 of sk_inv over P||'invite-register\\0'||user_id||'\\0'||challenge (ADR-043): proof of holding the invitation code"
+        }
+      },
+      "required": [
+        "ceremony_id",
+        "credential",
+        "identity",
+        "recovery",
+        "cred_wrap",
+        "inv_sig"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "additional passkey or passkey after recovery",
+      "properties": {
+        "ceremony_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "credential": {
+          "$ref": "objects.json#/$defs/attestation_credential"
+        }
+      },
+      "required": [
+        "ceremony_id",
+        "credential"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

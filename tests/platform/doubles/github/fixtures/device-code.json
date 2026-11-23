@@ -1,0 +1,11 @@
+{
+ "body": {
+  "device_code": "s",
+  "expires_in": 0,
+  "interval": 0,
+  "user_code": "s",
+  "verification_uri": "s"
+ },
+ "route": "POST /login/device/code",
+ "source": "docs.github.com REST reference example (values neutralised)"
+}

@@ -1,0 +1,20 @@
+{
+  "body": {
+    "org": "0193000c-0000-7000-8000-00000000000c",
+    "seq": 3,
+    "prev": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY",
+    "type": "invite",
+    "by": "0193000c-0000-7000-8000-00000000000c",
+    "ts": "2026-11-21T12:00:00.000Z",
+    "v": 1,
+    "invite_id": "BwcHBwcHBwcHBwcHBwcHBw",
+    "pk_inv": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY",
+    "kind": "user",
+    "role": "member",
+    "wgs": {
+      "01930002-0000-7000-8000-000000000002": "write"
+    },
+    "expires": "2026-11-21T12:00:00.000Z"
+  },
+  "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+}

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/tasks-create.response.json",
+  "title": "POST /v1/tasks response",
+  "description": "Body of a successful response to POST /v1/tasks (03-api.md section 4.6).",
+  "type": "object",
+  "properties": {
+    "task": {
+      "$ref": "objects.json#/$defs/task_row"
+    },
+    "session": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "state": {
+          "$ref": "../common.json#/$defs/session_state"
+        },
+        "device_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "estimate_ms": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "state",
+        "device_id",
+        "estimate_ms"
+      ],
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/event_result"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "task",
+    "session",
+    "events"
+  ],
+  "additionalProperties": false
+}

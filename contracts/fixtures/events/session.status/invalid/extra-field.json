@@ -1,0 +1,8 @@
+{
+  "state": "failed",
+  "reason": "oom",
+  "details": {
+    "memory_max": 4294967296
+  },
+  "unexpected": 1
+}

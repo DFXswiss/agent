@@ -1,0 +1,9 @@
+{
+ "body": {
+  "error": "authorization_pending",
+  "error_description": "s",
+  "error_uri": "s"
+ },
+ "route": "POST /login/oauth/access_token",
+ "source": "docs.github.com REST reference example (values neutralised)"
+}

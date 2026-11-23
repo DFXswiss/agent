@@ -1,0 +1,8 @@
+{
+  "params": {
+    "repo": "example-org/example-repo",
+    "number": 12,
+    "body": "LGTM"
+  },
+  "idempotency_key": "review-12"
+}

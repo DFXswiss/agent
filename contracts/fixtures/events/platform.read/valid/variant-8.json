@@ -1,0 +1,8 @@
+{
+  "tool": "get_operation",
+  "arguments": {
+    "operation_id": "01a1ee56-5e00-700a-8f1b-340691d99f0a",
+    "wait_seconds": 30
+  },
+  "result_count": 3
+}

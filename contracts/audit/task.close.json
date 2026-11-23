@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/task.close.json",
+  "title": "audit detail task.close",
+  "description": "detail of audit rows with action task.close: task closed. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "by": {
+      "type": "string",
+      "enum": [
+        "user",
+        "hub"
+      ]
+    }
+  },
+  "required": [
+    "by"
+  ],
+  "additionalProperties": false
+}

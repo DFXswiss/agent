@@ -1,0 +1,80 @@
+# Platform runner, guest and doubles gate (docs/platform/spec/07-testing.md section 8): lint and types, tests on
+# Linux and macOS, the Linux-only guest tests (reusable workflow platform-guest-linux.yml), then one combined
+# coverage report with the 100 % gate of .coveragerc-platform.
+name: platform-runner
+
+on:
+  pull_request:
+    branches: [ad5f2026-agent-platform]
+  push:
+    branches: [ad5f2026-agent-platform]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[platform,platform-test]"
+      - run: make platform-lint platform-types platform-contracts
+
+  runner:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # test_legacy_untouched compares with origin/develop.
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: PostgreSQL binaries for the ephemeral test cluster (Linux)
+        if: runner.os == 'Linux'
+        run: echo "$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)" >> "$GITHUB_PATH"
+      - name: PostgreSQL binaries for the ephemeral test cluster (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install postgresql@16
+          echo "$(brew --prefix postgresql@16)/bin" >> "$GITHUB_PATH"
+      - run: pip install -e ".[platform,platform-test,login]"
+      # Headless Chromium for the mailbox-automation suites of the runner (RUN-13, Playwright for Python).
+      - run: python -m playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
+      - run: >-
+          coverage run --rcfile=.coveragerc-platform -m pytest -c tests/platform/pytest.ini
+          --confcutdir=tests/platform --import-mode=importlib -m "not linux and not live" tests/platform
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-runner-${{ matrix.os }}
+          path: .coverage.*
+          include-hidden-files: true
+          if-no-files-found: error
+
+  guest-linux:
+    uses: ./.github/workflows/platform-guest-linux.yml
+
+  combine:
+    needs: [runner, guest-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[platform-test]"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+      - run: coverage combine --rcfile=.coveragerc-platform .
+      - run: coverage report --rcfile=.coveragerc-platform

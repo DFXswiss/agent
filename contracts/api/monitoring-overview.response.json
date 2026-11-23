@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/monitoring-overview.response.json",
+  "title": "GET /v1/monitoring/overview response",
+  "description": "Body of a successful response to GET /v1/monitoring/overview (03-api.md section 4.11).",
+  "type": "object",
+  "properties": {
+    "devices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "capacity": {
+            "$ref": "../common.json#/$defs/capacity"
+          },
+          "capacity_low": {
+            "type": "boolean"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "objects.json#/$defs/metric_sample"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "true when latest is null or more than 60 s older than the hub clock (08-monitoring.md section 6; added by HUB-16)"
+          }
+        },
+        "required": [
+          "device_id",
+          "online",
+          "capacity",
+          "capacity_low",
+          "latest"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    },
+    "vms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "vm_id": {
+            "$ref": "../common.json#/$defs/vm_id"
+          },
+          "device_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "wg_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pool",
+              "assigning",
+              "running",
+              "stopping",
+              "stopped",
+              "deleted"
+            ]
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "objects.json#/$defs/metric_sample"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "true when latest is null or more than 60 s older than the hub clock (08-monitoring.md section 6; added by HUB-16)"
+          }
+        },
+        "required": [
+          "vm_id",
+          "device_id",
+          "wg_id",
+          "state",
+          "latest"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "task_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "wg_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "state": {
+            "$ref": "../common.json#/$defs/session_state"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "objects.json#/$defs/metric_sample"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "objects.json#/$defs/usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "true when latest is null or more than 60 s older than the hub clock (08-monitoring.md section 6; added by HUB-16)"
+          }
+        },
+        "required": [
+          "session_id",
+          "task_id",
+          "wg_id",
+          "state",
+          "latest",
+          "usage"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    }
+  },
+  "required": [
+    "devices",
+    "vms",
+    "sessions"
+  ],
+  "additionalProperties": false
+}

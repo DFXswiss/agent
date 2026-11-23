@@ -1,0 +1,234 @@
+{
+  "description": "Session platform API (03-api.md section 8): JSON-RPC methods, tools (section 8.1) and hook events (section 8.2, 05-runner.md section 5.2). via: how the guest answers (local, platform.query or operation.request journal record answered by the runner).",
+  "server": {
+    "name": "platform",
+    "server_info_name": "agent-dfx-swiss-platform",
+    "default_protocol_version": "2025-06-18",
+    "endpoint": "http://127.0.0.1:7700/mcp"
+  },
+  "methods": [
+    {
+      "method": "initialize",
+      "params": "mcp/initialize.params.json",
+      "result": "mcp/initialize.result.json"
+    },
+    {
+      "method": "notifications/initialized",
+      "params": null,
+      "result": null,
+      "http_status": 202
+    },
+    {
+      "method": "tools/list",
+      "params": "mcp/tools-list.params.json",
+      "result": "mcp/tools-list.result.json"
+    },
+    {
+      "method": "tools/call",
+      "params": "mcp/tools-call.params.json",
+      "result": "mcp/tools-call.result.json"
+    },
+    {
+      "method": "ping",
+      "params": null,
+      "result": "mcp/ping.result.json"
+    }
+  ],
+  "envelope": {
+    "request": "mcp/jsonrpc.request.json",
+    "response": "mcp/jsonrpc.response.json",
+    "error": "mcp/rpc-error.json",
+    "tool_error": "mcp/tool-error.json"
+  },
+  "tools": [
+    {
+      "tool": "get_context",
+      "name": "mcp__platform__get_context",
+      "input": "mcp/tools/get_context.input.json",
+      "output": "mcp/tools/get_context.output.json",
+      "read_audit": "read.session.get_context",
+      "via": "platform.query"
+    },
+    {
+      "tool": "list_workgroups",
+      "name": "mcp__platform__list_workgroups",
+      "input": "mcp/tools/list_workgroups.input.json",
+      "output": "mcp/tools/list_workgroups.output.json",
+      "read_audit": "read.session.list_workgroups",
+      "via": "platform.query"
+    },
+    {
+      "tool": "list_members",
+      "name": "mcp__platform__list_members",
+      "input": "mcp/tools/list_members.input.json",
+      "output": "mcp/tools/list_members.output.json",
+      "read_audit": "read.session.list_members",
+      "via": "platform.query"
+    },
+    {
+      "tool": "list_tasks",
+      "name": "mcp__platform__list_tasks",
+      "input": "mcp/tools/list_tasks.input.json",
+      "output": "mcp/tools/list_tasks.output.json",
+      "read_audit": "read.session.list_tasks",
+      "via": "platform.query"
+    },
+    {
+      "tool": "get_task",
+      "name": "mcp__platform__get_task",
+      "input": "mcp/tools/get_task.input.json",
+      "output": "mcp/tools/get_task.output.json",
+      "read_audit": "read.session.get_task",
+      "via": "platform.query"
+    },
+    {
+      "tool": "get_task_messages",
+      "name": "mcp__platform__get_task_messages",
+      "input": "mcp/tools/get_task_messages.input.json",
+      "output": "mcp/tools/get_task_messages.output.json",
+      "read_audit": "read.session.get_task_messages",
+      "via": "platform.query"
+    },
+    {
+      "tool": "get_whiteboard",
+      "name": "mcp__platform__get_whiteboard",
+      "input": "mcp/tools/get_whiteboard.input.json",
+      "output": "mcp/tools/get_whiteboard.output.json",
+      "read_audit": "read.session.get_whiteboard",
+      "via": "platform.query"
+    },
+    {
+      "tool": "get_notifications",
+      "name": "mcp__platform__get_notifications",
+      "input": "mcp/tools/get_notifications.input.json",
+      "output": "mcp/tools/get_notifications.output.json",
+      "read_audit": "read.session.get_notifications",
+      "via": "local"
+    },
+    {
+      "tool": "request_operation",
+      "name": "mcp__platform__request_operation",
+      "input": "mcp/tools/request_operation.input.json",
+      "output": "mcp/tools/request_operation.output.json",
+      "read_audit": null,
+      "via": "operation.request"
+    },
+    {
+      "tool": "get_operation",
+      "name": "mcp__platform__get_operation",
+      "input": "mcp/tools/get_operation.input.json",
+      "output": "mcp/tools/get_operation.output.json",
+      "read_audit": "read.session.get_operation",
+      "via": "platform.query"
+    },
+    {
+      "tool": "list_operations",
+      "name": "mcp__platform__list_operations",
+      "input": "mcp/tools/list_operations.input.json",
+      "output": "mcp/tools/list_operations.output.json",
+      "read_audit": "read.session.list_operations",
+      "via": "platform.query"
+    },
+    {
+      "tool": "get_subagent_result",
+      "name": "mcp__platform__get_subagent_result",
+      "input": "mcp/tools/get_subagent_result.input.json",
+      "output": "mcp/tools/get_subagent_result.output.json",
+      "read_audit": "read.session.get_subagent_result",
+      "via": "platform.query"
+    }
+  ],
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "request": "mcp/hooks/SessionStart.request.json",
+      "response": "mcp/hooks/SessionStart.response.json"
+    },
+    {
+      "event": "SessionEnd",
+      "request": "mcp/hooks/SessionEnd.request.json",
+      "response": "mcp/hooks/SessionEnd.response.json"
+    },
+    {
+      "event": "UserPromptSubmit",
+      "request": "mcp/hooks/UserPromptSubmit.request.json",
+      "response": "mcp/hooks/UserPromptSubmit.response.json"
+    },
+    {
+      "event": "PreToolUse",
+      "request": "mcp/hooks/PreToolUse.request.json",
+      "response": "mcp/hooks/PreToolUse.response.json"
+    },
+    {
+      "event": "PostToolUse",
+      "request": "mcp/hooks/PostToolUse.request.json",
+      "response": "mcp/hooks/PostToolUse.response.json"
+    },
+    {
+      "event": "PostToolUseFailure",
+      "request": "mcp/hooks/PostToolUseFailure.request.json",
+      "response": "mcp/hooks/PostToolUseFailure.response.json"
+    },
+    {
+      "event": "PermissionRequest",
+      "request": "mcp/hooks/PermissionRequest.request.json",
+      "response": "mcp/hooks/PermissionRequest.response.json"
+    },
+    {
+      "event": "PermissionDenied",
+      "request": "mcp/hooks/PermissionDenied.request.json",
+      "response": "mcp/hooks/PermissionDenied.response.json"
+    },
+    {
+      "event": "Notification",
+      "request": "mcp/hooks/Notification.request.json",
+      "response": "mcp/hooks/Notification.response.json"
+    },
+    {
+      "event": "Stop",
+      "request": "mcp/hooks/Stop.request.json",
+      "response": "mcp/hooks/Stop.response.json"
+    },
+    {
+      "event": "StopFailure",
+      "request": "mcp/hooks/StopFailure.request.json",
+      "response": "mcp/hooks/StopFailure.response.json"
+    },
+    {
+      "event": "SubagentStart",
+      "request": "mcp/hooks/SubagentStart.request.json",
+      "response": "mcp/hooks/SubagentStart.response.json"
+    },
+    {
+      "event": "SubagentStop",
+      "request": "mcp/hooks/SubagentStop.request.json",
+      "response": "mcp/hooks/SubagentStop.response.json"
+    },
+    {
+      "event": "PreCompact",
+      "request": "mcp/hooks/PreCompact.request.json",
+      "response": "mcp/hooks/PreCompact.response.json"
+    },
+    {
+      "event": "PostCompact",
+      "request": "mcp/hooks/PostCompact.request.json",
+      "response": "mcp/hooks/PostCompact.response.json"
+    },
+    {
+      "event": "ConfigChange",
+      "request": "mcp/hooks/ConfigChange.request.json",
+      "response": "mcp/hooks/ConfigChange.response.json"
+    },
+    {
+      "event": "InstructionsLoaded",
+      "request": "mcp/hooks/InstructionsLoaded.request.json",
+      "response": "mcp/hooks/InstructionsLoaded.response.json"
+    },
+    {
+      "event": "CwdChanged",
+      "request": "mcp/hooks/CwdChanged.request.json",
+      "response": "mcp/hooks/CwdChanged.response.json"
+    }
+  ],
+  "deny_reasons": "mcp/hook-deny-reasons.json"
+}

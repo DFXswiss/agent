@@ -1,0 +1,7 @@
+{
+  "status": "error",
+  "error": {
+    "error": "boom",
+    "message": "x"
+  }
+}

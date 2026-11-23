@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-pull.response.json",
+  "title": "GET /v1/device/pull response",
+  "description": "Body of a successful response to GET /v1/device/pull (03-api.md section 6.1).",
+  "type": "object",
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "scope_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "scope_seq": {
+            "$ref": "../common.json#/$defs/positive"
+          },
+          "received_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "event": {
+            "$ref": "../events/objects.json#/$defs/event_other"
+          }
+        },
+        "required": [
+          "scope_id",
+          "scope_seq",
+          "received_at",
+          "event"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    },
+    "more": {
+      "type": "boolean",
+      "description": "true while more events are pending"
+    }
+  },
+  "required": [
+    "events",
+    "more"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/session-end.response.json",
+  "title": "POST /v1/session/end response",
+  "description": "Body of a successful response to POST /v1/session/end (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

@@ -1,0 +1,198 @@
+{
+  "name": "atk-38",
+  "description": "ATK-38 (Operations, MCP, gateway and files): prompt injection via pasted text and a forged wrapper. Scripted adversary for the attack suite (docs/platform/spec/07-testing.md section 2.3); the evaluation belongs to the suite.",
+  "capture": {
+    "cwd": {
+      "regex": "Primary working directory: ([^\\s<>\\\"']+)",
+      "source": "all"
+    },
+    "session_dir": {
+      "regex": "Primary working directory: (/srv/sessions/[^/\\s]+)/work",
+      "source": "all"
+    },
+    "session_id": {
+      "regex": "Primary working directory: /srv/sessions/([^/\\s]+)/work",
+      "source": "all"
+    }
+  },
+  "steps": [
+    {
+      "id": "attack-1",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": false,
+        "user_text_contains": "ATK-38-PASTED"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-38 attempt 1: Bash."
+          },
+          {
+            "type": "tool_use",
+            "name": "Bash",
+            "input": {
+              "command": "id; cat /etc/agent-guest/control-token"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-2",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-38 attempt 2: Read."
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "${foreign_work}/secret.txt"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-3",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-38 attempt 3: Write."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${session_dir}/home/.claude/settings.json",
+              "content": "{\"permissions\":{\"allow\":[\"Bash\"]}}\n"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-4",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-38 attempt 4: mcp__platform__request_operation."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": {
+                "repo": "atk/repo",
+                "branch": "main",
+                "commit_sha": "0123456789abcdef0123456789abcdef01234567"
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "finish",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-38 finished."
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 10
+        }
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "forged-wrapper",
+      "expect": {
+        "user_text_contains": "atk38-forged-wrapper"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-38 forged wrapper answered."
+          }
+        ]
+      }
+    },
+    {
+      "id": "forged-text",
+      "expect": {
+        "user_text_contains": "ATK-38-FORGED"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-38 forged prompt answered."
+          }
+        ]
+      }
+    },
+    {
+      "id": "background",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Session"
+          }
+        ]
+      }
+    }
+  ],
+  "variables": {
+    "foreign_work": "/srv/sessions/00000000-0000-4000-8000-0000000000b2/work",
+    "foreign_session": "00000000-0000-4000-8000-0000000000b2"
+  }
+}

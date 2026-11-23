@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/session-control.request.json",
+  "title": "guest POST /v1/sessions/{id}/control request",
+  "description": "Request of POST /v1/sessions/{id}/control (03-api.md section 7.1).",
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "interrupt",
+        "stop",
+        "suspend"
+      ]
+    }
+  },
+  "required": [
+    "action"
+  ],
+  "additionalProperties": false
+}

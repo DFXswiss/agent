@@ -1,0 +1,8 @@
+{
+  "repo": "a/b",
+  "branch": "x",
+  "message": "m",
+  "paths": [
+    "/etc/passwd"
+  ]
+}

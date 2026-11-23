@@ -1,0 +1,8 @@
+{
+  "repo": 12345,
+  "branch": "feature/x",
+  "message": "Fix the parser.",
+  "paths": [
+    "src/parser.py"
+  ]
+}

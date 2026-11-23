@@ -1,0 +1,16 @@
+{
+  "name": "agent-platform-contracts",
+  "private": true,
+  "description": "Validation harness of the platform contracts (TypeScript side).",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "validate": "node tools/validate.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0"
+  }
+}

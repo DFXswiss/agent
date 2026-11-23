@@ -1,0 +1,39 @@
+{
+ "body": {
+  "author": {
+   "date": "s",
+   "email": "s",
+   "name": "s"
+  },
+  "committer": {
+   "date": "s",
+   "email": "s",
+   "name": "s"
+  },
+  "html_url": "s",
+  "message": "s",
+  "node_id": "s",
+  "parents": [
+   {
+    "html_url": "s",
+    "sha": "s",
+    "url": "s"
+   }
+  ],
+  "sha": "s",
+  "tree": {
+   "sha": "s",
+   "url": "s"
+  },
+  "url": "s",
+  "verification": {
+   "payload": null,
+   "reason": "unsigned",
+   "signature": null,
+   "verified": false,
+   "verified_at": null
+  }
+ },
+ "route": "GET /repos/{owner}/{repo}/git/commits/{sha}",
+ "source": "recorded"
+}

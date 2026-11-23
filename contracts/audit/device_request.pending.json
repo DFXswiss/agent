@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/device_request.pending.json",
+  "title": "audit detail device_request.pending",
+  "description": "detail of audit rows with action device_request.pending: device request pending. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "$ref": "../common.json#/$defs/request_kind"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/error_code"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "kind",
+    "error_code"
+  ],
+  "additionalProperties": false
+}

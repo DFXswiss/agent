@@ -1,0 +1,24 @@
+{
+  "description": "Audit actions a runner may send through the outbox item audit (03-api.md section 6.1); read.session.<tool> expanded with the MCP read tools of 03-api.md section 8.1.",
+  "actions": [
+    "hook.denied",
+    "read.session.get_context",
+    "read.session.list_workgroups",
+    "read.session.list_members",
+    "read.session.list_tasks",
+    "read.session.get_task",
+    "read.session.get_task_messages",
+    "read.session.get_whiteboard",
+    "read.session.get_notifications",
+    "read.session.get_operation",
+    "read.session.list_operations",
+    "read.session.get_subagent_result",
+    "ping.delivered",
+    "session.prompt_refused",
+    "model.provider_outside_allowlist",
+    "runner.inbound_rejected",
+    "runner.log_rollback",
+    "runner.log_fork",
+    "runner.alert"
+  ]
+}

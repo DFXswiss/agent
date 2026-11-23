@@ -1,0 +1,13 @@
+{
+  "wraps": [
+    {
+      "scope": "wg",
+      "scope_id": "01930002-0000-7000-8000-000000000002",
+      "epoch": 1,
+      "recipient_id": "0193000a-0000-7000-8000-00000000000a",
+      "wrap": "EhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhI",
+      "wrapped_by": "0193000a-0000-7000-8000-00000000000a",
+      "created_at": "2026-11-21T12:00:00.000Z"
+    }
+  ]
+}

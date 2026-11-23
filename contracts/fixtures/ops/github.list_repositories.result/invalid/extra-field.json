@@ -1,0 +1,11 @@
+{
+  "repositories": [
+    {
+      "repo": "example-org/example-repo",
+      "default_branch": "main",
+      "private": true,
+      "allowed": true
+    }
+  ],
+  "zz_unexpected": "x"
+}

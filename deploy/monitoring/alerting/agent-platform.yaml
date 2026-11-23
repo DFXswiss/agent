@@ -1,0 +1,437 @@
+# Grafana unified-alerting — agent platform runner devices (agent.dfx.swiss).
+#
+# Producer: the agent runner daemon (LaunchDaemon swiss.dfx.agent-runner, written
+# by `agent-runner service install`) samples every 15 s and writes
+# agent_runner.prom atomically into its own TEXTFILE_DIR. A root-owned symlink
+# in the host's node_exporter textfile directory points at that file (install
+# step in the host README, section "Agent runner textfile"). The host
+# node_exporter reads it, the host Alloy pushes it with server="<host>". Labels
+# carry IDs only: vm (vm-<8 hex>), wg (workgroup UUID), session (session UUID),
+# state, direction. No new port, no exporter process and no push password in any
+# VM. Source of the files: DFXswiss/agent deploy/monitoring/ (prepared patch).
+#
+# The rules, all in folder Infrastructure, labels severity and
+# component="agent-platform", noDataState and execErrState OK like every sibling
+# watchdog (a transient central-Prometheus blip must not page; the absence of
+# data is watched explicitly by the first rule):
+#
+# agent-runner-textfile-absent (critical, 10m). The runner's samples stopped
+# arriving: fewer than 20 of the expected 40 samples of
+# agent_runner_textfile_timestamp_seconds in 10m. Metrics are pushed, so `up`
+# stays stale rather than 0 and an instant vector would linger for the lookback
+# delta; counting real samples in a real window is the pattern of
+# guest-memory-exporter-absent. THE ZERO FALLBACK IS PER DEVICE: one
+# label_replace(vector(0), "server", "<device>", "", "") per runner device
+# gives the fallback the label set of its live counterpart, so `or` appends it
+# only while that device is gone (a bare `or vector(0)` would fire forever).
+# A device added to the selector must be added to the fallback list as well.
+#
+# agent-runner-textfile-stale (warning, 5m). The file still arrives but its
+# own timestamp is older than 120 s (eight sampling rounds): the daemon is
+# stuck or stopped and the symlink still points at its last file, so every
+# other series would look fresh forever.
+#
+# agent-runner-capacity-low (warning, 10m). Bottleneck warning (KONZEPT §7,
+# R-7.7): agent_runner_device_capacity_low is 1 while fewer than 10 % of the VM
+# slots of the device are free. New work waits for a slot or goes to another
+# device; the same flag is the capacity_low badge of the web monitoring screen.
+#
+# agent-runner-vm-probe-failed (warning, 5m). A VM that should run (pool,
+# assigning, running) did not answer GET /v1/health on its control socket
+# (agent_runner_vm_probe_ok 0). Its sessions cannot be reached.
+#
+# agent-runner-session-oom (warning, 0m). The kernel OOM-killed a process in a
+# session sandbox within the last 15 minutes (cgroup memory.events oom_kill of
+# the session unit). One event is enough to tell the operator. increase() needs
+# two samples of a session series: a kill already counted in the first sample
+# (runner restart, a session shorter than one scrape) is not reported.
+#
+# agent-runner-sync-fatal (critical, 0m). The runner stopped pushing to the hub
+# and needs an operator (sync state fatal): no result of this device reaches
+# the hub until it is resolved.
+#
+# agent-runner-hub-disconnected (critical, 10m). The device WebSocket to the hub
+# has been closed for 10 minutes: the device takes no new work and its outbox
+# grows (agent_runner_device_outbox_backlog).
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: agent-platform
+    folder: Infrastructure
+    interval: 1m
+    rules:
+      - uid: agent-runner-textfile-absent
+        title: Agent runner samples missing
+        condition: C
+        execErrState: OK
+        noDataState: OK
+        for: 10m
+        labels:
+          severity: critical
+          component: agent-platform
+        annotations:
+          summary: The agent runner of a device stopped delivering its textfile
+          description: >-
+            agent_runner_textfile_timestamp_seconds produced fewer than 20 of the
+            expected 40 samples in 10m for this device, or none at all. Device, VM
+            and session series of the agent platform are missing. Check the
+            LaunchDaemon swiss.dfx.agent-runner, the symlink agent_runner.prom in
+            the textfile directory of node_exporter.args and the host Alloy push.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: >-
+                sum by (server) (
+                  count_over_time(agent_runner_textfile_timestamp_seconds{server=~"<runner-device>"}[10m])
+                )
+                or label_replace(vector(0), "server", "<runner-device>", "", "")
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: lt, params: [20] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+
+      - uid: agent-runner-textfile-stale
+        title: Agent runner textfile is stale
+        condition: C
+        execErrState: OK
+        noDataState: OK
+        for: 5m
+        labels:
+          severity: warning
+          component: agent-platform
+        annotations:
+          summary: The agent runner has not rewritten agent_runner.prom
+          description: >-
+            time() minus agent_runner_textfile_timestamp_seconds is over 120s
+            (sampling interval 15s). The runner daemon is stuck or stopped while
+            node_exporter still reads its last file, so every agent platform
+            series of this device looks fresh but is not.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: >-
+                time() - max by (server) (agent_runner_textfile_timestamp_seconds)
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [120] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+
+      - uid: agent-runner-capacity-low
+        title: Agent runner capacity low
+        condition: C
+        execErrState: OK
+        noDataState: OK
+        for: 10m
+        labels:
+          severity: warning
+          component: agent-platform
+        annotations:
+          summary: Fewer than 10 % of the VM slots of a runner device are free
+          description: >-
+            agent_runner_device_capacity_low is 1 for 10 minutes: fewer than 10 %
+            of the VM slots (agent_runner_device_vm_slots_free of
+            agent_runner_device_vm_slots) are free. New sessions wait for a slot
+            or are placed on another device. Add a device, raise the VM memory
+            budget or stop idle VMs.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: >-
+                max by (server) (agent_runner_device_capacity_low)
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+
+      - uid: agent-runner-vm-probe-failed
+        title: Agent runner VM does not answer
+        condition: C
+        execErrState: OK
+        noDataState: OK
+        for: 5m
+        labels:
+          severity: warning
+          component: agent-platform
+        annotations:
+          summary: A Lima VM of a runner device does not answer its health probe
+          description: >-
+            agent_runner_vm_probe_ok is 0 for 5 minutes for a VM that should run
+            (pool, assigning or running): GET /v1/health on its control socket
+            fails. Sessions in this VM cannot be reached. Check limactl list and
+            the runner log on the device; the label vm names the instance.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: >-
+                max by (server, vm) (agent_runner_vm_probe_ok)
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+
+      - uid: agent-runner-session-oom
+        title: Agent session OOM kill
+        condition: C
+        execErrState: OK
+        noDataState: OK
+        for: 0m
+        labels:
+          severity: warning
+          component: agent-platform
+        annotations:
+          summary: The kernel killed a process of an agent session for lack of memory
+          description: >-
+            agent_runner_session_oom_kills_total increased within 15 minutes: the
+            memory limit of the session sandbox (memory.max of its unit) was hit.
+            The labels vm and session name the sandbox; the session may have lost
+            its agent process.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: >-
+                sum by (server, vm, session) (increase(agent_runner_session_oom_kills_total[15m]))
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+
+      - uid: agent-runner-sync-fatal
+        title: Agent runner sync stopped
+        condition: C
+        execErrState: OK
+        noDataState: OK
+        for: 0m
+        labels:
+          severity: critical
+          component: agent-platform
+        annotations:
+          summary: A runner device stopped pushing to the hub and needs an operator
+          description: >-
+            agent_runner_device_sync_fatal is 1: the runner refuses to push its
+            outbox to the hub until an operator resolves the cause (agent-runner
+            status on the device). Results of this device do not reach the hub.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: >-
+                max by (server) (agent_runner_device_sync_fatal)
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+
+      - uid: agent-runner-hub-disconnected
+        title: Agent runner disconnected from the hub
+        condition: C
+        execErrState: OK
+        noDataState: OK
+        for: 10m
+        labels:
+          severity: critical
+          component: agent-platform
+        annotations:
+          summary: A runner device has no connection to the hub
+          description: >-
+            agent_runner_device_hub_connected is 0 for 10 minutes: the device
+            WebSocket to the hub is closed. The device takes no new work and its
+            outbox backlog grows. Check the network of the device and the hub.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: >-
+                min by (server) (agent_runner_device_hub_connected)
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query

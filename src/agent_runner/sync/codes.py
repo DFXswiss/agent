@@ -1,0 +1,96 @@
+"""Closed code lists the sync client relies on (03-api.md sections 6.1 and 11).
+
+Copies of `contracts/enums/error-codes.json` (codes with `origin` `hub`) and `contracts/enums/outbox-item-kinds.json`;
+the runner package does not read `contracts/` at run time. `tests/platform/runner/sync/test_tasks.py` keeps them
+equal to the contracts.
+"""
+
+from __future__ import annotations
+
+HUB_ERROR_CODES = frozenset(
+    {
+        "already_assigned",
+        "attestation_invalid",
+        "authenticator_data_invalid",
+        "author_not_writer",
+        "ceremony_invalid",
+        "certificate_expiry_invalid",
+        "challenge_mismatch",
+        "client_data_invalid",
+        "counter_regressed",
+        "credential_invalid",
+        "decrypt_failed",
+        "device_not_assigned",
+        "epoch_stale",
+        "event_conflict",
+        "forbidden",
+        "header_invalid",
+        "hpke_short",
+        "id_conflict",
+        "invite_code_invalid",
+        "invite_code_length",
+        "invite_consumed",
+        "invite_expired",
+        "invite_not_in_log",
+        "invite_registered",
+        "invite_revoked",
+        "invite_unknown",
+        "key_revoked",
+        "key_unknown",
+        "kind_not_allowed",
+        "last_admin",
+        "last_passkey",
+        "log_accept",
+        "log_chain",
+        "log_empty",
+        "log_epoch",
+        "log_genesis",
+        "log_rights",
+        "log_signature",
+        "log_type",
+        "no_device",
+        "no_device_available",
+        "non_ascii",
+        "nonce_replayed",
+        "not_found",
+        "origin_mismatch",
+        "origin_seq_conflict",
+        "origin_seq_gap",
+        "params_invalid",
+        "platform_access_denied",
+        "platform_invite_required",
+        "prf_length",
+        "rate_limited",
+        "recovery_code_length",
+        "request_invalid",
+        "rotation_required",
+        "rp_id_mismatch",
+        "seq_conflict",
+        "session_expired",
+        "signature_invalid",
+        "signature_missing",
+        "size_exceeded",
+        "statement_invalid",
+        "time_skew",
+        "unauthorized",
+        "unavailable",
+        "user_presence_missing",
+        "user_verification_missing",
+        "version_conflict",
+        "wrap_unauthorized",
+    }
+)
+"""Every error code the hub may send in `{"error": ...}` (03-api.md section 11)."""
+
+ITEM_KINDS = (
+    "event",
+    "session_transition",
+    "vm_state",
+    "operation_transition",
+    "usage",
+    "quota",
+    "metrics",
+    "audit",
+    "wrap",
+)
+"""Outbox item kinds in the order of `contracts/enums/outbox-item-kinds.json` (= the CHECK of `runner.outbox`)."""

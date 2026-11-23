@@ -1,0 +1,1 @@
+{"mcpServers":{"platform":{"type":"http","url":"http://127.0.0.1:7700/mcp","headers":{"Authorization":"Bearer ${PLATFORM_SESSION_TOKEN}"}}}}

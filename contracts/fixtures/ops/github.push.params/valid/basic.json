@@ -1,0 +1,5 @@
+{
+  "repo": "example-org/example-repo",
+  "branch": "feature/x",
+  "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

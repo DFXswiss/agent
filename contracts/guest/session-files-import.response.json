@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/session-files-import.response.json",
+  "title": "guest POST /v1/sessions/{id}/files/import response",
+  "description": "Response of POST /v1/sessions/{id}/files/import (03-api.md section 7.1).",
+  "type": "object",
+  "properties": {
+    "files": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "bytes": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "files",
+    "bytes"
+  ],
+  "additionalProperties": false
+}

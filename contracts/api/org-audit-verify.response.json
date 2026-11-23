@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-audit-verify.response.json",
+  "title": "GET /v1/orgs/{org}/audit/verify response",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/audit/verify (03-api.md section 4.11).",
+  "type": "object",
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "head": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "hash": {
+          "$ref": "../common.json#/$defs/sha256_hex"
+        }
+      },
+      "required": [
+        "seq",
+        "hash"
+      ],
+      "additionalProperties": false
+    },
+    "checkpoint": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "hub_key_id": {
+              "$ref": "../common.json#/$defs/hub_key_id"
+            },
+            "seq": {
+              "$ref": "../common.json#/$defs/seq"
+            },
+            "hash": {
+              "$ref": "../common.json#/$defs/sha256_hex"
+            },
+            "published_at": {
+              "$ref": "../common.json#/$defs/time"
+            },
+            "signature": {
+              "$ref": "../common.json#/$defs/b64u_64"
+            }
+          },
+          "required": [
+            "hub_key_id",
+            "seq",
+            "hash",
+            "published_at",
+            "signature"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "ok",
+    "head",
+    "checkpoint"
+  ],
+  "additionalProperties": false
+}

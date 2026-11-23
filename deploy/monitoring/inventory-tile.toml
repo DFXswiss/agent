@@ -1,0 +1,12 @@
+[[servers]]
+key = "<runner-device>"
+name = "<runner-device>"
+description = "Agent platform runner device (agent.dfx.swiss): agent runner with Lima VMs, host baseline"
+ip = ""
+nodes = []
+# Native Alloy does not instance-relabel; instance stays localhost:9100. The agent runner
+# itself has no container and no port: its series arrive through the host node_exporter.
+services = [
+  {key = "alloy-host-<runner-device>", name = "Alloy", container = "alloy", prom_server = "<runner-device>"},
+  {key = "node-exporter-host-<runner-device>", name = "node_exporter", container = "node_exporter", prom_instance = "localhost:9100"},
+]

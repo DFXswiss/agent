@@ -1,0 +1,2 @@
+time="2026-11-21T19:05:48+01:00" level=fatal msg="instance `nosuch-vm` does not exist, run `limactl create nosuch-vm` to create a new instance"
+1

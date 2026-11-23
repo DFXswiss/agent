@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-catch-up.response.json",
+  "title": "GET /v1/orgs/{org}/catch-up response",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/catch-up (03-api.md section 4.3).",
+  "type": "object",
+  "properties": {
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "../common.json#/$defs/key_scope"
+          },
+          "scope_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "epoch": {
+            "$ref": "../common.json#/$defs/epoch"
+          },
+          "recipient_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          }
+        },
+        "required": [
+          "scope",
+          "scope_id",
+          "epoch",
+          "recipient_id"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100000
+    }
+  },
+  "required": [
+    "missing"
+  ],
+  "additionalProperties": false
+}

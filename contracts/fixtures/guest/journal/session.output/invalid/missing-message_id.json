@@ -1,0 +1,6 @@
+{
+  "role": "assistant",
+  "text": "Done.",
+  "turn": 1,
+  "stop_reason": "end_turn"
+}

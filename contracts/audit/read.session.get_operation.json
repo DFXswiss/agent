@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/read.session.get_operation.json",
+  "title": "audit detail read.session.get_operation",
+  "description": "detail of audit rows with action read.session.get_operation: session platform read reported by the runner (03-api.md section 10 platform.read). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "result_count": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "result_count"
+  ],
+  "additionalProperties": false
+}

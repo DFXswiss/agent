@@ -1,0 +1,20 @@
+{
+  "record": {
+    "header": {
+      "v": 1,
+      "alg": "A256GCM-HKDF",
+      "id": "01930050-0000-7000-8000-000000000050",
+      "owner": "0193000a-0000-7000-8000-00000000000a",
+      "kind": "github",
+      "version": 2,
+      "epoch": 1,
+      "author": "0193000a-0000-7000-8000-00000000000a",
+      "ts": "2026-11-21T12:00:00.000Z",
+      "salt": "FRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRU",
+      "nonce": "FhYWFhYWFhYWFhYW"
+    },
+    "ct": "FxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcX",
+    "sig": "GBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGA"
+  },
+  "unexpected": 1
+}

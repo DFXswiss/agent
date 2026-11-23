@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/wraps-get.response.json",
+  "title": "GET /v1/wraps response",
+  "description": "Body of a successful response to GET /v1/wraps (03-api.md section 4.3).",
+  "type": "object",
+  "properties": {
+    "wraps": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/stored_wrap"
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    }
+  },
+  "required": [
+    "wraps"
+  ],
+  "additionalProperties": false
+}

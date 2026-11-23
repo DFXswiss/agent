@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/outbox.rejected.json",
+  "title": "audit detail outbox.rejected",
+  "description": "detail of audit rows with action outbox.rejected: a device outbox item acknowledged with status rejected (03-api.md section 6.1: logged, the sequence continues). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "origin_seq": {
+      "$ref": "../common.json#/$defs/positive"
+    },
+    "item_kind": {
+      "type": "string",
+      "enum": [
+        "event",
+        "session_transition",
+        "vm_state",
+        "operation_transition",
+        "usage",
+        "quota",
+        "metrics",
+        "audit",
+        "wrap"
+      ]
+    },
+    "code": {
+      "$ref": "../common.json#/$defs/hub_error_code"
+    }
+  },
+  "required": [
+    "origin_seq",
+    "item_kind",
+    "code"
+  ],
+  "additionalProperties": false
+}

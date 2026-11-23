@@ -1,0 +1,13 @@
+{
+  "body": {
+    "seq": 3,
+    "prev": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY",
+    "type": "device_decertify",
+    "by": "platform-root",
+    "ts": "2026-11-21T12:00:00.000Z",
+    "v": 1,
+    "device": "0193000c-0000-7000-8000-00000000000c"
+  },
+  "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA",
+  "unexpected": 1
+}

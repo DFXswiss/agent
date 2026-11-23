@@ -1,0 +1,8 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-00000000002d",
+  "type": "github.get_pull_request",
+  "params": {
+    "repo": "example-org/example-repo",
+    "number": 7
+  }
+}

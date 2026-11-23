@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/journal-ack.request.json",
+  "title": "guest POST /v1/journal/ack request",
+  "description": "Request of POST /v1/journal/ack (03-api.md section 7.1).",
+  "type": "object",
+  "properties": {
+    "through": {
+      "$ref": "../common.json#/$defs/seq"
+    }
+  },
+  "required": [
+    "through"
+  ],
+  "additionalProperties": false
+}

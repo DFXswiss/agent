@@ -1,0 +1,12 @@
+{
+  "repositories": {
+    "items": [
+      {
+        "repo": "example-org/example-repo",
+        "default_branch": "main",
+        "private": true,
+        "allowed": true
+      }
+    ]
+  }
+}

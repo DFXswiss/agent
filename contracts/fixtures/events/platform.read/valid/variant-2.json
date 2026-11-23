@@ -1,0 +1,7 @@
+{
+  "tool": "list_members",
+  "arguments": {
+    "scope": "org"
+  },
+  "result_count": 3
+}

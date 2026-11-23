@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/scope-events-get.request.json",
+  "title": "GET /v1/scopes/{scope_id}/events request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "after": {
+      "$ref": "../common.json#/$defs/q_seq"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_log"
+    },
+    "kinds": {
+      "type": "string",
+      "pattern": "^[a-z]+(\\.[a-z]+)?(,[a-z]+(\\.[a-z]+)?){0,31}$",
+      "maxLength": 1024
+    },
+    "task": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "session": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "ref": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "additionalProperties": false
+}

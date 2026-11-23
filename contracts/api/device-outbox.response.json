@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-outbox.response.json",
+  "title": "POST /v1/device/outbox response",
+  "description": "Body of a successful response to POST /v1/device/outbox (03-api.md section 6.1).",
+  "type": "object",
+  "properties": {
+    "acked_through": {
+      "$ref": "../common.json#/$defs/seq"
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "origin_seq": {
+                "$ref": "../common.json#/$defs/positive"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "replayed",
+                  "reseal"
+                ]
+              }
+            },
+            "required": [
+              "origin_seq",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "origin_seq": {
+                "$ref": "../common.json#/$defs/positive"
+              },
+              "status": {
+                "type": "string",
+                "const": "rejected"
+              },
+              "error": {
+                "$ref": "../common.json#/$defs/hub_error_code"
+              }
+            },
+            "required": [
+              "origin_seq",
+              "status",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 500
+    }
+  },
+  "required": [
+    "acked_through",
+    "results"
+  ],
+  "additionalProperties": false
+}

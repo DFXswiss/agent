@@ -1,0 +1,16 @@
+# Operator runbooks
+
+Procedures for operating the platform packages (09-milestones.md WP-M3-07). Devices are named by role only: hub
+device, runner device, second device. The cutover to production is a separate plan: [CUTOVER.md](../CUTOVER.md).
+
+| Runbook | Covers |
+|---|---|
+| [platform-root-key.md](platform-root-key.md) | Platform root key: creation offline, safekeeping, operator commands, bootstrap invitations, compromise, loss and re-keying |
+| [device-certification.md](device-certification.md) | Platform device enrollment and certification, org device enrollment, decertification and removal |
+| [golden-image-release.md](golden-image-release.md) | Building, rolling out and retiring the golden image |
+| [claude-code-upgrade-gate.md](claude-code-upgrade-gate.md) | Changing the pinned Claude Code version: attack suite, model-double E2E, PERF-01 |
+| [runner-installation.md](runner-installation.md) | Runner installation as LaunchDaemon, configuration, `doctor`, operator markers, failing inbox consumers, uninstall |
+| [hub-operation.md](hub-operation.md) | Hub process (one per database), configuration, migrations, rate limits behind NAT, audit verification |
+| [monitoring-patch-handover.md](monitoring-patch-handover.md) | Rendering and handing over the monitoring patch for the infrastructure repository |
+| [export-restore.md](export-restore.md) | Org export and restore, projection rebuild, runner store wipe (DR-01) |
+| [local-development-and-tests.md](local-development-and-tests.md) | Setup, `make platform-ci`, `make platform-ci-linux`, `e2e/platform/run.sh` |

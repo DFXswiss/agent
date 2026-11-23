@@ -1,0 +1,56 @@
+{
+ "body": {
+  "installations": [
+   {
+    "access_tokens_url": "s",
+    "account": {
+     "avatar_url": "s",
+     "events_url": "s",
+     "followers_url": "s",
+     "following_url": "s",
+     "gists_url": "s",
+     "gravatar_id": "s",
+     "html_url": "s",
+     "id": 0,
+     "login": "s",
+     "node_id": "s",
+     "organizations_url": "s",
+     "received_events_url": "s",
+     "repos_url": "s",
+     "site_admin": false,
+     "starred_url": "s",
+     "subscriptions_url": "s",
+     "type": "User",
+     "url": "s",
+     "user_view_type": "public"
+    },
+    "app_id": 0,
+    "app_slug": "s",
+    "client_id": "s",
+    "created_at": "s",
+    "events": [],
+    "has_multiple_single_files": false,
+    "html_url": "s",
+    "id": 0,
+    "permissions": {
+     "contents": "s",
+     "issues": "s",
+     "metadata": "s",
+     "pull_requests": "s"
+    },
+    "repositories_url": "s",
+    "repository_selection": "selected",
+    "single_file_name": null,
+    "single_file_paths": [],
+    "suspended_at": null,
+    "suspended_by": null,
+    "target_id": 0,
+    "target_type": "Organization",
+    "updated_at": "s"
+   }
+  ],
+  "total_count": 0
+ },
+ "route": "GET /user/installations",
+ "source": "docs.github.com REST reference example (values neutralised)"
+}

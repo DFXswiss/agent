@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/hooks/Stop.request.json",
+  "title": "hook Stop request",
+  "description": "Body of POST /hooks/Stop as sent by Claude Code (03-api.md section 8.2). Third-party input: the listed fields are checked, further fields are ignored (open object, decisions CTR-02) so that a new Claude Code field never makes a hook fail open.",
+  "type": "object",
+  "$comment": "open: Claude Code Stop hook input (third-party, versioned)",
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "transcript_path": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "permission_mode": {
+      "type": "string"
+    },
+    "hook_event_name": {
+      "type": "string",
+      "const": "Stop"
+    },
+    "stop_hook_active": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "hook_event_name"
+  ],
+  "additionalProperties": {}
+}

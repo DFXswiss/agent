@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/requests/mailbox.check.response.json",
+  "title": "device response body mailbox.check",
+  "description": "Plaintext body of a device response to mailbox.check (seq 1..n, final on the last; 05-runner.md section 11). Never contains a secret.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "done"
+        },
+        "valid": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "step",
+        "valid"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "failed"
+        },
+        "code": {
+          "$ref": "objects.json#/$defs/failure_code"
+        }
+      },
+      "required": [
+        "step",
+        "code"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

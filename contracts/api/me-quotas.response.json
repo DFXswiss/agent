@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-quotas.response.json",
+  "title": "GET /v1/me/quotas response",
+  "description": "Body of a successful response to GET /v1/me/quotas (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "quotas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "type": "string",
+            "pattern": "^(five_hour|seven_day|weekly:[A-Za-z0-9._-]{1,64})$"
+          },
+          "used_percent": {
+            "type": "number",
+            "minimum": 0
+          },
+          "resets_at": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z_]{1,32}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fetched_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "device_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          }
+        },
+        "required": [
+          "window",
+          "used_percent",
+          "resets_at",
+          "severity",
+          "fetched_at",
+          "device_id"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100
+    }
+  },
+  "required": [
+    "quotas"
+  ],
+  "additionalProperties": false
+}

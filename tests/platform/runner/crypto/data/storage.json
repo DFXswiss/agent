@@ -1,0 +1,68 @@
+{
+  "about": "Runner-only local sealing (agent_runner.crypto.storage, decisions/CRY-03.md); the key comes from the storage_key vector of contracts/vectors/kdf.json.",
+  "device_sig_seed": "M4xx_92hi1ubpMkari6TlCAQt6VsHHfhYPYJjOkEcEo",
+  "invalid": [
+    {
+      "blob": "VwNMOyI_kIs9fZBhiilz3WsO5drWSfU4LagJ4yvTOTSOGy0TAAlcYMzMzMXHumGpS3jzhrNnML89dj9m3hJtZt1mlBPPgCs",
+      "context": "42:event",
+      "error": "decrypt_failed",
+      "name": "other purpose",
+      "purpose": "credential"
+    },
+    {
+      "blob": "VwNMOyI_kIs9fZBhiilz3WsO5drWSfU4LagJ4yvTOTSOGy0TAAlcYMzMzMXHumGpS3jzhrNnML89dj9m3hJtZt1mlBPPgCs",
+      "context": "43:event",
+      "error": "decrypt_failed",
+      "name": "other row",
+      "purpose": "outbox"
+    },
+    {
+      "blob": "VwNMOyI_kIs9fZBhiilz3WsO5drWSfU4LagJ4yvTOTSOGy0TAAlcYMzMzMXHumGpS3jzhrNnML89dj9m3hJtZt1mlBPPgCs",
+      "context": "42:audit",
+      "error": "decrypt_failed",
+      "name": "other item kind",
+      "purpose": "outbox"
+    },
+    {
+      "blob": "VwNMOyI_kIs9fZBhiilz3WsO5drWSfU4LagJ4yvTOTSOGy0TAAlcYMzMzMXHumGpS3jzhrNnML89dj9m3hJtZt1mlBPPgCo",
+      "context": "42:event",
+      "error": "decrypt_failed",
+      "name": "tampered tag",
+      "purpose": "outbox"
+    },
+    {
+      "blob": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "context": "42:event",
+      "error": "decrypt_failed",
+      "name": "short",
+      "purpose": "outbox"
+    }
+  ],
+  "key": "e-_vjMpJeU6bv4T3JWRGAnV3SKacf1RZ9NMnAoZr-GU",
+  "valid": [
+    {
+      "aad": "YWdlbnQuZGZ4LnN3aXNzL3YxL3J1bm5lci1zdG9yYWdlAG91dGJveAA0MjpldmVudA",
+      "blob": "VwNMOyI_kIs9fZBhiilz3WsO5drWSfU4LagJ4yvTOTSOGy0TAAlcYMzMzMXHumGpS3jzhrNnML89dj9m3hJtZt1mlBPPgCs",
+      "context": "42:event",
+      "nonce": "VwNMOyI_kIs9fZBh",
+      "plaintext": "eyJib2R5IjoiR3LDvMOfZSwg4pyTIiwiaXRlbV9raW5kIjoiZXZlbnQifQ",
+      "purpose": "outbox"
+    },
+    {
+      "aad": "YWdlbnQuZGZ4LnN3aXNzL3YxL3J1bm5lci1zdG9yYWdlAHNjb3BlX2tleQB3ZzowMTk2YTFiMi0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMDE6Mw",
+      "blob": "vVICK5eWDyPd18gbDmM33rL_QZERZNisCegScHwcFMon5D6BNulIIN7ucKBYIIFLH3ccJHEfbIERcF-E",
+      "context": "wg:0196a1b2-0000-7000-8000-000000000001:3",
+      "nonce": "vVICK5eWDyPd18gb",
+      "plaintext": "okmxuAYe0cw50oEFTyCZJcng4jfABdGdU6ezTqqr5i0",
+      "purpose": "scope_key"
+    },
+    {
+      "aad": "YWdlbnQuZGZ4LnN3aXNzL3YxL3J1bm5lci1zdG9yYWdlAGNyZWRlbnRpYWwAMDE5NmExYjItMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDAyOmdpdGh1Yjoy",
+      "blob": "kpczQ68U7ldORKgRwwQpdlW5OR87_Sil80cXUZWa7vvmML1uON9BkEeW8llcLuuSj0P6SZ47E1Pt95H94W34p8uVaRTAqi4B_nkJd-nlXeG8",
+      "context": "0196a1b2-0000-7000-8000-000000000002:github:2",
+      "nonce": "kpczQ68U7ldORKgR",
+      "plaintext": "eyJoZWFkZXIiOnsia2luZCI6ImdpdGh1YiJ9LCJjdCI6IkFBRUMiLCJzaWciOiJBd1FGIn0",
+      "purpose": "credential"
+    }
+  ]
+}

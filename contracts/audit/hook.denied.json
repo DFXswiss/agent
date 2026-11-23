@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/hook.denied.json",
+  "title": "audit detail hook.denied",
+  "description": "detail of audit rows with action hook.denied: PreToolUse deny: tool name and rule number of 05-runner.md section 5.3, never the path. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "tool": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "rule": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 6
+    }
+  },
+  "required": [
+    "tool",
+    "rule"
+  ],
+  "additionalProperties": false
+}

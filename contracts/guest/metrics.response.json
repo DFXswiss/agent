@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/metrics.response.json",
+  "title": "guest GET /v1/metrics response",
+  "description": "Response of GET /v1/metrics (03-api.md section 7.1).",
+  "$ref": "objects.json#/$defs/metrics"
+}

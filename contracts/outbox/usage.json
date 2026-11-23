@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/outbox/usage.json",
+  "title": "outbox body usage",
+  "description": "Body of the outbox item kind usage (03-api.md section 6.1).",
+  "$ref": "objects.json#/$defs/body_usage"
+}

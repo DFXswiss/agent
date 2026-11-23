@@ -1,0 +1,8 @@
+{
+  "tool": "get_subagent_result",
+  "arguments": {
+    "session_id": "01a1ee56-5e00-7028-8f1b-340691d99f28",
+    "wait_seconds": 0
+  },
+  "result_count": 3
+}

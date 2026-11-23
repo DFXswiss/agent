@@ -1,0 +1,8 @@
+{
+  "error": "request_invalid",
+  "detail": {
+    "pointers": [
+      "/limits/depth"
+    ]
+  }
+}

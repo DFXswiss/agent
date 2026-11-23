@@ -1,0 +1,16 @@
+{
+  "workgroups": [
+    {
+      "id": "01a1ee56-5e00-7002-8f1b-340691d99f02",
+      "name": "Default",
+      "is_default": true,
+      "my_access": "write"
+    },
+    {
+      "id": "01a1ee56-5e00-700c-8f1b-340691d99f0c",
+      "name": "Finance",
+      "is_default": false,
+      "my_access": null
+    }
+  ]
+}

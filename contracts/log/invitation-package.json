@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/log/invitation-package.json",
+  "title": "invitation package",
+  "description": "Plaintext of the invitation package (04-crypto.md section 4.6): body JSON (non-ASCII names allowed), sealed with package_key; transported as package_ct.",
+  "type": "object",
+  "properties": {
+    "org": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "org_name": {
+      "type": "string",
+      "description": "display name (UTF-8 body JSON, non-ASCII allowed)",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "wg_names": {
+      "type": "object",
+      "description": "workgroup ID -> name",
+      "additionalProperties": {
+        "type": "string",
+        "description": "display name (UTF-8 body JSON, non-ASCII allowed)",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "founder": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    },
+    "head": {
+      "$ref": "../common.json#/$defs/log_head"
+    },
+    "keys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "../common.json#/$defs/scope"
+          },
+          "scope_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "epoch": {
+            "$ref": "../common.json#/$defs/epoch"
+          },
+          "key": {
+            "$ref": "../common.json#/$defs/b64u_32"
+          }
+        },
+        "required": [
+          "scope",
+          "scope_id",
+          "epoch",
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 1024
+    },
+    "hub_key": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/hub_key_id"
+        },
+        "public_key": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "id",
+        "public_key"
+      ],
+      "additionalProperties": false
+    },
+    "v": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "required": [
+    "org",
+    "org_name",
+    "wg_names",
+    "founder",
+    "head",
+    "keys",
+    "hub_key",
+    "v"
+  ],
+  "additionalProperties": false
+}

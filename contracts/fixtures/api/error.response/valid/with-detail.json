@@ -1,0 +1,6 @@
+{
+  "error": "origin_seq_gap",
+  "detail": {
+    "expected": 17
+  }
+}

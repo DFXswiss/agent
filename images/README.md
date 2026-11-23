@@ -1,0 +1,52 @@
+# Golden image definition
+
+Declarative definition of the golden Lima VM of the platform runner (docs/platform/spec/05-runner.md sections 3.1,
+4.1–4.3, 5.1, 8 and 15; ADR-008, ADR-009). The build itself is `agent-runner image build` (VM-01); this directory is
+its input.
+
+| Path | Content |
+|---|---|
+| `golden.yaml` | Lima template: Lima ≥ 2.3.0, `vz`, aarch64, Ubuntu 24.04 arm64 pinned by URL and digest, no mounts, no containerd, only the control-socket forward, parameter `AGENT_GUEST_CONTROL_TOKEN`, Lima provisioning (slim step, token hand-over) |
+| `versions.json` | Pins: Claude Code version and the sha256 of its npm wrapper and native linux-arm64 tarballs, Node LTS version and tarball sha256, Ubuntu image URL and digest |
+| `provision/10-slim.sh` | Lima system provisioning: slim steps of Spike A, guarded by `/var/lib/agent-golden/slim.done` |
+| `provision/install.sh` | Stage-2 installer (below), guarded by `/var/lib/agent-golden.done` |
+| `files/etc/…`, `files/usr/…` | Installed verbatim (root, 0644, scripts 0755): nftables, systemd units, tmpfiles, the harden script and its sudoers template |
+| `files/fragments/` | Fragments the installer merges: fstab line of `/srv/sessions`, TEST_MODE nftables rule |
+| `mcp.json`, `harness/RULES.md` | Installed to `/opt/agent-guest/` |
+
+## Build contract
+
+```sh
+limactl create -y --name=<prefix>golden-build-<hex> [--cpus N --memory GiB --disk GiB] images/golden.yaml
+limactl start -y <prefix>golden-build-<hex>                    # runs provision/10-slim.sh
+COPYFILE_DISABLE=1 tar -cf - images src/agent_guest | limactl shell --workdir / <vm> sudo bash -c \
+  'mkdir -p /tmp/agent-golden && tar -xf - -C /tmp/agent-golden --no-same-owner'
+limactl shell --workdir / <vm> sudo bash /tmp/agent-golden/images/provision/install.sh [--test-model-port PORT]
+```
+
+The installer installs `tmux nftables acl` (+ `libatomic1` for Node), Node from the pinned tarball to `/opt/node`,
+Claude Code from both pinned npm tarballs (offline `npm install --global` into a scratch prefix) to
+`/opt/claude/claude` (`/opt/claude/install.json` records path, source package and sha256), copies `src/agent_guest`
+to `/opt/agent-guest/agent_guest` (root, directories 0755, files 0644), generates
+`/etc/claude-code/managed-settings.json` with `agent_guest.sandbox.settings`, creates the `platform` user and the
+`agent-ctl` group (Lima default user only), mounts `/srv/sessions` (`noexec,nosuid,nodev`, fstab), loads the
+nftables rules (`nft -c` first) and enables `agent-guest-harden`, `agent-guest-control` and `agent-guest-api`.
+`--test-model-port` builds a TEST_MODE golden: the `platform` user may also reach that port on the Lima host gateway
+(resolved from `host.lima.internal` at build time); `/var/lib/agent-golden/install.json` records the mode.
+
+The installer does not start the guest services. Every clone starts them at boot after
+`agent-guest-harden.service`, which limits the Lima default user's sudo to restarting the guest services and moves
+the control token from the Lima parameter to `/etc/agent-guest/control-token` (root 0600); both services require
+the harden unit, so a failed hardening leaves them stopped. During the build the installer writes the flag
+`/run/agent-golden-build`, which skips the harden unit until the next boot: a build that needs the services for its
+smoke tests writes a temporary token to `/etc/agent-guest/control-token`, starts them with `systemctl start`, keeps
+its own sudo, and stops them and deletes that token before `limactl stop`. The installer refuses to run before the slim
+step finished and deletes AppleDouble files (`._*`) a macOS `tar` may add to the bundle.
+
+`agent-runner image build` (VM-01) follows this contract with a bundle that also carries the JSON contracts the
+guest validates against (copied to `/opt/agent-guest/contracts` after the installer), writes `exec-paths.json` and
+`build.json`, runs the smoke tests, and removes the empty `sock/` directory Lima leaves in the stopped instance
+(`limactl clone` cannot copy it); docs/platform/decisions/VM-01.md.
+
+Clones: `limactl start -y --set '.param.AGENT_GUEST_CONTROL_TOKEN="<token>"' <clone>`; the runner then removes the
+parameter from the instance configuration on the host (05-runner.md section 3.2).

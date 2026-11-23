@@ -1,0 +1,8 @@
+{
+  "user_id": "0193000a-0000-7000-8000-00000000000a",
+  "key_id": "session.0123456789abcdef0123456789abcdef",
+  "expires_at": "2026-11-21T23:58:00.000Z",
+  "bundle_ct": "Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8_Pz8",
+  "prf_expected": true,
+  "unexpected_field": 1
+}

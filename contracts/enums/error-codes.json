@@ -1,0 +1,588 @@
+{
+  "description": "Closed list of API error codes with their HTTP statuses (03-api.md section 11, 04-crypto.md section 8). origin=client: never sent by the hub (statuses empty). The first status is the usual one.",
+  "codes": [
+    {
+      "code": "request_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "header_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "params_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "non_ascii",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "kind_not_allowed",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "epoch_stale",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "invite_code_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "ceremony_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "client_data_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "challenge_mismatch",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "origin_mismatch",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "attestation_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "authenticator_data_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "rp_id_mismatch",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "user_presence_missing",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "user_verification_missing",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "credential_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "statement_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "certificate_expiry_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "counter_regressed",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
+    },
+    {
+      "code": "size_exceeded",
+      "statuses": [
+        400,
+        413
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (400 for field limits such as E8, 413 for the request body)"
+    },
+    {
+      "code": "signature_missing",
+      "statuses": [
+        401
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "key_unknown",
+      "statuses": [
+        401
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "key_revoked",
+      "statuses": [
+        401
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "time_skew",
+      "statuses": [
+        401
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "signature_invalid",
+      "statuses": [
+        401
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "nonce_replayed",
+      "statuses": [
+        401
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "session_expired",
+      "statuses": [
+        401
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "unauthorized",
+      "statuses": [
+        401
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "forbidden",
+      "statuses": [
+        403
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "last_admin",
+      "statuses": [
+        403
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "last_passkey",
+      "statuses": [
+        403
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "device_not_assigned",
+      "statuses": [
+        403
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "platform_invite_required",
+      "statuses": [
+        403
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (additional)"
+    },
+    {
+      "code": "platform_access_denied",
+      "statuses": [
+        403
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (additional)"
+    },
+    {
+      "code": "not_found",
+      "statuses": [
+        404
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "invite_unknown",
+      "statuses": [
+        404
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "id_conflict",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "event_conflict",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "seq_conflict",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "version_conflict",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "origin_seq_gap",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "origin_seq_conflict",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "no_device",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "already_assigned",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "rotation_required",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "no_device_available",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (additional)"
+    },
+    {
+      "code": "invite_registered",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711 (additional)"
+    },
+    {
+      "code": "invite_expired",
+      "statuses": [
+        410
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "rate_limited",
+      "statuses": [
+        429
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "unavailable",
+      "statuses": [
+        503
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
+      "code": "decrypt_failed",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "prf_length",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "recovery_code_length",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "hpke_short",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "invite_code_length",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "wrap_unauthorized",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "log_empty",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "log_chain",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "log_genesis",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "log_accept",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "log_signature",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "log_rights",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "log_epoch",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "log_type",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "invite_not_in_log",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "invite_consumed",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "invite_revoked",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "author_not_writer",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
+      "code": "login_automation_failed",
+      "statuses": [],
+      "origin": "client",
+      "source": "03-api \u00a711 (client-only)"
+    },
+    {
+      "code": "prf_missing",
+      "statuses": [],
+      "origin": "client",
+      "source": "03-api \u00a711 (client-only)"
+    },
+    {
+      "code": "log_rollback",
+      "statuses": [],
+      "origin": "client",
+      "source": "03-api \u00a711 (client-only)"
+    },
+    {
+      "code": "log_fork",
+      "statuses": [],
+      "origin": "client",
+      "source": "03-api \u00a711 (client-only)"
+    },
+    {
+      "code": "platform_root_mismatch",
+      "statuses": [],
+      "origin": "client",
+      "source": "03-api \u00a711 (client-only)"
+    }
+  ]
+}

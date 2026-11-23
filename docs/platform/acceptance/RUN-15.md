@@ -1,0 +1,21 @@
+# RUN-15 acceptance (metric sampler device → VM → session, textfile sink, guest `/v1/metrics`)
+
+Unit tests in `tests/platform/runner/metrics/` and `tests/platform/guest/metrics/`, Linux tests in
+`tests/platform/guest_linux/test_metrics_cgroup.py`. Decisions: `docs/platform/decisions/RUN-15.md`, ADR-042.
+
+| Criterion | Evidence |
+|---|---|
+| Parser of every probe command with recorded fixtures, including failure output | `test_parsers.py`: `sysctl`, `top -l 2`, `vm_stat`, `df -k` (and its error text), `netstat -ib` (link rows, tunnels, down interfaces, address rows), `lsof -F pn`, `ps` (elapsed formats), `nettop`, guest answer (contract fixtures valid/invalid plus 15 broken variants); fixtures recorded on macOS 27 hosts (runner device for `lsof`/`ps`/`nettop` of a Lima VM), hostnames and addresses replaced by documentation values |
+| Probe execution: fixed argv, 5 s timeout, failure → `probe_ok 0`, never an abort | `test_probes.py` (`run_probe` 127/124, `probe` exit-code handling, device and VM host probes with failing commands), `test_sampler.py::test_sampling_goes_on_without_hub_textfile_or_lima`, `::test_task_loop_samples_every_15_s_and_survives_failures` |
+| Guest `GET /v1/metrics` (VM: `/proc`, `statvfs`; session: cgroup v2, workspace, state) | `tests/platform/guest/metrics/test_metrics.py` (recorded Linux formats, contract-valid answer over the control socket, 503 on a missing VM source, ≤ 64 sessions, journal counters, egress chains per session, IO accounting switch) |
+| Textfile renderer: escaping, HELP/TYPE, atomic write, mode 0644 | `test_sinks.py::test_render_escapes_label_values_and_help_and_merges_names`, `::test_every_metric_has_help_and_type_and_labels_are_ids`, `::test_write_atomic_replaces_the_file_with_mode_0644`, `::test_write_atomic_never_leaves_a_partial_file` (temp name `.agent_runner.prom.*`, one write, rename) |
+| `promtool check metrics` on a sample output | `fixtures/agent_runner.prom` is pinned by `test_rendered_textfile_matches_the_promtool_checked_sample`; `promtool check metrics` of Prometheus 3.11.0 (release archive, SHA-256 checked) exits 0 on it (ADR-042 for the one name that would fail the lint) |
+| Drop rule (samples > 48 h dropped before the push, counted) | `test_sinks.py::test_sink_stores_rounds_while_disconnected_and_drops_after_48_h` (real store, real outbox), `::test_sink_moves_a_bounded_number_of_samples_per_round` |
+| Cardinality rule (IDs only; session series until 15 min after `stopped`) | `test_sinks.py::test_cardinality_only_listed_sessions_have_series`, `::test_every_metric_has_help_and_type_and_labels_are_ids` (label set `vm, wg, state, session, direction, window`), `test_sampler.py::test_session_rows_retention`, `::test_sample_writes_the_textfile_and_the_outbox` (ended 5 min ago present, 20 min ago absent, unknown guest session ignored) |
+| Sink B: outbox `metrics`, independent of the hub | `test_sampler.py::test_sample_writes_the_textfile_and_the_outbox` (items valid against `outbox/metrics.json`), `::test_sampling_goes_on_without_hub_textfile_or_lima` (held in `runner.metric_pending`) |
+| Child sessions in the monitoring (R-13.4) | `test_sampler.py::test_sample_writes_the_textfile_and_the_outbox` (subagent session of the main session exported with its own series) |
+| Integration: guest metrics move under load in a real VM with a session unit | Linux tests in the Lima VM `wp-run15-guest-ci` on the runner device: session unit `agent-session-<id>` with CPU, memory, IO and egress load – session CPU 2.05 s → 6.04 s, memory 175 MB, IO written 0 → 7.3 MB, egress denies 5 → 13 (still dropped by the filter), OOM kill counted under `OOMPolicy=continue`; VM values from the real kernel (workspace report RUN-15) |
+| Host probes on the runner device | real `sysctl`/`top`/`vm_stat`/`df`/`netstat`/`lsof`/`ps`/`nettop` through the parsers against the same VM: VZ CPU 0.002 → 1.98 cores with two busy loops in the VM, all device probes ok (workspace report RUN-15) |
+| `agent_runner_device_model_spend_usd` | left out: the spend query of RUN-12 does not exist yet (decisions no. 20); `metrics_of(..., spend=...)` is ready for it |
+| E2E-17, E2E-24 | not yet written (SCN-07, SCN-04) |
+| Gates | `tools/wp/gates.sh RUN-15` (agent, incl. Linux coverage) and agent-core gates for the contract change |

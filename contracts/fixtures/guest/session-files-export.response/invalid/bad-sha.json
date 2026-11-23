@@ -1,0 +1,10 @@
+{
+  "files": [
+    {
+      "path": "a",
+      "size": 1,
+      "sha256": "XYZ"
+    }
+  ],
+  "skipped": []
+}

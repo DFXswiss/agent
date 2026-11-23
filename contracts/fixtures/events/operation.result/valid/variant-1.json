@@ -1,0 +1,11 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-00000000002d",
+  "status": "succeeded",
+  "result": {
+    "repo": "example-org/example-repo",
+    "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "dir": "repos/example-org/example-repo",
+    "files": 31,
+    "bytes": 81920
+  }
+}

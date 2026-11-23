@@ -1,0 +1,20 @@
+{
+  "description": "Closed list of session failure reasons (03-api.md section 11).",
+  "reasons": [
+    "model_access_unavailable",
+    "vm_start_failed",
+    "guest_unreachable",
+    "sandbox_failed",
+    "agent_start_failed",
+    "agent_exited",
+    "prompt_refused",
+    "delivery_failed",
+    "device_offline",
+    "device_shutdown",
+    "capacity_exhausted",
+    "runtime_exceeded",
+    "budget_exceeded",
+    "oom",
+    "unassigned"
+  ]
+}

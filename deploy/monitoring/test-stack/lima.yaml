@@ -1,0 +1,40 @@
+# Lima template of the monitoring test stack (08-monitoring.md section 7): an Ubuntu 24.04 VM with Prometheus,
+# node_exporter and Grafana in the versions of versions.env, installed by provision.sh. up.sh creates the instance
+# `<prefix>monitoring` from this file and sets the two read-only mounts (this directory's parent as
+# /opt/agent-monitoring, the runner's textfile directory as /mnt/agent-runner-textfile) and, on request, the two
+# port forwards to the host loopback. Every other guest port stays inside the VM.
+# Offline mode (`up.sh --archives`, parameter AGENT_MONITORING_OFFLINE=1): a boot script (cloud-init bootcmd, before
+# any network service of the guest starts) drops every packet the guest itself opens except loopback, name lookups
+# and NTP (the guest operating system's own traffic, allowed by the E2E egress check); answers on connections the host
+# opened (Lima's SSH and port forwards) pass. So the stack VM sends nothing to the internet (no pollinate, snapd, motd
+# or apt traffic) - the hermetic rule of the E2E runs (07-testing.md section 5.2). check.sh verifies the rule set.
+base: template:ubuntu-24.04
+vmType: vz
+cpus: 2
+memory: 4GiB
+disk: 20GiB
+containerd:
+  system: false
+  user: false
+mounts: []
+portForwards:
+  - guestPortRange: [1, 65535]
+    ignore: true
+param:
+  AGENT_MONITORING_OFFLINE: "0"
+provision:
+  - mode: boot
+    script: |
+      #!/bin/sh
+      [ "{{.Param.AGENT_MONITORING_OFFLINE}}" = 1 ] || exit 0
+      nft -f - <<'EOF'
+      table inet agent_monitoring_offline {
+        chain output {
+          type filter hook output priority 0; policy drop;
+          oifname "lo" accept
+          ct state established,related accept
+          udp dport { 53, 123 } accept
+          tcp dport 53 accept
+        }
+      }
+      EOF

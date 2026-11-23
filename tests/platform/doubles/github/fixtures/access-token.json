@@ -1,0 +1,9 @@
+{
+ "body": {
+  "access_token": "s",
+  "scope": "s",
+  "token_type": "bearer"
+ },
+ "route": "POST /login/oauth/access_token",
+ "source": "docs.github.com REST reference example (values neutralised)"
+}

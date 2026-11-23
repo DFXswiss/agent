@@ -1,0 +1,84 @@
+{
+  "about": "Derivations and labels of 04-crypto.md section 3. Byte strings are b64u.",
+  "credential_key": {
+    "credential_scope_key": "uswvOfcdPJjFektF-8EG1DMz_NCiB27zr39CyPx3zts",
+    "key": "hgTYhBCVEE3hsoCwTMmqrAyJ3_7VSo8k5Q2SDcW80fI",
+    "salt": "bTH1cIxtHGfVlM174UZnQStxDDML-UeXbIiWTe5CwME"
+  },
+  "dedupe_key": {
+    "key": "6wJAVLSL4vNiJhHuc1dsZOqI7c_jmYGyYwbotP0jxOs",
+    "workgroup_key": "-jx7nbFaDSrHGz_jQKhEuGp50nwhtK4GxbHxZ8ZmHlI"
+  },
+  "event_key": {
+    "key": "3D_NBna5GvmhtD1zv4LtqkmgXj_WjN7yVcIqMh77zYM",
+    "salt": "bTH1cIxtHGfVlM174UZnQStxDDML-UeXbIiWTe5CwME",
+    "scope_key": "-jx7nbFaDSrHGz_jQKhEuGp50nwhtK4GxbHxZ8ZmHlI"
+  },
+  "invalid": [
+    {
+      "args": {
+        "credential_id": "YzKB8GUbzlxt8wNZjwHH2Q",
+        "prf_output": "stkUf-ny2r5dH0_gAs0NNfMaY3ctNHmd7S42OxxZog"
+      },
+      "error": "prf_length",
+      "name": "prf_31_bytes",
+      "op": "kek_from_prf"
+    },
+    {
+      "args": {
+        "credential_id": "YzKB8GUbzlxt8wNZjwHH2Q",
+        "prf_output": "stkUf-ny2r5dH0_gAs0NNfMaY3ctNHmd7S42OxxZorSy2RR_6fLavl0fT-ACzQ018xpjdy00eZ3tLjY7HFmitA"
+      },
+      "error": "prf_length",
+      "name": "prf_64_bytes",
+      "op": "kek_from_prf"
+    },
+    {
+      "args": {
+        "code": "I7F_A-GQZDjZGm-Quk7k"
+      },
+      "error": "recovery_code_length",
+      "name": "recovery_code_15_bytes",
+      "op": "kek_from_recovery_code"
+    },
+    {
+      "args": {
+        "code": "I7F_A-GQZDjZGm-Quk7k5wA"
+      },
+      "error": "recovery_code_length",
+      "name": "recovery_id_17_bytes",
+      "op": "recovery_id"
+    },
+    {
+      "args": {
+        "code": "M2rYJQhngn-LKLSqKSTJsgA"
+      },
+      "error": "invite_code_length",
+      "name": "invite_code_17_bytes",
+      "op": "invite_secrets"
+    }
+  ],
+  "invite": {
+    "code": "M2rYJQhngn-LKLSqKSTJsg",
+    "invite_id": "vtpuf5NcUZGRaGRAMT35HA",
+    "package_key": "m94jEb-qcCkQsy-c2wqQph8ixO9ANY067n9_pBFjyLc",
+    "pk_inv": "9iApfrKNjBORGcYZ0TfHWJdLU79nQ25bZ0c9bTGjU1o",
+    "sk_inv_seed": "_Cjee_R3aVEuXY1QUA-JfzTvr044mAPqc_z_7CDnAlM"
+  },
+  "kek_from_prf": {
+    "credential_id": "YzKB8GUbzlxt8wNZjwHH2Q",
+    "kek": "ynrXNe5Gb4LMEx6PYRmH8BYUKEOmvsYZ4Bju3FIqGuw",
+    "prf_output": "stkUf-ny2r5dH0_gAs0NNfMaY3ctNHmd7S42OxxZorQ"
+  },
+  "prefix": "agent.dfx.swiss/v1/",
+  "prf_input": "Hdi0C-3e3_nqvg8u0YFDnSGwY91I0C7wjroihwZICEU",
+  "recovery": {
+    "code": "I7F_A-GQZDjZGm-Quk7k5w",
+    "kek": "5oPHCKNEY8eUoxLzLXjzQNF1kb8_Tm83ZsYZU5wP_l8",
+    "recovery_id": "Lkr0tgFRNQ5NNnW7bU4Qmg"
+  },
+  "storage_key": {
+    "device_sig_seed": "M4xx_92hi1ubpMkari6TlCAQt6VsHHfhYPYJjOkEcEo",
+    "key": "e-_vjMpJeU6bv4T3JWRGAnV3SKacf1RZ9NMnAoZr-GU"
+  }
+}

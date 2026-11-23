@@ -1,0 +1,293 @@
+{
+  "about": "Copies of agent-core src/agent_hub/{crypto,log} and of their tests (ADR-027 section 2). sha256 is the hash of the reference file, copy_sha256 the hash of a copied test file; tests/platform/runner/crypto/copy_tool.py writes and checks the copies.",
+  "commit": "07f6d21b261a11ed129977f52fb79f9487cec434",
+  "files": [
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "src/agent_hub/crypto/__init__.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/aead.py",
+      "sha256": "fe862c9e2ec5cb2036abbd5b06eaee666afcdf2dee200a567666239eccd3fe80",
+      "source": "src/agent_hub/crypto/aead.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/bundle.py",
+      "sha256": "fc359852a191c077696e2d47c01c1c7879bb22ddeb1badefa5eea7d1a4a8c0a2",
+      "source": "src/agent_hub/crypto/bundle.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/credential.py",
+      "sha256": "2039942d4402228d250e748d84937b102dfa0bf034f5308bacda2a5a50cae0a5",
+      "source": "src/agent_hub/crypto/credential.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/dedupe.py",
+      "sha256": "d0e1c8389c617570d5fed1c0a4651a0b5efccfddad7aef199371a235ae7b496c",
+      "source": "src/agent_hub/crypto/dedupe.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/encoding.py",
+      "sha256": "3374ac751950eced4117ce91caf68d93d0de6b843df3e14f1456765931114e1c",
+      "source": "src/agent_hub/crypto/encoding.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/enroll.py",
+      "sha256": "54fefdff12ebad1ef3bdcd3bb91e270a723b8eec9a79260721e7011c5c621b1a",
+      "source": "src/agent_hub/crypto/enroll.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/errors.py",
+      "sha256": "9ded21e5a72e2a588ac7e27a08908bcf1dc7e0041fd375a194efa70afd7db3f5",
+      "source": "src/agent_hub/crypto/errors.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/event.py",
+      "sha256": "f231167666ea7c95ead56e953db86c94d79271e7f5b7d47322dd5ff47e8873d5",
+      "source": "src/agent_hub/crypto/event.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/fields.py",
+      "sha256": "6fcfd13a712566561c96a7fbfbe708db385cb40c261833ed449100cf24b97776",
+      "source": "src/agent_hub/crypto/fields.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/hpke.py",
+      "sha256": "f71aea16d0625bb2780e133a739cfa58e5df8597ee1582ed829118dc6c898445",
+      "source": "src/agent_hub/crypto/hpke.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/ids.py",
+      "sha256": "3a7e3161049a187e125ef9fefe361b114dd6e5a2486d7e6ee3e0a1ff0b431ffb",
+      "source": "src/agent_hub/crypto/ids.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/invite.py",
+      "sha256": "ff0710fb1e5964058e6ff9e89bc34cb4a3432d89496ddcf36ae283a7a0fab0f3",
+      "source": "src/agent_hub/crypto/invite.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/kdf.py",
+      "sha256": "df735f1ae50eaf3c1b97d7bf1ee89b32c8a66c17873fdd6fcde1a83c2c8b78f5",
+      "source": "src/agent_hub/crypto/kdf.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/keys.py",
+      "sha256": "3ef633a5b61b8658152e5c0a68415eada0e490a591dbca5180da422cbc520297",
+      "source": "src/agent_hub/crypto/keys.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/recovery.py",
+      "sha256": "0185e8f38767a7566470c1f1df70f73bf02930be2eba93f0d6e12abbc0c35696",
+      "source": "src/agent_hub/crypto/recovery.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/request.py",
+      "sha256": "c6683ad8d4f6d37686827a8445e7476b42d64ce02d904783fa2775d3ce610693",
+      "source": "src/agent_hub/crypto/request.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/signed.py",
+      "sha256": "1bd155881855a69ab80c55f5f5434d617c469b68e30544560ec00c484761a19b",
+      "source": "src/agent_hub/crypto/signed.py"
+    },
+    {
+      "adaptations": [
+        {
+          "copy": "- `agent_runner/crypto/<area>/vectors.py` with a module attribute `SECTIONS` (e.g.\n  `agent_runner.crypto.log.vectors`), and\n",
+          "reference": "- `agent_hub/<area>/vectors.py` with a module attribute `SECTIONS` (e.g. `agent_hub.log.vectors`), and\n"
+        },
+        {
+          "copy": "import agent_runner.crypto\n",
+          "reference": "import agent_hub\n"
+        },
+        {
+          "copy": "PACKAGE_ROOT = Path(agent_runner.crypto.__file__).parent\n",
+          "reference": "PACKAGE_ROOT = Path(agent_hub.__file__).parent\n"
+        },
+        {
+          "copy": "    \"\"\"`SECTIONS` of this module, of every `<package_root>/<area>/vectors.py` and of `<tools_dir>/vectors_*.py`.\n",
+          "reference": "    \"\"\"`SECTIONS` of this module, of every `agent_hub/<area>/vectors.py` and of `<tools_dir>/vectors_*.py`.\n"
+        },
+        {
+          "copy": "            module = importlib.import_module(f\"agent_runner.crypto.{area}.vectors\")\n",
+          "reference": "            module = importlib.import_module(f\"agent_hub.{area}.vectors\")\n"
+        }
+      ],
+      "copy": "src/agent_runner/crypto/vectors.py",
+      "sha256": "bc101fc2e7e45dad381f7c4778b979249fec9bf0a0a01f23574a071aeaed4e2b",
+      "source": "src/agent_hub/crypto/vectors.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/wrap.py",
+      "sha256": "619e0256a1c36294ebbb19821933e17bd926309cb9418ddb1d4fd2bee94bd05f",
+      "source": "src/agent_hub/crypto/wrap.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/log/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "src/agent_hub/log/__init__.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/log/batch.py",
+      "sha256": "ca21eb8091d731c3e3bf0cd8fc2a43e2dc3db1f0306ebc6215a75a0d6bd7448e",
+      "source": "src/agent_hub/log/batch.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/log/catchup.py",
+      "sha256": "82deca7c2ae834a05a1eec96b461154a3a542f7c9763b2c2d3de194f77e2c701",
+      "source": "src/agent_hub/log/catchup.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/log/entries.py",
+      "sha256": "5b22bdd29d3f49af9ccb98dcaa85328420d2e652cf66bfaad1a5bf092dc52b06",
+      "source": "src/agent_hub/log/entries.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/log/events.py",
+      "sha256": "4e7300a198eab97eaf04b10828fba02c8eaa3ed1718301eb4b1d25e8345bbbf9",
+      "source": "src/agent_hub/log/events.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/log/platform.py",
+      "sha256": "f67c476638d6d96d4522b3cb4cc297f6fbba560af0bf8366612b8bbba264f559",
+      "source": "src/agent_hub/log/platform.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/log/rotation.py",
+      "sha256": "06f6d3aafb421089d56b879facace54ffc5e7178eecc2579f779e1aae77482b8",
+      "source": "src/agent_hub/log/rotation.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/log/state.py",
+      "sha256": "441f0c6a4bd6e75971d92b9b5ff311c0c7ee554c28ec52a53ee24a1674291a62",
+      "source": "src/agent_hub/log/state.py"
+    },
+    {
+      "adaptations": [
+        {
+          "copy": "from agent_hub.log import catchup, events, platform, rotation, verify, wraps\nfrom agent_hub.log.batch import check_batch\nfrom agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry\nfrom agent_hub.crypto.vectors import Section, fixed, fixed_id\n",
+          "reference": "from agent_hub.crypto.vectors import Section, fixed, fixed_id\nfrom agent_hub.log import catchup, events, platform, rotation, verify, wraps\nfrom agent_hub.log.batch import check_batch\nfrom agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry\n"
+        }
+      ],
+      "copy": "src/agent_runner/crypto/log/vectors.py",
+      "sha256": "6357bc5a8ec9652773f0ad6d0072d1a6b58b3c999918b0b8842a6f845f71e9d7",
+      "source": "src/agent_hub/log/vectors.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/log/verify.py",
+      "sha256": "4df1471f9d9cab435a84441bd03ec923101781f70031ef2555af7cbedaa0f6c7",
+      "source": "src/agent_hub/log/verify.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/log/wraps.py",
+      "sha256": "7f540bf424d9309b44c2ae1fddd6bb8fad2595e2f5ca6f9bd1f4936d736db5ca",
+      "source": "src/agent_hub/log/wraps.py"
+    }
+  ],
+  "repository": "agent-core",
+  "tests": [
+    {
+      "copy": "tests/platform/runner/crypto/data/spike_d_e2ee.json",
+      "copy_sha256": "f0d0e291bb23abd9cc2bc54799d99b71f6aed65cdbfaaf5df6c635d68458217c",
+      "sha256": "f0d0e291bb23abd9cc2bc54799d99b71f6aed65cdbfaaf5df6c635d68458217c",
+      "source": "tests/platform/hub/crypto/data/spike_d_e2ee.json"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/test_formats.py",
+      "copy_sha256": "adef2d6aab007108d97f23a1894b3e5d8c5fa87f9a456cb39cb726bcbdd6acc7",
+      "sha256": "f4efd9ba7e165e1bc9b1b119f4b910b20ce972866eeefbda874d8c90df2b35de",
+      "source": "tests/platform/hub/crypto/test_formats.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/test_primitives.py",
+      "copy_sha256": "f6e539d337a59b1b87f650b104f40e6f6f124e825affca541d7d20993db72917",
+      "sha256": "038d8cc4e115e9bf5065e189e62ff9851683cd92474feaebce17b793c6a54684",
+      "source": "tests/platform/hub/crypto/test_primitives.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/test_vectors.py",
+      "copy_sha256": "121683122ac956849d166dce80182347a5fb1f853429e536417c84fd6a5c7506",
+      "sha256": "f7679f59022d60ff86ef5717b00122fc11370e5569338c96dce2df49c5e26a3d",
+      "source": "tests/platform/hub/crypto/test_vectors.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/log/conftest.py",
+      "copy_sha256": "d676677a8fa4c4bcc3782a9a5a67094a1ac9503d161346c6963947d5deff2fde",
+      "sha256": "2db586907c2ae66a53174c43a4bb98cc7f3ca77cbb2b5ae12a4481e48674135c",
+      "source": "tests/platform/hub/log/conftest.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/log/test_entries.py",
+      "copy_sha256": "895ff7ed5db13fd7a959135ca7e3924761fa78b715c7f48857616cbcb41acc55",
+      "sha256": "ed03cd9ac061cfd9bb70d1b68a849ea7b3612e34455aed87d74aefc3e18267b0",
+      "source": "tests/platform/hub/log/test_entries.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/log/test_events.py",
+      "copy_sha256": "9a45ebfa552782a38431fe02ea2bfeaaffa8e6102d1e03a31c70ece361f4aa88",
+      "sha256": "501898db253bda8c6b683754d29a52927a0e3bc4f0d5eeede9383db593d8b0b1",
+      "source": "tests/platform/hub/log/test_events.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/log/test_platform.py",
+      "copy_sha256": "e82c9567df453d8a73bab5ee956acd66e90e85aba48f3aebe7a365217d597a11",
+      "sha256": "24dd8ed4311783335c673e13360803aa52feaf0b3ec1009a3ee063da411da3a4",
+      "source": "tests/platform/hub/log/test_platform.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/log/test_rotation.py",
+      "copy_sha256": "08e13c831db430ee8df49c730aee9384f972288e22446e74f15983abd6b0278a",
+      "sha256": "4bd91881a97bf6ab824d83e03921ddc99bf1f63e3fd321afe089ff2ffb64d1c9",
+      "source": "tests/platform/hub/log/test_rotation.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/log/test_vectors_log.py",
+      "copy_sha256": "28679dfee15d87db7581be63b404f00c3698f3ff453e36da496acb5ece61c740",
+      "sha256": "ef233f834e31b6ef17c87c015a60c2538acd43f92ad5483db3e6d659d8ace56e",
+      "source": "tests/platform/hub/log/test_vectors_log.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/log/test_verify.py",
+      "copy_sha256": "2a8059e3ed61a7e157d0832d76e7b87c2bd815cdf708dbadac7f8c08985a04bf",
+      "sha256": "a69df039ad959f2a7f009972529c42c6dbd8672dd90952efc8ba5dee366a8307",
+      "source": "tests/platform/hub/log/test_verify.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/log/test_wraps.py",
+      "copy_sha256": "b73461ad5b3292cfe2466ab20f245a518908933fe8c38eceb4ee740cd7b3b3b4",
+      "sha256": "fc982e88b6f1449d84bb737c03074e0bc7c78da49f23c4b3a2412f73b620b439",
+      "source": "tests/platform/hub/log/test_wraps.py"
+    }
+  ]
+}

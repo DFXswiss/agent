@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/orgs-create.request.json",
+  "title": "POST /v1/orgs request",
+  "description": "Body of POST /v1/orgs (03-api.md section 4.3).",
+  "type": "object",
+  "properties": {
+    "genesis": {
+      "$ref": "../common.json#/$defs/log_entry"
+    },
+    "wraps": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/wrap"
+      },
+      "minItems": 1,
+      "maxItems": 1000
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/event"
+      },
+      "minItems": 3,
+      "maxItems": 100
+    },
+    "platform_invite_id": {
+      "$ref": "../common.json#/$defs/invite_id"
+    }
+  },
+  "required": [
+    "genesis",
+    "wraps",
+    "events"
+  ],
+  "additionalProperties": false
+}

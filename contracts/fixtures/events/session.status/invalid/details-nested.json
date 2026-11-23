@@ -1,0 +1,9 @@
+{
+  "state": "failed",
+  "reason": "oom",
+  "details": {
+    "a": {
+      "b": 1
+    }
+  }
+}

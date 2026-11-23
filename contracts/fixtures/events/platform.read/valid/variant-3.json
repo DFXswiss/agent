@@ -1,0 +1,8 @@
+{
+  "tool": "list_tasks",
+  "arguments": {
+    "state": "idle",
+    "limit": 20
+  },
+  "result_count": 3
+}

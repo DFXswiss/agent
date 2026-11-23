@@ -1,0 +1,14 @@
+{
+  "tasks": [
+    {
+      "id": "01a1ee56-5e00-7004-8f1b-340691d99f04",
+      "title": "Review",
+      "state": "idle",
+      "owner_id": "01a1ee56-5e00-7014-8f1b-340691d99f14",
+      "created_at": "2026-11-21T10:00:00.000Z",
+      "last_activity_at": "2026-11-21T10:00:00.000Z"
+    }
+  ],
+  "next_before": null,
+  "zz_unexpected": "x"
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/events-post.request.json",
+  "title": "POST /v1/events request",
+  "description": "Body of POST /v1/events (03-api.md section 4.4).",
+  "type": "object",
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "$ref": "../common.json#/$defs/event"
+          },
+          "notify": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "event"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 100
+    }
+  },
+  "required": [
+    "events"
+  ],
+  "additionalProperties": false
+}

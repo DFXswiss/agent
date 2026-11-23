@@ -1,0 +1,10 @@
+{
+  "action": "runner.log_fork",
+  "result": "ok",
+  "target_kind": "device",
+  "target_id": "01930014-0000-7000-8000-000000000014",
+  "detail": {
+    "verified_seq": 9,
+    "offered_seq": 7
+  }
+}

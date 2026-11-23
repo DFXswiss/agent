@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/auth.refused.json",
+  "title": "audit detail auth.refused",
+  "description": "detail of audit rows with action auth.refused: refused authentication (code of 03-api.md section 11). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "code": {
+      "$ref": "../common.json#/$defs/hub_error_code"
+    },
+    "key_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9.-]+$",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "code",
+    "key_id"
+  ],
+  "additionalProperties": false
+}

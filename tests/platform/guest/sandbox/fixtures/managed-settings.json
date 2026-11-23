@@ -1,0 +1,407 @@
+{
+  "allowManagedHooksOnly": true,
+  "allowManagedMcpServersOnly": true,
+  "allowManagedPermissionRulesOnly": true,
+  "allowedHttpHookUrls": [
+    "http://127.0.0.1:7700/hooks/*"
+  ],
+  "allowedMcpServers": [
+    {
+      "serverName": "platform"
+    }
+  ],
+  "disableAutoMode": "disable",
+  "disableSkillShellExecution": true,
+  "env": {
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "DISABLE_AUTOUPDATER": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "DISABLE_TELEMETRY": "1"
+  },
+  "hooks": {
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/ConfigChange"
+          }
+        ]
+      }
+    ],
+    "CwdChanged": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/CwdChanged"
+          }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/InstructionsLoaded"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/Notification"
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/PermissionDenied"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/PermissionRequest"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/PostCompact"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/PostToolUse"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/PostToolUseFailure"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/PreCompact"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/PreToolUse"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/SessionEnd"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/SessionStart"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/Stop"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/StopFailure"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/SubagentStart"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/SubagentStop"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "allowedEnvVars": [
+              "PLATFORM_SESSION_TOKEN"
+            ],
+            "headers": {
+              "Authorization": "Bearer $PLATFORM_SESSION_TOKEN"
+            },
+            "timeout": 15,
+            "type": "http",
+            "url": "http://127.0.0.1:7700/hooks/UserPromptSubmit"
+          }
+        ]
+      }
+    ]
+  },
+  "httpHookAllowedEnvVars": [
+    "PLATFORM_SESSION_TOKEN"
+  ],
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "mcp__platform__get_context",
+      "mcp__platform__list_workgroups",
+      "mcp__platform__list_members",
+      "mcp__platform__list_tasks",
+      "mcp__platform__get_task",
+      "mcp__platform__get_task_messages",
+      "mcp__platform__get_whiteboard",
+      "mcp__platform__get_notifications",
+      "mcp__platform__request_operation",
+      "mcp__platform__get_operation",
+      "mcp__platform__list_operations",
+      "mcp__platform__get_subagent_result"
+    ],
+    "defaultMode": "dontAsk",
+    "deny": [
+      "Bash",
+      "PowerShell",
+      "Agent",
+      "Task",
+      "TaskOutput",
+      "TaskStop",
+      "KillShell",
+      "BashOutput",
+      "Monitor",
+      "WebFetch",
+      "WebSearch",
+      "NotebookEdit",
+      "Skill",
+      "Workflow",
+      "CronCreate",
+      "CronDelete",
+      "RemoteTrigger",
+      "EnterWorktree",
+      "ExitWorktree",
+      "SendMessage",
+      "TeamCreate",
+      "LSP",
+      "Edit(~/.claude/**)",
+      "Edit(~/.claude.json)",
+      "Edit(**/.claude/**)",
+      "Edit(**/.mcp.json)",
+      "Edit(**/CLAUDE.md)",
+      "Edit(**/CLAUDE.local.md)",
+      "Edit(**/AGENTS.md)",
+      "Edit(**/.git/**)",
+      "Edit(**/.gitconfig)",
+      "Edit(//etc/**)",
+      "Edit(//opt/**)",
+      "Edit(//usr/**)",
+      "Edit(//var/**)",
+      "Edit(//proc/**)",
+      "Edit(//run/**)",
+      "Edit(//srv/sessions/*/home/**)",
+      "Read(//etc/agent-guest/**)",
+      "Read(//var/lib/agent-guest/**)",
+      "Read(//proc/**)",
+      "Read(//run/agent-guest/**)",
+      "Read(//srv/sessions/*/home/**)"
+    ],
+    "disableBypassPermissionsMode": "disable"
+  },
+  "strictKnownMarketplaces": []
+}

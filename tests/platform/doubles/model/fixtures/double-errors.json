@@ -1,0 +1,320 @@
+[
+  {
+    "name": "auth_401",
+    "about": "wrong API key, every request 401 (CLAUDE_CODE_MAX_RETRIES=1; default: 11 requests, ~180 s)",
+    "passed": true,
+    "exit": 1,
+    "is_error": true,
+    "subtype": "success",
+    "result": "Invalid API key \u00b7 Fix external API key",
+    "consumed": [],
+    "requests": 2,
+    "statuses": [
+      401,
+      401
+    ],
+    "seconds": 0.8,
+    "beta_headers": [
+      7,
+      7
+    ],
+    "api_retry_events": [
+      {
+        "attempt": 1,
+        "max_retries": 1,
+        "retry_delay_ms": 565,
+        "error_status": 401,
+        "error": "authentication_failed"
+      }
+    ],
+    "stderr_tail": [
+      "[claude-code:unrecognized_model] {\"model\":\"double-model\",\"query_source\":\"sdk\"}"
+    ]
+  },
+  {
+    "name": "stream_error_then_ok",
+    "about": "overloaded_error event after message_start, then success",
+    "passed": true,
+    "exit": 0,
+    "is_error": false,
+    "subtype": "success",
+    "result": "SPIKE-OK",
+    "consumed": [
+      "stream_err",
+      "ok"
+    ],
+    "requests": 2,
+    "statuses": [
+      200,
+      200
+    ],
+    "seconds": 0.8,
+    "beta_headers": [
+      7,
+      7
+    ],
+    "api_retry_events": [],
+    "stderr_tail": [
+      "[claude-code:unrecognized_model] {\"model\":\"double-model\",\"query_source\":\"sdk\"}"
+    ]
+  },
+  {
+    "name": "http_500_then_ok",
+    "about": "500 api_error, then success",
+    "passed": true,
+    "exit": 0,
+    "is_error": false,
+    "subtype": "success",
+    "result": "SPIKE-OK",
+    "consumed": [
+      "e500",
+      "ok"
+    ],
+    "requests": 2,
+    "statuses": [
+      500,
+      200
+    ],
+    "seconds": 0.8,
+    "beta_headers": [
+      7,
+      7
+    ],
+    "api_retry_events": [
+      {
+        "attempt": 1,
+        "max_retries": 10,
+        "retry_delay_ms": 537,
+        "error_status": 500,
+        "error": "server_error"
+      }
+    ],
+    "stderr_tail": [
+      "[claude-code:unrecognized_model] {\"model\":\"double-model\",\"query_source\":\"sdk\"}"
+    ]
+  },
+  {
+    "name": "rate_limit_429_then_ok",
+    "about": "429 rate_limit_error with retry-after: 1, then success",
+    "passed": true,
+    "exit": 0,
+    "is_error": false,
+    "subtype": "success",
+    "result": "SPIKE-OK",
+    "consumed": [
+      "e429",
+      "ok"
+    ],
+    "requests": 2,
+    "statuses": [
+      429,
+      200
+    ],
+    "seconds": 1.3,
+    "beta_headers": [
+      7,
+      7
+    ],
+    "api_retry_events": [
+      {
+        "attempt": 1,
+        "max_retries": 10,
+        "retry_delay_ms": 1095,
+        "error_status": 429,
+        "error": "rate_limit"
+      }
+    ],
+    "stderr_tail": [
+      "[claude-code:unrecognized_model] {\"model\":\"double-model\",\"query_source\":\"sdk\"}"
+    ]
+  },
+  {
+    "name": "overloaded_persistent",
+    "about": "529 on every attempt, CLAUDE_CODE_MAX_RETRIES=2",
+    "passed": true,
+    "exit": 1,
+    "is_error": true,
+    "subtype": "success",
+    "result": "API Error: 529 busy. This is a server-side issue, usually temporary \u2014 try again in a moment. If it persists, check your inference gateway (127.0.0.1:57545).",
+    "consumed": [
+      "e529_0",
+      "e529_1",
+      "e529_2"
+    ],
+    "requests": 3,
+    "statuses": [
+      529,
+      529,
+      529
+    ],
+    "seconds": 2.0,
+    "beta_headers": [
+      7,
+      7,
+      7
+    ],
+    "api_retry_events": [
+      {
+        "attempt": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 618,
+        "error_status": 529,
+        "error": "overloaded"
+      },
+      {
+        "attempt": 2,
+        "max_retries": 2,
+        "retry_delay_ms": 1153,
+        "error_status": 529,
+        "error": "overloaded"
+      }
+    ],
+    "stderr_tail": [
+      "[claude-code:unrecognized_model] {\"model\":\"double-model\",\"query_source\":\"sdk\"}"
+    ]
+  },
+  {
+    "name": "invalid_request_400",
+    "about": "400 invalid_request_error on every attempt: Claude Code walks a 6-step fallback (drops beta thinking-token-count, then thinking-display-updates, then the deferred-tool placeholder and repeats), then fails",
+    "passed": true,
+    "exit": 1,
+    "is_error": true,
+    "subtype": "success",
+    "result": "API Error: 400 messages: bad",
+    "consumed": [
+      "e400_0",
+      "e400_1",
+      "e400_2",
+      "e400_3",
+      "e400_4",
+      "e400_5"
+    ],
+    "requests": 6,
+    "statuses": [
+      400,
+      400,
+      400,
+      400,
+      400,
+      400
+    ],
+    "seconds": 0.2,
+    "beta_headers": [
+      7,
+      6,
+      5,
+      7,
+      6,
+      5
+    ],
+    "api_retry_events": [],
+    "stderr_tail": [
+      "[claude-code:unrecognized_model] {\"model\":\"double-model\",\"query_source\":\"sdk\"}"
+    ]
+  },
+  {
+    "name": "prompt_too_long",
+    "about": "400 'prompt is too long' as the API phrases it",
+    "passed": true,
+    "exit": 1,
+    "is_error": true,
+    "subtype": "success",
+    "result": "Prompt is too long \u00b7 the request is ~1200000 tokens (limit 1000000) but this conversation is only ~253 tokens \u2014 the rest is system prompt, tool definitions, and",
+    "consumed": [
+      "too_long"
+    ],
+    "requests": 1,
+    "statuses": [
+      400
+    ],
+    "seconds": 0.2,
+    "beta_headers": [
+      7
+    ],
+    "api_retry_events": [],
+    "stderr_tail": [
+      "[claude-code:unrecognized_model] {\"model\":\"double-model\",\"query_source\":\"sdk\"}"
+    ]
+  },
+  {
+    "name": "mcp_tool_error",
+    "about": "MCP tool answers isError: true; Claude Code passes it back as is_error tool_result",
+    "passed": true,
+    "exit": 0,
+    "is_error": false,
+    "subtype": "success",
+    "result": "SPIKE-OK",
+    "consumed": [
+      "call_fail",
+      "after"
+    ],
+    "requests": 2,
+    "statuses": [
+      200,
+      200
+    ],
+    "seconds": 0.2,
+    "beta_headers": [
+      7,
+      7
+    ],
+    "api_retry_events": [],
+    "stderr_tail": [
+      "[claude-code:unrecognized_model] {\"model\":\"double-model\",\"query_source\":\"sdk\"}"
+    ]
+  },
+  {
+    "name": "unknown_tool",
+    "about": "model calls a tool that is not offered (Bash)",
+    "passed": true,
+    "exit": 0,
+    "is_error": false,
+    "subtype": "success",
+    "result": "SPIKE-OK",
+    "consumed": [
+      "call_bash",
+      "after"
+    ],
+    "requests": 2,
+    "statuses": [
+      200,
+      200
+    ],
+    "seconds": 0.2,
+    "beta_headers": [
+      7,
+      7
+    ],
+    "api_retry_events": [],
+    "stderr_tail": [
+      "[claude-code:unrecognized_model] {\"model\":\"double-model\",\"query_source\":\"sdk\"}"
+    ]
+  },
+  {
+    "name": "max_tokens",
+    "about": "reply ends with stop_reason max_tokens",
+    "passed": null,
+    "exit": 0,
+    "is_error": false,
+    "subtype": "success",
+    "result": "SPIKE-OK",
+    "consumed": [
+      "cut",
+      "maybe"
+    ],
+    "requests": 2,
+    "statuses": [
+      200,
+      200
+    ],
+    "seconds": 0.2,
+    "beta_headers": [
+      7,
+      7
+    ],
+    "api_retry_events": [],
+    "stderr_tail": [
+      "[claude-code:unrecognized_model] {\"model\":\"double-model\",\"query_source\":\"sdk\"}"
+    ]
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "action": "read.session.list_tasks",
+  "result": "ok",
+  "target_kind": "device",
+  "target_id": "01930014-0000-7000-8000-000000000014",
+  "detail": {
+    "result_count": 3
+  }
+}

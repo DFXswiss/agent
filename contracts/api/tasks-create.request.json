@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/tasks-create.request.json",
+  "title": "POST /v1/tasks request",
+  "description": "events = [task.meta, prompt] (03-api.md section 4.6)",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "wg_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/event"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    }
+  },
+  "required": [
+    "task_id",
+    "wg_id",
+    "events"
+  ],
+  "additionalProperties": false
+}

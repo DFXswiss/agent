@@ -1,0 +1,19 @@
+{
+  "name": "openrouter-usage",
+  "description": "OpenRouter-shaped answers: provider in the message, usage.cost with cost_details and x-generation-id; the first answer fixes its cost, the second follows the double's prices; a 429 with retry-after in between.",
+  "openrouter": {"provider": "DoubleProvider"},
+  "steps": [
+    {"id": "read",
+     "expect": {"has_tools": true, "headers": {"anthropic-version": "2023-06-01"}},
+     "reply": {"content": [{"type": "text", "text": "Reading the file."}, {"type": "tool_use", "name": "Read", "input": {"file_path": "${cwd}/notes.txt"}}],
+       "usage": {"input_tokens": 1926, "cache_read_input_tokens": 118, "output_tokens": 86},
+       "cost": 0.000340854, "provider": "OtherProvider"}},
+    {"id": "limited",
+     "expect": {"has_tool_result": true},
+     "error": {"status": 429, "type": "rate_limit_error", "message": "Rate limited (scripted)", "headers": {"retry-after": "1"}}},
+    {"id": "answer",
+     "expect": {"has_tool_result": true},
+     "reply": {"content": [{"type": "text", "text": "The file says hello."}],
+       "usage": {"input_tokens": 2100, "cache_read_input_tokens": 1900, "output_tokens": 12}}}
+  ]
+}

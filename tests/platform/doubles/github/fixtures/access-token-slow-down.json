@@ -1,0 +1,10 @@
+{
+ "body": {
+  "error": "slow_down",
+  "error_description": "s",
+  "error_uri": "s",
+  "interval": 0
+ },
+ "route": "POST /login/oauth/access_token",
+ "source": "docs.github.com REST reference example (values neutralised)"
+}

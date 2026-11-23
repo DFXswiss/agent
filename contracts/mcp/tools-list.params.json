@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/tools-list.params.json",
+  "title": "tools/list params",
+  "description": "Params of tools/list (no pagination; a cursor is ignored).",
+  "type": "object",
+  "properties": {
+    "cursor": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "_meta": {
+      "type": "object",
+      "additionalProperties": {}
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

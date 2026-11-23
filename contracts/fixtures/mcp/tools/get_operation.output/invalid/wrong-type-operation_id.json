@@ -1,0 +1,10 @@
+{
+  "operation_id": 12345,
+  "status": "rejected",
+  "error": {
+    "code": "params_invalid",
+    "pointers": [
+      "/params/number"
+    ]
+  }
+}
