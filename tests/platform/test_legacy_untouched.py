@@ -1,8 +1,9 @@
 """U-HUB-legacy-untouched (R-P.2): the platform work never changes legacy files (ADR-001).
 
-Compares the working tree with the merge base of `origin/develop`: added files lie only in the platform areas;
-of the existing files only `.gitignore` (lines added) and `pyproject.toml` (new sections and new keys in the
-extras, scripts and package-data tables) may change.
+Compares the working tree with the merge base of `origin/develop`: added, changed and removed files lie only in the
+platform areas (since the platform was merged into `develop`, its files exist on the base and change there, too); of
+the other files only `.gitignore` (lines added) and `pyproject.toml` (new sections and new keys in the extras, scripts
+and package-data tables) may change.
 """
 
 from __future__ import annotations
@@ -112,7 +113,7 @@ def problems(root: Path = REPO_ROOT) -> list[str]:
     base = merge_base(root)
     found = []
     for status, path in changes(root):
-        if status == "A" and is_platform_path(path):
+        if is_platform_path(path):
             continue
         if status == "M" and path == "pyproject.toml":
             found += pyproject_problems(git("show", f"{base}:{path}", root=root), (root / path).read_text())
@@ -179,6 +180,19 @@ def test_forbidden_changes(repo: Path) -> None:
         "pyproject.toml: [project] changed",
         "pyproject.toml: project.scripts.x changed",
     ]
+
+
+def test_platform_files_on_the_base_may_change(repo: Path) -> None:
+    platform = repo / "docs" / "platform"
+    platform.mkdir(parents=True)
+    (platform / "a.md").write_text("a\n")
+    (platform / "b.md").write_text("b\n")
+    run(repo, "add", ".")
+    run(repo, "commit", "-q", "-m", "Platform.")
+    run(repo, "push", "-q", "origin", "develop")
+    (platform / "a.md").write_text("changed\n")
+    (platform / "b.md").unlink()
+    assert problems(repo) == []
 
 
 def test_deleted_file_is_refused(repo: Path) -> None:
