@@ -1,13 +1,13 @@
 // Passkey management (06-web.md section 3.6, 04-crypto.md section 5.6, `core/account/passkeys.ts`) against the
 // simulated hub: the list of `GET /v1/me`, adding a passkey on this or another device and the sign-in restricted to it,
-// removal including `last_passkey`, the recovery-code check, and the session facts the screens read.
+// removal including `last_passkey`, whether a recovery code exists, and the session facts the screens read.
 import { IDBFactory } from 'fake-indexeddb';
 import { describe, expect, it } from 'vitest';
 import { CeremonyCancelled } from '../../../src/core/account/ceremony';
 import { signIn } from '../../../src/core/account/login';
 import {
-  checkRecoveryCode,
   credentialBytes,
+  hasRecoveryCode,
   passkeysOf,
   placeOptions,
   registerPasskey,
@@ -18,11 +18,11 @@ import { register } from '../../../src/core/account/register';
 import { AppSession } from '../../../src/core/account/session';
 import { b64uEncode } from '../../../src/core/encoding/b64u';
 import { CryptoError } from '../../../src/core/crypto/errors';
-import { Identity } from '../../../src/core/crypto/keys';
+import { newRecoveryCode, rotateRecoveryCode } from '../../../src/core/account/recover';
 import { HubError } from '../../../src/core/net/signedFetch';
 import { Persist } from '../../../src/core/persist';
 import { createStore } from '../../../src/core/store';
-import { FakeAuthenticator } from './authenticator';
+import { FakeAuthenticator, giveRecoveryCode } from './authenticator';
 import { CONFIG, ORIGIN, SimHub, T0 } from './hub';
 
 const codeOf = async (run: () => Promise<unknown>): Promise<string> => {
@@ -35,9 +35,8 @@ const codeOf = async (run: () => Promise<unknown>): Promise<string> => {
   throw new Error('no error');
 };
 
-async function signedIn() {
+async function signedIn(auth = new FakeAuthenticator()) {
   const hub = new SimHub();
-  const auth = new FakeAuthenticator();
   const app = new AppSession({
     store: createStore(),
     fetch: hub.fetch,
@@ -199,28 +198,20 @@ describe('removing a passkey', () => {
   });
 });
 
-describe('recovery-code check', () => {
-  it('accepts the code of the identity in memory and nothing else', async () => {
-    const { app, registration } = await signedIn();
-    const bundle = await app.recoveryBundle();
-    await checkRecoveryCode(
-      registration.userId,
-      registration.recoveryCode.toLowerCase(),
-      bundle,
-      registration.identity,
-    );
-    expect(
-      await codeOf(() =>
-        checkRecoveryCode(registration.userId, 'AAAAA-AAAAA-AAAAA-AAAAA-AAAAAA', bundle, registration.identity),
-      ),
-    ).toBe('decrypt_failed');
-    expect(await codeOf(() => checkRecoveryCode(registration.userId, 'AAAAA', bundle, registration.identity))).toBe(
-      'recovery_code_length',
-    );
-    const stranger = await Identity.generate();
-    expect(
-      await codeOf(() => checkRecoveryCode(registration.userId, registration.recoveryCode, bundle, stranger)),
-    ).toBe('decrypt_failed');
+describe('whether a recovery code exists', () => {
+  it('is false for the unset slot of a registration without code, true once one was made', async () => {
+    const { app, auth, registration } = await signedIn();
+    expect(await hasRecoveryCode(registration.userId, registration.identity, await app.recoveryBundle())).toBe(false);
+    const request = (method: string, target: string, options?: { body: unknown }) =>
+      app.client.request(method, target, options);
+    await rotateRecoveryCode(request, auth, await newRecoveryCode(registration.userId, registration.identity));
+    expect(await hasRecoveryCode(registration.userId, registration.identity, await app.recoveryBundle())).toBe(true);
+  });
+
+  it('is true for an account with a code', async () => {
+    const { app, hub, registration } = await signedIn();
+    await giveRecoveryCode(hub, registration);
+    expect(await hasRecoveryCode(registration.userId, registration.identity, await app.recoveryBundle())).toBe(true);
   });
 });
 

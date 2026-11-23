@@ -4,7 +4,7 @@
 import { type BrowserContext, expect, type Page } from '@playwright/test';
 import { addAuthenticator } from './authenticator.ts';
 import { joinWithCode } from './members.ts';
-import { onboard, type Onboarded } from './onboard.ts';
+import { navigateInApp, onboard, type Onboarded } from './onboard.ts';
 import { PageUser } from './user.ts';
 import { bodyJson } from '../../src/core/encoding/json';
 import { uuid7 } from '../../src/core/encoding/ids';
@@ -39,13 +39,7 @@ export async function visit(page: Page, path: string): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`${path.replace(/[?]/g, '\\?')}$`));
 }
 
-/** Client-side navigation (the router follows `popstate`; a reload would lock the identity). */
-export async function navigateInApp(page: Page, path: string): Promise<void> {
-  await page.evaluate((target) => {
-    history.pushState({}, '', target);
-    dispatchEvent(new PopStateEvent('popstate'));
-  }, path);
-}
+export { navigateInApp };
 
 /** Ada invites through the member screen; returns the code. */
 async function invite(page: Page, org: string): Promise<string> {

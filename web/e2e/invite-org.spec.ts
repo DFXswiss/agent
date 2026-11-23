@@ -14,7 +14,7 @@ import { extendLog } from '../src/core/log/verify';
 import { expect, test } from './fixtures/test.ts';
 import { addAuthenticator } from './helpers/authenticator.ts';
 import { cancelNext } from './helpers/cancel.ts';
-import { onboard, type Onboarded } from './helpers/onboard.ts';
+import { createRecoveryCode, onboard, type Onboarded, ORG_PATH } from './helpers/onboard.ts';
 import { PageUser } from './helpers/user.ts';
 
 interface Admin {
@@ -90,15 +90,15 @@ async function invite(
   return formatCode(code);
 }
 
-/** Display name, gesture 1, gesture 2, recovery code confirmed; returns the recovery code. */
+/** Display name, gesture 1, gesture 2 – with PRF straight into the org (KOR-22) –, then a recovery code from the
+ *  settings (the Node side opens the identity with it); returns the recovery code. */
 async function registerAndJoin(page: Page, name: string): Promise<string> {
   await page.getByTestId('invite.display-name').fill(name);
   await page.getByTestId('invite.create-passkey').click();
   await page.getByTestId('invite.unlock').click();
-  const recoveryCode = (await page.getByTestId('recovery-code.code').textContent())!;
-  await page.getByTestId('recovery-code.confirm').fill(recoveryCode.slice(-6));
-  await page.getByTestId('recovery-code.continue').click();
-  return recoveryCode;
+  await expect(page).toHaveURL(ORG_PATH);
+  await expect(page.getByTestId('recovery-code.step')).toHaveCount(0);
+  return createRecoveryCode(page);
 }
 
 test('a new user joins an org with role, workgroups, both signatures and self-wraps @R-1.5 @R-1.4', async ({

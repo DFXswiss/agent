@@ -1,5 +1,5 @@
 // Slice `session`: where the browser stands in the sign-in lifecycle (06-web.md sections 2.6, 3.4), the user's locale
-// from `user_settings` (section 2.5), the org the screens work in, the recovery-code reminder (section 3.2) and the
+// from `user_settings` (section 2.5), the org the screens work in and the
 // `prf_missing` event of the last sign-in (section 3.3; the guidance screen is WEB-14's). Keys stay in `me`/`orgs`.
 import type { Locale } from '../../i18n/locale';
 import type { Slice, Store } from '../store';
@@ -15,8 +15,6 @@ export interface SessionState {
   /** `user_settings.locale` once known; null: the browser's language decides. */
   readonly locale: Locale | null;
   readonly activeOrg: string | null;
-  /** The recovery code was skipped and not confirmed yet (persistent banner). */
-  readonly recoveryUnconfirmed: boolean;
   /** The last sign-in returned no usable PRF output (`prf_missing`). */
   readonly prfMissing: boolean;
 }
@@ -29,7 +27,7 @@ declare module '../store' {
 
 export const slice: Slice<'session'> = {
   name: 'session',
-  initial: () => ({ phase: 'starting', locale: null, activeOrg: null, recoveryUnconfirmed: false, prfMissing: false }),
+  initial: () => ({ phase: 'starting', locale: null, activeOrg: null, prfMissing: false }),
 };
 
 function patch(store: Store, values: Partial<SessionState>): void {
@@ -49,10 +47,6 @@ export function setLocale(store: Store, locale: Locale | null): void {
 
 export function setActiveOrg(store: Store, org: string | null): void {
   patch(store, { activeOrg: org });
-}
-
-export function setRecoveryUnconfirmed(store: Store, unconfirmed: boolean): void {
-  patch(store, { recoveryUnconfirmed: unconfirmed });
 }
 
 export function setPrfMissing(store: Store, missing: boolean): void {

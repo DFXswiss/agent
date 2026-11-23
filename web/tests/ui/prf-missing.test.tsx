@@ -1,6 +1,6 @@
 // `prf_missing` in jsdom (06-web.md section 3.3): the device key unlocks the sign-in and gives a PRF-capable passkey its
 // missing slot (also when the upload is refused), a device entry that does not open is forgotten and the guidance is
-// shown, and the registration's "Remember this browser" offer when IndexedDB refuses.
+// shown (accounts that exist already: a new account needs PRF, KOR-22).
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -96,27 +96,5 @@ describe('device key that cannot be read', () => {
     (await deviceKeys(factory)).close();
     fireEvent.click(screen.getByTestId('login.submit'));
     expect(await screen.findByTestId('prf-missing.explain')).toBeInTheDocument();
-  });
-});
-
-describe('remember offer of the registration', () => {
-  it('reports a browser that cannot store the key and continues without it', async () => {
-    const hub = new SimHub();
-    const auth = new FakeAuthenticator();
-    auth.prf = false;
-    const code = hub.addInvite();
-    window.history.replaceState({ key: 'invite' }, '', `/invite#${code}`);
-    // no IndexedDB in this page: the device key cannot be stored
-    const harness = await renderApp('/invite', { hub, auth });
-    fireEvent.change(await screen.findByTestId('invite.display-name'), { target: { value: 'Ada' } });
-    fireEvent.click(screen.getByTestId('invite.create-passkey'));
-    fireEvent.click(await screen.findByTestId('invite.unlock'));
-    const recovery = (await screen.findByTestId('recovery-code.code')).textContent!;
-    fireEvent.change(screen.getByTestId('recovery-code.confirm'), { target: { value: recovery.slice(-6) } });
-    fireEvent.click(screen.getByTestId('recovery-code.continue'));
-    fireEvent.click(await screen.findByTestId('prf-missing.offer.remember'));
-    expect(await screen.findByTestId('prf-missing.offer.failed')).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('prf-missing.offer.skip'));
-    await waitFor(() => expect(harness.router.state.location.pathname).toMatch(/^\/o\//));
   });
 });

@@ -5,6 +5,7 @@
 import { expect, type Page } from '@playwright/test';
 import { openEvent } from '../../../web/src/core/crypto/event';
 import { epochKey, WG } from '../../../web/src/core/log/state';
+import { createRecoveryCode } from '../../../web/e2e/helpers/onboard.ts';
 import { PageUser } from '../../../web/e2e/helpers/user.ts';
 import type { Orchestrator } from './orchestrator.ts';
 import { navTo } from './nav.ts';
@@ -116,8 +117,8 @@ export interface Onboarded extends Invitation {
 
 /**
  * The platform-invitation onboarding in the page (06-web.md sections 3.1, 3.1.1, 3.2) with a code from the operator
- * CLI: link → display name → passkey (PRF) → unlock → recovery code confirmed → private org. The page needs a
- * virtual authenticator.
+ * CLI: link → display name → passkey (PRF) → unlock → private org (no code screen, KOR-22), then a recovery code from
+ * /settings (one passkey gesture), with which the Node side opens the identity. The page needs a virtual authenticator.
  */
 export async function onboard(page: Page, orchestrator: Orchestrator, name = 'Ada Lovelace'): Promise<Onboarded> {
   const invitation = await invite(orchestrator, 'user');
@@ -141,7 +142,8 @@ async function spaceOnboarding(): Promise<void> {
   lastOnboarding = Date.now();
 }
 
-/** The onboarding UI with a given platform invitation code; returns the private org and the recovery code shown. */
+/** The onboarding UI with a given platform invitation code; returns the private org and the recovery code created in
+ *  the settings. */
 export async function onboardWithCode(
   page: Page,
   code: string,
@@ -152,11 +154,9 @@ export async function onboardWithCode(
   await page.getByTestId('invite.display-name').fill(name);
   await page.getByTestId('invite.create-passkey').click();
   await page.getByTestId('invite.unlock').click();
-  const recoveryCode = (await page.getByTestId('recovery-code.code').textContent())!;
-  await page.getByTestId('recovery-code.confirm').fill(recoveryCode.slice(-6).toLowerCase());
-  await page.getByTestId('recovery-code.continue').click();
   await expect(page).toHaveURL(ORG_PATH, { timeout: 30_000 });
-  return { recoveryCode, org: ORG_PATH.exec(page.url())![1]! };
+  const org = ORG_PATH.exec(page.url())![1]!;
+  return { recoveryCode: await createRecoveryCode(page), org };
 }
 
 /** One unsigned request from inside the page (through the browser's link to the hub): status and JSON answer. */

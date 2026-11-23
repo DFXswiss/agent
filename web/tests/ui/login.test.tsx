@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { preparePrivateOrg } from '../../src/core/account/genesis';
 import { signIn } from '../../src/core/account/login';
 import { register, type Registration } from '../../src/core/account/register';
-import { FakeAuthenticator } from '../core/account/authenticator';
+import { FakeAuthenticator, giveRecoveryCode } from '../core/account/authenticator';
 import { HubFailure, ORIGIN, SimHub } from '../core/account/hub';
 import { type makeApp, renderApp } from './harness';
 
@@ -12,7 +12,9 @@ type Made = Awaited<ReturnType<typeof makeApp>>;
 /** A registered user with a private org, signed out again (the hub knows the user; the browser does not). */
 async function registeredUser(hub: SimHub, auth: FakeAuthenticator, made: Made, options: { slot: boolean }) {
   const invite = hub.addInvite();
-  const registration = await register(made.app.anon, auth, invite);
+  const registered = await register(made.app.anon, auth, invite);
+  // an account with a recovery code (the prf_missing guidance unlocks with it)
+  const registration = { ...registered, recoveryCode: await giveRecoveryCode(hub, registered) };
   const login = await signIn({ anon: made.app.anon, credentials: auth, origin: ORIGIN });
   await made.app.begin(login);
   await made.app.unlock(registration.identity);
@@ -33,7 +35,7 @@ async function registeredUser(hub: SimHub, auth: FakeAuthenticator, made: Made, 
 async function loginPage(options: { slot?: boolean; prf?: boolean; path?: string } = {}) {
   const hub = new SimHub();
   const auth = new FakeAuthenticator();
-  let user: { registration: Registration; org: string } | null = null;
+  let user: { registration: Registration & { recoveryCode: string }; org: string } | null = null;
   const harness = await renderApp(options.path ?? '/login', { hub, auth }, async (made) => {
     user = await registeredUser(hub, auth, made, { slot: options.slot ?? true });
     auth.prf = options.prf ?? true;

@@ -3,11 +3,18 @@
 // CDP virtual authenticator as platform passkey with PRF, as platform passkey without PRF, and as a roaming security
 // key (`transport: "usb"`) with PRF. Per row one test walks the matrix columns against the real hub with the device
 // double: registration, login, PRF (unlock without the recovery code, or the `prf_missing` path), recovery after losing
-// the passkey, countdown to "working" and the read-only terminal. Real platforms (iCloud Keychain, Google Password
+// the passkey, countdown to "working" and the read-only terminal. Without PRF (KOR-22) a new account and the new
+// passkey of a recovery are refused and made again with a PRF passkey; the row then signs in to the existing account
+// from an authenticator without PRF (`withoutPrf`) and takes the `prf_missing` path. Real platforms (iCloud Keychain, Google Password
 // Manager, Windows Hello, password managers, hardware keys) need a human; their rows stay open in the checklist.
 import { devices, type Page } from '@playwright/test';
 import { expect, test } from '../fixtures/test.ts';
-import { addAuthenticator, type AuthenticatorOptions, type VirtualAuthenticator } from '../helpers/authenticator.ts';
+import {
+  addAuthenticator,
+  type AuthenticatorOptions,
+  type VirtualAuthenticator,
+  withoutPrf,
+} from '../helpers/authenticator.ts';
 import { mainSession, newDevice, walk } from '../helpers/director.ts';
 import { onboard, type Onboarded } from '../helpers/onboard.ts';
 import { sessionEvents, terminalChunk } from '../helpers/sessions.ts';
@@ -58,17 +65,25 @@ async function recover(
 ) {
   await signOut(page);
   await lost.cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId: lost.id });
-  const replacement = await addAuthenticator(page, options);
+  let replacement = await addAuthenticator(page, options);
   await page.getByTestId('login.recover').click();
   await page.getByTestId('recover.code').fill(done.recoveryCode);
   await page.getByTestId('recover.submit').click();
   await page.getByTestId('recover.create-passkey').click();
   await page.getByTestId('recover.unlock').click();
+  if (options.hasPrf === false) {
+    // refused; the same code begins again with a PRF passkey
+    await expect(page.getByTestId('prf-required')).toBeVisible();
+    await replacement.cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId: replacement.id });
+    replacement = await addAuthenticator(page);
+    await page.getByTestId('prf-required.retry').click();
+    await page.getByTestId('recover.submit').click();
+    await page.getByTestId('recover.create-passkey').click();
+    await page.getByTestId('recover.unlock').click();
+  }
   const fresh = (await page.getByTestId('recovery-code.code').textContent())!;
   expect(fresh).not.toBe(done.recoveryCode);
-  await page.getByTestId('recovery-code.confirm').fill(fresh.slice(-6));
   await page.getByTestId('recovery-code.continue').click();
-  if (options.hasPrf === false) await page.getByTestId('prf-missing.offer.skip').click();
   await expect(page).toHaveURL(new RegExp(`/o/${done.org}$`));
   expect(await replacement.credentials()).toHaveLength(1);
   // the old recovery code is gone
@@ -106,14 +121,20 @@ for (const profile of PROFILES) {
         baseURL,
       }) => {
         test.setTimeout(120_000);
-        const first = await addAuthenticator(page, authenticator.options);
+        let first = await addAuthenticator(page, authenticator.options);
         await newDevice({ poolReady: 2 });
-        // registration
-        const done = await onboard(page, { origin: baseURL! });
+        // registration (without PRF refused, then made with a PRF passkey)
+        const retry = async () => {
+          await first.cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId: first.id });
+          first = await addAuthenticator(page);
+        };
+        const done = await onboard(page, { origin: baseURL!, ...(prf ? {} : { retry }) });
         expect(await first.credentials()).toHaveLength(1);
-        // PRF: the passkey list records whether the credential delivered PRF output
+        // the passkey list records that the credential delivered PRF output at registration
         await page.getByTestId('shell.settings').click();
-        await expect(page.getByTestId('passkeys.item')).toHaveAttribute('data-prf', String(prf));
+        await expect(page.getByTestId('passkeys.item')).toHaveAttribute('data-prf', 'true');
+        // without PRF: the existing account signs in from an authenticator without PRF
+        if (!prf) first = await withoutPrf(page, first);
         // login
         await signOut(page);
         await login(page, done, prf);

@@ -24,7 +24,7 @@ import { EventReader } from '../store/reader';
 import { noteSession, sessionRenewed } from '../store/slices/connection';
 import { setIdentity, setProfile, setSession } from '../store/slices/me';
 import { addKeys, ensureOrg, setLog } from '../store/slices/orgs';
-import { setActiveOrg, setLocale, setPhase, setPrfMissing, setRecoveryUnconfirmed } from '../store/slices/session';
+import { setActiveOrg, setLocale, setPhase, setPrfMissing } from '../store/slices/session';
 import type { Store } from '../store/store';
 import type { TasksContext } from '../tasks/pull';
 import type { TerminalContext } from '../terminal/watch';
@@ -193,7 +193,7 @@ export class AppSession {
   }
 
   #userPrefs(userId: string): void {
-    setRecoveryUnconfirmed(this.store, this.prefs.recoveryUnconfirmed(userId));
+    this.prefs.forgetRecoveryReminder(userId);
   }
 
   /** Records whether the last sign-in could unlock with PRF (the `prf_missing` event, 06-web.md section 3.3). */
@@ -298,13 +298,6 @@ export class AppSession {
   rememberOrg(org: string): void {
     const userId = this.userId;
     if (userId !== null) this.prefs.setLastOrg(userId, org);
-  }
-
-  /** The recovery-code reminder (06-web.md section 3.2): set when skipped, cleared when confirmed. */
-  setRecoveryUnconfirmed(unconfirmed: boolean): void {
-    const userId = this.userId;
-    if (userId !== null) this.prefs.setRecoveryUnconfirmed(userId, unconfirmed);
-    setRecoveryUnconfirmed(this.store, unconfirmed);
   }
 
   /** Makes `org` the active org: its live channel runs (one org at a time, 03-api.md section 5). */

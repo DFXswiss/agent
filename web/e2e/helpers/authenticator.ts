@@ -53,3 +53,18 @@ export async function addAuthenticator(
     },
   };
 }
+
+/**
+ * The same passkeys in an authenticator that gives no PRF output – an existing account signing in from a browser or
+ * password manager without PRF (KOR-22: a new account cannot be made that way). `from` is removed; its credentials
+ * (keys, user handles, counters) are copied into a new authenticator with `hasPrf: false`.
+ */
+export async function withoutPrf(page: Page, from: VirtualAuthenticator): Promise<VirtualAuthenticator> {
+  const { credentials } = await from.cdp.send('WebAuthn.getCredentials', { authenticatorId: from.id });
+  await from.cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId: from.id });
+  const to = await addAuthenticator(page, { hasPrf: false });
+  for (const credential of credentials) {
+    await to.cdp.send('WebAuthn.addCredential', { authenticatorId: to.id, credential });
+  }
+  return to;
+}

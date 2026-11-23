@@ -1,7 +1,8 @@
 // Branch of the invitation screen for org invitations (06-web.md sections 3.1 and 3.1.1, 04-crypto.md sections 5.1,
 // 5.2 and 5.2a), registered at WEB-03's `org` step: `org_verify` (package opened with the code, lookup log verified)
 // → `intro` (org and workgroup names from the package, role and expiry from the verified `invite` entry; display
-// name) → either "Create passkey" (gesture 1, gesture 2, recovery code – the registration of WEB-03) or "I already
+// name) → either "Create passkey" (gesture 1, gesture 2 – the registration of WEB-03; a passkey without PRF output
+// ends in `prf_required` with the registration withdrawn, KOR-22) or "I already
 // have an account" (`existing_account`: sign-in with the passkey, else this browser's device key, else the
 // `prf_missing` guidance of WEB-14) → `accept`
 // (`accept` with `sig` and `inv_sig`, self-wraps of the current package keys, `member.profile`) → the remaining
@@ -21,7 +22,7 @@ import {
   type OrgInvitation,
 } from '../../../../core/account/join';
 import { type SignIn, signIn } from '../../../../core/account/login';
-import { register, type Lookup } from '../../../../core/account/register';
+import { type Lookup, register } from '../../../../core/account/register';
 import { meOrgs } from '../../../../core/account/session';
 import type { Identity } from '../../../../core/crypto/keys';
 import { parseTime } from '../../../../core/encoding/time';
@@ -31,8 +32,8 @@ import { verifiedPlatform } from '../../../../core/org/batch';
 import { useI18n } from '../../../i18n';
 import { useAppEnv } from '../../../shell/context';
 import { errorCode } from '../../../shell/errors';
-import { unlockSignIn, uploadMissingSlot } from '../../../prf-missing/device';
-import { OnboardingRecovery } from '../../../prf-missing/OnboardingRecovery';
+import { unlockSignIn, uploadMissingSlot, withdrawRegistration } from '../../../prf-missing/device';
+import { PrfRequired } from '../../../prf-missing/PrfRequired';
 import { PrfMissing } from '../../../prf-missing/PrfMissing';
 import { afterVerify, failedStep, type OrgStep, verifyFailed } from './machine';
 
@@ -102,7 +103,7 @@ export function OrgInvite({ code, lookup }: OrgInviteProps) {
     }
   };
 
-  // --- new user: the registration of WEB-03 (gesture 1, gesture 2, recovery code) ---
+  // --- new user: the registration of WEB-03 (gesture 1, gesture 2; without PRF `prf_required`) ---
 
   const createPasskey = async (event: FormEvent, current: Step<'intro'>) => {
     event.preventDefault();
@@ -128,19 +129,18 @@ export function OrgInvite({ code, lookup }: OrgInviteProps) {
       await app.begin(result);
       await app.unlock(current.registration.identity);
       const slot = await app.uploadPasskeySlot(result, current.registration.identity);
+      if (!slot) {
+        setStep({ step: 'prf_required', invitation: current.invitation, released: await withdrawRegistration(app) });
+        return;
+      }
       app.notePrf(result, slot);
-      setStep({ step: 'recovery_code', invitation: current.invitation, registration: current.registration, slot });
+      const { userId, identity } = current.registration;
+      void accept(current.invitation, { userId, identity });
     } catch (caught) {
       const notice =
         caught instanceof CeremonyCancelled ? t('invite.unlock.cancelled') : error(errorCode(caught)).title;
       setStep({ ...current, busy: false, notice });
     }
-  };
-
-  const recoveryDone = (current: Step<'recovery_code'>, skipped: boolean) => {
-    app.setRecoveryUnconfirmed(skipped);
-    const { userId, identity } = current.registration;
-    void accept(current.invitation, { userId, identity });
   };
 
   // --- existing account (04-crypto.md section 5.2a) ---
@@ -329,14 +329,11 @@ export function OrgInvite({ code, lookup }: OrgInviteProps) {
           {notice(step.notice)}
         </section>
       )}
-      {step.step === 'recovery_code' && (
-        <OnboardingRecovery
-          code={step.registration.recoveryCode}
-          slot={step.slot}
-          userId={step.registration.userId}
-          identity={step.registration.identity}
-          onConfirmed={() => recoveryDone(step, false)}
-          onSkipped={() => recoveryDone(step, true)}
+      {step.step === 'prf_required' && (
+        <PrfRequired
+          context="register"
+          released={step.released}
+          onRetry={() => setStep({ step: 'intro', invitation: step.invitation, notice: null })}
         />
       )}
       {step.step === 'existing_account' && (

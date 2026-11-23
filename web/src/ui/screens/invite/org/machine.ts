@@ -23,12 +23,8 @@ export type OrgStep =
       readonly busy: boolean;
       readonly notice: string | null;
     }
-  | {
-      readonly step: 'recovery_code';
-      readonly invitation: OrgInvitation;
-      readonly registration: Registration;
-      readonly slot: boolean;
-    }
+  /** The new passkey gave no PRF output: the registration was withdrawn (`released`: the invitation is free now). */
+  | { readonly step: 'prf_required'; readonly invitation: OrgInvitation; readonly released: boolean }
   | {
       readonly step: 'existing_account';
       readonly invitation: OrgInvitation;

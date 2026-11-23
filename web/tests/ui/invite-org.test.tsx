@@ -1,6 +1,6 @@
 // U-WEB-invite-org (screen part, 06-web.md section 3.1): the org path of `/invite#<code>` in the real app against the
 // simulated hub, with an org of the core test world behind it (real package, real log, the hub's batch rules for the
-// `accept`): a new user (passkey, recovery code), an existing user (signed in, locked, signing in from the intro,
+// `accept`): a new user (passkey; a recovery code only where one is shown, KOR-22), an existing user (signed in, locked, signing in from the intro,
 // recovery-code unlock), cancelled gestures, blocking refusals of the package and the log, invalid invitations,
 // `invite_registered` and a failed `accept` with retry.
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
@@ -19,7 +19,7 @@ import { createInvite } from '../../src/core/org/invites';
 import { orgEntry } from '../../src/core/store/slices/orgs';
 import { forgetFragment } from '../../src/ui/screens/invite/fragment';
 import { afterVerify, blocking, failedStep, verifyFailed } from '../../src/ui/screens/invite/org/machine';
-import { FakeAuthenticator } from '../core/account/authenticator';
+import { FakeAuthenticator, giveRecoveryCode } from '../core/account/authenticator';
 import { HubFailure, ORIGIN, SimHub } from '../core/account/hub';
 import { idOf } from '../core/log/world';
 import { orgWorld, type OrgWorld } from '../core/org/world';
@@ -131,7 +131,9 @@ async function openOrgInvite(
 
 /** A registered user of `made.hub` (its platform invitation), signed in; `unlock`/`slot` as asked. */
 async function existingUser(made: Made, options: { unlock?: boolean; slot?: boolean } = {}) {
-  const registration = await register(made.app.anon, made.auth, made.hub.addInvite());
+  const registered = await register(made.app.anon, made.auth, made.hub.addInvite());
+  // an account with a recovery code (the fallbacks below type it)
+  const registration = { ...registered, recoveryCode: await giveRecoveryCode(made.hub, registered) };
   const login = await signIn({ anon: made.app.anon, credentials: made.auth, origin: ORIGIN });
   await made.app.begin(login);
   if (options.unlock !== false || options.slot) await made.app.unlock(registration.identity);
@@ -141,9 +143,10 @@ async function existingUser(made: Made, options: { unlock?: boolean; slot?: bool
 
 const accepted = (setup: OrgSetup, userId: string) => setup.w.world.state.member(userId) !== null;
 
-async function expectJoined(harness: Awaited<ReturnType<typeof openOrgInvite>>, userId: string) {
+async function expectJoined(harness: Awaited<ReturnType<typeof openOrgInvite>>, user: string | (() => string)) {
   const { setup, app, persist, router } = harness;
   await waitFor(() => expect(router.state.location.pathname).toBe(`/o/${setup.w.org}`));
+  const userId = typeof user === 'string' ? user : user();
   expect(accepted(setup, userId)).toBe(true);
   // the joined org: its founder pinned (not the user's key), the package keys in memory, the last org
   expect((await persist.loadPinned(setup.w.org))!.founder).toBe(setup.w.world.state.founder);
@@ -180,7 +183,7 @@ describe('org invitation steps', () => {
 });
 
 describe('OrgInvite: new user', () => {
-  it('shows the invitation, registers, confirms the recovery code and joins', async () => {
+  it('shows the invitation, registers and joins without a code screen (KOR-22)', async () => {
     const harness = await openOrgInvite();
     expect(await screen.findByTestId('invite.org-name')).toHaveTextContent('You are invited to Grüße AG');
     expect(screen.getByTestId('invite.role')).toHaveTextContent('Your role: Member');
@@ -197,16 +200,14 @@ describe('OrgInvite: new user', () => {
     expect(screen.queryByTestId('invite.display-name.invalid')).toBeNull();
     fireEvent.click(screen.getByTestId('invite.create-passkey'));
     fireEvent.click(await screen.findByTestId('invite.unlock'));
-    const code = (await screen.findByTestId('recovery-code.code')).textContent!;
-    fireEvent.change(screen.getByTestId('recovery-code.confirm'), { target: { value: code.slice(-6) } });
-    fireEvent.click(screen.getByTestId('recovery-code.continue'));
+    await waitFor(() => expect(harness.app.userId).not.toBeNull());
     const userId = harness.app.userId!;
     await expectJoined(harness, userId);
-    expect(harness.app.store.getState().session.recoveryUnconfirmed).toBe(false);
+    expect(screen.queryByTestId('recovery-code.step')).toBeNull();
     expect(harness.setup.w.hub.events).toHaveLength(1);
   });
 
-  it('returns after cancelled gestures, refuses another account and remembers a skipped code', async () => {
+  it('returns after cancelled gestures, refuses another account and then joins', async () => {
     const auth = new FakeAuthenticator();
     const harness = await openOrgInvite({ auth, names: false });
     expect(await screen.findByTestId('invite.org-name')).toHaveTextContent('You are invited to an organization');
@@ -238,11 +239,7 @@ describe('OrgInvite: new user', () => {
     await waitFor(() => expect(screen.getByTestId('invite.notice')).toHaveTextContent('Service unavailable'));
     harness.hub.override.delete('GET /v1/me');
     fireEvent.click(screen.getByTestId('invite.unlock'));
-    await screen.findByTestId('recovery-code.code');
-    fireEvent.click(screen.getByTestId('recovery-code.skip'));
-    fireEvent.click(screen.getByTestId('recovery-code.skip-confirm'));
     await waitFor(() => expect(harness.router.state.location.pathname).toBe(`/o/${harness.setup.w.org}`));
-    expect(harness.app.store.getState().session.recoveryUnconfirmed).toBe(true);
   });
 
   it('ends in the invalid state when the hub refuses the registration', async () => {
@@ -253,17 +250,33 @@ describe('OrgInvite: new user', () => {
     expect(await screen.findByTestId('invite.invalid')).toHaveAttribute('data-code', 'invite_unknown');
   });
 
+  it('without PRF ends with the message, withdraws the registration and lets the same link work again', async () => {
+    const auth = new FakeAuthenticator();
+    auth.prf = false;
+    const harness = await openOrgInvite({ auth });
+    fireEvent.change(await screen.findByTestId('invite.display-name'), { target: { value: 'Erin' } });
+    fireEvent.click(screen.getByTestId('invite.create-passkey'));
+    fireEvent.click(await screen.findByTestId('invite.unlock'));
+    expect(await screen.findByTestId('prf-required')).toHaveTextContent('You need a passkey that supports PRF.');
+    expect(harness.hub.users.size).toBe(0);
+    expect([...harness.hub.invites.values()].every((invite) => invite.registered === null)).toBe(true);
+    expect(accepted(harness.setup, harness.setup.w.me.id)).toBe(true);
+    fireEvent.click(screen.getByTestId('prf-required.retry'));
+    auth.prf = true;
+    fireEvent.click(await screen.findByTestId('invite.create-passkey'));
+    fireEvent.click(await screen.findByTestId('invite.unlock'));
+    await expectJoined(harness, () => harness.app.userId!);
+  });
+
   it('retries a failed accept and reports invite_registered', async () => {
     const harness = await openOrgInvite();
     fireEvent.change(await screen.findByTestId('invite.display-name'), { target: { value: 'Erin' } });
     fireEvent.click(screen.getByTestId('invite.create-passkey'));
-    fireEvent.click(await screen.findByTestId('invite.unlock'));
-    const code = (await screen.findByTestId('recovery-code.code')).textContent!;
+    await screen.findByTestId('invite.unlock');
     const path = `POST /v1/orgs/${harness.setup.w.org}/log`;
     const append = harness.hub.override.get(path)!;
     harness.hub.override.set(path, new HubFailure(503, 'unavailable'));
-    fireEvent.change(screen.getByTestId('recovery-code.confirm'), { target: { value: code.slice(-6) } });
-    fireEvent.click(screen.getByTestId('recovery-code.continue'));
+    fireEvent.click(screen.getByTestId('invite.unlock'));
     expect(await screen.findByTestId('invite.accept-failed')).toHaveAttribute('data-code', 'unavailable');
     harness.hub.override.set(path, new HubFailure(409, 'invite_registered'));
     fireEvent.click(screen.getByTestId('invite.accept-retry'));
@@ -275,15 +288,13 @@ describe('OrgInvite: new user', () => {
     const harness = await openOrgInvite();
     fireEvent.change(await screen.findByTestId('invite.display-name'), { target: { value: 'Erin' } });
     fireEvent.click(screen.getByTestId('invite.create-passkey'));
-    fireEvent.click(await screen.findByTestId('invite.unlock'));
-    const code = (await screen.findByTestId('recovery-code.code')).textContent!;
+    await screen.findByTestId('invite.unlock');
     harness.hub.override.set('GET /v1/platform/log', new HubFailure(503, 'unavailable'));
-    fireEvent.change(screen.getByTestId('recovery-code.confirm'), { target: { value: code.slice(-6) } });
-    fireEvent.click(screen.getByTestId('recovery-code.continue'));
+    fireEvent.click(screen.getByTestId('invite.unlock'));
     expect(await screen.findByTestId('invite.accept-failed')).toHaveAttribute('data-code', 'unavailable');
     harness.hub.override.delete('GET /v1/platform/log');
     fireEvent.click(screen.getByTestId('invite.accept-retry'));
-    await expectJoined(harness, harness.app.userId!);
+    await expectJoined(harness, () => harness.app.userId!);
   });
 });
 
@@ -292,18 +303,18 @@ describe('OrgInvite: concurrent appends', () => {
     const harness = await openOrgInvite();
     fireEvent.change(await screen.findByTestId('invite.display-name'), { target: { value: 'Erin' } });
     fireEvent.click(screen.getByTestId('invite.create-passkey'));
-    fireEvent.click(await screen.findByTestId('invite.unlock'));
-    const code = (await screen.findByTestId('recovery-code.code')).textContent!;
+    await screen.findByTestId('invite.unlock');
     const { w } = harness.setup;
     // the user is a member of another org (the membership check after the conflict looks through it)
     const other = uuid7();
     harness.hub.orgs.set(other, { id: other, defaultWg: uuid7(), owner: '', entries: [], wraps: [], events: [] });
-    harness.hub.users.get(harness.app.userId!)!.orgs.push(other);
     // an admin appends right before the accept arrives
-    w.hub.before.push(() => w.hub.foreign(w.me, { type: 'wg_create', wg: uuid7(), epoch: 1 }));
-    fireEvent.change(screen.getByTestId('recovery-code.confirm'), { target: { value: code.slice(-6) } });
-    fireEvent.click(screen.getByTestId('recovery-code.continue'));
-    await expectJoined(harness, harness.app.userId!);
+    w.hub.before.push(() => {
+      harness.hub.users.get(harness.app.userId!)!.orgs.push(other);
+      return w.hub.foreign(w.me, { type: 'wg_create', wg: uuid7(), epoch: 1 });
+    });
+    fireEvent.click(screen.getByTestId('invite.unlock'));
+    await expectJoined(harness, () => harness.app.userId!);
     expect(harness.hub.log.filter((entry) => entry.target === '/v1/invites/lookup')).toHaveLength(2);
   });
 });

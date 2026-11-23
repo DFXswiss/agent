@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-registration-delete.response.json",
+  "title": "DELETE /v1/me/registration response",
+  "description": "Body of a successful response to DELETE /v1/me/registration (03-api.md section 4.1, KOR-22): the unfinished registration is withdrawn.",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

@@ -34,7 +34,7 @@ in `agent-core` (uses `agent_hub.crypto`); `contracts/` is owned by `agent-core`
 | Passkey | WebAuthn credential (P-256 or other COSE alg) | authenticator | authenticator | credential ID + public key |
 | PRF output `prf_i` | 32 B | authenticator per passkey | browser memory only | never |
 | `KEK_i` (passkey slot) | AES-256 | browser | memory only | never |
-| Recovery code | 16 B | browser at registration | user (written down) | never; only `recovery_id` |
+| Recovery code | 16 B | browser: on request in the settings (KOR-22, ADR-055) and after every recovery; registrations make none | user (written down) | never; only `recovery_id` |
 | `KEK_rec` | AES-256 | browser | memory only | never |
 | User identity | X25519 `kem` + Ed25519 `sig` | browser at registration | identity bundle | public keys; bundle only encrypted |
 | Browser session key | P-256, non-extractable | browser per login | IndexedDB (non-extractable) | public key in session certificate |
@@ -57,6 +57,7 @@ in `agent-core` (uses `agent_hub.crypto`); `contracts/` is owned by `agent-core`
 | `KEK_i` | `HKDF(ikm=prf_i, info=P‖"kek\0"‖credential_id_raw)`; `prf_i` MUST be 32 B (`prf_length`) |
 | `KEK_rec` | `HKDF(ikm=code16, info=P‖"recovery-kek")`; code MUST be 16 B (`recovery_code_length`) |
 | `recovery_id` **(new)** | `b64u(HKDF(ikm=code16, info=P‖"recovery-id")[:16])` |
+| `nonce_unset` **(new, browser only)** | `HKDF(ikm=ed25519_seed, info=P‖"recovery-unset\0"‖user_id)[:12]`: the nonce of the unset recovery slot (§4.1, ADR-055); hub and runner never derive or see it as such |
 | `invite_id` | `b64u(HKDF(ikm=code16, info=P‖"invite-id")[:16])` |
 | `package_key` | `HKDF(ikm=code16, info=P‖"invite-package")` |
 | `sk_inv` | Ed25519 private key from seed `HKDF(ikm=code16, info=P‖"invite-sign")`; `pk_inv` its public key |
@@ -81,6 +82,14 @@ this text. `device_certify` copies both signatures so that browsers can verify t
 - Plaintext: `canonical({"kem":b64u(x25519_private_raw),"sig":b64u(ed25519_seed),"v":1})`.
 - Ciphertext: `b64u(nonce12 ‖ AES-GCM(KEK, plaintext, AAD))`, `AAD = P‖"bundle\0"‖user_id‖"\0"‖slot`.
 - Slots: `passkey:<b64u(credential_id)>` and `recovery`. Exactly one `recovery` slot per user.
+- **Unset recovery slot (KOR-22, ADR-055):** a registration makes no recovery code. Its `recovery` slot is sealed
+  under `KEK_rec` of a random code that the browser drops at once (nobody can ever open or find it), over zero bytes
+  of the length of the bundle plaintext, with `nonce = nonce_unset` (§3). The slot itself looks like any other (same
+  lengths, a random `recovery_id`); the hub can still guess from metadata it already has (the attestation, whether a
+  passkey slot follows the registration, whether a code replacement ever comes) which users probably have no code
+  (§9). The browser with the unlocked identity recognises it by its nonce and says "no recovery code" (`06-web.md`
+  §3.2). The first code the user creates replaces it like any replacement (`PUT /v1/me/bundles/recovery` with
+  `assertion`, §5.5). Only the browser produces and reads this mark; the vectors do not cover it.
 
 ### 4.2 Key wrap
 
@@ -253,20 +262,21 @@ Each flow lists who does what; every step that sends something to the hub names 
    `inv_sig = Ed25519_{sk_inv}(P‖"invite-register\0"‖user_id‖"\0"‖challenge)`, verified under the invitation's
    `pk_inv` (`401 signature_invalid` otherwise, ADR-043), and only then records the invitation's
    `registered_user` (one user per invitation; orphan registrations are deleted after 24 h, `03-api.md` §4.1).
-4. `navigator.credentials.create()` (gesture 1). Browser creates the identity, the recovery code, `KEK_rec`
-   and the recovery bundle, and draws the user's credential key `CK_1` with a self-wrap signed by the new
+4. `navigator.credentials.create()` (gesture 1). Browser creates the identity and the **unset** recovery slot of §4.1
+   (no code, KOR-22) and draws the user's credential key `CK_1` with a self-wrap signed by the new
    identity. `POST /v1/passkeys/register/finish` with attestation, identity public keys, recovery bundle,
    `recovery_id` and `cred_wrap` (the hub creates `scope_epoch(cred, user, 1)`). `CK_1` is created exactly once
    per user, here, and never in an org genesis. The hub stores the credential, the identity public keys and the recovery
    slot; the user exists but has no session yet.
 5. The browser immediately runs the login ceremony §5.4 (gesture 2; always, so the flow is identical on every
    platform). It yields the session certificate and the PRF output. If PRF is present the browser computes
-   `KEK_i` and uploads the passkey slot (`PUT /v1/me/bundles/{slot}`). If PRF is absent the account works with
-   recovery-code unlock plus an optional IndexedDB device key (non-extractable AES key that encrypts the bundle
-   locally) and the UI shows `prf_missing` guidance (`06-web.md` §3). A PRF value already delivered by
-   `create()` MAY be used to pre-compute the slot, but the upload always happens after step 5.
-6. Recovery code is shown once; the user MUST confirm it by re-typing the last group, or explicitly skip after
-   the consequence dialog (`06-web.md` §3); skipping leaves a persistent reminder.
+   `KEK_i` and uploads the passkey slot (`PUT /v1/me/bundles/{slot}`). If PRF is absent the registration is withdrawn
+   (step 6). A PRF value already delivered by `create()` MAY be used to pre-compute the slot, but the upload always
+   happens after step 5.
+6. **PRF required** (KOR-22, ADR-055; `06-web.md` §3.3): without a PRF output at step 5 the passkey can never unlock
+   the identity. The browser withdraws the registration (`DELETE /v1/me/registration`: the hub deletes the user and
+   everything stored in step 4 and frees the invitation at once) and signs out; the user tries again with another
+   passkey on the same link. No recovery code is shown at registration; a user may create one later in the settings.
 7. Accept (§5.2 or §5.3).
 
 ### 5.2 Accepting an org invitation
@@ -316,19 +326,23 @@ existing `CK` is wrapped for the org's devices by catch-up (W2).
    `user_id`, recovery bundle, `challenge` (32 B, TTL 300 s). Rate limit: 5 per hour per source and 20 per
    day per `recovery_id`.
 2. Decrypt bundle with `KEK_rec`; sign `P‖"recovery-proof\0"‖user_id‖"\0"‖challenge` with the identity key.
-3. `POST /v1/recovery/finish` with the proof → registration options for a new passkey; then 5.1 steps 4–6 for
-   a new passkey slot. A **new recovery code MUST be generated** and the recovery slot replaced. Unlocking with the
+3. `POST /v1/recovery/finish` with the proof → registration options for a new passkey; then the passkey's
+   registration and sign-in for a new passkey slot. A new passkey without PRF output is not accepted: it is removed
+   again (`DELETE /v1/passkeys/{id}` with its own session) and the recovery begins anew with the same code, which
+   nothing has replaced (KOR-22). A **new recovery code MUST be generated** and the recovery slot replaced. Unlocking with the
    recovery code during normal login (§5.4) does not rotate it; a signed-in user can replace it at any time after a
    fresh passkey assertion (`03-api.md` §4.1, `06-web.md` §3.2, KOR-01).
 4. Loss of all passkeys and the recovery code: the identity is lost; an admin removes the member and
-   re-invites; other holders re-wrap (optionally old epochs). A private org with a single member is lost; the
-   UI says so before the user skips confirming the recovery code.
+   re-invites; other holders re-wrap (optionally old epochs). A private org with a single member is lost. A user
+   without a code (PRF registration, KOR-22) depends on the passkeys alone until creating one in the settings, where
+   one quiet line says that none exists (ADR-052).
 
 ### 5.6 Adding a passkey
 
 Signed-in session with unlocked identity → `POST /v1/passkeys/register/begin {add:true}` (signed) → `create()`
 with PRF → `POST /v1/passkeys/register/finish` → `get()` restricted to the new credential (PRF) →
-`PUT /v1/me/bundles/{slot}`. Passkey removal: `DELETE /v1/passkeys/{id}` (not the
+`PUT /v1/me/bundles/{slot}`. A new passkey without PRF output is removed again by the previous session
+(`DELETE /v1/passkeys/{id}`, KOR-22). Passkey removal: `DELETE /v1/passkeys/{id}` (not the
 last one).
 
 ### 5.7 Inviting a user or device to an org
@@ -460,8 +474,8 @@ Log: `seq_conflict`, `log_empty`, `log_chain`, `log_genesis`, `log_accept`, `log
 
 | Attacker | Protection | Residual risk |
 |---|---|---|
-| Passive hub operator / database theft | All content encrypted; codes, PRF, scope keys never reach the hub | Metadata of §7; traffic analysis |
-| Active hub: inject member, swap keys, forge wraps, forge events | Clients verify log against founder key; `inv_sig` binds invitee keys to the code; wrap info binds recipient/epoch/scope; wraps and events signed | Withholding data; serving an old log (L9 detects rollback per client; cross-client fork detection via `lh`) |
+| Passive hub operator / database theft | All content encrypted; codes, PRF, scope keys never reach the hub | Metadata of §7; traffic analysis; from attestation and slot uploads a likely guess which users have no recovery code (ADR-055) |
+| Active hub: inject member, swap keys, forge wraps, forge events | Clients verify log against founder key; `inv_sig` binds invitee keys to the code; wrap info binds recipient/epoch/scope; wraps and events signed | Withholding data; serving an old log (L9 detects rollback per client; cross-client fork detection via `lh`); serving another recovery slot makes the settings show "a code exists" (ADR-055) |
 | Hub serves malicious JavaScript | strict CSP without inline script, SRI for all assets including lazily loaded chunks (`06-web.md` §10.2), reproducible build with published hashes (`06-web.md` §10), root key compiled into the build | Not fully solvable for web E2EE; documented in the UI's "Security" page |
 | Intercepted invitation code | single use, expiry, revocation, accept visible in the log and the member list | First user of the code wins; channel must be confidential |
 | Removed member / unpaired device | atomic rotation batch, immediate refusal at the hub | Content already read |

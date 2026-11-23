@@ -9,14 +9,8 @@ import { Identity } from '../../../src/core/crypto/keys';
 import type { LiveConnection, LiveWiring } from '../../../src/core/net/live';
 import { Persist } from '../../../src/core/persist';
 import { createStore } from '../../../src/core/store';
-import {
-  setActiveOrg,
-  setLocale,
-  setPhase,
-  setPrfMissing,
-  setRecoveryUnconfirmed,
-} from '../../../src/core/store/slices/session';
-import { FakeAuthenticator } from './authenticator';
+import { setActiveOrg, setLocale, setPhase, setPrfMissing } from '../../../src/core/store/slices/session';
+import { FakeAuthenticator, giveRecoveryCode } from './authenticator';
 import { CONFIG, ORIGIN, SimHub, T0 } from './hub';
 
 class MemoryStorage implements PrefStorage {
@@ -83,31 +77,27 @@ describe('session slice', () => {
     setPhase(store, 'locked');
     setLocale(store, 'de');
     setActiveOrg(store, 'o');
-    setRecoveryUnconfirmed(store, true);
     setPrfMissing(store, true);
     expect(store.getState().session).toEqual({
       phase: 'locked',
       locale: 'de',
       activeOrg: 'o',
-      recoveryUnconfirmed: true,
       prfMissing: true,
     });
-    expect(listener).toHaveBeenCalledTimes(5);
+    expect(listener).toHaveBeenCalledTimes(4);
   });
 });
 
 describe('Prefs', () => {
-  it('keeps the last org and the recovery reminder per user', () => {
+  it('keeps the last org per user and drops the old recovery reminder', () => {
     const storage = new MemoryStorage();
     const prefs = new Prefs(storage);
     expect(prefs.lastOrg('u')).toBeNull();
     prefs.setLastOrg('u', 'o');
     expect(prefs.lastOrg('u')).toBe('o');
-    prefs.setRecoveryUnconfirmed('u', true);
-    expect(prefs.recoveryUnconfirmed('u')).toBe(true);
-    expect(storage.items.get('agent-platform.recovery-unconfirmed.u')).toBe('1');
-    prefs.setRecoveryUnconfirmed('u', false);
-    expect(prefs.recoveryUnconfirmed('u')).toBe(false);
+    // a flag stored before KOR-22 (the skipped code) is removed
+    storage.setItem('agent-platform.recovery-unconfirmed.u', '1');
+    prefs.forgetRecoveryReminder('u');
     expect(storage.items.has('agent-platform.recovery-unconfirmed.u')).toBe(false);
   });
 
@@ -127,7 +117,7 @@ describe('Prefs', () => {
       },
     });
     refusing.setLastOrg('u', 'o');
-    refusing.setRecoveryUnconfirmed('u', false);
+    refusing.forgetRecoveryReminder('u');
     expect(refusing.lastOrg('u')).toBeNull();
   });
 });
@@ -252,8 +242,9 @@ describe('AppSession', () => {
     app.notePrf(login, false);
     expect(context.store.getState().session.prfMissing).toBe(true);
     expect(await app.uploadPasskeySlot(login, registration.identity)).toBe(false);
+    const code = await giveRecoveryCode(hub, registration);
     const bundle = await app.recoveryBundle();
-    const identity = await unlockWithRecoveryCode(registration.userId, registration.recoveryCode, bundle);
+    const identity = await unlockWithRecoveryCode(registration.userId, code, bundle);
     await app.unlock(identity);
     expect(context.store.getState().session.phase).toBe('unlocked');
     app.notePrf({ ...login, prf: null }, true);
@@ -262,17 +253,16 @@ describe('AppSession', () => {
     await expect(app.recoveryBundle()).rejects.toMatchObject({ code: 'header_invalid' });
   });
 
-  it('keeps the recovery reminder per user', async () => {
+  it('keeps the last org per user and drops an old recovery reminder at sign-in', async () => {
     const context = await setup();
-    const { app, hub, auth, store } = context;
-    app.setRecoveryUnconfirmed(true);
-    expect(store.getState().session.recoveryUnconfirmed).toBe(true);
+    const { app, hub, auth } = context;
+    app.rememberOrg('o0');
     expect(context.storage.items.size).toBe(0);
     const registration = await register(app.anon, auth, hub.addInvite());
+    const reminder = `agent-platform.recovery-unconfirmed.${registration.userId}`;
+    context.storage.setItem(reminder, '1');
     await app.begin(await signIn({ anon: app.anon, credentials: auth, origin: ORIGIN }));
-    expect(store.getState().session.recoveryUnconfirmed).toBe(false);
-    app.setRecoveryUnconfirmed(true);
-    expect(context.storage.items.get(`agent-platform.recovery-unconfirmed.${registration.userId}`)).toBe('1');
+    expect(context.storage.items.has(reminder)).toBe(false);
     app.rememberOrg('o');
     await app.signOut();
     app.rememberOrg('o2');

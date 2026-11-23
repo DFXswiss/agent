@@ -1,25 +1,21 @@
-// `prf_missing` (06-web.md section 3.3, 04-crypto.md section 5.4) with the `hasPrf: false` authenticator against the real
-// hub: the registration offers "Remember this browser" right after the recovery code; a remembered browser unlocks the
-// sign-in without the recovery code; "Forget" in /settings brings the guidance back, whose recovery-code unlock can
-// remember the browser again; the hint to add a PRF passkey from another device is shown.
+// `prf_missing` (06-web.md section 3.3, 04-crypto.md section 5.4) against the real hub for accounts that exist already:
+// their passkey signs in from an authenticator that gives no PRF output (`withoutPrf`; a new account needs PRF,
+// KOR-22). The guidance unlocks with the recovery code and can remember the browser; a remembered browser unlocks the
+// next sign-in without the code; "Forget" in /settings brings the guidance back; the hint to add a PRF passkey from
+// another device is shown.
 import { expect, test } from './fixtures/test.ts';
-import { addAuthenticator } from './helpers/authenticator.ts';
+import { addAuthenticator, withoutPrf } from './helpers/authenticator.ts';
 import { onboard } from './helpers/onboard.ts';
 
-test('a remembered browser unlocks without PRF; forgetting it brings the guidance back', async ({ page, baseURL }) => {
-  await addAuthenticator(page, { hasPrf: false });
-  const done = await onboard(page, { origin: baseURL!, remember: true });
+test('without PRF the code unlocks and remembers the browser; forgetting it brings the guidance back', async ({
+  page,
+  baseURL,
+}) => {
+  const first = await addAuthenticator(page);
+  const done = await onboard(page, { origin: baseURL! });
   await page.getByTestId('shell.settings').click();
-  await expect(page.getByTestId('passkeys.browser.remembered')).toBeVisible();
-  await expect(page.getByTestId('passkeys.item.prf')).toHaveText('Cannot unlock your encryption keys (no PRF)');
   await page.getByTestId('settings.sign-out').click();
-  await page.getByTestId('login.submit').click();
-  await expect(page).toHaveURL(new RegExp(`/o/${done.org}$`));
-  // forget: the next sign-in needs the recovery code again
-  await page.getByTestId('shell.settings').click();
-  await page.getByTestId('passkeys.browser.forget').click();
-  await expect(page.getByTestId('passkeys.browser.none')).toBeVisible();
-  await page.getByTestId('settings.sign-out').click();
+  await withoutPrf(page, first);
   await page.getByTestId('login.submit').click();
   await expect(page.getByTestId('prf-missing.explain')).toHaveText(
     'This passkey cannot unlock your encryption keys on this device.',
@@ -31,26 +27,23 @@ test('a remembered browser unlocks without PRF; forgetting it brings the guidanc
   await expect(page).toHaveURL(new RegExp(`/o/${done.org}$`));
   await page.getByTestId('shell.settings').click();
   await expect(page.getByTestId('passkeys.browser.remembered')).toBeVisible();
+  // the remembered browser unlocks the next sign-in without the code
+  await page.getByTestId('settings.sign-out').click();
+  await page.getByTestId('login.submit').click();
+  await expect(page).toHaveURL(new RegExp(`/o/${done.org}$`));
+  // forget: the next sign-in needs the recovery code again
+  await page.getByTestId('shell.settings').click();
+  await page.getByTestId('passkeys.browser.forget').click();
+  await expect(page.getByTestId('passkeys.browser.none')).toBeVisible();
+  await page.getByTestId('settings.sign-out').click();
+  await page.getByTestId('login.submit').click();
+  await expect(page.getByTestId('prf-missing.explain')).toBeVisible();
 });
 
-test('remembering the browser from the settings and confirming a skipped recovery code', async ({ page, baseURL }) => {
+test('remembering the browser from the settings', async ({ page, baseURL }) => {
   await addAuthenticator(page);
-  const done = await onboard(page, { origin: baseURL!, skip: true });
-  await expect(page.getByTestId('shell.recovery-banner')).toBeVisible();
-  await page.getByTestId('shell.recovery-banner.settings').click();
-  await expect(page.getByTestId('passkeys.recovery.unconfirmed')).toBeVisible();
-  await page.getByTestId('passkeys.recovery.input').fill('AAAAA-AAAAA-AAAAA-AAAAA-AAAAAA');
-  await page.getByTestId('passkeys.recovery.submit').click();
-  await expect(page.getByTestId('passkeys.recovery.error')).toHaveText('This is not your recovery code.');
-  await page.getByTestId('passkeys.recovery.input').fill('AAAAA');
-  await page.getByTestId('passkeys.recovery.submit').click();
-  await expect(page.getByTestId('passkeys.recovery.error')).not.toHaveText('This is not your recovery code.');
-  await page.getByTestId('passkeys.recovery.input').fill(done.recoveryCode.toLowerCase());
-  await page.getByTestId('passkeys.recovery.submit').click();
-  await expect(page.getByTestId('passkeys.recovery.ok')).toHaveText('Your recovery code is correct.');
-  await expect(page.getByTestId('passkeys.recovery.unconfirmed')).toHaveCount(0);
-  await expect(page.getByTestId('shell.recovery-banner')).toHaveCount(0);
-  // this browser can also be remembered from the settings
+  await onboard(page, { origin: baseURL!, code: false });
+  await page.getByTestId('shell.settings').click();
   await expect(page.getByTestId('passkeys.browser.none')).toBeVisible();
   await page.getByTestId('passkeys.browser.remember').click();
   await expect(page.getByTestId('passkeys.browser.remembered')).toBeVisible();

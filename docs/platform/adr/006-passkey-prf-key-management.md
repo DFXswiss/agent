@@ -1,6 +1,6 @@
 # ADR-006: Passkey-based key management (KONZEPT §14.1)
 
-Status: Accepted (2026-11-21)
+Status: Accepted (2026-11-21); amended by [ADR-055](055-registration-without-recovery-code-step.md) (2026-11-23): the recovery slot stays mandatory, the code is no longer shown and confirmed at every registration, and a new passkey must deliver PRF.
 
 ## Context
 - KONZEPT §5: a passkey login does not automatically yield an encryption key; derivation, sharing and device distribution are open (§14.1).

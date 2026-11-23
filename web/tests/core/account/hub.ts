@@ -237,6 +237,7 @@ export class SimHub {
         return {};
       };
     }
+    if (method === 'DELETE' && path === '/v1/me/registration') return (_b, user) => this.#abandon(user!);
     const passkey = /^\/v1\/passkeys\/([^/]+)$/.exec(path);
     if (method === 'DELETE' && passkey) return (_b, user) => this.#removePasskey(user!, passkey[1]!);
     if (method === 'PUT' && path === '/v1/me/settings') {
@@ -282,6 +283,17 @@ export class SimHub {
         prf_seen: user.prfSeen.has(id),
       })),
     };
+  }
+
+  /** `DELETE /v1/me/registration` (KOR-22): an unfinished registration (unused invitation, no org) is withdrawn. */
+  #abandon(user: SimUser): unknown {
+    const invite = [...this.invites.values()].find((item) => item.registered === user.id && !item.used);
+    if (invite === undefined || user.orgs.length > 0) throw new HubFailure(403, 'forbidden');
+    invite.registered = null;
+    this.users.delete(user.id);
+    for (const id of user.credentials) this.credentialUser.delete(id);
+    for (const session of this.sessions.values()) if (session.user === user.id) session.ended = true;
+    return {};
   }
 
   #removePasskey(user: SimUser, id: string): unknown {

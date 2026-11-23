@@ -24,13 +24,8 @@ export type Step =
       readonly busy: boolean;
       readonly notice: string | null;
     }
-  | {
-      readonly step: 'recovery_code';
-      readonly lookup: Lookup;
-      readonly registration: Registration;
-      /** A passkey slot was uploaded (PRF); without it the recovery code is the only unlock and cannot be skipped. */
-      readonly slot: boolean;
-    }
+  /** The new passkey gave no PRF output: the registration was withdrawn (`released`: the invitation is free now). */
+  | { readonly step: 'prf_required'; readonly lookup: Lookup; readonly released: boolean }
   | {
       readonly step: 'accept';
       readonly lookup: Lookup;

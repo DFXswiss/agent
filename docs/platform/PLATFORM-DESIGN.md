@@ -64,7 +64,7 @@ residual risks: [04 §9](spec/04-crypto.md#9-threat-model).
 ## 4. Main data flows
 
 1. **Invitation and first login** ([04 §5.1–§5.3](spec/04-crypto.md#5-flows), [06 §3](spec/06-web.md#3-invitation-registration-login-recovery-passkeys)):
-   code → passkey with PRF → identity bundle and recovery code → accept → private organization or join.
+   code → passkey with PRF → identity bundle (PRF required; a recovery code on request, ADR-055) → accept → private organization or join.
 2. **First task** ([05 §6](spec/05-runner.md#6-session-lifecycle), [06 §4](spec/06-web.md)): the browser encrypts the
    prompt and `task.meta`; the hub creates task and session, picks a device and hints it; the runner verifies, takes a
    pool VM, starts the sandboxed Claude Code and delivers the prompt; transitions stream to the countdown.

@@ -21,7 +21,6 @@ import { useAppEnv } from './context';
 import { loginTarget, needsUnlock } from './guard';
 import { Header } from './Header';
 import { Nav } from './Nav';
-import { RecoveryBanner } from './RecoveryBanner';
 import { RenewalNotice } from './RenewalNotice';
 
 export function Layout() {
@@ -61,7 +60,6 @@ export function Layout() {
       <Header />
       {unlocked && <ConnectionBanner />}
       <RenewalNotice />
-      <RecoveryBanner />
       <div className="flex flex-1 flex-col lg:flex-row">
         <Nav />
         <div id={CONTENT_ID} tabIndex={-1} className="min-w-0 flex-1 focus:outline-none">

@@ -2,8 +2,9 @@
 // `register/begin {add:true}`, `create()` on this device or on another one (the platform's hybrid/QR and security-key
 // UI), `register/finish`; then one confirmation with the new passkey (`get()` restricted to it, a sign-in that
 // certifies a new session key and yields its PRF output) whose slot is uploaded, so the new passkey unlocks the keys
-// on its own. The previous session is ended and this browser continues with the new one. Without PRF output the
-// passkey still signs in; unlocking then needs the recovery code or this browser's device key.
+// on its own. The previous session is ended and this browser continues with the new one. A passkey without PRF output
+// is not accepted (KOR-22, ADR-055): the previous session removes it again (which ends its new session) and the
+// "PRF required" message offers another try.
 import { useState } from 'react';
 import { CeremonyCancelled } from '../../../../core/account/ceremony';
 import { signIn } from '../../../../core/account/login';
@@ -12,10 +13,14 @@ import { useStore } from '../../../hooks/useStore';
 import { useI18n } from '../../../i18n';
 import { useAppEnv } from '../../../shell/context';
 import { errorCode } from '../../../shell/errors';
+import { rejectPasskey } from '../../../prf-missing/device';
+import { PrfRequired } from '../../../prf-missing/PrfRequired';
 
 type State =
   | { readonly step: 'idle'; readonly notice: string | null; readonly busy: boolean }
-  | { readonly step: 'confirm'; readonly credentialId: string; readonly notice: string | null; readonly busy: boolean };
+  | { readonly step: 'confirm'; readonly credentialId: string; readonly notice: string | null; readonly busy: boolean }
+  /** The new passkey gave no PRF output and was removed again (`removed`: false if the hub refused). */
+  | { readonly step: 'prf_required'; readonly removed: boolean };
 
 const BUTTON = 'min-h-11 rounded border border-gray-400 px-4 disabled:opacity-60';
 
@@ -56,12 +61,18 @@ export function AddPasskey() {
         setState({ ...current, notice: t('passkeys.add.other'), busy: false });
         return;
       }
+      if (result.prf === null) {
+        const removed = await rejectPasskey(app, current.credentialId);
+        await app.loadMe();
+        setState({ step: 'prf_required', removed });
+        return;
+      }
       // this browser continues with the session of the new passkey; the previous one ends
       await app.client.request('POST', '/v1/session/end', { body: {} }).catch(() => null);
       await app.begin(result);
-      const slot = await app.uploadPasskeySlot(result, identity!);
+      await app.uploadPasskeySlot(result, identity!);
       await app.loadMe();
-      setState({ step: 'idle', notice: slot ? t('passkeys.add.done') : t('passkeys.add.done-no-prf'), busy: false });
+      setState({ step: 'idle', notice: t('passkeys.add.done'), busy: false });
     } catch (caught) {
       setState({ ...current, notice: failure(caught), busy: false });
     }
@@ -70,7 +81,14 @@ export function AddPasskey() {
   return (
     <div className="flex flex-col gap-3" data-testid="passkeys.add" data-step={state.step}>
       <h3 className="text-lg font-semibold">{t('passkeys.add.title')}</h3>
-      {state.step === 'idle' ? (
+      {state.step === 'prf_required' && (
+        <PrfRequired
+          context="add"
+          removed={state.removed}
+          onRetry={() => setState({ step: 'idle', notice: null, busy: false })}
+        />
+      )}
+      {state.step === 'idle' && (
         <>
           <p>{t('passkeys.add.explain')}</p>
           <div className="flex flex-wrap gap-3">
@@ -94,7 +112,8 @@ export function AddPasskey() {
             </button>
           </div>
         </>
-      ) : (
+      )}
+      {state.step === 'confirm' && (
         <>
           <p>{t('passkeys.add.confirm.explain')}</p>
           <button
@@ -108,7 +127,7 @@ export function AddPasskey() {
           </button>
         </>
       )}
-      {state.notice !== null && (
+      {state.step !== 'prf_required' && state.notice !== null && (
         <p role="status" data-testid="passkeys.add.notice">
           {state.notice}
         </p>

@@ -5,7 +5,8 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { anonClient } from '../../src/core/account/anon';
 import { register } from '../../src/core/account/register';
-import { FakeAuthenticator } from '../core/account/authenticator';
+import { b64uEncode } from '../../src/core/encoding/b64u';
+import { FakeAuthenticator, giveRecoveryCode } from '../core/account/authenticator';
 import { HubFailure, SimHub } from '../core/account/hub';
 import { renderApp } from './harness';
 
@@ -16,7 +17,8 @@ async function recoverPage() {
   let userId = '';
   const harness = await renderApp('/recover', { hub, auth }, async (made) => {
     const registration = await register(made.app.anon, auth, hub.addInvite());
-    code = registration.recoveryCode;
+    // an account with a recovery code
+    code = await giveRecoveryCode(hub, registration);
     userId = registration.userId;
     await made.app.restore();
   });
@@ -89,8 +91,8 @@ describe('RecoverScreen', () => {
     await waitFor(() => expect(screen.getByTestId('recover.notice')).toHaveTextContent('Sign-in was cancelled'));
   });
 
-  it('stores the new code before showing it, retries a failed save and keeps the reminder until confirmed', async () => {
-    const { hub, auth, code, userId, router, app } = await recoverPage();
+  it('stores the new code before showing it, retries a failed save and goes on with one button', async () => {
+    const { hub, auth, code, userId, router } = await recoverPage();
     submitCode(code);
     fireEvent.click(await screen.findByTestId('recover.create-passkey'));
     hub.override.set('PUT /v1/me/bundles/recovery', new HubFailure(503, 'unavailable'));
@@ -100,13 +102,46 @@ describe('RecoverScreen', () => {
     expect(auth.credentials).toHaveLength(2);
     hub.override.delete('PUT /v1/me/bundles/recovery');
     fireEvent.click(screen.getByTestId('recover.save-retry'));
-    const fresh = (await screen.findByTestId('recovery-code.code')).textContent!;
-    // stored already: the old code is gone, the reminder holds until the new code is confirmed
+    await screen.findByTestId('recovery-code.code');
+    // stored already: the old code is gone; no retyping, no browser offer with PRF
     expect(hub.users.get(userId)!.recoveryRotation).toBe(false);
-    expect(app.store.getState().session.recoveryUnconfirmed).toBe(true);
-    fireEvent.change(screen.getByTestId('recovery-code.confirm'), { target: { value: fresh.slice(-6) } });
+    expect(screen.getByTestId('recovery-code.explain')).toHaveTextContent('has replaced your old one');
+    expect(screen.queryByTestId('recovery-code.remember')).toBeNull();
     fireEvent.click(screen.getByTestId('recovery-code.continue'));
     await waitFor(() => expect(router.state.location.pathname).not.toBe('/recover'));
-    expect(app.store.getState().session.recoveryUnconfirmed).toBe(false);
+  });
+
+  it('says so when the refused new passkey cannot be removed', async () => {
+    const { hub, auth, code } = await recoverPage();
+    submitCode(code);
+    auth.prf = false;
+    fireEvent.click(await screen.findByTestId('recover.create-passkey'));
+    await screen.findByTestId('recover.unlock');
+    const id = b64uEncode(auth.credentials.at(-1)!.id);
+    hub.override.set(`DELETE /v1/passkeys/${id}`, new HubFailure(503, 'unavailable'));
+    fireEvent.click(screen.getByTestId('recover.unlock'));
+    expect(await screen.findByTestId('prf-required.not-removed')).toBeInTheDocument();
+  });
+
+  it('does not accept a new passkey without PRF: it is removed, and the same code begins again', async () => {
+    const { hub, auth, code, userId, router } = await recoverPage();
+    submitCode(code);
+    auth.prf = false;
+    fireEvent.click(await screen.findByTestId('recover.create-passkey'));
+    fireEvent.click(await screen.findByTestId('recover.unlock'));
+    const message = await screen.findByTestId('prf-required');
+    expect(message).toHaveAttribute('data-context', 'recover');
+    expect(message).toHaveTextContent('your recovery code still works');
+    const user = hub.users.get(userId)!;
+    expect(user.credentials.size).toBe(1);
+    expect(user.bundles.has('recovery')).toBe(true);
+    // the code was not replaced: it starts the recovery again, now with a passkey that has PRF
+    fireEvent.click(screen.getByTestId('prf-required.retry'));
+    auth.prf = true;
+    fireEvent.click(screen.getByTestId('recover.submit'));
+    fireEvent.click(await screen.findByTestId('recover.create-passkey'));
+    fireEvent.click(await screen.findByTestId('recover.unlock'));
+    fireEvent.click(await screen.findByTestId('recovery-code.continue'));
+    await waitFor(() => expect(router.state.location.pathname).not.toBe('/recover'));
   });
 });

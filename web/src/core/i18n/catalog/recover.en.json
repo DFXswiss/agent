@@ -21,7 +21,7 @@
   "unlock.working": "Waiting for your passkey…",
   "unlock.cancelled": "Sign-in was cancelled – try again.",
   "unlock.other-account": "Another passkey answered. Sign in with the passkey you just created.",
-  "new-code": "This new recovery code has replaced your old one. Store it in a safe place and confirm it.",
+  "new-code": "This new recovery code has replaced your old one. Keep it in a safe place.",
   "saving": "Saving the new recovery code…",
   "save-failed": "The new recovery code could not be saved: {reason}",
   "save-retry": "Try again"

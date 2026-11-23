@@ -3,6 +3,8 @@
 // without usable PRF output (06-web.md section 3.3 option b): null when this browser has no usable entry for the user;
 // an entry that does not open is forgotten (it can never unlock again).
 import { type SignIn, unlockWithPrf } from '../../core/account/login';
+import { removePasskey } from '../../core/account/passkeys';
+import { abandonRegistration } from '../../core/account/register';
 import type { AppSession } from '../../core/account/session';
 import type { Identity } from '../../core/crypto/keys';
 import { DeviceKeys } from '../../core/persist/device-key';
@@ -68,4 +70,27 @@ export async function rememberBrowser(
   } catch {
     return false;
   }
+}
+
+/**
+ * A registration whose new passkey gave no PRF output (KOR-22): the registration is withdrawn at the hub
+ * (`abandonRegistration`) and this browser signs out; true if the invitation is free again at once.
+ */
+export async function withdrawRegistration(app: AppSession): Promise<boolean> {
+  const released = await abandonRegistration((method, target, options) => app.client.request(method, target, options));
+  await app.signOut();
+  return released;
+}
+
+/**
+ * Removes a passkey that was not accepted (no PRF output; KOR-22); the hub ends its sessions as well. False if the hub
+ * refused or could not be reached – the caller says so (the passkey then stays on the account).
+ */
+export async function rejectPasskey(app: AppSession, credentialId: string): Promise<boolean> {
+  const request = (method: string, target: string, options?: { body: unknown }) =>
+    app.client.request(method, target, options);
+  return removePasskey(request, credentialId).then(
+    () => true,
+    () => false,
+  );
 }

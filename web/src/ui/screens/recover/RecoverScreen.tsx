@@ -1,10 +1,11 @@
 // `/recover` (06-web.md section 3.5, 04-crypto.md section 5.5) for users without any working passkey: recovery code →
 // `recovery/begin` (the recovery slot opens with `KEK_rec`) → proof → `recovery/finish` → a new passkey (gesture 1) →
 // sign-in restricted to it (gesture 2) → its passkey slot (with PRF) → a **new** recovery code, stored at once
-// (`PUT /v1/me/bundles/recovery`, replacing the old code; mandatory, 04-crypto.md section 5.5), shown once and
-// confirmed by retyping its last group (no skip; until then the "Recovery code not confirmed" reminder is set, so
-// leaving the page here keeps the reminder) → "Remember this browser" if the new passkey has no PRF → start page. `429` shows the waiting time. A cancelled gesture can be
-// retried; the proof is single-use, so a new passkey after a cancelled one begins the recovery again with the code.
+// (`PUT /v1/me/bundles/recovery`, replacing the old code; mandatory, 04-crypto.md section 5.5), shown once with one
+// "Continue" – no retyping → start page. A new passkey without PRF output is not accepted (KOR-22, ADR-055): it is
+// removed again, the browser signs out, and "Try again with another passkey" begins again with the same code (it
+// still works: nothing was replaced). `429` shows the waiting time. A cancelled gesture can be retried; the proof is
+// single-use, so a new passkey after a cancelled one begins the recovery again with the code.
 import { type FormEvent, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { CeremonyCancelled } from '../../../core/account/ceremony';
@@ -22,10 +23,11 @@ import {
   replaceRecoveryCode,
 } from '../../../core/account/recover';
 import { useI18n } from '../../i18n';
-import { RememberBrowser } from '../../prf-missing/RememberBrowser';
+import { rejectPasskey } from '../../prf-missing/device';
+import { PrfRequired } from '../../prf-missing/PrfRequired';
+import { RecoveryCodeStep } from '../invite/RecoveryCodeStep';
 import { useAppEnv } from '../../shell/context';
 import { errorCode } from '../../shell/errors';
-import { RecoveryCodeStep } from '../invite/RecoveryCodeStep';
 
 type Step =
   | { readonly step: 'code'; readonly busy: boolean; readonly notice: string | null }
@@ -47,29 +49,33 @@ type Step =
       readonly step: 'new_code';
       readonly start: RecoveryStart;
       readonly prepared: NewRecoveryCode;
-      readonly slot: boolean;
       /** The new code replaced the old one at the hub. */
       readonly saved: boolean;
       readonly failed: string | null;
     }
-  | { readonly step: 'remember'; readonly start: RecoveryStart }
+  /** The new passkey gave no PRF output: removed again (`removed`: false if the hub refused); the recovery begins anew
+   *  with the code. */
+  | { readonly step: 'prf_required'; readonly removed: boolean }
   | { readonly step: 'done' };
 
-/** The new code, shown once and confirmed by retyping its last group; no "Skip" after a recovery. */
-function NewCode({ code, onConfirmed }: { readonly code: string; readonly onConfirmed: () => void }) {
-  // `allowSkip` is false, so "Skip" is never rendered; the confirm handler keeps the required prop total
-  return <RecoveryCodeStep code={code} allowSkip={false} onConfirmed={onConfirmed} onSkipped={onConfirmed} />;
-}
-
-/** The new-code step: saving, the failed save with "Try again", or the stored code to confirm. */
+/** The new-code step: saving, the failed save with "Try again", or the stored code with "Continue". */
 function NewCodeState(props: {
   readonly step: Extract<Step, { step: 'new_code' }>;
-  readonly onConfirmed: () => void;
+  readonly onDone: () => void;
   readonly onRetry: () => void;
 }) {
   const { t, error } = useI18n();
   const { step } = props;
-  if (step.saved) return <NewCode code={step.prepared.code} onConfirmed={props.onConfirmed} />;
+  if (step.saved) {
+    return (
+      <RecoveryCodeStep
+        code={step.prepared.code}
+        explain={t('recover.new-code')}
+        continueLabel={t('invite.recovery.continue')}
+        onContinue={props.onDone}
+      />
+    );
+  }
   if (step.failed === null) return <p data-testid="recover.saving">{t('recover.saving')}</p>;
   return (
     <section role="alert" className="flex flex-col gap-3" data-testid="recover.save-failed" data-code={step.failed}>
@@ -142,10 +148,15 @@ export function RecoverScreen() {
       }
       await app.begin(result);
       await app.unlock(current.start.identity);
-      const slot = await app.uploadPasskeySlot(result, current.start.identity);
-      app.notePrf(result, slot);
+      if (!(await app.uploadPasskeySlot(result, current.start.identity))) {
+        const removed = await rejectPasskey(app, current.passkey.credentialId);
+        await app.signOut();
+        setStep({ step: 'prf_required', removed });
+        return;
+      }
+      app.notePrf(result, true);
       const prepared = await newRecoveryCode(current.start.userId, current.start.identity);
-      await save({ step: 'new_code', start: current.start, prepared, slot, saved: false, failed: null });
+      await save({ step: 'new_code', start: current.start, prepared, saved: false, failed: null });
     } catch (caught) {
       const notice =
         caught instanceof CeremonyCancelled ? t('recover.unlock.cancelled') : error(errorCode(caught)).title;
@@ -164,15 +175,8 @@ export function RecoverScreen() {
       setStep({ ...current, failed: errorCode(caught) });
       return;
     }
-    // the old code is gone; the reminder stays until the user retyped the new one
-    app.setRecoveryUnconfirmed(true);
     setCode('');
     setStep({ ...current, saved: true, failed: null });
-  };
-
-  const confirmed = (current: Extract<Step, { step: 'new_code' }>) => {
-    app.setRecoveryUnconfirmed(false);
-    setStep(current.slot ? { step: 'done' } : { step: 'remember', start: current.start });
   };
 
   if (step.step === 'done') return <Navigate to="/" replace />;
@@ -242,18 +246,15 @@ export function RecoverScreen() {
           {notice(step.notice)}
         </section>
       )}
-      {step.step === 'new_code' && (
-        <>
-          <p data-testid="recover.new-code">{t('recover.new-code')}</p>
-          <NewCodeState step={step} onConfirmed={() => confirmed(step)} onRetry={() => void save(step)} />
-        </>
-      )}
-      {step.step === 'remember' && (
-        <RememberBrowser
-          userId={step.start.userId}
-          identity={step.start.identity}
-          onDone={() => setStep({ step: 'done' })}
+      {step.step === 'prf_required' && (
+        <PrfRequired
+          context="recover"
+          removed={step.removed}
+          onRetry={() => setStep({ step: 'code', busy: false, notice: null })}
         />
+      )}
+      {step.step === 'new_code' && (
+        <NewCodeState step={step} onDone={() => setStep({ step: 'done' })} onRetry={() => void save(step)} />
       )}
     </main>
   );

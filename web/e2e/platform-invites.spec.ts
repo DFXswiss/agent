@@ -75,8 +75,6 @@ test('an inviter creates a platform invitation that brings a new customer into a
   await invitee.getByTestId('invite.display-name').fill('Katherine Johnson');
   await invitee.getByTestId('invite.create-passkey').click();
   await invitee.getByTestId('invite.unlock').click();
-  await invitee.getByTestId('recovery-code.skip').click();
-  await invitee.getByTestId('recovery-code.skip-confirm').click();
   await expect(invitee).toHaveURL(ORG_PATH);
   const org = ORG_PATH.exec(invitee.url())![1]!;
   await page.reload();

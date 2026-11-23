@@ -156,3 +156,64 @@ def test_credential_reference_and_decode() -> None:
     with pytest.raises(HubError, match="request_invalid"):
         decode("AB")
     assert timedelta(seconds=jobs.ORPHAN_SECONDS) == timedelta(days=1)
+
+
+def test_the_registered_user_withdraws_an_unfinished_registration(
+    browser: FakeBrowser, orphan: tuple[str, Account]
+) -> None:
+    """KOR-22: the new passkey gave no PRF output; the browser withdraws the registration at once (no 24 h wait)."""
+    hub = browser.hub
+    invite, account = orphan
+    session = browser.login(account)
+    other = browser.register(seed_invite(hub))
+    response = browser.client(session).delete("/v1/me/registration")
+    assert response.status_code == 200, response.text
+    assert response.json() == {}
+    # nothing of the user is left, the invitation is free again, the other registration stays
+    assert set(user_rows(hub, account.user_id).values()) == {0}
+    assert rows(hub, "SELECT registered_user, registered_at FROM hub.invite WHERE id = %s", invite) == [(None, None)]
+    assert user_rows(hub, other.user_id)["principal"] == 1
+    [(actor_kind, actor, target, detail)] = rows(
+        hub, "SELECT actor_kind, actor_id, target_id, detail FROM hub.audit WHERE action = 'invite.release'"
+    )
+    assert (actor_kind, str(actor), target, detail) == (
+        "user",
+        account.user_id,
+        invite,
+        {"invite_id": invite, "kind": "user"},
+    )
+    # the same link registers again right away
+    again = browser.register(invite)
+    assert again.user_id != account.user_id
+    # the deleted session is gone with the user
+    assert browser.client(session).delete("/v1/me/registration").status_code == 401
+
+
+@pytest.mark.parametrize("finished", ["used", "member", "role", "released"])
+def test_a_finished_account_cannot_withdraw(browser: FakeBrowser, orphan: tuple[str, Account], finished: str) -> None:
+    hub = browser.hub
+    _, account = orphan
+    session = browser.login(account)
+    with hub.pool.connection() as connection:
+        if finished == "used":
+            connection.execute(
+                "UPDATE hub.invite SET used_at = %s, used_by = %s", (hub.clock(), uuid.UUID(account.user_id))
+            )
+        elif finished == "role":
+            connection.execute(
+                "INSERT INTO hub.platform_role (user_id, role, granted_seq) VALUES (%s, 'inviter', 1)",
+                (uuid.UUID(account.user_id),),
+            )
+        elif finished == "released":
+            # no invitation names the user any more
+            connection.execute("UPDATE hub.invite SET registered_user = NULL, registered_at = NULL")
+        else:
+            connection.execute(
+                "INSERT INTO hub.org_member (org_id, principal_id, kind, role, joined_seq)"
+                " VALUES (%s, %s, 'user', 'member', 1)",
+                (uuid.uuid4(), uuid.UUID(account.user_id)),
+            )
+    response = browser.client(session).delete("/v1/me/registration")
+    assert response.status_code == 403
+    assert response.json()["error"] == "forbidden"
+    assert user_rows(hub, account.user_id)["principal"] == 1

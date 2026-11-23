@@ -1,6 +1,5 @@
 // Non-secret preferences of this browser in `localStorage`: the last org a user worked in (route `/`, 06-web.md
-// section 2.4) and the reminder that the recovery code was skipped (section 3.2). Only IDs and a flag – no keys, no
-// names, no content (those stay in memory or in the IndexedDB entries of `persist/`). A storage that refuses access
+// section 2.4). Only IDs – no keys, no names, no content (those stay in memory or in the IndexedDB entries of `persist/`). A storage that refuses access
 // (private mode, quota) behaves as empty.
 export interface PrefStorage {
   getItem(key: string): string | null;
@@ -42,11 +41,8 @@ export class Prefs {
     this.#set(`last-org.${userId}`, org);
   }
 
-  recoveryUnconfirmed(userId: string): boolean {
-    return this.#get(`recovery-unconfirmed.${userId}`) === '1';
-  }
-
-  setRecoveryUnconfirmed(userId: string, unconfirmed: boolean): void {
-    this.#set(`recovery-unconfirmed.${userId}`, unconfirmed ? '1' : null);
+  /** Removes the reminder flag of a skipped recovery code that browsers stored before KOR-22 (no reminder any more). */
+  forgetRecoveryReminder(userId: string): void {
+    this.#set(`recovery-unconfirmed.${userId}`, null);
   }
 }

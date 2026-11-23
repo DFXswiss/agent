@@ -1,5 +1,5 @@
-// Platform invitation → passkey with PRF → recovery code → private org (06-web.md sections 3.1, 3.1.1, 3.2;
-// 04-crypto.md sections 5.1, 5.3; E2E-01 web part) against the real hub with a CDP virtual authenticator.
+// Platform invitation → passkey with PRF → private org, no code screen (06-web.md sections 3.1, 3.1.1, 3.2;
+// 04-crypto.md sections 5.1, 5.3; KOR-22; E2E-01 web part) against the real hub with a CDP virtual authenticator.
 import { formatCode, generateCode } from '../src/core/crypto/invite';
 import { expect, test } from './fixtures/test.ts';
 import { addAuthenticator } from './helpers/authenticator.ts';
@@ -7,7 +7,10 @@ import { cancelNext } from './helpers/cancel.ts';
 import { onboard, ORG_PATH } from './helpers/onboard.ts';
 import { platformInvite } from './helpers/platform.ts';
 
-test('a new customer registers with a passkey and lands in the private organization', async ({ page, baseURL }) => {
+test('a new customer registers with a passkey and lands in the private organization, no code screen', async ({
+  page,
+  baseURL,
+}) => {
   const authenticator = await addAuthenticator(page);
   const sent: string[] = [];
   page.on('request', (request) => sent.push(`${request.url()}\n${request.postData() ?? ''}`));
@@ -24,26 +27,19 @@ test('a new customer registers with a passkey and lands in the private organizat
   await expect(page.getByTestId('invite.unlock')).toBeVisible();
   expect(await authenticator.credentials()).toHaveLength(1);
   await page.getByTestId('invite.unlock').click();
-  const recoveryCode = (await page.getByTestId('recovery-code.code').textContent())!;
-  expect(recoveryCode).toMatch(/^[A-Z2-7]{5}(-[A-Z2-7]{5}){3}-[A-Z2-7]{6}$/);
-  await page.getByTestId('recovery-code.confirm').fill('XXXXXX');
-  await page.getByTestId('recovery-code.continue').click();
-  await expect(page.getByTestId('recovery-code.mismatch')).toBeVisible();
-  await page.getByTestId('recovery-code.confirm').fill(` ${recoveryCode.slice(-6).toLowerCase()} `);
-  await page.getByTestId('recovery-code.continue').click();
   await expect(page).toHaveURL(ORG_PATH);
+  await expect(page.getByTestId('recovery-code.step')).toHaveCount(0);
   await expect(page.getByTestId('shell.blocked')).toHaveCount(0);
-  await expect(page.getByTestId('shell.recovery-banner')).toHaveCount(0);
   await expect(page.getByTestId('shell.settings')).toBeVisible();
   // `/` brings the user back to the private org
   const org = ORG_PATH.exec(page.url())![1]!;
   await page.getByTestId('shell.brand').click();
   await expect(page).toHaveURL(new RegExp(`/o/${org}$`));
-  // neither the invitation code nor the recovery code ever left the browser
+  // the invitation code never left the browser, and no recovery code was set afterwards
   const traffic = sent.join('\n');
-  for (const secret of [invite.code, invite.code.replace(/-/g, ''), recoveryCode, recoveryCode.replace(/-/g, '')]) {
-    expect(traffic).not.toContain(secret);
-  }
+  for (const secret of [invite.code, invite.code.replace(/-/g, '')]) expect(traffic).not.toContain(secret);
+  expect(traffic).not.toContain('/v1/me/bundles/recovery');
+  expect(traffic).not.toContain('/v1/me/recovery/begin');
 });
 
 test('the same invitation cannot be used twice', async ({ page, baseURL }) => {
@@ -76,7 +72,7 @@ test('a cancelled second gesture can be repeated without registering again', asy
   await page.getByTestId('invite.unlock').click();
   await expect(page.getByTestId('invite.notice')).toHaveText('Sign-in was cancelled – try again.');
   await page.getByTestId('invite.unlock').click();
-  await expect(page.getByTestId('recovery-code.code')).toBeVisible();
+  await expect(page).toHaveURL(ORG_PATH);
   expect(await authenticator.credentials()).toHaveLength(1);
 });
 
@@ -142,9 +138,6 @@ test('a failed organization creation is retried with the same request', async ({
   await page.getByTestId('invite.display-name').fill('Grace');
   await page.getByTestId('invite.create-passkey').click();
   await page.getByTestId('invite.unlock').click();
-  const code = (await page.getByTestId('recovery-code.code').textContent())!;
-  await page.getByTestId('recovery-code.confirm').fill(code.slice(-6));
-  await page.getByTestId('recovery-code.continue').click();
   await expect(page.getByTestId('invite.accept-failed')).toHaveAttribute('data-code', 'unavailable');
   await page.getByTestId('invite.accept-retry').click();
   await expect(page).toHaveURL(ORG_PATH);
@@ -152,25 +145,33 @@ test('a failed organization creation is retried with the same request', async ({
   expect(bodies[1]).toBe(bodies[0]);
 });
 
-test('an authenticator without PRF registers; the recovery code cannot be skipped, remembering is offered', async ({
+test('a passkey without PRF is refused with the hint; nothing remains and the same link works with another', async ({
   page,
   baseURL,
 }) => {
-  await addAuthenticator(page, { hasPrf: false });
+  const refused = await addAuthenticator(page, { hasPrf: false });
   const sent: string[] = [];
-  page.on('request', (request) => sent.push(request.url()));
+  page.on('request', (request) => sent.push(`${request.method()} ${request.url()}`));
   const invite = await platformInvite(baseURL!);
   await page.goto(`/invite#${invite.code}`);
   await page.getByTestId('invite.display-name').fill('Grace');
   await page.getByTestId('invite.create-passkey').click();
   await page.getByTestId('invite.unlock').click();
-  const code = (await page.getByTestId('recovery-code.code').textContent())!;
-  await expect(page.getByTestId('recovery-code.skip')).toHaveCount(0);
-  await page.getByTestId('recovery-code.confirm').fill(code.slice(-6));
-  await page.getByTestId('recovery-code.continue').click();
-  await expect(page.getByTestId('prf-missing.offer')).toBeVisible();
-  await page.getByTestId('prf-missing.offer.skip').click();
+  const message = page.getByTestId('prf-required');
+  await expect(message).toContainText('You need a passkey that supports PRF.');
+  await expect(message).toContainText('Bitwarden currently does not support PRF');
+  await expect(message).toContainText('Delete the passkey you just created');
+  await expect(page.getByTestId('prf-required.later')).toHaveCount(0);
+  // the registration was withdrawn at the hub; no passkey slot, no organization
+  expect(sent.some((line) => line.startsWith('DELETE') && line.endsWith('/v1/me/registration'))).toBe(true);
+  expect(sent.some((line) => line.includes('/v1/me/bundles/'))).toBe(false);
+  expect(sent.some((line) => line.startsWith('POST') && line.endsWith('/v1/orgs'))).toBe(false);
+  // another passkey on the same link
+  await refused.cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId: refused.id });
+  await addAuthenticator(page);
+  await page.getByTestId('prf-required.retry').click();
+  await expect(page.getByTestId('invite.display-name')).toHaveValue('Grace');
+  await page.getByTestId('invite.create-passkey').click();
+  await page.getByTestId('invite.unlock').click();
   await expect(page).toHaveURL(ORG_PATH);
-  // no passkey slot without PRF output
-  expect(sent.some((url) => url.includes('/v1/me/bundles/'))).toBe(false);
 });

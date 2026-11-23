@@ -104,8 +104,8 @@ test('a browser that refuses localStorage still works, without the remembered pr
     });
   });
   await addAuthenticator(page);
-  await onboard(page, { origin: baseURL!, skip: true });
-  await expect(page.getByTestId('shell.recovery-banner')).toBeVisible();
+  await onboard(page, { origin: baseURL!, code: false });
+  await expect(page.getByTestId('shell.layout')).toBeVisible();
 });
 
 test.describe('on a phone', () => {

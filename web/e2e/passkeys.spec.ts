@@ -43,7 +43,7 @@ test('a second passkey on another device unlocks the same identity, the first is
   await page.getByTestId('passkeys.remove.cancel').click();
   await expect(page.getByTestId('passkeys.remove-dialog')).toHaveCount(0);
   await first.getByTestId('passkeys.remove').click();
-  await expect(page.getByTestId('passkeys.remove-dialog')).toContainText('Your other passkeys keep working.');
+  await expect(page.getByTestId('passkeys.remove-dialog')).toContainText('Your other passkeys still sign you in');
   await page.getByTestId('passkeys.remove.confirm').click();
   await expect(page.getByTestId('passkeys.notice')).toHaveText('The passkey was removed.');
   await expect(items).toHaveCount(1);

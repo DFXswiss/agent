@@ -1,7 +1,8 @@
 // E2E-30 (07-testing.md sections 1, 2.1; 04-crypto.md sections 5.4–5.6; 06-web.md sections 3.3, 3.5, 3.6): one account
 // with three kinds of passkeys and the recovery code. A second passkey on a roaming authenticator (`transport: usb`)
-// signs in and unlocks alone; a passkey of an authenticator without PRF signs in and takes the `prf_missing` path
-// (unlock with the recovery code); after "losing" every passkey the recovery code registers a new one and issues a new
+// signs in and unlocks alone; a passkey of an authenticator without PRF is not accepted (KOR-22), and an existing
+// passkey signing in from an authenticator without PRF takes the `prf_missing` path (unlock with the recovery code);
+// after "losing" every passkey the recovery code registers a new one and issues a new
 // recovery code that replaces the old one (slot and code). Each way unlocks the same identity: after every sign-in the
 // app itself decrypts a whiteboard entry written before with the org's keys (wrapped only for this identity), the
 // user ID stays the same, and the identity of the recovery slot opens the same keys. Runs on T1.
@@ -35,7 +36,7 @@ async function addPasskey(page: Page, where: 'other-device' | 'this-device', not
   await expect(page.getByTestId('passkeys.item')).toHaveCount(count);
 }
 
-test('@E2E-30 @R-1.6 @R-1.7 @R-5.6 @R-14.1 @R-P.5 a second passkey, a passkey without PRF and the recovery code unlock the same identity', async ({
+test('@E2E-30 @R-1.6 @R-1.7 @R-5.6 @R-14.1 @R-P.5 a second passkey, a passkey signing in without PRF and the recovery code unlock the same identity', async ({
   page,
   e2e,
   orchestrator,
@@ -80,18 +81,21 @@ test('@E2E-30 @R-1.6 @R-1.7 @R-5.6 @R-14.1 @R-P.5 a second passkey, a passkey wi
   await expect(page.getByTestId('prf-missing.page')).toHaveCount(0);
   await sameIdentity(ada.onboarded.recoveryCode);
 
-  // 2. A passkey without PRF: it is registered, but signing in with it needs the recovery code (`prf_missing`).
+  // 2. A passkey without PRF is not accepted (KOR-22): it is removed again and the account keeps its two passkeys.
   // (Chromium's virtual authenticators ignore the attachment hint: the new one is the only one present.)
+  const { credentials } = await usb.cdp.send('WebAuthn.getCredentials', { authenticatorId: usb.id });
   await lose(usb);
   const noPrf = await addAuthenticator(page, 'no-prf');
-  await addPasskey(
-    page,
-    'this-device',
-    'The passkey was added. It signs you in, but cannot unlock your keys (no PRF): unlocking then needs your recovery code or a remembered browser.',
-    3,
-  );
-  await expect(page.getByTestId('passkeys.item').and(page.locator('[data-prf="false"]'))).toHaveCount(1);
-  expect(await noPrf.credentials()).toHaveLength(1);
+  await page.getByTestId('shell.settings').click();
+  await page.getByTestId('passkeys.add.this-device').click();
+  await page.getByTestId('passkeys.add.confirm').click();
+  await expect(page.getByTestId('prf-required')).toContainText('The passkey was not added.');
+  await expect(page.getByTestId('passkeys.item')).toHaveCount(2);
+  // The usb passkey signs in from an authenticator without PRF: the unlock needs the recovery code (`prf_missing`).
+  await noPrf.cdp.send('WebAuthn.clearCredentials', { authenticatorId: noPrf.id });
+  for (const credential of credentials) {
+    await noPrf.cdp.send('WebAuthn.addCredential', { authenticatorId: noPrf.id, credential });
+  }
   await signOut(page);
   await signIn(page);
   await expect(page.getByTestId('prf-missing.explain')).toHaveText(
@@ -122,7 +126,6 @@ test('@E2E-30 @R-1.6 @R-1.7 @R-5.6 @R-14.1 @R-P.5 a second passkey, a passkey wi
   await page.getByTestId('recover.unlock').click();
   const fresh = (await page.getByTestId('recovery-code.code').textContent())!;
   expect(fresh).not.toBe(ada.onboarded.recoveryCode);
-  await page.getByTestId('recovery-code.confirm').fill(fresh.slice(-6));
   await page.getByTestId('recovery-code.continue').click();
   await expect(page).toHaveURL(new RegExp(`/o/${uuid(org)}$`), { timeout: 30_000 });
   expect(await replacement.credentials()).toHaveLength(1);

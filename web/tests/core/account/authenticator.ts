@@ -1,10 +1,13 @@
 // A fake WebAuthn authenticator for the account-flow tests (structurally a `Credentials`): `create()` makes a
 // credential with a random ID and a per-credential PRF secret, `get()` asserts with the last (or chosen) credential.
 // PRF output = SHA-256(secret || prf input) – stable per credential like a real authenticator. Knobs: no PRF, a
-// cancelled ceremony (`NotAllowedError`/`AbortError`) or no credential at all.
+// cancelled ceremony (`NotAllowedError`/`AbortError`) or no credential at all, and `prfAtCreate = false` for an
+// authenticator that answers PRF at `get()` without reporting it at `create()`.
 import { concat, utf8 } from '../../../src/core/encoding/bytes';
 import { random, sha256 } from '../../../src/core/crypto/subtle';
 import type { Credentials } from '../../../src/core/account/ceremony';
+import { newRecoveryCode } from '../../../src/core/account/recover';
+import type { Identity } from '../../../src/core/crypto/keys';
 
 export interface FakeCredential {
   readonly id: Uint8Array<ArrayBuffer>;
@@ -14,6 +17,7 @@ export interface FakeCredential {
 export class FakeAuthenticator implements Credentials {
   readonly credentials: FakeCredential[] = [];
   prf = true;
+  prfAtCreate = true;
   /** Next ceremony: throw a DOMException-like error with this name, or resolve null. */
   refuse: string | 'null' | null = null;
   use: FakeCredential | null = null;
@@ -42,7 +46,7 @@ export class FakeAuthenticator implements Credentials {
     this.lastCreate = options.publicKey;
     const credential = { id: random(16), secret: random(32) };
     this.credentials.push(credential);
-    const prf = this.prf ? { prf: { enabled: true } } : {};
+    const prf = this.prf && this.prfAtCreate ? { prf: { enabled: true } } : {};
     return {
       rawId: credential.id.buffer,
       response: {
@@ -70,4 +74,19 @@ export class FakeAuthenticator implements Credentials {
       getClientExtensionResults: () => results,
     };
   }
+}
+
+/**
+ * Gives a registered user a recovery code in the simulated hub (as the settings would: `newRecoveryCode` and the
+ * replaced slot), for tests of accounts that have one – a registration makes none (KOR-22). Returns the code text.
+ */
+export async function giveRecoveryCode(
+  hub: { users: Map<string, { bundles: Map<string, string>; recoveryId: string | null }> },
+  registration: { readonly userId: string; readonly identity: Identity },
+): Promise<string> {
+  const prepared = await newRecoveryCode(registration.userId, registration.identity);
+  const user = hub.users.get(registration.userId)!;
+  user.bundles.set('recovery', prepared.body.bundle_ct);
+  user.recoveryId = prepared.body.new_recovery_id;
+  return prepared.code;
 }

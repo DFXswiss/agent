@@ -30,7 +30,7 @@ import { HubError } from '../../../src/core/net/signedFetch';
 import { Persist } from '../../../src/core/persist';
 import { createStore } from '../../../src/core/store';
 import { VECTOR_FILES } from '../crypto/vector-suite';
-import { FakeAuthenticator } from './authenticator';
+import { FakeAuthenticator, giveRecoveryCode } from './authenticator';
 import { CONFIG, HubFailure, ORIGIN, SimHub, T0 } from './hub';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vector files are untyped JSON
@@ -71,7 +71,9 @@ async function setup() {
     prefs: new Prefs(null),
     now: () => T0,
   });
-  const registration = await register(app.anon, auth, hub.addInvite());
+  const registered = await register(app.anon, auth, hub.addInvite());
+  // an account with a recovery code (the recovery needs one)
+  const registration = { ...registered, recoveryCode: await giveRecoveryCode(hub, registered) };
   return { hub, auth, app, registration, client: recoveryClient(hub.fetch) };
 }
 

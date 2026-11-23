@@ -13,8 +13,6 @@
   "renew.working": "Waiting for your passkey…",
   "renew.cancelled": "Sign-in was cancelled – try again.",
   "renew.other-user": "This passkey belongs to another account. Sign in again on the sign-in page.",
-  "recovery.banner": "Recovery code not confirmed. Without it, losing your passkeys means losing your data.",
-  "recovery.banner.action": "Open settings",
   "blocked.title": "This organization is blocked",
   "blocked.body": "The server presented an inconsistent membership history. Nothing is read from or written to this organization until this is resolved.",
   "blocked.evidence": "Evidence for support: stored head {stored}, served head {served}, event head {lh}.",

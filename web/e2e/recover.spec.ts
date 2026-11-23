@@ -1,8 +1,8 @@
 // Recovery with the recovery code (06-web.md section 3.5, 04-crypto.md section 5.5) against the real hub: after
 // "losing" every passkey (the virtual authenticator is removed) the code registers a new passkey, signs in with it and
 // issues a new recovery code that replaces the old one; a refused recovery shows the waiting time of the hub's limit
-// (20 per day and recovery code); cancelled ceremonies can be repeated; a new passkey without PRF offers "Remember this
-// browser".
+// (20 per day and recovery code); cancelled ceremonies can be repeated; the new code is shown with one "Continue", no
+// retyping; a new passkey without PRF is refused and the same code begins again (KOR-22).
 import { parseRecoveryCode, recoveryId } from '../src/core/crypto/recovery';
 import { expect, test } from './fixtures/test.ts';
 import { addAuthenticator, type VirtualAuthenticator } from './helpers/authenticator.ts';
@@ -38,11 +38,8 @@ test('recovery after losing every passkey replaces the passkey and the recovery 
   await page.getByTestId('recover.unlock').click();
   const fresh = (await page.getByTestId('recovery-code.code').textContent())!;
   expect(fresh).not.toBe(done.recoveryCode);
-  await expect(page.getByTestId('recovery-code.skip')).toHaveCount(0);
-  await page.getByTestId('recovery-code.confirm').fill('WRONG1');
-  await page.getByTestId('recovery-code.continue').click();
-  await expect(page.getByTestId('recovery-code.mismatch')).toBeVisible();
-  await page.getByTestId('recovery-code.confirm').fill(fresh.slice(-6));
+  await expect(page.getByRole('textbox')).toHaveCount(0);
+  await expect(page.getByTestId('recovery-code.remember')).toHaveCount(0);
   await page.getByTestId('recovery-code.continue').click();
   await expect(page).toHaveURL(new RegExp(`/o/${done.org}$`));
   expect(await replacement.credentials()).toHaveLength(1);
@@ -116,35 +113,33 @@ test('cancelled ceremonies of the recovery can be repeated', async ({ page, base
   await page.getByTestId('recover.unlock').click();
   await expect(page.getByTestId('recover.notice')).toHaveText('Sign-in was cancelled – try again.');
   await page.getByTestId('recover.unlock').click();
-  const fresh = (await page.getByTestId('recovery-code.code').textContent())!;
-  await page.getByTestId('recovery-code.confirm').fill(fresh.slice(-6));
+  await expect(page.getByTestId('recovery-code.code')).toBeVisible();
   await page.getByTestId('recovery-code.continue').click();
   await expect(page).toHaveURL(ORG_PATH);
 });
 
-test('a new passkey without PRF offers to remember the browser after the new code', async ({ page, baseURL }) => {
+test('a new passkey without PRF is refused; the same code begins again with another', async ({ page, baseURL }) => {
   const lost = await addAuthenticator(page);
   const done = await onboard(page, { origin: baseURL! });
   await page.getByTestId('shell.settings').click();
   await page.getByTestId('settings.sign-out').click();
   await lose(lost);
-  await addAuthenticator(page, { hasPrf: false });
+  const refused = await addAuthenticator(page, { hasPrf: false });
   await page.goto('/recover');
   await page.getByTestId('recover.code').fill(done.recoveryCode);
   await page.getByTestId('recover.submit').click();
   await page.getByTestId('recover.create-passkey').click();
   await page.getByTestId('recover.unlock').click();
-  const fresh = (await page.getByTestId('recovery-code.code').textContent())!;
-  await page.getByTestId('recovery-code.confirm').fill(fresh.slice(-6));
+  await expect(page.getByTestId('prf-required')).toContainText('your recovery code still works');
+  await lose(refused);
+  await addAuthenticator(page);
+  await page.getByTestId('prf-required.retry').click();
+  await page.getByTestId('recover.submit').click();
+  await page.getByTestId('recover.create-passkey').click();
+  await page.getByTestId('recover.unlock').click();
   await page.getByTestId('recovery-code.continue').click();
-  await expect(page.getByTestId('prf-missing.offer')).toBeVisible();
-  await page.getByTestId('prf-missing.offer.remember').click();
   await expect(page).toHaveURL(new RegExp(`/o/${done.org}$`));
-  // the remembered browser unlocks the next sign-in without the recovery code
+  // only the lost and the accepted passkey are on the account
   await page.getByTestId('shell.settings').click();
-  await expect(page.getByTestId('passkeys.browser.remembered')).toBeVisible();
-  await page.getByTestId('settings.sign-out').click();
-  await page.getByTestId('login.submit').click();
-  await expect(page).toHaveURL(new RegExp(`/o/${done.org}$`));
-  await expect(page.getByTestId('prf-missing.page')).toHaveCount(0);
+  await expect(page.getByTestId('passkeys.item')).toHaveCount(2);
 });

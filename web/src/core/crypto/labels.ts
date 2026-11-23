@@ -16,6 +16,8 @@ export const PRF_INPUT_LABEL = 'agent.dfx.swiss/prf/v1';
 export const KEK = 'kek\0';
 export const RECOVERY_KEK = 'recovery-kek';
 export const RECOVERY_ID = 'recovery-id';
+/** Browser only (KOR-22, ADR-055): the nonce that marks an unset recovery slot; hub and runner never see the label. */
+export const RECOVERY_UNSET = 'recovery-unset\0';
 export const INVITE_ID = 'invite-id';
 export const INVITE_PACKAGE = 'invite-package';
 export const INVITE_SIGN = 'invite-sign';

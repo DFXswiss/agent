@@ -1,8 +1,9 @@
 // `/invite#<code>` for platform invitations (06-web.md sections 3.1, 3.1.1, 3.2; 04-crypto.md sections 5.1, 5.3):
 // parsing → lookup → intro (display name) → create_passkey (gesture 1, `register/begin` + `create()` +
-// `register/finish`) → unlock_passkey (gesture 2: login ceremony, passkey slot upload with PRF) → recovery_code →
-// accept (private genesis, `POST /v1/orgs`) → done (`/o/:org`). A cancelled gesture returns to the step before with
-// "try again"; a failed accept retries with the identical request (same IDs, idempotent). Org invitations branch into
+// `register/finish`) → unlock_passkey (gesture 2: login ceremony, passkey slot upload with PRF) → accept (private
+// genesis, `POST /v1/orgs`) → done (`/o/:org`). A passkey without PRF output ends in `prf_required`: the registration
+// is withdrawn (account deleted, invitation free again) and "Try again with another passkey" returns to the intro
+// (KOR-22, ADR-055). A cancelled gesture returns to the step before with "try again"; a failed accept retries with the identical request (same IDs, idempotent). Org invitations branch into
 // `org/` (WEB-08).
 import { type FormEvent, useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
@@ -13,7 +14,8 @@ import { codeToInviteId, lookupInvite, register } from '../../../core/account/re
 import { formatEventTime } from '../../../core/i18n';
 import { parseTime } from '../../../core/encoding/time';
 import { useI18n } from '../../i18n';
-import { OnboardingRecovery } from '../../prf-missing/OnboardingRecovery';
+import { withdrawRegistration } from '../../prf-missing/device';
+import { PrfRequired } from '../../prf-missing/PrfRequired';
 import { useAppEnv } from '../../shell/context';
 import { errorCode } from '../../shell/errors';
 import { forgetFragment, takeFragment } from './fragment';
@@ -84,8 +86,18 @@ export function InviteScreen() {
       await app.begin(result);
       await app.unlock(current.registration.identity);
       const uploaded = await app.uploadPasskeySlot(result, current.registration.identity);
+      if (!uploaded) {
+        setStep({ step: 'prf_required', lookup: current.lookup, released: await withdrawRegistration(app) });
+        return;
+      }
       app.notePrf(result, uploaded);
-      setStep({ step: 'recovery_code', lookup: current.lookup, registration: current.registration, slot: uploaded });
+      void accept({
+        step: 'accept',
+        lookup: current.lookup,
+        registration: current.registration,
+        prepared: null,
+        failed: null,
+      });
     } catch (caught) {
       const notice =
         caught instanceof CeremonyCancelled ? t('invite.unlock.cancelled') : error(errorCode(caught)).title;
@@ -93,9 +105,9 @@ export function InviteScreen() {
     }
   };
 
-  const accept = async (current: Extract<Step, { step: 'recovery_code' | 'accept' }>) => {
+  const accept = async (current: Extract<Step, { step: 'accept' }>) => {
     const base = { step: 'accept', lookup: current.lookup, registration: current.registration } as const;
-    let prepared = current.step === 'accept' ? current.prepared : null;
+    let prepared = current.prepared;
     setStep({ ...base, prepared, failed: null });
     try {
       prepared ??= await preparePrivateOrg({
@@ -111,11 +123,6 @@ export function InviteScreen() {
     } catch (caught) {
       setStep({ ...base, prepared, failed: errorCode(caught) });
     }
-  };
-
-  const recoveryDone = (current: Extract<Step, { step: 'recovery_code' }>, skipped: boolean) => {
-    app.setRecoveryUnconfirmed(skipped);
-    void accept(current);
   };
 
   if (step.step === 'done') return <Navigate to={`/o/${step.org}`} replace />;
@@ -224,14 +231,11 @@ export function InviteScreen() {
           )}
         </section>
       )}
-      {step.step === 'recovery_code' && (
-        <OnboardingRecovery
-          code={step.registration.recoveryCode}
-          slot={step.slot}
-          userId={step.registration.userId}
-          identity={step.registration.identity}
-          onConfirmed={() => recoveryDone(step, false)}
-          onSkipped={() => recoveryDone(step, true)}
+      {step.step === 'prf_required' && (
+        <PrfRequired
+          context="register"
+          released={step.released}
+          onRetry={() => setStep({ step: 'intro', lookup: step.lookup, notice: null })}
         />
       )}
       {step.step === 'accept' &&

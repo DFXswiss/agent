@@ -247,6 +247,23 @@
     },
     {
       "method": "DELETE",
+      "path": "/v1/me/registration",
+      "name": "me-registration-delete",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/me-registration-delete.request.json",
+      "response": "api/me-registration-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-22"
+    },
+    {
+      "method": "DELETE",
       "path": "/v1/passkeys/{credential_id}",
       "name": "passkeys-delete",
       "section": "4.1",

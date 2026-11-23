@@ -19,6 +19,7 @@ import {
   personOf,
 } from '../fixtures/identity.ts';
 import { hubTablesContaining, ORG_PATH } from '../fixtures/platform.ts';
+import { createRecoveryCode } from '../../../web/e2e/helpers/onboard.ts';
 import { PageUser } from '../../../web/e2e/helpers/user.ts';
 import { b64uDecode } from '../../../web/src/core/encoding/b64u';
 import { inviteSecrets, parseCode } from '../../../web/src/core/crypto/invite';
@@ -62,11 +63,10 @@ test('@E2E-02 @R-1.1 @R-1.4 @R-1.5 @R-2.2 @R-8.1 @R-8.3 @R-8.4 @R-P.5 an invited
   await invitee.page.getByTestId('invite.display-name').fill(INVITEE);
   await invitee.page.getByTestId('invite.create-passkey').click();
   await invitee.page.getByTestId('invite.unlock').click();
-  const recoveryCode = (await invitee.page.getByTestId('recovery-code.code').textContent())!;
-  await invitee.page.getByTestId('recovery-code.confirm').fill(recoveryCode.slice(-6).toLowerCase());
-  await invitee.page.getByTestId('recovery-code.continue').click();
-  // The invited org is the default context (R-2.2): the join lands there, and so does the next sign-in.
+  // The invited org is the default context (R-2.2): the join lands there – no code screen with PRF (KOR-22) –, and so
+  // does the next sign-in. A recovery code from the settings lets the Node side open the identity.
   await expect(invitee.page).toHaveURL(new RegExp(`/o/${org}$`), { timeout: 30_000 });
+  const recoveryCode = await createRecoveryCode(invitee.page);
   await anonymousBudget(COST.page);
   await invitee.page.goto('/');
   await signIn(invitee.page);

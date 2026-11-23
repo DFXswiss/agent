@@ -5,13 +5,8 @@ import { CryptoError } from '../../src/core/crypto/errors';
 import { HubError } from '../../src/core/net/signedFetch';
 import { forgetFragment, takeFragment } from '../../src/ui/screens/invite/fragment';
 import { afterLookup, failedLookup } from '../../src/ui/screens/invite/machine';
-import {
-  confirmsCode,
-  downloadText,
-  FILE_NAME,
-  lastGroup,
-  RecoveryCodeStep,
-} from '../../src/ui/screens/invite/RecoveryCodeStep';
+import { downloadText, FILE_NAME, RecoveryCodeStep } from '../../src/ui/screens/invite/RecoveryCodeStep';
+import { isUnsetRecoverySlot } from '../../src/core/crypto/recovery';
 import { FakeAuthenticator } from '../core/account/authenticator';
 import { HubFailure, SimHub } from '../core/account/hub';
 import { renderApp } from './harness';
@@ -82,68 +77,48 @@ describe('invitation steps', () => {
 });
 
 describe('RecoveryCodeStep', () => {
-  it('confirms with the last group only', () => {
-    expect(lastGroup(CODE)).toBe('UVWXYZ');
-    expect(confirmsCode(CODE, ' uvwxyz ')).toBe(true);
-    expect(confirmsCode(CODE, 'UVWXY')).toBe(false);
-  });
-
-  it('copies, downloads, refuses a wrong group and asks before skipping', async () => {
+  it('copies, downloads and goes on with one button – no retyping, no skip (KOR-22)', async () => {
     const copy = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('denied'));
     const download = vi.fn();
-    const onConfirmed = vi.fn();
-    const onSkipped = vi.fn();
-    render(
+    const onContinue = vi.fn();
+    const { rerender } = render(
       <RecoveryCodeStep
         code={CODE}
-        allowSkip
+        explain="Why"
+        continueLabel="Go"
         copy={copy}
         download={download}
-        onConfirmed={onConfirmed}
-        onSkipped={onSkipped}
-      />,
+        onContinue={onContinue}
+      >
+        <p data-testid="extra">extra</p>
+      </RecoveryCodeStep>,
     );
+    expect(screen.getByTestId('recovery-code.code')).toHaveTextContent(CODE);
+    expect(screen.getByTestId('recovery-code.explain')).toHaveTextContent('Why');
+    expect(screen.getByTestId('extra')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(screen.getByTestId('recovery-code.copy'));
     expect(await screen.findByTestId('recovery-code.copied')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('recovery-code.copy'));
     expect(await screen.findByTestId('recovery-code.copy-failed')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('recovery-code.download'));
     expect(download).toHaveBeenCalledWith(FILE_NAME, expect.stringContaining(CODE));
-    fireEvent.change(screen.getByTestId('recovery-code.confirm'), { target: { value: 'nope' } });
+    expect(screen.getByTestId('recovery-code.continue')).toHaveTextContent('Go');
     fireEvent.click(screen.getByTestId('recovery-code.continue'));
-    expect(screen.getByTestId('recovery-code.mismatch')).toBeInTheDocument();
-    fireEvent.change(screen.getByTestId('recovery-code.confirm'), { target: { value: 'uvwxyz' } });
-    expect(screen.queryByTestId('recovery-code.mismatch')).toBeNull();
-    fireEvent.click(screen.getByTestId('recovery-code.skip'));
-    const dialog = screen.getByTestId('recovery-code.skip-dialog');
-    expect(screen.getByTestId('recovery-code.skip-confirm')).toHaveFocus();
-    fireEvent.keyDown(dialog, { key: 'Tab' });
-    expect(screen.getByTestId('recovery-code.skip-cancel')).toHaveFocus();
-    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
-    expect(screen.getByTestId('recovery-code.skip-confirm')).toHaveFocus();
-    fireEvent.keyDown(dialog, { key: 'Enter' });
-    expect(screen.getByTestId('recovery-code.skip-dialog')).toBeInTheDocument();
-    fireEvent.keyDown(dialog, { key: 'Escape' });
-    expect(screen.queryByTestId('recovery-code.skip-dialog')).toBeNull();
-    expect(screen.getByTestId('recovery-code.skip')).toHaveFocus();
-    fireEvent.click(screen.getByTestId('recovery-code.skip'));
-    fireEvent.click(screen.getByTestId('recovery-code.skip-cancel'));
-    expect(screen.queryByTestId('recovery-code.skip-dialog')).toBeNull();
-    fireEvent.click(screen.getByTestId('recovery-code.skip'));
-    fireEvent.click(screen.getByTestId('recovery-code.skip-confirm'));
-    expect(onSkipped).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByTestId('recovery-code.continue'));
-    expect(onConfirmed).toHaveBeenCalledOnce();
+    expect(onContinue).toHaveBeenCalledOnce();
+    rerender(<RecoveryCodeStep code={CODE} explain="Why" continueLabel="Go" onContinue={onContinue} busy />);
+    expect(screen.getByTestId('recovery-code.continue')).toBeDisabled();
   });
 
-  it('offers no skip in the recovery flow and uses the browser defaults', async () => {
+  it('uses the browser defaults', async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     URL.createObjectURL = vi.fn(() => 'blob:x');
     URL.revokeObjectURL = vi.fn();
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
-    render(<RecoveryCodeStep code={CODE} allowSkip={false} onConfirmed={vi.fn()} onSkipped={vi.fn()} />);
-    expect(screen.queryByTestId('recovery-code.skip')).toBeNull();
+    render(<RecoveryCodeStep code={CODE} explain="Why" continueLabel="Go" onContinue={vi.fn()} />);
+    expect(screen.getByTestId('recovery-code.continue')).toBeEnabled();
     fireEvent.click(screen.getByTestId('recovery-code.copy'));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(CODE));
     fireEvent.click(screen.getByTestId('recovery-code.download'));
@@ -173,29 +148,66 @@ async function toUnlock(harness: Awaited<ReturnType<typeof openInvite>>) {
 }
 
 describe('InviteScreen', () => {
-  it('runs the platform path to the private org and remembers a skipped recovery code', async () => {
+  it('goes from the passkey straight to the private org: no code screen, no reminder (KOR-22)', async () => {
     const harness = await toUnlock(await openInvite(undefined, undefined, ['de']));
     expect(window.location.hash).toBe('');
     fireEvent.click(screen.getByTestId('invite.unlock'));
-    await screen.findByTestId('recovery-code.code');
-    fireEvent.click(screen.getByTestId('recovery-code.skip'));
-    fireEvent.click(screen.getByTestId('recovery-code.skip-confirm'));
     await waitFor(() => expect(harness.router.state.location.pathname).toMatch(/^\/o\//));
     const org = harness.router.state.location.pathname.slice(3);
     expect(harness.hub.orgs.get(org)).toBeDefined();
-    expect(harness.app.store.getState().session.recoveryUnconfirmed).toBe(true);
-    expect(await screen.findByTestId('shell.recovery-banner')).toBeInTheDocument();
+    expect(screen.queryByTestId('recovery-code.step')).toBeNull();
+    // no code exists: the recovery slot is the unset one, and nothing replaced it
+    const { userId, identity } = harness.app.store.getState().me;
+    const slot = harness.hub.users.get(userId!)!.bundles.get('recovery')!;
+    expect(await isUnsetRecoverySlot(userId!, identity!, slot)).toBe(true);
+    expect(harness.hub.log.some((entry) => entry.target === '/v1/me/bundles/recovery')).toBe(false);
     await waitFor(() => expect(harness.live).toHaveBeenCalled());
   });
 
-  it('offers no skip when the passkey gave no PRF output (the code is the only unlock)', async () => {
+  it('also goes straight on when create() did not report PRF but the sign-in delivers it', async () => {
     const auth = new FakeAuthenticator();
-    auth.prf = false;
+    auth.prfAtCreate = false;
     const harness = await toUnlock(await openInvite(new SimHub(), auth));
     fireEvent.click(screen.getByTestId('invite.unlock'));
-    await screen.findByTestId('recovery-code.code');
-    expect(screen.queryByTestId('recovery-code.skip')).toBeNull();
-    expect(harness.app.store.getState().session.prfMissing).toBe(true);
+    await waitFor(() => expect(harness.router.state.location.pathname).toMatch(/^\/o\//));
+    expect(screen.queryByTestId('recovery-code.step')).toBeNull();
+  });
+
+  it('without PRF the registration fails with the message, leaves nothing, and the same link works again', async () => {
+    const hub = new SimHub();
+    const auth = new FakeAuthenticator();
+    auth.prf = false;
+    const harness = await toUnlock(await openInvite(hub, auth, ['de']));
+    const userId = [...hub.users.keys()][0]!;
+    fireEvent.click(screen.getByTestId('invite.unlock'));
+    const message = await screen.findByTestId('prf-required');
+    expect(message).toHaveAttribute('data-context', 'register');
+    expect(message).toHaveTextContent('Sie brauchen einen Passkey, der PRF unterstützt.');
+    expect(message).toHaveTextContent('Bitwarden unterstützt PRF');
+    expect(message).toHaveTextContent('Löschen Sie den eben angelegten Passkey');
+    expect(screen.queryByTestId('prf-required.later')).toBeNull();
+    // no account, no bound invitation, signed out
+    expect(hub.users.has(userId)).toBe(false);
+    expect(hub.invites.get(harness.id)!.registered).toBeNull();
+    expect(hub.orgs.size).toBe(0);
+    expect(harness.app.store.getState().session.phase).toBe('anonymous');
+    // another passkey on the same link
+    fireEvent.click(screen.getByTestId('prf-required.retry'));
+    expect(screen.getByTestId('invite.display-name')).toHaveValue('Ada');
+    auth.prf = true;
+    fireEvent.click(screen.getByTestId('invite.create-passkey'));
+    fireEvent.click(await screen.findByTestId('invite.unlock'));
+    await waitFor(() => expect(harness.router.state.location.pathname).toMatch(/^\/o\//));
+  });
+
+  it('says when the hub could not free the invitation at once (an older hub)', async () => {
+    const hub = new SimHub();
+    hub.override.set('DELETE /v1/me/registration', new HubFailure(404, 'not_found'));
+    const auth = new FakeAuthenticator();
+    auth.prf = false;
+    await toUnlock(await openInvite(hub, auth));
+    fireEvent.click(screen.getByTestId('invite.unlock'));
+    expect(await screen.findByTestId('prf-required.later')).toHaveTextContent('24 hours');
   });
 
   it('returns to the intro after a cancelled creation and reports refusals', async () => {
@@ -236,17 +248,14 @@ describe('InviteScreen', () => {
     await waitFor(() => expect(screen.getByTestId('invite.notice')).toHaveTextContent('Service unavailable'));
     hub.override.delete('GET /v1/me');
     fireEvent.click(screen.getByTestId('invite.unlock'));
-    await screen.findByTestId('recovery-code.code');
+    await waitFor(() => expect(harness.router.state.location.pathname).toMatch(/^\/o\//));
   });
 
   it('retries a failed genesis with the prepared request and reports a failed preparation', async () => {
     const hub = new SimHub();
     const harness = await toUnlock(await openInvite(hub));
-    fireEvent.click(screen.getByTestId('invite.unlock'));
-    const code = (await screen.findByTestId('recovery-code.code')).textContent!;
     hub.override.set('POST /v1/orgs', new HubFailure(503, 'unavailable'));
-    fireEvent.change(screen.getByTestId('recovery-code.confirm'), { target: { value: code.slice(-6) } });
-    fireEvent.click(screen.getByTestId('recovery-code.continue'));
+    fireEvent.click(screen.getByTestId('invite.unlock'));
     expect(await screen.findByTestId('invite.accept-failed')).toHaveAttribute('data-code', 'unavailable');
     const first = hub.log.filter((entry) => entry.target === '/v1/orgs').map((entry) => entry.body);
     hub.override.delete('POST /v1/orgs');
@@ -254,19 +263,15 @@ describe('InviteScreen', () => {
     await waitFor(() => expect(harness.router.state.location.pathname).toMatch(/^\/o\//));
     const sent = hub.log.filter((entry) => entry.target === '/v1/orgs').map((entry) => entry.body);
     expect(sent).toEqual([first[0], first[0]]);
-    expect(harness.app.store.getState().session.recoveryUnconfirmed).toBe(false);
   });
 
   it('reports a genesis that cannot be prepared', async () => {
     const hub = new SimHub();
     await toUnlock(await openInvite(hub));
-    fireEvent.click(screen.getByTestId('invite.unlock'));
-    const code = (await screen.findByTestId('recovery-code.code')).textContent!;
     // the display name was valid at the intro; an empty one now makes the preparation fail
     const genesis = await import('../../src/core/account/genesis');
     const spy = vi.spyOn(genesis, 'preparePrivateOrg').mockRejectedValueOnce(new CryptoError('header_invalid'));
-    fireEvent.change(screen.getByTestId('recovery-code.confirm'), { target: { value: code.slice(-6) } });
-    fireEvent.click(screen.getByTestId('recovery-code.continue'));
+    fireEvent.click(screen.getByTestId('invite.unlock'));
     expect(await screen.findByTestId('invite.accept-failed')).toHaveAttribute('data-code', 'header_invalid');
     spy.mockRestore();
   });

@@ -1,5 +1,6 @@
 """Routes of the authentication area (03-api.md section 4.1): passkey registration and login, session end, recovery
-(`agent_hub.auth.recovery`) and the removal of a passkey (`agent_hub.auth.passkeys_manage`).
+(`agent_hub.auth.recovery`), the removal of a passkey (`agent_hub.auth.passkeys_manage`) and the withdrawal of an
+unfinished registration (`agent_hub.auth.jobs.abandon_registration`, KOR-22).
 
 The handlers run their database work in a worker thread; refusals leave as `{"error": "<code>"}`.
 """
@@ -11,7 +12,7 @@ from typing import Any
 
 from starlette.requests import Request
 
-from agent_hub.auth import login, passkeys_manage, recovery, register, sessions
+from agent_hub.auth import jobs, login, passkeys_manage, recovery, register, sessions
 from agent_hub.auth.fields import Empty
 from agent_hub.http.context import Context, CurrentPrincipal
 from agent_hub.http.pipeline import source_address
@@ -70,3 +71,8 @@ async def recovery_finish(body: recovery.RecoveryFinish, context: Context) -> di
 @router.delete("/v1/passkeys/{credential_id}", auth="browser", right="user")
 async def remove_passkey(credential_id: str, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
     return await asyncio.to_thread(passkeys_manage.remove, context, principal, credential_id)
+
+
+@router.delete("/v1/me/registration", auth="browser", right="user")
+async def abandon_registration(context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
+    return await asyncio.to_thread(jobs.abandon_registration, context, principal.principal_id)

@@ -7,6 +7,7 @@ import { addAuthenticator } from './authenticator.ts';
 import type { E2eEnv } from './env.ts';
 import { ONBOARD_SPACING_MS } from './platform.ts';
 import { navigateInApp } from '../../../web/e2e/helpers/whiteboard.ts';
+import { createRecoveryCode } from '../../../web/e2e/helpers/onboard.ts';
 import { PageUser } from '../../../web/e2e/helpers/user.ts';
 
 export interface Member {
@@ -36,7 +37,7 @@ export async function inviteMember(
 
 /**
  * A new user registers with the org invitation `code` in a new browser profile with a platform authenticator (PRF):
- * display name, passkey, unlock, recovery code confirmed; lands on the org. Registrations are anonymous requests like
+ * display name, passkey, unlock; lands on the org (no code screen, KOR-22) and creates a recovery code in /settings. Registrations are anonymous requests like
  * onboardings and keep the same spacing (`ONBOARD_SPACING_MS`, the hub allows 30 per minute and source).
  */
 export async function joinAsNewUser(
@@ -54,10 +55,8 @@ export async function joinAsNewUser(
   await page.getByTestId('invite.display-name').fill(name);
   await page.getByTestId('invite.create-passkey').click();
   await page.getByTestId('invite.unlock').click();
-  const recoveryCode = (await page.getByTestId('recovery-code.code').textContent())!;
-  await page.getByTestId('recovery-code.confirm').fill(recoveryCode.slice(-6).toLowerCase());
-  await page.getByTestId('recovery-code.continue').click();
   await expect(page).toHaveURL(new RegExp(`/o/${org}$`), { timeout: 30_000 });
+  const recoveryCode = await createRecoveryCode(page);
   return { page, name, recoveryCode, user: await PageUser.open(page, recoveryCode) };
 }
 

@@ -16,7 +16,8 @@ import {
   unlockWithPrf,
   unlockWithRecoveryCode,
 } from '../../../src/core/account/login';
-import { codeToInviteId, lookupInvite, register } from '../../../src/core/account/register';
+import { abandonRegistration, codeToInviteId, lookupInvite, register } from '../../../src/core/account/register';
+import { isUnsetRecoverySlot } from '../../../src/core/crypto/recovery';
 import { b64uDecode } from '../../../src/core/encoding/b64u';
 import { fromUtf8 } from '../../../src/core/encoding/bytes';
 import { CryptoError } from '../../../src/core/crypto/errors';
@@ -26,8 +27,13 @@ import { Identity } from '../../../src/core/crypto/keys';
 import { epochKey } from '../../../src/core/log/state';
 import { checkBatch } from '../../../src/core/log/rotation';
 import { HubError } from '../../../src/core/net/signedFetch';
-import { FakeAuthenticator } from './authenticator';
-import { HubFailure, ORIGIN, SimHub, T0 } from './hub';
+import { IDBFactory } from 'fake-indexeddb';
+import { Prefs } from '../../../src/core/account/prefs';
+import { AppSession } from '../../../src/core/account/session';
+import { Persist } from '../../../src/core/persist';
+import { createStore } from '../../../src/core/store';
+import { FakeAuthenticator, giveRecoveryCode } from './authenticator';
+import { CONFIG, HubFailure, ORIGIN, SimHub, T0 } from './hub';
 
 const code = (error: unknown) => (error as { code: string }).code;
 
@@ -121,9 +127,8 @@ describe('invitation lookup', () => {
 });
 
 describe('register', () => {
-  it('creates identity, recovery slot and CK_1 in the browser and sends only public data', async () => {
+  it('creates identity, an unset recovery slot and CK_1 in the browser and sends only public data', async () => {
     const { hub, id, registration, auth } = await registered();
-    expect(registration.recoveryCode).toMatch(/^[A-Z2-7]{5}(-[A-Z2-7]{5}){3}-[A-Z2-7]{6}$/);
     expect(registration.prfAtCreate).toBe(true);
     expect(auth.lastCreate?.pubKeyCredParams).toEqual([{ type: 'public-key', alg: -7 }]);
     const user = hub.users.get(registration.userId)!;
@@ -132,17 +137,8 @@ describe('register', () => {
       sig_pub: registration.identity.public().sig,
     });
     expect(hub.invites.get(await hub.idOf(id))!.registered).toBe(registration.userId);
-    // the recovery bundle opens with the code and holds the same identity
-    const opened = await unlockWithRecoveryCode(
-      registration.userId,
-      registration.recoveryCode,
-      user.bundles.get('recovery')!,
-    );
-    expect(opened.public()).toEqual(registration.identity.public());
-    // nothing secret reached the hub: neither the code nor the private keys
+    // nothing secret reached the hub: not the private keys
     const sent = hub.log.map((entry) => entry.body).join('\n');
-    expect(sent).not.toContain(registration.recoveryCode);
-    expect(sent).not.toContain(registration.recoveryCode.replace(/-/g, ''));
     registration.identity.revealPrivate((kem, sig) => {
       expect(sent).not.toContain(Buffer.from(kem).toString('base64url'));
       expect(sent).not.toContain(Buffer.from(sig).toString('base64url'));
@@ -157,6 +153,53 @@ describe('register', () => {
     auth.prf = false;
     const { registration } = await registered(new SimHub(), auth);
     expect(registration.prfAtCreate).toBe(false);
+  });
+
+  it('makes no recovery code: the slot is the unset one, whatever create() reports (KOR-22)', async () => {
+    const auth = new FakeAuthenticator();
+    auth.prfAtCreate = false;
+    const { hub, registration } = await registered(new SimHub(), auth);
+    const user = hub.users.get(registration.userId)!;
+    const slot = user.bundles.get('recovery')!;
+    expect(await isUnsetRecoverySlot(registration.userId, registration.identity, slot)).toBe(true);
+    // no code opens it
+    await expect(unlockWithRecoveryCode(registration.userId, formatCode(generateCode()), slot)).rejects.toMatchObject({
+      code: 'decrypt_failed',
+    });
+    // an ordinary slot for the hub: a recovery ID, a bundle of the usual length
+    const finish = JSON.parse(hub.log.find((entry) => entry.target.endsWith('register/finish'))!.body);
+    expect(finish.recovery.recovery_id).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(user.recoveryId).toBe(finish.recovery.recovery_id);
+    const other = await registered();
+    await giveRecoveryCode(other.hub, other.registration);
+    const real = other.hub.users.get(other.registration.userId)!.bundles.get('recovery')!;
+    expect(b64uDecode(slot).length).toBe(b64uDecode(real).length);
+    expect(await isUnsetRecoverySlot(other.registration.userId, other.registration.identity, real)).toBe(false);
+    // another identity or user does not see the mark
+    expect(await isUnsetRecoverySlot(registration.userId, other.registration.identity, slot)).toBe(false);
+    expect(await isUnsetRecoverySlot(other.registration.userId, registration.identity, slot)).toBe(false);
+  });
+
+  it('withdraws an unfinished registration; a refusal or an older hub answers false', async () => {
+    const { hub, auth, anon, id, registration } = await registered();
+    const app = new AppSession({
+      store: createStore(),
+      fetch: hub.fetch,
+      config: CONFIG,
+      rootKey: CONFIG.platform_root_key,
+      persist: await Persist.open(new IDBFactory()),
+      prefs: new Prefs(null),
+      now: () => T0,
+    });
+    await app.begin(await signIn({ anon, credentials: auth, origin: ORIGIN, now: () => T0 }));
+    const request = (method: string, target: string, options?: { body: unknown }) =>
+      app.client.request(method, target, options);
+    hub.override.set('DELETE /v1/me/registration', new HubFailure(404, 'not_found'));
+    expect(await abandonRegistration(request)).toBe(false);
+    hub.override.delete('DELETE /v1/me/registration');
+    expect(await abandonRegistration(request)).toBe(true);
+    expect(hub.users.has(registration.userId)).toBe(false);
+    expect(hub.invites.get(await hub.idOf(id))!.registered).toBeNull();
   });
 
   it('rejects a cancelled gesture and leaves the invitation unbound', async () => {
@@ -276,8 +319,9 @@ describe('signIn and unlock', () => {
 
   it('unlocks with the recovery code and refuses a wrong one', async () => {
     const { hub, registration } = await registered();
+    const code = await giveRecoveryCode(hub, registration);
     const bundle = hub.users.get(registration.userId)!.bundles.get('recovery')!;
-    const typed = registration.recoveryCode.toLowerCase().replace(/-/g, ' ');
+    const typed = code.toLowerCase().replace(/-/g, ' ');
     expect((await unlockWithRecoveryCode(registration.userId, typed, bundle)).public()).toEqual(
       registration.identity.public(),
     );

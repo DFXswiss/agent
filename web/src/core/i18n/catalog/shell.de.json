@@ -13,8 +13,6 @@
   "renew.working": "Warte auf Ihren Passkey…",
   "renew.cancelled": "Die Anmeldung wurde abgebrochen – bitte erneut versuchen.",
   "renew.other-user": "Dieser Passkey gehört zu einem anderen Konto. Bitte auf der Anmeldeseite erneut anmelden.",
-  "recovery.banner": "Wiederherstellungscode nicht bestätigt. Ohne ihn gehen bei Verlust Ihrer Passkeys Ihre Daten verloren.",
-  "recovery.banner.action": "Einstellungen öffnen",
   "blocked.title": "Diese Organisation ist gesperrt",
   "blocked.body": "Der Server hat eine widersprüchliche Mitgliederhistorie geliefert. Bis zur Klärung wird in dieser Organisation nichts gelesen oder geschrieben.",
   "blocked.evidence": "Nachweis für den Support: gespeicherter Stand {stored}, gelieferter Stand {served}, Stand des Ereignisses {lh}.",

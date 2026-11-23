@@ -234,7 +234,7 @@ the new platform starts empty; the legacy Team Record remains readable from its 
 ## 8. Main flows (summary; details in the referenced documents)
 
 1. **Invitation and first login** (`04-crypto.md` §5.1–5.3, `06-web.md` §3): code → passkey with PRF →
-   identity bundle + recovery code → accept → private organization (genesis) with default workgroup, or join
+   identity bundle (PRF required; recovery code on request, ADR-055) → accept → private organization (genesis) with default workgroup, or join
    the organization named in the invitation.
 2. **First task** (`03-api.md` §4.6, `05-runner.md` §6, `06-web.md` §4): prompt → browser encrypts, ensures a
    device is assigned to the workgroup (auto-assigns a platform device for private organizations) → hub
@@ -268,7 +268,7 @@ the new platform starts empty; the legacy Team Record remains readable from its 
 | Scope / scope key | Encryption domain: `org` (org key OK), `wg` (workgroup key WK), `cred` (per-user credential key CK). Keys have epochs. |
 | Wrap | HPKE encryption of a scope key for one recipient (user identity or device). |
 | Identity bundle | A user's private X25519 and Ed25519 keys, stored at the hub only encrypted (per passkey slot and recovery slot). |
-| Recovery code | 128-bit code shown once at registration; unlocks the identity bundle without a passkey. |
+| Recovery code | 128-bit code, shown once when it is made (on request in the settings, after a recovery; ADR-055); unlocks the identity bundle without a passkey. |
 | Invitation code | 128-bit single-use code; the hub only sees a derived invitation ID. |
 | Event | Encrypted, signed record in one scope; ordered by the hub per scope (`scope_seq`). |
 | Outbox | Runner-side queue of events with gapless `origin_seq`, pushed with resume after interruption. |

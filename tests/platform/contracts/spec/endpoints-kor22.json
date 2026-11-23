@@ -1,0 +1,8 @@
+{
+  "description": "Endpoint added by KOR-22 (ADR-055): the signed-in user withdraws an unfinished registration whose passkey gave no PRF output; 03-api.md section 4.1.",
+  "rights": ["user"],
+  "auth": ["browser"],
+  "endpoints": [
+    {"method": "DELETE", "path": "/v1/me/registration", "rights": ["user"], "section": "4.1"}
+  ]
+}

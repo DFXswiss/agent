@@ -1,7 +1,7 @@
 // Sign-in and unlock (06-web.md section 3.4, 04-crypto.md section 5.4): one gesture certifies a new session key and
 // unlocks the identity with PRF; a reload needs the passkey again; without PRF the recovery code unlocks once.
 import { expect, test } from './fixtures/test.ts';
-import { addAuthenticator } from './helpers/authenticator.ts';
+import { addAuthenticator, withoutPrf } from './helpers/authenticator.ts';
 import { cancelNext } from './helpers/cancel.ts';
 import { onboard } from './helpers/onboard.ts';
 
@@ -44,8 +44,9 @@ test('a cancelled sign-in can be tried again', async ({ page, baseURL }) => {
 });
 
 test('without PRF the recovery code unlocks, a wrong code is refused', async ({ page, baseURL }) => {
-  await addAuthenticator(page, { hasPrf: false });
+  const first = await addAuthenticator(page);
   const done = await onboard(page, { origin: baseURL! });
+  await withoutPrf(page, first);
   await page.goto('/login');
   await page.getByTestId('login.submit').click();
   await expect(page.getByTestId('prf-missing.explain')).toBeVisible();
@@ -58,8 +59,9 @@ test('without PRF the recovery code unlocks, a wrong code is refused', async ({ 
 });
 
 test('the recovery prompt can be left by signing out', async ({ page, baseURL }) => {
-  await addAuthenticator(page, { hasPrf: false });
-  await onboard(page, { origin: baseURL! });
+  const first = await addAuthenticator(page);
+  await onboard(page, { origin: baseURL!, code: false });
+  await withoutPrf(page, first);
   await page.goto('/login');
   await page.getByTestId('login.submit').click();
   await page.getByTestId('prf-missing.cancel').click();

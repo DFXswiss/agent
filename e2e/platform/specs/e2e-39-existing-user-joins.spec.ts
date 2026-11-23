@@ -40,8 +40,10 @@ test('@E2E-39 @R-1.13 @R-P.5 an existing user joins a further org without a seco
   await anonymousBudget(COST.register);
   await carol.page.getByTestId('invite.display-name').fill('Carol Second');
   await carol.page.getByTestId('invite.create-passkey').click();
+  // the accept never arrives (with PRF the join follows the passkey at once, KOR-22): she leaves before it
+  await carol.page.route('**/v1/orgs/*/log', (route) => route.abort());
   await carol.page.getByTestId('invite.unlock').click();
-  await expect(carol.page.getByTestId('recovery-code.code')).toBeVisible();
+  await expect(carol.page.getByTestId('invite.accept-failed')).toBeVisible();
   await carol.context.close();
   const boundId = (await inviteSecrets(parseCode(bound))).inviteId;
   const [registered] = await orchestrator.hubQuery<{ registered: boolean; used: boolean }>(

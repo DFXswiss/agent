@@ -1,17 +1,17 @@
 // The passkeys of the signed-in user (06-web.md section 3.6, 04-crypto.md section 5.6, 03-api.md section 4.1): the list
 // of `GET /v1/me`, adding a passkey (signed `register/begin {add:true}`, `create()` with PRF, `register/finish`; the
 // caller then signs in restricted to the new credential and uploads its slot), removing one (`DELETE
-// /v1/passkeys/{id}`, refused for the last with `last_passkey`), and checking a recovery code against the recovery
-// slot without rotating it (the "confirm" of the recovery-code reminder, section 3.2).
+// /v1/passkeys/{id}`, refused for the last with `last_passkey`), and whether a recovery code exists at all (the
+// recovery slot is not the unset one of a registration without code, section 3.2, KOR-22).
 import { b64uDecode } from '../encoding/b64u';
 import { parseTime } from '../encoding/time';
 import { fail } from '../crypto/errors';
 import type { Identity } from '../crypto/keys';
+import { isUnsetRecoverySlot } from '../crypto/recovery';
 import { creationOptions } from '../passkey/options';
 import { attestationJson } from '../passkey/response';
 import { isRecord } from '../registry';
 import { createCredential, type Credentials } from './ceremony';
-import { sameIdentity, unlockWithRecoveryCode } from './login';
 import type { SignedRequest } from './recover';
 
 /** One passkey of `GET /v1/me` → `passkeys`. */
@@ -110,18 +110,7 @@ export async function removePasskey(request: SignedRequest, credentialId: string
   await request('DELETE', `/v1/passkeys/${credentialId}`);
 }
 
-/**
- * True if `codeText` opens the recovery slot `bundleCt` of `userId` to the identity in memory (no rotation).
- * Text that is no code fails with its code (`recovery_code_length`, `invite_code_invalid`), a wrong code with
- * `decrypt_failed`; a slot that opens to another identity is `decrypt_failed` as well.
- */
-export async function checkRecoveryCode(
-  userId: string,
-  codeText: string,
-  bundleCt: string,
-  identity: Identity,
-): Promise<void> {
-  const opened = await unlockWithRecoveryCode(userId, codeText, bundleCt);
-  const own = identity.public();
-  if (!sameIdentity(opened, { kem_pub: own.kem, sig_pub: own.sig })) fail('decrypt_failed');
+/** True if the recovery slot `bundleCt` of `userId` holds a code; false for the unset slot (no code was made). */
+export async function hasRecoveryCode(userId: string, identity: Identity, bundleCt: string): Promise<boolean> {
+  return !(await isUnsetRecoverySlot(userId, identity, bundleCt));
 }
