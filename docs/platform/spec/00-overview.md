@@ -274,7 +274,7 @@ the new platform starts empty; the legacy Team Record remains readable from its 
 | Outbox | Runner-side queue of events with gapless `origin_seq`, pushed with resume after interruption. |
 | Operation | A platform action requested by a session (`03-api.md` §9). Every request gets a hub record. |
 | Dedupe tag | HMAC over the canonical deduplication fields of an operation, keyed with a workgroup-key derivative; lets the hub detect duplicates without seeing parameters. |
-| Idempotency key | Optional caller-provided key that replaces the derived dedupe fields. |
+| Idempotency key | Optional caller-provided key that marks a repetition as the same request; it never replaces the derived dedupe fields of a type that has them (KOR-28). |
 | Device request | User-initiated request routed by the hub to one device (e.g. GitHub connect, Claude login), encrypted end to end. |
 | Ping | Content-free notice that something new is available. |
 | Harness | Fixed rules text plus generated context given to every session. |

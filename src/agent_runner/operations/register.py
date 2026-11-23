@@ -8,7 +8,9 @@ steps 4-5; 04-crypto.md sections 4.10 and 5.12; ADR-012).
   device key (`sync.seal`). Parameters that would make the event exceed the size limit (E8) are left out (`params:
   {}`) and the operation is rejected locally with `size_exceeded`;
 - `local_check` `passed` with the dedupe slot of `dedupe.dedupe_slot` (keyed with the same epoch), or `rejected`
-  with the local `error_code` and no slot;
+  with the local `error_code` and no slot. An idempotency key the task already used for other content of the same
+  type within the type's window (`records.key_conflict`) is rejected with `params_invalid` (`key_conflict`, KOR-28):
+  the key marks the same request, it never opens a second slot;
 - the plaintext `type` when it is a well-formed operation type (`contracts/common.json#/$defs/operation_type`), else
   `invalid.type` (a guest-rejected request may name anything; the params event keeps the exact type);
 - `requested_at` of the journal record when it is a contract time, else the device time.
@@ -33,7 +35,8 @@ from psycopg import AsyncConnection
 
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import uuid7
-from agent_runner.operations.dedupe import dedupe_slot
+from agent_runner.operations import records
+from agent_runner.operations.dedupe import WINDOWS, dedupe_slot
 from agent_runner.operations.extensions import OPERATION_ERROR_CODES
 from agent_runner.operations.records import Operation
 from agent_runner.orgs.keys import load_scope_key
@@ -66,6 +69,8 @@ class Built:
     body: dict[str, Any]
     size_exceeded: bool
     """The parameters did not fit into the params event (the operation is rejected locally)."""
+    key_conflict: bool = False
+    """The idempotency key was used for another request of the task (the operation is rejected locally)."""
 
 
 @dataclass(frozen=True)
@@ -158,6 +163,16 @@ async def build(
             workgroup_key=key,
             epoch=epoch,
         )
+        conflict = (
+            slot is not None
+            and op.type in WINDOWS
+            and op.idempotency_key is not None
+            and await records.key_conflict(conn, op, epoch=epoch, tag=str(slot["tag"]), window_s=WINDOWS[op.type])
+        )
+        if conflict:
+            body.update({"local_check": "rejected", "error_code": "params_invalid", "dedupe": None})
+            body["params_event"] = sealed
+            return Built(body=body, size_exceeded=False, key_conflict=True)
         body.update({"local_check": "passed", "dedupe": slot})
     body["params_event"] = sealed
     return Built(body=body, size_exceeded=size_exceeded)

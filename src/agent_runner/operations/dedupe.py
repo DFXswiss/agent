@@ -3,12 +3,17 @@ ADR-012).
 
 `dedupe_slot(...)` gives the `dedupe` member of the registration (`{epoch, tag}`) or None:
 
-- with an idempotency key the fields are `{"idempotency_key": key, "task": task_id}` (every type);
-- otherwise the type's field set (`crypto.dedupe.dedupe_fields`, normalised: repository lower case, branch names
+- the type's field set (`crypto.dedupe.dedupe_fields`, normalised: repository lower case, branch names
   without `refs/heads/`, SHAs lower case, texts as `sha256_hex`) built from the effective parameters plus the
   requesting session (`github.checkout` `session`, `subagent.request` parent `session`) and the pre-check's dedupe
   fields (`github.checkout` `ref` = resolved commit SHA, `github.commit` `parent_sha` and `tree_sha`);
-- types without dedupe fields (`github.list_repositories`, `github.get_pull_request`, `task.set_title`) have no slot.
+- types without dedupe fields (`github.list_repositories`, `github.get_pull_request`, `task.set_title`) have a slot
+  only with an idempotency key: `{"idempotency_key": key, "task": task_id}`, which the hub holds for 24 h.
+
+The content rule of a type with dedupe fields applies whether or not the session passes a key (KOR-28): the key never
+replaces the fields, so a new key cannot repeat the same operation. It can only mark a repetition as the same request:
+a reuse of the key for other content of the same task and type within the type's window (`WINDOWS`) is refused
+locally (`register.build`, `records.key_conflict`).
 
 The key is `dk_e = HKDF(WK_e, "dedupe")` of the workgroup key of the epoch the params event is sealed with (the
 current epoch), so the hub compares tags of the same epoch only.
@@ -17,12 +22,25 @@ current epoch), so the hub compares tags of the same epoch only.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 from agent_runner.crypto.dedupe import DEDUPE_TYPES, dedupe_fields, dedupe_tag, idempotency_fields
 from agent_runner.crypto.kdf import dedupe_key
 
 SESSION_FIELD_TYPES = frozenset({"github.checkout", "subagent.request"})
+WINDOWS: Mapping[str, int] = MappingProxyType(
+    {
+        "github.checkout": 600,
+        "github.create_branch": 86400,
+        "github.commit": 86400,
+        "github.push": 86400,
+        "github.create_pull_request": 604800,
+        "github.comment": 86400,
+        "subagent.request": 600,
+    }
+)
+"""Seconds a type's dedupe slot is held (`contracts/ops/dedupe-fields.json` `window_seconds`)."""
 
 
 def fields_for(
@@ -35,10 +53,8 @@ def fields_for(
     extra: Mapping[str, object],
 ) -> dict[str, object] | None:
     """The normalised field set of the operation, None for a type without duplicate protection."""
-    if idempotency_key is not None:
-        return idempotency_fields(idempotency_key, task_id)
     if op_type not in DEDUPE_TYPES:
-        return None
+        return None if idempotency_key is None else idempotency_fields(idempotency_key, task_id)
     source: dict[str, object] = {**params, **extra}
     if op_type in SESSION_FIELD_TYPES:
         source["session"] = session_id

@@ -85,7 +85,7 @@ one that opens but has the wrong structure → `header_invalid`. Malformed b64u 
 | `github.create_pull_request` | `repo`, `head`, `base` |
 | `github.comment` | `repo`, `number`, `body` = `sha256_hex(UTF-8 body)` |
 | `subagent.request` | `session` (parent session), `prompt` = `sha256_hex(UTF-8 purpose ‖ 0x00 ‖ UTF-8 prompt)` |
-| with idempotency key | `idempotency_key`, `task` (instead of the type's fields) |
+| with idempotency key | `idempotency_key`, `task` (only for a type without dedupe fields; a type with fields keeps them, KOR-28) |
 
 `repo` is lowercased, SHAs are lowercased, `branch`/`head`/`base` lose a leading `refs/heads/`; a branch, ref, SHA or
 idempotency key that is not printable ASCII is replaced by `sha256:<hex of its UTF-8>`. The `0x00` separator makes

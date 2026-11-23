@@ -446,6 +446,15 @@ allow-list when the list is not empty (`repo_not_allowed`) and accessible with t
 list is empty. Retry: retryable failures (network, GitHub 5xx, 429, secondary rate limit) are retried
 by the runner inside the same operation: 3 attempts, delays 2 s, 8 s, 30 s (respecting `Retry-After`); then
 `failed` with `retryable:true`, which releases the dedupe slot.
+Idempotency key (KOR-28): the dedupe fields of a type apply whether or not the session passes a key, so a new key
+never repeats an operation. The key only marks a repetition as the same request: the same key with the same content
+is a duplicate by the fields; for a type with dedupe fields, the same key for other content of the same task and
+type, while an earlier operation with that key holds its slot (`accepted`, `executing` or `succeeded`, same epoch,
+within the type's window), is rejected by the runner with `params_invalid` (pointer `/idempotency_key`) and
+registered as `rejected`. A type without dedupe fields has a slot only with a key (`{idempotency_key, task}`, 24 h);
+any repetition with that key is a duplicate. There is no
+way to repeat an operation on purpose inside its window; a repetition is possible once the window ended or the
+original released its slot (`failed`, `expired`), or with other content (e.g. another comment text).
 
 | Type | Params | Formal checks (runner) | Dedupe fields | Window | Result |
 |---|---|---|---|---|---|

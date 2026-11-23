@@ -174,6 +174,20 @@ async def pending_work(conn: AsyncConnection[Any], answer_window_s: float) -> li
     return [str(row[0]) for row in await cur.fetchall()]
 
 
+async def key_conflict(conn: AsyncConnection[Any], op: Operation, *, epoch: int, tag: str, window_s: int) -> bool:
+    """Whether another operation of the task and type registered the idempotency key of `op` with another dedupe tag
+    of the same epoch within `window_s` and holds its slot (`accepted|executing|succeeded`, as H5 of 03-api.md section
+    8.3; KOR-28). Tags of different epochs cannot be compared (04-crypto.md section 4.10)."""
+    cur = await conn.execute(
+        "SELECT 1 FROM runner.operation WHERE task_id = %s AND type = %s AND idempotency_key = %s AND id <> %s"
+        " AND state IN ('accepted', 'executing', 'succeeded')"
+        " AND dedupe_tag IS NOT NULL AND dedupe_tag <> %s AND registration->'dedupe'->'epoch' = %s"
+        " AND created_at > now() - make_interval(secs => %s) LIMIT 1",
+        (op.task_id, op.type, op.idempotency_key, op.id, tag, Jsonb(epoch), window_s),
+    )
+    return await cur.fetchone() is not None
+
+
 async def task_commits(conn: AsyncConnection[Any], task_id: str) -> set[str]:
     """Commit SHAs created by succeeded `github.commit` operations of the task on this device (`github.push`)."""
     cur = await conn.execute(

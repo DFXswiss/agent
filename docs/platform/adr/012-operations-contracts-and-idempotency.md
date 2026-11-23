@@ -10,15 +10,32 @@ Status: Accepted (2026-11-21)
 ## Decision
 - **Register-then-execute**: session → guest (schema) → runner (formal checks on plaintext, dedupe tag) → hub (`POST /v1/device/operations`, checks H1–H6) → runner executes only after `accepted` → encrypted result + transition. Every request, including locally rejected ones, gets a hub record and audit row.
 - **Dedupe tag** = HMAC-SHA256 keyed with `dk_e = HKDF(WK_e, "dedupe")` over canonical `{type, fields}` (`04-crypto.md` §4.10); the hub compares tags only. Per-type fields and windows in `03-api.md` §9 (e.g. comment: repo, number, sha256(body), 24 h; PR: repo, head, base, 7 days + open-PR check at GitHub; subagent: 10 min).
-- **Idempotency key** adopted as the optional mechanism: if given, fields = `{idempotency_key, task}`.
+- **Idempotency key** adopted as the optional mechanism: if given, fields = `{idempotency_key, task}` (amended by KOR-28, below).
 - Duplicate = slot held by an operation in `accepted|executing|succeeded` within the window; the duplicate returns the original result. Failed/rejected/expired operations release the slot.
 - **Retries** inside one operation for retryable errors: 3 attempts (2 s, 8 s, 30 s, honouring `Retry-After`).
 - Parameter schemas with `additionalProperties:false`, booleans never accepted as integers.
 - No operation type executes code (no `run_tests`, no build) in v1.
 
+## Amendment (KOR-28, 2026-11-23)
+The key replaced the content fields, so a session that passed a new key published the same comment again (AUD-03
+finding L3). Now:
+- The dedupe fields of a type apply with or without a key; the key never opens a slot of its own for such a type.
+- The key only marks a repetition as the same request. The same key with the same content is a duplicate by the
+  fields. The same key for other content of the same task and type, while an earlier operation with it holds its
+  slot (`accepted|executing|succeeded`, same epoch, within the type's window), is rejected by the runner (`params_invalid`, `/idempotency_key`) and
+  registered as `rejected` (recorded and audited by the hub).
+- A type without dedupe fields keeps the key's slot `{idempotency_key, task}` (24 h).
+- There is no override to repeat an operation inside its window on purpose: a repetition is possible after the
+  window, after the original released its slot, or with other content. A future explicit override would need its
+  own field visible in the audit, never a key.
+- The hub and the registration contract are unchanged (one tag per registration); the key check runs on the
+  device that holds the task's earlier operations. Its scope is the task (parent and subagent sessions share keys).
+  It does not see operations of the task on another device, and two concurrent requests with one key can both pass
+  it; neither case lets the same content through.
+
 ## Consequences
 - Cross-device duplicate protection without plaintext at the hub.
-- A key rotation inside a window allows one duplicate (documented).
+- A workgroup-key (epoch) rotation inside a window allows one duplicate (documented); an idempotency key never does (KOR-28).
 - Operations need the hub online (expire after 10 min in `received`).
 
 ## Alternatives considered

@@ -9,10 +9,10 @@ from typing import Any
 
 import pytest
 
-from agent_runner.crypto.dedupe import dedupe_tag
+from agent_runner.crypto.dedupe import dedupe_tag, idempotency_fields
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.encoding import b64u_decode
-from agent_runner.operations.dedupe import dedupe_slot, fields_for
+from agent_runner.operations.dedupe import WINDOWS, dedupe_slot, fields_for
 from agent_runner.operations.extensions import NEEDS_PRECHECK
 
 CONTRACTS = Path(__file__).resolve().parents[4] / "contracts"
@@ -60,27 +60,44 @@ def test_every_type_with_dedupe_fields_has_a_vector() -> None:
 
 
 @pytest.mark.parametrize("vector", KEYED)
-def test_an_idempotency_key_replaces_the_fields(vector: dict[str, Any]) -> None:
+def test_the_idempotency_key_field_set_matches_the_vector(vector: dict[str, Any]) -> None:
+    # the key's field set of a type without dedupe fields; the vector names a type to fix the tag's input
+    assert idempotency_fields(vector["idempotency_key"], vector["task"]) == vector["fields"]
+    assert dedupe_tag(DK, vector["type"], vector["fields"]) == vector["tag"]
     fields = fields_for(
-        vector["type"],
-        {"anything": "ignored"},
+        "task.set_title",
+        {"title": "ignored"},
         session_id="01930005-0000-7000-8000-000000000001",
         task_id=vector["task"],
         idempotency_key=vector["idempotency_key"],
         extra={},
     )
     assert fields == vector["fields"]
-    slot = dedupe_slot(
-        vector["type"],
-        {},
-        session_id="x",
-        task_id=vector["task"],
-        idempotency_key=vector["idempotency_key"],
-        extra={},
-        workgroup_key=WK,
-        epoch=1,
-    )
-    assert slot == {"epoch": 1, "tag": vector["tag"]}
+
+
+@pytest.mark.parametrize("vector", TYPED, ids=[v["type"] for v in TYPED])
+def test_an_idempotency_key_never_replaces_the_fields_of_a_type(vector: dict[str, Any]) -> None:
+    # KOR-28: the content rule applies with any key, so a new key cannot repeat the same operation
+    params, session, extra = split(vector)
+    for key in (None, "client-key-1", "client-key-2"):
+        fields = fields_for(vector["type"], params, session_id=session, task_id=TASK, idempotency_key=key, extra=extra)
+        assert fields == vector["fields"]
+        slot = dedupe_slot(
+            vector["type"],
+            params,
+            session_id=session,
+            task_id=TASK,
+            idempotency_key=key,
+            extra=extra,
+            workgroup_key=WK,
+            epoch=3,
+        )
+        assert slot == {"epoch": 3, "tag": vector["tag"]}
+
+
+def test_the_windows_equal_the_contract() -> None:
+    dedupe = json.loads((CONTRACTS / "ops" / "dedupe-fields.json").read_text(encoding="utf-8"))
+    assert dict(WINDOWS) == {name: entry["window_seconds"] for name, entry in dedupe["types"].items()}
 
 
 @pytest.mark.parametrize("op_type", ["github.list_repositories", "github.get_pull_request", "task.set_title"])
@@ -88,7 +105,7 @@ def test_types_without_dedupe_fields_have_no_slot(op_type: str) -> None:
     common: dict[str, Any] = {"session_id": "s", "task_id": TASK, "idempotency_key": None, "extra": {}}
     assert fields_for(op_type, {"title": "x"}, **common) is None
     assert dedupe_slot(op_type, {}, workgroup_key=WK, epoch=1, **common) is None
-    # with a key every type has a slot
+    # with a key a type without dedupe fields has the key's slot
     keyed = {**common, "idempotency_key": "k"}
     assert fields_for(op_type, {}, **keyed) == {"idempotency_key": "k", "task": TASK}
 

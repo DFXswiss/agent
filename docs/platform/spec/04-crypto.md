@@ -231,7 +231,8 @@ session key and unlocks the identity.
 
 `tag = b64u(HMAC-SHA256(dk_e, P‖"dedupe\0"‖canonical({"type":type,"fields":fields})))`, where `fields` is the
 per-type field set of `03-api.md` §9 (normalised: repository names lowercased, refs without `refs/heads/`,
-text fields replaced by their `sha256_hex`). If the caller passes an idempotency key, `fields =
+text fields replaced by their `sha256_hex`). An idempotency key never replaces these fields (KOR-28): the content
+rule applies with any key. Only a type without dedupe fields gets a slot from the key, `fields =
 {"idempotency_key":key,"task":task_id}`. The hub stores `(wg, epoch, tag)`; tags of different epochs never
 match (documented limitation: a rotation inside a window re-allows one duplicate).
 

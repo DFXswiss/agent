@@ -11,7 +11,8 @@
    pre-check (`extensions.PRECHECKS`; any error other than `CheckFailed` is `upstream_error`). The guest's
    `local_check:"rejected"` skips them: its error is binding.
 2. **Registration** (`register.build`, `register.Registrar`): the encrypted `operation.params` event, the dedupe
-   tag with the current workgroup epoch, `local_check` and the error code, stored before the first attempt; posted
+   tag with the current workgroup epoch (an idempotency key reused for other content is `params_invalid`, KOR-28),
+   `local_check` and the error code, stored before the first attempt; posted
    with backoff while the hub is unreachable. While the device holds no workgroup key the registration waits for it.
    No decision 10 min after the request reached the runner: `expired` with `hub_unreachable` (the session gets
    `failed`, `retryable:true`; the hub never knew the operation, so no event or transition is written). A final
@@ -330,6 +331,12 @@ class Pipeline:
                     )
                     if built.size_exceeded and error is None:
                         error = {"code": "size_exceeded", "message": "The parameters are too large."}
+                    if built.key_conflict and error is None:
+                        error = CheckFailed(
+                            "params_invalid",
+                            pointers=["/idempotency_key"],
+                            message="The idempotency key was already used for another request of this task.",
+                        ).error()
                     if error is not None and op.local_error is None:
                         checked = {"error": error}
                     slot = built.body["dedupe"]

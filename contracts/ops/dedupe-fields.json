@@ -1,5 +1,5 @@
 {
-  "description": "Dedupe field sets and windows per operation type (03-api.md section 9, 04-crypto.md section 4.10, ADR-012). Normalisation: repo lowercased, SHAs lowercased, branch/head/base without a leading refs/heads/, text that is not printable ASCII replaced by sha256:<hex of its UTF-8>. Equal to agent_hub.crypto.dedupe and contracts/vectors/dedupe.json. Types without an entry have no duplicate protection. A duplicate is a slot held by an operation in accepted, executing or succeeded within window_seconds; failed, rejected and expired operations release the slot.",
+  "description": "Dedupe field sets and windows per operation type (03-api.md section 9, 04-crypto.md section 4.10, ADR-012). Normalisation: repo lowercased, SHAs lowercased, branch/head/base without a leading refs/heads/, text that is not printable ASCII replaced by sha256:<hex of its UTF-8>. Equal to agent_hub.crypto.dedupe and contracts/vectors/dedupe.json. Types without an entry have duplicate protection only through an idempotency key. An idempotency key never replaces the fields of a type that has an entry (KOR-28): the same content is a duplicate with any key, and the runner rejects a key reused for other content of the same task and such a type while the earlier operation holds its slot (params_invalid at /idempotency_key). For a type without an entry the key's slot makes any repetition with the key a duplicate. A duplicate is a slot held by an operation in accepted, executing or succeeded within window_seconds; failed, rejected and expired operations release the slot.",
   "idempotency_key": {
     "fields": [
       {
@@ -12,7 +12,7 @@
       }
     ],
     "window_seconds": null,
-    "window_rule": "the window of the operation type; for a type without dedupe fields 86400"
+    "window_rule": "only for a type without dedupe fields: 86400"
   },
   "types": {
     "github.checkout": {
