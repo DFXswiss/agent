@@ -345,7 +345,8 @@ class Run:
             runner_node.egress_start(SAMPLE_INTERVAL_S, [bind, ctx.peer], match)
         else:
             hub_node.egress_start(SAMPLE_INTERVAL_S, [], match)
-        pg_bin = self.tools.pg_bin or find_pg_bin(hub_node)
+        # E2E_PG_BIN: another PostgreSQL bin directory for a local run on a computer without PostgreSQL 16 (KOR-24)
+        pg_bin = self.tools.pg_bin or self.environ.get("E2E_PG_BIN") or find_pg_bin(hub_node)
         base_env = clean_env(self.environ, {})
         cluster = Cluster(hub_node, pg_bin, f"{ctx.scratch}/pg", config.port("postgres"), base_env)
         cluster.password, cluster.reader_password = self.secrets.new(), self.secrets.new()

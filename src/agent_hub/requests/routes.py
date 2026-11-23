@@ -25,12 +25,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from agent_hub.agents.notify import account_change
 from agent_hub.credentials.eligibility import eligible_devices
 from agent_hub.crypto.encoding import format_time
 from agent_hub.device.keys import ActiveDevice, device_id
 from agent_hub.errors import HubError
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import HubRouter
+from agent_hub.notifications.rules import Notification, publish_rows
 from agent_hub.orgs.routes import parse_id, user_id
 from agent_hub.requests import store
 from agent_hub.stream.publish import Audience, hint, publish
@@ -92,7 +94,17 @@ async def get_my_devices(context: Context, principal: CurrentPrincipal) -> dict[
 @router.post("/v1/device-requests", auth="browser", right="user")
 async def post_request(context: Context, principal: CurrentPrincipal, body: EnvelopeBody) -> dict[str, Any]:
     user, now = user_id(principal), context.clock()
-    created = await _in_transaction(context, lambda c: store.create_request(c, user, body.envelope, now))
+
+    def work(connection: Any) -> tuple[store.Created, list[Notification]]:
+        created = store.create_request(connection, user, body.envelope, now)
+        if created.replayed:
+            return created, []
+        # an agent sent a device request (e.g. connect GitHub): the user is told (KOR-24)
+        target = created.row.device_id
+        return created, account_change(connection, user, "device_request", now, target=target)
+
+    created, notices = await _in_transaction(context, work)
+    publish_rows(notices)
     if created.replaced:
         hint(created.row.device_id, "reconcile", {})
     if not created.replayed:

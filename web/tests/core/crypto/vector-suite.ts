@@ -11,6 +11,7 @@ import { uuid7 } from '../../../src/core/encoding/ids';
 import { bodyJson, canonical, canonicalText, parseJson } from '../../../src/core/encoding/json';
 import { formatTime, parseTime } from '../../../src/core/encoding/time';
 import { aesKey, seal as aeadSeal } from '../../../src/core/crypto/aead';
+import * as agent from '../../../src/core/crypto/agent';
 import * as bundle from '../../../src/core/crypto/bundle';
 import * as credential from '../../../src/core/crypto/credential';
 import * as dedupe from '../../../src/core/crypto/dedupe';
@@ -62,6 +63,7 @@ export const TITLE_CASES: Any = parseJson(
 
 /** The vector files this package consumes (04-crypto.md sections 1-4); the title cases come on top. */
 export const CONSUMED = [
+  'agent',
   'bundle',
   'credential',
   'dedupe',
@@ -175,6 +177,12 @@ export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
   verify_enrollment: async (a) => enroll.verifyEnrollment(a.body, b(a.pk_inv)),
   verify_register: async (a) => invite.verifyRegister(b(a.pk_inv), a.user_id, b(a.challenge), a.inv_sig),
   dedupe_fields: async (a) => dedupe.dedupeFields(a.type, a.params),
+  verify_pop: async (a) => agent.verifyPop(a.pairing_id, b(a.kem), b(a.sig), a.pop),
+  open_identity: async (a) =>
+    agent.openIdentity(await kem(a.agent_kem_sk), b(a.secret), a.agent_id, a.user_id, a.sealed),
+  open_label: async (a) => agent.openLabel(await kem(a.user_kem_sk), a.agent_id, a.user_id, a.sealed),
+  claim: async (a) => agent.claim(b(a.secret), a.agent_id, a.user_id),
+  check_label: async (a) => agent.checkLabel(a.label),
 };
 
 /** Runs `op(args)` and returns the error code it fails with (`null` if it succeeds; other errors propagate). */
@@ -202,6 +210,40 @@ export function negativeChecks(): Check[] {
 }
 
 const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
+  agent: async (data) => {
+    const ag = data.agent;
+    const user = data.user;
+    same(await agent.fingerprint(b(ag.kem), b(ag.sig)), data.fingerprint, 'fingerprint');
+    same(agent.popText(ag.id, b(ag.kem), b(ag.sig)), data.pop.text, 'pop text');
+    await agent.verifyPop(ag.id, b(ag.kem), b(ag.sig), data.pop.signature);
+    const signer = await keys.ed25519KeyPair(b(ag.sig_sk));
+    same(signer.publicKey, ag.sig, 'agent sig key');
+    same(await keys.ed25519Sign(signer.privateKey, b(data.pop.text)), data.pop.signature, 'pop signature');
+    const agentKem = await kem(ag.kem_sk);
+    same(agentKem.publicKey, ag.kem, 'agent kem key');
+    const sec = data.secret;
+    await sameAesKey(await agent.bundleKey(b(sec.secret), ag.id, user.id), sec.bundle_key, 'bundle key');
+    const claimed = await agent.claim(Secret.of(b(sec.secret)), ag.id, user.id);
+    same(claimed, sec.claim, 'claim');
+    same(await agent.claimHash(claimed), sec.claim_hash, 'claim hash');
+    const id = data.identity;
+    same(agent.identityInfo(ag.id, user.id), id.info, 'identity info');
+    const plain = parseJson(utf8(id.plaintext)) as Any;
+    const identityOf = await keys.Identity.fromRaw(b(plain.kem), b(plain.sig));
+    same(identityOf.public(), { kem: user.kem, sig: user.sig }, 'user identity');
+    same(fromUtf8(bundle.bundlePlaintext(identityOf)), id.plaintext, 'identity plaintext');
+    const fixed = { nonce: b(id.nonce), ephemeral: b(id.ephemeral_sk) };
+    same(await agent.sealIdentity(b(ag.kem), b(sec.secret), ag.id, user.id, identityOf, fixed), id.sealed, 'sealed');
+    same(
+      (await agent.openIdentity(agentKem, b(sec.secret), ag.id, user.id, id.sealed)).public(),
+      identityOf.public(),
+      'opened identity',
+    );
+    const lab = data.label;
+    same(agent.labelInfo(ag.id, user.id), lab.info, 'label info');
+    same(await agent.sealLabel(b(user.kem), ag.id, user.id, lab.value, b(lab.ephemeral_sk)), lab.sealed, 'label');
+    same(await agent.openLabel(await kem(user.kem_sk), ag.id, user.id, lab.sealed), lab.value, 'opened label');
+  },
   encoding: async (data) => {
     for (const item of data.b64u) {
       same(b64uEncode(fromHex(item.hex)), item.b64u, 'b64u encode');

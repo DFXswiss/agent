@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-agents-revoke.response.json",
+  "title": "DELETE /v1/me/agents/{agent_id} response",
+  "description": "Body of a successful response to DELETE /v1/me/agents/{agent_id} (11-agent-access.md section 4).",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

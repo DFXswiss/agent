@@ -10,6 +10,30 @@ from __future__ import annotations
 from typing import Any
 
 DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "agent.claim": {
+        "properties": {
+            "agent": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ]
+        },
+        "required": ["agent"],
+    },
+    "agent.confirm": {
+        "properties": {
+            "agent": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ]
+        },
+        "required": ["agent"],
+    },
+    "agent.revoke": {
+        "properties": {
+            "agent": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ]
+        },
+        "required": ["agent"],
+    },
     "auth.login": {
         "properties": {"passkey_id": [{"type": "string", "pattern": "^(?:[A-Za-z0-9_-]{1,128}|sha256:[0-9a-f]{32})$"}]},
         "required": ["passkey_id"],
@@ -101,6 +125,9 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "invite_consumed",
                         "invite_revoked",
                         "author_not_writer",
+                        "pairing_unknown",
+                        "pairing_gesture_required",
+                        "claim_invalid",
                     ],
                 }
             ],
@@ -349,6 +376,13 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "model": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"}],
         },
         "required": ["provider", "model"],
+    },
+    "notification.read": {
+        "properties": {
+            "marked": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "scope": [{"type": "string", "enum": ["ids", "all", "all_account"]}],
+        },
+        "required": ["marked", "scope"],
     },
     "operation.accepted": {
         "properties": {
@@ -802,6 +836,9 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "invite_consumed",
                         "invite_revoked",
                         "author_not_writer",
+                        "pairing_unknown",
+                        "pairing_gesture_required",
+                        "claim_invalid",
                     ],
                 }
             ],
@@ -850,6 +887,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
     },
+    "read.agent.me": {"properties": {}, "required": []},
     "read.device.credential": {"properties": {}, "required": []},
     "read.device.logs": {"properties": {}, "required": []},
     "read.device.platform_log": {"properties": {}, "required": []},
@@ -860,6 +898,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.device.workgroup.tasks": {"properties": {}, "required": []},
     "read.device.wraps": {"properties": {}, "required": []},
     "read.device_request": {"properties": {}, "required": []},
+    "read.me.agents": {"properties": {}, "required": []},
+    "read.me.audit": {"properties": {}, "required": []},
     "read.me.bundles.recovery": {"properties": {}, "required": []},
     "read.me.credential": {"properties": {}, "required": []},
     "read.me.credentials": {"properties": {}, "required": []},

@@ -173,4 +173,11 @@ export const MAILBOX = {
   email: 'claude@example.com',
 };
 export const SUBSCRIPTION = { token: 'sk-ant-oat01-not-real', email: 'claude@example.com', kind: 'setup_token' };
+/** A login token of the local Claude Code login (ADR-056 section 7). */
+export const LOGIN_TOKEN = {
+  token: 'sk-ant-oat01-login-fake',
+  email: null,
+  kind: 'login_token',
+  expires_at: '2026-11-23T20:00:00.000Z',
+};
 export const GITHUB = { token: 'gho_x', login: 'octo-cat', user_id: 1, scopes: [], created_at: TS };

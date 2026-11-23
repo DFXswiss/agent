@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-audit.request.json",
+  "title": "GET /v1/me/audit request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "before": {
+      "$ref": "../common.json#/$defs/q_before"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_list"
+    }
+  },
+  "additionalProperties": false
+}

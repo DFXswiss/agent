@@ -8,6 +8,10 @@ own actions (`actor_id` = the member); a non-member gets `404 not_found`. Filter
 `session`, `wg`. Rows are returned as the hash covers them (`agent_hub.audit.chain.row_json`), so a client can
 recompute a row's hash with its `prev_hash` taken from the verification.
 
+**Account.** `GET /v1/me/audit` (KOR-24) returns the caller's account audit in the same form and paging: the rows the
+user wrote outside any org (`actor_id` = the user and no `org_id`: sign-in, passkeys, recovery, agents) and every row
+written by a request of one of the user's agents (`agent_id`), in an org or not.
+
 **Verify.** `GET /v1/orgs/{org}/audit/verify` (admin) recomputes the whole chain (`verify_chain`: every hash and link
 from `seq` 1 to the head) and checks the newest checkpoint of the hub key (`audit_checkpoint`, written hourly by
 `agent_hub.audit.jobs`): its signature verifies under the hub key and its hash equals the stored hash at its `seq`.
@@ -43,7 +47,7 @@ _FILTER_COLUMNS = {"actor": "actor_id", "task": "task_id", "session": "session_i
 _ACTION_RE = re.compile(r"[a-z_]+(?:\.[a-z_]+)*")
 _COLUMNS = (
     "seq, at, actor_id, actor_kind, action, result, org_id, wg_id, task_id, session_id, device_id, target_kind,"
-    " target_id, detail, event_id"
+    " target_id, detail, event_id, agent_id"
 )
 MAX_ACTION = 96
 
@@ -106,6 +110,7 @@ def _row(record: tuple[Any, ...]) -> dict[str, Any]:
         target_id=record[12],
         detail=record[13],
         event_id=record[14],
+        agent_id=record[15],
     )
     return row_json(int(record[0]), row)
 
@@ -140,6 +145,22 @@ def list_audit(
         else:
             clauses.append(f"{_FILTER_COLUMNS[name]} = %s")
             params.append(value)
+    found = connection.execute(
+        f"SELECT {_COLUMNS} FROM hub.audit WHERE {' AND '.join(clauses)} ORDER BY seq DESC LIMIT %s",
+        (*params, limit + 1),
+    ).fetchall()
+    rows = [_row(record) for record in found[:limit]]
+    return {"rows": rows, "next_before": encode_before(rows[-1]["seq"]) if len(found) > limit else None}
+
+
+def list_account_audit(connection: Connection, user: UUID, *, before: str | None, limit: int) -> dict[str, Any]:
+    """A page of the user's account audit (`GET /v1/me/audit`, KOR-24): the rows the user wrote outside any org
+    (`actor_id` = the user, no org) and every row written by a request of one of the user's agents, newest first."""
+    clauses = ["((actor_id = %s AND org_id IS NULL) OR agent_id IN (SELECT id FROM hub.agent WHERE user_id = %s))"]
+    params: list[Any] = [user, user]
+    if before is not None:
+        clauses.append("seq < %s")
+        params.append(decode_before(before))
     found = connection.execute(
         f"SELECT {_COLUMNS} FROM hub.audit WHERE {' AND '.join(clauses)} ORDER BY seq DESC LIMIT %s",
         (*params, limit + 1),

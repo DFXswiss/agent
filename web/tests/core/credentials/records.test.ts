@@ -32,7 +32,7 @@ import {
 import { actor as vectorActor } from '../crypto/helpers';
 import { VECTOR_FILES } from '../crypto/vector-suite';
 import { actor, TS } from '../log/world';
-import { API_KEY, credWorld, GITHUB, MAILBOX, seed, selfWrap, storedRecord, SUBSCRIPTION } from './world';
+import { API_KEY, credWorld, GITHUB, LOGIN_TOKEN, MAILBOX, seed, selfWrap, storedRecord, SUBSCRIPTION } from './world';
 
 const codeOf = async (run: () => Promise<unknown>): Promise<string> => {
   try {
@@ -117,6 +117,12 @@ describe('bodies', () => {
     expect(validBody('claude_subscription', { ...SUBSCRIPTION, email: 'x' })).toBe(false);
     expect(validBody('claude_subscription', { ...SUBSCRIPTION, kind: 'oauth' })).toBe(false);
     expect(validBody('claude_subscription', { ...SUBSCRIPTION, token: 7 })).toBe(false);
+    // the login token of the local Claude Code login (ADR-056 section 7), with its expiry
+    expect(validBody('claude_subscription', LOGIN_TOKEN)).toBe(true);
+    expect(validBody('claude_subscription', { ...LOGIN_TOKEN, expires_at: '2026-11-23' })).toBe(false);
+    expect(validBody('claude_subscription', { ...LOGIN_TOKEN, expires_at: 7 })).toBe(false);
+    expect(validBody('claude_subscription', { ...LOGIN_TOKEN, extra: 1 })).toBe(false);
+    expect(validBody('claude_subscription', { ...SUBSCRIPTION, kind: 'login_token' })).toBe(true);
     expect(validBody('github', GITHUB)).toBe(true);
     expect(validBody('github', { ...GITHUB, created_at: 'yesterday' })).toBe(false);
     expect(isCredentialKind('mailbox')).toBe(true);
@@ -129,6 +135,14 @@ describe('bodies', () => {
     expect(summarize('claude_subscription', SUBSCRIPTION)).toEqual({
       kind: 'claude_subscription',
       email: 'claude@example.com',
+      origin: 'setup_token',
+      expiresAt: null,
+    });
+    expect(summarize('claude_subscription', LOGIN_TOKEN)).toEqual({
+      kind: 'claude_subscription',
+      email: null,
+      origin: 'login_token',
+      expiresAt: '2026-11-23T20:00:00.000Z',
     });
     expect(summarize('mailbox', MAILBOX)).toEqual({
       kind: 'mailbox',
@@ -186,6 +200,8 @@ describe('openRecord', () => {
     expect((await openRecord(t.context, 'claude_subscription', byDevice, keys)).summary).toEqual({
       kind: 'claude_subscription',
       email: 'claude@example.com',
+      origin: 'setup_token',
+      expiresAt: null,
     });
     const stranger = await actor('stranger');
     const foreign = await storedRecord(t, 'anthropic_api_key', API_KEY, { author: stranger });

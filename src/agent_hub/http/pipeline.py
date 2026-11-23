@@ -23,8 +23,10 @@ response-signed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from urllib.parse import parse_qsl
+from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi.dependencies.models import Dependant
@@ -32,8 +34,11 @@ from fastapi.routing import APIRoute, APIWebSocketRoute
 from starlette.routing import BaseRoute
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from agent_hub.agents.keys import touch
+from agent_hub.agents.scope import agent_allowed
+from agent_hub.audit.chain import ACTING_AGENT
 from agent_hub.auth.gate import PendingSignature, SignedHeaders, response_headers, signed_headers, verify_request
-from agent_hub.auth.keys import ANONYMOUS, DEVICE_PREFIX, SESSION_PREFIX, Principal
+from agent_hub.auth.keys import AGENT_PREFIX, ANONYMOUS, DEVICE_PREFIX, SESSION_PREFIX, Principal
 from agent_hub.clock import epoch_seconds
 from agent_hub.errors import INTERNAL_ERROR, HubError, error_bytes
 from agent_hub.http.context import PENDING_KEY, PRINCIPAL_KEY, SIGNED_KEY, HubContext
@@ -44,10 +49,21 @@ from agent_hub.http.routing import API_PREFIX, REQUEST_BODY_BYTES, RouteSpec, ma
 
 LOG = logging.getLogger("agent_hub.http")
 UNROUTED = RouteSpec(auth="anon", rights=("anon",), read_resource=None, max_body=REQUEST_BODY_BYTES, streaming=False)
-REQUIRED_KIND = {"browser": "session", "device": "device", "root": "root"}
+REQUIRED_KIND = {"browser": "session", "device": "device", "agent": "agent", "root": "root"}
 POLICY_VIOLATION = 1008
 SOURCE_KEY = "agent_hub.source"
 _QUERY_NAMES: dict[int, frozenset[str]] = {}
+
+
+def route_path(route: BaseRoute | None) -> str | None:
+    """The path template of a matched route (`/v1/orgs/{org}`), None without a route."""
+    return route.path if isinstance(route, APIRoute | APIWebSocketRoute) else None
+
+
+def acting_agent(principal: Principal) -> UUID | None:
+    """The agent ID of an agent principal (written into every audit row of its request, ADR-056), else None."""
+    agent = principal.attributes.get("agent_id") if principal.kind == "agent" else None
+    return agent if isinstance(agent, UUID) else None
 
 
 class ClientGone(Exception):
@@ -58,11 +74,22 @@ def key_kind(key_id: str) -> str:
     """The rate-limit class of a key ID (03-api.md section 1)."""
     if key_id.startswith(DEVICE_PREFIX):
         return "device"
+    if key_id.startswith(AGENT_PREFIX):
+        return "agent"
     return "session" if key_id.startswith(SESSION_PREFIX) else "root"
 
 
-def check_auth(spec: RouteSpec, principal: Principal, *, signed: bool) -> None:
-    """The authentication class of the route (the right itself is checked by the area's handler)."""
+def check_auth(
+    spec: RouteSpec, principal: Principal, *, signed: bool, method: str = "GET", path: str | None = None
+) -> None:
+    """The authentication class of the route (the right itself is checked by the area's handler).
+
+    An active agent (ADR-056) passes every route a browser session of its user passes, except the WebAuthn
+    ceremonies (`agent_hub.agents.scope`)."""
+    if principal.kind == "agent":
+        if not agent_allowed(method, path or "", spec.auth, principal.attributes.get("state")):
+            raise HubError("forbidden")
+        return
     if spec.auth == "anon" or (spec.auth == "device_enroll" and signed):
         return
     if spec.auth == "anon_or_browser":
@@ -195,7 +222,14 @@ class HubPipeline:
             check_auth(spec, ANONYMOUS, signed=False)
 
     async def _authenticate(
-        self, context: HubContext, scope: Scope, spec: RouteSpec, signed: SignedHeaders | None, body: bytes
+        self,
+        context: HubContext,
+        scope: Scope,
+        spec: RouteSpec,
+        signed: SignedHeaders | None,
+        body: bytes,
+        *,
+        path: str | None,
     ) -> Principal:
         if signed is None:
             return ANONYMOUS
@@ -216,7 +250,11 @@ class HubPipeline:
             raise
         scope[SIGNED_KEY] = signed
         self._limit(context, principal.kind, str(principal.key_id))
-        check_auth(spec, principal, signed=True)
+        check_auth(spec, principal, signed=True, method=scope.get("method", "GET"), path=path)
+        agent = acting_agent(principal)
+        if agent is not None and principal.attributes.get("state") == "active":
+            # the use of an agent is recorded only for a verified signature (review L2, decisions KOR-24)
+            await asyncio.to_thread(touch, context, agent)
         return principal
 
     async def _http(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -228,7 +266,7 @@ class HubPipeline:
             signed = signed_headers(scope)
             self._precheck(context, scope, spec, signed)
             body = await read_body(scope, receive, spec.max_body)
-            principal = await self._authenticate(context, scope, spec, signed, body)
+            principal = await self._authenticate(context, scope, spec, signed, body, path=route_path(match.route))
             check_query(match.route, scope)
         except ClientGone:
             return
@@ -237,7 +275,11 @@ class HubPipeline:
             return
         scope[PRINCIPAL_KEY] = principal
         request: Message = {"type": "http.request", "body": body, "more_body": False}
-        status = await self._run(context, scope, spec, prepend(request, receive), send)
+        acting = ACTING_AGENT.set(acting_agent(principal))
+        try:
+            status = await self._run(context, scope, spec, prepend(request, receive), send)
+        finally:
+            ACTING_AGENT.reset(acting)
         principal = scope[PRINCIPAL_KEY]
         if spec.read_resource is not None and principal.kind != "anonymous":
             self._read_log(context, scope, spec.read_resource, principal, status)
@@ -310,14 +352,15 @@ class HubPipeline:
     async def _websocket(self, scope: Scope, receive: Receive, send: Send) -> None:
         context: HubContext = self.hub.state.hub
         resolve_source(context, scope)
-        spec = match_route(self.hub.router.routes, scope).spec
+        match = match_route(self.hub.router.routes, scope)
+        spec = match.spec
         connect = await receive()
         try:
             if spec is None:
                 raise HubError("not_found")
             signed = signed_headers(scope)
             self._precheck(context, scope, spec, signed)
-            principal = await self._authenticate(context, scope, spec, signed, b"")
+            principal = await self._authenticate(context, scope, spec, signed, b"", path=route_path(match.route))
         except HubError:
             await send({"type": "websocket.close", "code": POLICY_VIOLATION})
             return

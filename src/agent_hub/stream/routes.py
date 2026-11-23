@@ -38,11 +38,12 @@ async def stream(
     terminal: Annotated[list[str] | None, Query()] = None,
     cursors: Annotated[str | None, Query()] = None,
     monitoring: Annotated[str | None, Query()] = None,
+    account: Annotated[str | None, Query()] = None,
 ) -> StreamingResponse:
     """The browser live channel of one org."""
-    query = parse_query(org, terminal or [], cursors, monitoring)
+    query = parse_query(org, terminal or [], cursors, monitoring, account)
     service = _service(service_of(request.app))
-    opened = await service.open_browser(cast(UUID, principal.principal_id), query)
+    opened = await service.open_browser(cast(UUID, principal.principal_id), query, principal.key_id)
     return StreamingResponse(service.browser_body(opened), media_type="text/event-stream", headers=STREAM_HEADERS)
 
 

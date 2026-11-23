@@ -8,14 +8,18 @@
 // | `task.failed` | "Task Y failed" | the task |
 // | `invite.accepted` | "Z accepted the invitation to X" | the org's members |
 // | `rotation.required` | "Key rotation required in organization X" | the org's members |
+// | `agent.account_change` | "Agent A removed a passkey" (replaced the recovery code, disconnected an agent, …;
+//   `ref` = `<action>:<acting agent id>:<target>`, no org) | the settings |
 //
 // The level of a whiteboard notification follows from the row: a task → task level, else a workgroup → workgroup
 // level, else the org level. Names that are not (yet) decrypted are replaced by neutral fallbacks, never by IDs of
 // confidential objects; unknown kinds get a generic text. The names come from verified events only
-// (`core/tasks/directory.ts`): `org.profile`, `wg.profile`, `member.profile`, `device.profile` and the task's `task.meta`.
+// (`core/tasks/directory.ts`): `org.profile`, `wg.profile`, `member.profile`, `device.profile` and the task's `task.meta`;
+// an agent's name from the user's own sealed agent labels (`core/agents/list.ts`).
 import { isRecord } from '../registry';
 import { selectDirectory, selectTitle } from '../tasks/directory';
-import type { NotificationRow } from '../store/slices/notifications';
+import { agentName } from '../store/slices/agents';
+import { ACCOUNT_KIND, type NotificationRow } from '../store/slices/notifications';
 import type { StoreState } from '../store/store';
 import { boardPath, orgBoard, taskBoard, wgBoard } from '../whiteboards/location';
 
@@ -25,6 +29,27 @@ export interface Names {
   readonly task: string | null;
   /** The subject of `invite.accepted` (a member's display name or a device's label). */
   readonly subject: string | null;
+  /** The name of the agent of an `agent.account_change`. */
+  readonly agent: string | null;
+}
+
+/** The account-changing actions of an agent the hub reports (`agents/notify.py`). */
+export const AGENT_ACTIONS = [
+  'passkey_removed',
+  'recovery_replaced',
+  'recovery_finished',
+  'agent_revoked',
+  'role_changed',
+  'credential_changed',
+  'bundle_replaced',
+  'invite_created',
+  'device_request',
+];
+
+/** Action, acting agent and target of an `agent.account_change` row (`ref` = `<action>:<agent id>:<target>`). */
+export function agentChange(row: Pick<NotificationRow, 'ref'>): { action: string; agent: string; target: string } {
+  const [action = '', agent = '', ...rest] = (row.ref ?? '').split(':');
+  return { action, agent, target: rest.join(':') };
 }
 
 export interface Message {
@@ -40,6 +65,12 @@ export function notificationMessage(row: NotificationRow, names: Names, fallback
   const task = names.task ?? fallback.task!;
   const subject = names.subject ?? fallback.subject!;
   switch (row.kind) {
+    case ACCOUNT_KIND: {
+      const { action } = agentChange(row);
+      const agent = names.agent ?? fallback.agent!;
+      const known = AGENT_ACTIONS.includes(action) ? action : 'unknown';
+      return { key: `notifications.text.agent.${known}`, params: { agent } };
+    }
     case 'whiteboard.entry':
       if (row.task_id !== null) return { key: 'notifications.text.whiteboard.task', params: { task, org } };
       if (row.wg_id !== null) return { key: 'notifications.text.whiteboard.workgroup', params: { wg, org } };
@@ -59,6 +90,7 @@ export function notificationMessage(row: NotificationRow, names: Names, fallback
 
 /** Where a click leads (06-web.md section 6.2: "click marks read and navigates"). */
 export function notificationTarget(row: NotificationRow): string {
+  if (row.org_id === null) return '/settings';
   const org = `/o/${encodeURIComponent(row.org_id)}`;
   switch (row.kind) {
     case 'whiteboard.entry':
@@ -93,15 +125,17 @@ function deviceLabel(state: StoreState, org: string, device: string): string | n
   return label;
 }
 
-const named = new WeakMap<object, WeakMap<NotificationRow, Names>>();
+const named = new WeakMap<object, WeakMap<object, WeakMap<NotificationRow, Names>>>();
 
 /**
  * The decrypted names a notification refers to (null where not read yet or not readable); the same object while the
- * `events` slice and the row are unchanged (a stable selector for `useStore`).
+ * `events` and `agents` slices and the row are unchanged (a stable selector for `useStore`).
  */
 export function notificationNames(state: StoreState, row: NotificationRow): Names {
-  const byRow = named.get(state.events) ?? new WeakMap<NotificationRow, Names>();
-  named.set(state.events, byRow);
+  const byAgents = named.get(state.events) ?? new WeakMap<object, WeakMap<NotificationRow, Names>>();
+  named.set(state.events, byAgents);
+  const byRow = byAgents.get(state.agents) ?? new WeakMap<NotificationRow, Names>();
+  byAgents.set(state.agents, byRow);
   const known = byRow.get(row);
   if (known !== undefined) return known;
   const names = readNames(state, row);
@@ -110,6 +144,10 @@ export function notificationNames(state: StoreState, row: NotificationRow): Name
 }
 
 function readNames(state: StoreState, row: NotificationRow): Names {
+  if (row.org_id === null) {
+    const agent = row.kind === ACCOUNT_KIND ? agentName(state, agentChange(row).agent) : null;
+    return { org: null, wg: null, task: null, subject: null, agent };
+  }
   const directory = selectDirectory(row.org_id)(state);
   const title = row.task_id === null || row.wg_id === null ? null : selectTitle(row.wg_id, row.task_id, null)(state);
   const subject =
@@ -121,5 +159,6 @@ function readNames(state: StoreState, row: NotificationRow): Names {
     wg: row.wg_id === null ? null : (directory.workgroups.get(row.wg_id) ?? null),
     task: title?.status === 'verified' ? title.text : null,
     subject,
+    agent: null,
   };
 }

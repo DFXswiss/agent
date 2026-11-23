@@ -19,5 +19,16 @@
   "unnamed.org": "…",
   "unnamed.wg": "…",
   "unnamed.task": "…",
-  "unnamed.subject": "Jemand"
+  "unnamed.subject": "Jemand",
+  "text.agent.passkey_removed": "Agent „{agent}“ hat einen Passkey entfernt",
+  "text.agent.recovery_replaced": "Agent „{agent}“ hat den Wiederherstellungscode ersetzt",
+  "text.agent.recovery_finished": "Agent „{agent}“ hat eine Kontowiederherstellung abgeschlossen",
+  "text.agent.agent_revoked": "Agent „{agent}“ hat einen Agenten getrennt",
+  "text.agent.role_changed": "Agent „{agent}“ hat eine Rolle in einer Organisation geändert",
+  "text.agent.credential_changed": "Agent „{agent}“ hat einen Zugang geändert",
+  "text.agent.bundle_replaced": "Agent „{agent}“ hat die Schlüssel einer Anmeldung ersetzt",
+  "text.agent.invite_created": "Agent „{agent}“ hat eine Einladung erstellt",
+  "text.agent.device_request": "Agent „{agent}“ hat eine Anfrage an ein Ausführungsgerät gesendet",
+  "text.agent.unknown": "Agent „{agent}“ hat dein Konto geändert",
+  "unnamed.agent": "unbekannt"
 }

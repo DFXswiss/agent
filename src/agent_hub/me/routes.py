@@ -29,6 +29,8 @@ import psycopg
 import psycopg.errors
 
 from agent_core.signing import b64url_decode, b64url_encode
+from agent_hub.agents.notify import account_change
+from agent_hub.auth.ceremonies import credential_reference
 from agent_hub.auth.fields import B64u16Id, BundleCt, Empty, ModelId, Strict, decode
 from agent_hub.auth.keys import Principal
 from agent_hub.config import ACCESS_KINDS, HubConfig
@@ -39,6 +41,7 @@ from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import HubRouter
 from agent_hub.me import recovery_code
 from agent_hub.me.recovery_code import RecoveryAssertion
+from agent_hub.notifications.rules import Notification, publish_rows
 
 router = HubRouter()
 
@@ -91,7 +94,9 @@ def load_me(context: HubContext, user_id: uuid.UUID) -> dict[str, Any]:
             "SELECT role FROM hub.platform_role WHERE user_id = %s AND revoked_seq IS NULL ORDER BY role", (user_id,)
         ).fetchall()
         unread = connection.execute(
-            "SELECT count(*) FROM hub.notification WHERE recipient_id = %s AND read_at IS NULL", (user_id,)
+            # account notifications (KOR-24) are not counted: a web client of before KOR-24 cannot list them
+            "SELECT count(*) FROM hub.notification WHERE recipient_id = %s AND read_at IS NULL AND org_id IS NOT NULL",
+            (user_id,),
         ).fetchone()
         passkeys = connection.execute(
             "SELECT credential_id, created_at, last_used_at, prf_seen FROM hub.passkey"
@@ -152,8 +157,10 @@ def load_recovery_bundle(context: HubContext, user_id: uuid.UUID) -> dict[str, A
     return {"bundle_ct": b64url_encode(bytes(row[0]))}
 
 
-def put_bundle(context: HubContext, user_id: uuid.UUID, slot: str, body: BundlePut) -> dict[str, Any]:
-    """Store one identity-bundle slot of the caller."""
+def put_bundle(
+    context: HubContext, user_id: uuid.UUID, slot: str, body: BundlePut, agent_id: uuid.UUID | None = None
+) -> dict[str, Any]:
+    """Store one identity-bundle slot of the caller (`agent_id`: the request of an agent of the user, ADR-056)."""
     now = context.clock()
     ct = decode(body.bundle_ct)
     passkey = _PASSKEY_SLOT_RE.fullmatch(slot)
@@ -164,6 +171,7 @@ def put_bundle(context: HubContext, user_id: uuid.UUID, slot: str, body: BundleP
     elif credential_id is None or body.new_recovery_id is not None or body.assertion is not None:
         raise HubError("request_invalid")
     ceremony = None if body.assertion is None else recovery_code.take(context, user_id, body.assertion, now)
+    notices: list[Notification] = []
     with transaction(context.pool) as connection:
         if credential_id is None:
             proven_by = (
@@ -178,7 +186,10 @@ def put_bundle(context: HubContext, user_id: uuid.UUID, slot: str, body: BundleP
                     now=now,
                 )
             )
-            recovery_code.rotate(connection, user_id, cast(str, body.new_recovery_id), proven_by, now)
+            recovery_code.rotate(
+                connection, user_id, cast(str, body.new_recovery_id), proven_by, now, agent_id=agent_id
+            )
+            notices = account_change(connection, user_id, "recovery_replaced", now)
         else:
             owned = connection.execute(
                 "UPDATE hub.passkey SET prf_seen = true WHERE credential_id = %s AND user_id = %s"
@@ -187,11 +198,17 @@ def put_bundle(context: HubContext, user_id: uuid.UUID, slot: str, body: BundleP
             ).fetchone()
             if owned is None:
                 raise HubError("forbidden")
-        connection.execute(
+        replaced = connection.execute(
             "INSERT INTO hub.identity_bundle (user_id, slot, ct, updated_at) VALUES (%s, %s, %s, %s)"
-            " ON CONFLICT (user_id, slot) DO UPDATE SET ct = EXCLUDED.ct, updated_at = EXCLUDED.updated_at",
+            " ON CONFLICT (user_id, slot) DO UPDATE SET ct = EXCLUDED.ct, updated_at = EXCLUDED.updated_at"
+            " RETURNING xmax <> 0",
             (user_id, slot, ct, now),
-        )
+        ).fetchone()
+        if credential_id is not None and replaced is not None and replaced[0]:
+            # an agent overwrote the bundle slot of a passkey (KOR-24)
+            target = credential_reference(credential_id)
+            notices = account_change(connection, user_id, "bundle_replaced", now, target=target)
+    publish_rows(notices)
     return {}
 
 
@@ -230,7 +247,9 @@ async def get_recovery_bundle(context: Context, principal: CurrentPrincipal) -> 
 
 @router.put("/v1/me/bundles/{slot}", auth="browser", right="user")
 async def put_bundle_slot(slot: str, body: BundlePut, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
-    return await asyncio.to_thread(put_bundle, context, _user(principal), slot, body)
+    agent = principal.attributes.get("agent_id") if principal.kind == "agent" else None
+    agent_id = agent if isinstance(agent, uuid.UUID) else None
+    return await asyncio.to_thread(put_bundle, context, _user(principal), slot, body, agent_id)
 
 
 @router.post("/v1/me/recovery/begin", auth="browser", right="user")

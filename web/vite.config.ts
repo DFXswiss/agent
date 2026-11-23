@@ -24,7 +24,9 @@ export default defineConfig((): UserConfig => {
     define: { 'import.meta.env.VITE_PLATFORM_ROOT_KEY': JSON.stringify(rootKey) },
     root: WEB_DIR,
     base: '/',
-    publicDir: false,
+    // public/ holds only agents.md, the guide for AI agents (a byte-identical copy of docs/platform/agents.md, ADR-056
+    // section 8), delivered by the hub as `/agents.md`.
+    publicDir: 'public',
     plugins: [
       lazyIntegrity(),
       react(),

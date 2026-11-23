@@ -32,6 +32,7 @@ from uuid import UUID
 import psycopg
 import psycopg.errors
 
+from agent_hub.agents.notify import account_change
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.config import LIMITS
 from agent_hub.crypto.encoding import format_time, parse_time
@@ -162,6 +163,9 @@ def create(
         except psycopg.errors.UniqueViolation:  # an invitation with this ID was created meanwhile
             raise HubError("id_conflict") from None
         _audit(connection, "invite.create", user=user, org_id=org_id, invite_id=invite_id, kind=body["kind"], now=now)
+        if body.get("role") == "admin":
+            # an agent invited an admin: the user is told (KOR-24), live after the commit (`publish_append`)
+            result.notices.extend(account_change(connection, user, "invite_created", now, target=org_id))
 
     result = _append(
         connection, org_id=org_id, user=user, entry=entry, seq=body["seq"], now=now, root_key=root_key, extra=store

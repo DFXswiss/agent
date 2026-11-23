@@ -43,7 +43,23 @@ def summary(world: World, iteration: int = 1) -> dict[str, Any]:
     return data
 
 
-def test_t1_run_is_green_and_leaves_nothing(world: World, capsys: pytest.CaptureFixture[str]) -> None:
+def git_answers(monkeypatch: pytest.MonkeyPatch, rc: int) -> None:
+    """`git rev-parse HEAD` of the checkout answers `rc` whether or not the tests run in a git checkout (the copy of
+    tools/wp/remote.sh has no .git)."""
+    real_run = LocalNode.run
+
+    def git(self: Node, argv: list[str], *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if argv[:1] == ["git"]:
+            return {"rc": rc, "stdout": "0" * 40 if rc == 0 else "", "stderr": "" if rc == 0 else "not a repository"}
+        return real_run(self, argv, *args, **kwargs)
+
+    monkeypatch.setattr(LocalNode, "run", git)
+
+
+def test_t1_run_is_green_and_leaves_nothing(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git_answers(monkeypatch, 0)  # a git checkout: the web build takes its commit from git itself
     world.set(pw_model="1", hub_commands="audit verify")
     assert Run(config_of(world, repeat=2), world.environ, tools_of(world)).execute() == run.EXIT_OK
     out = capsys.readouterr().out
@@ -76,14 +92,7 @@ def test_t1_run_is_green_and_leaves_nothing(world: World, capsys: pytest.Capture
 
 
 def test_build_without_git_metadata_gets_a_placeholder_commit(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
-    real_run = LocalNode.run
-
-    def no_git(self: Node, argv: list[str], *args: Any, **kwargs: Any) -> dict[str, Any]:
-        if argv[:1] == ["git"]:
-            return {"rc": 128, "stdout": "", "stderr": "not a repository"}
-        return real_run(self, argv, *args, **kwargs)
-
-    monkeypatch.setattr(LocalNode, "run", no_git)
+    git_answers(monkeypatch, 128)
     world.set(node_fail="1")
     assert Run(config_of(world), world.environ, tools_of(world)).execute() == run.EXIT_FAILED
     assert any(line.startswith("node BUILD_COMMIT=" + "0" * 40) for line in world.logged())

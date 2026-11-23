@@ -14,6 +14,7 @@ import {
   filterQuery,
   hubQuery,
   inTime,
+  agentMarker,
   isAuditRow,
   NO_FILTERS,
   parseAuditPage,
@@ -94,6 +95,13 @@ describe('rows and pages', () => {
     expect(isAuditRow(auditRow(1, T0))).toBe(true);
     expect(isAuditRow(auditRow(1, T0, { detail: { a: 'x', b: 2, c: true, d: null } }))).toBe(true);
     expect(isAuditRow(auditRow(1, T0, { detail: { a: {} } }))).toBe(false);
+    expect(isAuditRow({ ...auditRow(1, T0), agent_id: '01a1ee56-5e00-7242-9e24-f87629ad2977' })).toBe(true);
+    expect(isAuditRow({ ...auditRow(1, T0), agent_id: 7 })).toBe(false);
+    const byAgent = { ...auditRow(1, T0), agent_id: 'a1' };
+    const names = (id: string) => (id === 'a1' ? 'Claude Code' : null);
+    expect(agentMarker(byAgent, names)).toBe('Claude Code');
+    expect(agentMarker({ ...byAgent, agent_id: 'a2' }, names)).toBeNull();
+    expect(agentMarker(auditRow(1, T0), names)).toBeUndefined();
     expect(isAuditRow(auditRow(1, T0, { detail: null }))).toBe(false);
     expect(isAuditRow(auditRow(1, T0, { seq: 1.5 }))).toBe(false);
     expect(isAuditRow(auditRow(1, T0, { at: 5 }))).toBe(false);

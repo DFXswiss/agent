@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-agents-list.response.json",
+  "title": "GET /v1/me/agents response",
+  "description": "Body of a successful response to GET /v1/me/agents (11-agent-access.md section 4).",
+  "type": "object",
+  "properties": {
+    "agents": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "expired",
+              "active",
+              "revoked"
+            ]
+          },
+          "label_ct": {
+            "$ref": "../common.json#/$defs/bundle_ct"
+          },
+          "created_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "confirmed_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "claimed_at": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replaces": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the main orchestrator this one replaced at its confirmation (revoked then), or null"
+          }
+        },
+        "required": [
+          "agent_id",
+          "state",
+          "label_ct",
+          "created_at",
+          "confirmed_at",
+          "claimed_at",
+          "last_used_at",
+          "revoked_at",
+          "replaces"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "agents"
+  ],
+  "additionalProperties": false
+}

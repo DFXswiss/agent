@@ -55,7 +55,7 @@ class Notification:
     id: UUID
     recipient_id: UUID
     kind: str
-    org_id: UUID
+    org_id: UUID | None
     wg_id: UUID | None
     task_id: UUID | None
     ref: str | None
@@ -67,7 +67,7 @@ class Notification:
         return {
             "notification_id": str(self.id),
             "kind": self.kind,
-            "org_id": str(self.org_id),
+            "org_id": None if self.org_id is None else str(self.org_id),
             "wg_id": None if self.wg_id is None else str(self.wg_id),
             "task_id": None if self.task_id is None else str(self.task_id),
             "ref": self.ref,
@@ -263,6 +263,7 @@ def orgs_of_device(connection: Connection, device_id: UUID) -> list[UUID]:
 
 
 def publish_rows(rows: Iterable[Notification]) -> None:
-    """The stream frame `notification` of every row to its recipient's browsers (after the commit)."""
+    """The stream frame `notification` of every row to its recipient's browsers (after the commit); an account
+    notification (no org, KOR-24) reaches only the streams opened with `account=1` (`agent_hub.stream.sse`)."""
     for notification in rows:
         publish(Audience("user", notification.recipient_id), "notification", notification.to_json())

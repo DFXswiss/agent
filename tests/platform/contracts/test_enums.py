@@ -30,9 +30,12 @@ SPEC_ERRORS: dict[int, str] = {
     " log_chain log_genesis log_accept log_signature log_rights log_epoch log_type invite_not_in_log invite_consumed"
     " invite_revoked author_not_writer",
     401: "signature_missing key_unknown key_revoked time_skew signature_invalid nonce_replayed session_expired"
-    " unauthorized",
-    403: "forbidden last_admin last_passkey device_not_assigned platform_invite_required platform_access_denied",
-    404: "not_found invite_unknown",
+    " unauthorized"
+    # 11-agent-access.md section 4 (KOR-24)
+    " claim_invalid",
+    403: "forbidden last_admin last_passkey device_not_assigned platform_invite_required platform_access_denied"
+    " pairing_gesture_required",
+    404: "not_found invite_unknown pairing_unknown",
     409: "id_conflict event_conflict seq_conflict version_conflict origin_seq_gap origin_seq_conflict no_device"
     " already_assigned rotation_required no_device_available invite_registered",
     410: "invite_expired",
@@ -40,7 +43,7 @@ SPEC_ERRORS: dict[int, str] = {
     503: "unavailable",
 }
 SPEC_SIZE_EXCEEDED = [400, 413]  # listed under 400 and 413 in 03-api.md section 11
-SPEC_CLIENT_ONLY = "login_automation_failed prf_missing log_rollback log_fork platform_root_mismatch"
+SPEC_CLIENT_ONLY = "login_automation_failed prf_missing log_rollback log_fork platform_root_mismatch pairing_mismatch"
 # 04-crypto.md section 8, complete (every code must be in error-codes.json).
 SPEC_CRYPTO = (
     "non_ascii header_invalid signature_invalid decrypt_failed prf_length prf_missing recovery_code_length hpke_short"
@@ -98,7 +101,7 @@ SPEC_AUDIT_PATTERNS = {
 # (03-api.md section 4.8); the rejected outbox item of 03-api.md section 6.1 (contracts/changes/HUB-10.md).
 DECIDED_AUDIT = (
     "invite.lookup invite.create invite.revoke invite.register invite.release invite.use invite.expire"
-    " credential.rotate outbox.rejected"
+    " credential.rotate outbox.rejected agent.confirm agent.claim agent.revoke notification.read"
 )
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 04-crypto.md section 4.3: (kind, scope, author kind, right).

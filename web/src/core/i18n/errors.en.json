@@ -64,6 +64,11 @@
     "body": "The passkey response does not belong to this sign-in step.",
     "action": "Start the passkey step again."
   },
+  "claim_invalid": {
+    "title": "Agent connection refused",
+    "body": "The agent could not prove that it received the connection.",
+    "action": "Ask your AI agent to connect again."
+  },
   "client_data_invalid": {
     "title": "Passkey response invalid",
     "body": "The browser returned an invalid passkey response.",
@@ -338,6 +343,21 @@
     "title": "Sync gap",
     "body": "The device sent entries with a gap.",
     "action": "The device resends them automatically."
+  },
+  "pairing_gesture_required": {
+    "title": "Confirm again",
+    "body": "The confirmation took too long.",
+    "action": "Confirm once more with your passkey."
+  },
+  "pairing_mismatch": {
+    "title": "This link is not valid",
+    "body": "The agent connection link does not match the request at the server.",
+    "action": "Do not confirm. Ask your AI agent to connect again."
+  },
+  "pairing_unknown": {
+    "title": "Connection request expired",
+    "body": "This agent connection request does not exist any more: it expired, was already used or was cancelled.",
+    "action": "Ask your AI agent to connect again."
   },
   "params_invalid": {
     "title": "Invalid parameters",

@@ -18,7 +18,7 @@ to), so the live services ignore them here. Tests install `MemoryPublisher` with
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 from uuid import UUID
@@ -41,7 +41,10 @@ BROWSER_FRAMES = frozenset(
         "resync",
     }
 )
-PUBLISHED_FRAMES = BROWSER_FRAMES - {"hello", "resync"}
+# An internal frame that is never sent to a browser: it ends the open streams of the keys in `data["key_ids"]` of the
+# user (a revoked agent, an ended browser session; KOR-24), in every hub process.
+CLOSE_KEYS = "close_keys"
+PUBLISHED_FRAMES = (BROWSER_FRAMES - {"hello", "resync"}) | {CLOSE_KEYS}
 # 03-api.md section 6.2: every hint of GET /v1/device/ws; `hello` is sent by the socket itself.
 DEVICE_HINTS = frozenset(
     {
@@ -161,6 +164,12 @@ def publish(audience: Audience, frame: str, data: Mapping[str, Any], *, wg_id: U
     item = Published(audience=audience, frame=frame, data=dict(data), wg_id=wg_id)
     check(item)
     _state["publisher"].publish(item)
+
+
+def close_keys(user_id: UUID, key_ids: Sequence[str]) -> None:
+    """End the open streams of `user_id` signed with one of `key_ids` in every hub process (after the commit)."""
+    if key_ids:
+        publish(Audience("user", user_id), CLOSE_KEYS, {"key_ids": list(key_ids)})
 
 
 def hint(device_id: UUID, hint_type: str, body: Mapping[str, Any] | None = None) -> None:

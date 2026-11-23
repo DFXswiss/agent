@@ -3,6 +3,7 @@
 (`org:admin`). Semantics in `agent_hub.audit.query`; unknown, malformed and forbidden orgs are `404 not_found`. The
 read log (`read.org.audit`, `read.org.audit.verify`) is written by the pipeline, after the response - a verification
 does not see its own read row. Verifications run one at a time per process (they recompute the whole chain).
+`GET /v1/me/audit` (`user`, KOR-24): the caller's account audit (`read.me.audit`).
 """
 
 from __future__ import annotations
@@ -66,3 +67,17 @@ async def get_audit(
 async def get_audit_verify(context: Context, principal: CurrentPrincipal, org: str) -> dict[str, Any]:
     user = cast(UUID, principal.principal_id)
     return await asyncio.to_thread(_verify, context, user, path_id(org))
+
+
+def _account(context: HubContext, user: UUID, before: str | None, limit: int) -> dict[str, Any]:
+    with context.pool.connection() as connection:
+        return query.list_account_audit(connection, user, before=before, limit=limit)
+
+
+@router.get("/v1/me/audit", auth="browser", right="user", read_resource="me.audit")
+async def get_account_audit(
+    context: Context, principal: CurrentPrincipal, *, before: str | None = None, limit: str | None = None
+) -> dict[str, Any]:
+    """The caller's account audit (`agent_hub.audit.query.list_account_audit`, KOR-24)."""
+    count = parse_count(limit, query.LIST_DEFAULT, 1, query.LIST_MAX)
+    return await asyncio.to_thread(_account, context, cast(UUID, principal.principal_id), before, count)

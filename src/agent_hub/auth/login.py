@@ -20,12 +20,14 @@ import hmac
 from datetime import UTC, datetime, timedelta
 from secrets import token_bytes
 from typing import Annotated, Any
+from uuid import UUID
 
 from agent_core.passkey.certificate import Certificate, verify_certificate
 from agent_core.passkey.encoding import SESSION_KEY_ISSUE_SECONDS, SESSION_KEY_MAX_SECONDS, session_key_id
 from agent_core.passkey.errors import PasskeyRefusal
 from agent_core.passkey.webauthn import check_counter
 from agent_core.signing import b64url_encode
+from agent_hub.agents.store import check_open
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.auth.ceremonies import (
     CHALLENGE_BYTES,
@@ -52,15 +54,26 @@ class SessionCertificate(Strict):
     signature: Annotated[str, b64u_text(256)]
 
 
+class LoginBegin(Strict):
+    pairing_id: Uuid7 | None = None
+
+
 class LoginFinish(Strict):
     ceremony_id: Uuid7
     certificate: SessionCertificate
 
 
-def begin(context: HubContext) -> dict[str, Any]:
-    """`POST /v1/passkeys/login/begin`."""
+def begin(context: HubContext, body: LoginBegin | None = None) -> dict[str, Any]:
+    """`POST /v1/passkeys/login/begin`; with `pairing_id` the login confirms that open agent pairing (ADR-056,
+    `404 pairing_unknown` otherwise): the ceremony and the session it creates carry the pairing ID."""
     now = context.clock()
-    ceremony = create_ceremony(context.pool, kind="login", now=now, hub_value=token_bytes(CHALLENGE_BYTES))
+    pairing = None if body is None or body.pairing_id is None else UUID(body.pairing_id)
+    if pairing is not None:
+        with context.pool.connection() as connection:
+            check_open(connection, pairing, now)
+    ceremony = create_ceremony(
+        context.pool, kind="login", now=now, hub_value=token_bytes(CHALLENGE_BYTES), pairing_id=pairing
+    )
     return {
         "ceremony_id": str(ceremony.id),
         "hub_value": b64url_encode(ceremony.challenge),
@@ -139,7 +152,7 @@ def _finish(context: HubContext, body: LoginFinish, ceremony: Ceremony, now: dat
         )
         connection.execute(
             "INSERT INTO hub.browser_session (key_id, user_id, credential_id, public_key, statement, created_at,"
-            " expires_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            " expires_at, pairing_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 certified.session_key_id,
                 user_id,
@@ -148,6 +161,7 @@ def _finish(context: HubContext, body: LoginFinish, ceremony: Ceremony, now: dat
                 certificate.statement.decode("ascii"),
                 now,
                 expires_at,
+                ceremony.pairing_id,
             ),
         )
         bundle = connection.execute(

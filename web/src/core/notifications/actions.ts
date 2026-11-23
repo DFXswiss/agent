@@ -1,17 +1,21 @@
 // What the notification center and the bell do (06-web.md section 6.2, 03-api.md section 4.9):
 //
-// - `loadNotifications`: `GET /v1/notifications` newest first (`next_before` for more); live rows arrive as
+// - `loadNotifications`: `GET /v1/notifications?account=1` newest first (`account=1`: also the account-level rows,
+//   `agent.account_change` without org) (`next_before` for more); live rows arrive as
 //   `notification` frames of the org channel (only those of the active org: the hub filters the stream per org);
 // - `readNotification` / `readAll`: `POST /v1/notifications/read` with `{ids:[…]}` or `{all:true}`, then the rows are
 //   read in the store and the bell's count drops (answers arriving after a sign-out change nothing);
 // - `pullNames`: the profile events of each named org (shared with the task screens) and the title of each named task
 //   (`task.meta`), so the texts can name them; `device.profile` events when a device accepted an invitation. Only for
-//   orgs whose log is verified (the reader needs it) and workgroups the user reads (others are `not_found`).
+//   orgs whose log is verified (the reader needs it) and workgroups the user reads (others are `not_found`); the
+//   user's agents (their names from the sealed labels) once when an account-level row names an agent.
+import { loadAgents } from '../agents/list';
 import { formatTime } from '../encoding/time';
 import { WG } from '../log/state';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import {
+  ACCOUNT_KIND,
   isNotificationRow,
   markAllRead,
   markRead,
@@ -35,7 +39,7 @@ export async function loadNotifications(context: TasksContext, more = false): Pr
   if (more && before === null) return;
   setListLoading(store);
   try {
-    const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ account: '1', limit: String(PAGE_SIZE) });
     if (before !== null) params.set('before', before);
     const page = await context.client.request('GET', `/v1/notifications?${params.toString()}`);
     if (!isRecord(page) || !Array.isArray(page.notifications) || !page.notifications.every(isNotificationRow)) {
@@ -68,7 +72,11 @@ export async function pullNames(context: TasksContext, rows: readonly Notificati
   const userId = state.me.userId;
   const pulls: Promise<number>[] = [];
   const quiet = (pull: Promise<number>) => pulls.push(pull.catch(() => 0));
+  if (rows.some((row) => row.kind === ACCOUNT_KIND) && state.agents.status === 'idle' && state.me.identity !== null) {
+    quiet(loadAgents(context).then(() => 0));
+  }
   for (const row of rows) {
+    if (row.org_id === null) continue;
     const log = orgEntry(state.orgs, row.org_id).log;
     if (log === null || userId === null) continue;
     quiet(pullOnce(context, row.org_id, row.org_id, { kinds: PROFILE_KINDS }));

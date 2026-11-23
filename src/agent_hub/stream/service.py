@@ -10,6 +10,8 @@ reaches it. All registries live on the event loop; publishers and the bus thread
   here - and offered to the org's streams; a frame of another process is delivered like a local one; an oversized
   frame of another process becomes a `resync`/`reconcile` for its audience; a lost bus connection resyncs every
   stream and sends every device `reconcile`.
+- A `close_keys` frame (`agent_hub.stream.publish.CLOSE_KEYS`, from any process) ends the user's streams opened with
+  one of its keys (a revoked agent, an ended browser session; KOR-24); it is never sent to a browser.
 - `close_all()` (shutdown): every stream gets `resync {hub_restart}` and ends, every device socket is closed with
   1012; new streams are refused with `503 unavailable` and new sockets with 1012 from then on. The command `agent-hub`
   calls it before uvicorn waits for open connections (`close_streams`), so the hub stops promptly with open streams.
@@ -36,7 +38,7 @@ from agent_hub.events.notify import Appended
 from agent_hub.http.context import HubContext
 from agent_hub.stream import presence
 from agent_hub.stream.bus import Bus, BusMessage, Connect, encode
-from agent_hub.stream.publish import LIVE, Audience, Published
+from agent_hub.stream.publish import CLOSE_KEYS, LIVE, Audience, Published
 from agent_hub.stream.sse import (
     BUFFER_FRAMES,
     HEARTBEAT,
@@ -161,6 +163,12 @@ class StreamService:
         return list(table.get(audience.id, ()))
 
     def _deliver(self, item: Published) -> None:
+        if item.frame == CLOSE_KEYS:
+            keys = set(item.data.get("key_ids", ()))
+            for stream in self._browsers(item.audience):
+                if stream.key_id in keys:
+                    stream.close()
+            return
         if item.audience.kind == "device":
             socket = self.devices.get(item.audience.id)
             if socket is not None:
@@ -214,8 +222,9 @@ class StreamService:
                     del table[key]
         self._orgs = frozenset(self.by_org)
 
-    async def open_browser(self, user_id: UUID, query: StreamQuery) -> BrowserStream:
-        """Check the rights, register the stream and queue its opening frames (`HubError` before streaming)."""
+    async def open_browser(self, user_id: UUID, query: StreamQuery, key_id: str | None = None) -> BrowserStream:
+        """Check the rights, register the stream and queue its opening frames (`HubError` before streaming); `key_id`
+        is the key that signed the request (its revocation ends the stream)."""
         if self.closing:
             raise HubError("unavailable")
         scopes, watched = await asyncio.to_thread(self._transaction, self._rights, query.org, user_id, query.terminals)
@@ -223,7 +232,7 @@ class StreamService:
             raise HubError("not_found")
         if self.is_closing():  # the hub began to shut down during the read: never register after `close_all`
             raise HubError("unavailable")
-        stream = BrowserStream(user_id, query, scopes, watched, buffer=self.buffer)
+        stream = BrowserStream(user_id, query, scopes, watched, buffer=self.buffer, key_id=key_id)
         self._add(stream)
         try:
             opened = await asyncio.to_thread(

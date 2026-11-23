@@ -24,11 +24,13 @@ from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
 from agent_hub import signals
+from agent_hub.agents.notify import account_change
 from agent_hub.db.pool import transaction
 from agent_hub.errors import HubError
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import HubRouter
 from agent_hub.invites import lookup as invite_lookup
+from agent_hub.notifications.rules import Notification, publish_rows
 from agent_hub.platform import enrollments, invites
 from agent_hub.platform import log as platform_log
 from agent_hub.stream.publish import Audience, publish
@@ -147,10 +149,16 @@ async def get_enrollments(context: Context) -> dict[str, Any]:
 async def create_invite(body: CreateInviteRequest, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
     now = context.clock()
     user = user_of(principal)
-    await in_transaction(
-        context,
-        lambda c: invites.create(c, user, body.invite_id, pk_inv=body.pk_inv, expires_text=body.expires_at, now=now),
-    )
+
+    def work(connection: Any) -> list[Notification]:
+        if not invites.create(
+            connection, user, body.invite_id, pk_inv=body.pk_inv, expires_text=body.expires_at, now=now
+        ):
+            return []
+        # an agent created a platform invitation: the user is told (KOR-24)
+        return account_change(connection, user, "invite_created", now, target="platform")
+
+    publish_rows(await in_transaction(context, work))
     return {}
 
 

@@ -311,6 +311,19 @@ describe('signIn and unlock', () => {
     await expect(signIn({ anon, credentials: auth, origin: ORIGIN })).rejects.toMatchObject({ code: 'header_invalid' });
   });
 
+  it('tags the ceremony with an agent pairing when asked (11-agent-access.md section 5.1)', async () => {
+    const { auth, anon } = await registered();
+    const begun: unknown[] = [];
+    const tagging: typeof anon = (method, target, body) => {
+      if (target.endsWith('/login/begin')) begun.push(body);
+      return anon(method, target, body);
+    };
+    const pairingId = '01a1ee56-5e00-7242-9e24-f87629ad2977';
+    await signIn({ anon: tagging, credentials: auth, origin: ORIGIN, pairingId });
+    await signIn({ anon: tagging, credentials: auth, origin: ORIGIN });
+    expect(begun).toEqual([{ pairing_id: pairingId }, {}]);
+  });
+
   it('rejects a cancelled sign-in', async () => {
     const { auth, anon } = await registered();
     auth.refuse = 'AbortError';

@@ -323,7 +323,7 @@ def test_runner_control_without_runners_and_with_a_broken_store(fake: Fake) -> N
 def test_columns_report(fake: Fake) -> None:
     status, report = fake.call("GET", "/canary/columns")
     assert status == 200
-    assert report["problems"][0] == "audit.action: mapped but not in the schema"  # sorted
+    assert report["problems"][0] == "agent.bundle_ct: mapped but not in the schema"  # sorted
     assert report["columns"] == [
         {
             "table": "event",

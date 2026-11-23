@@ -8,6 +8,7 @@ import { fromLocalInput, localInput } from '../../src/ui/screens/audit/AuditView
 import { AuditScreen } from '../../src/ui/screens/audit/AuditScreen';
 import { AuditTab } from '../../src/ui/task-tabs/audit/AuditTab';
 import { tab } from '../../src/ui/task-tabs/audit';
+import { setAgents } from '../../src/core/store/slices/agents';
 import { putEvents } from '../../src/core/store/slices/events';
 import { HubError } from '../../src/core/net/signedFetch';
 import { orgWorld, type OrgWorld } from '../core/org/world';
@@ -231,6 +232,41 @@ describe('audit view', () => {
     });
     expect(await screen.findByTestId('audit.error')).toHaveTextContent('(not_found)');
     expect(screen.getByTestId('audit.empty')).toBeInTheDocument();
+  });
+
+  it('marks rows written by an agent: the name of an own agent, else "by agent" (11-agent-access.md section 7)', async () => {
+    const { w } = await world();
+    const own = '01a1ee56-5e00-7242-9e24-f87629ad2977';
+    const foreign = '01a1ee56-5e00-79bc-ad68-1fafbfc5d917';
+    w.client.on('GET /v1/me/agents', () => ({ agents: [] }));
+    w.client.on(`GET /v1/orgs/${w.org}/audit`, () => ({
+      rows: [
+        { ...auditRow(3, T0 + 3000, { action: 'read.org' }), agent_id: own },
+        { ...auditRow(2, T0 + 2000, { action: 'read.org' }), agent_id: foreign },
+        auditRow(1, T0 + 1000, { action: 'read.org' }),
+      ],
+      next_before: null,
+    }));
+    mountScreen(w);
+    expect(await screen.findAllByTestId('audit.row')).toHaveLength(3);
+    act(() =>
+      setAgents(w.store, [
+        {
+          agentId: own,
+          state: 'active',
+          label: { name: 'Claude Code', host: 'Mac' },
+          createdAt: iso(T0),
+          confirmedAt: iso(T0),
+          claimedAt: null,
+          lastUsedAt: null,
+          revokedAt: null,
+          replaces: null,
+        },
+      ]),
+    );
+    expect(within(row(3)).getByTestId('audit.row.agent')).toHaveTextContent('by agent Claude Code');
+    expect(within(row(2)).getByTestId('audit.row.agent')).toHaveTextContent('by agent');
+    expect(within(row(1)).queryByTestId('audit.row.agent')).toBeNull();
   });
 
   it('verifies the chain for admins: intact, broken, failed', async () => {

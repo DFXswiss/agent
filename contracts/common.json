@@ -213,7 +213,10 @@
         "invite_not_in_log",
         "invite_consumed",
         "invite_revoked",
-        "author_not_writer"
+        "author_not_writer",
+        "pairing_unknown",
+        "pairing_gesture_required",
+        "claim_invalid"
       ],
       "description": "codes the hub sends (enums/error-codes.json)"
     },

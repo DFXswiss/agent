@@ -23,7 +23,7 @@ describe('loadNotifications', () => {
     await loadNotifications(w.context);
     expect(w.store.getState().notifications.list).toEqual({ status: 'ready', code: null, nextBefore: 'c' });
     await loadNotifications(w.context, true);
-    expect(w.client.of('GET /v1/notifications')[1]!.target).toBe('/v1/notifications?limit=50&before=c');
+    expect(w.client.of('GET /v1/notifications')[1]!.target).toBe('/v1/notifications?account=1&limit=50&before=c');
     expect(Object.keys(w.store.getState().notifications.rows).sort()).toEqual(['n1', 'n2']);
     await loadNotifications(w.context, true);
     expect(w.client.of('GET /v1/notifications')).toHaveLength(2);
@@ -99,6 +99,20 @@ describe('pullNames', () => {
     await pullNames(w.context, rows);
     const kinds = w.client.calls.map((call) => new URL(call.target, 'https://h').searchParams.get('kinds'));
     expect(kinds.sort()).toEqual(['device.profile', 'org.profile,wg.profile,member.profile', 'task.meta']);
+  });
+
+  it('loads the agents once for account-level rows and skips their missing org', async () => {
+    const w = await boardWorld();
+    w.client.on('GET /v1/me/agents', () => ({ agents: [] }));
+    const row = notification('n1', { kind: 'agent.account_change', org_id: null, ref: 'agent_revoked:a:' });
+    await pullNames(w.context, [row]);
+    expect(w.client.of('GET /v1/me/agents')).toHaveLength(1);
+    await pullNames(w.context, [row]);
+    expect(w.client.of('GET /v1/me/agents')).toHaveLength(1);
+    w.store.update('agents', () => ({ entries: null, status: 'idle', code: null }));
+    w.store.update('me', (me) => ({ ...me, identity: null }));
+    await pullNames(w.context, [row]);
+    expect(w.client.calls).toHaveLength(1);
   });
 
   it('ignores failed pulls and needs a signed-in user', async () => {

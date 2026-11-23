@@ -82,6 +82,9 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "invite_consumed": (400,),
     "invite_revoked": (400,),
     "author_not_writer": (400,),
+    "pairing_unknown": (404,),
+    "pairing_gesture_required": (403,),
+    "claim_invalid": (401,),
 }
 
 # The detail keys of `contracts/common.json#/$defs/error` (closed).

@@ -21,7 +21,7 @@ from tests.platform.hub.conftest import FixedClock, HubDatabase, HubHarness, hub
 
 EXPECTED_CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
-    "font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    "font-src 'self'; base-uri 'none'; form-action 'self' http://127.0.0.1:*; frame-ancestors 'none'"
 )
 EXPECTED_HEADERS = {
     "content-security-policy": EXPECTED_CSP,
@@ -163,8 +163,9 @@ def test_every_spa_route_serves_the_page(web: HubHarness, path: str) -> None:
 
 
 def test_spa_routes_are_the_routes_of_the_web_spec() -> None:
-    assert len(SPA_ROUTES) == 20
+    assert len(SPA_ROUTES) == 21
     assert "/invite" in SPA_ROUTES
+    assert "/connect" in SPA_ROUTES
     assert "/o/{org}/s/{session}" in SPA_ROUTES
 
 

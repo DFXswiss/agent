@@ -8,6 +8,9 @@ from __future__ import annotations
 
 AUDIT_ACTIONS = frozenset(
     {
+        "agent.claim",
+        "agent.confirm",
+        "agent.revoke",
         "auth.login",
         "auth.passkey_add",
         "auth.passkey_remove",
@@ -50,6 +53,7 @@ AUDIT_ACTIONS = frozenset(
         "log.wg_archive",
         "log.wg_create",
         "model.provider_outside_allowlist",
+        "notification.read",
         "operation.accepted",
         "operation.denied",
         "operation.duplicate",
@@ -69,6 +73,7 @@ AUDIT_ACTIONS = frozenset(
         "platform.role_revoke",
         "platform.root",
         "platform.user_invite",
+        "read.agent.me",
         "read.device.credential",
         "read.device.logs",
         "read.device.platform_log",
@@ -80,6 +85,8 @@ AUDIT_ACTIONS = frozenset(
         "read.device.wraps",
         "read.device_request",
         "read.me",
+        "read.me.agents",
+        "read.me.audit",
         "read.me.bundles.recovery",
         "read.me.credential",
         "read.me.credentials",

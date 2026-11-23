@@ -52,6 +52,7 @@ class Ceremony:
     user_id: uuid.UUID | None
     invite_id: str | None
     hub_value: bytes | None = field(repr=False)
+    pairing_id: uuid.UUID | None = None
 
 
 def relying_party(config: HubConfig) -> RelyingParty:
@@ -111,8 +112,10 @@ def create_ceremony(
     user_id: uuid.UUID | None = None,
     invite_id: str | None = None,
     hub_value: bytes | None = None,
+    pairing_id: uuid.UUID | None = None,
 ) -> Ceremony:
-    """Store a new ceremony; its challenge is the hub value for a login, else 32 random bytes."""
+    """Store a new ceremony; its challenge is the hub value for a login, else 32 random bytes. A login ceremony may
+    carry the agent pairing it confirms (ADR-056)."""
     ceremony = Ceremony(
         id=new_id(now),
         kind=kind,
@@ -120,11 +123,12 @@ def create_ceremony(
         user_id=user_id,
         invite_id=invite_id,
         hub_value=hub_value,
+        pairing_id=pairing_id,
     )
     with transaction(pool) as connection:
         connection.execute(
-            "INSERT INTO hub.ceremony (id, kind, challenge, user_id, invite_id, hub_value, created_at, expires_at)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO hub.ceremony (id, kind, challenge, user_id, invite_id, hub_value, created_at, expires_at,"
+            " pairing_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 ceremony.id,
                 kind,
@@ -134,6 +138,7 @@ def create_ceremony(
                 hub_value,
                 now,
                 now + timedelta(seconds=CEREMONY_SECONDS),
+                pairing_id,
             ),
         )
     return ceremony
@@ -151,7 +156,7 @@ def take_ceremony(
     kind, wrong caller)."""
     with transaction(pool) as connection:
         row = connection.execute(
-            "SELECT id, kind, challenge, user_id, invite_id, hub_value FROM hub.ceremony"
+            "SELECT id, kind, challenge, user_id, invite_id, hub_value, pairing_id FROM hub.ceremony"
             " WHERE id = %s AND used_at IS NULL AND expires_at > %s FOR UPDATE",
             (uuid.UUID(ceremony_id), now),
         ).fetchone()
@@ -164,6 +169,7 @@ def take_ceremony(
             user_id=row[3],
             invite_id=row[4],
             hub_value=None if row[5] is None else bytes(row[5]),
+            pairing_id=row[6],
         )
         if check is not None:
             check(ceremony)

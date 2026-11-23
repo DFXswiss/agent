@@ -28,6 +28,7 @@ PURGE_INTERVAL_SECONDS = 3600.0
 
 # Rows of an orphaned user, deleted child tables first (`principal` last: identity and settings reference it).
 USER_ROWS = (
+    "DELETE FROM hub.agent WHERE user_id = %(user)s",
     "DELETE FROM hub.browser_session WHERE user_id = %(user)s",
     "DELETE FROM hub.identity_bundle WHERE user_id = %(user)s",
     "DELETE FROM hub.passkey WHERE user_id = %(user)s",

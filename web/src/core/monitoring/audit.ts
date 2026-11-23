@@ -12,6 +12,9 @@ import { isRecord } from '../registry';
 
 /** The closed list of audit actions, a copy of `contracts/enums/audit-actions.json` (a test compares them). */
 export const AUDIT_ACTIONS: readonly string[] = [
+  'agent.claim',
+  'agent.confirm',
+  'agent.revoke',
   'auth.login',
   'auth.passkey_add',
   'auth.passkey_remove',
@@ -54,6 +57,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'log.wg_archive',
   'log.wg_create',
   'model.provider_outside_allowlist',
+  'notification.read',
   'operation.accepted',
   'operation.denied',
   'operation.duplicate',
@@ -73,6 +77,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'platform.role_revoke',
   'platform.root',
   'platform.user_invite',
+  'read.agent.me',
   'read.device.credential',
   'read.device.logs',
   'read.device.platform_log',
@@ -84,6 +89,8 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'read.device.wraps',
   'read.device_request',
   'read.me',
+  'read.me.agents',
+  'read.me.audit',
   'read.me.bundles.recovery',
   'read.me.credential',
   'read.me.credentials',
@@ -255,6 +262,8 @@ export interface AuditRow {
   readonly target_id: string | null;
   readonly detail: AuditDetail;
   readonly event_id: string | null;
+  /** The agent whose request wrote the row (11-agent-access.md section 7); absent otherwise. */
+  readonly agent_id?: string;
 }
 
 const NULLABLE_TEXT = [
@@ -281,7 +290,8 @@ export function isAuditRow(value: unknown): value is AuditRow {
     ['actor_kind', 'action', 'result'].every((field) => typeof value[field] === 'string') &&
     NULLABLE_TEXT.every((field) => value[field] === null || typeof value[field] === 'string') &&
     isRecord(value.detail) &&
-    Object.values(value.detail).every(isDetailValue)
+    Object.values(value.detail).every(isDetailValue) &&
+    (value.agent_id === undefined || typeof value.agent_id === 'string')
   );
 }
 
@@ -295,6 +305,13 @@ export function parseAuditPage(body: unknown): AuditPage {
   if (!isRecord(body) || !Array.isArray(body.rows)) throw new HubError('unavailable', 200);
   const next = typeof body.next_before === 'string' ? body.next_before : null;
   return { rows: body.rows.filter(isAuditRow), next };
+}
+
+/** `GET /v1/me/audit` (the user's account audit, 11-agent-access.md section 7) for a page. */
+export function accountAuditTarget(before: string | null): string {
+  const query = new URLSearchParams({ limit: String(AUDIT_PAGE) });
+  if (before !== null) query.set('before', before);
+  return `/v1/me/audit?${query.toString()}`;
 }
 
 /** Whether the row is inside the time filter. */
@@ -364,6 +381,14 @@ export function actorName(row: AuditRow, names: AuditNames): string | null {
   if (row.actor_kind === 'user') return names.member(row.actor_id);
   if (row.actor_kind === 'device') return names.device(row.actor_id);
   return null;
+}
+
+/**
+ * The agent marker of a row written by an agent request (06-web.md section 8.3): `undefined` for a row without agent,
+ * else the agent's name when it is one of the user's own agents (`agentName`), null otherwise ("by agent").
+ */
+export function agentMarker(row: AuditRow, agentName: (id: string) => string | null): string | null | undefined {
+  return row.agent_id === undefined ? undefined : agentName(row.agent_id);
 }
 
 /** The decrypted name of the row's target (a user or a device), null when not known or of another kind. */

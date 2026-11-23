@@ -64,6 +64,11 @@
     "body": "Die Passkey-Antwort gehört nicht zu diesem Anmeldeschritt.",
     "action": "Starte den Passkey-Schritt noch einmal."
   },
+  "claim_invalid": {
+    "title": "Agentenverbindung abgelehnt",
+    "body": "Der Agent konnte nicht nachweisen, dass er die Verbindung erhalten hat.",
+    "action": "Bitte deinen KI-Agenten, sich neu zu verbinden."
+  },
   "client_data_invalid": {
     "title": "Passkey-Antwort ungültig",
     "body": "Der Browser hat eine ungültige Passkey-Antwort geliefert.",
@@ -338,6 +343,21 @@
     "title": "Synchronisierungslücke",
     "body": "Das Gerät hat Einträge mit einer Lücke gesendet.",
     "action": "Das Gerät sendet sie automatisch erneut."
+  },
+  "pairing_gesture_required": {
+    "title": "Erneut bestätigen",
+    "body": "Die Bestätigung hat zu lange gedauert.",
+    "action": "Bestätige noch einmal mit deinem Passkey."
+  },
+  "pairing_mismatch": {
+    "title": "Dieser Link ist nicht gültig",
+    "body": "Der Verbindungslink des Agenten passt nicht zur Anfrage beim Server.",
+    "action": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden."
+  },
+  "pairing_unknown": {
+    "title": "Verbindungsanfrage abgelaufen",
+    "body": "Diese Verbindungsanfrage des Agenten gibt es nicht mehr: Sie ist abgelaufen, wurde schon verwendet oder abgebrochen.",
+    "action": "Bitte deinen KI-Agenten, sich neu zu verbinden."
   },
   "params_invalid": {
     "title": "Ungültige Parameter",

@@ -92,6 +92,7 @@ def read_row(
         if _TARGET_KIND_RE.fullmatch(kind) and _TARGET_ID_RE.fullmatch(text):
             target_kind, target_id = kind, text
     device_id = principal.principal_id if principal.kind == "device" else None
+    agent_id = principal.attributes.get("agent_id") if principal.kind == "agent" else None
     return AuditRow(
         at=at,
         actor_kind=principal.actor_kind,
@@ -105,6 +106,7 @@ def read_row(
         wg_id=ids["wg"],
         task_id=ids["task"],
         session_id=ids["session"],
+        agent_id=agent_id if isinstance(agent_id, UUID) else None,
     )
 
 

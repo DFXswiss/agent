@@ -1,8 +1,8 @@
 """Key lookup of the signature gate (03-api.md section 1, ADR-027 section 4).
 
 The gate finds the public key of a signed request through key resolvers discovered as `<area>/keys.py:RESOLVERS`: a
-mapping from a key-ID prefix ending in `.` (`session.` → HUB-03, `device.` → HUB-08) or an exact key ID
-(`platform-root` → `config_api/keys.py`, from the configuration) to a `KeyResolver`. A resolver runs in a worker
+mapping from a key-ID prefix ending in `.` (`session.` → HUB-03, `device.` → HUB-08, `agent.` → KOR-24) or an exact
+key ID (`platform-root` → `config_api/keys.py`, from the configuration) to a `KeyResolver`. A resolver runs in a worker
 thread, may use the database pool and returns the `ResolvedKey` (who signs and how to verify), None for an unknown
 key, or raises `HubError` with a code of 03-api.md section 11 (`key_revoked`, `session_expired`, ...). It never
 verifies the signature itself; the gate does that, checks the time window and the nonce.
@@ -32,22 +32,24 @@ from agent_hub.crypto.errors import CryptoError
 from agent_hub.crypto.keys import ed25519_verify
 from agent_hub.errors import HubError
 
-PrincipalKind = Literal["anonymous", "session", "device", "root"]
+PrincipalKind = Literal["anonymous", "session", "device", "agent", "root"]
 ROOT_KEY_ID = "platform-root"
 SESSION_PREFIX = "session."
 DEVICE_PREFIX = "device."
-# The three key-ID forms of 03-api.md section 1; anything else is a malformed `Agent-Key`.
-KEY_ID_RE = re.compile(r"session\.[0-9a-f]{32}|device\.[0-9a-f]{32}|platform-root")
+AGENT_PREFIX = "agent."
+# The key-ID forms of 03-api.md section 1 and 11-agent-access.md section 4; anything else is a malformed `Agent-Key`.
+KEY_ID_RE = re.compile(r"session\.[0-9a-f]{32}|device\.[0-9a-f]{32}|agent\.[0-9a-f]{32}|platform-root")
 
 Verify = Callable[[bytes, bytes], bool]
 
 
 @dataclass(frozen=True)
 class Principal:
-    """Who sent a request: anonymous, a browser session (user), a device or the platform root (operator).
+    """Who sent a request: anonymous, a browser session (user), a device, an agent acting for its user (ADR-056) or
+    the platform root (operator).
 
-    `principal_id` is the user ID of a session or the device ID; `actor_kind` is the audit actor kind; `attributes`
-    carries what the resolver knows and the area checks need (e.g. the device state for `device:any`).
+    `principal_id` is the user ID of a session or an agent, or the device ID; `actor_kind` is the audit actor kind;
+    `attributes` carries what the resolver knows and the area checks need (e.g. the device state for `device:any`).
     """
 
     kind: PrincipalKind
@@ -130,9 +132,9 @@ def resolver_for(resolvers: Mapping[str, KeyResolver], key_id: str) -> KeyResolv
 def check_resolvers(resolvers: Mapping[str, KeyResolver]) -> None:
     """Refuse a registration key that is neither a prefix ending in `.` nor an exact key ID of 03-api.md section 1."""
     for key, resolver in resolvers.items():
-        prefix_form = key in (SESSION_PREFIX, DEVICE_PREFIX)
+        prefix_form = key in (SESSION_PREFIX, DEVICE_PREFIX, AGENT_PREFIX)
         if not (prefix_form or KEY_ID_RE.fullmatch(key)) or not callable(resolver):
-            raise ValueError(f"key resolver {key!r}: key must be 'session.', 'device.' or an exact key ID")
+            raise ValueError(f"key resolver {key!r}: key must be 'session.', 'device.', 'agent.' or an exact key ID")
 
 
 def resolve_session(context: KeyContext, key_id: str) -> ResolvedKey | None:

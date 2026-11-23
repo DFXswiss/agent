@@ -38,6 +38,7 @@ from pydantic import Field
 from agent_core.passkey.errors import PasskeyRefusal
 from agent_core.passkey.webauthn import Registration, verify_registration
 from agent_core.signing import b64url_encode, ed25519_public_key_valid
+from agent_hub.agents.notify import recovery_notice
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.auth.ceremonies import (
     Ceremony,
@@ -69,6 +70,7 @@ from agent_hub.crypto.wrap import verify_wrap
 from agent_hub.db.pool import transaction
 from agent_hub.errors import HubError
 from agent_hub.http.context import HubContext
+from agent_hub.notifications.rules import publish_rows
 
 ADD_MODULE = "agent_hub.auth.passkeys_manage"
 # An invitation whose `pk_inv` the hub knows (platform: the column; org: the membership-log `invite` entry, ADR-043).
@@ -351,3 +353,5 @@ def _store_further(
                 detail={"step": "finish"} if recovery else {"passkey_id": reference},
             ),
         )
+        notices = recovery_notice(connection, user_id, now, reference) if recovery else []
+    publish_rows(notices)

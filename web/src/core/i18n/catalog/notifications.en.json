@@ -19,5 +19,16 @@
   "unnamed.org": "…",
   "unnamed.wg": "…",
   "unnamed.task": "…",
-  "unnamed.subject": "Someone"
+  "unnamed.subject": "Someone",
+  "text.agent.passkey_removed": "Agent “{agent}” removed a passkey",
+  "text.agent.recovery_replaced": "Agent “{agent}” replaced the recovery code",
+  "text.agent.recovery_finished": "Agent “{agent}” completed an account recovery",
+  "text.agent.agent_revoked": "Agent “{agent}” disconnected an agent",
+  "text.agent.role_changed": "Agent “{agent}” changed a role in an organization",
+  "text.agent.credential_changed": "Agent “{agent}” changed a credential",
+  "text.agent.bundle_replaced": "Agent “{agent}” replaced the keys of a sign-in",
+  "text.agent.invite_created": "Agent “{agent}” created an invitation",
+  "text.agent.device_request": "Agent “{agent}” sent a request to an execution device",
+  "text.agent.unknown": "Agent “{agent}” changed your account",
+  "unnamed.agent": "unknown"
 }

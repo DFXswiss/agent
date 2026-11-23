@@ -16,7 +16,7 @@ from agent_hub.errors import INTERNAL_ERROR, error_bytes
 LOG = logging.getLogger("agent_hub.http")
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
-    "font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    "font-src 'self'; base-uri 'none'; form-action 'self' http://127.0.0.1:*; frame-ancestors 'none'"
 )
 SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
     (b"content-security-policy", CSP.encode("ascii")),

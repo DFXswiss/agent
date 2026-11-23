@@ -25,6 +25,9 @@ import { notification } from './rows';
 describe('rows', () => {
   it('checks the row shape', () => {
     expect(isNotificationRow(notification('n1'))).toBe(true);
+    // org-less rows exist only for the account-level kind (11-agent-access.md section 8)
+    expect(isNotificationRow(notification('n1', { kind: 'agent.account_change', org_id: null }))).toBe(true);
+    expect(isNotificationRow(notification('n1', { org_id: null }))).toBe(false);
     expect(isNotificationRow(notification('n1', { read_at: '2026-11-21T12:00:00.000Z' }))).toBe(true);
     expect(isNotificationRow({ ...notification('n1'), wg_id: 3 })).toBe(false);
     expect(isNotificationRow({ ...notification('n1'), read_at: 3 })).toBe(false);

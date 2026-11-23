@@ -33,6 +33,7 @@ SPEC_FILES = (
     "08-monitoring.md",
     "09-milestones.md",
     "10-work-packages.md",
+    "11-agent-access.md",
 )
 # Runbooks the work packages require (09-milestones.md WP-M3-07, DOC-01 scope).
 RUNBOOKS = (

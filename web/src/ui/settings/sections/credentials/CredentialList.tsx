@@ -29,6 +29,47 @@ function useDetail(): (summary: Summary) => string | null {
   };
 }
 
+/** Origin ("long-lived token" / "from the Claude Code login", ADR-056 section 7) and expiry of a subscription token;
+ *  an expired token is highlighted. */
+function SubscriptionOrigin({
+  summary,
+  now,
+}: {
+  readonly summary: Extract<Summary, { kind: 'claude_subscription' }>;
+  readonly now: number;
+}) {
+  const { t, locale } = useI18n();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const expires = summary.expiresAt === null ? null : Date.parse(summary.expiresAt);
+  const expired = expires !== null && expires <= now;
+  return (
+    <>
+      <span data-testid="credentials.item.claude_subscription.origin" data-origin={summary.origin}>
+        {t(`credentials.list.origin.${summary.origin}`)}
+      </span>
+      {expires !== null &&
+        (expired ? (
+          <span
+            className="font-semibold text-red-800"
+            role="alert"
+            data-testid="credentials.item.claude_subscription.expiry"
+            data-expired
+          >
+            {t('credentials.list.expired', { time: formatEventTime(expires, { locale, timeZone, now }) })}
+          </span>
+        ) : (
+          <span
+            className="text-sm text-gray-700"
+            data-testid="credentials.item.claude_subscription.expiry"
+            data-expired={false}
+          >
+            {t('credentials.list.expires', { time: formatEventTime(expires, { locale, timeZone, now }) })}
+          </span>
+        ))}
+    </>
+  );
+}
+
 export function CredentialList({
   entries,
   onChanged,
@@ -74,6 +115,9 @@ export function CredentialList({
               <div className="flex min-w-0 flex-1 flex-col">
                 <span className="font-medium">{t(`credentials.kind.${entry.kind}`)}</span>
                 {shown !== null && <span data-testid={`credentials.item.${entry.kind}.detail`}>{shown}</span>}
+                {entry.summary?.kind === 'claude_subscription' && (
+                  <SubscriptionOrigin summary={entry.summary} now={now} />
+                )}
                 {entry.status === 'unverifiable' && (
                   <span
                     role="alert"

@@ -1,10 +1,10 @@
 """Rate limits of the hub API (03-api.md section 1).
 
 Anonymous requests: 30 per minute per source address; signed requests: 600 per minute per browser session key, 6000
-per minute per device key (the platform root shares the browser limit). Each bucket is a token bucket with the
-capacity of one minute and a steady refill, so a client may burst up to the per-minute limit. A refused request gets
-`429 rate_limited` with `Retry-After` in whole seconds until the next token. The limiter is per hub process and keeps
-at most `max_buckets` buckets (least recently used are dropped first).
+per minute per device key (the platform root and agents share the browser limit, ADR-056). Each bucket is a token
+bucket with the capacity of one minute and a steady refill, so a client may burst up to the per-minute limit. A refused
+request gets `429 rate_limited` with `Retry-After` in whole seconds until the next token. The limiter is per hub process
+and keeps at most `max_buckets` buckets (least recently used are dropped first).
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ PER_MINUTE = {
     "anonymous": ANONYMOUS_PER_MINUTE,
     "session": SESSION_PER_MINUTE,
     "device": DEVICE_PER_MINUTE,
+    "agent": SESSION_PER_MINUTE,
     "root": ROOT_PER_MINUTE,
     "failed": FAILED_PER_MINUTE,
 }

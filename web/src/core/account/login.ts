@@ -49,6 +49,8 @@ export interface SignInInput {
   readonly now?: () => number;
   /** Restricts `get()` to this credential (the unlock of a passkey just added, 04-crypto.md section 5.6). */
   readonly allowCredential?: Uint8Array;
+  /** Tags the ceremony (and the session it creates) with an agent pairing (11-agent-access.md section 5.1). */
+  readonly pairingId?: string;
 }
 
 function text(value: unknown): string {
@@ -58,8 +60,12 @@ function text(value: unknown): string {
 
 /** Runs the login ceremony; a cancelled gesture rejects with `CeremonyCancelled`. */
 export async function signIn(input: SignInInput): Promise<SignIn> {
-  const { anon, credentials, origin, now = Date.now, allowCredential } = input;
-  const begun = await anon('POST', '/v1/passkeys/login/begin', {});
+  const { anon, credentials, origin, now = Date.now, allowCredential, pairingId } = input;
+  const begun = await anon(
+    'POST',
+    '/v1/passkeys/login/begin',
+    pairingId === undefined ? {} : { pairing_id: pairingId },
+  );
   if (!isRecord(begun)) fail('header_invalid');
   const ceremonyId = text(begun.ceremony_id);
   const hubValue = b64uDecode(begun.hub_value);

@@ -19,6 +19,7 @@ from psycopg_pool import ConnectionPool
 from agent_hub.config import HubConfig
 from agent_hub.http.routing import API_PREFIX, route_spec
 from tests.platform.contracts.harness import CONTRACTS
+from tests.platform.hub.agents.support import agent_client
 from tests.platform.hub.conftest import FixedClock, HubHarness, SignedClient, start_hub
 from tests.platform.hub.orgs.support import new_id
 
@@ -44,6 +45,8 @@ def index_resources() -> dict[str, str | None]:
 
 
 def client_for(hub: HubHarness, auth: str) -> SignedClient:
+    if auth == "agent":
+        return agent_client(hub)
     if auth == "device":
         return hub.device()
     if auth == "root":

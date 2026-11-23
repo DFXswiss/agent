@@ -35,6 +35,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.agents.notify import account_change
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.audit.invites import audit_invite_use
 from agent_hub.crypto.encoding import b64u_decode, canonical
@@ -46,6 +47,7 @@ from agent_hub.log.entries import Head, entry_hash
 from agent_hub.log.platform import PlatformState
 from agent_hub.log.state import DEVICE, USER, WG, OrgState
 from agent_hub.log.verify import VerifiedLog
+from agent_hub.notifications.rules import Notification
 from agent_hub.orgs import logs, projection
 
 Connection = psycopg.Connection[Any]
@@ -75,9 +77,15 @@ class AppendResult:
     """Active user members after the batch (receivers of `log`)."""
     devices: frozenset[str] = field(default_factory=frozenset)
     """Active devices after the batch (receivers of the `log` hint)."""
+    notices: list[Notification] = field(default_factory=list)
+    """Account notifications of the batch (an agent changed roles or access, KOR-24), published after the commit."""
 
 
 Extra = Callable[[Connection, AppendResult], None]
+
+
+ROLE_CHANGES = frozenset({"role", "remove", "grant", "ungrant"})
+"""Entry types that change who may do what; taken by an agent they notify its user (ADR-056 §5)."""
 
 
 def hub_error(error: CryptoError) -> HubError:
@@ -292,10 +300,15 @@ def append_batch(
     bodies = [cast(Body, entry["body"]) for entry in after.entries[log.head.seq + 1 :]]
     _accepts(connection, org_id, bodies, appender, now)
     persist_range(connection, org_id, batch, first=log.head.seq + 1, wraps=wraps, appender=appender, now=now)
+    notices: list[Notification] = []
+    if appender.kind == "user" and any(body["type"] in ROLE_CHANGES for body in bodies):
+        # an agent's role change or removal: the user is told (ADR-056 §5; nothing for a browser session), live after
+        # the commit (`publish_append`)
+        notices = account_change(connection, UUID(appender.id), "role_changed", now, target=org_id)
     stored = store_batch_events(connection, events, after, root_key=root_key, author=appender.id, now=now)
     projection.update_org(connection, org_id, after, platform, access)
     users, devices = members(after.state)
-    result = AppendResult(org_id, after.head, after, batch, stored, users=users, devices=devices)
+    result = AppendResult(org_id, after.head, after, batch, stored, users=users, devices=devices, notices=notices)
     if extra is not None:
         extra(connection, result)
     logs.remember(org_id, after)

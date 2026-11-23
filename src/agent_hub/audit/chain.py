@@ -11,12 +11,18 @@ where "row without hash fields" is the audit row as the API returns it (`contrac
 JSON of 04-crypto.md section 1. `detail` holds metadata only: a flat object of printable-ASCII strings (at most 256
 characters), integers, booleans and nulls, and it fits the detail schema of its action (`contracts/audit/<action>.json`,
 `agent_hub.audit.details`). `verify_chain` recomputes every hash and link of a range.
+
+A row written while the request of an agent is processed (ADR-056) carries the agent's ID in `agent_id`: the request
+pipeline sets `ACTING_AGENT` for the request, and `append_audit` fills it into a row that names no agent itself. The
+hashed row JSON contains the key `agent_id` only when it is set, so the hashes of rows written before (and of every
+row without an agent) are unchanged.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -38,7 +44,9 @@ READ_BATCH = 1000
 
 ACTOR_KINDS = frozenset({"user", "device", "session", "hub", "operator", "anonymous"})
 RESULTS = frozenset({"ok", "denied", "rejected", "duplicate", "failed"})
-ID_FIELDS = ("actor_id", "org_id", "wg_id", "task_id", "session_id", "device_id", "event_id")
+ID_FIELDS = ("actor_id", "org_id", "wg_id", "task_id", "session_id", "device_id", "event_id", "agent_id")
+ACTING_AGENT: ContextVar[UUID | None] = ContextVar("agent_hub_acting_agent", default=None)
+"""The agent whose request is being processed (set by the request pipeline, ADR-056)."""
 MAX_DETAIL_KEYS = 32
 MAX_DETAIL_TEXT = 256
 
@@ -58,7 +66,7 @@ DetailValue = str | int | bool | None
 
 _COLUMNS = (
     "seq, at, actor_id, actor_kind, action, result, org_id, wg_id, task_id, session_id, device_id, target_kind,"
-    " target_id, detail, event_id, prev_hash, hash"
+    " target_id, detail, event_id, prev_hash, hash, agent_id"
 )
 
 
@@ -88,6 +96,7 @@ class AuditRow:
     target_id: str | None = None
     detail: Mapping[str, DetailValue] = field(default_factory=dict)
     event_id: UUID | None = None
+    agent_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -166,8 +175,9 @@ def _id_text(value: UUID | None) -> str | None:
 
 
 def row_json(seq: int, row: AuditRow) -> dict[str, Any]:
-    """The audit row without its hash fields, as the API returns it and as the hash covers it."""
-    return {
+    """The audit row without its hash fields, as the API returns it and as the hash covers it (`agent_id` only when
+    set)."""
+    found: dict[str, Any] = {
         "seq": seq,
         "at": format_time(to_millis(row.at)),
         "actor_id": _id_text(row.actor_id),
@@ -184,6 +194,9 @@ def row_json(seq: int, row: AuditRow) -> dict[str, Any]:
         "detail": dict(row.detail),
         "event_id": _id_text(row.event_id),
     }
+    if row.agent_id is not None:
+        found["agent_id"] = str(row.agent_id)
+    return found
 
 
 def hash_text(seq: int, row: AuditRow, prev_hash: str | None) -> bytes:
@@ -209,6 +222,8 @@ def append_audit(connection: psycopg.Connection[Any], row: AuditRow) -> StoredAu
     The advisory lock AUDIT_LOCK is held until the outermost transaction ends, so concurrent writers get gapless,
     strictly ordered `seq` values and each row links to the hash of its predecessor.
     """
+    if row.agent_id is None:
+        row = replace(row, agent_id=ACTING_AGENT.get())
     validate_row(row)
     stored_row = replace(row, at=to_millis(row.at), detail=dict(row.detail))
     with connection.transaction():
@@ -221,7 +236,7 @@ def append_audit(connection: psycopg.Connection[Any], row: AuditRow) -> StoredAu
         digest = audit_hash(seq, stored_row, prev_hash)
         connection.execute(
             f"INSERT INTO hub.audit ({_COLUMNS})"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 seq,
                 stored_row.at,
@@ -240,6 +255,7 @@ def append_audit(connection: psycopg.Connection[Any], row: AuditRow) -> StoredAu
                 stored_row.event_id,
                 prev_hash,
                 digest,
+                stored_row.agent_id,
             ),
         )
     return StoredAudit(seq=seq, row=stored_row, prev_hash=prev_hash, hash=digest)
@@ -261,6 +277,7 @@ def _stored(record: Sequence[Any]) -> StoredAudit:
         target_id=record[12],
         detail=record[13],
         event_id=record[14],
+        agent_id=record[17],
     )
     return StoredAudit(seq=int(record[0]), row=row, prev_hash=record[15], hash=record[16])
 

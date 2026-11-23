@@ -25,6 +25,7 @@ export function NotificationText({ row }: { readonly row: NotificationRow }) {
     wg: t('notifications.unnamed.wg'),
     task: t('notifications.unnamed.task'),
     subject: t('notifications.unnamed.subject'),
+    agent: t('notifications.unnamed.agent'),
   };
   const message = notificationMessage(row, names, fallback);
   return <span data-testid="notifications.text">{t(message.key, message.params)}</span>;

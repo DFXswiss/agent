@@ -34,8 +34,8 @@ async def register_finish(
 
 
 @router.post("/v1/passkeys/login/begin", auth="anon", right="anon")
-async def login_begin(_body: Empty, context: Context) -> dict[str, Any]:
-    return await asyncio.to_thread(login.begin, context)
+async def login_begin(body: login.LoginBegin, context: Context) -> dict[str, Any]:
+    return await asyncio.to_thread(login.begin, context, body)
 
 
 @router.post("/v1/passkeys/login/finish", auth="anon", right="anon")

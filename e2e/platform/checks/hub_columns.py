@@ -34,6 +34,8 @@ CATEGORIES: dict[str, str] = {
     "credentials": "Credential metadata (owner, kind, version)",
     "settings": "User settings (model access preference, model choice, locale)",
     "ciphertext": "Encrypted content (ADR-003): sealed under scope, credential or recipient keys the hub never holds",
+    "agents": "Agents of a user (11-agent-access.md section 2): agent ID, public keys, state, times, claim hash, the "
+    "source address of an open pairing, which login confirmed which pairing, which actions were taken by an agent",
     "internal": "Hub bookkeeping without user data (applied schema migrations)",
 }
 
@@ -56,12 +58,15 @@ TOKEN = r"^[A-Za-z0-9_.:/+=-]*$"
 _MAP = """
 audit: audit | seq:number at:time actor_id:uuid actor_kind:code action:code result:code org_id:uuid wg_id:uuid
   task_id:uuid session_id:uuid device_id:uuid target_kind:code target_id:code detail:json event_id:uuid prev_hash:code
-  hash:code
+  hash:code agent_id:uuid@agents
+agent: agents | id:uuid user_id:uuid kem_pub:bytes sig_pub:bytes state:code bundle_ct:bytes@ciphertext
+  label_ct:bytes@ciphertext claim_hash:bytes claim_misses:number source:code source_net:code created_at:time
+  expires_at:time confirmed_at:time claimed_at:time last_used_at:time revoked_at:time replaces:uuid
 audit_checkpoint: audit | hub_key_id:code seq:number hash:code published_at:time signature:bytes
 browser_session: auth | key_id:code user_id:uuid@ids credential_id:bytes public_key:bytes statement:lines
-  created_at:time expires_at:time ended_at:time
+  created_at:time expires_at:time ended_at:time pairing_id:uuid@agents
 ceremony: auth | id:uuid kind:code challenge:bytes user_id:uuid@ids invite_id:code@logs hub_value:bytes
-  created_at:time expires_at:time used_at:time
+  created_at:time expires_at:time used_at:time pairing_id:uuid@agents
 credential: credentials | id:uuid owner_id:uuid kind:code version:number epoch:number header_text:json
   ct:bytes@ciphertext sig:bytes updated_at:time
 credential_notice: credentials | device_id:uuid owner_id:uuid kind:code changed_at:time

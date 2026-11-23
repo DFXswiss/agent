@@ -26,12 +26,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_hub.agents.notify import account_change
 from agent_hub.credentials import notices, records
 from agent_hub.credentials.eligibility import is_eligible
 from agent_hub.device.keys import ActiveDevice, device_id
 from agent_hub.errors import HubError
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import EVENT_BATCH_BYTES, HubRouter
+from agent_hub.notifications.rules import Notification, publish_rows
 from agent_hub.orgs.routes import parse_id, user_id
 from agent_hub.requests.store import authorizes_write
 from agent_hub.stream.publish import Audience, AudienceKind, publish
@@ -104,8 +106,8 @@ async def get_credential(context: Context, principal: CurrentPrincipal, kind: st
 async def put_credential(context: Context, principal: CurrentPrincipal, kind: str, body: PutBody) -> dict[str, Any]:
     user, found_kind, now = user_id(principal), _kind(kind), context.clock()
 
-    def work(connection: Any) -> records.Change:
-        return records.put_record(
+    def work(connection: Any) -> tuple[records.Change, list[Notification]]:
+        change = records.put_record(
             connection,
             owner=user,
             kind=found_kind,
@@ -114,9 +116,11 @@ async def put_credential(context: Context, principal: CurrentPrincipal, kind: st
             author=_user_author(connection, user),
             now=now,
         )
+        return change, account_change(connection, user, "credential_changed", now, target=found_kind)
 
-    change = await _in_transaction(context, work)
+    change, account = await _in_transaction(context, work)
     notices.hint_devices(change.devices, user)
+    publish_rows(account)
     return {"version": change.version}
 
 
@@ -124,8 +128,14 @@ async def put_credential(context: Context, principal: CurrentPrincipal, kind: st
 async def delete_credential(context: Context, principal: CurrentPrincipal, kind: str) -> dict[str, Any]:
     user, found_kind, now = user_id(principal), _kind(kind), context.clock()
     owner = records.Author(id=user, kind="user", sig_public=b"")
-    change = await _in_transaction(context, lambda c: records.delete_record(c, owner=owner, kind=found_kind, now=now))
+
+    def work(connection: Any) -> tuple[records.Change, list[Notification]]:
+        change = records.delete_record(connection, owner=owner, kind=found_kind, now=now)
+        return change, account_change(connection, user, "credential_changed", now, target=found_kind)
+
+    change, account = await _in_transaction(context, work)
     notices.hint_devices(change.devices, user)
+    publish_rows(account)
     return {}
 
 

@@ -22,7 +22,16 @@ import { CredentialRotationToasts, headerItem, TOAST_MS } from '../../src/ui/she
 import { UsageSlot } from '../../src/ui/task-tabs/chat/UsageSlot';
 import { UsageStrip } from '../../src/ui/task-tabs/chat/usage-strip';
 import { taskRow } from '../core/tasks/world';
-import { API_KEY, credWorld, type CredWorld, GITHUB, MAILBOX, seed, SUBSCRIPTION } from '../core/credentials/world';
+import {
+  API_KEY,
+  credWorld,
+  type CredWorld,
+  GITHUB,
+  LOGIN_TOKEN,
+  MAILBOX,
+  seed,
+  SUBSCRIPTION,
+} from '../core/credentials/world';
 import { mount } from './chat-world';
 
 afterEach(() => vi.useRealTimers());
@@ -173,6 +182,37 @@ describe('credentials list', () => {
     expect(screen.getByTestId('claude.connect')).toHaveTextContent('Connect again');
     expect(screen.getByTestId('mailbox.save')).toHaveTextContent('Replace mailbox');
     noSecrets();
+  });
+
+  it('shows the origin and expiry of a subscription token, an expired one highlighted (ADR-056 section 7)', async () => {
+    const t = await world();
+    await seed(t, 'claude_subscription', { ...LOGIN_TOKEN, expires_at: '2000-01-01T00:00:00.000Z' });
+    credentialsPage(t);
+    const origin = await screen.findByTestId('credentials.item.claude_subscription.origin');
+    expect(origin).toHaveTextContent('From the Claude Code login');
+    const expiry = screen.getByTestId('credentials.item.claude_subscription.expiry');
+    expect(expiry).toHaveAttribute('data-expired', 'true');
+    expect(expiry).toHaveTextContent(/^Expired /);
+    noSecrets();
+  });
+
+  it('shows a valid login token with its expiry', async () => {
+    const t = await world();
+    await seed(t, 'claude_subscription', { ...LOGIN_TOKEN, expires_at: '2999-01-01T00:00:00.000Z' });
+    credentialsPage(t);
+    const expiry = await screen.findByTestId('credentials.item.claude_subscription.expiry');
+    expect(expiry).toHaveAttribute('data-expired', 'false');
+    expect(expiry).toHaveTextContent(/^Valid until /);
+  });
+
+  it('shows a long-lived token without expiry', async () => {
+    const t = await world();
+    await seed(t, 'claude_subscription', SUBSCRIPTION, { author: t.device });
+    credentialsPage(t);
+    expect(await screen.findByTestId('credentials.item.claude_subscription.origin')).toHaveTextContent(
+      'Long-lived token',
+    );
+    expect(screen.queryByTestId('credentials.item.claude_subscription.expiry')).toBeNull();
   });
 
   it('shows the e-mail of a subscription and unverifiable records with their code', async () => {

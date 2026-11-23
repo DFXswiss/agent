@@ -16,7 +16,12 @@ export const NOTIFICATION_KINDS = [
   'task.failed',
   'invite.accepted',
   'rotation.required',
+  'agent.account_change',
 ] as const;
+
+/** The account-level kind (no org): an account-changing action of one of the user's agents (11-agent-access.md
+ *  section 8); `ref` is `<action>:<agent id>`. */
+export const ACCOUNT_KIND = 'agent.account_change';
 
 /** At most this many toasts at a time (the oldest leaves first). */
 export const MAX_TOASTS = 3;
@@ -25,7 +30,8 @@ export const MAX_TOASTS = 3;
 export interface NotificationRow {
   readonly notification_id: string;
   readonly kind: string;
-  readonly org_id: string;
+  /** Null only for the account-level kind `agent.account_change`. */
+  readonly org_id: string | null;
   readonly wg_id: string | null;
   readonly task_id: string | null;
   readonly ref: string | null;
@@ -67,7 +73,7 @@ export function isNotificationRow(value: unknown): value is NotificationRow {
     isRecord(value) &&
     isId(value.notification_id) &&
     isId(value.kind) &&
-    isId(value.org_id) &&
+    (isId(value.org_id) || (value.org_id === null && value.kind === ACCOUNT_KIND)) &&
     isIdOrNull(value.wg_id) &&
     isIdOrNull(value.task_id) &&
     isIdOrNull(value.ref) &&

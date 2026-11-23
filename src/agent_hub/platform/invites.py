@@ -62,8 +62,8 @@ def _audit(connection: psycopg.Connection[Any], action: str, user: UUID, invite_
 
 def create(
     connection: psycopg.Connection[Any], user: UUID, invite_id: str, *, pk_inv: str, expires_text: str, now: datetime
-) -> None:
-    """Create a platform user invitation (idempotent for an identical repeat)."""
+) -> bool:
+    """Create a platform user invitation (idempotent for an identical repeat: False)."""
     require_inviter(connection, user)
     expires = parse_time(expires_text)
     if not now < expires <= now + timedelta(seconds=LIMITS["invite_max_seconds"]):
@@ -84,13 +84,14 @@ def create(
             key,
         ):
             raise HubError("id_conflict")
-        return
+        return False
     connection.execute(
         "INSERT INTO hub.invite (id, scope, kind, created_by, created_at, expires_at, pk_inv)"
         " VALUES (%s, 'platform', 'user', %s, %s, %s, %s)",
         (invite_id, user, now, expires, key),
     )
     _audit(connection, "invite.create", user, invite_id, now)
+    return True
 
 
 def state_of(used_at: datetime | None, revoked_at: datetime | None, expires_at: datetime, now: datetime) -> str:

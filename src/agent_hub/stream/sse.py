@@ -1,7 +1,7 @@
 """The browser live channel `GET /v1/stream` (03-api.md section 5, 06-web.md section 1.3, ADR-016).
 
 A browser opens one stream per active org with its signed request, read with `fetch` streaming. Query: `org`,
-`terminal` (repeatable, at most 3 watched sessions), `cursors` (`<scope_id>:<seq>,…`), `monitoring=1`.
+`terminal` (repeatable, at most 3 watched sessions), `cursors` (`<scope_id>:<seq>,…`), `monitoring=1`, `account=1`.
 
 **Rights.** The caller must be an active member of the org (else `404 not_found`, like every read). Readable scopes
 are the org scope and every workgroup the user reads (`wg_access`, 03-api.md section 3); a watched session must be a
@@ -10,7 +10,8 @@ session of the org in a readable workgroup (`task:read`, else `404 not_found`). 
 workgroup (task, session and operation rows, or `wg_id=` at `publish`) only for readers of that workgroup - a row
 without a workgroup and a `metrics` frame with VM or session samples but without `wg_id=` reach nobody (fail closed);
 `metrics` only with `monitoring=1`; user frames (`wraps`, `device_response`, `notification`) only to that user's
-streams, a `notification` only to streams of its org that read its workgroup. The
+streams, a `notification` only to streams of its org that read its workgroup, an account notification (no org,
+KOR-24) only to streams opened with `account=1` (a web client of before KOR-24 never receives one). The
 rights are read again on every `log` frame of the org and with every heartbeat; a user who left the org loses the
 stream, a session in a workgroup the user no longer reads is no longer watched.
 
@@ -74,6 +75,8 @@ class StreamQuery:
     terminals: frozenset[UUID]
     cursors: Mapping[UUID, int]
     monitoring: bool
+    account: bool = False
+    """`account=1`: the stream also carries the user's account notifications (no org; KOR-24)."""
 
 
 @dataclass(frozen=True)
@@ -94,7 +97,9 @@ def _uuid(text: str) -> UUID:
     return UUID(text)
 
 
-def parse_query(org: str, terminal: Iterable[str], cursors: str | None, monitoring: str | None) -> StreamQuery:
+def parse_query(
+    org: str, terminal: Iterable[str], cursors: str | None, monitoring: str | None, account: str | None = None
+) -> StreamQuery:
     """Check the query (`400 request_invalid` for anything outside contracts/ws/sse/query.json)."""
     watched = [_uuid(item) for item in terminal]
     if len(watched) > MAX_TERMINALS or len(set(watched)) != len(watched):
@@ -109,9 +114,9 @@ def parse_query(org: str, terminal: Iterable[str], cursors: str | None, monitori
             if match is None or UUID(match.group(1)) in positions:
                 raise HubError("request_invalid")
             positions[UUID(match.group(1))] = int(match.group(2))
-    if monitoring not in (None, "1"):
+    if monitoring not in (None, "1") or account not in (None, "1"):
         raise HubError("request_invalid")
-    return StreamQuery(_uuid(org), frozenset(watched), positions, monitoring == "1")
+    return StreamQuery(_uuid(org), frozenset(watched), positions, monitoring == "1", account == "1")
 
 
 def frame_bytes(frame: str, data: Mapping[str, Any]) -> bytes:
@@ -299,6 +304,8 @@ class BrowserStream:
     watched: frozenset[UUID]
     buffer: int = BUFFER_FRAMES
     byte_limit: int = BUFFER_BYTES
+    key_id: str | None = None
+    """The key that opened the stream: a revoked agent key or an ended session ends it (`CLOSE_KEYS`, KOR-24)."""
     stream_id: str = field(default_factory=uuid7)
     sent: dict[UUID, int] = field(default_factory=dict)
     finished: bool = False
@@ -369,8 +376,10 @@ class BrowserStream:
         if item.audience.kind == "org":
             wg = frame_wg(item)
             return wg is None or wg in self.scopes
-        if item.frame == "notification":  # a user frame of one org and maybe one workgroup
+        if item.frame == "notification":  # a user frame of one org and maybe one workgroup, or of the account
             org, wg = item.data.get("org_id"), item.data.get("wg_id")
+            if org is None:
+                return self.query.account
             return org == str(self.org) and (wg is None or _wg_value(wg) in self.scopes)
         return True
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, cast
 from uuid import UUID
@@ -56,7 +56,16 @@ class TableRule:
     append_only: bool = False
     seeded: bool = False
     """The migration inserts a row (an empty database holds it; restore replaces it by the exported row)."""
+    columns: Mapping[str, str] = field(default_factory=dict)
+    """SQL expressions that replace stored columns in the export (a value that must not leave the hub as it is);
+    `%(now)s` is the export time."""
 
+
+AGENT_EXPORT: Mapping[str, str] = {
+    "state": "'revoked'",
+    "bundle_ct": "NULL::bytea",
+    "revoked_at": "COALESCE(revoked_at, %(now)s)",
+}
 
 RULES: tuple[TableRule, ...] = (
     # Principals first: user_identity, user_settings and device reference principal (the only foreign keys).
@@ -66,6 +75,10 @@ RULES: tuple[TableRule, ...] = (
     TableRule("identity_bundle", USER_ROWS),
     TableRule("passkey", USER_ROWS),
     TableRule("browser_session", USER_ROWS),
+    # agents of the org's users (ADR-056); open pairings (no user yet) live ten minutes and are not exported. An agent
+    # is exported revoked and without its sealed identity (review L3, decisions KOR-24): an export file never opens an
+    # access, and a restored hub has no working agent (the user pairs again).
+    TableRule("agent", USER_ROWS, columns=AGENT_EXPORT),
     TableRule("request_nonce", ALL_ROWS),
     TableRule("device", "id = ANY(%(devices)s)"),
     TableRule("device_enrollment", DEVICE_ROWS),
@@ -94,7 +107,8 @@ RULES: tuple[TableRule, ...] = (
     TableRule("dedupe_slot", WG_ROWS),
     TableRule("whiteboard_entry", ORG_ROWS),
     TableRule("session_ping", "session_id = ANY(%(sessions)s)"),
-    TableRule("notification", ORG_ROWS),
+    # the org's notifications and the account notifications of its users (`agent.account_change`, no org; ADR-056)
+    TableRule("notification", "org_id = %(org)s OR (org_id IS NULL AND recipient_id = ANY(%(users)s))"),
     TableRule("credential", "owner_id = ANY(%(users)s)"),
     TableRule("credential_notice", "owner_id = ANY(%(users)s)"),
     TableRule("device_request", USER_ROWS),

@@ -23,6 +23,7 @@ from agent_hub.events.notify import announce
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import EVENT_BATCH_BYTES, HubRouter
 from agent_hub.log.state import DEVICE
+from agent_hub.notifications.rules import publish_rows
 from agent_hub.orgs import logs, rights
 from agent_hub.orgs.append import Appender, AppendResult, append_batch
 from agent_hub.orgs.genesis import Created, create_org
@@ -84,6 +85,7 @@ def publish_append(result: AppendResult) -> None:
         kind: AudienceKind = "device" if state.principals[recipient].kind == DEVICE else "user"
         publish(Audience(kind, UUID(recipient)), "wraps", {})
     announce(result.events)
+    publish_rows(result.notices)
     signals.emit("log.appended", org_id=result.org_id, seq=head.seq)
 
 

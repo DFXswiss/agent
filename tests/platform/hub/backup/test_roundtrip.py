@@ -69,7 +69,16 @@ def test_restore_of_every_org_reproduces_every_table(
     count = restored(target, files)
     assert count == len({(item["table"], str(item["row"])) for data in files for item in lines(data)[1:-1]})
     for rule in RULES:
-        assert table_rows(target, rule.table) == table_rows(migrated_db, rule.table), rule.table
+        if rule.table != "agent":
+            assert table_rows(target, rule.table) == table_rows(migrated_db, rule.table), rule.table
+    # agents are restored revoked and without their sealed identity (decisions KOR-24 item 16)
+    agents = "SELECT id, user_id, state, bundle_ct, revoked_at FROM hub.agent ORDER BY id"
+    with target.admin() as connection:
+        restored_agents = connection.execute(agents).fetchall()
+    with migrated_db.admin() as connection:
+        source_agents = connection.execute(agents).fetchall()
+    assert [row[:2] for row in restored_agents] == [row[:2] for row in source_agents]
+    assert {row[2:] for row in restored_agents} == {("revoked", None, estate.hub.clock())}
     assert table_rows(migrated_db, "ceremony") != []  # excluded tables are not restored
     for table in sorted(set(EXCLUDED) - {"schema_version"}):
         assert table_rows(target, table) == [], table

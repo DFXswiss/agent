@@ -221,6 +221,25 @@ class Estate:
                 ),
             ),
             (
+                "INSERT INTO hub.agent (id, user_id, kem_pub, sig_pub, state, bundle_ct, label_ct, claim_hash,"
+                " created_at, expires_at, confirmed_at, claimed_at, last_used_at)"
+                " VALUES (%s, %s, %s, %s, 'active', %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    new_id(),
+                    writer.id,
+                    secrets.token_bytes(32),
+                    secrets.token_bytes(32),
+                    secrets.token_bytes(140),
+                    secrets.token_bytes(80),
+                    secrets.token_bytes(32),
+                    now,
+                    now + timedelta(minutes=10),
+                    now,
+                    now,
+                    now,
+                ),
+            ),
+            (
                 "INSERT INTO hub.credential_notice (device_id, owner_id, kind, changed_at)"
                 " VALUES (%s, %s, 'github', %s)",
                 (device.id, writer.id, now),

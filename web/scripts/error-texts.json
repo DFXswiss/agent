@@ -1270,5 +1270,53 @@
       "body": "Der Arbeitsbereich hat keine Änderungen gegenüber dem Branch.",
       "action": "Ändere zuerst Dateien und committe dann."
     }
+  },
+  "pairing_unknown": {
+    "en": {
+      "title": "Connection request expired",
+      "body": "This agent connection request does not exist any more: it expired, was already used or was cancelled.",
+      "action": "Ask your AI agent to connect again."
+    },
+    "de": {
+      "title": "Verbindungsanfrage abgelaufen",
+      "body": "Diese Verbindungsanfrage des Agenten gibt es nicht mehr: Sie ist abgelaufen, wurde schon verwendet oder abgebrochen.",
+      "action": "Bitte deinen KI-Agenten, sich neu zu verbinden."
+    }
+  },
+  "pairing_gesture_required": {
+    "en": {
+      "title": "Confirm again",
+      "body": "The confirmation took too long.",
+      "action": "Confirm once more with your passkey."
+    },
+    "de": {
+      "title": "Erneut bestätigen",
+      "body": "Die Bestätigung hat zu lange gedauert.",
+      "action": "Bestätige noch einmal mit deinem Passkey."
+    }
+  },
+  "claim_invalid": {
+    "en": {
+      "title": "Agent connection refused",
+      "body": "The agent could not prove that it received the connection.",
+      "action": "Ask your AI agent to connect again."
+    },
+    "de": {
+      "title": "Agentenverbindung abgelehnt",
+      "body": "Der Agent konnte nicht nachweisen, dass er die Verbindung erhalten hat.",
+      "action": "Bitte deinen KI-Agenten, sich neu zu verbinden."
+    }
+  },
+  "pairing_mismatch": {
+    "en": {
+      "title": "This link is not valid",
+      "body": "The agent connection link does not match the request at the server.",
+      "action": "Do not confirm. Ask your AI agent to connect again."
+    },
+    "de": {
+      "title": "Dieser Link ist nicht gültig",
+      "body": "Der Verbindungslink des Agenten passt nicht zur Anfrage beim Server.",
+      "action": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden."
+    }
   }
 }

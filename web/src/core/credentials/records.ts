@@ -20,7 +20,7 @@
 //   `credentials` slice.
 import { uuid7 } from '../encoding/ids';
 import { bodyJson, parseJson } from '../encoding/json';
-import { formatTime } from '../encoding/time';
+import { formatTime, parseTime } from '../encoding/time';
 import { CryptoError } from '../crypto/errors';
 import { KINDS, newHeader, openCredential, sealCredential, verifyCredential } from '../crypto/credential';
 import type { Fields } from '../crypto/fields';
@@ -70,10 +70,16 @@ export interface MailboxBody {
   readonly email: string;
 }
 
+/** `setup_token`: a long-lived token of `claude setup-token`; `login_token`: the access token of the local Claude Code
+ *  login, transferred by the user's agent tool, with its expiry (ADR-056 section 7). */
+export const SUBSCRIPTION_ORIGINS = ['setup_token', 'login_token'] as const;
+export type SubscriptionOrigin = (typeof SUBSCRIPTION_ORIGINS)[number];
+
 export interface SubscriptionBody {
   readonly token: string;
   readonly email: string | null;
-  readonly kind: 'setup_token';
+  readonly kind: SubscriptionOrigin;
+  readonly expires_at?: string;
 }
 
 export const isApiKeyBody = (value: unknown): value is ApiKeyBody =>
@@ -94,13 +100,24 @@ export const isMailboxBody = (value: unknown): value is MailboxBody =>
   [...value.imap_password].length <= 1024 &&
   isEmail(value.email);
 
+const isHeaderTime = (value: unknown): boolean => {
+  try {
+    parseTime(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const isSubscriptionBody = (value: unknown): value is SubscriptionBody =>
   isRecord(value) &&
-  keysAre(value, ['token', 'email', 'kind']) &&
+  (Object.hasOwn(value, 'expires_at')
+    ? keysAre(value, ['token', 'email', 'kind', 'expires_at']) && isHeaderTime(value.expires_at)
+    : keysAre(value, ['token', 'email', 'kind'])) &&
   typeof value.token === 'string' &&
   PRINTABLE_RE.test(value.token) &&
   (value.email === null || isEmail(value.email)) &&
-  value.kind === 'setup_token';
+  (SUBSCRIPTION_ORIGINS as readonly unknown[]).includes(value.kind);
 
 export const MAILBOX_FIELDS = ['imap_host', 'imap_port', 'imap_user', 'imap_password', 'email'] as const;
 export type MailboxForm = Readonly<Record<(typeof MAILBOX_FIELDS)[number], string>>;
@@ -134,7 +151,13 @@ export function validBody(kind: CredentialKind, body: unknown): boolean {
 export type Summary =
   | { readonly kind: 'github'; readonly login: string }
   | { readonly kind: 'anthropic_api_key' }
-  | { readonly kind: 'claude_subscription'; readonly email: string | null }
+  | {
+      readonly kind: 'claude_subscription';
+      readonly email: string | null;
+      readonly origin: SubscriptionOrigin;
+      /** Header time of the token's expiry, null when the record states none. */
+      readonly expiresAt: string | null;
+    }
   | { readonly kind: 'mailbox'; readonly email: string; readonly host: string };
 
 /** The non-secret part of a checked body (`validBody`). */
@@ -146,7 +169,12 @@ export function summarize(kind: CredentialKind, body: unknown): Summary {
     case 'anthropic_api_key':
       return { kind };
     case 'claude_subscription':
-      return { kind, email: value.email as string | null };
+      return {
+        kind,
+        email: value.email as string | null,
+        origin: value.kind as SubscriptionOrigin,
+        expiresAt: (value.expires_at as string | undefined) ?? null,
+      };
     case 'mailbox':
       return { kind, email: value.email as string, host: value.imap_host as string };
   }

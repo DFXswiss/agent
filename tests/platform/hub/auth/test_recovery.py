@@ -104,6 +104,9 @@ def test_recovery_registers_a_new_passkey_and_replaces_the_code(browser: FakeBro
     audit = recovery_audit(hub)
     assert audit[0] == ("ok", "anonymous", "user", account.user_id, {"step": "begin"})
     assert ("ok", "user", "passkey", credential["id"], {"step": "finish"}) in audit
+    # the user is told that a recovery added a passkey (KOR-24; no agent), in the account notifications
+    notices = rows(hub, "SELECT kind, org_id, ref FROM hub.notification WHERE recipient_id = %s", account.user_id)
+    assert notices == [("agent.account_change", None, f"recovery_finished::{credential['id']}")]
 
 
 def test_wrong_proof_is_refused_once_and_allows_no_replacement(browser: FakeBrowser, account: Account) -> None:

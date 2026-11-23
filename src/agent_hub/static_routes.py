@@ -7,7 +7,9 @@ of 06-web.md section 2.4 (status 200) and, for any other path outside `/v1/` and
 client shows its not-found screen. Unknown API and asset paths get the JSON `404 not_found`; without a build the page
 is `503 unavailable`. `GET /build-manifest.json` delivers the build manifest unchanged and revalidated (`no-cache`):
 the security page hashes its exact bytes into the build hash (06-web.md sections 10.3 and 10.5); without a build it is
-the JSON `404 not_found`. The security headers (CSP) are set by `agent_hub.http.headers` on every response.
+the JSON `404 not_found`. `GET /agents.md` delivers the guide for AI agents of the build (`docs/platform/agents.md`,
+copied into the build by the web client; ADR-056) as `text/markdown`, revalidated; without it the JSON
+`404 not_found`. The security headers (CSP) are set by `agent_hub.http.headers` on every response.
 """
 
 from __future__ import annotations
@@ -21,12 +23,14 @@ from agent_hub.http.context import Context, HubContext
 from agent_hub.http.routing import API_PREFIX, HubRouter
 
 MANIFEST_FILE = "build-manifest.json"
+GUIDE_FILE = "agents.md"
 ASSET_CACHE = "public, max-age=31536000, immutable"
 PAGE_CACHE = "no-cache"
 # 06-web.md section 2.4, path parameters as single segments.
 SPA_ROUTES = (
     "/",
     "/invite",
+    "/connect",
     "/login",
     "/recover",
     "/o/{org}",
@@ -86,6 +90,14 @@ async def build_manifest(context: Context) -> Response:
     if not path.is_file():
         raise HubError("not_found")
     return Response(path.read_bytes(), media_type="application/json", headers={"Cache-Control": PAGE_CACHE})
+
+
+@router.get(f"/{GUIDE_FILE}", auth="anon", right="anon", include_in_schema=False)
+async def agent_guide(context: Context) -> Response:
+    path = context.config.static_dir / GUIDE_FILE
+    if not path.is_file():
+        raise HubError("not_found")
+    return Response(path.read_bytes(), media_type="text/markdown; charset=utf-8", headers={"Cache-Control": PAGE_CACHE})
 
 
 async def spa_page(context: Context) -> Response:

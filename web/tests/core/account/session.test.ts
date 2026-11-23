@@ -390,5 +390,6 @@ describe('AppSession', () => {
     await context.app.loadMe();
     expect(context.store.getState().connection.session).toBe('expiring');
     expect(context.app.config).toBe(CONFIG);
+    expect(context.app.rootKey).toBe(CONFIG.platform_root_key);
   });
 });

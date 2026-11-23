@@ -145,15 +145,16 @@ def header(connection: Connection, org: UUID, hub_key_id: str, now: datetime) ->
     return {name: values[name] for name in HEADER_ORDER}
 
 
-def rows(connection: Connection, table: Table, selection: Selection) -> Iterator[dict[str, object]]:
-    """The org's rows of one table in primary-key order (read with a server-side cursor)."""
+def rows(connection: Connection, table: Table, selection: Selection, now: datetime) -> Iterator[dict[str, object]]:
+    """The org's rows of one table in primary-key order (read with a server-side cursor); `now` is the export time
+    (`%(now)s` of a column expression of the rule)."""
     rule = RULE_BY_TABLE[table.name]
-    columns = ", ".join(f'"{name}"' for name in table.names)
+    columns = ", ".join(rule.columns.get(name, f'"{name}"') for name in table.names)
     order = ", ".join(f'"{name}"' for name in table.key)
     query = f"SELECT {columns} FROM hub.{table.name} WHERE {rule.where} ORDER BY {order}"
     with connection.cursor(name=f"export_{table.name}") as cursor:
         cursor.itersize = FETCH_ROWS
-        cursor.execute(query, selection.params())
+        cursor.execute(query, {**selection.params(), "now": now})
         for record in cursor:
             yield encode_row(table, record)
 
@@ -173,7 +174,7 @@ def write_export(connection: Connection, org: UUID, signer: HubSigner, out: Bina
         tables = export_tables(connection)
         selection = select(connection, org)
         for table in tables:
-            for row in rows(connection, table, selection):
+            for row in rows(connection, table, selection, now):
                 emit(line({"table": table.name, "row": row}))
                 count += 1
     sha256 = digest.hexdigest()

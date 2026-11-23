@@ -7,9 +7,12 @@
 import { type FormEvent, useEffect, useId, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { formatEventTime } from '../../../core/i18n';
+import { loadAgents } from '../../../core/agents/list';
+import { agentName } from '../../../core/store/slices/agents';
 import {
   ACTION_GROUPS,
   actorName,
+  agentMarker,
   type AuditFilters,
   type AuditNames,
   type AuditRow,
@@ -297,6 +300,7 @@ function Row(props: {
     row.target_kind === null ? null : (targetName(row, names) ?? `${row.target_kind} ${row.target_id ?? ''}`.trim());
   const link = eventLink(org, row);
   const detail = Object.entries(row.detail);
+  const agent = useStore((state) => agentMarker(row, (id) => agentName(state, id)), app.store);
   return (
     <li
       className="flex flex-col gap-1 border-b border-gray-200 py-2"
@@ -311,6 +315,11 @@ function Row(props: {
         <span className="font-medium" data-testid="audit.row.actor">
           {actor}
         </span>
+        {agent !== undefined && (
+          <span className="rounded bg-amber-100 px-2 text-sm text-amber-900" data-testid="audit.row.agent">
+            {agent === null ? t('audit.row.by-unknown-agent') : t('audit.row.by-agent', { name: agent })}
+          </span>
+        )}
         <code className="rounded bg-gray-100 px-1 text-sm" data-testid="audit.row.action">
           {row.action}
         </code>
@@ -370,6 +379,10 @@ export function AuditView({ org, task }: { readonly org: string; readonly task: 
   useEffect(() => {
     if (ready) pullOnce(app.tasks, org, org, { kinds: [DEVICE_PROFILE] }).catch(() => 0);
   }, [app, org, ready]);
+  // the names of the user's own agents for the "by agent" marker (11-agent-access.md section 7)
+  useEffect(() => {
+    if (app.store.getState().agents.status === 'idle') void loadAgents(app.tasks);
+  }, [app]);
   useEffect(() => {
     void loadAudit(app.tasks, org, parseFilters(new URLSearchParams(query)));
   }, [app, org, query]);

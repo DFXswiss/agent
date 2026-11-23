@@ -17,12 +17,14 @@ import uuid
 from typing import Any, cast
 
 from agent_core.signing import b64url_decode, b64url_encode
+from agent_hub.agents.notify import account_change
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.auth.ceremonies import create_ceremony, creation_options, credential_reference
 from agent_hub.auth.keys import Principal
 from agent_hub.db.pool import transaction
 from agent_hub.errors import HubError
 from agent_hub.http.context import HubContext
+from agent_hub.notifications.rules import publish_rows
 
 
 def _user(principal: Principal) -> uuid.UUID:
@@ -68,6 +70,9 @@ def remove(context: HubContext, principal: Principal, credential_text: str) -> d
         if len(active) == 1:
             raise HubError("last_passkey")
         connection.execute("UPDATE hub.passkey SET removed_at = %s WHERE credential_id = %s", (now, credential_id))
+        notices = account_change(
+            connection, user_id, "passkey_removed", now, target=credential_reference(credential_id)
+        )
         connection.execute(
             "DELETE FROM hub.identity_bundle WHERE user_id = %s AND slot = %s",
             (user_id, "passkey:" + credential_text),
@@ -89,4 +94,5 @@ def remove(context: HubContext, principal: Principal, credential_text: str) -> d
                 detail={"passkey_id": credential_reference(credential_id)},
             ),
         )
+    publish_rows(notices)
     return {}

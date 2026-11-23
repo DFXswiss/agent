@@ -42,5 +42,7 @@
   "row.task": "Task …{id}",
   "row.device": "Gerät: {name}",
   "row.event": "Referenziertes Event",
-  "wg.unnamed": "Workgroup …{id}"
+  "wg.unnamed": "Workgroup …{id}",
+  "row.by-agent": "durch Agent {name}",
+  "row.by-unknown-agent": "durch einen Agenten"
 }

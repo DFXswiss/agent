@@ -1,0 +1,88 @@
+{
+  "description": "Endpoints of the delegated agent access (11-agent-access.md section 4, KOR-24, ADR-056): agent pairings (anon), the browser-only agent management and the agent's own routes.",
+  "rights": [
+    "anon",
+    "user",
+    "agent:confirmed",
+    "agent"
+  ],
+  "auth": [
+    "anon",
+    "browser",
+    "agent"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/v1/agent-pairings",
+      "rights": [
+        "anon"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/agent-pairings/{pairing_id}",
+      "rights": [
+        "anon"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/me/agents",
+      "rights": [
+        "user"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/agents",
+      "rights": [
+        "user"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/audit",
+      "rights": [
+        "user"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/me/agents/{agent_id}",
+      "rights": [
+        "user"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent/claim",
+      "rights": [
+        "agent:confirmed"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/agent/me",
+      "rights": [
+        "agent"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/me/agents",
+      "rights": [
+        "user"
+      ],
+      "section": "11.4"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-agents-confirm.response.json",
+  "title": "POST /v1/me/agents response",
+  "description": "Body of a successful response to POST /v1/me/agents (11-agent-access.md section 4).",
+  "type": "object",
+  "properties": {
+    "agent_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "agent_id"
+  ],
+  "additionalProperties": false
+}

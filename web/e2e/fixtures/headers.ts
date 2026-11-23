@@ -8,7 +8,7 @@ export const CONTENT_SECURITY_POLICY = [
   "connect-src 'self'",
   "font-src 'self'",
   "base-uri 'none'",
-  "form-action 'none'",
+  "form-action 'self' http://127.0.0.1:*",
   "frame-ancestors 'none'",
 ].join('; ');
 

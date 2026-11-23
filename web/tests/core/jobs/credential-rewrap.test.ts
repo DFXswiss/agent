@@ -31,7 +31,7 @@ import { HubError } from '../../../src/core/net/signedFetch';
 import { createStore } from '../../../src/core/store';
 import { blockOrg, ensureOrg, setLog, setPlatform } from '../../../src/core/store/slices/orgs';
 import { actor, idOf, seed as seedOf, T0, World } from '../log/world';
-import { API_KEY, credWorld, type CredWorld, MAILBOX, seed, SUBSCRIPTION } from '../credentials/world';
+import { API_KEY, credWorld, type CredWorld, LOGIN_TOKEN, MAILBOX, seed, SUBSCRIPTION } from '../credentials/world';
 
 /** The epoch start of the world's CK_1 self-wrap (`credWorld`). */
 const START = Date.parse('2026-11-21T11:00:00.000Z');
@@ -298,6 +298,20 @@ describe('rotateCredentialKey', () => {
     expect(parseJson(await openCredential(key, byKind.anthropic_api_key, t.me.identity.sigPublic()))).toEqual(API_KEY);
     // the next run finds the epoch newer than the loss
     expect(await rotateCredentialKey(t.context)).toBeNull();
+  });
+
+  it('re-encrypts a login token of the agent tool unchanged, with its expiry (ADR-056 section 7)', async () => {
+    const t = await credWorld();
+    await seed(t, 'claude_subscription', LOGIN_TOKEN);
+    await unassign(t);
+    t.clock.now = T0 + 3600_000;
+    expect(await rotateCredentialKey(t.context)).toMatchObject({ status: 'rotated', epoch: 2, records: 1 });
+    const [rotation] = t.hub.rotations;
+    const mine = rotation!.wraps.find((wrap) => wrap.recipient_id === t.me.id)!;
+    const slot = { scope: 'cred', scope_id: t.me.id, epoch: 2, recipient: t.me.id };
+    const key = await unwrapKey(t.me.identity.kem, slot, mine.wrap as string);
+    const [record] = rotation!.records;
+    expect(parseJson(await openCredential(key, record!, t.me.identity.sigPublic()))).toEqual(LOGIN_TOKEN);
   });
 
   it('is blocked by a record it cannot open: nothing is deleted or rotated, the notice comes once', async () => {

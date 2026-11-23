@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/agent-me.request.json",
+  "title": "GET /v1/agent/me request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

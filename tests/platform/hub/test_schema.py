@@ -57,6 +57,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("created_at", TS),
         ("expires_at", TS),
         ("used_at", TS),
+        ("pairing_id", U),  # KOR-24, migration 0010
     ],
     "browser_session": [
         ("key_id", T),
@@ -67,6 +68,28 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("created_at", TS),
         ("expires_at", TS),
         ("ended_at", TS),
+        ("pairing_id", U),  # KOR-24, migration 0010
+    ],
+    # delegated agent access (KOR-24, ADR-056, migration 0010)
+    "agent": [
+        ("id", U),
+        ("user_id", U),
+        ("kem_pub", B),
+        ("sig_pub", B),
+        ("state", T),
+        ("bundle_ct", B),
+        ("label_ct", B),
+        ("claim_hash", B),
+        ("claim_misses", INT),
+        ("source", T),
+        ("source_net", T),
+        ("created_at", TS),
+        ("expires_at", TS),
+        ("confirmed_at", TS),
+        ("claimed_at", TS),
+        ("last_used_at", TS),
+        ("revoked_at", TS),
+        ("replaces", U),
     ],
     "request_nonce": [("key_id", T), ("nonce", T), ("seen_at", TS)],
     "device": [
@@ -438,6 +461,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("event_id", U),
         ("prev_hash", T),
         ("hash", T),
+        ("agent_id", U),  # KOR-24, migration 0010
     ],
     "audit_checkpoint": [
         ("hub_key_id", T),
@@ -645,7 +669,14 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
         (
             "notification",
             "kind",
-            ["whiteboard.entry", "task.idle", "task.failed", "invite.accepted", "rotation.required"],
+            [
+                "whiteboard.entry",
+                "task.idle",
+                "task.failed",
+                "invite.accepted",
+                "rotation.required",
+                "agent.account_change",
+            ],
         ),
         ("device_request", "kind", ["github.connect", "claude.login", "credential.check", "mailbox.check"]),
         ("device_request", "state", ["pending", "delivered", "answered", "failed", "expired"]),

@@ -40,3 +40,12 @@ export const LABEL_DEDUPE = 'dedupe\0';
 export const LABEL_RECOVERY_PROOF = 'recovery-proof\0';
 export const LABEL_ENROLL = 'enroll\0';
 export const LABEL_INVITE_REGISTER = 'invite-register\0';
+
+// Delegated agent access (11-agent-access.md section 3), without the prefix P.
+export const LABEL_AGENT_KEY = 'agent-key\0';
+export const LABEL_AGENT_PAIR = 'agent-pair\0';
+export const LABEL_AGENT_BUNDLE = 'agent-bundle\0';
+export const LABEL_AGENT_BUNDLE_KEY = 'agent-bundle-key\0';
+export const LABEL_AGENT_LABEL = 'agent-label\0';
+export const LABEL_AGENT_CLAIM = 'agent-claim\0';
+export const LABEL_AGENT_CLAIM_HASH = 'agent-claim-hash\0';

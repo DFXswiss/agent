@@ -144,10 +144,13 @@ def rotate(
     new_recovery_id: str,
     proven_by: str | None,
     now: datetime,
+    *,
+    agent_id: uuid.UUID | None = None,
 ) -> None:
     """Replace the recovery ID (the caller writes the slot afterwards in the same transaction) and audit it;
-    `proven_by` is the passkey of a verified assertion, None for the replacement after a recovery."""
-    if proven_by is None and not allowed_after_recovery(connection, user_id):
+    `proven_by` is the passkey of a verified assertion, None for the replacement after a recovery or by an agent
+    (`agent_id`: the agent's signed request is its proof, as the assertion is the browser's; ADR-056 §4)."""
+    if proven_by is None and agent_id is None and not allowed_after_recovery(connection, user_id):
         raise HubError("forbidden")
     try:
         with connection.transaction():
@@ -164,8 +167,8 @@ def rotate(
             actor_id=user_id,
             action="auth.recovery",
             result="ok",
-            target_kind="user" if proven_by is None else "passkey",
-            target_id=str(user_id) if proven_by is None else proven_by,
+            target_kind=("agent" if agent_id is not None else "user") if proven_by is None else "passkey",
+            target_id=(str(agent_id or user_id)) if proven_by is None else proven_by,
             detail={"step": "rotate"},
         ),
     )

@@ -14,6 +14,7 @@ import agent_hub
 from agent_hub.__main__ import main
 
 AREAS = [
+    "agents",
     "audit",
     "auth",
     "backup",

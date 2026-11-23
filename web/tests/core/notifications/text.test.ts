@@ -5,7 +5,10 @@ import { describe, expect, it } from 'vitest';
 import type { EventEntry } from '../../../src/core/store/slices/events';
 import { putEvents } from '../../../src/core/store/slices/events';
 import { createStore } from '../../../src/core/store';
+import { setAgents } from '../../../src/core/store/slices/agents';
 import {
+  agentChange,
+  AGENT_ACTIONS,
   type Names,
   notificationMessage,
   notificationNames,
@@ -19,9 +22,9 @@ const TASK = '0190f000-0000-7000-8000-00000000000c';
 const USER = '0190f000-0000-7000-8000-00000000000d';
 const DEVICE = '0190f000-0000-7000-8000-00000000000e';
 
-const NAMES = { org: 'Acme', wg: 'Research', task: 'Fix the build', subject: 'Bob' };
-const FALLBACK = { org: 'an organization', wg: 'a workgroup', task: 'a task', subject: 'Someone' };
-const NONE = { org: null, wg: null, task: null, subject: null };
+const NAMES = { org: 'Acme', wg: 'Research', task: 'Fix the build', subject: 'Bob', agent: 'Claude Code' };
+const FALLBACK = { org: 'an organization', wg: 'a workgroup', task: 'a task', subject: 'Someone', agent: 'an agent' };
+const NONE = { org: null, wg: null, task: null, subject: null, agent: null };
 
 describe('notificationMessage', () => {
   it('names the level of a whiteboard entry', () => {
@@ -108,13 +111,20 @@ describe('notificationNames', () => {
     putEvents(store, WG, [verified(WG, { kind: 'task.meta', task: TASK, id: 't1' }, { title: 'Fix the build' })]);
     const state = store.getState();
     const accepted = notification('n1', { kind: 'invite.accepted', org_id: ORG, ref: USER });
-    expect(notificationNames(state, accepted)).toEqual({ org: 'Acme', wg: null, task: null, subject: 'Bob' });
+    expect(notificationNames(state, accepted)).toEqual({
+      org: 'Acme',
+      wg: null,
+      task: null,
+      subject: 'Bob',
+      agent: null,
+    });
     const task = notification('n2', { kind: 'task.idle', org_id: ORG, wg_id: WG, task_id: TASK });
     expect(notificationNames(state, task)).toEqual({
       org: 'Acme',
       wg: 'Research',
       task: 'Fix the build',
       subject: null,
+      agent: null,
     });
     const unknown = notification('n3', { kind: 'task.idle', org_id: ORG, wg_id: 'other', task_id: TASK });
     expect(notificationNames(state, unknown)).toMatchObject({ wg: null, task: null });
@@ -146,5 +156,59 @@ describe('notificationNames caching', () => {
     putEvents(store, ORG, [verified(ORG, { kind: 'org.profile' }, { name: 'Acme' })]);
     expect(notificationNames(store.getState(), row)).not.toBe(first);
     expect(notificationNames(store.getState(), row).org).toBe('Acme');
+  });
+});
+
+describe('account-level notifications of an agent (11-agent-access.md section 8)', () => {
+  const AGENT = '0190f000-0000-7000-8000-0000000000a1';
+  const change = (ref: string | null) => notification('n1', { kind: 'agent.account_change', org_id: null, ref });
+
+  it('splits the reference into action, acting agent and target', () => {
+    expect(agentChange(change(`passkey_removed:${AGENT}:cred`))).toEqual({
+      action: 'passkey_removed',
+      agent: AGENT,
+      target: 'cred',
+    });
+    expect(agentChange(change(`agent_revoked:${AGENT}:a:b`)).target).toBe('a:b');
+    expect(agentChange(change(null))).toEqual({ action: '', agent: '', target: '' });
+  });
+
+  it('names every action with the agent, unknown actions generically', () => {
+    for (const action of AGENT_ACTIONS) {
+      expect(notificationMessage(change(`${action}:${AGENT}:`), NAMES, FALLBACK)).toEqual({
+        key: `notifications.text.agent.${action}`,
+        params: { agent: 'Claude Code' },
+      });
+    }
+    expect(notificationMessage(change(`odd:${AGENT}:`), NONE, FALLBACK)).toEqual({
+      key: 'notifications.text.agent.unknown',
+      params: { agent: 'an agent' },
+    });
+  });
+
+  it('leads to the settings; an org-less row of another kind too', () => {
+    expect(notificationTarget(change(`agent_revoked:${AGENT}:`))).toBe('/settings');
+    expect(notificationTarget(notification('n2', { org_id: null }))).toBe('/settings');
+  });
+
+  it('reads the agent name from the opened labels, and refreshes when the list changes', () => {
+    const store = createStore();
+    const row = change(`agent_revoked:${AGENT}:`);
+    expect(notificationNames(store.getState(), row)).toEqual(NONE);
+    setAgents(store, [
+      {
+        agentId: AGENT,
+        state: 'active',
+        label: { name: 'Claude Code', host: 'Mac' },
+        createdAt: 'x',
+        confirmedAt: 'x',
+        claimedAt: null,
+        lastUsedAt: null,
+        revokedAt: null,
+        replaces: null,
+      },
+    ]);
+    expect(notificationNames(store.getState(), row).agent).toBe('Claude Code');
+    expect(notificationNames(store.getState(), notification('n3', { org_id: null })).agent).toBeNull();
   });
 });

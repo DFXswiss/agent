@@ -136,6 +136,11 @@ export class AppSession {
     return this.#deps.config;
   }
 
+  /** The platform root key compiled into the build (b64u; equal to the hub's, checked at start-up). */
+  get rootKey(): string {
+    return this.#deps.rootKey;
+  }
+
   get prefs(): Prefs {
     return this.#deps.prefs;
   }

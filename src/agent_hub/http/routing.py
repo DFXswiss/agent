@@ -27,7 +27,7 @@ from starlette.types import Scope
 from agent_hub.audit.actions import AUDIT_ACTIONS
 from agent_hub.config import LIMITS
 
-Auth = Literal["anon", "browser", "anon_or_browser", "device", "device_enroll", "root"]
+Auth = Literal["anon", "browser", "anon_or_browser", "device", "device_enroll", "agent", "root"]
 AUTH_CLASSES = frozenset(get_args(Auth))
 # 03-api.md section 3 plus the endpoint-specific rights of contracts/api/INDEX.json.
 RIGHTS = frozenset(
@@ -53,6 +53,8 @@ RIGHTS = frozenset(
         "per_entry_type",
         "per_event_kind",
         "root",
+        "agent:confirmed",
+        "agent",
     }
 )
 SPEC_ATTRIBUTE = "agent_hub_spec"
@@ -75,7 +77,7 @@ class RouteSpec:
     @property
     def signed(self) -> bool:
         """The route requires a verified signature (every class except `anon`, `anon_or_browser` and enrolment)."""
-        return self.auth in ("browser", "device", "root")
+        return self.auth in ("browser", "device", "agent", "root")
 
 
 def make_spec(
