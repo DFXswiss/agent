@@ -1,4 +1,4 @@
-// ADR-058: every admin reads every workgroup by inheritance. The effective access and its sources (`explicitAccess`,
+// ADR-059: every admin reads every workgroup by inheritance. The effective access and its sources (`explicitAccess`,
 // `wgAccess`, `inherited`, projection), the credential scope that does not inherit, catch-up of every epoch for an
 // inheriting admin, the transition rule `compatSkip`, and the batches of promotion, demotion and self-demotion.
 import { beforeAll, describe, expect, it } from 'vitest';

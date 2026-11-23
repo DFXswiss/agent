@@ -81,7 +81,7 @@ describe('member rows', () => {
   });
 });
 
-describe('an admin reading by inheritance (ADR-058)', () => {
+describe('an admin reading by inheritance (ADR-059)', () => {
   it('shows the inherited read, grants explicit access over it and ungrants only explicit access', async () => {
     const { w, a, one } = await setup();
     await w.world.batch(a.ada!, [{ type: 'role', subject: a.cy!.id, role: 'admin' }]);

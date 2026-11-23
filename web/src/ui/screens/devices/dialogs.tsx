@@ -1,6 +1,6 @@
 // The device dialogs (06-web.md section 7.3): assign a platform device (workgroup, then the candidates the verified
 // platform log certifies; others are shown as not certified and cannot be chosen), assign an org device to a further
-// workgroup (every writable workgroup, ADR-058: key holders deliver what the admin does not hold), and rename. Each
+// workgroup (every writable workgroup, ADR-059: key holders deliver what the admin does not hold), and rename. Each
 // runs through the confirmation dialog of the member screen.
 import { useEffect, useId, useState } from 'react';
 import type { OrgState } from '../../../core/log/state';

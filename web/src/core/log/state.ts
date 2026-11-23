@@ -4,11 +4,11 @@
 // `OrgState` is immutable; `verify.apply` returns a new state per entry, so a reader keeps the state at every `seq`
 // (E5 checks rights "at `lh`"). Derived rights (section 4.7, ADR-024 addendum):
 // - an active user member reads the org scope and writes the default workgroup (not reducible in v1);
-// - an admin writes the org scope and reads every workgroup of the org (inherited read, ADR-058); the creating admin
+// - an admin writes the org scope and reads every workgroup of the org (inherited read, ADR-059); the creating admin
 //   of a workgroup (`wg_create`) gets explicit `write` on it;
 // - explicit workgroup access of users comes from `invite.wgs` (applied at `accept`), `grant` and `ungrant`; the
 //   effective access (`wgAccess`) is the explicit access if there is one, else `read` for an active admin; the
-//   credential scope uses the explicit access only (`explicitAccess`, ADR-058 section 1);
+//   credential scope uses the explicit access only (`explicitAccess`, ADR-059 section 1);
 // - devices read the workgroups they are assigned to and the org scope while they have at least one assignment
 //   (ADR-007);
 // - an archived workgroup stays readable but is no longer writable (decision CRY-02).
@@ -96,7 +96,7 @@ export interface OrgStateFields {
   /** `"scope scope_id epoch" -> principal` that created the epoch (genesis, `wg_create`, `rotate`). */
   readonly epochAuthors: ReadonlyMap<string, string>;
   /** `pairKey(scope, scope_id)` of scopes whose rotation is still owed (a member left by itself, decision CRY-02, or an
-   *  admin demoted itself, ADR-058 section 3). */
+   *  admin demoted itself, ADR-059 section 3). */
   readonly pending: ReadonlySet<string>;
 }
 
@@ -158,7 +158,7 @@ export class OrgState implements OrgStateFields {
   // --- workgroups ---
 
   /** `read`/`write` of an active user on a workgroup from membership alone (default workgroup: `write`), else null;
-   *  the admin role adds nothing here (credential scope, ADR-058 section 1). */
+   *  the admin role adds nothing here (credential scope, ADR-059 section 1). */
   explicitAccess(principal: string, wg: string): string | null {
     const found = this.member(principal);
     if (found === null || found.kind !== USER || !this.workgroups.has(wg)) return null;
@@ -167,7 +167,7 @@ export class OrgState implements OrgStateFields {
   }
 
   /** The effective `read`/`write` of an active user on a workgroup: the explicit access, else `read` for an active
-   *  admin of the org (ADR-058), else null. */
+   *  admin of the org (ADR-059), else null. */
   wgAccess(principal: string, wg: string): string | null {
     const explicit = this.explicitAccess(principal, wg);
     if (explicit === null && this.workgroups.has(wg) && this.isAdmin(principal)) return READ;

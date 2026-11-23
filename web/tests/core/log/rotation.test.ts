@@ -113,7 +113,7 @@ describe('membership batches', () => {
       { events: [{ marker: 1 }] },
     );
     expect(built.newKeys.map((k) => k.scope_id)).toEqual([wg]);
-    // the other admin (carol) reads every workgroup by inheritance (ADR-058) and gets WK_1 as well
+    // the other admin (carol) reads every workgroup by inheritance (ADR-059) and gets WK_1 as well
     expect(new Set(built.body.wraps.map((w) => w.recipient_id))).toEqual(
       new Set([alice.id, bob.id, carol.id, device.id]),
     );

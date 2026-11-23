@@ -7,6 +7,9 @@
   workgroup for lack of capacity (`Candidate.refused`, KOR-14, ADR-049) a stopped or starting VM of the workgroup no
   longer exempts it: it needs `vm_slots_free > 0` (restarting the VM takes a slot), only a `running` VM of the
   workgroup needs none. When every online device is skipped the answer is `NoPlacement("capacity_exhausted")`.
+- A platform device of an org whose credit is used up (`Candidate.unpaid`, KOR-31, ADR-059) is never chosen; own
+  devices of the org still are. When the online devices are skipped and one of them only for the credit, the answer
+  is `NoPlacement("credit_exhausted")`: the task waits and is placed once credit is added.
 - The rest is ordered by (1) a `running` VM of the workgroup, (2) a `stopped` VM of the workgroup, (3) the highest
   `capacity.vm_slots_free`, then the highest free VM memory budget (`vm_memory_budget_mib - vm_memory_used_mib`),
   (4) the smallest device ID; the first one wins. The levels are one lexicographic key, so (3) and (4) also break
@@ -29,6 +32,7 @@ ESTIMATE_POOL_MS = 3000
 ESTIMATE_CLONE_MS = 8000
 DEVICE_OFFLINE = "device_offline"
 CAPACITY_EXHAUSTED = "capacity_exhausted"
+CREDIT_EXHAUSTED = "credit_exhausted"
 RUNNING, STOPPED, OTHER = "running", "stopped", "other"
 CAPACITY_KEYS = ("vm_memory_budget_mib", "vm_memory_used_mib", "vm_slots_total", "vm_slots_free", "pool_ready")
 MAX_COUNT = 9007199254740991
@@ -84,6 +88,8 @@ class Candidate:
     """`running`, `stopped`, `other` (any other state but `deleted`) or None (no VM of the workgroup)."""
     refused: bool = False
     """The newest session of the workgroup on this device was refused with `capacity_exhausted`."""
+    unpaid: bool = False
+    """A platform device while the org's credit is used up (KOR-31, ADR-059): never chosen."""
 
     @property
     def level(self) -> int:
@@ -94,6 +100,8 @@ class Candidate:
     def usable(self) -> bool:
         """Online and not skipped (free slots, or a VM of the workgroup that needs none; after a refusal only a running
         one)."""
+        if self.unpaid:
+            return False
         if not self.online or self.capacity.vm_slots_free > 0 or self.wg_vm == RUNNING:
             return self.online
         return self.wg_vm is not None and not self.refused
@@ -142,5 +150,6 @@ def choose(candidates: Iterable[Candidate]) -> Decision:
         return NoPlacement(DEVICE_OFFLINE)
     ranked = order(items)
     if not ranked:
-        return NoPlacement(CAPACITY_EXHAUSTED)
+        unpaid = any(item.online and item.unpaid for item in items)
+        return NoPlacement(CREDIT_EXHAUSTED if unpaid else CAPACITY_EXHAUSTED)
     return Placement(device_id=ranked[0].device_id, estimate_ms=ranked[0].estimate_ms)

@@ -1,6 +1,6 @@
 // Members and rights (06-web.md section 7.1) against the real hub: an admin invites (link and code shown once, open
 // invitations revoked), a second user joins with the code (API, the screen is WEB-08), the admin changes the role,
-// (an admin reads every workgroup as admin, ADR-058), grants workgroup access with history, removes the member while
+// (an admin reads every workgroup as admin, ADR-059), grants workgroup access with history, removes the member while
 // the dialog shows "Saving …"; a plain member sees no admin controls, leaves, and the admin's browser rotates what the
 // member could read automatically and silently.
 import type { BrowserContext, Page } from '@playwright/test';
@@ -102,7 +102,7 @@ test('a member joins; the admin changes the role, grants with history and remove
   await row.getByTestId('members.item.role-change').click();
   await page.getByTestId('members.role.confirm').click();
   await expect(row.getByTestId('members.item.role')).toHaveText('Admin');
-  // as an admin, bob reads every workgroup (ADR-058)
+  // as an admin, bob reads every workgroup (ADR-059)
   await expect(row.getByTestId('members.item.access')).toContainText('Researchreads as admin');
   // demoting the admin it made: one honest sentence; the rotation of what bob read only as admin is built silently
   await row.getByTestId('members.item.role-change').click();
@@ -192,7 +192,7 @@ test('a plain member sees no admin controls and leaves; the admin rotates automa
   await expect(bob.page.getByTestId('members.loading')).toBeVisible();
   await navigateInApp(bob.page, `/o/${unknown}/workgroups`);
   await expect(bob.page.getByTestId('workgroups.loading')).toBeVisible();
-  // the admin's browser owes the rotation and sends it silently (no notice, ADR-058)
+  // the admin's browser owes the rotation and sends it silently (no notice, ADR-059)
   await expect.poll(async () => (await adaUser.log(ada.org)).state.pendingScopes().length, { timeout: 15_000 }).toBe(0);
   await expect(page.getByTestId('rotation-toast')).toHaveCount(0);
   const log = await adaUser.log(ada.org);

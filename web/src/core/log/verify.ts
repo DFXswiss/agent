@@ -191,7 +191,7 @@ function role(state: OrgState, body: Body): OrgState {
     principals: new Map(state.principals).set(principal.id, { ...principal, role: body.role as string }),
   });
   if (principal.id === body.by) {
-    // self-demotion: like leaving, the subject cannot rotate what it no longer reads (ADR-058 section 3)
+    // self-demotion: like leaving, the subject cannot rotate what it no longer reads (ADR-059 section 3)
     after = after.with({ pending: new Set([...after.pending, ...requiredSet(state, after, principal.id)]) });
   }
   return after;

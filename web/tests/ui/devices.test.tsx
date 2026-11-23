@@ -350,7 +350,7 @@ describe('admin controls', () => {
     );
   });
 
-  it('invites devices only once a workgroup is unlocked, but assigns to every workgroup (ADR-058)', async () => {
+  it('invites devices only once a workgroup is unlocked, but assigns to every workgroup (ADR-059)', async () => {
     const { w, one } = await deviceWorld({ private: true });
     w.store.update('orgs', (orgs) => ({
       ...orgs,

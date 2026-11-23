@@ -1,4 +1,4 @@
-// Toasts of the credential re-wrap job (06-web.md section 11 job 5): the automatic renewal runs silently (ADR-058
+// Toasts of the credential re-wrap job (06-web.md section 11 job 5): the automatic renewal runs silently (ADR-059
 // section 4); only when it is blocked by records the browser cannot open does one plain sentence in a polite live region
 // name them (the user deletes or replaces them in /settings). Each toast closes by itself after `TOAST_MS` or with its
 // button.

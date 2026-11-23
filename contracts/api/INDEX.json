@@ -1617,6 +1617,63 @@
       "read_resource": null,
       "streaming": false,
       "owner": "KOR-24"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/billing",
+      "name": "org-billing",
+      "section": "4.11",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/org-billing.request.json",
+      "response": "api/org-billing.response.json",
+      "read_resource": "org.billing",
+      "streaming": false,
+      "owner": "KOR-31"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/charges",
+      "name": "workgroup-charges",
+      "section": "4.11",
+      "auth": "browser",
+      "rights": [
+        "wg:read"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/workgroup-charges.request.json",
+      "response": "api/workgroup-charges.response.json",
+      "read_resource": "workgroup.charges",
+      "streaming": false,
+      "owner": "KOR-31"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task}/charges",
+      "name": "task-charges",
+      "section": "4.11",
+      "auth": "browser",
+      "rights": [
+        "task:read"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/task-charges.request.json",
+      "response": "api/task-charges.response.json",
+      "read_resource": "task.charges",
+      "streaming": false,
+      "owner": "KOR-31"
     }
   ]
 }

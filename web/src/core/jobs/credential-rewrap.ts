@@ -40,7 +40,7 @@
 //
 // Records: written by the user or a device entitled now → re-encrypted by the user. Written by a device that has lost
 // eligibility → deleted (re-signing them as the user's would launder whatever that device or a colluding hub wrote;
-// the user connects again). A rotation runs silently (ADR-058 section 4). Any other record the browser cannot open
+// the user connects again). A rotation runs silently (ADR-059 section 4). Any other record the browser cannot open
 // (signature, body, epoch) blocks the rotation – nothing is deleted on the browser's own doubt – and a notice asks the
 // user to delete or replace it (shown once per sign-in).
 //

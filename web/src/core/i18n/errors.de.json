@@ -84,6 +84,11 @@
     "body": "Dieser Passkey ist für dein Konto nicht registriert.",
     "action": "Verwende einen anderen Passkey oder den Wiederherstellungscode."
   },
+  "credit_exhausted": {
+    "title": "Guthaben aufgebraucht",
+    "body": "Bezahlte Ressourcen sind pausiert, bis der Betreiber Guthaben auflädt. Eigene Geräte mit eigenem Modellzugang arbeiten weiter.",
+    "action": "Bitte den Betreiber, Guthaben aufzuladen."
+  },
   "decrypt_failed": {
     "title": "Nicht lesbar",
     "body": "Dieser Inhalt lässt sich auf diesem Gerät nicht öffnen.",

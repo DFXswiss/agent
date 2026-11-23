@@ -4,9 +4,9 @@
 //
 // Any key holder computes from the verified log the recipients that are entitled to the current epoch of a scope
 // but have no wrap yet. Older epochs are wrapped only on request (section 5.10), with one exception: an admin that
-// reads a workgroup by inheritance gets every epoch of it (`catchUpEpochs`, ADR-058 section 2).
+// reads a workgroup by inheritance gets every epoch of it (`catchUpEpochs`, ADR-059 section 2).
 //
-// Transition rule (ADR-058 section 2, `compatSkip`): until every runner verifies ADR-058, the browser does not wrap a
+// Transition rule (ADR-059 section 2, `compatSkip`): until every runner verifies ADR-059, the browser does not wrap a
 // `wg` key for a device when its own user reads that workgroup only by inheritance and did not create the epoch (an
 // older runner would ignore such a wrap while the hub keeps the first wrap of a slot).
 import { b64uDecode } from '../encoding/b64u';
@@ -32,7 +32,7 @@ export type KeyRing = (scope: string, scopeId: string, epoch: number) => Secret 
 
 /**
  * The epochs catch-up gives an entitled recipient: the current one, and for an admin reading a workgroup by
- * inheritance every epoch from 1 (ADR-058 section 2).
+ * inheritance every epoch from 1 (ADR-059 section 2).
  */
 export function catchUpEpochs(state: OrgState, scope: string, scopeId: string, recipient: string): number[] {
   const current = state.epoch(scope, scopeId);
@@ -41,7 +41,7 @@ export function catchUpEpochs(state: OrgState, scope: string, scopeId: string, r
 }
 
 /**
- * The transition rule of ADR-058 section 2: true if `wrapper` must not wrap `slot`, i.e. a `wg` key for a device
+ * The transition rule of ADR-059 section 2: true if `wrapper` must not wrap `slot`, i.e. a `wg` key for a device
  * while the wrapper reads that workgroup only by inheritance and did not create the epoch.
  */
 export function compatSkip(state: OrgState, wrapper: string, slot: WrapSlot): boolean {

@@ -70,7 +70,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("ended_at", TS),
         ("pairing_id", U),  # KOR-24, migration 0010
     ],
-    # delegated agent access (KOR-24, ADR-056, migration 0010)
+    # delegated agent access (KOR-24, ADR-056, migration 0012)
     "agent": [
         ("id", U),
         ("user_id", U),
@@ -449,6 +449,60 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     ],
     # platform spend per org and UTC day (HUB-14, migration 0006)
     "usage_daily": [("org_id", U), ("day", "date"), ("device_id", U), ("cost_micro_usd", BI)],
+    # usage charges and prepaid credit (KOR-31, migration 0012, 12-billing.md section 3)
+    "price_list": [("version", INT), ("valid_from", TS), ("document", J), ("created_at", TS)],
+    "fx_rate": [
+        ("n", INT),
+        ("day", "date"),
+        ("chf_per_usd_e8", BI),
+        ("source", T),
+        ("set_at", TS),
+        ("actor", T),
+        ("reason", T),
+    ],
+    "credit_account": [("org_id", U), ("balance_micro_usd", BI), ("booked_micro_usd", BI), ("updated_at", TS)],
+    "credit_entry": [
+        ("org_id", U),
+        ("n", INT),
+        ("at", TS),
+        ("kind", T),
+        ("amount_micro_usd", BI),
+        ("balance_micro_usd", BI),
+        ("reason", T),
+        ("actor", T),
+        ("fx_n", INT),
+        ("fx_day", "date"),
+        ("chf_per_usd_e8", BI),
+        ("amount_micro_chf", BI),
+    ],
+    "charge": [
+        ("id", U),
+        ("org_id", U),
+        ("wg_id", U),
+        ("task_id", U),
+        ("session_id", U),
+        ("device_id", U),
+        ("origin_seq", BI),
+        ("kind", T),
+        ("at", TS),
+        ("amount_micro_usd", BI),
+        ("price_version", INT),
+        ("quantity", J),
+        ("fx_n", INT),
+        ("fx_day", "date"),
+        ("chf_per_usd_e8", BI),
+        ("amount_micro_chf", BI),
+    ],
+    "charge_pending": [("charge_id", U), ("org_id", U), ("amount_micro_usd", BI)],
+    "charge_daily": [
+        ("org_id", U),
+        ("day", "date"),
+        ("wg_id", U),
+        ("device_id", U),
+        ("kind", T),
+        ("amount_micro_usd", BI),
+        ("quantity", BI),
+    ],
     # 2.9
     "audit": [
         ("seq", BI),
@@ -488,6 +542,10 @@ APPEND_ONLY = (
     "operation_transition",
     "audit",
     "audit_checkpoint",
+    "price_list",
+    "fx_rate",
+    "credit_entry",
+    "charge",
 )
 
 PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
@@ -511,6 +569,8 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "metric_rollup": ("entity_kind", "entity_id", "ts"),
     "quota_snapshot": ("owner_id", "window"),
     "usage_daily": ("org_id", "day", "device_id"),
+    "credit_entry": ("org_id", "n"),
+    "charge_daily": ("org_id", "day", "wg_id", "device_id", "kind"),
     "outbox_receipt": ("device_id", "origin_seq"),
     "audit_checkpoint": ("hub_key_id", "seq"),
 }

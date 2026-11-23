@@ -146,7 +146,7 @@ test('connects the subscription by the relay, shows the quotas and rotates CK wh
   await expect(page.getByTestId('composer.prompt')).toBeVisible();
   const me = (await api.request('GET', '/v1/me')) as { orgs: { org_id: string; default_wg: string }[] };
   await unassign(api, user.org, me.orgs[0]!.default_wg, user.device);
-  // silently (ADR-058 section 4): no notice, the records show the result
+  // silently (ADR-059 section 4): no notice, the records show the result
   await expect
     .poll(
       async () =>

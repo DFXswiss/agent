@@ -1168,6 +1168,225 @@
         "timeout"
       ],
       "additionalProperties": false
+    },
+    "price_list_token_amount": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9]{1,4}(\\.[0-9]{1,18})?$"
+        }
+      ],
+      "description": "USD per million tokens (purchase price)"
+    },
+    "price_list_tokens": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/price_list_token_amount"
+        },
+        "output": {
+          "$ref": "#/$defs/price_list_token_amount"
+        },
+        "cache_read": {
+          "$ref": "#/$defs/price_list_token_amount"
+        },
+        "cache_write": {
+          "$ref": "#/$defs/price_list_token_amount"
+        }
+      },
+      "required": [
+        "input",
+        "output",
+        "cache_read",
+        "cache_write"
+      ],
+      "additionalProperties": false,
+      "description": "token prices of one model, USD per million tokens"
+    },
+    "price_list_body": {
+      "type": "object",
+      "description": "a price list as added by the operator (12-billing.md section 2; checked by agent_hub.billing.prices)",
+      "properties": {
+        "currency": {
+          "type": "string",
+          "const": "USD"
+        },
+        "valid_from": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "ISO 8601 time with a zone"
+        },
+        "tokens": {
+          "type": "object",
+          "properties": {
+            "factors": {
+              "type": "object",
+              "properties": {
+                "platform": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 100
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,4}(\\.[0-9]{1,18})?$"
+                    }
+                  ],
+                  "description": "customer price factor"
+                },
+                "operator": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 100
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,4}(\\.[0-9]{1,18})?$"
+                    }
+                  ],
+                  "description": "customer price factor"
+                }
+              },
+              "required": [
+                "platform",
+                "operator"
+              ],
+              "additionalProperties": false
+            },
+            "models": {
+              "type": "object",
+              "description": "model ID -> token prices (at most 200)",
+              "additionalProperties": {
+                "$ref": "#/$defs/price_list_tokens"
+              }
+            },
+            "default": {
+              "$ref": "#/$defs/price_list_tokens"
+            }
+          },
+          "required": [
+            "factors",
+            "default"
+          ],
+          "additionalProperties": false
+        },
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "per_hour": {
+              "type": "object",
+              "description": "USD per VM hour per size",
+              "properties": {
+                "session": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1000
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,4}(\\.[0-9]{1,18})?$"
+                    }
+                  ],
+                  "description": "USD per VM hour"
+                },
+                "standard": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1000
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,4}(\\.[0-9]{1,18})?$"
+                    }
+                  ],
+                  "description": "USD per VM hour"
+                },
+                "large": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1000
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,4}(\\.[0-9]{1,18})?$"
+                    }
+                  ],
+                  "description": "USD per VM hour"
+                },
+                "xlarge": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1000
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,4}(\\.[0-9]{1,18})?$"
+                    }
+                  ],
+                  "description": "USD per VM hour"
+                },
+                "default": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1000
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,4}(\\.[0-9]{1,18})?$"
+                    }
+                  ],
+                  "description": "USD per VM hour"
+                }
+              },
+              "required": [
+                "default"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "per_hour"
+          ],
+          "additionalProperties": false
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "currency",
+        "tokens",
+        "runtime"
+      ],
+      "additionalProperties": false
     }
   }
 }

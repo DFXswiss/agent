@@ -2,7 +2,7 @@
 // from the verified log (display names from `member.profile`); admins see the controls – invite, change role (hidden for
 // the last admin), grant workgroup access (optionally with history; every writable workgroup, the key holders deliver
 // the key), ungrant an explicit access, remove – each change through the confirmation dialog ("Saving …",
-// `submitBatch`). An access an admin has only by its role shows "reads as admin" and has nothing to ungrant (ADR-058).
+// `submitBatch`). An access an admin has only by its role shows "reads as admin" and has nothing to ungrant (ADR-059).
 // Every member can leave (hidden for the last admin). Controls the user's verified rights do not allow are not
 // rendered (section 1.2).
 import { useState } from 'react';

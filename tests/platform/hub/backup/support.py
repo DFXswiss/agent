@@ -31,6 +31,7 @@ from agent_hub.backup.export import line, signed_text, write_export
 from agent_hub.crypto import aead
 from agent_hub.crypto import event as event_format
 from agent_hub.crypto.encoding import b64u_encode, body_json, format_time
+from tests.platform.hub.billing.support import PRICES
 from tests.platform.hub.conftest import (
     MIN_SERVER_VERSION,
     HubDatabase,
@@ -59,6 +60,8 @@ class Estate:
     platform_device: str
     task: str
     session: str
+    charge: str = "01930028-0000-7000-8000-0000000000c1"
+    """The ID of the estate's charge (KOR-31)."""
 
     @property
     def org(self) -> str:
@@ -279,6 +282,42 @@ class Estate:
             (
                 "INSERT INTO hub.usage_daily (org_id, day, device_id, cost_micro_usd) VALUES (%s, %s, %s, 5000)",
                 (org, date(2026, 11, 21), device.id),
+            ),
+            # billing (KOR-31): a price list, the org's account, its history, a charge, its pending part and its day
+            (
+                # valid from next year: a restored hub's settle job finds nothing to do, so the copy stays identical
+                "INSERT INTO hub.price_list (version, valid_from, document, created_at) VALUES (1, %s, %s, %s)",
+                (now + timedelta(days=365), Jsonb(PRICES), now),
+            ),
+            (
+                "INSERT INTO hub.fx_rate (n, day, chf_per_usd_e8, source, set_at, actor, reason)"
+                " VALUES (1, %s, 84860000, 'BAZG', %s, 'operator', NULL)",
+                (date(2026, 11, 21), now),
+            ),
+            (
+                "INSERT INTO hub.credit_account (org_id, balance_micro_usd, booked_micro_usd, updated_at)"
+                " VALUES (%s, 5000000, 5000000, %s)",
+                (org, now),
+            ),
+            (
+                "INSERT INTO hub.credit_entry (org_id, n, at, kind, amount_micro_usd, balance_micro_usd, reason, actor)"
+                " VALUES (%s, 1, %s, 'start', 5000000, 5000000, NULL, 'hub')",
+                (org, now),
+            ),
+            (
+                "INSERT INTO hub.charge (id, org_id, wg_id, task_id, session_id, device_id, origin_seq, kind, at,"
+                " amount_micro_usd, price_version, quantity) VALUES (%s, %s, %s, %s, %s, %s, 9, 'runtime', %s, 3000, 1,"
+                " %s)",
+                (self.charge, org, wg, self.task, self.session, device.id, now, Jsonb({"runtime_ms": 30000})),
+            ),
+            (
+                "INSERT INTO hub.charge_pending (charge_id, org_id, amount_micro_usd) VALUES (%s, %s, 3000)",
+                (self.charge, org),
+            ),
+            (
+                "INSERT INTO hub.charge_daily (org_id, day, wg_id, device_id, kind, amount_micro_usd, quantity)"
+                " VALUES (%s, %s, %s, %s, 'runtime', 3000, 30000)",
+                (org, date(2026, 11, 21), wg, device.id),
             ),
             (
                 "INSERT INTO hub.outbox_receipt (device_id, origin_seq, item_kind, item_sha256, status, received_at)"

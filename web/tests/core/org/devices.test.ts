@@ -258,7 +258,7 @@ describe('rights and platform access', () => {
     expect(hasPlatformAccess(w.world.state, platform.with({ orgAccess: new Map([[w.org, false]]) }))).toBe(false);
   });
 
-  it('offers every writable workgroup, whatever keys the user holds (ADR-058)', async () => {
+  it('offers every writable workgroup, whatever keys the user holds (ADR-059)', async () => {
     const { w, one } = await setup({ as: 'bob' });
     expect(assignableWorkgroups(w.world.state)).toEqual([w.world.defaultWg, one]);
   });

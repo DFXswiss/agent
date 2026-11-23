@@ -1,0 +1,37 @@
+{
+  "description": "Endpoints added by KOR-31 (ADR-059, docs/platform/spec/12-billing.md section 6): credit and usage charges of an organization, a workgroup and a task; 03-api.md section 4.11 points to 12-billing.md.",
+  "rights": [
+    "org:member",
+    "wg:read",
+    "task:read"
+  ],
+  "auth": [
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/billing",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.11"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/charges",
+      "rights": [
+        "wg:read"
+      ],
+      "section": "4.11"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task}/charges",
+      "rights": [
+        "task:read"
+      ],
+      "section": "4.11"
+    }
+  ]
+}

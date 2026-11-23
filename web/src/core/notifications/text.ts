@@ -7,7 +7,7 @@
 // | `task.idle` | "Task Y is waiting for you" | the task |
 // | `task.failed` | "Task Y failed" | the task |
 // | `invite.accepted` | "Z accepted the invitation to X" | the org's members |
-// | `rotation.required` | "Access in X is being updated" (neutral; the hub no longer creates it, ADR-058) | the org's members |
+// | `rotation.required` | "Access in X is being updated" (neutral; the hub no longer creates it, ADR-059) | the org's members |
 // | `agent.account_change` | "Agent A removed a passkey" (replaced the recovery code, disconnected an agent, …;
 //   `ref` = `<action>:<acting agent id>:<target>`, no org) | the settings |
 //

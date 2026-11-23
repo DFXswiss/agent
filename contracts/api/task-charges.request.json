@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-charges.request.json",
+  "title": "GET /v1/tasks/{task}/charges request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

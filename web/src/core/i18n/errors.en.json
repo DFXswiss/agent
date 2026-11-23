@@ -84,6 +84,11 @@
     "body": "This passkey is not registered for your account.",
     "action": "Use another passkey or the recovery code."
   },
+  "credit_exhausted": {
+    "title": "Credit used up",
+    "body": "Paid resources are paused until the operator adds credit. Own devices with own model access keep working.",
+    "action": "Ask the operator to add credit."
+  },
   "decrypt_failed": {
     "title": "Cannot be opened",
     "body": "This content cannot be opened on this device.",

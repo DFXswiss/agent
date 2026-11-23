@@ -37,6 +37,9 @@ CATEGORIES: dict[str, str] = {
     "agents": "Agents of a user (11-agent-access.md section 2): agent ID, public keys, state, times, claim hash, the "
     "source address of an open pairing, which login confirmed which pairing, which actions were taken by an agent",
     "internal": "Hub bookkeeping without user data (applied schema migrations)",
+    "billing": "Usage charges and prepaid credit (ADR-059, AUD-04 A4): amounts, token and runtime quantities, model, "
+    "access origin and VM size of each charge, balances, credit history, the price list versions, the USD/CHF rates "
+    "and the CHF equivalent of each booking (books)",
 }
 
 # Content type → SQL types it may have.
@@ -50,6 +53,8 @@ CONTENT: dict[str, frozenset[str]] = {
     "codes": frozenset({"ARRAY"}),
     "json": frozenset({"jsonb", "text"}),  # a JSON document whose strings are tokens (signed entries, headers)
     "lines": frozenset({"text"}),  # lines of tokens (a signed statement)
+    # written by the operator on the hub device, never by a user: a price list, the reason of a credit (ADR-059)
+    "operator": frozenset({"text", "jsonb"}),
 }
 CHECKED = ("code", "codes", "json", "lines")
 TOKEN = r"^[A-Za-z0-9_.:/+=-]*$"
@@ -139,6 +144,18 @@ usage_counter: metrics | session_id:uuid requests:number input_tokens:number out
   cache_read_tokens:number cache_write_tokens:number thinking_tokens:number cost_micro_usd:number cost_basis:code
   context_used_tokens:number context_window_tokens:number last_provider:code updated_at:time
 usage_daily: metrics | org_id:uuid day:time device_id:uuid cost_micro_usd:number
+price_list: billing | version:number valid_from:time document:operator created_at:time
+fx_rate: billing | n:number day:time chf_per_usd_e8:number source:code set_at:time actor:code reason:operator
+credit_account: billing | org_id:uuid balance_micro_usd:number booked_micro_usd:number updated_at:time
+credit_entry: billing | org_id:uuid n:number at:time kind:code amount_micro_usd:number balance_micro_usd:number
+  reason:operator actor:code fx_n:number fx_day:time
+  chf_per_usd_e8:number amount_micro_chf:number
+charge: billing | id:uuid org_id:uuid wg_id:uuid task_id:uuid session_id:uuid device_id:uuid origin_seq:number
+  kind:code at:time amount_micro_usd:number price_version:number quantity:json fx_n:number fx_day:time
+  chf_per_usd_e8:number amount_micro_chf:number
+charge_pending: billing | charge_id:uuid org_id:uuid amount_micro_usd:number
+charge_daily: billing | org_id:uuid day:time wg_id:uuid device_id:uuid kind:code amount_micro_usd:number
+  quantity:number
 user_identity: auth | user_id:uuid@ids kem_pub:bytes@logs sig_pub:bytes@logs recovery_id:code created_at:time
 user_settings: settings | user_id:uuid model_access:code model_id:code locale:code updated_at:time
 vm: tasks | id:code device_id:uuid wg_id:uuid state:code golden_version:code cpus:number@metrics

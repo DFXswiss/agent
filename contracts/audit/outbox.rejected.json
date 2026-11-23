@@ -19,7 +19,8 @@
         "quota",
         "metrics",
         "audit",
-        "wrap"
+        "wrap",
+        "runtime"
       ]
     },
     "code": {

@@ -1,4 +1,4 @@
-// The calm "being unlocked" line (ADR-058 section 2, `ui/unlock/Unlocking.tsx`): instead of the content of a workgroup
+// The calm "being unlocked" line (ADR-059 section 2, `ui/unlock/Unlocking.tsx`): instead of the content of a workgroup
 // an admin reads by inheritance before a key holder delivered its key, the dead-end variant once nobody with access is
 // left, and the content itself as soon as the key is there.
 import { act, screen } from '@testing-library/react';

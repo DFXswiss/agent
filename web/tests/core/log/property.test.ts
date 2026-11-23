@@ -3,7 +3,7 @@
 // current state), then verified three ways – from scratch, incrementally page by page (`extendLog`, the reader) and
 // batch by batch with hub semantics (`appendEntries`) – and every state projection, head and catch-up plan must be
 // identical. Each batch also passes `checkBatch` with the hub's receipt time. Afterwards catch-up rounds by every admin
-// (W3-checked like at the hub) close every gap an admin can close: what admins read by inheritance (ADR-058) arrives
+// (W3-checked like at the hub) close every gap an admin can close: what admins read by inheritance (ADR-059) arrives
 // by catch-up, not necessarily in the batch.
 import { describe, expect, it } from 'vitest';
 import { CryptoError } from '../../../src/core/crypto/errors';

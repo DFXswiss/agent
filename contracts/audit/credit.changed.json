@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/credit.changed.json",
+  "title": "audit detail credit.changed",
+  "description": "detail of audit rows with action credit.changed: credit of an organization added or set (12-billing.md section 8, ADR-059); the organization is the target. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "start",
+        "grant",
+        "set",
+        "manual"
+      ]
+    },
+    "amount_micro_usd": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "balance_micro_usd": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "actor": {
+      "type": "string",
+      "enum": [
+        "operator",
+        "database",
+        "hub"
+      ]
+    }
+  },
+  "required": [
+    "kind",
+    "amount_micro_usd",
+    "balance_micro_usd",
+    "actor"
+  ],
+  "additionalProperties": false
+}

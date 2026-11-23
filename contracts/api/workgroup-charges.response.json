@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-charges.response.json",
+  "title": "GET /v1/workgroups/{wg}/charges response",
+  "description": "Body of a successful response to GET /v1/workgroups/{wg}/charges (03-api.md section 4.11, 12-billing.md section 6; last 30 days, by total descending). Amounts in micro-USD.",
+  "type": "object",
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "tokens_micro_usd": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "runtime_micro_usd": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "tokens": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "runtime_ms": {
+            "$ref": "../common.json#/$defs/count"
+          }
+        },
+        "required": [
+          "task_id",
+          "tokens_micro_usd",
+          "runtime_micro_usd",
+          "tokens",
+          "runtime_ms"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 200
+    },
+    "total_micro_usd": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "tasks",
+    "total_micro_usd"
+  ],
+  "additionalProperties": false
+}

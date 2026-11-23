@@ -34,7 +34,7 @@ async function setup(as: 'ada' | 'bob' = 'ada') {
       await world.batch(a.ada!, [{ type: 'wg_create', wg: one, epoch: 1 }]);
       await world.admitUser(a.ada!, a.bob!, 'member', {});
       await world.admitUser(a.ada!, a.cy!, 'admin', {});
-      // a workgroup of cy: ada reads it as admin (ADR-058), but its key has not reached ada's browser yet
+      // a workgroup of cy: ada reads it as admin (ADR-059), but its key has not reached ada's browser yet
       await world.batch(a.cy!, [{ type: 'wg_create', wg: hidden, epoch: 1 }]);
     },
   });

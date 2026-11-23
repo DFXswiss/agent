@@ -1,9 +1,9 @@
 // Wrap rules W1-W3 (04-crypto.md sections 4.2 and 6.3). TypeScript twin of `agent_hub.log.wraps`.
 //
 // Entitlement (who may receive a scope key) is the current read right of the verified log: members of the org
-// scope, users with access to a workgroup (explicit, or inherited as admin, ADR-058) and devices assigned to it, and
+// scope, users with access to a workgroup (explicit, or inherited as admin, ADR-059) and devices assigned to it, and
 // for the `cred` scope of a user the owner plus devices assigned to any workgroup in which the owner has **explicit**
-// access (in any org; section 2, ADR-007, ADR-058 section 1: the inherited read of an admin does not spread
+// access (in any org; section 2, ADR-007, ADR-059 section 1: the inherited read of an admin does not spread
 // credentials). Decertified platform devices are passed as `excluded`.
 // - W1: a principal may wrap a scope epoch for itself if it holds the key (it is entitled now).
 // - W2: a holder may wrap for any principal that is entitled now. A holder of `(scope, scope_id, e)` is the creator

@@ -1,4 +1,4 @@
-// The "being unlocked" decision (ADR-058 section 2, `core/org/unlock.ts`): an admin that reads a workgroup by
+// The "being unlocked" decision (ADR-059 section 2, `core/org/unlock.ts`): an admin that reads a workgroup by
 // inheritance without its current key sees "being unlocked" while somebody else can still deliver the key, the
 // dead-end variant once nobody but inheriting admins is left, and nothing while the keys are still being read.
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -60,7 +60,7 @@ describe('unlockStatus', () => {
 });
 
 describe('the way out of "lost"', () => {
-  it('an admin rotates a workgroup nobody can deliver any more (a log from before ADR-058)', async () => {
+  it('an admin rotates a workgroup nobody can deliver any more (a log from before ADR-059)', async () => {
     const old = await World.create(ada);
     const w = await idOf('orphan wg');
     await old.batch(ada, [{ type: 'wg_create', wg: w, epoch: 1 }]);

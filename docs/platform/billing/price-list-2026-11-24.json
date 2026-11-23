@@ -1,0 +1,23 @@
+{
+  "currency": "USD",
+  "valid_from": "2026-11-24T00:00:00Z",
+  "tokens": {
+    "factors": {
+      "platform": 1.06,
+      "operator": 1.0
+    },
+    "models": {
+      "deepseek/deepseek-v4.1-flash-1017": { "input": 0.3, "output": 1.2, "cache_read": 0.006, "cache_write": 0.3 },
+      "deepseek/deepseek-v4-pro": { "input": 1.32, "output": 3.96, "cache_read": 0.044, "cache_write": 1.32 },
+      "claude-opus-5-5": { "input": 4.0, "output": 20.0, "cache_read": 0.2, "cache_write": 5.0 },
+      "claude-sonnet-5-5": { "input": 2.0, "output": 10.0, "cache_read": 0.1, "cache_write": 2.5 },
+      "claude-haiku-5-5": { "input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_write": 0.125 },
+      "claude-fable-5-2": { "input": 8.0, "output": 40.0, "cache_read": 0.2, "cache_write": 10.0 }
+    },
+    "default": { "input": 8.0, "output": 40.0, "cache_read": 0.2, "cache_write": 10.0 }
+  },
+  "runtime": {
+    "per_hour": { "session": 0.36, "standard": 0.36, "large": 0.72, "xlarge": 1.44, "default": 1.44 }
+  },
+  "note": "First price list (KOR-31): purchase prices of 2026-11-23 (DeepSeek peak prices, Anthropic list prices); platform x1.06 covers the OpenRouter credit fee; operator subscriptions at list price; VM hour = median of 13 providers for 4 vCPU/8 GiB, scaled by size."
+}

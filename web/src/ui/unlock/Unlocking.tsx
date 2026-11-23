@@ -1,4 +1,4 @@
-// The calm "being unlocked" line of a workgroup (ADR-058 section 2, `core/org/unlock.ts`): shown above the content of
+// The calm "being unlocked" line of a workgroup (ADR-059 section 2, `core/org/unlock.ts`): shown above the content of
 // the task list (metadata stays visible), and instead of the content of a task and a workgroup whiteboard (`children`),
 // while the user may read the workgroup but holds no key of its current epoch; the dead-end variant when nobody with
 // access is left to deliver it. Nothing to do for the user.

@@ -7,7 +7,7 @@
 // Rights mirror the log rules (04-crypto.md section 4.7): role, grant, ungrant and remove of others need an admin;
 // the last admin can neither be demoted nor removed nor leave (`last_admin`); the default workgroup's write access is
 // not reducible (ADR-024 addendum: no `ungrant`, no `grant` on it). Every admin reads every workgroup by inheritance
-// (ADR-058): `grant` and `ungrant` act on the explicit access only (a `grant` of `read` to an admin makes it explicit,
+// (ADR-059): `grant` and `ungrant` act on the explicit access only (a `grant` of `read` to an admin makes it explicit,
 // an `ungrant` of an admin's explicit access leaves the inherited read). A grant needs no key of the granting admin:
 // the key holders deliver it by catch-up. Demoting an admin is a normal batch; `buildBatch` adds the rotation.
 import { ADMIN, MEMBER, type OrgState, READ, USER, WRITE } from '../log/state';

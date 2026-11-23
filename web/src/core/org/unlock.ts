@@ -1,4 +1,4 @@
-// The "being unlocked" state of a workgroup (ADR-058 section 2, 06-web.md section 7.2): the signed-in user may read the
+// The "being unlocked" state of a workgroup (ADR-059 section 2, 06-web.md section 7.2): the signed-in user may read the
 // workgroup but holds no key of its current epoch yet (e.g. an admin that reads it by inheritance until a key holder
 // delivers the key by catch-up). The views then show one calm line instead of errors or locked entries:
 // - `unlocking`: a member or device of the workgroup will deliver the key once it has been online;

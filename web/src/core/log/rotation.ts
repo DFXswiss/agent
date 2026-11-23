@@ -6,7 +6,7 @@
 // 1. L1-L8 for every entry (`appendEntries`; a wrong first `seq` is `seq_conflict`);
 // 2. the rotation obligation: R = the union of `R(before, after, subject)` over the entries, except a member that
 //    leaves by itself or an admin that demotes itself (it cannot rotate what it no longer reads; its R becomes
-//    `OrgState.pending`, ADR-058 section 3). If R is not empty the batch MUST contain exactly one
+//    `OrgState.pending`, ADR-059 section 3). If R is not empty the batch MUST contain exactly one
 //    `rotate` per element of R and no other `rotate`, each after the last entry contributing to R
 //    (`rotation_required`);
 // 3. W3 for every wrap of the batch, created by `wrappedBy`, which must be active after the batch;
@@ -16,7 +16,7 @@
 // `buildBatch` produces exactly such a batch from the verified log: the requested entries, one `rotate` per element
 // of R with a fresh key, wraps of every new epoch for all remaining recipients and wraps of the current epochs for
 // every principal the batch newly entitles (grant, device assignment, accept; every held epoch of a workgroup for a
-// grant with history and for a principal that reads it by inheritance, ADR-058 section 2), then runs `checkBatch` on
+// grant with history and for a principal that reads it by inheritance, ADR-059 section 2), then runs `checkBatch` on
 // its own result. Wraps of epochs the batch does not create follow the transition rule `compatSkip`. It is a pure
 // function of the log: after `seq_conflict` the caller re-reads the log and builds again.
 import { formatTime } from '../encoding/time';
@@ -171,7 +171,7 @@ export interface BatchInput {
   readonly keys?: KeyRing;
   /** For the `grant` entries of the batch: also wrap the older epochs of that workgroup the author holds for its
    *  subject ("also give access to history", 06-web.md section 7.1). A principal that newly reads a workgroup by
-   *  inheritance (`role` → admin) always gets them (ADR-058 section 2); other newly entitled principals get the
+   *  inheritance (`role` → admin) always gets them (ADR-059 section 2); other newly entitled principals get the
    *  current epochs only. */
   readonly history?: boolean;
   /** The verified platform state (`device_assign` with `platform_seq`, decertified devices). */

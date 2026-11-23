@@ -213,7 +213,7 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       const missing = catchup.missingWraps(log, plan.wrapper, existing, plan.excluded);
       same(missing.map(wraps.slotJson), plan.missing, `catch-up ${plan.wrapper}`);
     }
-    // admins reading by inheritance get every epoch (ADR-058 section 2); the browser confirms exactly these slots
+    // admins reading by inheritance get every epoch (ADR-059 section 2); the browser confirms exactly these slots
     const adminLog = await ctx.log({ log: data.admin_catch_up.log, founder: data.founder });
     const adminExisting = slots(data.admin_catch_up.existing);
     for (const plan of data.admin_catch_up.plans) {

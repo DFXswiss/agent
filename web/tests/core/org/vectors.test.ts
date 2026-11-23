@@ -75,7 +75,7 @@ describe('member action batches against the rotation vectors', () => {
       ts: body.ts,
     });
     expect(built.body.entries[0]).toEqual(c.entry);
-    // a self-remove and a self-demotion owe their rotation to the others (`pending`, ADR-058 section 3)
+    // a self-remove and a self-demotion owe their rotation to the others (`pending`, ADR-059 section 3)
     const self = SELF_OWED.has(body.type) && body.subject === body.by;
     expect(built.required).toEqual(self ? [] : c.required);
     expect(built.body.entries.slice(1).map((e) => e.body.type)).toEqual(self ? [] : c.required.map(() => 'rotate'));

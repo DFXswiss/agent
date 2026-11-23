@@ -1,4 +1,4 @@
-// Job 4 of 06-web.md section 11: pending rotations, sent automatically and silently (04-crypto.md section 4.7, ADR-058
+// Job 4 of 06-web.md section 11: pending rotations, sent automatically and silently (04-crypto.md section 4.7, ADR-059
 // section 3). The
 // hub's `rotation_pending` of an org is derived from two facts the browser verifies itself, so the job works from the
 // verified logs only (a hub cannot make a browser rotate or unassign anything the logs do not owe):
@@ -8,11 +8,11 @@
 //    one `rotate` per scope the user may rotate (org: admin; workgroup: admin or writer), with the wraps of the new
 //    epochs for every reader;
 // 3. workgroups the user reads only as admin whose current key nobody left can deliver (`keyHolderLeft` false: no
-//    explicit member, no assigned device, the author of the current epoch gone; ADR-058 section 2): an admin rotates
+//    explicit member, no assigned device, the author of the current epoch gone; ADR-059 section 2): an admin rotates
 //    them so that new content is readable for every reader again (older epochs stay deliverable by whoever holds
 //    them, so the rotation loses nothing); archived workgroups are left alone.
 // Each batch goes through `submitBatch` (rebuilt after `seq_conflict`); a batch another browser sent first leaves
-// nothing to do. Nothing is shown (key handling stays out of sight, ADR-058 section 4).
+// nothing to do. Nothing is shown (key handling stays out of sight, ADR-059 section 4).
 import type { LogFields } from '../log/entries';
 import type { PlatformState } from '../log/platform';
 import { ORG, WG, WRITE } from '../log/state';

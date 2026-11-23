@@ -18,6 +18,7 @@ AREAS = [
     "audit",
     "auth",
     "backup",
+    "billing",
     "config_api",
     "credentials",
     "crypto",

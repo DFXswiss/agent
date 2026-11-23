@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-billing.response.json",
+  "title": "GET /v1/orgs/{org}/billing response",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/billing (03-api.md section 4.11, 12-billing.md section 6). Amounts in micro-USD.",
+  "type": "object",
+  "properties": {
+    "currency": {
+      "type": "string",
+      "const": "USD"
+    },
+    "balance_micro_usd": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991,
+      "description": "credit minus unsettled charges; may be negative"
+    },
+    "exhausted": {
+      "type": "boolean"
+    },
+    "billing_active": {
+      "type": "boolean",
+      "description": "a price list is in force"
+    },
+    "price_list": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "$ref": "../common.json#/$defs/positive"
+            },
+            "valid_from": {
+              "$ref": "../common.json#/$defs/time"
+            },
+            "body": {
+              "$ref": "objects.json#/$defs/price_list_body"
+            }
+          },
+          "required": [
+            "version",
+            "valid_from",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "credits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "start",
+              "grant",
+              "set",
+              "manual"
+            ]
+          },
+          "amount_micro_usd": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "balance_micro_usd": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "actor": {
+            "type": "string",
+            "enum": [
+              "operator",
+              "database",
+              "hub"
+            ]
+          }
+        },
+        "required": [
+          "at",
+          "kind",
+          "amount_micro_usd",
+          "balance_micro_usd",
+          "reason",
+          "actor"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "days": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "day": {
+            "type": "string",
+            "description": "UTC day YYYY-MM-DD",
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+          },
+          "tokens_micro_usd": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "runtime_micro_usd": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "tokens": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "runtime_ms": {
+            "$ref": "../common.json#/$defs/count"
+          }
+        },
+        "required": [
+          "day",
+          "tokens_micro_usd",
+          "runtime_micro_usd",
+          "tokens",
+          "runtime_ms"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 31
+    },
+    "workgroups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "wg_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "tokens_micro_usd": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "runtime_micro_usd": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "tokens": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "runtime_ms": {
+            "$ref": "../common.json#/$defs/count"
+          }
+        },
+        "required": [
+          "wg_id",
+          "tokens_micro_usd",
+          "runtime_micro_usd",
+          "tokens",
+          "runtime_ms"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    }
+  },
+  "required": [
+    "currency",
+    "balance_micro_usd",
+    "exhausted",
+    "billing_active",
+    "price_list",
+    "credits",
+    "days",
+    "workgroups"
+  ],
+  "additionalProperties": false
+}

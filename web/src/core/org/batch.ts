@@ -14,7 +14,7 @@
 //    `BATCH_ATTEMPTS` times in total; any other refusal ends the flow with its code.
 // After success the verified log of the batch replaces the stored one and the new keys of scopes the user reads are
 // kept in memory. `progress` reports a new attempt after `seq_conflict` (the dialog otherwise shows only "Saving …";
-// key handling stays out of sight, ADR-058 section 4).
+// key handling stays out of sight, ADR-059 section 4).
 import { formatTime } from '../encoding/time';
 import { CryptoError } from '../crypto/errors';
 import type { Identity } from '../crypto/keys';

@@ -1,5 +1,5 @@
 {
- "$comment": "Requirement ID -> tests (docs/platform/spec/01-requirements.md, 153 rows) and the milestone in which each test is first written (10-work-packages.md sections 5 and 7). A requirement belongs to the milestone of its earliest test. E2E/PERF/LIVE tests exist as tags in spec titles; gate tests through their evidence paths. Created by SCN-00; changed only by acceptance packages (ADR-027 section 4).",
+ "$comment": "Requirement ID -> tests (docs/platform/spec/01-requirements.md, 154 rows) and the milestone in which each test is first written (10-work-packages.md sections 5 and 7). A requirement belongs to the milestone of its earliest test. E2E/PERF/LIVE tests exist as tags in spec titles; gate tests through their evidence paths. Created by SCN-00; changed only by acceptance packages (ADR-027 section 4).",
  "version": 1,
  "requirements": {
   "R-0.1": {"milestone": 1, "tests": ["E2E-01", "E2E-09"]},
@@ -154,7 +154,8 @@
   "R-P.10": {"milestone": 2, "tests": ["LIVE-03"]},
   "R-P.11": {"milestone": 3, "tests": ["GATE-BRANCH-PROTECTION"]},
   "R-P.12": {"milestone": 1, "tests": ["E2E-01", "E2E-05"]},
-  "R-P.13": {"milestone": 2, "tests": ["E2E-27"]}
+  "R-P.13": {"milestone": 2, "tests": ["E2E-27"]},
+  "R-P.14": {"milestone": 3, "tests": ["E2E-46"]}
  },
  "tests": {
   "ATK-01": {"milestone": 0, "kind": "gate", "evidence": ["agent:tests/platform/atk"]},
@@ -243,6 +244,7 @@
   "E2E-39": {"milestone": 2, "kind": "e2e"},
   "E2E-40": {"milestone": 3, "kind": "e2e"},
   "E2E-45": {"milestone": 3, "kind": "e2e"},
+  "E2E-46": {"milestone": 3, "kind": "e2e"},
   "GATE-BRANCH-PROTECTION": {"milestone": 3, "kind": "gate", "evidence": ["agent-core:docs/platform/acceptance/M3.md"]},
   "GATE-COVERAGE": {"milestone": 0, "kind": "gate", "evidence": ["agent-core:tests/platform/test_coverage_config.py", "agent:.coveragerc-platform"]},
   "GATE-MATRIX": {"milestone": 3, "kind": "gate", "evidence": ["agent-core:docs/platform/acceptance/M3.md"]},

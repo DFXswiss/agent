@@ -56,7 +56,7 @@ describe('submitBatch', () => {
         { scope: WG, scope_id: w.world.defaultWg },
       ]),
     );
-    // only a new attempt is reported (key handling stays out of sight, ADR-058 section 4)
+    // only a new attempt is reported (key handling stays out of sight, ADR-059 section 4)
     expect(steps).toEqual([]);
     // the hub took it: everyone but bob holds the new epochs
     expect(w.world.state.member(bob.id)).toBeNull();
@@ -78,7 +78,7 @@ describe('submitBatch', () => {
     expect(built!.required).toEqual([{ scope: WG, scope_id: one }]);
     const entry = orgEntry(w.store.getState().orgs, w.org);
     expect(entry.log!.state.epoch(WG, one)).toBe(2);
-    // cy reads workgroup one as admin (ADR-058)
+    // cy reads workgroup one as admin (ADR-059)
     expect(entry.keys.has(`wg ${one} 2`)).toBe(true);
     // bob no longer reads it: installed for bob, the new key is not kept
     const other = createStore();

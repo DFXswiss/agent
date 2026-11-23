@@ -49,7 +49,7 @@ describe('member screen', () => {
     expect(within(items[2]!).getByTestId('members.item.access')).toHaveTextContent('StandardWrite');
     expect(within(items[2]!).getByTestId('members.item.access')).toHaveTextContent('WorkgroupRead');
     expect(within(items[0]!).queryByTestId('members.item.remove')).toBeNull();
-    // cy is an admin: workgroup one is read as admin, with nothing to ungrant (ADR-058)
+    // cy is an admin: workgroup one is read as admin, with nothing to ungrant (ADR-059)
     expect(within(items[1]!).getByTestId('members.item.access')).toHaveTextContent('Workgroupreads as admin');
     expect(within(items[1]!).queryByTestId('members.item.ungrant')).toBeNull();
     expect(screen.getByTestId('members.leave')).toBeInTheDocument();

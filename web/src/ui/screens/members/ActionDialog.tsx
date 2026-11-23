@@ -1,6 +1,6 @@
 // The confirmation dialog of every membership change (06-web.md sections 7.1-7.3): an explanation, optional inputs,
 // then the change with one line "Saving …" while it runs (plus "Attempt 2 of 3" after `seq_conflict`; key handling
-// stays out of sight, ADR-058 section 4), and its error code with "Try again" if it is refused. Exported for the
+// stays out of sight, ADR-059 section 4), and its error code with "Try again" if it is refused. Exported for the
 // device screen (WEB-07: unassign and unpair).
 import { type ReactNode, useState } from 'react';
 import { actionErrorCode, BATCH_ATTEMPTS, type SubmitProgress } from '../../../core/org/batch';

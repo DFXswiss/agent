@@ -56,15 +56,20 @@ SPEC_CRYPTO = (
 SPEC_OPERATION_ERRORS = (
     "unknown_type params_invalid repo_not_allowed repo_not_accessible branch_protected branch_exists non_fast_forward"
     " path_invalid secret_detected size_exceeded github_not_connected not_found limit_exceeded budget_exceeded"
+    " credit_exhausted"  # 12-billing.md section 6 (contracts/changes/KOR-31.md)
     " rights_denied hub_unreachable upstream_error timeout model_not_allowed tree_mismatch no_changes"
 )
 SPEC_SESSION_FAILURES = (
     "model_access_unavailable vm_start_failed guest_unreachable sandbox_failed agent_start_failed agent_exited"
     " prompt_refused delivery_failed device_offline device_shutdown capacity_exhausted runtime_exceeded budget_exceeded"
+    " credit_exhausted"  # 12-billing.md section 7 (contracts/changes/KOR-31.md)
     " oom unassigned"
 )
 # 03-api.md section 6.1 / 02-data-model.md section 4.
-SPEC_OUTBOX_KINDS = "event session_transition vm_state operation_transition usage quota metrics audit wrap"
+SPEC_OUTBOX_KINDS = (
+    "event session_transition vm_state operation_transition usage quota metrics audit wrap"
+    " runtime"  # 12-billing.md section 4 (contracts/changes/KOR-31.md)
+)
 SPEC_OUTBOX_AUDIT = (
     "hook.denied read.session.<tool> ping.delivered session.prompt_refused model.provider_outside_allowlist"
     " runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert"
@@ -103,6 +108,8 @@ DECIDED_AUDIT = (
     "invite.lookup invite.create invite.revoke invite.register invite.release invite.use invite.expire"
     " credential.rotate outbox.rejected agent.confirm agent.claim agent.revoke notification.read"
 )
+# 12-billing.md sections 8 and 10 (contracts/changes/KOR-31.md): credit changes, USD/CHF rates and the export.
+KOR31_AUDIT = "credit.changed billing.fx_set billing.export"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 04-crypto.md section 4.3: (kind, scope, author kind, right).
 SPEC_EVENT_MATRIX = [
@@ -205,7 +212,7 @@ def test_audit_actions(index: dict[str, Any]) -> None:
     for row in document["actions"]:
         assert set(row) == {"action", "group"}
         assert re.fullmatch(r"[a-z_]+(\.[a-z_]+)+", row["action"]), row
-    expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split())
+    expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split()) | set(KOR31_AUDIT.split())
     for prefix, values in SPEC_AUDIT_PATTERNS.items():
         expected |= {f"{prefix}.{value}" for value in values.split()}
     expected |= {f"read.{e['read_resource']}" for e in index["endpoints"] if e["read_resource"]}

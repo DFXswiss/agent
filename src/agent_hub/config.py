@@ -38,6 +38,7 @@ PORT = "AGENT_HUB_PORT"
 STATIC_DIR = "AGENT_HUB_STATIC_DIR"
 DEVICE_ONLINE_SECONDS = "AGENT_HUB_DEVICE_ONLINE_SECONDS"
 PLATFORM_BUDGET = "AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY"
+START_CREDIT = "AGENT_HUB_BILLING_START_CREDIT_USD"
 MODEL_CATALOG = "AGENT_HUB_MODEL_CATALOG"
 TRUSTED_PROXIES = "AGENT_HUB_TRUSTED_PROXIES"
 IPV4_MAPPED = ipaddress.IPv6Network("::ffff:0:0/96")
@@ -56,6 +57,7 @@ KNOWN_VARIABLES = frozenset(
         STATIC_DIR,
         DEVICE_ONLINE_SECONDS,
         PLATFORM_BUDGET,
+        START_CREDIT,
         MODEL_CATALOG,
         TRUSTED_PROXIES,
         FORWARDED_HEADER,
@@ -150,6 +152,8 @@ class HubConfig:
     device_online_seconds: int
     platform_budget_usd_per_org_day: Decimal | None
     model_catalog: ModelCatalog
+    billing_start_credit_usd: Decimal = Decimal(0)
+    """`AGENT_HUB_BILLING_START_CREDIT_USD`: the balance of a new credit account (KOR-31, ADR-059; default 0)."""
     trusted_proxies: tuple[Network, ...] = ()
     forwarded_header: str = X_FORWARDED_FOR
 
@@ -227,6 +231,15 @@ def _budget(environ: Mapping[str, str]) -> Decimal | None:
         return None
     if _BUDGET_RE.fullmatch(value) is None:
         raise ConfigError(f"{PLATFORM_BUDGET} must be empty or a non-negative amount with at most 6 decimals")
+    return Decimal(value)
+
+
+def _start_credit(environ: Mapping[str, str]) -> Decimal:
+    value = _value(environ, START_CREDIT)
+    if value is None:
+        return Decimal(0)
+    if _BUDGET_RE.fullmatch(value) is None:
+        raise ConfigError(f"{START_CREDIT} must be empty or a non-negative amount with at most 6 decimals")
     return Decimal(value)
 
 
@@ -420,6 +433,7 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
         ),
         platform_budget_usd_per_org_day=_budget(environ),
         model_catalog=load_model_catalog(Path(_require(environ, MODEL_CATALOG))),
+        billing_start_credit_usd=_start_credit(environ),
         trusted_proxies=trusted,
         forwarded_header=_forwarded_header(environ, trusted),
     )

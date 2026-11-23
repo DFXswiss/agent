@@ -12,7 +12,7 @@
 // section 4.7; in a private org the single member is the admin):
 // - assign a device to a workgroup: one batch `device_assign` (platform devices with `platform_seq`, only with platform
 //   access, ADR-026) + the wraps of the current `WK` and `OK` the user holds for the device (built by `buildBatch`,
-//   ADR-007; the transition rule of ADR-058 withholds a `WK` the user reads only as admin, catch-up delivers it), then the
+//   ADR-007; the transition rule of ADR-059 withholds a `WK` the user reads only as admin, catch-up delivers it), then the
 //   wrap of the user's own `CK` (`wrapCredentialKey`, best effort like the first-task flow);
 // - platform candidates (`GET /v1/workgroups/{wg}/device-candidates`) are offered only when the verified platform log
 //   certifies them with the listed keys (compiled root key);
@@ -196,7 +196,7 @@ export function hasPlatformAccess(state: OrgState, platform: PlatformState | nul
 
 /**
  * Workgroups a device can be assigned to: every workgroup that is not archived, in the order of `workgroupOrder`. The
- * batch wraps the keys the user holds for the device; the other key holders deliver the rest by catch-up (ADR-058).
+ * batch wraps the keys the user holds for the device; the other key holders deliver the rest by catch-up (ADR-059).
  */
 export function assignableWorkgroups(state: OrgState): string[] {
   return workgroupOrder(state).filter((wg) => state.writable(wg));
