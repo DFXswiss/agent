@@ -22,7 +22,7 @@ from agent_platform import __version__, claude, diagnose, orgs, tasks
 from agent_platform.account import Account
 from agent_platform.credentials import put_record, read_record
 from agent_platform.errors import PlatformError
-from agent_platform.pairing import pair
+from agent_platform.pairing import pair, register
 from agent_platform.state import Home
 from agent_runner.crypto.encoding import b64u_decode
 from agent_runner.crypto.errors import CryptoError
@@ -83,6 +83,16 @@ def with_account(work: Callable[[Account, argparse.Namespace, Context], dict[str
 
 
 # --- commands ---
+
+
+def cmd_register(args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    link = context.environ.get("AGENT_PLATFORM_INVITE", "") or context.read_stdin()
+    if not link.strip():
+        raise PlatformError("invalid_argument")
+    result = register(
+        context.home, context.environ, invite=link, display_name=args.display_name, name=args.name, host=args.host
+    )
+    return {**result, "display_name": args.display_name.strip()}
 
 
 def cmd_pair(args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -288,6 +298,12 @@ def _account_commands(tree: Tree) -> None:
     sub.add_argument("--name", default="Claude Code")
     sub.add_argument("--host", default=(socket.gethostname().split(".")[0] or "computer")[:64])
     sub.add_argument("--no-browser", action="store_true")
+    sub = tree.add(
+        tree.commands, "register", cmd_register, "a new account through an invitation (link on stdin)", common=False
+    )
+    sub.add_argument("--display-name", required=True)
+    sub.add_argument("--name", default="Claude Code")
+    sub.add_argument("--host", default=(socket.gethostname().split(".")[0] or "computer")[:64])
     tree.add(tree.commands, "status", with_account(cmd_status), "the account as the agent sees it")
     sub = tree.add(tree.commands, "api", with_account(cmd_api), "a signed request to any route")
     sub.add_argument("method")

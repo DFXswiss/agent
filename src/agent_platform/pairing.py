@@ -20,24 +20,37 @@ the identity with its key and `r`, checks it against `GET /v1/me`, stores the st
 `<origin>/settings?agent=connected` (`?agent=failed` when the claimed identity does not open or does not match;
 `pairing_failed`). The origin comes from the tool's own state, never from the request. The wait ends after
 `PAIRING_TIMEOUT_S` (`pairing_timeout`).
+
+`register` (section 5.2) is the same pairing behind an invitation: the tool reads the invitation link (stdin or
+environment, never the command line), checks it at the hub, and opens `<origin>/invite#<code>&<pairing>&u=<display
+name>` in the user's browser. The user creates the passkey; the registration's sign-in is the pairing-tagged
+ceremony, and the page confirms and hands over like `/connect`. The link carries the invitation code, so it is never
+printed and never a program argument (which other local users could read in the process list): the browser opens a
+redirect file (`0600`, in the state directory, removed when the wait ends) whose only content forwards to the link.
+The hub address comes from the invitation link; it must be `https` (plain `http` only for a loopback hub, as in
+tests), and the result names it.
 """
 
 from __future__ import annotations
 
 import hmac
+import html
+import os
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote, urlencode
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 from agent_platform.errors import PlatformError
-from agent_platform.hub import AgentClient, anon_request
+from agent_platform.hub import AgentClient, anon_request, refused
 from agent_platform.state import Home
 from agent_runner.crypto import agent as agent_crypto
+from agent_runner.crypto import invite as invite_format
 from agent_runner.crypto.encoding import b64u_decode, b64u_encode
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import is_uuid7, uuid7
@@ -49,6 +62,14 @@ POLL_S = 0.5
 MAX_FORM_BYTES = 4096
 FORM_TYPE = "application/x-www-form-urlencoded"
 PATH = "/agent-pairing"
+DISPLAY_NAME_MAX = 80
+# what JavaScript's `String.prototype.trim` removes (the web's rule for the display name, `account/genesis.ts`)
+JS_TRIM = (
+    "\t\n\x0b\x0c\r \xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+OPEN_YOURSELF = "agent-platform: the browser could not be started; open the link yourself"
 
 
 @dataclass(frozen=True)
@@ -85,7 +106,7 @@ def default_browser(platform: str = sys.platform) -> str:
     return "open" if platform == "darwin" else "xdg-open"
 
 
-def open_browser(environ: Mapping[str, str], url: str) -> None:
+def open_browser(environ: Mapping[str, str], url: str, fallback: str = OPEN_YOURSELF) -> None:
     """Start `AGENT_PLATFORM_BROWSER` (else the system's opener) with the URL as its only argument."""
     program = environ.get("AGENT_PLATFORM_BROWSER", "") or default_browser()
     try:
@@ -97,7 +118,7 @@ def open_browser(environ: Mapping[str, str], url: str) -> None:
             start_new_session=True,
         )
     except OSError:
-        print("agent-platform: the browser could not be started; open the link yourself", file=sys.stderr)
+        print(fallback, file=sys.stderr)
 
 
 class _WrongSecret(Exception):
@@ -142,10 +163,12 @@ class Pairing:
         if answer.get("pairing_id") != self.pairing_id:
             raise PlatformError("hub_refused", reason="response_invalid")
 
-    def link(self, port: int) -> str:
+    def fragment(self, port: int) -> str:
         fp = agent_crypto.fingerprint(self.agent.kem_public(), self.agent.sig_public())
-        fragment = f"p={self.pairing_id}&f={fp}&c={port}&a={quote(self.name, safe='')}&h={quote(self.host, safe='')}"
-        return f"{self.origin}/connect#{fragment}"
+        return f"p={self.pairing_id}&f={fp}&c={port}&a={quote(self.name, safe='')}&h={quote(self.host, safe='')}"
+
+    def link(self, port: int) -> str:
+        return f"{self.origin}/connect#{self.fragment(port)}"
 
     def claim(self, handover: Handover) -> bool:
         """True when the claim succeeded (state stored or `failure` set); False for a wrong `r`."""
@@ -299,3 +322,67 @@ def pair(home: Home, environ: Mapping[str, str], *, hub: str, name: str, host: s
         raise pairing.failure
     assert pairing.result is not None
     return {**pairing.result, "hub": pairing.origin, "link": opened[0]}
+
+
+def parse_invite(text: str) -> tuple[str, bytes]:
+    """The hub origin and the code of an invitation link `<origin>/invite#<code>` (`invalid_argument` otherwise)."""
+    parts = urlsplit(text.strip())
+    if parts.path != "/invite" or parts.query or not parts.fragment:
+        raise PlatformError("invalid_argument")
+    if parts.scheme != "https" and (parts.scheme != "http" or parts.netloc.rsplit(":", 1)[0] not in LOOPBACK_HOSTS):
+        raise PlatformError("invalid_argument")
+    try:
+        origin = hub_origin(f"{parts.scheme}://{parts.netloc}").base_url
+        code = invite_format.parse_code(parts.fragment.split("&", 1)[0])
+    except (ValueError, CryptoError):
+        raise PlatformError("invalid_argument") from None
+    return origin, code
+
+
+def register(
+    home: Home, environ: Mapping[str, str], *, invite: str, display_name: str, name: str, host: str
+) -> dict[str, Any]:
+    """A new account through an invitation, with this agent paired (module comment, 11-agent-access.md section 5.2)."""
+    origin, code = parse_invite(invite)
+    member = display_name.strip(JS_TRIM)
+    if not 1 <= len(member) <= DISPLAY_NAME_MAX:
+        raise PlatformError("invalid_argument")
+    invite_id = invite_format.invite_secrets(code).invite_id
+    lookup = anon_request(origin, "POST", "/v1/invites/lookup", {"invite_id": invite_id})
+    if lookup.get("registered") is True:
+        raise refused("invite_registered", 409)
+    pairing = Pairing(home, origin, name, host)
+    pairing.register()
+    code_text = invite_format.format_code(code)
+
+    redirect = home.path / f"invite-{pairing.pairing_id}.html"
+
+    def ready(port: int) -> None:
+        url = f"{origin}/invite#{code_text}&{pairing.fragment(port)}&u={quote(member, safe='')}"
+        write_redirect(home, redirect, url)
+        print("agent-platform: waiting for the user to create a passkey in the browser (10 minutes)", file=sys.stderr)
+        open_browser(
+            environ,
+            redirect.as_uri(),
+            "agent-platform: the browser could not be started; run the command where the user's browser runs",
+        )
+
+    try:
+        listen(pairing, ready)
+    finally:
+        redirect.unlink(missing_ok=True)
+    if pairing.failure is not None:
+        raise pairing.failure
+    assert pairing.result is not None
+    return {**pairing.result, "hub": origin, "scope": lookup.get("scope")}
+
+
+def write_redirect(home: Home, path: Path, url: str) -> None:
+    """A page that only forwards to `url`, readable by the user alone (module comment)."""
+    home.ensure_dir()
+    target = html.escape(url, quote=True)
+    page = '<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer">'
+    page += f'<meta http-equiv="refresh" content="0;url={target}"><title>agent.dfx.swiss</title>'
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(page)

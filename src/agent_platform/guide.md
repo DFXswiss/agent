@@ -5,9 +5,6 @@ agent.dfx.swiss for me". This guide tells you exactly what to do. Your user does
 passkey in the browser window you open. You do everything else. Talk to your user in their language and never ask
 them to type commands, copy codes or open settings.
 
-What the platform promises and the rules it follows are in `docs/platform/KONZEPT.md` of the `DFXswiss/agent`
-repository (German; for example rule E-04: you can do everything your user can do in the browser).
-
 The tool for all of this is `agent-platform` (package of the `DFXswiss/agent` repository). Every command prints one
 JSON object. `"ok": true` means done. `"ok": false` comes with `"error"` (a fixed code) and `"next"` (what to do).
 No command ever prints a token, key or code, except `org invite`, whose `invite_link` (listed in `secret_fields`) is
@@ -16,12 +13,18 @@ meant only for the person being invited.
 ## 0. Install the tool
 
 ```sh
-uv tool install "dfx-agent[platform] @ git+https://github.com/DFXswiss/agent@develop"
-# or: pipx install "dfx-agent[platform] @ git+https://github.com/DFXswiss/agent@develop"
+python3 -m venv ~/.agent-platform-venv
+~/.agent-platform-venv/bin/pip install "dfx-agent[platform] @ git+https://github.com/DFXswiss/agent@ad5f2026-live"
+mkdir -p ~/.local/bin
+[ -e ~/.local/bin/agent-platform ] || ln -s ~/.agent-platform-venv/bin/agent-platform ~/.local/bin/agent-platform
 agent-platform guide   # this guide, as shipped with the tool
 ```
 
-Without `uv` or `pipx`, use a virtual environment (`python3 -m venv ~/.agent-platform-venv`). Do not use `sudo`.
+Use a virtual environment of its own as above and link only `agent-platform`: the package also contains other
+programs (for example `agent`), and `uv tool install` or `pipx install` of it would replace an `agent` tool that is
+already installed on this computer. If `~/.local/bin` is not on the `PATH`, call
+`~/.agent-platform-venv/bin/agent-platform` directly. To update, run the `pip install` line again with `--upgrade`.
+Do not use `sudo`.
 
 ## 1. Connect to your user's account
 
@@ -44,9 +47,20 @@ connected already, the page says "replaces <name>", and your user's confirmation
 your user this before they confirm. Pairing again from an agent that is already connected also replaces it (the tool
 keeps only the new connection).
 
-**Your user has an invitation link but no account yet:** not available yet – the `register` command is planned. For
-now your user opens the invitation link in the browser, registers with a passkey, and then you connect with `pair` as
-above.
+**Your user has an invitation link but no account yet:** give the link to the tool on stdin (never on the command
+line, it is a secret) together with the name your user wants to be shown as:
+
+```sh
+printf '%s' "<invitation link>" | agent-platform register --display-name "<your user's name>" --name "Claude Code"
+```
+
+This opens the invitation in your user's browser, with your request to connect. Tell your user: "A page from
+agent.dfx.swiss opened. Please create a passkey (fingerprint or face) and confirm once more. Nothing else is needed."
+Your user types nothing: the page shows the name you gave (they can change it later in the settings). The command
+waits up to 10 minutes and returns `{"ok":true,"agent_id":…,"user_id":…,"display_name":…,"scope":…}` once the account
+exists and you are connected as its main orchestrator. It works for an invitation to the platform (a new private
+organization) and for an invitation to an organization. If your user already has an account, use `pair` and then
+`org join` (invitation link on stdin) instead.
 
 If `pair` fails with `pairing_timeout`: you must run on the same computer as your user's browser. The
 confirmation is handed to you through `http://127.0.0.1` on purpose; there is no code to type in.
@@ -91,6 +105,19 @@ GitHub and the repository list of a workgroup have no command of their own yet (
 to open Settings → GitHub once (GitHub itself asks for one confirmation there); an empty repository list allows every
 repository of the GitHub connection.
 
+**Tasks.** When your user says "put this into agent.dfx.swiss as a task":
+
+```sh
+agent-platform task create --wg <wg_id> --text -  < prompt.txt   # or --text "…"; returns task_id and title
+agent-platform task show --task <task_id>                        # the task and its chat, decrypted here
+agent-platform task prompt --task <task_id> --text "…"           # a further prompt to its session
+agent-platform task follow --task <task_id> [--after <next_after>] [--wait 60]  # new answers; repeat with next_after
+agent-platform task list --wg <wg_id> [--state open|closed]
+```
+
+Prompts and answers are encrypted on this computer; the hub never sees them. `task create` fails with `no_device`
+when the workgroup has no execution device: run `device assign --wg <wg_id>` first.
+
 You can do everything your user can do in the browser: tasks and prompts, members and roles (also admins),
 workgroups, devices, whiteboards, notifications, credentials, passkeys (removing; adding opens a page for your user),
 the recovery code, disconnecting agents. The one thing you cannot do is connect another agent: only your user's
@@ -99,7 +126,7 @@ client. Anything without its own command yet goes through the generic signed cal
 
 ```sh
 agent-platform api GET /v1/me
-agent-platform api POST /v1/tasks --body -      # JSON body on stdin
+agent-platform api GET /v1/notifications
 ```
 
 Account-changing actions you take (removing a passkey, replacing the recovery code, disconnecting an agent, changing

@@ -77,3 +77,9 @@ Delegated agent access, stage a of the agent tool `agent-platform` (ADR-056, `sp
     marks events without key as `locked`. A lost answer is not resent automatically (the hub would need the identical
     sealed bytes); `task list` shows whether the task exists. The shared parity matrix and the guide name the commands
     with the next agent-core change (they are copies of agent-core files); `agent-platform task --help` documents them.
+17. **`register` (stage b, `11-agent-access.md` §5.2).** The invitation link comes from stdin or
+    `AGENT_PLATFORM_INVITE` and is checked at the hub (`POST /v1/invites/lookup`; an invitation that already
+    registered someone is `hub_refused` / `invite_registered`) before the pairing is created. The opened link carries
+    the invitation code, so `register` has no `--no-browser` and never prints the link; when no browser starts, the
+    message says to run the command where the user's browser runs. The display name is checked like the web's name
+    field (1–80 characters after trimming). The result is that of `pair` plus the invitation's `scope` and the name.

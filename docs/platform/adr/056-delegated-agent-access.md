@@ -222,7 +222,7 @@ a local one and is replaced by one); only the key generation and the handover di
   two ciphertexts it cannot open (the identity needs `r`); the label is encrypted. New hub-visible metadata: the
   existence of an agent, its public keys and times, and for ten minutes the source address of an open pairing
   (`04-crypto.md` §7).
-- **Residual risk (accepted by the owner, 2026-11-23).** An agent key together with the agent's state equals the
+- **Residual risk (follows from decision 10a – the agent may do everything its user may – and the project's reading A3 of the concept audit AUD-04 W5–W7: one main orchestrator, pairing and replacing only with a passkey gesture, the agent holds the user's identity; an own identity with rotation is a later hardening, AUD-04 N15).** An agent key together with the agent's state equals the
   user's passkey plus the unlocked identity. Whoever steals it holds full and lasting control of the account and can
   lock the user out: replace the recovery code and use it to register an own passkey, remove all
   of the user's passkeys, invite itself into the user's organizations with any role, replace credentials, read

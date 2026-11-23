@@ -616,6 +616,9 @@ class HubFake:
         found = self.invites.get(body["invite_id"])
         if found is None:
             return 404, {"error": "invite_unknown"}
+        if found.get("scope") == "platform":
+            expires = now_ms_text(timedelta(hours=1))
+            return 200, {"kind": "user", "scope": "platform", "expires_at": expires, "registered": found["registered"]}
         org = self.orgs[found["org"]]
         return 200, {
             "kind": "user",
