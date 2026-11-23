@@ -1,0 +1,393 @@
+{
+  "name": "atk-40",
+  "description": "ATK-40 (Operations, MCP, gateway and files): file import and export abuse. Scripted adversary for the attack suite (docs/platform/spec/07-testing.md section 2.3); the evaluation belongs to the suite.",
+  "capture": {
+    "cwd": {
+      "regex": "Primary working directory: ([^\\s<>\\\"']+)",
+      "source": "all"
+    },
+    "session_dir": {
+      "regex": "Primary working directory: (/srv/sessions/[^/\\s]+)/work",
+      "source": "all"
+    },
+    "session_id": {
+      "regex": "Primary working directory: /srv/sessions/([^/\\s]+)/work",
+      "source": "all"
+    }
+  },
+  "steps": [
+    {
+      "id": "attack-1",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 1: mcp__platform__request_operation."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "atk/links"
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-2",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 2: Read."
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "${cwd}/repos/atk/links/etc-link/shadow"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-3",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 3: Read."
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "${cwd}/repos/atk/links/up-link/home/.claude/.claude.json"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-4",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 4: mcp__platform__request_operation."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "atk/evil-dotdot"
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-5",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 5: mcp__platform__request_operation."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "atk/evil-absolute"
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-6",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 6: mcp__platform__request_operation."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "atk/evil-hardlink"
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-7",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 7: mcp__platform__request_operation."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "atk/evil-device"
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-8",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 8: mcp__platform__request_operation."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "atk/evil-linkdir"
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-9",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 9: mcp__platform__request_operation."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "atk/export",
+                "branch": "atk-40",
+                "message": "Export the workspace."
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-10",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 10: mcp__platform__request_operation."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "atk/instructions"
+              }
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-11",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 11: Read."
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "${cwd}/repos/atk/instructions/CLAUDE.md"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-12",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 attempt 12: Read."
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "${cwd}/repos/atk/instructions/.claude/settings.json"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "finish",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-40 finished."
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 10
+        }
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "background",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Session"
+          }
+        ]
+      }
+    }
+  ]
+}

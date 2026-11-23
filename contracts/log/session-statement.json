@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/log/session-statement.json",
+  "title": "session statement",
+  "description": "The statement text agent-session-v1 of agent_core.passkey.certificate (04-crypto.md section 4.9): five lines joined by a line feed without a trailing one - label, origin, session P-256 public key (65-byte point, b64u), hub value (32 bytes, b64u), expiry YYYY-MM-DDTHH:MM:SSZ. The certificate carries its UTF-8 bytes as b64u.",
+  "type": "string",
+  "pattern": "^agent-session-v1\nhttps?://[a-z0-9.-]{1,253}(:[0-9]{1,5})?\nB[A-Za-z0-9_-]{85}[AEIMQUYcgkosw048]\n[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]\n[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$",
+  "maxLength": 512
+}

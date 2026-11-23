@@ -1,0 +1,173 @@
+{
+  "description": "Guest control protocol (03-api.md section 7.1): HTTP/1.1 over the forwarded unix socket, bearer control token. request_kind: body (JSON), query (text parameters), query+tar (query parameters, application/x-tar body); response_kind: json, tar (the response schema describes the manifest member). Errors: guest/error.response.json.",
+  "error_response": "guest/error.response.json",
+  "reserved_headers": [
+    "authorization",
+    "x-api-key",
+    "host",
+    "content-length",
+    "connection",
+    "accept-encoding",
+    "transfer-encoding",
+    "anthropic-beta"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/health",
+      "name": "health",
+      "section": "7.1",
+      "path_params": {},
+      "request_kind": "query",
+      "request": "guest/health.request.json",
+      "response_kind": "json",
+      "response": "guest/health.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/assign",
+      "name": "assign",
+      "section": "7.1",
+      "path_params": {},
+      "request_kind": "body",
+      "request": "guest/assign.request.json",
+      "response_kind": "json",
+      "response": "guest/assign.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions",
+      "name": "sessions-create",
+      "section": "7.1",
+      "path_params": {},
+      "request_kind": "body",
+      "request": "guest/sessions-create.request.json",
+      "response_kind": "json",
+      "response": "guest/sessions-create.response.json"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/sessions/{id}/credential",
+      "name": "session-credential",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "guest/session-credential.request.json",
+      "response_kind": "json",
+      "response": "guest/session-credential.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{id}/prompts",
+      "name": "session-prompts",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "guest/session-prompts.request.json",
+      "response_kind": "json",
+      "response": "guest/session-prompts.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{id}/control",
+      "name": "session-control",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "guest/session-control.request.json",
+      "response_kind": "json",
+      "response": "guest/session-control.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{id}/files/import",
+      "name": "session-files-import",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query+tar",
+      "request": "guest/session-files-import.request.json",
+      "response_kind": "json",
+      "response": "guest/session-files-import.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{id}/files/export",
+      "name": "session-files-export",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "guest/session-files-export.request.json",
+      "response_kind": "tar",
+      "response": "guest/session-files-export.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{id}/pings",
+      "name": "session-pings",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "guest/session-pings.request.json",
+      "response_kind": "json",
+      "response": "guest/session-pings.response.json"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/journal",
+      "name": "journal",
+      "section": "7.1",
+      "path_params": {},
+      "request_kind": "query",
+      "request": "guest/journal.request.json",
+      "response_kind": "json",
+      "response": "guest/journal.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/journal/ack",
+      "name": "journal-ack",
+      "section": "7.1",
+      "path_params": {},
+      "request_kind": "body",
+      "request": "guest/journal-ack.request.json",
+      "response_kind": "json",
+      "response": "guest/journal-ack.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/pending/{id}/answer",
+      "name": "pending-answer",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "guest/pending-answer.request.json",
+      "response_kind": "json",
+      "response": "guest/pending-answer.response.json"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/metrics",
+      "name": "metrics",
+      "section": "7.1",
+      "path_params": {},
+      "request_kind": "query",
+      "request": "guest/metrics.request.json",
+      "response_kind": "json",
+      "response": "guest/metrics.response.json"
+    }
+  ]
+}

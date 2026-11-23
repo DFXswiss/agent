@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-outbox.request.json",
+  "title": "POST /v1/device/outbox request",
+  "description": "at most 500 items and 4 MiB; the pushes of a device are paced by a token bucket of one push per 100 ms with a reserve of 10 pushes (ADR-048)",
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "../outbox/objects.json#/$defs/item"
+      },
+      "minItems": 1,
+      "maxItems": 500
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "additionalProperties": false
+}

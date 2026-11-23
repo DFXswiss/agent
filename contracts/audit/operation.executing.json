@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/operation.executing.json",
+  "title": "audit detail operation.executing",
+  "description": "detail of audit rows with action operation.executing: operation transition to executing (never parameters). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "$ref": "../common.json#/$defs/operation_type"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/operation_error_code"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "duplicate_of": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "local_check": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "passed",
+            "rejected"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "error_code",
+    "duplicate_of",
+    "local_check"
+  ],
+  "additionalProperties": false
+}

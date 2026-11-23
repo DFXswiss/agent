@@ -1,0 +1,8 @@
+{
+  "guest_version": "1.0.0",
+  "claude_version": "2.1.330",
+  "state": "unassigned",
+  "sessions": [],
+  "landlock_abi": 6,
+  "boot_id": "0b6f7f2c-8d1e-4f3a-9c5b-7a6e5d4c3b2a"
+}

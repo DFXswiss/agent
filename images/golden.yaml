@@ -1,0 +1,56 @@
+# Golden image of the agent.dfx.swiss runner (docs/platform/spec/05-runner.md section 3.1, ADR-009).
+#
+# Build contract (images/README.md): `limactl create --name=<prefix>golden-build-<hex> images/golden.yaml`,
+# `limactl start` (runs the slim provisioning below), then the stage-2 installer
+# `images/provision/install.sh` inside the VM with this repository's `images/` and `src/agent_guest/`.
+# Pinned versions and digests: images/versions.json (kept identical by tests/platform/images/).
+minimumLimaVersion: 2.3.0
+vmType: vz
+arch: aarch64
+images:
+- location: "https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-arm64.img"
+  arch: aarch64
+  digest: "sha256:50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e"
+# Defaults; the runner overrides them from its configuration (AGENT_RUNNER_VM_CPUS/_MEMORY_MIB/_DISK_GIB).
+cpus: 4
+memory: 8GiB
+disk: 20GiB
+mounts: []
+containerd:
+  system: false
+  user: false
+ssh:
+  forwardAgent: false
+  forwardX11: false
+  forwardX11Trusted: false
+# Only the control socket is forwarded (host connects, guest never does). Every TCP/UDP port of the guest is
+# ignored, so that Lima's implicit fallback rule never forwards 127.0.0.1:7700 or any other guest port.
+portForwards:
+- guestSocket: "/run/agent-guest/control.sock"
+  hostSocket: "{{.Dir}}/sock/agent-guest.sock"
+- guestIP: "0.0.0.0"
+  proto: any
+  ignore: true
+- guestIP: "127.0.0.1"
+  proto: any
+  ignore: true
+# Control token of the guest agent; set before boot with
+#   limactl start --set '.param.AGENT_GUEST_CONTROL_TOKEN="<token>"' <instance>
+# and consumed at boot by agent-guest-harden.service (/etc/agent-guest/control-token, root 0600).
+param:
+  AGENT_GUEST_CONTROL_TOKEN: ""
+provision:
+# Slim steps of Spike A; runs on every boot and returns at once after the first (guard file).
+- mode: system
+  file: provision/10-slim.sh
+# Hands the control token parameter to agent-guest-harden.service on a root-only tmpfs; the unit validates it,
+# writes /etc/agent-guest/control-token and removes this copy (files/usr/local/lib/agent-guest/harden.sh).
+- mode: system
+  script: |
+    #!/bin/sh
+    set -eu
+    umask 077
+    if [ -n "${PARAM_AGENT_GUEST_CONTROL_TOKEN:-}" ]; then
+      install -d -m 0700 -o root -g root /run/agent-guest-param
+      printf '%s' "$PARAM_AGENT_GUEST_CONTROL_TOKEN" >/run/agent-guest-param/control-token
+    fi

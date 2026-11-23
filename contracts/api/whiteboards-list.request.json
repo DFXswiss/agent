@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/whiteboards-list.request.json",
+  "title": "GET /v1/whiteboards request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "org": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "wg": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "task": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "level": {
+      "type": "string",
+      "enum": [
+        "org",
+        "workgroup",
+        "task"
+      ]
+    },
+    "before": {
+      "$ref": "../common.json#/$defs/q_before"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_list"
+    }
+  },
+  "additionalProperties": false
+}

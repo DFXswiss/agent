@@ -1,0 +1,7 @@
+{
+  "state": 12345,
+  "reason": "oom",
+  "details": {
+    "memory_max": 4294967296
+  }
+}

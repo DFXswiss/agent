@@ -1,0 +1,8 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-00000000002d",
+  "type": "github.checkout",
+  "params": {
+    "repo": "example-org/example-repo",
+    "ref": "main"
+  }
+}

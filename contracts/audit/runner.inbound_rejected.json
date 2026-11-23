@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/runner.inbound_rejected.json",
+  "title": "audit detail runner.inbound_rejected",
+  "description": "detail of audit rows with action runner.inbound_rejected: inbound item refused by the runner. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "source": {
+      "type": "string",
+      "enum": [
+        "event",
+        "log",
+        "platform_log",
+        "wrap",
+        "request",
+        "assignment",
+        "setting",
+        "credential"
+      ]
+    },
+    "code": {
+      "$ref": "../common.json#/$defs/error_code"
+    }
+  },
+  "required": [
+    "source",
+    "code"
+  ],
+  "additionalProperties": false
+}

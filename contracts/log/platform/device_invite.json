@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/log/platform/device_invite.json",
+  "title": "platform-log entry device_invite",
+  "description": "Platform-log entry of type device_invite (04-crypto.md section 4.8), signed by the platform root with P||'platform-log\\0' (by = \"platform-root\").",
+  "type": "object",
+  "properties": {
+    "body": {
+      "$ref": "../../common.json#/$defs/platform_body_device_invite"
+    },
+    "sig": {
+      "$ref": "../../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "body",
+    "sig"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,3 @@
+time="2026-11-22T20:12:04+01:00" level=warning msg="Skipping instance `wp-kor03-ck-3` during network reconcile: open /var/lima-host/runner/.lima/wp-kor03-ck-3/lima.yaml: no such file or directory"
+time="2026-11-22T20:12:04+01:00" level=fatal msg="instance `wp-kor03-ck-3` directory `/var/lima-host/runner/.lima/wp-kor03-ck-3` exists but its `lima.yaml` could not be read; it was NOT deleted, in case it is currently being cloned into. If no `limactl` operation is using it, remove it manually"
+1

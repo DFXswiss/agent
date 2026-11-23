@@ -1,0 +1,15 @@
+{
+  "sessions": [
+    {
+      "session_id": "01a1ee56-5e00-7003-8f1b-340691d99f03",
+      "cpu_usage_usec": 1,
+      "mem_current_bytes": 2,
+      "mem_max_bytes": null,
+      "tasks_current": 3,
+      "io_read_bytes": 4,
+      "io_write_bytes": 5,
+      "workspace_bytes": 6,
+      "state": "idle"
+    }
+  ]
+}

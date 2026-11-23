@@ -1,0 +1,30 @@
+# Unprivileged API process of the guest agent (docs/platform/spec/05-runner.md section 5.1): /mcp, /hooks/<Event>
+# and /model/... on 127.0.0.1:7700; talks to the control process only over /run/agent-guest/api.sock.
+[Unit]
+Description=agent.dfx.swiss guest API
+After=agent-guest-control.service agent-guest-harden.service
+Wants=agent-guest-control.service
+Requires=agent-guest-harden.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=platform
+Group=platform
+WorkingDirectory=/opt/agent-guest
+# Session tokens are accepted only from the UID of their session (agent_guest/peer.py).
+Environment=AGENT_GUEST_PEER_TABLE=/proc/net/tcp
+ExecStart=/usr/bin/python3 -E -s -m agent_guest.server
+Restart=always
+RestartSec=1s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# The transient unit files of the sessions hold their environments (session and gateway tokens); the API process
+# resolves tokens through the control socket and never needs them (decisions GST-02 no. 5, ATS-03).
+InaccessiblePaths=-/run/systemd/transient
+UMask=0077
+
+[Install]
+WantedBy=cloud-init.target

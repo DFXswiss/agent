@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/auth.passkey_remove.json",
+  "title": "audit detail auth.passkey_remove",
+  "description": "detail of audit rows with action auth.passkey_remove: passkey used or changed. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "passkey_id": {
+      "type": "string",
+      "description": "the passkey's audit reference: its b64u credential ID, or sha256:<32 hex> of it when longer than 128 characters (the row's target_id)",
+      "pattern": "^(?:[A-Za-z0-9_-]{1,128}|sha256:[0-9a-f]{32})$"
+    }
+  },
+  "required": [
+    "passkey_id"
+  ],
+  "additionalProperties": false
+}

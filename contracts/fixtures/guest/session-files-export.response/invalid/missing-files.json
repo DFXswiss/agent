@@ -1,0 +1,8 @@
+{
+  "skipped": [
+    {
+      "path": "link-to-etc",
+      "reason": "symlink"
+    }
+  ]
+}

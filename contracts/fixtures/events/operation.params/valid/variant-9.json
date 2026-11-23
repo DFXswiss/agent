@@ -1,0 +1,7 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-00000000002d",
+  "type": "task.set_title",
+  "params": {
+    "title": "Review PR 7"
+  }
+}

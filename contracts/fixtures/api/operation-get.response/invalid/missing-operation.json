@@ -1,0 +1,11 @@
+{
+  "transitions": [
+    {
+      "seq": 1,
+      "state": "accepted",
+      "error_code": null,
+      "at": "2026-11-21T12:00:00.000Z",
+      "by_id": null
+    }
+  ]
+}

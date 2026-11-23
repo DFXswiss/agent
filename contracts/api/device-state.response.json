@@ -1,0 +1,371 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-state.response.json",
+  "title": "GET /v1/device/state response",
+  "description": "Body of a successful response to GET /v1/device/state (03-api.md section 6.1).",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "const": "pending_certification"
+        },
+        "hub_time": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "state",
+        "hub_time"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "desired state of an active device",
+      "properties": {
+        "state": {
+          "type": "string",
+          "const": "active"
+        },
+        "last_origin_seq": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "orgs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "org_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "log_head": {
+                "$ref": "../common.json#/$defs/log_head"
+              }
+            },
+            "required": [
+              "org_id",
+              "log_head"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        },
+        "assigned": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "org_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "wg_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              }
+            },
+            "required": [
+              "org_id",
+              "wg_id"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "desired session (03-api.md section 6.1)",
+            "properties": {
+              "session_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "task_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "org_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "wg_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/session_state"
+              },
+              "parent_session_id": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "depth": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "owner_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "model_access_pref": {
+                "$ref": "../common.json#/$defs/model_access_pref"
+              },
+              "model_id_pref": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/model_id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "resume_from": {
+                "$ref": "../common.json#/$defs/uuid"
+              }
+            },
+            "required": [
+              "session_id",
+              "task_id",
+              "org_id",
+              "wg_id",
+              "state",
+              "parent_session_id",
+              "depth",
+              "owner_id",
+              "model_access_pref",
+              "model_id_pref"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        },
+        "pending_prompts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "task_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "session_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "scope_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "scope_seq": {
+                "$ref": "../common.json#/$defs/positive"
+              },
+              "event_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              }
+            },
+            "required": [
+              "task_id",
+              "session_id",
+              "scope_id",
+              "scope_seq",
+              "event_id"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        },
+        "delivered_prompt_event_ids": {
+          "type": "object",
+          "description": "session ID -> last 100 delivered prompt event IDs",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "minItems": 0,
+            "maxItems": 100
+          }
+        },
+        "requests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "request_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              }
+            },
+            "required": [
+              "request_id"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        },
+        "pings": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "ping_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "session_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "const": "whiteboard.entry"
+                  },
+                  "level": {
+                    "type": "string",
+                    "enum": [
+                      "org",
+                      "workgroup",
+                      "task"
+                    ]
+                  },
+                  "ref": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "created_at": {
+                    "$ref": "../common.json#/$defs/time"
+                  }
+                },
+                "required": [
+                  "ping_id",
+                  "session_id",
+                  "kind",
+                  "level",
+                  "ref",
+                  "created_at"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "ping_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "session_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "subagent.finished",
+                      "operation.finished"
+                    ]
+                  },
+                  "level": {
+                    "type": "null"
+                  },
+                  "ref": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "created_at": {
+                    "$ref": "../common.json#/$defs/time"
+                  }
+                },
+                "required": [
+                  "ping_id",
+                  "session_id",
+                  "kind",
+                  "level",
+                  "ref",
+                  "created_at"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        },
+        "credentials_changed": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        },
+        "rotation_pending": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        },
+        "quota_poll_owners": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        },
+        "platform_budget": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "usd_per_org_day": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "spent_today_by_org": {
+                  "type": "object",
+                  "description": "org ID -> USD spent today (hub clock, UTC day)",
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "required": [
+                "usd_per_org_day",
+                "spent_today_by_org"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hub_time": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "state",
+        "last_origin_seq",
+        "orgs",
+        "assigned",
+        "sessions",
+        "pending_prompts",
+        "delivered_prompt_event_ids",
+        "requests",
+        "pings",
+        "credentials_changed",
+        "rotation_pending",
+        "quota_poll_owners",
+        "platform_budget",
+        "hub_time"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

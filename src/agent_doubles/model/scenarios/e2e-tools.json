@@ -1,0 +1,45 @@
+{
+  "name": "e2e-tools",
+  "description": "Two turns: Write, Read, Edit, parallel Grep+Glob, two MCP tools, one 529 retry, then a resumed second turn with a thinking block.",
+  "steps": [
+    {"id": "write",
+     "expect": {"user_text_contains": "SPIKE-E2E-1", "tools_include": ["Read", "Write", "Edit", "Grep", "Glob", "mcp__spike__add", "mcp__spike__task_context"], "tools_exclude": ["Bash"], "stream": true},
+     "reply": {"content": [
+       {"type": "text", "text": "I will create notes.txt first."},
+       {"type": "tool_use", "name": "Write", "input": {"file_path": "${cwd}/notes.txt", "content": "alpha\nbeta\n"}}],
+       "usage": {"input_tokens": 1200, "cache_creation_input_tokens": 3000, "cache_read_input_tokens": 0, "output_tokens": 40}}},
+    {"id": "read",
+     "expect": {"tool_result_is_error": false, "tool_result_contains": "notes.txt"},
+     "reply": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "${cwd}/notes.txt"}}],
+       "usage": {"input_tokens": 60, "cache_read_input_tokens": 4200, "output_tokens": 20}}},
+    {"id": "edit",
+     "expect": {"tool_result_contains": "beta"},
+     "reply": {"content": [{"type": "tool_use", "name": "Edit", "input": {"file_path": "${cwd}/notes.txt", "old_string": "beta", "new_string": "gamma"}}],
+       "usage": {"input_tokens": 60, "cache_read_input_tokens": 4300, "output_tokens": 30}}},
+    {"id": "search",
+     "expect": {"tool_result_is_error": false},
+     "reply": {"content": [
+       {"type": "tool_use", "name": "Grep", "input": {"pattern": "gamma", "path": "${cwd}", "output_mode": "content"}},
+       {"type": "tool_use", "name": "Glob", "input": {"pattern": "*.txt", "path": "${cwd}"}}],
+       "usage": {"input_tokens": 60, "cache_read_input_tokens": 4400, "output_tokens": 40}}},
+    {"id": "mcp",
+     "expect": {"tool_result_contains": "gamma"},
+     "reply": {"content": [
+       {"type": "tool_use", "name": "mcp__spike__add", "input": {"a": 2, "b": 3}},
+       {"type": "tool_use", "name": "mcp__spike__task_context", "input": {}}],
+       "usage": {"input_tokens": 60, "cache_read_input_tokens": 4500, "output_tokens": 40}}},
+    {"id": "overloaded",
+     "expect": {"tool_result_contains": "sum=5"},
+     "error": {"status": 529, "type": "overloaded_error", "message": "Overloaded (scripted)"}},
+    {"id": "final",
+     "expect": {"tool_result_contains": "task-0001"},
+     "reply": {"content": [{"type": "text", "text": "SPIKE-E2E-1 done: notes.txt now reads alpha/gamma, 2+3=5, task task-0001."}],
+       "usage": {"input_tokens": 60, "cache_read_input_tokens": 4600, "output_tokens": 30}}},
+    {"id": "turn2",
+     "expect": {"user_text_contains": "SPIKE-E2E-2", "min_messages": 10},
+     "reply": {"content": [
+       {"type": "thinking", "thinking": "The user asks what happened in turn one."},
+       {"type": "text", "text": "SPIKE-E2E-2 remembered: alpha/gamma and sum 5."}],
+       "usage": {"input_tokens": 80, "cache_read_input_tokens": 4700, "output_tokens": 25}}}
+  ]
+}

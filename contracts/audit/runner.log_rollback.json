@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/runner.log_rollback.json",
+  "title": "audit detail runner.log_rollback",
+  "description": "detail of audit rows with action runner.log_rollback: log rollback or fork detected by a runner. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "verified_seq": {
+      "$ref": "../common.json#/$defs/seq"
+    },
+    "offered_seq": {
+      "$ref": "../common.json#/$defs/seq"
+    }
+  },
+  "required": [
+    "verified_seq",
+    "offered_seq"
+  ],
+  "additionalProperties": false
+}

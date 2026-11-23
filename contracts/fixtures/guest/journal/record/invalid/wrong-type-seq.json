@@ -1,0 +1,10 @@
+{
+  "seq": "12345",
+  "ts": "2026-11-21T10:00:00.000Z",
+  "session_id": "01a1ee56-5e00-7003-8f1b-340691d99f03",
+  "kind": "ping.delivered",
+  "body": {
+    "ping_id": "01a1ee56-5e00-7007-8f1b-340691d99f07",
+    "via": "tool"
+  }
+}

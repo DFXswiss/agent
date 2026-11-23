@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-recovery-begin.request.json",
+  "title": "POST /v1/me/recovery/begin request",
+  "description": "Body of POST /v1/me/recovery/begin (KOR-01: the ceremony before a new recovery code replaces the old one).",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

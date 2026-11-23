@@ -1,0 +1,3 @@
+# TEST_MODE golden only (docs/platform/spec/05-runner.md section 4.3): the platform user may also reach the model
+# double on the Lima host gateway. Rendered by images/provision/install.sh --test-model-port.
+insert rule inet agent_sessions out meta skuid "platform" ip daddr @GATEWAY@ tcp dport @PORT@ accept

@@ -1,0 +1,53 @@
+{
+  "kind": 12345,
+  "scope": "org",
+  "org_id": "01930001-0000-7000-8000-000000000001",
+  "expires_at": "2026-11-21T12:00:00.000Z",
+  "registered": false,
+  "package_ct": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio",
+  "log_head": {
+    "seq": 5,
+    "hash": "FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQ"
+  },
+  "log": [
+    {
+      "body": {
+        "org": "01930001-0000-7000-8000-000000000001",
+        "seq": 0,
+        "prev": "",
+        "type": "genesis",
+        "by": "0193000a-0000-7000-8000-00000000000a",
+        "ts": "2026-11-21T12:00:00.000Z",
+        "v": 1,
+        "subject": "0193000a-0000-7000-8000-00000000000a",
+        "pub": {
+          "kem": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws",
+          "sig": "DAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw"
+        },
+        "default_wg": "01930002-0000-7000-8000-000000000002",
+        "private": true
+      },
+      "sig": "DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ"
+    },
+    {
+      "body": {
+        "org": "01930001-0000-7000-8000-000000000001",
+        "seq": 5,
+        "prev": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU",
+        "type": "invite",
+        "by": "0193000a-0000-7000-8000-00000000000a",
+        "ts": "2026-11-21T12:00:00.000Z",
+        "v": 1,
+        "invite_id": "BgYGBgYGBgYGBgYGBgYGBg",
+        "pk_inv": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg",
+        "kind": "user",
+        "role": "member",
+        "wgs": {
+          "01930002-0000-7000-8000-000000000002": "write"
+        },
+        "expires": "2026-11-24T12:00:00.000Z"
+      },
+      "sig": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQ"
+    }
+  ]
+}

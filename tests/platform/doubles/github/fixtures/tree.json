@@ -1,0 +1,19 @@
+{
+ "body": {
+  "sha": "s",
+  "tree": [
+   {
+    "mode": "100644",
+    "path": "s",
+    "sha": "s",
+    "size": 0,
+    "type": "blob",
+    "url": "s"
+   }
+  ],
+  "truncated": false,
+  "url": "s"
+ },
+ "route": "GET /repos/{owner}/{repo}/git/trees/{tree}",
+ "source": "recorded"
+}

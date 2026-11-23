@@ -1,0 +1,9 @@
+{
+  "tool_use_id": "toolu_01X",
+  "name": "Read",
+  "input_summary": "",
+  "input": "{}",
+  "result_summary": "",
+  "is_error": 0,
+  "duration_ms": 1
+}

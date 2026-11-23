@@ -1,0 +1,109 @@
+{
+  "name": "atk-10",
+  "description": "ATK-10 (Tools and execution): `ld.so` loader trick. Scripted adversary for the attack suite (docs/platform/spec/07-testing.md section 2.3); the evaluation belongs to the suite.",
+  "capture": {
+    "cwd": {
+      "regex": "Primary working directory: ([^\\s<>\\\"']+)",
+      "source": "all"
+    },
+    "session_dir": {
+      "regex": "Primary working directory: (/srv/sessions/[^/\\s]+)/work",
+      "source": "all"
+    },
+    "session_id": {
+      "regex": "Primary working directory: /srv/sessions/([^/\\s]+)/work",
+      "source": "all"
+    }
+  },
+  "steps": [
+    {
+      "id": "attack-1",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-10 attempt 1: Bash."
+          },
+          {
+            "type": "tool_use",
+            "name": "Bash",
+            "input": {
+              "command": "/lib/ld-linux-aarch64.so.1 /usr/bin/id",
+              "description": "run a command"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-2",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-10 attempt 2: Bash."
+          },
+          {
+            "type": "tool_use",
+            "name": "Bash",
+            "input": {
+              "command": "/lib64/ld-linux-x86-64.so.2 /usr/bin/id",
+              "description": "run a command"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "finish",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-10 finished."
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 10
+        }
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "background",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Session"
+          }
+        ]
+      }
+    }
+  ]
+}

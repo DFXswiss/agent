@@ -1,0 +1,99 @@
+{
+  "genesis": {
+    "body": {
+      "org": "01930001-0000-7000-8000-000000000001",
+      "seq": 0,
+      "prev": "",
+      "type": "genesis",
+      "by": "0193000a-0000-7000-8000-00000000000a",
+      "ts": "2026-11-21T12:00:00.000Z",
+      "v": 1,
+      "subject": "0193000a-0000-7000-8000-00000000000a",
+      "default_wg": "01930002-0000-7000-8000-000000000002",
+      "private": true
+    },
+    "sig": "DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ"
+  },
+  "wraps": [
+    {
+      "scope": "wg",
+      "scope_id": "01930002-0000-7000-8000-000000000002",
+      "epoch": 1,
+      "recipient_id": "0193000a-0000-7000-8000-00000000000a",
+      "wrap": "EhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhI",
+      "sig": "ExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEw"
+    }
+  ],
+  "events": [
+    {
+      "header": {
+        "v": 1,
+        "alg": "A256GCM-HKDF",
+        "id": "0193002c-0000-7000-8000-00000000002c",
+        "org": "01930001-0000-7000-8000-000000000001",
+        "scope": "org",
+        "scope_id": "01930001-0000-7000-8000-000000000001",
+        "epoch": 1,
+        "wg": "",
+        "task": "",
+        "session": "",
+        "author": "0193000a-0000-7000-8000-00000000000a",
+        "kind": "org.profile",
+        "ref": "",
+        "ts": "2026-11-21T12:00:00.000Z",
+        "lh": 4,
+        "salt": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+        "nonce": "AgICAgICAgICAgIC"
+      },
+      "ct": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+      "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+    },
+    {
+      "header": {
+        "v": 1,
+        "alg": "A256GCM-HKDF",
+        "id": "0193002d-0000-7000-8000-00000000002d",
+        "org": "01930001-0000-7000-8000-000000000001",
+        "scope": "org",
+        "scope_id": "01930001-0000-7000-8000-000000000001",
+        "epoch": 1,
+        "wg": "01930002-0000-7000-8000-000000000002",
+        "task": "",
+        "session": "",
+        "author": "0193000a-0000-7000-8000-00000000000a",
+        "kind": "wg.profile",
+        "ref": "",
+        "ts": "2026-11-21T12:00:00.000Z",
+        "lh": 4,
+        "salt": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+        "nonce": "AgICAgICAgICAgIC"
+      },
+      "ct": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+      "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+    },
+    {
+      "header": {
+        "v": 1,
+        "alg": "A256GCM-HKDF",
+        "id": "0193002e-0000-7000-8000-00000000002e",
+        "org": "01930001-0000-7000-8000-000000000001",
+        "scope": "org",
+        "scope_id": "01930001-0000-7000-8000-000000000001",
+        "epoch": 1,
+        "wg": "",
+        "task": "",
+        "session": "",
+        "author": "0193000a-0000-7000-8000-00000000000a",
+        "kind": "member.profile",
+        "ref": "0193000a-0000-7000-8000-00000000000a",
+        "ts": "2026-11-21T12:00:00.000Z",
+        "lh": 4,
+        "salt": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+        "nonce": "AgICAgICAgICAgIC"
+      },
+      "ct": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+      "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+    }
+  ],
+  "platform_invite_id": "R0dHR0dHR0dHR0dHR0dHRw"
+}

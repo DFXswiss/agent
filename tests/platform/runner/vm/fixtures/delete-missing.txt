@@ -1,0 +1,2 @@
+time="2026-11-21T19:05:57+01:00" level=warning msg="Ignoring non-existent instance `wp-vm01-nosuch`"
+0

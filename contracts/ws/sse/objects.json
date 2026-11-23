@@ -1,0 +1,458 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ws/sse/objects.json",
+  "title": "browser stream definitions",
+  "description": "Frames of GET /v1/stream (03-api.md section 5). On the wire a frame is `event: <type>\\ndata: <json>\\n\\n`; the schemas describe {event, data}. Heartbeat comments (every 15 s) carry no data.",
+  "$defs": {
+    "data_hello": {
+      "type": "object",
+      "properties": {
+        "stream_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "heads": {
+          "type": "object",
+          "description": "scope ID -> head scope_seq",
+          "additionalProperties": {
+            "$ref": "../../common.json#/$defs/seq"
+          }
+        },
+        "hub_time": {
+          "$ref": "../../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "stream_id",
+        "heads",
+        "hub_time"
+      ],
+      "additionalProperties": false
+    },
+    "data_event": {
+      "type": "object",
+      "properties": {
+        "scope_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "scope_seq": {
+          "$ref": "../../common.json#/$defs/positive"
+        },
+        "event": {
+          "$ref": "../../events/objects.json#/$defs/event_other"
+        }
+      },
+      "required": [
+        "scope_id",
+        "scope_seq",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "data_terminal": {
+      "type": "object",
+      "properties": {
+        "scope_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "scope_seq": {
+          "$ref": "../../common.json#/$defs/positive"
+        },
+        "event": {
+          "$ref": "../../events/objects.json#/$defs/event_terminal"
+        }
+      },
+      "required": [
+        "scope_id",
+        "scope_seq",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "data_task": {
+      "$ref": "../../api/objects.json#/$defs/task_row"
+    },
+    "data_session": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "$ref": "../../api/objects.json#/$defs/session_row"
+        },
+        "transition": {
+          "anyOf": [
+            {
+              "$ref": "../../api/objects.json#/$defs/session_transition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "description": "usage counter of the session after a `usage` outbox item (HUB-14); absent in frames of state changes",
+          "anyOf": [
+            {
+              "$ref": "../../api/objects.json#/$defs/usage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "session",
+        "transition"
+      ],
+      "additionalProperties": false
+    },
+    "data_operation": {
+      "$ref": "../../api/objects.json#/$defs/operation_row"
+    },
+    "data_log": {
+      "type": "object",
+      "properties": {
+        "org_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "head": {
+          "$ref": "../../common.json#/$defs/log_head"
+        }
+      },
+      "required": [
+        "org_id",
+        "head"
+      ],
+      "additionalProperties": false
+    },
+    "data_wraps": {
+      "$ref": "../../common.json#/$defs/empty"
+    },
+    "data_notification": {
+      "$ref": "../../api/objects.json#/$defs/notification_row"
+    },
+    "data_device_response": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "../../common.json#/$defs/positive"
+        }
+      },
+      "required": [
+        "request_id",
+        "seq"
+      ],
+      "additionalProperties": false
+    },
+    "data_metrics": {
+      "type": "object",
+      "properties": {
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "entity_kind": {
+                "type": "string",
+                "enum": [
+                  "device",
+                  "vm",
+                  "session"
+                ]
+              },
+              "entity_id": {
+                "anyOf": [
+                  {
+                    "$ref": "../../common.json#/$defs/uuid"
+                  },
+                  {
+                    "$ref": "../../common.json#/$defs/vm_id"
+                  }
+                ]
+              },
+              "sample": {
+                "$ref": "../../api/objects.json#/$defs/metric_sample"
+              }
+            },
+            "required": [
+              "entity_kind",
+              "entity_id",
+              "sample"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 2000
+        }
+      },
+      "required": [
+        "samples"
+      ],
+      "additionalProperties": false
+    },
+    "data_resync": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": [
+            "buffer_overflow",
+            "replay_limit",
+            "hub_restart"
+          ]
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "frame_hello": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "hello"
+        },
+        "data": {
+          "$ref": "#/$defs/data_hello"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_event": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "event"
+        },
+        "data": {
+          "$ref": "#/$defs/data_event"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_terminal": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "terminal"
+        },
+        "data": {
+          "$ref": "#/$defs/data_terminal"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_task": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "task"
+        },
+        "data": {
+          "$ref": "#/$defs/data_task"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_session": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "session"
+        },
+        "data": {
+          "$ref": "#/$defs/data_session"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_operation": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "operation"
+        },
+        "data": {
+          "$ref": "#/$defs/data_operation"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_log": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "log"
+        },
+        "data": {
+          "$ref": "#/$defs/data_log"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_wraps": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "wraps"
+        },
+        "data": {
+          "$ref": "#/$defs/data_wraps"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_notification": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "notification"
+        },
+        "data": {
+          "$ref": "#/$defs/data_notification"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_device_response": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "device_response"
+        },
+        "data": {
+          "$ref": "#/$defs/data_device_response"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_metrics": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "metrics"
+        },
+        "data": {
+          "$ref": "#/$defs/data_metrics"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_resync": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "resync"
+        },
+        "data": {
+          "$ref": "#/$defs/data_resync"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame": {
+      "description": "one frame: event name and JSON data",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/frame_hello"
+        },
+        {
+          "$ref": "#/$defs/frame_event"
+        },
+        {
+          "$ref": "#/$defs/frame_terminal"
+        },
+        {
+          "$ref": "#/$defs/frame_task"
+        },
+        {
+          "$ref": "#/$defs/frame_session"
+        },
+        {
+          "$ref": "#/$defs/frame_operation"
+        },
+        {
+          "$ref": "#/$defs/frame_log"
+        },
+        {
+          "$ref": "#/$defs/frame_wraps"
+        },
+        {
+          "$ref": "#/$defs/frame_notification"
+        },
+        {
+          "$ref": "#/$defs/frame_device_response"
+        },
+        {
+          "$ref": "#/$defs/frame_metrics"
+        },
+        {
+          "$ref": "#/$defs/frame_resync"
+        }
+      ]
+    }
+  }
+}

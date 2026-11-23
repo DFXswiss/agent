@@ -1,0 +1,675 @@
+{
+  "scenario": {
+    "name": "wire-forms",
+    "description": "Every answer form of the double: streamed text, tools, thinking, a JSON message, HTTP and stream errors, max_tokens.",
+    "steps": [
+      {
+        "id": "text",
+        "expect": {
+          "stream": true,
+          "user_text_contains": "WIRE-1"
+        },
+        "reply": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Hello from the double, streamed in chunks."
+            }
+          ],
+          "chunk_size": 8,
+          "usage": {
+            "input_tokens": 1200,
+            "cache_creation_input_tokens": 3000,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 40
+          }
+        }
+      },
+      {
+        "id": "tools",
+        "expect": {
+          "stream": true,
+          "tools_include": [
+            "Write",
+            "Read"
+          ]
+        },
+        "reply": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Writing in ${cwd}."
+            },
+            {
+              "type": "tool_use",
+              "name": "Write",
+              "input": {
+                "file_path": "${cwd}/notes.txt",
+                "content": "alpha\nbeta\n"
+              }
+            },
+            {
+              "type": "tool_use",
+              "name": "Read",
+              "input": {
+                "file_path": "${cwd}/notes.txt"
+              }
+            }
+          ],
+          "usage": {
+            "cache_read_input_tokens": 4200,
+            "output_tokens": 20
+          }
+        }
+      },
+      {
+        "id": "think",
+        "expect": {
+          "tool_result_contains": "alpha"
+        },
+        "reply": {
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "The file holds two lines."
+            },
+            {
+              "type": "text",
+              "text": "Done: alpha and beta."
+            }
+          ]
+        }
+      },
+      {
+        "id": "plain",
+        "expect": {
+          "stream": false
+        },
+        "reply": {
+          "content": [
+            {
+              "type": "text",
+              "text": "A JSON answer."
+            }
+          ],
+          "model": "other-model",
+          "usage": {
+            "input_tokens": 10,
+            "output_tokens": 4,
+            "service_tier": 1
+          }
+        }
+      },
+      {
+        "id": "overload",
+        "error": {
+          "status": 529,
+          "type": "overloaded_error",
+          "message": "Overloaded (scripted)",
+          "headers": {
+            "retry-after": "1"
+          }
+        }
+      },
+      {
+        "id": "stream_err",
+        "error": {
+          "status": 529,
+          "type": "overloaded_error",
+          "message": "mid-stream",
+          "in_stream": true
+        }
+      },
+      {
+        "id": "max",
+        "reply": {
+          "content": [
+            {
+              "type": "text",
+              "text": "partial"
+            }
+          ],
+          "stop_reason": "max_tokens"
+        }
+      }
+    ]
+  },
+  "requests": [
+    {
+      "step": "text",
+      "body": {
+        "model": "double-model",
+        "max_tokens": 32000,
+        "stream": true,
+        "system": [
+          {
+            "type": "text",
+            "text": "x-anthropic-billing-header: cc_version=2.1.330"
+          },
+          {
+            "type": "text",
+            "text": "You are Claude Code.",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "tools": [
+          {
+            "name": "Read",
+            "description": "Read a file",
+            "input_schema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "Write",
+            "description": "Write a file",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "thinking": {
+          "type": "adaptive",
+          "display": "updates"
+        },
+        "output_config": {
+          "effort": "high"
+        },
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "text",
+                "text": "Primary working directory: /work/space"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "WIRE-1: say hello"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "step": "tools",
+      "body": {
+        "model": "double-model",
+        "max_tokens": 32000,
+        "stream": true,
+        "system": [
+          {
+            "type": "text",
+            "text": "x-anthropic-billing-header: cc_version=2.1.330"
+          },
+          {
+            "type": "text",
+            "text": "You are Claude Code.",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "tools": [
+          {
+            "name": "Read",
+            "description": "Read a file",
+            "input_schema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "Write",
+            "description": "Write a file",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "thinking": {
+          "type": "adaptive",
+          "display": "updates"
+        },
+        "output_config": {
+          "effort": "high"
+        },
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "text",
+                "text": "Primary working directory: /work/space"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "WIRE-2: write and read notes.txt"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "step": "think",
+      "body": {
+        "model": "double-model",
+        "max_tokens": 32000,
+        "stream": true,
+        "system": [
+          {
+            "type": "text",
+            "text": "x-anthropic-billing-header: cc_version=2.1.330"
+          },
+          {
+            "type": "text",
+            "text": "You are Claude Code.",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "tools": [
+          {
+            "name": "Read",
+            "description": "Read a file",
+            "input_schema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "Write",
+            "description": "Write a file",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "thinking": {
+          "type": "adaptive",
+          "display": "updates"
+        },
+        "output_config": {
+          "effort": "high"
+        },
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "text",
+                "text": "Primary working directory: /work/space"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "WIRE-2: write and read notes.txt"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_double_tools_1",
+                "name": "Write",
+                "input": {}
+              },
+              {
+                "type": "tool_use",
+                "id": "toolu_double_tools_2",
+                "name": "Read",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_double_tools_1",
+                "content": "File created"
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_double_tools_2",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "1\talpha\n2\tbeta\n"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "step": "plain",
+      "body": {
+        "model": "double-model",
+        "max_tokens": 32000,
+        "stream": false,
+        "system": [
+          {
+            "type": "text",
+            "text": "x-anthropic-billing-header: cc_version=2.1.330"
+          },
+          {
+            "type": "text",
+            "text": "You are Claude Code.",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "tools": [
+          {
+            "name": "Read",
+            "description": "Read a file",
+            "input_schema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "Write",
+            "description": "Write a file",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "thinking": {
+          "type": "adaptive",
+          "display": "updates"
+        },
+        "output_config": {
+          "effort": "high"
+        },
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "text",
+                "text": "Primary working directory: /work/space"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "WIRE-3: plain"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "step": "overload",
+      "body": {
+        "model": "double-model",
+        "max_tokens": 32000,
+        "stream": true,
+        "system": [
+          {
+            "type": "text",
+            "text": "x-anthropic-billing-header: cc_version=2.1.330"
+          },
+          {
+            "type": "text",
+            "text": "You are Claude Code.",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "tools": [
+          {
+            "name": "Read",
+            "description": "Read a file",
+            "input_schema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "Write",
+            "description": "Write a file",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "thinking": {
+          "type": "adaptive",
+          "display": "updates"
+        },
+        "output_config": {
+          "effort": "high"
+        },
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "text",
+                "text": "Primary working directory: /work/space"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "WIRE-4: busy"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "step": "stream_err",
+      "body": {
+        "model": "double-model",
+        "max_tokens": 32000,
+        "stream": true,
+        "system": [
+          {
+            "type": "text",
+            "text": "x-anthropic-billing-header: cc_version=2.1.330"
+          },
+          {
+            "type": "text",
+            "text": "You are Claude Code.",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "tools": [
+          {
+            "name": "Read",
+            "description": "Read a file",
+            "input_schema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "Write",
+            "description": "Write a file",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "thinking": {
+          "type": "adaptive",
+          "display": "updates"
+        },
+        "output_config": {
+          "effort": "high"
+        },
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "text",
+                "text": "Primary working directory: /work/space"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "WIRE-5: stream error"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "step": "max",
+      "body": {
+        "model": "double-model",
+        "max_tokens": 32000,
+        "stream": true,
+        "system": [
+          {
+            "type": "text",
+            "text": "x-anthropic-billing-header: cc_version=2.1.330"
+          },
+          {
+            "type": "text",
+            "text": "You are Claude Code.",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "tools": [
+          {
+            "name": "Read",
+            "description": "Read a file",
+            "input_schema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "Write",
+            "description": "Write a file",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "thinking": {
+          "type": "adaptive",
+          "display": "updates"
+        },
+        "output_config": {
+          "effort": "high"
+        },
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "text",
+                "text": "Primary working directory: /work/space"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "WIRE-6: cut"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "responses": [
+    {
+      "step": "text",
+      "status": 200,
+      "content_type": "text/event-stream; charset=utf-8",
+      "retry_after": null,
+      "file": "wire-01-text.sse"
+    },
+    {
+      "step": "tools",
+      "status": 200,
+      "content_type": "text/event-stream; charset=utf-8",
+      "retry_after": null,
+      "file": "wire-02-tools.sse"
+    },
+    {
+      "step": "think",
+      "status": 200,
+      "content_type": "text/event-stream; charset=utf-8",
+      "retry_after": null,
+      "file": "wire-03-think.sse"
+    },
+    {
+      "step": "plain",
+      "status": 200,
+      "content_type": "application/json",
+      "retry_after": null,
+      "file": "wire-04-plain.json"
+    },
+    {
+      "step": "overload",
+      "status": 529,
+      "content_type": "application/json",
+      "retry_after": "1",
+      "file": "wire-05-overload.json"
+    },
+    {
+      "step": "stream_err",
+      "status": 200,
+      "content_type": "text/event-stream; charset=utf-8",
+      "retry_after": null,
+      "file": "wire-06-stream_err.sse"
+    },
+    {
+      "step": "max",
+      "status": 200,
+      "content_type": "text/event-stream; charset=utf-8",
+      "retry_after": null,
+      "file": "wire-07-max.sse"
+    }
+  ]
+}

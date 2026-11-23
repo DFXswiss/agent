@@ -1,0 +1,325 @@
+{
+  "name": "atk-34",
+  "description": "ATK-34 (Operations, MCP, gateway and files): symlink escape through workspace links. Scripted adversary for the attack suite (docs/platform/spec/07-testing.md section 2.3); the evaluation belongs to the suite.",
+  "capture": {
+    "cwd": {
+      "regex": "Primary working directory: ([^\\s<>\\\"']+)",
+      "source": "all"
+    },
+    "session_dir": {
+      "regex": "Primary working directory: (/srv/sessions/[^/\\s]+)/work",
+      "source": "all"
+    },
+    "session_id": {
+      "regex": "Primary working directory: /srv/sessions/([^/\\s]+)/work",
+      "source": "all"
+    }
+  },
+  "steps": [
+    {
+      "id": "attack-1",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-34 attempt 1: Read."
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "${cwd}/etc-link/shadow"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-2",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-34 attempt 2: Read."
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "${cwd}/victim-link/secret.txt"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-3",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-34 attempt 3: Read."
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "${cwd}/guest-link/control-token"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-4",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-34 attempt 4: Read."
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "${cwd}/harness-link/${foreign_session}.md"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-5",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-34 attempt 5: Read."
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "${cwd}/state-link/journal.db"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-6",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-34 attempt 6: Grep."
+          },
+          {
+            "type": "tool_use",
+            "name": "Grep",
+            "input": {
+              "pattern": "CANARY",
+              "path": "${cwd}/victim-link"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-7",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-34 attempt 7: Glob."
+          },
+          {
+            "type": "tool_use",
+            "name": "Glob",
+            "input": {
+              "pattern": "**/*",
+              "path": "${cwd}/guest-link"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-8",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-34 attempt 8: Write."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/victim-link/planted.txt",
+              "content": "written through a link\n"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-9",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-34 attempt 9: Write."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/etc-link/atk34-written",
+              "content": "written through a link\n"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-10",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-34 attempt 10: Edit."
+          },
+          {
+            "type": "tool_use",
+            "name": "Edit",
+            "input": {
+              "file_path": "${cwd}/victim-link/secret.txt",
+              "old_string": "ATK",
+              "new_string": "EDITED"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "finish",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-34 finished."
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 10
+        }
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "background",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Session"
+          }
+        ]
+      }
+    }
+  ],
+  "variables": {
+    "foreign_work": "/srv/sessions/00000000-0000-4000-8000-0000000000b2/work",
+    "foreign_session": "00000000-0000-4000-8000-0000000000b2"
+  }
+}

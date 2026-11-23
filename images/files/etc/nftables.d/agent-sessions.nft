@@ -1,0 +1,16 @@
+# Egress of the session sandboxes and of the guest API process (docs/platform/spec/05-runner.md section 4.3).
+# Session users (UID 20000-29999) reach only 127.0.0.1:7700; the platform user reaches HTTPS and DNS.
+table inet agent_sessions {
+  chain out {
+    type filter hook output priority 0; policy accept;
+    meta skuid 20000-29999 oif lo tcp dport 7700 accept
+    meta skuid 20000-29999 ct state established,related accept
+    meta skuid 20000-29999 counter drop
+    meta skuid "platform" tcp dport 443 accept
+    meta skuid "platform" udp dport 53 accept
+    meta skuid "platform" tcp dport 53 accept
+    meta skuid "platform" oif lo accept
+    meta skuid "platform" ct state established,related accept
+    meta skuid "platform" counter drop
+  }
+}

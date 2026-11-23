@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-audit.response.json",
+  "title": "GET /v1/orgs/{org}/audit response",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/audit (03-api.md section 4.11).",
+  "type": "object",
+  "properties": {
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "$ref": "../common.json#/$defs/positive"
+          },
+          "at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "actor_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "actor_kind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "device",
+              "session",
+              "hub",
+              "operator",
+              "anonymous"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "pattern": "^[a-z_]+(\\.[a-z_]+)*$",
+            "maxLength": 96
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "denied",
+              "rejected",
+              "duplicate",
+              "failed"
+            ]
+          },
+          "org_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wg_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z_]{1,32}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[ -~]{1,128}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "detail": {
+            "type": "object",
+            "description": "metadata only; per-action schemas: contracts/audit/ (CTR-02)",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[ -~]*$",
+                  "maxLength": 256
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "seq",
+          "at",
+          "actor_id",
+          "actor_kind",
+          "action",
+          "result",
+          "org_id",
+          "wg_id",
+          "task_id",
+          "session_id",
+          "device_id",
+          "target_kind",
+          "target_id",
+          "detail",
+          "event_id"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 200
+    },
+    "next_before": {
+      "$ref": "../common.json#/$defs/next_before"
+    }
+  },
+  "required": [
+    "rows",
+    "next_before"
+  ],
+  "additionalProperties": false
+}

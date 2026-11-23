@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/recovery-finish.request.json",
+  "title": "POST /v1/recovery/finish request",
+  "description": "Body of POST /v1/recovery/finish (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "challenge": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    },
+    "proof": {
+      "$ref": "../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "user_id",
+    "challenge",
+    "proof"
+  ],
+  "additionalProperties": false
+}

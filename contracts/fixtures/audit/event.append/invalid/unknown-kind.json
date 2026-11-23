@@ -1,0 +1,6 @@
+{
+  "kind": "secret",
+  "scope": "wg",
+  "scope_seq": 1,
+  "ct_bytes": 1
+}

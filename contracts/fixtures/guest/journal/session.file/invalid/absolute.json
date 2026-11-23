@@ -1,0 +1,6 @@
+{
+  "path": "/etc/passwd",
+  "op": "write",
+  "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "size": 1
+}

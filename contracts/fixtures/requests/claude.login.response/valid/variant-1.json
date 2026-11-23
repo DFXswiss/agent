@@ -1,0 +1,5 @@
+{
+  "step": "authorize",
+  "url": "http://127.0.0.1:20185/oauth/authorize",
+  "automation": "failed"
+}

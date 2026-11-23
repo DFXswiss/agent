@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/sessions-create.request.json",
+  "title": "guest POST /v1/sessions request",
+  "description": "Request of POST /v1/sessions (03-api.md section 7.1).",
+  "type": "object",
+  "properties": {
+    "session_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "task_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "parent_session_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2
+    },
+    "harness": {
+      "type": "object",
+      "properties": {
+        "context_markdown": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        }
+      },
+      "required": [
+        "context_markdown"
+      ],
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "access": {
+          "$ref": "../common.json#/$defs/model_access"
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/model_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "env": {
+          "type": "object",
+          "description": "model environment of 05-runner.md section 10.3 (only for the platform access); every other variable is fixed by the guest",
+          "properties": {
+            "ANTHROPIC_MODEL": {
+              "type": "string",
+              "pattern": "^[ -~]+$",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": {
+              "type": "string",
+              "pattern": "^[ -~]+$",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": {
+              "type": "string",
+              "pattern": "^[ -~]+$",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": {
+              "type": "string",
+              "pattern": "^[ -~]+$",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "CLAUDE_CODE_SUBAGENT_MODEL": {
+              "type": "string",
+              "pattern": "^[ -~]+$",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS": {
+              "type": "string",
+              "pattern": "^[ -~]+$",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS": {
+              "type": "string",
+              "pattern": "^[ -~]+$",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "access",
+        "model_id",
+        "env"
+      ],
+      "additionalProperties": false
+    },
+    "resume_claude_session_id": {
+      "$ref": "objects.json#/$defs/claude_session_id"
+    },
+    "initial_prompt": {
+      "type": "object",
+      "properties": {
+        "prompt_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "text": {
+          "$ref": "objects.json#/$defs/text_256k"
+        }
+      },
+      "required": [
+        "prompt_id",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "memory_max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "cpu_quota": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000,
+          "description": "CPUQuota in percent of one CPU"
+        },
+        "tasks_max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "runtime_max_sec": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 31536000
+        }
+      },
+      "required": [
+        "memory_max",
+        "cpu_quota",
+        "tasks_max",
+        "runtime_max_sec"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "session_id",
+    "task_id",
+    "parent_session_id",
+    "depth",
+    "harness",
+    "model",
+    "limits"
+  ],
+  "additionalProperties": false
+}

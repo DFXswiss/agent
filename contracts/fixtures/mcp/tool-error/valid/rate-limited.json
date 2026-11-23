@@ -1,0 +1,4 @@
+{
+  "error": "rate_limited",
+  "message": "Too many platform reads of this session; try again in a few seconds."
+}

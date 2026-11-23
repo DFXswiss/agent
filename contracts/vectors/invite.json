@@ -1,0 +1,215 @@
+{
+  "about": "Invitation code text, derivations, sealed package and registration proof of 04-crypto.md sections 3 and 4.6 (proof: ADR-043).",
+  "code": "M2rYJQhngn-LKLSqKSTJsg",
+  "invalid": [
+    {
+      "args": {
+        "text": "GNVNQ-JIIM6-BH7CZ-IWSVC-SJGJW"
+      },
+      "error": "invite_code_length",
+      "name": "code_25_chars",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "text": "GNVNQ-JIIM6-BH7CZ-IWSVC-SJGJWIA"
+      },
+      "error": "invite_code_length",
+      "name": "code_27_chars",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "text": "1NVNQ-JIIM6-BH7CZ-IWSVC-SJGJWI"
+      },
+      "error": "invite_code_invalid",
+      "name": "code_digit_one",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "text": "GNVNQ-JIIM6-BH7CZ-IWSVC-SJGJWI======"
+      },
+      "error": "invite_code_invalid",
+      "name": "code_padding",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "text": "GNVNQ-JIIM6-BH7CZ-IWSVC-SJGJWB"
+      },
+      "error": "invite_code_invalid",
+      "name": "code_trailing_bits",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "text": "GNVNQ\tJIIM6\tBH7CZ\tIWSVC\tSJGJWI"
+      },
+      "error": "invite_code_invalid",
+      "name": "code_other_whitespace",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "text": "ſNVNQ-JIIM6-BH7CZ-IWSVC-SJGJWI"
+      },
+      "error": "invite_code_invalid",
+      "name": "code_long_s_folds_to_s",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "code": "pqoFstzMkitN3Iq8mnv1Rg",
+        "sealed": "blLz3jmB83EAEvXztBafnET_ajWPFV_GMShDWROtkanjyAF24Jyvs_I1LC_yn03qLye1W4Sez0ObcYQR-4qJpdpeWRVHTEJy5AU560fouxf2b0TtWPdlACWTAMXmZiUQICAvXsDAvdmcPBpRbKvVPQ72Bca4OTEOKCePBCOoD1B1uwFAvU2JjNa0HRFjs64_8oUWQVtQUyl1heUq15WQpHXT3fVMWqaAmIaUgx8fXIqv3hiGIMT4aPaEZVzQ7z4nqYotjQ30NLc_y1ynypdzFaX1IO7fnQCV-lq9eYBdo6TX0GW9vj09EtvnvMK5BfdiMIi5D5-RF-01iuSdaqPObIMJb3UmTyfBQQklx9TIKxGszTVEnQMjxlmrzwpC0ddVWFr0saTOSOAbMN576osdkGHAbH2GzCPisf4fSusuVSeiL0ITp382nMztXuEU4K3te45_R0MwG43tBWCrg3U7hP4BmYaSutD0Jihwvh567q6ZFNmTuh9azxiVs7IIxXQeyPTCJH2WJi-X_tfrDRB-wdCLgE1a_qjJCrXI2XmjBO4tbSvDi8Gk1xuNvxNmCRw4FDd8p1RS50aiwypi5yZMgvnJL7EhleFKk5tZ3D70SUoXuURSawui3pTiNuSgrqzOac366dqZ1dtCCZQr-Gk6urxY-Rmi1pt0i5ajHQM1o3d-Bksz6XD4ZvdLPvqnd2iy1yvic41rvWy9veEsXdWwLaIf9Nz3K-U5Zs2eXxi8mExBYmx7uOEBXxVfLJNPuY4yGIKvqHaGyGjjHgl9--Dz_pTmQZhTR3Nqq5XpoG0PzJIdkD45ktUisFquHoro7FHXygPfNkVowgydHdEKo8RAMZcj-noMWvUeiXLttXtTINck45dcfkA"
+      },
+      "error": "invite_code_invalid",
+      "name": "package_other_code",
+      "op": "open_package"
+    },
+    {
+      "args": {
+        "code": "M2rYJQhngn-LKLSqKSTJsg",
+        "sealed": "blLz3jmB83EAEvXztBaf"
+      },
+      "error": "invite_code_invalid",
+      "name": "package_truncated",
+      "op": "open_package"
+    },
+    {
+      "args": {
+        "code": "M2rYJQhngn-LKLSqKSTJsg",
+        "sealed": "blLz3jmB83EAEvXztBafnET_ajWPFV_GMShDWROtkanjyAF24Jyvs_I1LC_yn03qLye1W4Sez0ObcYQR-4qJpdpeWRVHTEJy5AU560fouxf2b0TtWPdlACWTAMXmZiUQICAvXsDAvdmcPBpRbKvVPQ72Bca4OTEOKCePBCOoD1B1uwFAvU2JjNa0HRFjs64_8oUWQVtQUyl1heUq15WQpHXT3fVMWqaAmIaUgx8fXIqv3hiGIMT4aPaEZVzQ7z4nqYotjQ30NLc_y1ynypdzFaX1IO7fnQCV-lq9eYBdo6TX0GW9vj09EtvnvMK5BfdiMIi5D5-RF-01iuSdaqPObIMJb3UmTyfBQQklx9TIKxGszTVEnQMjxlmrzwpC0ddVWFr0saTOSOAbMN576osdkGHAbH2GzCPisf4fSusuVSeiL0ITp382nMztXuEU4K3te45_R0MwG43tBWCrg3U7hP4BmYaSutD0Jihwvh567q6ZFNmTuh9azxiVs7IIxXQeyPTCJH2WJi-X_tfrDRB-wdCLgE1a_qjJCrXI2XmjBO4tbSvDi8Gk1xuNvxNmCRw4FDd8p1RS50aiwypi5yZMgvnJL7EhleFKk5tZ3D70SUoXuURSawui3pTiNuSgrqzOac366dqZ1dtCCZQr-Gk6urxY-Rmi1pt0i5ajHQM1o3d-Bksz6XD4ZvdLPvqnd2iy1yvic41rvWy9veEsXdWwLaIf9Nz3K-U5Zs2eXxi8mExBYmx7uOEBXxVfLJNPuY4yG4KvqHaGyGjjHgl9--Dz_pTmQZhTR3Nqq5XpoG0PzJIdkD45ktUisFquHoro7FHXygPfNkVowgydHdEKo8RAMZcj-noMWlORtRYvSlGEVGjMyGBSHVs"
+      },
+      "error": "header_invalid",
+      "name": "package_version_2",
+      "op": "open_package"
+    },
+    {
+      "args": {
+        "challenge": "rsebmzjO67va26ekVLDQ81mLxn39JeymTrseHIe1j6Y",
+        "inv_sig": "J_3iewmEvG3EHnYbGu_Tnu7GqNWwothFZpenAEv7hK3YVIIJYkKyWui8GvRuKvD3k6-1amke9drkAuBZg8BLBg",
+        "pk_inv": "9iApfrKNjBORGcYZ0TfHWJdLU79nQ25bZ0c9bTGjU1o",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "signature_invalid",
+      "name": "register_other_challenge",
+      "op": "verify_register"
+    },
+    {
+      "args": {
+        "challenge": "KupSmrSnSXB0sCm2G90IidwsSbnRRHSu8kQ41evwDyU",
+        "inv_sig": "J_3iewmEvG3EHnYbGu_Tnu7GqNWwothFZpenAEv7hK3YVIIJYkKyWui8GvRuKvD3k6-1amke9drkAuBZg8BLBg",
+        "pk_inv": "9iApfrKNjBORGcYZ0TfHWJdLU79nQ25bZ0c9bTGjU1o",
+        "user_id": "01a1ee56-5e00-7476-87e0-4918c293c341"
+      },
+      "error": "signature_invalid",
+      "name": "register_other_user",
+      "op": "verify_register"
+    },
+    {
+      "args": {
+        "challenge": "KupSmrSnSXB0sCm2G90IidwsSbnRRHSu8kQ41evwDyU",
+        "inv_sig": "J_3iewmEvG3EHnYbGu_Tnu7GqNWwothFZpenAEv7hK3YVIIJYkKyWui8GvRuKvD3k6-1amke9drkAuBZg8BLBg",
+        "pk_inv": "5ZpEqtNeO9hVAuRVK8MKAt9Lzeet68I1_T1Ahbq0TVk",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "signature_invalid",
+      "name": "register_other_code",
+      "op": "verify_register"
+    },
+    {
+      "args": {
+        "challenge": "KupSmrSnSXB0sCm2G90IiQ",
+        "inv_sig": "J_3iewmEvG3EHnYbGu_Tnu7GqNWwothFZpenAEv7hK3YVIIJYkKyWui8GvRuKvD3k6-1amke9drkAuBZg8BLBg",
+        "pk_inv": "9iApfrKNjBORGcYZ0TfHWJdLU79nQ25bZ0c9bTGjU1o",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "header_invalid",
+      "name": "register_short_challenge",
+      "op": "verify_register"
+    },
+    {
+      "args": {
+        "challenge": "KupSmrSnSXB0sCm2G90IidwsSbnRRHSu8kQ41evwDyU",
+        "inv_sig": "J_3iewmEvG3EHnYbGu_Tnu7GqNWwothFZpenAEv7hK3YVIIJYkKyWui8GvRuKvD3k6-1amke9drkAuBZg8BLBg",
+        "pk_inv": "9iApfrKNjBORGcYZ0TfHWJdLU79nQ25bZ0c9bTGjU1o",
+        "user_id": "ä"
+      },
+      "error": "non_ascii",
+      "name": "register_non_ascii_user",
+      "op": "verify_register"
+    },
+    {
+      "args": {
+        "challenge": "KupSmrSnSXB0sCm2G90IidwsSbnRRHSu8kQ41evwDyU",
+        "inv_sig": "J_3iewmEvG3EHnYbGu_Tnu7GqNWwothFZpenAEv7hK3YVIIJYkKyWui8GvRuKvD3k6-1amke9drkAuBZg8BLBg",
+        "pk_inv": "9iApfrKNjBORGcYZ0TfHWJdLU79nQ25bZ0c9bTGjU1o",
+        "user_id": ""
+      },
+      "error": "header_invalid",
+      "name": "register_empty_user",
+      "op": "verify_register"
+    }
+  ],
+  "invite_id": "vtpuf5NcUZGRaGRAMT35HA",
+  "nonce": "blLz3jmB83EAEvXz",
+  "package": {
+    "founder": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+    "head": {
+      "hash": "JgOT9clVoJz8wesW9-tnHkfAjC31dTuLiqw9S6Jibhs",
+      "seq": 4
+    },
+    "hub_key": {
+      "id": "hub-1",
+      "public_key": "5FSRiY-2FrgUdVSNTzC3dnzIW9EBZOxYgrT_DLlIL-I"
+    },
+    "keys": [
+      {
+        "epoch": 1,
+        "key": "uRoFY2lF3XqYPmAVbYe_GgJm5RwwiOEfvA1x5n_QXrE",
+        "scope": "org",
+        "scope_id": "01a1ee56-5e00-709e-89f1-23840ae4c726"
+      },
+      {
+        "epoch": 3,
+        "key": "-jx7nbFaDSrHGz_jQKhEuGp50nwhtK4GxbHxZ8ZmHlI",
+        "scope": "wg",
+        "scope_id": "01a1ee56-5e00-7dc3-902a-8d9c4386d111"
+      }
+    ],
+    "org": "01a1ee56-5e00-709e-89f1-23840ae4c726",
+    "org_name": "Gemüsekooperative Zürich",
+    "v": 1,
+    "wg_names": {
+      "01a1ee56-5e00-7dc3-902a-8d9c4386d111": "Allgemein ✓"
+    }
+  },
+  "package_aad": "YWdlbnQuZGZ4LnN3aXNzL3YxL2ludml0ZS1wYWNrYWdlAHZ0cHVmNU5jVVpHUmFHUkFNVDM1SEE",
+  "package_body_json": "{\"founder\":\"_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk\",\"head\":{\"hash\":\"JgOT9clVoJz8wesW9-tnHkfAjC31dTuLiqw9S6Jibhs\",\"seq\":4},\"hub_key\":{\"id\":\"hub-1\",\"public_key\":\"5FSRiY-2FrgUdVSNTzC3dnzIW9EBZOxYgrT_DLlIL-I\"},\"keys\":[{\"epoch\":1,\"key\":\"uRoFY2lF3XqYPmAVbYe_GgJm5RwwiOEfvA1x5n_QXrE\",\"scope\":\"org\",\"scope_id\":\"01a1ee56-5e00-709e-89f1-23840ae4c726\"},{\"epoch\":3,\"key\":\"-jx7nbFaDSrHGz_jQKhEuGp50nwhtK4GxbHxZ8ZmHlI\",\"scope\":\"wg\",\"scope_id\":\"01a1ee56-5e00-7dc3-902a-8d9c4386d111\"}],\"org\":\"01a1ee56-5e00-709e-89f1-23840ae4c726\",\"org_name\":\"Gemüsekooperative Zürich\",\"v\":1,\"wg_names\":{\"01a1ee56-5e00-7dc3-902a-8d9c4386d111\":\"Allgemein ✓\"}}",
+  "package_key": "m94jEb-qcCkQsy-c2wqQph8ixO9ANY067n9_pBFjyLc",
+  "parse": [
+    {
+      "code": "M2rYJQhngn-LKLSqKSTJsg",
+      "text": "GNVNQ-JIIM6-BH7CZ-IWSVC-SJGJWI"
+    },
+    {
+      "code": "M2rYJQhngn-LKLSqKSTJsg",
+      "text": "gnvnq jiim6 bh7cz iwsvc sjgjwi"
+    },
+    {
+      "code": "M2rYJQhngn-LKLSqKSTJsg",
+      "text": "GNVNQJIIM6BH7CZIWSVCSJGJWI"
+    }
+  ],
+  "pk_inv": "9iApfrKNjBORGcYZ0TfHWJdLU79nQ25bZ0c9bTGjU1o",
+  "register": {
+    "challenge": "KupSmrSnSXB0sCm2G90IidwsSbnRRHSu8kQ41evwDyU",
+    "inv_sig": "J_3iewmEvG3EHnYbGu_Tnu7GqNWwothFZpenAEv7hK3YVIIJYkKyWui8GvRuKvD3k6-1amke9drkAuBZg8BLBg",
+    "pk_inv": "9iApfrKNjBORGcYZ0TfHWJdLU79nQ25bZ0c9bTGjU1o",
+    "text": "YWdlbnQuZGZ4LnN3aXNzL3YxL2ludml0ZS1yZWdpc3RlcgAwMWExZWU1Ni01ZTAwLTc3YmUtOGNmMy0xZjI3YmIwZTkyYTIAKupSmrSnSXB0sCm2G90IidwsSbnRRHSu8kQ41evwDyU",
+    "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+  },
+  "sealed": "blLz3jmB83EAEvXztBafnET_ajWPFV_GMShDWROtkanjyAF24Jyvs_I1LC_yn03qLye1W4Sez0ObcYQR-4qJpdpeWRVHTEJy5AU560fouxf2b0TtWPdlACWTAMXmZiUQICAvXsDAvdmcPBpRbKvVPQ72Bca4OTEOKCePBCOoD1B1uwFAvU2JjNa0HRFjs64_8oUWQVtQUyl1heUq15WQpHXT3fVMWqaAmIaUgx8fXIqv3hiGIMT4aPaEZVzQ7z4nqYotjQ30NLc_y1ynypdzFaX1IO7fnQCV-lq9eYBdo6TX0GW9vj09EtvnvMK5BfdiMIi5D5-RF-01iuSdaqPObIMJb3UmTyfBQQklx9TIKxGszTVEnQMjxlmrzwpC0ddVWFr0saTOSOAbMN576osdkGHAbH2GzCPisf4fSusuVSeiL0ITp382nMztXuEU4K3te45_R0MwG43tBWCrg3U7hP4BmYaSutD0Jihwvh567q6ZFNmTuh9azxiVs7IIxXQeyPTCJH2WJi-X_tfrDRB-wdCLgE1a_qjJCrXI2XmjBO4tbSvDi8Gk1xuNvxNmCRw4FDd8p1RS50aiwypi5yZMgvnJL7EhleFKk5tZ3D70SUoXuURSawui3pTiNuSgrqzOac366dqZ1dtCCZQr-Gk6urxY-Rmi1pt0i5ajHQM1o3d-Bksz6XD4ZvdLPvqnd2iy1yvic41rvWy9veEsXdWwLaIf9Nz3K-U5Zs2eXxi8mExBYmx7uOEBXxVfLJNPuY4yGIKvqHaGyGjjHgl9--Dz_pTmQZhTR3Nqq5XpoG0PzJIdkD45ktUisFquHoro7FHXygPfNkVowgydHdEKo8RAMZcj-noMWvUeiXLttXtTINck45dcfkA",
+  "text": "GNVNQ-JIIM6-BH7CZ-IWSVC-SJGJWI"
+}

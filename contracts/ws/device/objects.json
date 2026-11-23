@@ -1,0 +1,413 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ws/device/objects.json",
+  "title": "device WebSocket definitions",
+  "description": "Frames of GET /v1/device/ws (03-api.md section 6.2): content-free hints from the hub, heartbeats from the device.",
+  "$defs": {
+    "hint_hello": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "hello"
+        },
+        "hub_time": {
+          "$ref": "../../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "type",
+        "hub_time"
+      ],
+      "additionalProperties": false
+    },
+    "hint_reconcile": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "reconcile"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "hint_session_start": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "session.start"
+        },
+        "session_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "type",
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
+    "hint_session_control": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "session.control"
+        },
+        "session_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "interrupt",
+            "stop"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "session_id",
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "hint_prompt": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "prompt"
+        },
+        "session_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "scope_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "scope_seq": {
+          "$ref": "../../common.json#/$defs/positive"
+        }
+      },
+      "required": [
+        "type",
+        "session_id",
+        "scope_id",
+        "scope_seq"
+      ],
+      "additionalProperties": false
+    },
+    "hint_events": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "events"
+        },
+        "scope_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "scope_seq": {
+          "$ref": "../../common.json#/$defs/positive"
+        }
+      },
+      "required": [
+        "type",
+        "scope_id",
+        "scope_seq"
+      ],
+      "additionalProperties": false
+    },
+    "hint_log": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "log"
+        },
+        "org_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "../../common.json#/$defs/seq"
+        }
+      },
+      "required": [
+        "type",
+        "org_id",
+        "seq"
+      ],
+      "additionalProperties": false
+    },
+    "hint_wraps": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "wraps"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "hint_credentials": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "credentials"
+        },
+        "owner_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "type",
+        "owner_id"
+      ],
+      "additionalProperties": false
+    },
+    "hint_request": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "type",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "hint_decertified": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "decertified"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "hint_ping": {
+      "description": "content-free whiteboard ping (03-api.md section 4.9); wg_id and task_id by level",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "ping"
+            },
+            "org_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "level": {
+              "type": "string",
+              "const": "org"
+            },
+            "entry_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "type",
+            "org_id",
+            "level",
+            "entry_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "ping"
+            },
+            "org_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "wg_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "level": {
+              "type": "string",
+              "const": "workgroup"
+            },
+            "entry_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "type",
+            "org_id",
+            "wg_id",
+            "level",
+            "entry_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "ping"
+            },
+            "org_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "wg_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "task_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "level": {
+              "type": "string",
+              "const": "task"
+            },
+            "entry_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "type",
+            "org_id",
+            "wg_id",
+            "task_id",
+            "level",
+            "entry_id"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "hint": {
+      "description": "any hint frame from the hub",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/hint_hello"
+        },
+        {
+          "$ref": "#/$defs/hint_reconcile"
+        },
+        {
+          "$ref": "#/$defs/hint_session_start"
+        },
+        {
+          "$ref": "#/$defs/hint_session_control"
+        },
+        {
+          "$ref": "#/$defs/hint_prompt"
+        },
+        {
+          "$ref": "#/$defs/hint_events"
+        },
+        {
+          "$ref": "#/$defs/hint_log"
+        },
+        {
+          "$ref": "#/$defs/hint_wraps"
+        },
+        {
+          "$ref": "#/$defs/hint_credentials"
+        },
+        {
+          "$ref": "#/$defs/hint_request"
+        },
+        {
+          "$ref": "#/$defs/hint_ping"
+        },
+        {
+          "$ref": "#/$defs/hint_decertified"
+        }
+      ]
+    },
+    "heartbeat": {
+      "type": "object",
+      "description": "device frame every 15 s (03-api.md section 6.2)",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "heartbeat"
+        },
+        "capacity": {
+          "$ref": "../../common.json#/$defs/capacity"
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "$ref": "../../common.json#/$defs/uuid"
+              },
+              "state": {
+                "$ref": "../../common.json#/$defs/session_state"
+              }
+            },
+            "required": [
+              "session_id",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        },
+        "vms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "vm_id": {
+                "$ref": "../../common.json#/$defs/vm_id"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "pool",
+                  "assigning",
+                  "running",
+                  "stopping",
+                  "stopped",
+                  "deleted"
+                ]
+              }
+            },
+            "required": [
+              "vm_id",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "type",
+        "capacity",
+        "sessions",
+        "vms"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

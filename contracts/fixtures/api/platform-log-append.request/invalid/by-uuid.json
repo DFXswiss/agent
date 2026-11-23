@@ -1,0 +1,19 @@
+{
+  "expected_seq": 3,
+  "entries": [
+    {
+      "body": {
+        "seq": 3,
+        "prev": "Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4",
+        "type": "device_invite",
+        "by": "01930009-0000-7000-8000-000000000009",
+        "ts": "2026-11-21T12:00:00.000Z",
+        "v": 1,
+        "invite_id": "Dw8PDw8PDw8PDw8PDw8PDw",
+        "pk_inv": "EBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA",
+        "expires": "2026-11-22T12:00:00.000Z"
+      },
+      "sig": "EREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREQ"
+    }
+  ]
+}

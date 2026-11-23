@@ -1,0 +1,2 @@
+time="2026-11-21T19:05:48+01:00" level=fatal msg="open /nonexistent.yaml: no such file or directory"
+1

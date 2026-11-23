@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/wraps-get.request.json",
+  "title": "GET /v1/wraps request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "scope": {
+      "$ref": "../common.json#/$defs/key_scope"
+    },
+    "scope_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "epoch": {
+      "$ref": "../common.json#/$defs/q_epoch"
+    }
+  },
+  "additionalProperties": false
+}

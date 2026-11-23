@@ -1,0 +1,12 @@
+{
+  "claude_code": "2.1.330",
+  "claude_code_tarball_url": "https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-2.1.330.tgz",
+  "claude_code_tarball_sha256": "53e85de819f0802ffa8550eddec2483428c4c79b0ef5bd16ddd13ea916c5a507",
+  "claude_code_native_tarball_url": "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-arm64/-/claude-code-linux-arm64-2.1.330.tgz",
+  "claude_code_native_tarball_sha256": "5460d42c696670f4fd2a7ec619719edda14a576b28ee3c289b348ade96efbf6d",
+  "node": "26.13.1",
+  "node_tarball_url": "https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-arm64.tar.xz",
+  "node_tarball_sha256": "89e1853138db51e8b82d3e98ba9c0d3f2956a28e5e55ea1b7e12d25aae92d5dd",
+  "ubuntu_image_url": "https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-arm64.img",
+  "ubuntu_image_digest": "sha256:50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e"
+}

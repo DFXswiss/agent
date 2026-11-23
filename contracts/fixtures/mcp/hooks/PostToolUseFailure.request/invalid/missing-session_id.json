@@ -1,0 +1,10 @@
+{
+  "transcript_path": "/home/s/.claude/projects/w/5f0c.jsonl",
+  "cwd": "/srv/agent/sessions/w",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "missing"
+  },
+  "error": "not found"
+}

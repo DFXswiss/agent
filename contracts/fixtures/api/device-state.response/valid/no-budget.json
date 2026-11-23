@@ -1,0 +1,37 @@
+{
+  "state": "active",
+  "last_origin_seq": 41,
+  "orgs": [
+    {
+      "org_id": "01930001-0000-7000-8000-000000000001",
+      "log_head": {
+        "seq": 7,
+        "hash": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU"
+      }
+    }
+  ],
+  "assigned": [
+    {
+      "org_id": "01930001-0000-7000-8000-000000000001",
+      "wg_id": "01930002-0000-7000-8000-000000000002"
+    }
+  ],
+  "sessions": [],
+  "pending_prompts": [],
+  "delivered_prompt_event_ids": {},
+  "requests": [
+    {
+      "request_id": "0193003c-0000-7000-8000-00000000003c"
+    }
+  ],
+  "pings": [],
+  "credentials_changed": [
+    "0193000a-0000-7000-8000-00000000000a"
+  ],
+  "rotation_pending": [],
+  "quota_poll_owners": [
+    "0193000a-0000-7000-8000-00000000000a"
+  ],
+  "platform_budget": null,
+  "hub_time": "2026-11-21T12:00:00.000Z"
+}

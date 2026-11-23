@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/events/whiteboard.edit.json",
+  "title": "event body whiteboard.edit",
+  "description": "Plaintext body of the event kind whiteboard.edit inside the ciphertext (03-api.md section 10).",
+  "$ref": "objects.json#/$defs/body_whiteboard_edit"
+}

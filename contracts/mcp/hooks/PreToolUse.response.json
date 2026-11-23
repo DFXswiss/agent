@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/hooks/PreToolUse.response.json",
+  "title": "hook PreToolUse response",
+  "description": "Response of POST /hooks/PreToolUse (03-api.md section 8.2; never a notice on Stop or other events).",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "hookSpecificOutput": {
+          "type": "object",
+          "properties": {
+            "hookEventName": {
+              "type": "string",
+              "const": "PreToolUse"
+            },
+            "permissionDecision": {
+              "type": "string",
+              "const": "allow"
+            },
+            "additionalContext": {
+              "$ref": "../objects.json#/$defs/notice"
+            }
+          },
+          "required": [
+            "hookEventName",
+            "permissionDecision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "hookSpecificOutput"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "hookSpecificOutput": {
+          "type": "object",
+          "properties": {
+            "hookEventName": {
+              "type": "string",
+              "const": "PreToolUse"
+            },
+            "permissionDecision": {
+              "type": "string",
+              "const": "deny"
+            },
+            "permissionDecisionReason": {
+              "$ref": "../objects.json#/$defs/deny_reason"
+            },
+            "additionalContext": {
+              "$ref": "../objects.json#/$defs/notice"
+            }
+          },
+          "required": [
+            "hookEventName",
+            "permissionDecision",
+            "permissionDecisionReason"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "hookSpecificOutput"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

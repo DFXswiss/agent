@@ -1,0 +1,12 @@
+{
+ "body": {
+  "content": "s",
+  "encoding": "base64",
+  "node_id": "s",
+  "sha": "s",
+  "size": 0,
+  "url": "s"
+ },
+ "route": "GET /repos/{owner}/{repo}/git/blobs/{sha}",
+ "source": "recorded"
+}

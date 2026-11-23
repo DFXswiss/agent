@@ -1,0 +1,8 @@
+{
+ "body": {
+  "sha": "s",
+  "url": "s"
+ },
+ "route": "POST /repos/{owner}/{repo}/git/blobs",
+ "source": "docs.github.com REST reference example (values neutralised)"
+}

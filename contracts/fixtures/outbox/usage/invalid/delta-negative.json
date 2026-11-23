@@ -1,0 +1,16 @@
+{
+  "session_id": "01930028-0000-7000-8000-000000000028",
+  "delta": {
+    "requests": -1,
+    "input_tokens": 1,
+    "output_tokens": 1,
+    "cache_read_tokens": 1,
+    "cache_write_tokens": 1,
+    "thinking_tokens": 1,
+    "cost_micro_usd": 1
+  },
+  "cost_basis": "provider",
+  "context_used_tokens": 12000,
+  "context_window_tokens": 128000,
+  "last_provider": "DeepSeek"
+}

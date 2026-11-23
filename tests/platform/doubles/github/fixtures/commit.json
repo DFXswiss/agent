@@ -1,0 +1,105 @@
+{
+ "body": {
+  "author": {
+   "avatar_url": "s",
+   "events_url": "s",
+   "followers_url": "s",
+   "following_url": "s",
+   "gists_url": "s",
+   "gravatar_id": "s",
+   "html_url": "s",
+   "id": 0,
+   "login": "s",
+   "node_id": "s",
+   "organizations_url": "s",
+   "received_events_url": "s",
+   "repos_url": "s",
+   "site_admin": false,
+   "starred_url": "s",
+   "subscriptions_url": "s",
+   "type": "User",
+   "url": "s",
+   "user_view_type": "public"
+  },
+  "comments_url": "s",
+  "commit": {
+   "author": {
+    "date": "s",
+    "email": "s",
+    "name": "s"
+   },
+   "comment_count": 0,
+   "committer": {
+    "date": "s",
+    "email": "s",
+    "name": "s"
+   },
+   "message": "s",
+   "tree": {
+    "sha": "s",
+    "url": "s"
+   },
+   "url": "s",
+   "verification": {
+    "payload": null,
+    "reason": "unsigned",
+    "signature": null,
+    "verified": false,
+    "verified_at": null
+   }
+  },
+  "committer": {
+   "avatar_url": "s",
+   "events_url": "s",
+   "followers_url": "s",
+   "following_url": "s",
+   "gists_url": "s",
+   "gravatar_id": "s",
+   "html_url": "s",
+   "id": 0,
+   "login": "s",
+   "node_id": "s",
+   "organizations_url": "s",
+   "received_events_url": "s",
+   "repos_url": "s",
+   "site_admin": false,
+   "starred_url": "s",
+   "subscriptions_url": "s",
+   "type": "User",
+   "url": "s",
+   "user_view_type": "public"
+  },
+  "files": [
+   {
+    "additions": 0,
+    "blob_url": "s",
+    "changes": 0,
+    "contents_url": "s",
+    "deletions": 0,
+    "filename": "s",
+    "patch": "s",
+    "raw_url": "s",
+    "sha": "s",
+    "status": "modified"
+   }
+  ],
+  "html_url": "s",
+  "node_id": "s",
+  "parents": [
+   {
+    "html_url": "s",
+    "sha": "s",
+    "url": "s"
+   }
+  ],
+  "sha": "s",
+  "stats": {
+   "additions": 0,
+   "deletions": 0,
+   "total": 0
+  },
+  "url": "s"
+ },
+ "route": "GET /repos/{owner}/{repo}/commits/{ref}",
+ "source": "recorded"
+}

@@ -1,0 +1,14 @@
+{
+ "body": {
+  "node_id": "s",
+  "object": {
+   "sha": "s",
+   "type": "commit",
+   "url": "s"
+  },
+  "ref": "s",
+  "url": "s"
+ },
+ "route": "GET /repos/{owner}/{repo}/git/ref/{ref}",
+ "source": "recorded"
+}

@@ -1,0 +1,11 @@
+{
+  "protocolVersion": "2025-06-18",
+  "capabilities": {
+    "roots": {}
+  },
+  "clientInfo": {
+    "name": "claude-code",
+    "version": "2.1.330"
+  },
+  "zz_unexpected": "x"
+}

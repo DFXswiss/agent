@@ -1,0 +1,186 @@
+# promtool test rules for agent-platform.yaml (08-monitoring.md section 7). The Grafana rules are converted into
+# Prometheus rules first (python -m agent_monitoring.rules --without-annotations --device test-device
+# --device healthy-device …; alert name = rule UID, expression `(A) > x` or `(A) < x`, same `for` and labels),
+# written next to this file as agent-platform.rules.yaml. promtool compares firing alerts only (pending ones are not
+# listed), so every rule is checked one evaluation before and exactly at the end of its `for` window, and the healthy series are
+# checked after the window, when they would fire if they were counted wrongly. Series at the fleet's 15 s interval.
+rule_files:
+  - agent-platform.rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # Textfile absent: test-device stops after 10 minutes (40 samples), healthy-device keeps delivering. From minute 15
+  # fewer than 20 samples of test-device are in the window, so it fires exactly at minute 25; healthy-device never fires
+  # (its fallback stays out while its series exists).
+  - interval: 15s
+    input_series:
+      - series: 'agent_runner_textfile_timestamp_seconds{server="test-device"}'
+        values: '0+15x39 _x160'
+      - series: 'agent_runner_textfile_timestamp_seconds{server="healthy-device"}'
+        values: '0+15x200'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: agent-runner-textfile-absent
+        exp_alerts: []
+      - eval_time: 24m
+        alertname: agent-runner-textfile-absent
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: agent-runner-textfile-absent
+        exp_alerts:
+          - exp_labels: { severity: critical, component: agent-platform, server: test-device }
+      - eval_time: 45m
+        alertname: agent-runner-textfile-absent
+        exp_alerts:
+          - exp_labels: { severity: critical, component: agent-platform, server: test-device }
+
+  # Devices that never delivered: only their zero fallbacks exist, each fires on its own after 10 minutes.
+  - interval: 15s
+    input_series:
+      - series: 'agent_runner_device_up{server="other-device"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: agent-runner-textfile-absent
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: agent-runner-textfile-absent
+        exp_alerts:
+          - exp_labels: { severity: critical, component: agent-platform, server: test-device }
+          - exp_labels: { severity: critical, component: agent-platform, server: healthy-device }
+
+  # Textfile stale: the file is scraped but its own timestamp stays at 0 (time() - 0 > 120 from minute 3, firing
+  # at minute 8). fresh-device's timestamp follows the clock and never fires.
+  - interval: 15s
+    input_series:
+      - series: 'agent_runner_textfile_timestamp_seconds{server="test-device"}'
+        values: '0x80'
+      - series: 'agent_runner_textfile_timestamp_seconds{server="fresh-device"}'
+        values: '0+15x80'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: agent-runner-textfile-stale
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: agent-runner-textfile-stale
+        exp_alerts:
+          - exp_labels: { severity: warning, component: agent-platform, server: test-device }
+      - eval_time: 18m
+        alertname: agent-runner-textfile-stale
+        exp_alerts:
+          - exp_labels: { severity: warning, component: agent-platform, server: test-device }
+
+  # Capacity low (bottleneck warning): 1 from the start fires at minute 10. A 5-minute low phase and a device with
+  # free slots never fire, checked after their window.
+  - interval: 15s
+    input_series:
+      - series: 'agent_runner_device_capacity_low{server="test-device"}'
+        values: '1x80'
+      - series: 'agent_runner_device_capacity_low{server="short-device"}'
+        values: '1x20 0x60'
+      - series: 'agent_runner_device_capacity_low{server="free-device"}'
+        values: '0x80'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: agent-runner-capacity-low
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: agent-runner-capacity-low
+        exp_alerts:
+          - exp_labels: { severity: warning, component: agent-platform, server: test-device }
+      - eval_time: 16m
+        alertname: agent-runner-capacity-low
+        exp_alerts:
+          - exp_labels: { severity: warning, component: agent-platform, server: test-device }
+
+  # VM probe failed: one VM does not answer from the start (firing from minute 5), the other answers.
+  - interval: 15s
+    input_series:
+      - series: 'agent_runner_vm_probe_ok{server="test-device", vm="vm-0000beef", wg=""}'
+        values: '0x60'
+      - series: 'agent_runner_vm_probe_ok{server="test-device", vm="vm-0a1b2c3d", wg="01930002-0000-7000-8000-00000000000a"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: agent-runner-vm-probe-failed
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: agent-runner-vm-probe-failed
+        exp_alerts:
+          - exp_labels: { severity: warning, component: agent-platform, server: test-device, vm: vm-0000beef }
+      - eval_time: 14m
+        alertname: agent-runner-vm-probe-failed
+        exp_alerts:
+          - exp_labels: { severity: warning, component: agent-platform, server: test-device, vm: vm-0000beef }
+
+  # Session OOM: the counter rises after minute 5; the alert fires at once and clears once the increase has left the
+  # 15-minute window. An OOM already counted in the first sample of a series (runner restart) is not an increase.
+  - interval: 15s
+    input_series:
+      - series: 'agent_runner_session_oom_kills_total{server="test-device", vm="vm-0a1b2c3d", session="01a1ee56-5e00-7003-8f1b-340691d99f03"}'
+        values: '0x20 1x120'
+      - series: 'agent_runner_session_oom_kills_total{server="test-device", vm="vm-0a1b2c3d", session="01a1ee56-5e00-7003-8f1b-340691d99f04"}'
+        values: '0x140'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: agent-runner-session-oom
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: agent-runner-session-oom
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: agent-platform
+              server: test-device
+              vm: vm-0a1b2c3d
+              session: 01a1ee56-5e00-7003-8f1b-340691d99f03
+      - eval_time: 19m
+        alertname: agent-runner-session-oom
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: agent-platform
+              server: test-device
+              vm: vm-0a1b2c3d
+              session: 01a1ee56-5e00-7003-8f1b-340691d99f03
+      - eval_time: 25m
+        alertname: agent-runner-session-oom
+        exp_alerts: []
+
+  # Sync fatal: no `for`, fires at the first evaluation after the flag is set; a device without it never fires.
+  - interval: 15s
+    input_series:
+      - series: 'agent_runner_device_sync_fatal{server="test-device"}'
+        values: '0x8 1x20'
+      - series: 'agent_runner_device_sync_fatal{server="ok-device"}'
+        values: '0x28'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: agent-runner-sync-fatal
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: agent-runner-sync-fatal
+        exp_alerts:
+          - exp_labels: { severity: critical, component: agent-platform, server: test-device }
+
+  # Hub disconnected: closed from the start fires at minute 10; a 5-minute outage never fires, checked after its
+  # window.
+  - interval: 15s
+    input_series:
+      - series: 'agent_runner_device_hub_connected{server="test-device"}'
+        values: '0x80'
+      - series: 'agent_runner_device_hub_connected{server="flaky-device"}'
+        values: '0x20 1x60'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: agent-runner-hub-disconnected
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: agent-runner-hub-disconnected
+        exp_alerts:
+          - exp_labels: { severity: critical, component: agent-platform, server: test-device }
+      - eval_time: 16m
+        alertname: agent-runner-hub-disconnected
+        exp_alerts:
+          - exp_labels: { severity: critical, component: agent-platform, server: test-device }

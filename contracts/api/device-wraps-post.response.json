@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-wraps-post.response.json",
+  "title": "POST /v1/device/wraps response",
+  "description": "Body of a successful response to POST /v1/device/wraps (03-api.md section 6.1).",
+  "type": "object",
+  "properties": {
+    "stored": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "ignored": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "stored",
+    "ignored"
+  ],
+  "additionalProperties": false
+}

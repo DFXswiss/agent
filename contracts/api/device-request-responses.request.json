@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-request-responses.request.json",
+  "title": "POST /v1/device/requests/{id}/responses request",
+  "description": "Body of POST /v1/device/requests/{id}/responses (03-api.md section 6.1).",
+  "type": "object",
+  "properties": {
+    "envelope": {
+      "$ref": "../common.json#/$defs/device_response_envelope"
+    }
+  },
+  "required": [
+    "envelope"
+  ],
+  "additionalProperties": false
+}

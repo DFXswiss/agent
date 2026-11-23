@@ -1,0 +1,20 @@
+# Root control process of the guest agent (docs/platform/spec/05-runner.md section 5.1, 03-api.md section 7):
+# control socket for the runner host, api.sock for the API process, sessions, tmux, recorder, journal.
+[Unit]
+Description=agent.dfx.swiss guest control
+After=local-fs.target systemd-tmpfiles-setup.service agent-guest-harden.service
+Requires=agent-guest-harden.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/agent-guest
+ExecStart=/usr/bin/python3 -E -s -m agent_guest.control
+Restart=always
+RestartSec=1s
+NoNewPrivileges=yes
+UMask=0077
+
+[Install]
+WantedBy=cloud-init.target

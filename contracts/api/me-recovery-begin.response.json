@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-recovery-begin.response.json",
+  "title": "POST /v1/me/recovery/begin response",
+  "description": "Body of a successful response to POST /v1/me/recovery/begin: a recovery_rotate ceremony of the caller (KOR-01).",
+  "type": "object",
+  "properties": {
+    "ceremony_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "challenge": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    },
+    "options": {
+      "type": "object",
+      "description": "PublicKeyCredentialRequestOptions JSON without challenge (the browser uses `challenge`), as for a login",
+      "properties": {
+        "rpId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "allowCredentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 0
+        },
+        "userVerification": {
+          "type": "string",
+          "const": "required"
+        },
+        "extensions": {
+          "type": "object",
+          "properties": {
+            "prf": {
+              "type": "object",
+              "properties": {
+                "eval": {
+                  "type": "object",
+                  "properties": {
+                    "first": {
+                      "$ref": "../common.json#/$defs/prf_input"
+                    }
+                  },
+                  "required": [
+                    "first"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "eval"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "prf"
+          ],
+          "additionalProperties": false
+        },
+        "timeout": {
+          "type": "integer",
+          "const": 300000
+        }
+      },
+      "required": [
+        "rpId",
+        "allowCredentials",
+        "userVerification",
+        "extensions",
+        "timeout"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "ceremony_id",
+    "challenge",
+    "options"
+  ],
+  "additionalProperties": false
+}

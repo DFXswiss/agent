@@ -1,0 +1,140 @@
+{
+  "about": "Enrollment text of 04-crypto.md section 3: P || 'enroll\\0' || canonical(body without signatures).",
+  "body": {
+    "agent_version": "0.1.0",
+    "arch": "arm64",
+    "capacity": {
+      "pool_ready": 2,
+      "vm_memory_budget_mib": 131072,
+      "vm_memory_used_mib": 0,
+      "vm_slots_free": 8,
+      "vm_slots_total": 8
+    },
+    "device_id": "01a1ee56-5e00-7390-8018-c0145a37621b",
+    "enroll_sig": "UEBVzfQ9ZPP9FQ-jysFg9xoxGpXh20BhDm6JfzKruBTdmHAqWysb98S3NUamJhf4uzxIbEoLLBWDtN8moEpxCA",
+    "inv_sig": "V073V-u-OwPUfmyVuJ-zQgLMF3MMRdFxr6CJI5uM8RO-WvS9Zit9fZ7oFAv32txiyXHvYK-_j15JEXQYQ0RTDg",
+    "invite_id": "wlySWz5qcEy2cAuoOEk51w",
+    "kind": "platform",
+    "os": "macos",
+    "pub": {
+      "kem": "wAz1CQhxUyntlAN3sTZbOKwuz5d9_mxNJO2OGE4ZyiA",
+      "sig": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI"
+    }
+  },
+  "invalid": [
+    {
+      "args": {
+        "body": {
+          "agent_version": "0.1.0",
+          "arch": "arm64",
+          "capacity": {
+            "pool_ready": 2,
+            "vm_memory_budget_mib": 131072,
+            "vm_memory_used_mib": 0,
+            "vm_slots_free": 8,
+            "vm_slots_total": 8
+          },
+          "device_id": "01a1ee56-5e00-7390-8018-c0145a37621b",
+          "enroll_sig": "UEBVzfQ9ZPP9FQ-jysFg9xoxGpXh20BhDm6JfzKruBTdmHAqWysb98S3NUamJhf4uzxIbEoLLBWDtN8moEpxCA",
+          "inv_sig": "V073V-u-OwPUfmyVuJ-zQgLMF3MMRdFxr6CJI5uM8RO-WvS9Zit9fZ7oFAv32txiyXHvYK-_j15JEXQYQ0RTDg",
+          "invite_id": "wlySWz5qcEy2cAuoOEk51w",
+          "kind": "platform",
+          "os": "macos",
+          "pub": {
+            "kem": "wAz1CQhxUyntlAN3sTZbOKwuz5d9_mxNJO2OGE4ZyiA",
+            "sig": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI"
+          }
+        },
+        "pk_inv": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk"
+      },
+      "error": "signature_invalid",
+      "name": "other_invite_key",
+      "op": "verify_enrollment"
+    },
+    {
+      "args": {
+        "body": {
+          "agent_version": "0.1.0",
+          "arch": "arm64",
+          "capacity": {
+            "pool_ready": 2,
+            "vm_memory_budget_mib": 131072,
+            "vm_memory_used_mib": 0,
+            "vm_slots_free": 7,
+            "vm_slots_total": 8
+          },
+          "device_id": "01a1ee56-5e00-7390-8018-c0145a37621b",
+          "enroll_sig": "UEBVzfQ9ZPP9FQ-jysFg9xoxGpXh20BhDm6JfzKruBTdmHAqWysb98S3NUamJhf4uzxIbEoLLBWDtN8moEpxCA",
+          "inv_sig": "V073V-u-OwPUfmyVuJ-zQgLMF3MMRdFxr6CJI5uM8RO-WvS9Zit9fZ7oFAv32txiyXHvYK-_j15JEXQYQ0RTDg",
+          "invite_id": "wlySWz5qcEy2cAuoOEk51w",
+          "kind": "platform",
+          "os": "macos",
+          "pub": {
+            "kem": "wAz1CQhxUyntlAN3sTZbOKwuz5d9_mxNJO2OGE4ZyiA",
+            "sig": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI"
+          }
+        },
+        "pk_inv": "DAsjTxQCM0Fq2XYBkEynd1CB8ZCIAWSKV8iMGvw9ksI"
+      },
+      "error": "signature_invalid",
+      "name": "capacity_changed",
+      "op": "verify_enrollment"
+    },
+    {
+      "args": {
+        "body": {
+          "agent_version": "0.1.0",
+          "arch": "arm64",
+          "capacity": {
+            "pool_ready": 2,
+            "vm_memory_budget_mib": 131072,
+            "vm_memory_used_mib": 0,
+            "vm_slots_free": 8,
+            "vm_slots_total": 8
+          },
+          "device_id": "01a1ee56-5e00-7390-8018-c0145a37621b",
+          "inv_sig": "V073V-u-OwPUfmyVuJ-zQgLMF3MMRdFxr6CJI5uM8RO-WvS9Zit9fZ7oFAv32txiyXHvYK-_j15JEXQYQ0RTDg",
+          "invite_id": "wlySWz5qcEy2cAuoOEk51w",
+          "kind": "platform",
+          "os": "macos",
+          "pub": {
+            "kem": "wAz1CQhxUyntlAN3sTZbOKwuz5d9_mxNJO2OGE4ZyiA",
+            "sig": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI"
+          }
+        },
+        "pk_inv": "DAsjTxQCM0Fq2XYBkEynd1CB8ZCIAWSKV8iMGvw9ksI"
+      },
+      "error": "signature_invalid",
+      "name": "enroll_sig_missing",
+      "op": "verify_enrollment"
+    },
+    {
+      "args": {
+        "body": {
+          "agent_version": "0.1.0",
+          "arch": "arm64",
+          "capacity": {
+            "pool_ready": 2,
+            "vm_memory_budget_mib": 131072,
+            "vm_memory_used_mib": 0,
+            "vm_slots_free": 8,
+            "vm_slots_total": 8
+          },
+          "device_id": "01a1ee56-5e00-7390-8018-c0145a37621b",
+          "enroll_sig": "UEBVzfQ9ZPP9FQ-jysFg9xoxGpXh20BhDm6JfzKruBTdmHAqWysb98S3NUamJhf4uzxIbEoLLBWDtN8moEpxCA",
+          "inv_sig": "V073V-u-OwPUfmyVuJ-zQgLMF3MMRdFxr6CJI5uM8RO-WvS9Zit9fZ7oFAv32txiyXHvYK-_j15JEXQYQ0RTDg",
+          "invite_id": "wlySWz5qcEy2cAuoOEk51w",
+          "kind": "platform",
+          "os": "macos"
+        },
+        "pk_inv": "DAsjTxQCM0Fq2XYBkEynd1CB8ZCIAWSKV8iMGvw9ksI"
+      },
+      "error": "header_invalid",
+      "name": "pub_missing",
+      "op": "verify_enrollment"
+    }
+  ],
+  "invite_code": "YhP71dizHNzhoiL1QviJvw",
+  "pk_inv": "DAsjTxQCM0Fq2XYBkEynd1CB8ZCIAWSKV8iMGvw9ksI",
+  "text": "agent.dfx.swiss/v1/enroll\u0000{\"agent_version\":\"0.1.0\",\"arch\":\"arm64\",\"capacity\":{\"pool_ready\":2,\"vm_memory_budget_mib\":131072,\"vm_memory_used_mib\":0,\"vm_slots_free\":8,\"vm_slots_total\":8},\"device_id\":\"01a1ee56-5e00-7390-8018-c0145a37621b\",\"invite_id\":\"wlySWz5qcEy2cAuoOEk51w\",\"kind\":\"platform\",\"os\":\"macos\",\"pub\":{\"kem\":\"wAz1CQhxUyntlAN3sTZbOKwuz5d9_mxNJO2OGE4ZyiA\",\"sig\":\"XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI\"}}"
+}

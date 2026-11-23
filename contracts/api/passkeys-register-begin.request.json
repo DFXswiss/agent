@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/passkeys-register-begin.request.json",
+  "title": "POST /v1/passkeys/register/begin request",
+  "description": "Body of POST /v1/passkeys/register/begin (03-api.md section 4.1).",
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "registration through an invitation (anon)",
+      "properties": {
+        "invite_id": {
+          "$ref": "../common.json#/$defs/invite_id"
+        }
+      },
+      "required": [
+        "invite_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "additional passkey (signed, user)",
+      "properties": {
+        "add": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "add"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

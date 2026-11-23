@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/passkeys-login-finish.response.json",
+  "title": "POST /v1/passkeys/login/finish response",
+  "description": "Body of a successful response to POST /v1/passkeys/login/finish (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "key_id": {
+      "$ref": "../common.json#/$defs/session_key_id"
+    },
+    "expires_at": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "prf_expected": {
+      "type": "boolean"
+    },
+    "bundle_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct"
+    }
+  },
+  "required": [
+    "user_id",
+    "key_id",
+    "expires_at",
+    "prf_expected"
+  ],
+  "additionalProperties": false
+}

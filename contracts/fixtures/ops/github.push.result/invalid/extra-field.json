@@ -1,0 +1,6 @@
+{
+  "branch": "feature/x",
+  "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "url": "https://github.example/example-org/example-repo/tree/feature/x",
+  "zz_unexpected": "x"
+}

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/passkeys-login-begin.response.json",
+  "title": "POST /v1/passkeys/login/begin response",
+  "description": "Body of a successful response to POST /v1/passkeys/login/begin (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "ceremony_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "hub_value": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    },
+    "options": {
+      "type": "object",
+      "description": "PublicKeyCredentialRequestOptions JSON without challenge: the browser uses SHA-256(statement) (04-crypto.md section 5.4)",
+      "properties": {
+        "rpId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "allowCredentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 0
+        },
+        "userVerification": {
+          "type": "string",
+          "const": "required"
+        },
+        "extensions": {
+          "type": "object",
+          "properties": {
+            "prf": {
+              "type": "object",
+              "properties": {
+                "eval": {
+                  "type": "object",
+                  "properties": {
+                    "first": {
+                      "$ref": "../common.json#/$defs/prf_input"
+                    }
+                  },
+                  "required": [
+                    "first"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "eval"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "prf"
+          ],
+          "additionalProperties": false
+        },
+        "timeout": {
+          "type": "integer",
+          "const": 300000
+        }
+      },
+      "required": [
+        "rpId",
+        "allowCredentials",
+        "userVerification",
+        "extensions",
+        "timeout"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "ceremony_id",
+    "hub_value",
+    "options"
+  ],
+  "additionalProperties": false
+}

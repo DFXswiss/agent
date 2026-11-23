@@ -1,0 +1,5 @@
+{
+  "dir": "repos/example-org/example-repo",
+  "replace": "true",
+  "zz_unexpected": "x"
+}

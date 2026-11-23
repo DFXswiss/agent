@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-bundles-put.request.json",
+  "title": "PUT /v1/me/bundles/{slot} request",
+  "description": "Body of PUT /v1/me/bundles/{slot} (03-api.md section 4.1); `assertion` only with the slot recovery (KOR-01).",
+  "type": "object",
+  "properties": {
+    "bundle_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct"
+    },
+    "new_recovery_id": {
+      "$ref": "../common.json#/$defs/recovery_id"
+    },
+    "assertion": {
+      "type": "object",
+      "description": "passkey assertion (get) over the challenge of POST /v1/me/recovery/begin; required to replace the recovery code outside a recovery (KOR-01)",
+      "properties": {
+        "ceremony_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "credential_id": {
+          "$ref": "../common.json#/$defs/credential_id"
+        },
+        "authenticator_data": {
+          "$ref": "../common.json#/$defs/b64u",
+          "type": "string",
+          "maxLength": 8192
+        },
+        "client_data_json": {
+          "$ref": "../common.json#/$defs/b64u",
+          "type": "string",
+          "maxLength": 8192
+        },
+        "signature": {
+          "$ref": "../common.json#/$defs/b64u",
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "ceremony_id",
+        "credential_id",
+        "authenticator_data",
+        "client_data_json",
+        "signature"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "bundle_ct"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,68 @@
+{
+  "items": [
+    {
+      "origin_seq": 42,
+      "item_kind": "event",
+      "body": {
+        "event": {
+          "header": {
+            "v": 1,
+            "alg": "A256GCM-HKDF",
+            "id": "01930032-0000-7000-8000-000000000032",
+            "org": "01930001-0000-7000-8000-000000000001",
+            "scope": "wg",
+            "scope_id": "01930002-0000-7000-8000-000000000002",
+            "epoch": 2,
+            "wg": "01930002-0000-7000-8000-000000000002",
+            "task": "0193001e-0000-7000-8000-00000000001e",
+            "session": "01930028-0000-7000-8000-000000000028",
+            "author": "01930014-0000-7000-8000-000000000014",
+            "kind": "session.output",
+            "ref": "",
+            "ts": "2026-11-21T12:00:00.000Z",
+            "lh": 7,
+            "salt": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+            "nonce": "AgICAgICAgICAgIC"
+          },
+          "ct": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD",
+          "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+        }
+      }
+    },
+    {
+      "origin_seq": 43,
+      "item_kind": "session_transition",
+      "body": {
+        "session_id": "01930028-0000-7000-8000-000000000028",
+        "state": "working",
+        "reason": null,
+        "at": "2026-11-21T12:00:00.000Z",
+        "agent_version": "2.1.0",
+        "model_access": "platform",
+        "model_id": "deepseek/deepseek-v4.1-flash-1017",
+        "claude_session_id_present": true
+      }
+    },
+    {
+      "origin_seq": 44,
+      "item_kind": "usage",
+      "body": {
+        "session_id": "01930028-0000-7000-8000-000000000028",
+        "delta": {
+          "requests": 10,
+          "input_tokens": 10,
+          "output_tokens": 10,
+          "cache_read_tokens": 10,
+          "cache_write_tokens": 10,
+          "thinking_tokens": 10,
+          "cost_micro_usd": 10
+        },
+        "cost_basis": "provider",
+        "context_used_tokens": 12000,
+        "context_window_tokens": 128000,
+        "last_provider": "DeepSeek"
+      }
+    }
+  ],
+  "unexpected": 1
+}

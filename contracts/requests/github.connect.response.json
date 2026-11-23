@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/requests/github.connect.response.json",
+  "title": "device response body github.connect",
+  "description": "Plaintext body of a device response to github.connect (seq 1..n, final on the last; 05-runner.md section 11). Never contains a secret.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "device_code"
+        },
+        "user_code": {
+          "type": "string",
+          "pattern": "^[A-Z0-9-]{4,16}$"
+        },
+        "verification_uri": {
+          "type": "string",
+          "description": "https URL, or http on the loopback host (hermetic doubles)",
+          "pattern": "^(https://[!-~]{1,2040}|http://(127\\.0\\.0\\.1|localhost)(:[0-9]{1,5})?(/[!-~]{0,2000})?)$",
+          "maxLength": 2048
+        },
+        "expires_in": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        }
+      },
+      "required": [
+        "step",
+        "user_code",
+        "verification_uri",
+        "expires_in"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "done"
+        },
+        "login": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{1,39}$"
+        }
+      },
+      "required": [
+        "step",
+        "login"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "failed"
+        },
+        "code": {
+          "$ref": "objects.json#/$defs/failure_code"
+        }
+      },
+      "required": [
+        "step",
+        "code"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

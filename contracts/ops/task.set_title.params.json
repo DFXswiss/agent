@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/task.set_title.params.json",
+  "title": "operation task.set_title params",
+  "description": "Parameters of the operation type task.set_title (03-api.md section 9); additionalProperties false, integers without booleans.",
+  "$ref": "objects.json#/$defs/params_task_set_title"
+}

@@ -1,0 +1,18 @@
+# Boot hardening of every golden clone (docs/platform/spec/05-runner.md sections 3.1 and 3.2). Runs on every boot
+# after cloud-init, because Lima re-runs cloud-init on every clone and restores the default user's sudo: limits that
+# user's sudo to restarting the guest services and moves the control token parameter to
+# /etc/agent-guest/control-token (root 0600). Skipped while the golden build runs (flag on /run, written by
+# images/provision/install.sh, gone at the next boot), so that the build keeps its sudo for its smoke tests.
+[Unit]
+Description=agent.dfx.swiss guest boot hardening
+After=cloud-final.service
+Before=agent-guest-control.service agent-guest-api.service
+ConditionPathExists=!/run/agent-golden-build
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/agent-guest/harden.sh
+
+[Install]
+WantedBy=cloud-init.target

@@ -1,0 +1,374 @@
+"""Fail-closed configuration of the runner (docs/platform/spec/05-runner.md section 1.3, ADR-027 section 7).
+
+Every setting is an environment variable `AGENT_RUNNER_<NAME>`, read once at start. A missing required or
+invalid value raises `RunnerError("config_invalid", "<NAME>")`; the value itself is never echoed. The runner
+supports macOS only (R-3.6): any other platform raises `RunnerError("unsupported_os")` before a variable is read.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import os
+import re
+import stat
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+from urllib.parse import urlsplit
+
+from agent_runner.encoding import b64u_decode
+from agent_runner.errors import RunnerError
+
+PREFIX = "AGENT_RUNNER_"
+SUPPORTED_PLATFORM = "darwin"
+DEFAULT_HOME_RELATIVE = ".local/share/agent-runner"
+DEFAULT_HOME = "~/" + DEFAULT_HOME_RELATIVE
+DEFAULT_LOGIN_ARGV = ("claude", "setup-token")
+DeviceKind = Literal["org", "platform"]
+
+# Every name of section 1.3 plus VM_PREFIX (ADR-027 section 7). A variable with the prefix that is not listed is
+# refused, so a typo never silently falls back to a default.
+NAMES = (
+    "HOME",
+    "HUB_URL",
+    "PLATFORM_ROOT_KEY",
+    "VM_CPUS",
+    "VM_MEMORY_MIB",
+    "VM_DISK_GIB",
+    "POOL_SIZE",
+    "MEMORY_RESERVE_MIB",
+    "SESSION_IDLE_SECONDS",
+    "VM_IDLE_SECONDS",
+    "TEXTFILE_DIR",
+    "MODEL_CATALOG",
+    "OPENROUTER_KEY_FILE",
+    "GITHUB_CLIENT_ID",
+    "GITHUB_API_URL",
+    "GITHUB_WEB_URL",
+    "MODEL_UPSTREAM_ANTHROPIC",
+    "MODEL_UPSTREAM_OPENROUTER",
+    "ANTHROPIC_USAGE_URL",
+    "LOGIN_ARGV",
+    "LOGIN_AUTOMATION",
+    "GOLDEN_TEMPLATE",
+    "TEST_MODE",
+    "VM_PREFIX",
+)
+# Required for the daemon (`run`, `service install`); commands that never talk to the hub load without them.
+HUB_NAMES = frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"})
+
+# name: (default, minimum, maximum)
+_INTEGERS: dict[str, tuple[int, int, int]] = {
+    "VM_CPUS": (4, 1, 256),
+    "VM_MEMORY_MIB": (8192, 1024, 4_194_304),
+    "VM_DISK_GIB": (20, 5, 65_536),
+    "POOL_SIZE": (2, 0, 64),
+    "MEMORY_RESERVE_MIB": (32768, 0, 4_194_304),
+    "SESSION_IDLE_SECONDS": (1800, 60, 604_800),
+    "VM_IDLE_SECONDS": (1800, 60, 604_800),
+}
+_URL_DEFAULTS = {
+    "GITHUB_API_URL": "https://api.github.com",
+    "GITHUB_WEB_URL": "https://github.com",
+    "MODEL_UPSTREAM_ANTHROPIC": "https://api.anthropic.com",
+    "MODEL_UPSTREAM_OPENROUTER": "https://openrouter.ai/api",
+    "ANTHROPIC_USAGE_URL": "https://api.anthropic.com/api/oauth/usage",
+}
+_DIGITS_RE = re.compile(r"^[0-9]{1,9}$")
+_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+# Lima instance names start with a letter and use [A-Za-z0-9._-]; the prefix is lower case and ends the
+# instance name's first segment, e.g. `wp-run01-`.
+_VM_PREFIX_RE = re.compile(r"^(?:[a-z][a-z0-9-]{0,31})?$")
+_LOOPBACK_NAMES = frozenset({"localhost"})
+_ED25519_PUBLIC_LENGTH = 32
+
+
+@dataclass(frozen=True)
+class Config:
+    """The validated runner configuration. `None` means "not set" (or "packaged default" for files)."""
+
+    home: Path
+    hub_url: str | None
+    platform_root_key: str | None
+    vm_cpus: int
+    vm_memory_mib: int
+    vm_disk_gib: int
+    pool_size: int
+    memory_reserve_mib: int
+    session_idle_seconds: int
+    vm_idle_seconds: int
+    textfile_dir: Path | None
+    model_catalog: Path | None
+    openrouter_key_file: Path | None
+    github_client_id: str | None
+    github_api_url: str
+    github_web_url: str
+    model_upstream_anthropic: str
+    model_upstream_openrouter: str
+    anthropic_usage_url: str
+    login_argv: tuple[str, ...]
+    login_automation: bool
+    # True when LOGIN_AUTOMATION was set explicitly (otherwise the default follows the device kind).
+    login_automation_set: bool
+    golden_template: Path | None
+    test_mode: bool
+    vm_prefix: str
+
+    @property
+    def pg_dir(self) -> Path:
+        """Directory of the runner's own PostgreSQL cluster (section 1.4)."""
+        return self.home / "pg"
+
+    @property
+    def log_dir(self) -> Path:
+        return self.home / "log"
+
+    @property
+    def tmp_dir(self) -> Path:
+        return self.home / "tmp"
+
+
+def check_platform(platform: str) -> None:
+    """Refuse every host except macOS (R-3.6)."""
+    if platform != SUPPORTED_PLATFORM:
+        raise RunnerError("unsupported_os")
+
+
+def load_config(
+    env: Mapping[str, str],
+    *,
+    platform: str,
+    device_kind: DeviceKind | None = None,
+    require: frozenset[str] = HUB_NAMES,
+    expand_user: Callable[[str], str] = os.path.expanduser,
+) -> Config:
+    """Validate `AGENT_RUNNER_*` from `env`.
+
+    `device_kind` is the kind recorded in the device identity (None before enrollment); it selects the
+    `LOGIN_AUTOMATION` default and refuses `OPENROUTER_KEY_FILE` on org devices. `require` names the variables
+    that must be set (default: the hub settings needed by the daemon).
+    """
+    check_platform(platform)
+    for key in sorted(env):
+        if key.startswith(PREFIX) and key[len(PREFIX) :] not in NAMES:
+            raise RunnerError("config_invalid", key[len(PREFIX) :])
+
+    def raw(name: str) -> str:
+        return env.get(PREFIX + name, "")
+
+    test_mode = _flag(raw("TEST_MODE"), "TEST_MODE")
+    hub_url = _optional(raw("HUB_URL"), "HUB_URL", require, lambda v: _url(v, "HUB_URL", test_mode))
+    root_key = _optional(raw("PLATFORM_ROOT_KEY"), "PLATFORM_ROOT_KEY", require, _root_key)
+    integers = {name: _integer(raw(name), name, *limits) for name, limits in _INTEGERS.items()}
+    urls = {name: _url(raw(name) or default, name, test_mode) for name, default in _URL_DEFAULTS.items()}
+    openrouter = _optional(raw("OPENROUTER_KEY_FILE"), "OPENROUTER_KEY_FILE", require, _key_file)
+    if openrouter is not None and device_kind == "org":
+        raise RunnerError("config_invalid", "OPENROUTER_KEY_FILE")
+    automation_raw = raw("LOGIN_AUTOMATION") or ("on" if device_kind == "platform" else "off")
+    if automation_raw not in ("on", "off"):
+        raise RunnerError("config_invalid", "LOGIN_AUTOMATION")
+    return Config(
+        home=_home(raw("HOME") or DEFAULT_HOME, expand_user),
+        hub_url=hub_url,
+        platform_root_key=root_key,
+        vm_cpus=integers["VM_CPUS"],
+        vm_memory_mib=integers["VM_MEMORY_MIB"],
+        vm_disk_gib=integers["VM_DISK_GIB"],
+        pool_size=integers["POOL_SIZE"],
+        memory_reserve_mib=integers["MEMORY_RESERVE_MIB"],
+        session_idle_seconds=integers["SESSION_IDLE_SECONDS"],
+        vm_idle_seconds=integers["VM_IDLE_SECONDS"],
+        textfile_dir=_optional(raw("TEXTFILE_DIR"), "TEXTFILE_DIR", require, lambda v: _absolute(v, "TEXTFILE_DIR")),
+        model_catalog=_optional(raw("MODEL_CATALOG"), "MODEL_CATALOG", require, lambda v: _file(v, "MODEL_CATALOG")),
+        openrouter_key_file=openrouter,
+        github_client_id=_optional(raw("GITHUB_CLIENT_ID"), "GITHUB_CLIENT_ID", require, _client_id),
+        github_api_url=urls["GITHUB_API_URL"],
+        github_web_url=urls["GITHUB_WEB_URL"],
+        model_upstream_anthropic=urls["MODEL_UPSTREAM_ANTHROPIC"],
+        model_upstream_openrouter=urls["MODEL_UPSTREAM_OPENROUTER"],
+        anthropic_usage_url=urls["ANTHROPIC_USAGE_URL"],
+        login_argv=_login_argv(raw("LOGIN_ARGV")),
+        login_automation=automation_raw == "on",
+        login_automation_set=raw("LOGIN_AUTOMATION") != "",
+        golden_template=_optional(
+            raw("GOLDEN_TEMPLATE"), "GOLDEN_TEMPLATE", require, lambda v: _file(v, "GOLDEN_TEMPLATE")
+        ),
+        test_mode=test_mode,
+        vm_prefix=_vm_prefix(raw("VM_PREFIX")),
+    )
+
+
+def environment(config: Config) -> dict[str, str]:
+    """The `AGENT_RUNNER_*` variables that reproduce `config` (used for the LaunchDaemon environment).
+
+    Only settings that differ from their default are written, plus `HOME`. None of them is a secret: URLs, the
+    platform root public key, paths, numbers and switches.
+    """
+    out = {PREFIX + "HOME": str(config.home)}
+    optional_text: dict[str, str | Path | None] = {
+        "HUB_URL": config.hub_url,
+        "PLATFORM_ROOT_KEY": config.platform_root_key,
+        "TEXTFILE_DIR": config.textfile_dir,
+        "MODEL_CATALOG": config.model_catalog,
+        "OPENROUTER_KEY_FILE": config.openrouter_key_file,
+        "GITHUB_CLIENT_ID": config.github_client_id,
+        "GOLDEN_TEMPLATE": config.golden_template,
+        "VM_PREFIX": config.vm_prefix or None,
+    }
+    for name, value in optional_text.items():
+        if value is not None:
+            out[PREFIX + name] = str(value)
+    for name, (default, _, _) in _INTEGERS.items():
+        value_int = getattr(config, name.lower())
+        if value_int != default:
+            out[PREFIX + name] = str(value_int)
+    for name, default_url in _URL_DEFAULTS.items():
+        url = getattr(config, name.lower())
+        if url != default_url:
+            out[PREFIX + name] = url
+    if config.login_argv != DEFAULT_LOGIN_ARGV:
+        out[PREFIX + "LOGIN_ARGV"] = json.dumps(list(config.login_argv))
+    if config.login_automation_set:
+        out[PREFIX + "LOGIN_AUTOMATION"] = "on" if config.login_automation else "off"
+    if config.test_mode:
+        out[PREFIX + "TEST_MODE"] = "1"
+    return out
+
+
+def _optional[T](value: str, name: str, require: frozenset[str], parse: Callable[[str], T]) -> T | None:
+    if value == "":
+        if name in require:
+            raise RunnerError("config_invalid", name)
+        return None
+    return parse(value)
+
+
+def _flag(value: str, name: str) -> bool:
+    if value not in ("", "0", "1"):
+        raise RunnerError("config_invalid", name)
+    return value == "1"
+
+
+def _integer(value: str, name: str, default: int, minimum: int, maximum: int) -> int:
+    if value == "":
+        return default
+    if not _DIGITS_RE.fullmatch(value):
+        raise RunnerError("config_invalid", name)
+    number = int(value)
+    if not minimum <= number <= maximum:
+        raise RunnerError("config_invalid", name)
+    return number
+
+
+def _is_loopback(host: str) -> bool:
+    if host in _LOOPBACK_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _url(value: str, name: str, test_mode: bool) -> str:
+    """An `https://` URL without credentials, query or fragment; loopback `http://` only in test mode."""
+    try:
+        parts = urlsplit(value)
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        raise RunnerError("config_invalid", name) from None
+    if not host or parts.username is not None or parts.password is not None or parts.query or parts.fragment:
+        raise RunnerError("config_invalid", name)
+    if any(ch.isspace() for ch in value) or port == 0:
+        raise RunnerError("config_invalid", name)
+    if parts.scheme == "https":
+        return value.rstrip("/")
+    if parts.scheme == "http" and test_mode and _is_loopback(host):
+        return value.rstrip("/")
+    raise RunnerError("config_invalid", name)
+
+
+def _root_key(value: str) -> str:
+    try:
+        raw_key = b64u_decode(value)
+    except ValueError:
+        raise RunnerError("config_invalid", "PLATFORM_ROOT_KEY") from None
+    if len(raw_key) != _ED25519_PUBLIC_LENGTH:
+        raise RunnerError("config_invalid", "PLATFORM_ROOT_KEY")
+    return value
+
+
+def _home(value: str, expand_user: Callable[[str], str]) -> Path:
+    """Absolute home; when it exists it must be a real directory with mode 0700 (no group or other bits)."""
+    return check_home(Path(expand_user(value)))
+
+
+def check_home(path: Path) -> Path:
+    """Refuse a relative home and an existing home that is not a real 0700-style directory."""
+    if not path.is_absolute():
+        raise RunnerError("config_invalid", "HOME")
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return path
+    except OSError:
+        raise RunnerError("config_invalid", "HOME") from None
+    if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o077:
+        raise RunnerError("config_invalid", "HOME")
+    return path
+
+
+def _absolute(value: str, name: str) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        raise RunnerError("config_invalid", name)
+    return path
+
+
+def _file(value: str, name: str) -> Path:
+    path = _absolute(value, name)
+    if not path.is_file():
+        raise RunnerError("config_invalid", name)
+    return path
+
+
+def _key_file(value: str) -> Path:
+    """A regular file (not a symlink) readable only by its owner (0600 or stricter)."""
+    path = _absolute(value, "OPENROUTER_KEY_FILE")
+    try:
+        info = path.lstat()
+    except OSError:
+        raise RunnerError("config_invalid", "OPENROUTER_KEY_FILE") from None
+    if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+        raise RunnerError("config_invalid", "OPENROUTER_KEY_FILE")
+    return path
+
+
+def _client_id(value: str) -> str:
+    if not _CLIENT_ID_RE.fullmatch(value):
+        raise RunnerError("config_invalid", "GITHUB_CLIENT_ID")
+    return value
+
+
+def _login_argv(value: str) -> tuple[str, ...]:
+    if value == "":
+        return DEFAULT_LOGIN_ARGV
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        raise RunnerError("config_invalid", "LOGIN_ARGV") from None
+    if (
+        not isinstance(parsed, list)
+        or not parsed
+        or not all(isinstance(item, str) and item and "\x00" not in item for item in parsed)
+    ):
+        raise RunnerError("config_invalid", "LOGIN_ARGV")
+    return tuple(parsed)
+
+
+def _vm_prefix(value: str) -> str:
+    if not _VM_PREFIX_RE.fullmatch(value):
+        raise RunnerError("config_invalid", "VM_PREFIX")
+    return value

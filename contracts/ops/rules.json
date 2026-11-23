@@ -1,0 +1,339 @@
+{
+  "description": "Formal operation rules of 03-api.md section 9 that a JSON Schema cannot express, as data with positive and negative examples (RUN-07 reads this file in its tests). Lengths are counted in Unicode code points, byte limits in bytes. Secret examples are stored as fragments that are joined before use, so this public file contains no literal token.",
+  "repo": {
+    "pattern": "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$",
+    "allow_list": "exact owner/name of settings.workgroup.repositories, compared lowercased",
+    "valid": [
+      "DFXswiss/agent",
+      "a/b",
+      "owner-1/name.with_dots-2"
+    ],
+    "invalid": [
+      "agent",
+      "a/b/c",
+      "a/b c",
+      "owner/",
+      "o_x/name",
+      "oooooooooooooooooooooooooooooooooooooooo/n",
+      "a/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+      "a /b"
+    ]
+  },
+  "branch": {
+    "description": "git check-ref-format --branch, implemented without git (03-api.md section 9)",
+    "max_length": 200,
+    "forbidden_characters": "ASCII control characters (U+0000-U+001F, U+007F), space and ~ ^ : ? * [ \\",
+    "forbidden_substrings": [
+      "..",
+      "@{",
+      "//",
+      "/."
+    ],
+    "forbidden_prefixes": [
+      "-",
+      "/",
+      "."
+    ],
+    "forbidden_suffixes": [
+      "/",
+      ".",
+      ".lock"
+    ],
+    "forbidden_component_suffixes": [
+      ".lock"
+    ],
+    "forbidden_names": [
+      "@",
+      "HEAD"
+    ],
+    "strip_prefix": "refs/heads/",
+    "valid": [
+      "main",
+      "feature/x",
+      "release/1.2",
+      "fix-#12",
+      "ünïcode",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "v1.0"
+    ],
+    "invalid": [
+      "",
+      "-x",
+      "/x",
+      "x/",
+      "a..b",
+      "a@{1}",
+      "a b",
+      "a~1",
+      "a^",
+      "a:b",
+      "a?",
+      "a*",
+      "a[b",
+      "a\\b",
+      "x.lock",
+      "a.lock/b",
+      "a//b",
+      "a/.b",
+      ".hidden",
+      "x.",
+      "@",
+      "HEAD",
+      "a\u0007b",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ]
+  },
+  "ref": {
+    "description": "github.checkout ref and github.create_branch from: a branch or tag name (branch rules) or a commit SHA (7-40 lower-case hex digits)",
+    "sha_pattern": "^[0-9a-f]{7,40}$",
+    "valid": [
+      "main",
+      "v1.2.3",
+      "abc1234",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "invalid": [
+      "",
+      "a..b",
+      "-x",
+      "a b"
+    ]
+  },
+  "protected_branches": {
+    "default": [
+      "main",
+      "master",
+      "develop",
+      "release/*"
+    ],
+    "matching": "fnmatch-style on the normalised branch name: * matches any characters except /, everything else literally; the head of a pull request, the branch of create_branch, commit and push must not match (branch_protected)",
+    "examples": [
+      {
+        "pattern": "release/*",
+        "branch": "release/1.2",
+        "protected": true
+      },
+      {
+        "pattern": "release/*",
+        "branch": "release/1.2/hotfix",
+        "protected": false
+      },
+      {
+        "pattern": "main",
+        "branch": "main",
+        "protected": true
+      },
+      {
+        "pattern": "main",
+        "branch": "mainline",
+        "protected": false
+      }
+    ]
+  },
+  "path": {
+    "description": "paths of github.commit (and every workspace-relative path of an operation or guest file transfer): relative, no .. segment, no .git segment anywhere (compared case-insensitively), no empty or . segment, no control character, <= 4096 characters",
+    "max_length": 4096,
+    "forbidden_segments": [
+      "",
+      ".",
+      ".."
+    ],
+    "forbidden_segments_casefold": [
+      ".git"
+    ],
+    "forbidden_characters": "ASCII control characters (U+0000-U+001F, U+007F) and \\",
+    "valid": [
+      "README.md",
+      "src/app.py",
+      ".github/workflows/ci.yml",
+      "a/.gitignore",
+      "dir/file name.txt"
+    ],
+    "invalid": [
+      "",
+      "/etc/passwd",
+      "../x",
+      "a/../b",
+      "a//b",
+      "./a",
+      "a/",
+      ".git/config",
+      ".git",
+      "sub/.git/config",
+      ".GIT/hooks/x",
+      "a/.Git",
+      "a\\b",
+      "a\u0000b"
+    ]
+  },
+  "commit_limits": {
+    "file_bytes": 10485760,
+    "files": 500,
+    "total_bytes": 52428800,
+    "message_max_length": 4096
+  },
+  "checkout_limits": {
+    "archive_bytes": 536870912
+  },
+  "pull_request_limits": {
+    "title_max_length": 256,
+    "body_max_length": 65536,
+    "patch_total_bytes": 1048576
+  },
+  "comment_limits": {
+    "body_max_length": 65536
+  },
+  "subagent_limits": {
+    "purpose_max_length": 200,
+    "prompt_max_length": 32768,
+    "max_depth": 2,
+    "max_running_per_task": 3,
+    "max_total_per_task": 10
+  },
+  "title_limits": {
+    "max_length": 120,
+    "single_line": true
+  },
+  "secret_patterns": {
+    "description": "deterministic secret patterns of github.commit (secret_detected); searched (not anchored) in the UTF-8 text of every file of the snapshot. The prefixes are those of 03-api.md section 9; a minimum of 16 token characters after the prefix keeps documentation that merely names a prefix committable (decisions CTR-02)",
+    "patterns": [
+      {
+        "id": "pem_private_key",
+        "pattern": "-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----",
+        "positive": [
+          [
+            "-----BEGIN ",
+            "RSA PRIVATE KEY-----"
+          ],
+          [
+            "-----BEGIN ",
+            "PRIVATE KEY-----"
+          ],
+          [
+            "x -----BEGIN ",
+            "OPENSSH PRIVATE KEY----- y"
+          ]
+        ],
+        "negative": [
+          [
+            "-----BEGIN ",
+            "PUBLIC KEY-----"
+          ],
+          [
+            "BEGIN PRIVATE KEY"
+          ]
+        ]
+      },
+      {
+        "id": "github_token",
+        "pattern": "gh[pou]_[A-Za-z0-9]{16,}",
+        "positive": [
+          [
+            "gh",
+            "p_",
+            "A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1"
+          ],
+          [
+            "gh",
+            "o_",
+            "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          [
+            "gh",
+            "u_",
+            "Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9Z9"
+          ]
+        ],
+        "negative": [
+          [
+            "gh",
+            "s_",
+            "A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1"
+          ],
+          [
+            "gh",
+            "p_",
+            "short"
+          ]
+        ]
+      },
+      {
+        "id": "github_pat",
+        "pattern": "github_pat_[A-Za-z0-9_]{16,}",
+        "positive": [
+          [
+            "github",
+            "_pat_",
+            "11ABCDEFG0",
+            "abcdefghij_klmnop"
+          ]
+        ],
+        "negative": [
+          [
+            "github",
+            "_pat_",
+            "short"
+          ]
+        ]
+      },
+      {
+        "id": "anthropic_key",
+        "pattern": "sk-ant-[A-Za-z0-9_-]{16,}",
+        "positive": [
+          [
+            "sk-",
+            "ant-",
+            "api03-",
+            "xxxxxxxxxxxxxxxxxxxxxxxx"
+          ]
+        ],
+        "negative": [
+          [
+            "sk-",
+            "ant-",
+            "short"
+          ]
+        ]
+      },
+      {
+        "id": "openrouter_key",
+        "pattern": "sk-or-[A-Za-z0-9_-]{16,}",
+        "positive": [
+          [
+            "sk-",
+            "or-",
+            "v1-",
+            "00000000000000000000000000000000"
+          ]
+        ],
+        "negative": [
+          [
+            "sk-",
+            "or-",
+            "x"
+          ]
+        ]
+      },
+      {
+        "id": "aws_access_key",
+        "pattern": "AKIA[0-9A-Z]{16}",
+        "positive": [
+          [
+            "AKIA",
+            "IOSFODNN7EXAMPLE"
+          ]
+        ],
+        "negative": [
+          [
+            "AKIA",
+            "iosfodnn7example"
+          ],
+          [
+            "AKIA",
+            "SHORT"
+          ]
+        ]
+      }
+    ]
+  }
+}

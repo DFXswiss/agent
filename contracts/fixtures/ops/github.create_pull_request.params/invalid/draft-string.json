@@ -1,0 +1,7 @@
+{
+  "repo": "a/b",
+  "head": "x",
+  "base": "main",
+  "title": "t",
+  "draft": "true"
+}

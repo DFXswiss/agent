@@ -1,0 +1,40 @@
+{
+  "rp_id": 12345,
+  "origin": "https://agent.example.org",
+  "platform_root_key": "KCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCg",
+  "hub_key": {
+    "id": "hub-1",
+    "public_key": "KSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSk"
+  },
+  "version": "0.1.0",
+  "limits": {
+    "request_body_bytes": 1048576,
+    "event_batch_bytes": 4194304,
+    "events_per_request": 100,
+    "event_ct_bytes": 262144,
+    "terminal_ct_bytes": 65536,
+    "whiteboard_text_bytes": 65536,
+    "session_certificate_seconds": 43080,
+    "invite_user_seconds": 259200,
+    "invite_device_seconds": 86400,
+    "invite_max_seconds": 2592000,
+    "device_request_seconds": 900,
+    "subagent_max_depth": 2,
+    "subagent_max_running": 3,
+    "subagent_max_total": 10
+  },
+  "models": {
+    "platform": [
+      "deepseek/deepseek-v4.1-flash-1017"
+    ],
+    "api_key": [
+      "claude-sonnet-4-5"
+    ],
+    "subscription": [
+      "claude-sonnet-4-5"
+    ]
+  },
+  "defaults": {
+    "platform": "deepseek/deepseek-v4.1-flash-1017"
+  }
+}

@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-get.response.json",
+  "title": "GET /v1/orgs/{org} response",
+  "description": "Body of a successful response to GET /v1/orgs/{org} (03-api.md section 4.3).",
+  "type": "object",
+  "properties": {
+    "org_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "private": {
+      "type": "boolean"
+    },
+    "platform_access": {
+      "type": "boolean"
+    },
+    "default_wg": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "log_head": {
+      "$ref": "../common.json#/$defs/log_head"
+    },
+    "workgroups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "wg_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "my_access": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/wg_access"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "minItems": 0,
+            "maxItems": 1000
+          },
+          "epoch": {
+            "$ref": "../common.json#/$defs/epoch"
+          }
+        },
+        "required": [
+          "wg_id",
+          "is_default",
+          "archived",
+          "my_access",
+          "devices",
+          "epoch"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 10000
+    },
+    "members": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "principal_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "kind": {
+            "$ref": "../common.json#/$defs/principal_kind"
+          },
+          "role": {
+            "$ref": "../common.json#/$defs/member_role"
+          },
+          "joined_seq": {
+            "$ref": "../common.json#/$defs/seq"
+          }
+        },
+        "required": [
+          "principal_id",
+          "kind",
+          "role",
+          "joined_seq"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 100000
+    },
+    "rotation_pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "../common.json#/$defs/scope"
+          },
+          "scope_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          }
+        },
+        "required": [
+          "scope",
+          "scope_id"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    }
+  },
+  "required": [
+    "org_id",
+    "private",
+    "platform_access",
+    "default_wg",
+    "log_head",
+    "workgroups",
+    "members",
+    "rotation_pending"
+  ],
+  "additionalProperties": false
+}

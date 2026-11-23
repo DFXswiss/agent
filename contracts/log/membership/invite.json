@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/log/membership/invite.json",
+  "title": "membership-log entry invite",
+  "description": "Membership-log entry of type invite (04-crypto.md section 4.7): body signed with P||'log\\0' by `by`.",
+  "type": "object",
+  "properties": {
+    "body": {
+      "anyOf": [
+        {
+          "$ref": "../../common.json#/$defs/log_body_invite_user"
+        },
+        {
+          "$ref": "../../common.json#/$defs/log_body_invite_device"
+        }
+      ]
+    },
+    "sig": {
+      "$ref": "../../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "body",
+    "sig"
+  ],
+  "additionalProperties": false
+}

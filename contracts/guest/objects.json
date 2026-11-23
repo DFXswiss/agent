@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/objects.json",
+  "title": "guest objects",
+  "description": "Shared definitions of the guest control protocol and journal (03-api.md section 7).",
+  "$defs": {
+    "claude_session_id": {
+      "type": "string",
+      "description": "Claude Code session ID (UUID of any version)",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "boot_id": {
+      "type": "string",
+      "description": "Linux boot ID (/proc/sys/kernel/random/boot_id)",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "rel_path": {
+      "type": "string",
+      "description": "workspace-relative path: no leading /, no control characters; the guest also applies the segment rules of ops/rules.json#/path (no .., no .git segment)",
+      "pattern": "^[^/\u0000-\u001f][^\u0000-\u001f]*$",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "text_256k": {
+      "type": "string",
+      "description": "text of a prompt (at most 256 KiB of characters)",
+      "minLength": 1,
+      "maxLength": 262144
+    },
+    "count": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "ping_kind": {
+      "type": "string",
+      "enum": [
+        "whiteboard.entry",
+        "subagent.finished",
+        "operation.finished"
+      ]
+    },
+    "wb_level": {
+      "type": "string",
+      "enum": [
+        "org",
+        "workgroup",
+        "task"
+      ]
+    },
+    "ping": {
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "new whiteboard entry; ref = entry ID",
+          "properties": {
+            "ping_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "whiteboard.entry"
+            },
+            "level": {
+              "$ref": "#/$defs/wb_level"
+            },
+            "ref": {
+              "$ref": "../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "ping_id",
+            "kind",
+            "level",
+            "ref"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "finished child session (ref = session ID) or operation (ref = operation ID)",
+          "properties": {
+            "ping_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "subagent.finished",
+                "operation.finished"
+              ]
+            },
+            "ref": {
+              "$ref": "../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "ping_id",
+            "kind",
+            "ref"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "content-free notice (05-runner.md section 9)"
+    },
+    "vm_metrics": {
+      "type": "object",
+      "description": "VM-wide counters (cgroup root, /proc)",
+      "properties": {
+        "cpu_usage_usec": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "mem_used_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "mem_total_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "disk_used_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "disk_total_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "net_rx_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "net_tx_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "uptime_seconds": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "load1": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "cpu_usage_usec",
+        "mem_used_bytes",
+        "mem_total_bytes",
+        "disk_used_bytes",
+        "disk_total_bytes",
+        "net_rx_bytes",
+        "net_tx_bytes",
+        "uptime_seconds",
+        "load1"
+      ],
+      "additionalProperties": false
+    },
+    "session_metrics": {
+      "type": "object",
+      "description": "per-session cgroup counters; mem_max_bytes null = no limit (cgroup 'max'); the optional counters (RUN-15) are counted by the guest since its control process started: oom_kills from memory.events, hook_denies (session.hook deny/block), hook_errors (guest.error hook_handler_failed), egress_denied (packets of the session user refused by the egress filter), model tokens and bytes from the usage records",
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "cpu_usage_usec": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "mem_current_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "mem_max_bytes": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tasks_current": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "io_read_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "io_write_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "workspace_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "state": {
+          "$ref": "../common.json#/$defs/session_state"
+        },
+        "oom_kills": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "hook_denies": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "hook_errors": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "egress_denied": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "model_input_tokens": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "model_output_tokens": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "model_request_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "model_response_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "session_id",
+        "cpu_usage_usec",
+        "mem_current_bytes",
+        "mem_max_bytes",
+        "tasks_current",
+        "io_read_bytes",
+        "io_write_bytes",
+        "workspace_bytes",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "vm": {
+          "$ref": "#/$defs/vm_metrics"
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/session_metrics"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "vm",
+        "sessions"
+      ],
+      "additionalProperties": false
+    },
+    "manifest_file": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/rel_path"
+        },
+        "size": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "sha256": {
+          "$ref": "../common.json#/$defs/sha256_hex"
+        }
+      },
+      "required": [
+        "path",
+        "size",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "manifest_skip": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/rel_path"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "symlink",
+            "special",
+            "unreadable"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

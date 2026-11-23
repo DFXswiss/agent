@@ -1,0 +1,18 @@
+{
+ "body": [
+  {
+   "additions": 0,
+   "blob_url": "s",
+   "changes": 0,
+   "contents_url": "s",
+   "deletions": 0,
+   "filename": "s",
+   "patch": "s",
+   "raw_url": "s",
+   "sha": "s",
+   "status": "modified"
+  }
+ ],
+ "route": "GET /repos/{owner}/{repo}/pulls/{number}/files",
+ "source": "recorded"
+}

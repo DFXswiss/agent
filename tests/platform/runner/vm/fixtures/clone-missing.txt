@@ -1,0 +1,3 @@
+time="2026-11-21T19:05:48+01:00" level=warning msg="--yes flag is deprecated (--tty=false is still supported and works in the same way. Also consider using --start)"
+time="2026-11-21T19:05:48+01:00" level=fatal msg="instance `nosuch-vm` not found"
+1

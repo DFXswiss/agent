@@ -1,0 +1,10 @@
+{
+  "protocolVersion": 12345,
+  "capabilities": {
+    "roots": {}
+  },
+  "clientInfo": {
+    "name": "claude-code",
+    "version": "2.1.330"
+  }
+}

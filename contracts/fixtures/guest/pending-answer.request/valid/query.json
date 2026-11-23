@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "result": {
+    "workgroups": [
+      {
+        "id": "01a1ee56-5e00-7002-8f1b-340691d99f02",
+        "name": "Default",
+        "is_default": true,
+        "my_access": "write"
+      }
+    ]
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/whiteboards-list.response.json",
+  "title": "GET /v1/whiteboards response",
+  "description": "Body of a successful response to GET /v1/whiteboards (03-api.md section 4.9).",
+  "type": "object",
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "entry_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "org_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "org",
+              "workgroup",
+              "task"
+            ]
+          },
+          "wg_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "author_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "created_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "updated_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "latest_event": {
+            "$ref": "objects.json#/$defs/latest_event"
+          }
+        },
+        "required": [
+          "entry_id",
+          "org_id",
+          "level",
+          "wg_id",
+          "task_id",
+          "author_id",
+          "created_at",
+          "updated_at",
+          "deleted",
+          "latest_event"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 200
+    },
+    "next_before": {
+      "$ref": "../common.json#/$defs/next_before"
+    }
+  },
+  "required": [
+    "entries",
+    "next_before"
+  ],
+  "additionalProperties": false
+}

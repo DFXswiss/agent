@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-log-append.request.json",
+  "title": "POST /v1/orgs/{org}/log request",
+  "description": "Body of POST /v1/orgs/{org}/log (03-api.md section 4.3).",
+  "type": "object",
+  "properties": {
+    "expected_seq": {
+      "$ref": "../common.json#/$defs/seq"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/log_entry"
+      },
+      "minItems": 1,
+      "maxItems": 1000
+    },
+    "wraps": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/wrap"
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/event"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    }
+  },
+  "required": [
+    "expected_seq",
+    "entries",
+    "wraps",
+    "events"
+  ],
+  "additionalProperties": false
+}

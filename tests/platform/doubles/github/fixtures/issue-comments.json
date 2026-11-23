@@ -1,0 +1,52 @@
+{
+ "body": [
+  {
+   "author_association": "NONE",
+   "body": "s",
+   "created_at": "s",
+   "html_url": "s",
+   "id": 0,
+   "issue_url": "s",
+   "minimized": null,
+   "node_id": "s",
+   "performed_via_github_app": null,
+   "reactions": {
+    "+1": 0,
+    "-1": 0,
+    "confused": 0,
+    "eyes": 0,
+    "heart": 0,
+    "hooray": 0,
+    "laugh": 0,
+    "rocket": 0,
+    "total_count": 0,
+    "url": "s"
+   },
+   "updated_at": "s",
+   "url": "s",
+   "user": {
+    "avatar_url": "s",
+    "events_url": "s",
+    "followers_url": "s",
+    "following_url": "s",
+    "gists_url": "s",
+    "gravatar_id": "s",
+    "html_url": "s",
+    "id": 0,
+    "login": "s",
+    "node_id": "s",
+    "organizations_url": "s",
+    "received_events_url": "s",
+    "repos_url": "s",
+    "site_admin": false,
+    "starred_url": "s",
+    "subscriptions_url": "s",
+    "type": "User",
+    "url": "s",
+    "user_view_type": "public"
+   }
+  }
+ ],
+ "route": "GET /repos/{owner}/{repo}/issues/{number}/comments",
+ "source": "recorded"
+}

@@ -1,0 +1,12 @@
+{
+  "pending_id": "01a1ee56-5e00-700b-8f1b-340691d99f0b",
+  "operation_id": "01a1ee56-5e00-700a-8f1b-340691d99f0a",
+  "type": "github.comment",
+  "params": {
+    "repo": "example-org/example-repo",
+    "number": 12,
+    "body": "LGTM"
+  },
+  "requested_at": "2026-11-21T10:00:00.000Z",
+  "local_check": "skipped"
+}

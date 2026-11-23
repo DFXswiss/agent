@@ -1,0 +1,670 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/objects.json",
+  "title": "operation objects",
+  "description": "Parameters, results and the error object of the operation types (03-api.md section 9).",
+  "$defs": {
+    "repo": {
+      "type": "string",
+      "description": "owner/name (03-api.md section 9)",
+      "pattern": "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
+    },
+    "branch": {
+      "type": "string",
+      "description": "branch name; further rules (no .., @{, //, trailing / . .lock, component starting with .) in ops/rules.json#/branch",
+      "pattern": "^[^\u0000-\u001f ~^:?*\\[\\\\/.-][^\u0000-\u001f ~^:?*\\[\\\\]*$",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "ref": {
+      "type": "string",
+      "description": "branch, tag or commit SHA (ops/rules.json#/ref)",
+      "pattern": "^[^\u0000-\u001f ~^:?*\\[\\\\/.-][^\u0000-\u001f ~^:?*\\[\\\\]*$",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "sha": {
+      "type": "string",
+      "description": "git object SHA-1, lower-case hex",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "url": {
+      "type": "string",
+      "pattern": "^https://[!-~]{1,2048}$"
+    },
+    "github_time": {
+      "type": "string",
+      "description": "GitHub timestamp (seconds, optional fraction)",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,6})?Z$"
+    },
+    "github_login": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]{1,39}(\\[bot\\])?$"
+    },
+    "rel_path": {
+      "type": "string",
+      "description": "repository-relative path (segment rules: ops/rules.json#/path)",
+      "pattern": "^[^/\u0000-\u001f][^\u0000-\u001f]*$",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "number": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "github_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "error": {
+      "type": "object",
+      "description": "operation error: code of enums/operation-error-codes.json, JSON pointers for params_invalid, retryable for failed after the retries",
+      "properties": {
+        "code": {
+          "$ref": "../common.json#/$defs/operation_error_code"
+        },
+        "message": {
+          "type": "string",
+          "pattern": "^[ -~]+$",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "pointers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(/[^/]*)*$",
+            "maxLength": 256
+          },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_list_repositories": {
+      "$ref": "../common.json#/$defs/empty"
+    },
+    "params_github_checkout": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "ref": {
+          "$ref": "#/$defs/ref"
+        }
+      },
+      "required": [
+        "repo"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_get_pull_request": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "number": {
+          "$ref": "#/$defs/number"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_create_branch": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "branch": {
+          "$ref": "#/$defs/branch"
+        },
+        "from": {
+          "$ref": "#/$defs/ref"
+        }
+      },
+      "required": [
+        "repo",
+        "branch",
+        "from"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_commit": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "branch": {
+          "$ref": "#/$defs/branch"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rel_path"
+          },
+          "minItems": 1,
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "repo",
+        "branch",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_push": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "branch": {
+          "$ref": "#/$defs/branch"
+        },
+        "commit_sha": {
+          "$ref": "#/$defs/sha"
+        }
+      },
+      "required": [
+        "repo",
+        "branch",
+        "commit_sha"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_create_pull_request": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "head": {
+          "$ref": "#/$defs/branch"
+        },
+        "base": {
+          "$ref": "#/$defs/branch"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "draft": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "repo",
+        "head",
+        "base",
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_comment": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        }
+      },
+      "required": [
+        "repo",
+        "number",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "params_subagent_request": {
+      "type": "object",
+      "properties": {
+        "purpose": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32768
+        },
+        "model_id": {
+          "$ref": "../common.json#/$defs/model_id"
+        }
+      },
+      "required": [
+        "purpose",
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    "params_task_set_title": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "1-120 characters, single line (no control characters, no line or paragraph separator)",
+          "pattern": "^[^\u0000-\u001f  ]{1,120}$"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_list_repositories": {
+      "type": "object",
+      "properties": {
+        "repositories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "repo": {
+                "$ref": "#/$defs/repo"
+              },
+              "default_branch": {
+                "$ref": "#/$defs/branch"
+              },
+              "private": {
+                "type": "boolean"
+              },
+              "allowed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "repo",
+              "default_branch",
+              "private",
+              "allowed"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "repositories"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_checkout": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "commit_sha": {
+          "$ref": "#/$defs/sha"
+        },
+        "dir": {
+          "type": "string",
+          "pattern": "^repos/[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
+        },
+        "files": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "bytes": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "repo",
+        "commit_sha",
+        "dir",
+        "files",
+        "bytes"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_get_pull_request": {
+      "type": "object",
+      "description": "patches at most 1 MiB in total; truncated when patches were left out",
+      "properties": {
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "body": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 262144
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "draft": {
+          "type": "boolean"
+        },
+        "head": {
+          "type": "object",
+          "properties": {
+            "ref": {
+              "$ref": "#/$defs/branch"
+            },
+            "sha": {
+              "$ref": "#/$defs/sha"
+            }
+          },
+          "required": [
+            "ref",
+            "sha"
+          ],
+          "additionalProperties": false
+        },
+        "base": {
+          "type": "object",
+          "properties": {
+            "ref": {
+              "$ref": "#/$defs/branch"
+            },
+            "sha": {
+              "$ref": "#/$defs/sha"
+            }
+          },
+          "required": [
+            "ref",
+            "sha"
+          ],
+          "additionalProperties": false
+        },
+        "url": {
+          "$ref": "#/$defs/url"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/rel_path"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "added",
+                  "removed",
+                  "modified",
+                  "renamed",
+                  "copied",
+                  "changed",
+                  "unchanged"
+                ]
+              },
+              "additions": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "deletions": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "patch": {
+                "type": "string",
+                "maxLength": 1048576
+              }
+            },
+            "required": [
+              "path",
+              "status",
+              "additions",
+              "deletions"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 3000
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/github_id"
+              },
+              "author": {
+                "$ref": "#/$defs/github_login"
+              },
+              "body": {
+                "type": "string",
+                "maxLength": 262144
+              },
+              "created_at": {
+                "$ref": "#/$defs/github_time"
+              }
+            },
+            "required": [
+              "id",
+              "author",
+              "body",
+              "created_at"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "number",
+        "title",
+        "body",
+        "state",
+        "draft",
+        "head",
+        "base",
+        "url",
+        "files",
+        "comments",
+        "truncated"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_create_branch": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "$ref": "#/$defs/branch"
+        },
+        "sha": {
+          "$ref": "#/$defs/sha"
+        }
+      },
+      "required": [
+        "branch",
+        "sha"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_commit": {
+      "type": "object",
+      "properties": {
+        "commit_sha": {
+          "$ref": "#/$defs/sha"
+        },
+        "parent_sha": {
+          "$ref": "#/$defs/sha"
+        },
+        "tree_sha": {
+          "$ref": "#/$defs/sha"
+        },
+        "files_changed": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "commit_sha",
+        "parent_sha",
+        "tree_sha",
+        "files_changed"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_push": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "$ref": "#/$defs/branch"
+        },
+        "sha": {
+          "$ref": "#/$defs/sha"
+        },
+        "url": {
+          "$ref": "#/$defs/url"
+        }
+      },
+      "required": [
+        "branch",
+        "sha",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_create_pull_request": {
+      "type": "object",
+      "description": "existing true: an open PR with the same head/base was found (MCP status duplicate)",
+      "properties": {
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "url": {
+          "$ref": "#/$defs/url"
+        },
+        "id": {
+          "$ref": "#/$defs/github_id"
+        },
+        "draft": {
+          "type": "boolean"
+        },
+        "existing": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "number",
+        "url",
+        "id",
+        "draft"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_comment": {
+      "type": "object",
+      "properties": {
+        "comment_id": {
+          "$ref": "#/$defs/github_id"
+        },
+        "url": {
+          "$ref": "#/$defs/url"
+        }
+      },
+      "required": [
+        "comment_id",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "result_subagent_request": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
+    "result_task_set_title": {
+      "$ref": "../common.json#/$defs/empty"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/result_github_list_repositories"
+        },
+        {
+          "$ref": "#/$defs/result_github_checkout"
+        },
+        {
+          "$ref": "#/$defs/result_github_get_pull_request"
+        },
+        {
+          "$ref": "#/$defs/result_github_create_branch"
+        },
+        {
+          "$ref": "#/$defs/result_github_commit"
+        },
+        {
+          "$ref": "#/$defs/result_github_push"
+        },
+        {
+          "$ref": "#/$defs/result_github_create_pull_request"
+        },
+        {
+          "$ref": "#/$defs/result_github_comment"
+        },
+        {
+          "$ref": "#/$defs/result_subagent_request"
+        },
+        {
+          "$ref": "#/$defs/result_task_set_title"
+        }
+      ],
+      "description": "result of any operation type"
+    }
+  }
+}

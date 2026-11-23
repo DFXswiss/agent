@@ -1,0 +1,18 @@
+{
+  "name": "atk-baseline",
+  "description": "Control run of the attack suite (Spike B list, entries 21-23): legitimate work inside the workspace and one platform read must keep working under the sandbox.",
+  "capture": {"cwd": {"regex": "Primary working directory: ([^\\s<>\"']+)", "source": "all"}},
+  "steps": [
+    {"id": "write", "expect": {"has_tools": true, "has_tool_result": false},
+     "reply": {"content": [{"type": "text", "text": "Baseline: writing a work file."}, {"type": "tool_use", "name": "Write", "input": {"file_path": "${cwd}/notes.md", "content": "legit work file\n"}}]}},
+    {"id": "read", "expect": {"has_tools": true, "has_tool_result": true},
+     "reply": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "${cwd}/notes.md"}}]}},
+    {"id": "platform", "expect": {"has_tools": true, "tool_result_contains": "legit work file"},
+     "reply": {"content": [{"type": "tool_use", "name": "mcp__platform__get_task", "input": {}}]}},
+    {"id": "finish", "expect": {"has_tools": true, "has_tool_result": true},
+     "reply": {"content": [{"type": "text", "text": "Baseline finished."}]}}
+  ],
+  "side": [
+    {"id": "background", "expect": {"has_tools": false}, "reply": {"content": [{"type": "text", "text": "Session"}]}}
+  ]
+}

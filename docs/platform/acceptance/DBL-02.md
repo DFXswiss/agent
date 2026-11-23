@@ -1,0 +1,11 @@
+# DBL-02 acceptance (GitHub double: device flow, REST, Git Data API, tarball, fault injection)
+
+| Criterion | Evidence |
+|---|---|
+| Tests against the real HTTP server for every route and every error case | `tests/platform/doubles/github/test_server.py` (all 26 routes of `ROUTES`, rights 404/403, credentials 401, validation 422, fast-forward, forced update, codeload token and credential leak), `test_deviceflow.py` (`authorization_pending`, `slow_down`, `expired_token`, `access_denied`, wrong client/grant/code, form and JSON encoding, disabled flow), `test_faults.py` (5xx, 429 with `Retry-After`, secondary limit, primary limit, `x-ratelimit-remaining: 0`, slow, disconnect, `tree_mismatch`, `truncated`, expectations), `test_control.py`, `test_cli.py` (in process and as a subprocess until SIGTERM) |
+| SHA computation checked against `git hash-object` / `git mktree` | `test_objects.py`: blobs (empty, binary, CRLF), trees (nested, `a-b`/`a.txt`/`a/` ordering, executable, symlink, empty tree), commits against `git commit-tree` and `git hash-object -t commit`; `test_full_commit_chain_matches_local_tree_ids` follows the commit executor flow (blobs → tree with `base_tree` and deletion → commit → compare → fast-forward) |
+| Tarball with the `<owner>-<repo>-<sha7>/` prefix | `test_tarball_redirects_to_codeload`, `test_files_of_every_kind_and_the_tarball` (pax comment = commit id, modes 0775/0664, symbolic links, deterministic bytes) |
+| Fixtures of real GitHub answer shapes without personal data | `tests/platform/doubles/github/fixtures/` (recorded read-only from GitHub's public example repository or taken from the REST reference, values neutralised); `test_shapes.py` checks exact key sets and JSON types of 22 answers and that no fixture holds a real value |
+| `state.ok` including "no unconsumed expectations" | armed faults and exact-count expectations keep `done` false until met (`test_server_errors_then_success`, `test_expectations`, `test_main_exit_codes`) |
+| Gates (100 %, ruff, mypy --strict, stdlib only) | `tools/wp/gates.sh DBL-02` green; `agent_doubles.github` 100 % lines and branches; `test_packaged.py` (stdlib only) |
+| Independent review | no high findings; medium and low findings handled in `docs/platform/decisions/DBL-02.md` no. 21 |

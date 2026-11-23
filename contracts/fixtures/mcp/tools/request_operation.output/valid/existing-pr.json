@@ -1,0 +1,11 @@
+{
+  "operation_id": "01a1ee56-5e00-700d-8f1b-340691d99f0d",
+  "status": "duplicate",
+  "result": {
+    "number": 7,
+    "url": "https://github.example/p/7",
+    "id": 77,
+    "draft": false,
+    "existing": true
+  }
+}

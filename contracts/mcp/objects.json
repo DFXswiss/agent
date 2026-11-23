@@ -1,0 +1,1373 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/objects.json",
+  "title": "mcp objects",
+  "description": "Shared definitions of the session platform API (03-api.md section 8).",
+  "$defs": {
+    "input_get_context": {
+      "$ref": "../common.json#/$defs/empty"
+    },
+    "input_list_workgroups": {
+      "$ref": "../common.json#/$defs/empty"
+    },
+    "input_list_members": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "org",
+            "workgroup"
+          ]
+        }
+      },
+      "required": [
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "input_list_tasks": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "../common.json#/$defs/task_state"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "before": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "input_get_task": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "additionalProperties": false
+    },
+    "input_get_task_messages": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "after": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "additionalProperties": false
+    },
+    "input_get_whiteboard": {
+      "type": "object",
+      "description": "task_id is required for level task and refused for the levels org and workgroup; the guest and the runner check this rule (a tool input schema is a plain object: the model API refuses oneOf, anyOf and allOf at its top level)",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "org",
+            "workgroup",
+            "task"
+          ]
+        },
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "level"
+      ],
+      "additionalProperties": false
+    },
+    "input_get_notifications": {
+      "$ref": "../common.json#/$defs/empty"
+    },
+    "input_request_operation": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "operation type; an unknown or malformed type is recorded and rejected (unknown_type)",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "params": {
+          "type": "object",
+          "description": "parameters of the type; checked against ops/<type>.params.json (an unknown type or invalid parameters are recorded and answered with status rejected)",
+          "additionalProperties": {}
+        },
+        "idempotency_key": {
+          "$ref": "#/$defs/idempotency_key"
+        }
+      },
+      "required": [
+        "type",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "input_get_operation": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wait_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30,
+          "description": "seconds to wait for a final state (at most 30)"
+        }
+      },
+      "required": [
+        "operation_id"
+      ],
+      "additionalProperties": false
+    },
+    "input_list_operations": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "input_get_subagent_result": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wait_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30,
+          "description": "seconds to wait for a final state (at most 30)"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
+    "output_get_context": {
+      "type": "object",
+      "properties": {
+        "org": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "name": {
+              "type": "string",
+              "description": "plaintext name (organization, workgroup, member, device)",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "id",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "workgroup": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "name": {
+              "type": "string",
+              "description": "plaintext name (organization, workgroup, member, device)",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "is_default": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "is_default"
+          ],
+          "additionalProperties": false
+        },
+        "task": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "title": {
+              "type": "string",
+              "description": "task title",
+              "minLength": 0,
+              "maxLength": 256
+            },
+            "state": {
+              "$ref": "../common.json#/$defs/task_state"
+            },
+            "owner": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "../common.json#/$defs/uuid"
+                },
+                "display_name": {
+                  "type": "string",
+                  "description": "plaintext name (organization, workgroup, member, device)",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "display_name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "state",
+            "owner"
+          ],
+          "additionalProperties": false
+        },
+        "session": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "parent_session_id": {
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "depth": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "model_id": {
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/model_id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "parent_session_id",
+            "depth",
+            "model_id"
+          ],
+          "additionalProperties": false
+        },
+        "rights": {
+          "type": "object",
+          "properties": {
+            "workgroup": {
+              "$ref": "../common.json#/$defs/wg_access"
+            }
+          },
+          "required": [
+            "workgroup"
+          ],
+          "additionalProperties": false
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "subagent_max_depth": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "subagent_max_parallel": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            "subagent_max_total": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10
+            }
+          },
+          "required": [
+            "subagent_max_depth",
+            "subagent_max_parallel",
+            "subagent_max_total"
+          ],
+          "additionalProperties": false
+        },
+        "api_version": {
+          "type": "integer",
+          "const": 1
+        }
+      },
+      "required": [
+        "org",
+        "workgroup",
+        "task",
+        "session",
+        "rights",
+        "limits",
+        "api_version"
+      ],
+      "additionalProperties": false
+    },
+    "output_list_workgroups": {
+      "type": "object",
+      "description": "my_access null: the task owner has no access to that workgroup",
+      "properties": {
+        "workgroups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "name": {
+                "type": "string",
+                "description": "plaintext name (organization, workgroup, member, device)",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "is_default": {
+                "type": "boolean"
+              },
+              "my_access": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/wg_access"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "is_default",
+              "my_access"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "workgroups"
+      ],
+      "additionalProperties": false
+    },
+    "output_list_members": {
+      "type": "object",
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "description": "scope org",
+                "properties": {
+                  "id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "kind": {
+                    "$ref": "../common.json#/$defs/principal_kind"
+                  },
+                  "display_name": {
+                    "type": "string",
+                    "description": "plaintext name (organization, workgroup, member, device)",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "role": {
+                    "$ref": "../common.json#/$defs/member_role"
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "display_name",
+                  "role"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "scope workgroup",
+                "properties": {
+                  "id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "kind": {
+                    "$ref": "../common.json#/$defs/principal_kind"
+                  },
+                  "display_name": {
+                    "type": "string",
+                    "description": "plaintext name (organization, workgroup, member, device)",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "access": {
+                    "$ref": "../common.json#/$defs/wg_access"
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "display_name",
+                  "access"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "members"
+      ],
+      "additionalProperties": false
+    },
+    "output_list_tasks": {
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "title": {
+                "type": "string",
+                "description": "task title",
+                "minLength": 0,
+                "maxLength": 256
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/task_state"
+              },
+              "owner_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "created_at": {
+                "$ref": "../common.json#/$defs/time"
+              },
+              "last_activity_at": {
+                "$ref": "../common.json#/$defs/time"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "state",
+              "owner_id",
+              "created_at",
+              "last_activity_at"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "next_before": {
+          "$ref": "../common.json#/$defs/next_before"
+        }
+      },
+      "required": [
+        "tasks",
+        "next_before"
+      ],
+      "additionalProperties": false
+    },
+    "output_get_task": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "title": {
+          "type": "string",
+          "description": "task title",
+          "minLength": 0,
+          "maxLength": 256
+        },
+        "state": {
+          "$ref": "../common.json#/$defs/task_state"
+        },
+        "owner_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/session_state"
+              },
+              "depth": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "parent_session_id": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "state",
+              "depth",
+              "parent_session_id"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "type": {
+                "$ref": "../common.json#/$defs/operation_type"
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/operation_state"
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "state",
+        "owner_id",
+        "created_at",
+        "sessions",
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "output_get_task_messages": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "$ref": "../common.json#/$defs/positive"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "prompt",
+                  "output"
+                ]
+              },
+              "author_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "ts": {
+                "$ref": "../common.json#/$defs/time"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 262144
+              }
+            },
+            "required": [
+              "seq",
+              "kind",
+              "author_id",
+              "ts",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 200
+        },
+        "next_after": {
+          "$ref": "../common.json#/$defs/next_after"
+        }
+      },
+      "required": [
+        "messages",
+        "next_after"
+      ],
+      "additionalProperties": false
+    },
+    "output_get_whiteboard": {
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "entry_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "author_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "created_at": {
+                "$ref": "../common.json#/$defs/time"
+              },
+              "updated_at": {
+                "$ref": "../common.json#/$defs/time"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 65536
+              }
+            },
+            "required": [
+              "entry_id",
+              "author_id",
+              "created_at",
+              "updated_at",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "additionalProperties": false
+    },
+    "output_get_notifications": {
+      "type": "object",
+      "properties": {
+        "notifications": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "ping_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "const": "whiteboard.entry"
+                  },
+                  "level": {
+                    "type": "string",
+                    "enum": [
+                      "org",
+                      "workgroup",
+                      "task"
+                    ]
+                  },
+                  "ref": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "at": {
+                    "$ref": "../common.json#/$defs/time"
+                  }
+                },
+                "required": [
+                  "ping_id",
+                  "kind",
+                  "level",
+                  "ref",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "ping_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "subagent.finished",
+                      "operation.finished"
+                    ]
+                  },
+                  "ref": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "at": {
+                    "$ref": "../common.json#/$defs/time"
+                  }
+                },
+                "required": [
+                  "ping_id",
+                  "kind",
+                  "ref",
+                  "at"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "notifications"
+      ],
+      "additionalProperties": false
+    },
+    "output_list_operations": {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "operation_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "type": {
+                "$ref": "../common.json#/$defs/operation_type"
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/operation_state"
+              },
+              "error_code": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/operation_error_code"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "$ref": "../common.json#/$defs/time"
+              }
+            },
+            "required": [
+              "operation_id",
+              "type",
+              "state",
+              "error_code",
+              "created_at"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "output_get_subagent_result": {
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "finished child",
+          "properties": {
+            "session_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "stopped"
+              ]
+            },
+            "final_text": {
+              "type": "string",
+              "maxLength": 65536
+            },
+            "finished_at": {
+              "$ref": "../common.json#/$defs/time"
+            }
+          },
+          "required": [
+            "session_id",
+            "state",
+            "final_text",
+            "finished_at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "state": {
+              "type": "string",
+              "const": "failed"
+            },
+            "finished_at": {
+              "$ref": "../common.json#/$defs/time"
+            }
+          },
+          "required": [
+            "session_id",
+            "state",
+            "finished_at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "still running",
+          "properties": {
+            "session_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "requested",
+                "vm_assigning",
+                "vm_ready",
+                "sandbox_ready",
+                "agent_starting",
+                "prompt_delivering",
+                "working",
+                "idle",
+                "suspended",
+                "resuming",
+                "stopping"
+              ]
+            }
+          },
+          "required": [
+            "session_id",
+            "state"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "description": "optional client key; with it the dedupe fields are {idempotency_key, task}",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "operation_outcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "succeeded"
+            },
+            "result": {
+              "$ref": "../ops/objects.json#/$defs/result"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "result of the original operation (duplicate_of), or of an existing open pull request found by the executor (no duplicate_of, result.existing true)",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "duplicate"
+            },
+            "duplicate_of": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "result": {
+              "$ref": "../ops/objects.json#/$defs/result"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "failed",
+                "rejected",
+                "denied"
+              ]
+            },
+            "error": {
+              "$ref": "../ops/objects.json#/$defs/error"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "not final within the wait time; duplicate_of when the original is still running",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "pending"
+            },
+            "duplicate_of": {
+              "$ref": "../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "request_operation / get_operation result (03-api.md sections 8.1 and 9)"
+    },
+    "output_request_operation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "succeeded"
+            },
+            "result": {
+              "$ref": "../ops/objects.json#/$defs/result"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "result of the original operation (duplicate_of), or of an existing open pull request found by the executor (no duplicate_of, result.existing true)",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "duplicate"
+            },
+            "duplicate_of": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "result": {
+              "$ref": "../ops/objects.json#/$defs/result"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "failed",
+                "rejected",
+                "denied"
+              ]
+            },
+            "error": {
+              "$ref": "../ops/objects.json#/$defs/error"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "not final within the wait time; duplicate_of when the original is still running",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "pending"
+            },
+            "duplicate_of": {
+              "$ref": "../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "request_operation / get_operation result (03-api.md sections 8.1 and 9)"
+    },
+    "output_get_operation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "succeeded"
+            },
+            "result": {
+              "$ref": "../ops/objects.json#/$defs/result"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "result of the original operation (duplicate_of), or of an existing open pull request found by the executor (no duplicate_of, result.existing true)",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "duplicate"
+            },
+            "duplicate_of": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "result": {
+              "$ref": "../ops/objects.json#/$defs/result"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "failed",
+                "rejected",
+                "denied"
+              ]
+            },
+            "error": {
+              "$ref": "../ops/objects.json#/$defs/error"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "not final within the wait time; duplicate_of when the original is still running",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "pending"
+            },
+            "duplicate_of": {
+              "$ref": "../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "request_operation / get_operation result (03-api.md sections 8.1 and 9)"
+    },
+    "tool_result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/output_get_context"
+        },
+        {
+          "$ref": "#/$defs/output_list_workgroups"
+        },
+        {
+          "$ref": "#/$defs/output_list_members"
+        },
+        {
+          "$ref": "#/$defs/output_list_tasks"
+        },
+        {
+          "$ref": "#/$defs/output_get_task"
+        },
+        {
+          "$ref": "#/$defs/output_get_task_messages"
+        },
+        {
+          "$ref": "#/$defs/output_get_whiteboard"
+        },
+        {
+          "$ref": "#/$defs/output_get_notifications"
+        },
+        {
+          "$ref": "#/$defs/output_request_operation"
+        },
+        {
+          "$ref": "#/$defs/output_get_operation"
+        },
+        {
+          "$ref": "#/$defs/output_list_operations"
+        },
+        {
+          "$ref": "#/$defs/output_get_subagent_result"
+        }
+      ],
+      "description": "output of any platform tool"
+    },
+    "tool_error": {
+      "type": "object",
+      "description": "isError result body: closed code list (decisions CTR-02) and an English sentence",
+      "properties": {
+        "error": {
+          "type": "string",
+          "enum": [
+            "params_invalid",
+            "not_found",
+            "forbidden",
+            "unavailable",
+            "timeout",
+            "rate_limited"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "pattern": "^[ -~]+$",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "error",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "notice": {
+      "type": "string",
+      "description": "ping notice of 03-api.md section 8.2; kinds distinct, in the order whiteboard.entry, subagent.finished, operation.finished",
+      "pattern": "^agent\\.dfx\\.swiss notice: [1-9][0-9]{0,5} new item\\(s\\) available \\((whiteboard\\.entry, subagent\\.finished, operation\\.finished|whiteboard\\.entry, subagent\\.finished|whiteboard\\.entry, operation\\.finished|whiteboard\\.entry|subagent\\.finished, operation\\.finished|subagent\\.finished|operation\\.finished)\\)\\. Use mcp__platform__get_notifications to see them\\.$"
+    },
+    "deny_reason": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "This tool is forbidden in agent.dfx.swiss sessions. Request actions through the platform tools (mcp__platform__request_operation).",
+            "Glob and Grep patterns must stay inside the workspace: no leading / or ~, no .. segment and no NUL character.",
+            "The path could not be resolved inside the session workspace.",
+            "The tool call could not be checked and is denied.",
+            "Write and Edit are allowed only inside the session workspace.",
+            "This path is protected in agent.dfx.swiss sessions and cannot be written.",
+            "Read, Glob and Grep are allowed only inside the session workspace and the session harness file."
+          ]
+        },
+        {
+          "type": "string",
+          "pattern": "^Tool [A-Za-z0-9_.:-]{1,128} is forbidden in agent\\.dfx\\.swiss sessions\\. Request actions through the platform tools \\(mcp__platform__request_operation\\)\\.$"
+        }
+      ],
+      "description": "fixed deny sentences of mcp/hook-deny-reasons.json"
+    },
+    "rpc_error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "enum": [
+            -32700,
+            -32600,
+            -32601,
+            -32602,
+            -32603
+          ]
+        },
+        "message": {
+          "type": "string",
+          "pattern": "^[ -~]+$",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "rpc_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      ],
+      "description": "JSON-RPC id"
+    }
+  }
+}

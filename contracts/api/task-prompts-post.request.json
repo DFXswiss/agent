@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-prompts-post.request.json",
+  "title": "POST /v1/tasks/{task}/prompts request",
+  "description": "Body of POST /v1/tasks/{task}/prompts (03-api.md section 4.6).",
+  "type": "object",
+  "properties": {
+    "event": {
+      "$ref": "../common.json#/$defs/event_prompt"
+    }
+  },
+  "required": [
+    "event"
+  ],
+  "additionalProperties": false
+}

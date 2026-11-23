@@ -1,0 +1,6 @@
+{
+  "type": "session.control",
+  "session_id": "01930028-0000-7000-8000-000000000028",
+  "action": "interrupt",
+  "unexpected": 1
+}

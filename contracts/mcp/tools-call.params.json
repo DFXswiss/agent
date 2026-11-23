@@ -1,0 +1,260 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/tools-call.params.json",
+  "title": "tools/call params",
+  "description": "Params of tools/call: the arguments of the named tool (03-api.md section 8.1); an unknown name is a JSON-RPC error -32602.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "get_context"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_get_context"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "list_workgroups"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_list_workgroups"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "list_members"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_list_members"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "list_tasks"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_list_tasks"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "get_task"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_get_task"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "get_task_messages"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_get_task_messages"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "get_whiteboard"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_get_whiteboard"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "get_notifications"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_get_notifications"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "request_operation"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_request_operation"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "get_operation"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_get_operation"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "list_operations"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_list_operations"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "get_subagent_result"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_get_subagent_result"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

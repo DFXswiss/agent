@@ -1,0 +1,88 @@
+{
+  "tools": [
+    {
+      "name": "get_context",
+      "description": "get_context tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_workgroups",
+      "description": "list_workgroups tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_members",
+      "description": "list_members tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_tasks",
+      "description": "list_tasks tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_task",
+      "description": "get_task tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_task_messages",
+      "description": "get_task_messages tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_whiteboard",
+      "description": "get_whiteboard tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_notifications",
+      "description": "get_notifications tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "request_operation",
+      "description": "request_operation tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_operation",
+      "description": "get_operation tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_operations",
+      "description": "list_operations tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_subagent_result",
+      "description": "get_subagent_result tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    }
+  ]
+}

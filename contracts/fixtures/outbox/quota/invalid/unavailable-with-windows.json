@@ -1,0 +1,13 @@
+{
+  "owner_id": "0193000a-0000-7000-8000-00000000000a",
+  "unavailable": true,
+  "windows": [
+    {
+      "window": "five_hour",
+      "used_percent": 1,
+      "resets_at": null,
+      "severity": null
+    }
+  ],
+  "fetched_at": "2026-11-21T12:00:00.000Z"
+}

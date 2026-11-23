@@ -1,0 +1,190 @@
+# HELP agent_runner_textfile_timestamp_seconds Unix time this file was written.
+# TYPE agent_runner_textfile_timestamp_seconds gauge
+agent_runner_textfile_timestamp_seconds 1795600000.25
+# HELP agent_runner_device_up 1 while the runner daemon samples.
+# TYPE agent_runner_device_up gauge
+agent_runner_device_up 1
+# HELP agent_runner_device_hub_connected 1 while the device WebSocket to the hub is open.
+# TYPE agent_runner_device_hub_connected gauge
+agent_runner_device_hub_connected 1
+# HELP agent_runner_device_sync_fatal 1 when pushing to the hub stopped for an operator.
+# TYPE agent_runner_device_sync_fatal gauge
+agent_runner_device_sync_fatal 0
+# HELP agent_runner_device_outbox_backlog Outbox items not yet acknowledged by the hub.
+# TYPE agent_runner_device_outbox_backlog gauge
+agent_runner_device_outbox_backlog 3
+# HELP agent_runner_device_outbox_held Outbox items waiting in scope queues (no key or log head yet).
+# TYPE agent_runner_device_outbox_held gauge
+agent_runner_device_outbox_held 0
+# HELP agent_runner_device_outbox_held_scopes Scopes whose outbox queue waits.
+# TYPE agent_runner_device_outbox_held_scopes gauge
+agent_runner_device_outbox_held_scopes 0
+# HELP agent_runner_device_vm_slots VM slots of the device memory budget (total).
+# TYPE agent_runner_device_vm_slots gauge
+agent_runner_device_vm_slots 8
+# HELP agent_runner_device_vm_slots_free Free VM slots.
+# TYPE agent_runner_device_vm_slots_free gauge
+agent_runner_device_vm_slots_free 6
+# HELP agent_runner_device_vm_memory_budget_bytes Memory budget for VMs.
+# TYPE agent_runner_device_vm_memory_budget_bytes gauge
+agent_runner_device_vm_memory_budget_bytes 68719476736
+# HELP agent_runner_device_vm_memory_used_bytes VM memory in use from the budget.
+# TYPE agent_runner_device_vm_memory_used_bytes gauge
+agent_runner_device_vm_memory_used_bytes 17179869184
+# HELP agent_runner_device_pool_ready Warm pool VMs ready for assignment.
+# TYPE agent_runner_device_pool_ready gauge
+agent_runner_device_pool_ready 1
+# HELP agent_runner_device_capacity_low 1 when less than 10 % of the VM slots are free.
+# TYPE agent_runner_device_capacity_low gauge
+agent_runner_device_capacity_low 0
+# HELP agent_runner_device_verify_failures_total Inbound data the runner refused after verification (events, logs, wraps, requests).
+# TYPE agent_runner_device_verify_failures_total counter
+agent_runner_device_verify_failures_total 2
+# HELP agent_runner_device_metrics_dropped_total Metric samples dropped because they were older than 48 h before they could be pushed to the hub.
+# TYPE agent_runner_device_metrics_dropped_total counter
+agent_runner_device_metrics_dropped_total 0
+# HELP agent_runner_vm_start_failures_total Failed attempts to clone or start a Lima VM.
+# TYPE agent_runner_vm_start_failures_total counter
+agent_runner_vm_start_failures_total 1
+# HELP agent_runner_vm_probe_ok 1 when the guest of a VM that should run answered.
+# TYPE agent_runner_vm_probe_ok gauge
+agent_runner_vm_probe_ok{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a"} 1
+agent_runner_vm_probe_ok{vm="vm-0000beef",wg=""} 0
+# HELP agent_runner_vm_state 1 for the current state of the VM.
+# TYPE agent_runner_vm_state gauge
+agent_runner_vm_state{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="pool"} 0
+agent_runner_vm_state{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="assigning"} 0
+agent_runner_vm_state{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="running"} 1
+agent_runner_vm_state{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="stopping"} 0
+agent_runner_vm_state{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="stopped"} 0
+agent_runner_vm_state{vm="vm-0000beef",wg="",state="pool"} 1
+agent_runner_vm_state{vm="vm-0000beef",wg="",state="assigning"} 0
+agent_runner_vm_state{vm="vm-0000beef",wg="",state="running"} 0
+agent_runner_vm_state{vm="vm-0000beef",wg="",state="stopping"} 0
+agent_runner_vm_state{vm="vm-0000beef",wg="",state="stopped"} 0
+agent_runner_vm_state{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="pool"} 0
+agent_runner_vm_state{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="assigning"} 0
+agent_runner_vm_state{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="running"} 0
+agent_runner_vm_state{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="stopping"} 0
+agent_runner_vm_state{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="stopped"} 1
+# HELP agent_runner_vm_cpu_ratio CPU of the VM in cores.
+# TYPE agent_runner_vm_cpu_ratio gauge
+agent_runner_vm_cpu_ratio{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a"} 0.75
+# HELP agent_runner_vm_memory_bytes Host memory of the VM (VZ and hostagent resident).
+# TYPE agent_runner_vm_memory_bytes gauge
+agent_runner_vm_memory_bytes{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a"} 1500000000
+# HELP agent_runner_vm_memory_limit_bytes Memory configured for the VM.
+# TYPE agent_runner_vm_memory_limit_bytes gauge
+agent_runner_vm_memory_limit_bytes{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a"} 8589934592
+agent_runner_vm_memory_limit_bytes{vm="vm-0000beef",wg=""} 8589934592
+agent_runner_vm_memory_limit_bytes{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a"} 8589934592
+# HELP agent_runner_vm_disk_used_bytes Allocated bytes of the VM disk file.
+# TYPE agent_runner_vm_disk_used_bytes gauge
+agent_runner_vm_disk_used_bytes{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a"} 3122307072
+agent_runner_vm_disk_used_bytes{vm="vm-0000beef",wg=""} 3122307072
+# HELP agent_runner_vm_disk_limit_bytes Size of the VM disk.
+# TYPE agent_runner_vm_disk_limit_bytes gauge
+agent_runner_vm_disk_limit_bytes{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a"} 21474836480
+agent_runner_vm_disk_limit_bytes{vm="vm-0000beef",wg=""} 21474836480
+agent_runner_vm_disk_limit_bytes{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a"} 21474836480
+# HELP agent_runner_vm_uptime_seconds Seconds since the VM process started.
+# TYPE agent_runner_vm_uptime_seconds gauge
+agent_runner_vm_uptime_seconds{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a"} 120
+agent_runner_vm_uptime_seconds{vm="vm-0000beef",wg=""} 120
+# HELP agent_runner_vm_network_receive_bytes_total Bytes received by the VM.
+# TYPE agent_runner_vm_network_receive_bytes_total counter
+agent_runner_vm_network_receive_bytes_total{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a"} 1000
+agent_runner_vm_network_receive_bytes_total{vm="vm-0000beef",wg=""} 1000
+# HELP agent_runner_vm_network_transmit_bytes_total Bytes sent by the VM.
+# TYPE agent_runner_vm_network_transmit_bytes_total counter
+agent_runner_vm_network_transmit_bytes_total{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a"} 2000
+agent_runner_vm_network_transmit_bytes_total{vm="vm-0000beef",wg=""} 2000
+# HELP agent_runner_vm_sessions Sessions of the VM by state.
+# TYPE agent_runner_vm_sessions gauge
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="requested"} 0
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="vm_assigning"} 0
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="vm_ready"} 0
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="sandbox_ready"} 0
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="agent_starting"} 0
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="prompt_delivering"} 0
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="working"} 1
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="idle"} 0
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="suspended"} 0
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="resuming"} 0
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="stopping"} 0
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="stopped"} 1
+agent_runner_vm_sessions{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a",state="failed"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="requested"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="vm_assigning"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="vm_ready"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="sandbox_ready"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="agent_starting"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="prompt_delivering"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="working"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="idle"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="suspended"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="resuming"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="stopping"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="stopped"} 0
+agent_runner_vm_sessions{vm="vm-0000beef",wg="",state="failed"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="requested"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="vm_assigning"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="vm_ready"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="sandbox_ready"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="agent_starting"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="prompt_delivering"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="working"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="idle"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="suspended"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="resuming"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="stopping"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="stopped"} 0
+agent_runner_vm_sessions{vm="vm-0000dead",wg="01930002-0000-7000-8000-00000000000a",state="failed"} 0
+# HELP agent_runner_session_cpu_ratio CPU of the session unit in cores.
+# TYPE agent_runner_session_cpu_ratio gauge
+agent_runner_session_cpu_ratio{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 0.5
+# HELP agent_runner_session_memory_bytes Memory of the session unit (cgroup memory.current).
+# TYPE agent_runner_session_memory_bytes gauge
+agent_runner_session_memory_bytes{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 734003200
+agent_runner_session_memory_bytes{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04"} 734003200
+# HELP agent_runner_session_memory_limit_bytes Memory limit of the session unit.
+# TYPE agent_runner_session_memory_limit_bytes gauge
+agent_runner_session_memory_limit_bytes{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 4294967296
+agent_runner_session_memory_limit_bytes{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04"} 4294967296
+# HELP agent_runner_session_workspace_bytes Bytes of the files in the session workspace.
+# TYPE agent_runner_session_workspace_bytes gauge
+agent_runner_session_workspace_bytes{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 123
+agent_runner_session_workspace_bytes{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04"} 123
+# HELP agent_runner_session_runtime_seconds Seconds since the session was created.
+# TYPE agent_runner_session_runtime_seconds gauge
+agent_runner_session_runtime_seconds{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 300
+agent_runner_session_runtime_seconds{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04"} 60
+# HELP agent_runner_session_io_read_bytes_total Bytes read by the session unit.
+# TYPE agent_runner_session_io_read_bytes_total counter
+agent_runner_session_io_read_bytes_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 1052672
+agent_runner_session_io_read_bytes_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04"} 1052672
+# HELP agent_runner_session_io_write_bytes_total Bytes written by the session unit.
+# TYPE agent_runner_session_io_write_bytes_total counter
+agent_runner_session_io_write_bytes_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 4194304
+agent_runner_session_io_write_bytes_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04"} 4194304
+# HELP agent_runner_session_oom_kills_total Processes of the session killed for memory.
+# TYPE agent_runner_session_oom_kills_total counter
+agent_runner_session_oom_kills_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 1
+agent_runner_session_oom_kills_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04"} 1
+# HELP agent_runner_session_hook_denies_total Hook denies and blocks of the session.
+# TYPE agent_runner_session_hook_denies_total counter
+agent_runner_session_hook_denies_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 2
+agent_runner_session_hook_denies_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04"} 2
+# HELP agent_runner_session_hook_errors_total Hook handler failures of the session.
+# TYPE agent_runner_session_hook_errors_total counter
+agent_runner_session_hook_errors_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 0
+agent_runner_session_hook_errors_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04"} 0
+# HELP agent_runner_session_egress_denied_total Refused egress packets of the session.
+# TYPE agent_runner_session_egress_denied_total counter
+agent_runner_session_egress_denied_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 9
+# HELP agent_runner_session_model_tokens_total Model tokens of the session (input: input and cache tokens, output: output and thinking tokens).
+# TYPE agent_runner_session_model_tokens_total counter
+agent_runner_session_model_tokens_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03",direction="input"} 1200
+agent_runner_session_model_tokens_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04",direction="input"} 1200
+agent_runner_session_model_tokens_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03",direction="output"} 300
+agent_runner_session_model_tokens_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04",direction="output"} 300

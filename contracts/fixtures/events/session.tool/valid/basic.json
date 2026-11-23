@@ -1,0 +1,9 @@
+{
+  "tool_use_id": "toolu_01X",
+  "name": "Read",
+  "input_summary": "README.md",
+  "input": "{\"file_path\":\"README.md\"}",
+  "result_summary": "# Example",
+  "is_error": false,
+  "duration_ms": 12
+}

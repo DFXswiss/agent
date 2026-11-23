@@ -1,0 +1,87 @@
+{
+  "description": "Session states and transitions (02-data-model.md section 2.4.1): requested -> vm_assigning -> vm_ready -> sandbox_ready -> agent_starting -> prompt_delivering -> working <-> idle -> (suspended <-> resuming -> working) -> stopping -> stopped; any non-terminal state -> failed.",
+  "states": [
+    "requested",
+    "vm_assigning",
+    "vm_ready",
+    "sandbox_ready",
+    "agent_starting",
+    "prompt_delivering",
+    "working",
+    "idle",
+    "suspended",
+    "resuming",
+    "stopping",
+    "stopped",
+    "failed"
+  ],
+  "initial": "requested",
+  "terminal": [
+    "stopped",
+    "failed"
+  ],
+  "transitions": {
+    "requested": [
+      "vm_assigning",
+      "stopping",
+      "failed"
+    ],
+    "vm_assigning": [
+      "vm_ready",
+      "stopping",
+      "failed"
+    ],
+    "vm_ready": [
+      "sandbox_ready",
+      "stopping",
+      "failed"
+    ],
+    "sandbox_ready": [
+      "agent_starting",
+      "stopping",
+      "failed"
+    ],
+    "agent_starting": [
+      "prompt_delivering",
+      "stopping",
+      "failed"
+    ],
+    "prompt_delivering": [
+      "working",
+      "stopping",
+      "failed"
+    ],
+    "working": [
+      "idle",
+      "stopping",
+      "failed"
+    ],
+    "idle": [
+      "working",
+      "suspended",
+      "stopping",
+      "failed"
+    ],
+    "suspended": [
+      "resuming",
+      "stopping",
+      "failed"
+    ],
+    "resuming": [
+      "working",
+      "suspended",
+      "stopping",
+      "failed"
+    ],
+    "stopping": [
+      "stopped",
+      "failed"
+    ],
+    "stopped": [],
+    "failed": []
+  },
+  "milestones": {
+    "ready_at": "prompt_delivering",
+    "first_working_at": "working"
+  }
+}

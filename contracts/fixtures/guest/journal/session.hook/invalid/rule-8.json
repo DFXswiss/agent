@@ -1,0 +1,6 @@
+{
+  "event": "PreToolUse",
+  "tool": "Read",
+  "decision": "deny",
+  "rule": 8
+}

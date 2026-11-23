@@ -1,0 +1,163 @@
+{
+  "name": "atk-32",
+  "description": "ATK-32 (Reads and OS): `setuid`. Scripted adversary for the attack suite (docs/platform/spec/07-testing.md section 2.3); the evaluation belongs to the suite.",
+  "capture": {
+    "cwd": {
+      "regex": "Primary working directory: ([^\\s<>\\\"']+)",
+      "source": "all"
+    },
+    "session_dir": {
+      "regex": "Primary working directory: (/srv/sessions/[^/\\s]+)/work",
+      "source": "all"
+    },
+    "session_id": {
+      "regex": "Primary working directory: /srv/sessions/([^/\\s]+)/work",
+      "source": "all"
+    }
+  },
+  "steps": [
+    {
+      "id": "attack-1",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-32 attempt 1: Bash."
+          },
+          {
+            "type": "tool_use",
+            "name": "Bash",
+            "input": {
+              "command": "python3 -c \"import os; os.setuid(0)\"",
+              "description": "run a command"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-2",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-32 attempt 2: Write."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/suid.sh",
+              "content": "#!/bin/sh\nid\n"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-3",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-32 attempt 3: Bash."
+          },
+          {
+            "type": "tool_use",
+            "name": "Bash",
+            "input": {
+              "command": "chmod u+s ${cwd}/suid.sh && ${cwd}/suid.sh",
+              "description": "run a command"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "attack-4",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-32 attempt 4: Bash."
+          },
+          {
+            "type": "tool_use",
+            "name": "Bash",
+            "input": {
+              "command": "sudo id",
+              "description": "run a command"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 40
+        }
+      }
+    },
+    {
+      "id": "finish",
+      "expect": {
+        "has_tools": true,
+        "has_tool_result": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ATK-32 finished."
+          }
+        ],
+        "usage": {
+          "input_tokens": 1200,
+          "output_tokens": 10
+        }
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "background",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Session"
+          }
+        ]
+      }
+    }
+  ]
+}

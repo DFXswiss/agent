@@ -1,0 +1,4 @@
+{
+  "step": "authorize",
+  "url": "http://example.com/authorize"
+}

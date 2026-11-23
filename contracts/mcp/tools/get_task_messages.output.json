@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/tools/get_task_messages.output.json",
+  "title": "platform tool get_task_messages output",
+  "description": "Result (JSON text of the content item) of the platform tool get_task_messages (03-api.md section 8.1).",
+  "$ref": "../objects.json#/$defs/output_get_task_messages"
+}

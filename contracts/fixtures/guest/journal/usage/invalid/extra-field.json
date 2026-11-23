@@ -1,0 +1,16 @@
+{
+  "request_id": "gw_01",
+  "model": "deepseek/deepseek-v4.1-flash-1017",
+  "provider": "Fireworks",
+  "input_tokens": 1200,
+  "output_tokens": 80,
+  "cache_read_tokens": 1000,
+  "cache_write_tokens": 0,
+  "thinking_tokens": 0,
+  "cost_usd": 0.00021,
+  "context_window_tokens": 1048576,
+  "request_bytes": 5000,
+  "response_bytes": 900,
+  "status": 200,
+  "zz_unexpected": "x"
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/platform-log-get.response.json",
+  "title": "GET /v1/platform/log response",
+  "description": "Body of a successful response to GET /v1/platform/log (03-api.md section 4.3).",
+  "type": "object",
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "$ref": "../common.json#/$defs/seq"
+          },
+          "entry": {
+            "$ref": "../common.json#/$defs/platform_entry"
+          }
+        },
+        "required": [
+          "seq",
+          "entry"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    },
+    "head": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "hash": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "seq",
+        "hash"
+      ],
+      "additionalProperties": false
+    },
+    "next_after": {
+      "$ref": "../common.json#/$defs/next_after"
+    }
+  },
+  "required": [
+    "entries",
+    "head",
+    "next_after"
+  ],
+  "additionalProperties": false
+}

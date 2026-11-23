@@ -1,0 +1,4 @@
+# Written at every boot by agent-guest-harden.service (docs/platform/spec/05-runner.md section 3.1): the Lima
+# default user may only restart the guest services; cloud-init's unrestricted rule is removed.
+Cmnd_Alias AGENT_GUEST_RESTART = /usr/bin/systemctl restart agent-guest-control, /usr/bin/systemctl restart agent-guest-control.service, /usr/bin/systemctl restart agent-guest-api, /usr/bin/systemctl restart agent-guest-api.service
+@LIMA_USER@ ALL=(root) NOPASSWD: AGENT_GUEST_RESTART

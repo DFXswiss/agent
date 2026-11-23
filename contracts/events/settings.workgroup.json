@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/events/settings.workgroup.json",
+  "title": "event body settings.workgroup",
+  "description": "Plaintext body of the event kind settings.workgroup inside the ciphertext (03-api.md section 10).",
+  "$ref": "objects.json#/$defs/body_settings_workgroup"
+}

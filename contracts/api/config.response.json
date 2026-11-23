@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/config.response.json",
+  "title": "GET /v1/config response",
+  "description": "Body of a successful response to GET /v1/config (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "rp_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$",
+      "maxLength": 253
+    },
+    "origin": {
+      "type": "string",
+      "pattern": "^https?://[a-z0-9.-]{1,253}(:[0-9]{1,5})?$"
+    },
+    "platform_root_key": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    },
+    "hub_key": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/hub_key_id"
+        },
+        "public_key": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "id",
+        "public_key"
+      ],
+      "additionalProperties": false
+    },
+    "version": {
+      "$ref": "../common.json#/$defs/version_text"
+    },
+    "limits": {
+      "type": "object",
+      "description": "limits of 03-api.md section 12 that clients enforce before sending",
+      "properties": {
+        "request_body_bytes": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "event_batch_bytes": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "events_per_request": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "event_ct_bytes": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "terminal_ct_bytes": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "whiteboard_text_bytes": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "session_certificate_seconds": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "invite_user_seconds": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "invite_device_seconds": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "invite_max_seconds": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "device_request_seconds": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "subagent_max_depth": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "subagent_max_running": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "subagent_max_total": {
+          "$ref": "../common.json#/$defs/positive"
+        }
+      },
+      "required": [
+        "request_body_bytes",
+        "event_batch_bytes",
+        "events_per_request",
+        "event_ct_bytes",
+        "terminal_ct_bytes",
+        "whiteboard_text_bytes",
+        "session_certificate_seconds",
+        "invite_user_seconds",
+        "invite_device_seconds",
+        "invite_max_seconds",
+        "device_request_seconds",
+        "subagent_max_depth",
+        "subagent_max_running",
+        "subagent_max_total"
+      ],
+      "additionalProperties": false
+    },
+    "models": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/model_id"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "api_key": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/model_id"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "subscription": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/model_id"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "platform",
+        "api_key",
+        "subscription"
+      ],
+      "additionalProperties": false
+    },
+    "defaults": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "$ref": "../common.json#/$defs/model_id"
+        }
+      },
+      "required": [
+        "platform"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "rp_id",
+    "origin",
+    "platform_root_key",
+    "hub_key",
+    "version",
+    "limits",
+    "models",
+    "defaults"
+  ],
+  "additionalProperties": false
+}
