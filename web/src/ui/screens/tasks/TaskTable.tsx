@@ -37,11 +37,10 @@ export function TaskTable({ org, wgs, state, mine = null, search = '', showWorkg
   const { t, error } = useI18n();
   const { state: orgState } = useOrgView(org);
   const directory = useDirectory(org, orgState !== null);
+  // the same array while the workgroups are the same (the lists load again only when they or the state change)
   const wgsKey = JSON.stringify(wgs);
-  const query = useMemo(
-    () => ({ org, wgs: JSON.parse(wgsKey) as string[], state, mine, search }),
-    [org, wgsKey, state, mine, search],
-  );
+  const lists = useMemo(() => JSON.parse(wgsKey) as string[], [wgsKey]);
+  const query = useMemo(() => ({ org, wgs: lists, state, mine, search }), [org, lists, state, mine, search]);
   const select = useMemo(() => selectOverview(query), [query]);
   const view = useStore(select, app.store);
   const rows = limit === undefined ? view.rows : view.rows.slice(0, limit);
@@ -50,8 +49,8 @@ export function TaskTable({ org, wgs, state, mine = null, search = '', showWorkg
   // the search and "only mine" need the titles and owners of every merged row, not only of the shown ones
   useTitles(limit === undefined ? view.merged : rows);
   useEffect(() => {
-    void loadOverview(app.tasks, query.wgs, query.state);
-  }, [app, query.wgs, query.state]);
+    void loadOverview(app.tasks, lists, state);
+  }, [app, lists, state]);
   useLiveReload(app.store, () => void loadOverview(app.tasks, query.wgs, query.state, true));
   const paging = limit === undefined && view.binding !== null;
   useEffect(() => {

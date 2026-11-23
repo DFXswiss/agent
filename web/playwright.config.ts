@@ -21,7 +21,7 @@ const MOBILE_SPECS = [
   'performance.spec.ts',
 ].map((name) => `**/e2e/${name}`);
 /** Device specs that also run on the phones. */
-const MOBILE_DEVICE_SPECS = ['**/devices/responsive.spec.ts'];
+const MOBILE_DEVICE_SPECS = ['**/devices/responsive.spec.ts', '**/devices/task-overview.spec.ts'];
 
 export default defineConfig({
   testDir: './e2e',
