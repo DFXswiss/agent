@@ -2,7 +2,10 @@
 
 - `list_tasks(wg)`: the tasks of the workgroup newest first (`created_at DESC, id DESC`, 02-data-model.md section 1
   rule 5), optional `state`, at most `limit` (default 50, max 200), cursor `next_before` in the form of the device
-  task list (`agent_hub.device.tasks.encode_cursor`: b64u of canonical `{"at": <microseconds>, "id"}`).
+  task list (`agent_hub.device.tasks.encode_cursor`: b64u of canonical `{"at": <microseconds>, "id"}`). With
+  `order="activity"` (KOR-26B) the order is the latest activity (`last_activity_at DESC, id DESC`) and the cursor holds
+  the last activity of the page's last row instead of its creation time (the task overview of the web client merges
+  the lists of several workgroups by activity and pages each with its own cursor).
 - `get_task(task)`: the task row, its sessions as a tree order (depth, creation), each with its usage and its newest
   100 transitions, and the newest 100 task transitions.
 - `get_session(session)`: the session row, its newest 1000 transitions, usage, VM and the IDs of its children.
@@ -29,10 +32,21 @@ SESSION_TRANSITIONS = 1000
 CHILDREN_MAX = 10
 
 
+ORDERS = {"created": ("t.created_at", 6), "activity": ("t.last_activity_at", 8)}
+"""List orders: the time column and its index in `rows.TASK_COLUMNS` (the cursor's time)."""
+
+
 def list_tasks(
-    connection: Connection, wg: UUID, *, state: str | None, before: str | None, limit: int
+    connection: Connection,
+    wg: UUID,
+    *,
+    state: str | None,
+    before: str | None,
+    limit: int,
+    order: str = "created",
 ) -> dict[str, Any]:
     """The tasks of a workgroup, newest first (module docstring); the caller checked `wg:read`."""
+    column, at_index = ORDERS[order]
     clauses = ["t.wg_id = %s"]
     params: list[Any] = [wg]
     if state is not None:
@@ -40,14 +54,14 @@ def list_tasks(
         params.append(state)
     if before is not None:
         at, task = decode_cursor(before)
-        clauses.append("(t.created_at, t.id) < (%s, %s)")
+        clauses.append(f"({column}, t.id) < (%s, %s)")
         params.extend([at, task])
     params.append(limit + 1)
-    found = rows.task_rows(connection, " AND ".join(clauses), params)
+    found = rows.task_rows(connection, " AND ".join(clauses), params, column)
     page = found[:limit]
     return {
         "tasks": [rows.task_row_json(row) for row in page],
-        "next_before": encode_cursor(page[-1][6], page[-1][0]) if len(found) > limit else None,
+        "next_before": encode_cursor(page[-1][at_index], page[-1][0]) if len(found) > limit else None,
     }
 
 

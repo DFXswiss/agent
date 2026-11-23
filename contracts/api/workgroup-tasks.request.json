@@ -13,6 +13,14 @@
     },
     "limit": {
       "$ref": "../common.json#/$defs/q_limit_list"
+    },
+    "order": {
+      "type": "string",
+      "enum": [
+        "created",
+        "activity"
+      ],
+      "description": "list order (KOR-26B): created = created_at DESC (default), activity = last_activity_at DESC; the cursor of next_before follows the order"
     }
   },
   "additionalProperties": false

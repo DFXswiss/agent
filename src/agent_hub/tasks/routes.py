@@ -88,12 +88,16 @@ async def list_tasks(
     state: str | None = None,
     before: str | None = None,
     limit: str | None = None,
+    order: str | None = None,
 ) -> dict[str, Any]:
     if state is not None and state not in TASK_STATES:
         raise HubError("request_invalid", detail={"pointers": ["/state"]})
+    if order is not None and order not in read.ORDERS:
+        raise HubError("request_invalid", detail={"pointers": ["/order"]})
     count = parse_count(limit, read.LIST_DEFAULT, 1, read.LIST_MAX)
     user = cast(UUID, principal.principal_id)
-    return await asyncio.to_thread(_list, context, user, path_id(wg), state=state, before=before, limit=count)
+    options = {"state": state, "before": before, "limit": count, "order": order or "created"}
+    return await asyncio.to_thread(_list, context, user, path_id(wg), **options)
 
 
 def _task(context: HubContext, user: UUID, task: UUID) -> dict[str, Any]:

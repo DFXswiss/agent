@@ -34,6 +34,30 @@ def test_tasks_are_listed_newest_first_with_a_cursor(desk: Desk) -> None:
     assert whole["next_before"] is None
 
 
+def test_tasks_are_listed_by_latest_activity_with_a_cursor(desk: Desk) -> None:
+    created = []
+    for _ in range(4):
+        created.append(desk.started()[0])
+        desk.hub.clock.advance(0.001)
+    # the oldest task has the newest activity; two tasks share an activity time (the ID breaks the tie)
+    desk.prompt(desk.scene.writer, created[0])
+    desk.execute(
+        "UPDATE hub.task SET last_activity_at = %s WHERE id = %s", desk.task(created[2])["last_activity_at"], created[1]
+    )
+    client = desk.scene.reader.browser
+    target = f"/v1/workgroups/{desk.wg}/tasks"
+    expected = sorted(created, key=lambda task: (desk.task(task)["last_activity_at"], task), reverse=True)
+    assert expected[0] == created[0]
+    first = client.get(target, params={"order": "activity", "limit": "2"}).json()
+    assert [item["task_id"] for item in first["tasks"]] == expected[:2]
+    rest = client.get(target, params={"order": "activity", "before": first["next_before"]}).json()
+    assert [item["task_id"] for item in rest["tasks"]] == expected[2:]
+    assert rest["next_before"] is None
+    # the default order stays the creation time
+    default = client.get(target, params={"order": "created"}).json()
+    assert [item["task_id"] for item in default["tasks"]] == created[::-1]
+
+
 def test_tasks_are_filtered_by_state(desk: Desk) -> None:
     open_task, _ = desk.started()
     closed_task, _ = desk.started()
@@ -52,6 +76,7 @@ def test_tasks_are_filtered_by_state(desk: Desk) -> None:
         ({"before": "AAAA"}, "/before"),
         ({"limit": "0"}, None),
         ({"limit": "201"}, None),
+        ({"order": "title"}, "/order"),
     ],
 )
 def test_list_query_is_checked(desk: Desk, query: dict[str, str], pointer: str | None) -> None:
