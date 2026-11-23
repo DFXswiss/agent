@@ -329,6 +329,53 @@
             "size"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "Several changed files in one record (HOT-06): a scan pass over the bulk bound or the part beyond the session's window; path is their common directory (else the first path), paths at most 20 of them, no patches.",
+          "properties": {
+            "path": {
+              "$ref": "../objects.json#/$defs/rel_path"
+            },
+            "op": {
+              "type": "string",
+              "const": "summary"
+            },
+            "files": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "deleted": {
+              "$ref": "../../common.json#/$defs/count"
+            },
+            "bytes": {
+              "$ref": "../../common.json#/$defs/count"
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "$ref": "../objects.json#/$defs/rel_path"
+              },
+              "minItems": 1,
+              "maxItems": 20
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "bulk",
+                "limit"
+              ]
+            }
+          },
+          "required": [
+            "path",
+            "op",
+            "files",
+            "deleted",
+            "bytes",
+            "paths",
+            "reason"
+          ],
+          "additionalProperties": false
         }
       ]
     },

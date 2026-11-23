@@ -170,6 +170,7 @@ JOURNAL_ADDITIONS = {
     "session.hook": "rule",
     "usage": "provider_outside_allowlist",  # contracts/changes/GST-04.md
     "operation.request": "local_check local_error",  # contracts/changes/GST-07.md (05-runner.md section 12 step 1)
+    "session.file": "files deleted bytes paths reason",  # contracts/changes/HOT-06.md (summary of many files)
 }
 SPEC_JOURNAL_RECORD = "seq ts session_id kind body"
 

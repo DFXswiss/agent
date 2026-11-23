@@ -81,6 +81,7 @@ the end: no outbound connection except to the doubles (egress log of the orchest
 | E2E-37 | Workgroups and selection | both | Admin creates wg; user selects it; another prompt without selection | Task in selected wg; default wg used otherwise |
 | E2E-38 | Device assignment and scheduling | T1 | Two devices (second runner instance with its own home on the runner device) assigned to one wg; capacities differ; VM sticky | Scheduler order of 03 §4.6.2; estimate per path; capacity-based choice; sticky device for the wg |
 | E2E-39 | Existing user joins a further org | both | User with an account (private org) opens an org invitation, chooses "I already have an account", logs in and accepts | No second identity; `accept` carries the registered identity; org switcher lists both orgs; a second user cannot use the same invitation (`invite_registered`) |
+| E2E-40 | Quiet checkout | T1 | Session checks out a repository of 3000 files (GitHub double), then writes one file inside it with the Write tool | No `session.file` event at the hub or in the decrypted timeline for any checked-out file; exactly one `session.file` (the write) shown in chat with an expandable patch |
 
 ### 2.2 Performance tests (PERF)
 

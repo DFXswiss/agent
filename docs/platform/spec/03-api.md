@@ -362,7 +362,7 @@ JSON bodies except tar streams.
 | `session.output` | `{message_id,role:"assistant",text,turn,stop_reason?}` (from the transcript) |
 | `session.tool` | `{tool_use_id,name,input_summary,input,result_summary,is_error,duration_ms}` (input/result truncated to 64 KiB each) |
 | `session.hook` | `{event,tool?,decision:"allow"|"deny"|"block"|"none",reason?,path?}` |
-| `session.file` | `{path,op:"write"|"edit"|"delete",sha256,size,patch?}` (patch ≤ 64 KiB) |
+| `session.file` | `{path,op:"write"|"edit"|"delete",sha256,size,patch?}` (patch ≤ 64 KiB); or a summary of many files `{path,op:"summary",files,deleted,bytes,paths,reason:"bulk"|"limit"}` (no patches, `paths` ≤ 20; HOT-06, 05-runner.md §6.4) |
 | `session.terminal` | `{offset_ms_start,frames:[[t_ms,"o",data]],cols,rows}` (asciicast v2 output events, ≤ 16 KiB per record, flushed every 100 ms) |
 | `usage` | `{request_id,model,provider?,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,thinking_tokens,cost_usd?,context_window_tokens,request_bytes,response_bytes,status}` |
 | `operation.request` | `{pending_id,operation_id,type,params,idempotency_key?,requested_at}` |
