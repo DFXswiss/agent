@@ -34,6 +34,7 @@ SPEC_FILES = (
     "09-milestones.md",
     "10-work-packages.md",
     "11-agent-access.md",
+    "12-community.md",
     "13-work-vm.md",
 )
 # Runbooks the work packages require (09-milestones.md WP-M3-07, DOC-01 scope).

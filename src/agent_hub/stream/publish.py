@@ -1,11 +1,12 @@
 """Live publishing of the hub (ADR-027 section 4: live publishing only through this module).
 
 Areas call `publish(audience, frame, data)` after their transaction committed: `audience` names who receives the frame
-(the browsers of an organization or of one user, or one device), `frame` the SSE frame type of 03-api.md section 5 or
-the device hint type of section 6.2, `data` its JSON body (identifiers, metadata and signed or encrypted items only,
-never plaintext content). `hint(device_id, type, body)` is the shorthand for a device hint. A browser frame that
-belongs to one workgroup (task, session and operation rows, workgroup metrics) reaches only browsers that may read
-that workgroup: the stream takes the workgroup from `wg_id=` or from the row in `data` (`agent_hub.stream.sse`).
+(the browsers of an organization or of one user, every browser (`all` with the ID `ALL`, the community of ADR-061), or
+one device), `frame` the SSE frame type of 03-api.md section 5 or the device hint type of section 6.2, `data` its JSON
+body (identifiers, metadata and signed or encrypted items only, never plaintext content). `hint(device_id, type, body)`
+is the shorthand for a device hint. A browser frame that belongs to one workgroup (task, session and operation rows,
+workgroup metrics) reaches only browsers that may read that workgroup: the stream takes the workgroup from `wg_id=` or
+from the row in `data` (`agent_hub.stream.sse`).
 
 The default fan-out is `LIVE`: it hands every frame to the live services attached to it - one per running hub app
 (`agent_hub.stream.service`), which delivers it to its own browsers and devices and, over the PostgreSQL bus, to every
@@ -23,7 +24,9 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
-AudienceKind = Literal["org", "user", "device"]
+AudienceKind = Literal["org", "user", "device", "all"]
+ALL = UUID(int=0)
+"""The ID of the audience `all` (every browser stream of every user; the community, ADR-061)."""
 # 03-api.md section 5: every frame of GET /v1/stream; `hello` and `resync` are made by the stream itself.
 BROWSER_FRAMES = frozenset(
     {
@@ -38,6 +41,7 @@ BROWSER_FRAMES = frozenset(
         "notification",
         "device_response",
         "metrics",
+        "community",
         "resync",
     }
 )
@@ -67,7 +71,7 @@ PUBLISHED_HINTS = DEVICE_HINTS - {"hello"}
 
 @dataclass(frozen=True)
 class Audience:
-    """The receivers of a frame: the browsers of an organization or of a user, or one device."""
+    """The receivers of a frame: the browsers of an organization, of a user or of everybody (`all`), or one device."""
 
     kind: AudienceKind
     id: UUID
@@ -91,8 +95,10 @@ class Publisher(Protocol):
 
 def check(item: Published) -> None:
     """Refuse a frame type that the audience cannot receive (a programming error of the publishing area)."""
-    if item.audience.kind not in ("org", "user", "device"):
+    if item.audience.kind not in ("org", "user", "device", "all"):
         raise ValueError("unknown audience kind")
+    if item.audience.kind == "all" and (item.audience.id != ALL or item.wg_id is not None):
+        raise ValueError("the audience all has the ID 0 and no workgroup restriction")
     allowed = PUBLISHED_HINTS if item.audience.kind == "device" else PUBLISHED_FRAMES
     if item.frame not in allowed:
         raise ValueError(f"{item.frame!r} is not a frame for a {item.audience.kind} audience")

@@ -33,6 +33,8 @@ CATEGORIES: dict[str, str] = {
     "audit": "Audit and read-log rows (actor, action, target IDs, result)",
     "credentials": "Credential metadata (owner, kind, version)",
     "settings": "User settings (model access preference, model choice, locale)",
+    "community": "Community metadata (12-community.md section 2.3, ADR-061): message IDs, authors, sequence numbers, "
+    "times, sizes, tombstones, key epochs and checks, key requests, members, read positions, mutes, moderators",
     "ciphertext": "Encrypted content (ADR-003): sealed under scope, credential or recipient keys the hub never holds",
     "agents": "Agents of a user (11-agent-access.md section 2): agent ID, public keys, state, times, claim hash, the "
     "source address of an open pairing, which login confirmed which pairing, which actions were taken by an agent",
@@ -67,6 +69,15 @@ browser_session: auth | key_id:code user_id:uuid@ids credential_id:bytes public_
   created_at:time expires_at:time ended_at:time pairing_id:uuid@agents
 ceremony: auth | id:uuid kind:code challenge:bytes user_id:uuid@ids invite_id:code@logs hub_value:bytes
   created_at:time expires_at:time used_at:time pairing_id:uuid@agents
+community_epoch: community | epoch:number key_check:bytes created_by:uuid created_at:time
+community_member: community | user_id:uuid joined_at:time last_read_seq:number muted_at:time muted_by:uuid
+community_message: community | seq:number id:uuid author_id:uuid epoch:number created_at:time ct_bytes:number
+  header:json ct:bytes@ciphertext sig:bytes deleted_at:time deleted_as:code deleted_by:uuid
+community_moderator: community | user_id:uuid granted_at:time
+community_reject: community | wrapper_id:uuid user_id:uuid rejected_at:time
+community_request: community | user_id:uuid id:uuid kem_pub:bytes sig:bytes created_at:time offered_at:time
+  epoch:number wrap:bytes@ciphertext wrapped_by:uuid wrap_sig:bytes wrapped_at:time
+community_wrap: community | epoch:number user_id:uuid wrap:bytes@ciphertext sig:bytes created_at:time
 credential: credentials | id:uuid owner_id:uuid kind:code version:number epoch:number header_text:json
   ct:bytes@ciphertext sig:bytes updated_at:time
 credential_notice: credentials | device_id:uuid owner_id:uuid kind:code changed_at:time

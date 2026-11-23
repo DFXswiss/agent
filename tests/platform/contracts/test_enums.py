@@ -36,10 +36,14 @@ SPEC_ERRORS: dict[int, str] = {
     # 11-agent-access.md section 4 (KOR-24)
     " claim_invalid",
     403: "forbidden last_admin last_passkey device_not_assigned platform_invite_required platform_access_denied"
-    " pairing_gesture_required",
+    " pairing_gesture_required"
+    # 12-community.md section 4.1 (KOR-26)
+    " community_muted",
     404: "not_found invite_unknown pairing_unknown identity_unproven",
     409: "id_conflict event_conflict seq_conflict version_conflict origin_seq_gap origin_seq_conflict no_device"
-    " already_assigned rotation_required no_device_available invite_registered peer_outdated",
+    " already_assigned rotation_required no_device_available invite_registered peer_outdated"
+    # 12-community.md section 4.1 (KOR-26)
+    " community_not_member community_epoch_exists community_no_key",
     410: "invite_expired",
     429: "rate_limited",
     503: "unavailable",
@@ -106,6 +110,9 @@ SPEC_AUDIT_PATTERNS = {
 DECIDED_AUDIT = (
     "invite.lookup invite.create invite.revoke invite.register invite.release invite.use invite.expire"
     " credential.rotate outbox.rejected agent.confirm agent.claim agent.revoke notification.read"
+    # 12-community.md section 4 and ADR-061 decision 5 (KOR-26)
+    " community.key_create community.key_request community.key_wrap community.key_reject community.post"
+    " community.delete community.mute community.unmute community.moderator_grant community.moderator_revoke"
 )
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 04-crypto.md section 4.3: (kind, scope, author kind, right).

@@ -25,6 +25,8 @@ the names in code; renaming requires an ADR.
 
 ## 2. Hub schema `hub`
 
+The community tables (`community_*`, migration 0014) are specified in `12-community.md` §2 (KOR-26, ADR-061).
+
 ### 2.1 Principals, authentication
 
 | Table | Columns | Notes |

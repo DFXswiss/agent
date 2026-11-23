@@ -10,7 +10,8 @@ The org's own rows are those of the org, its workgroups, tasks, sessions and ope
 devices) belong to every org the principal is a member of, so they appear in each of its exports. The platform log,
 the platform roles and invitations, the platform devices, the audit chain and its checkpoints are hub-wide: they are
 single hash chains (or derived from one) that can only be verified and continued as a whole, so every export carries
-them completely (decision DR-01 1).
+them completely (decision DR-01 1). The community (ADR-061) belongs to all users of the hub and is carried completely
+by every export as well.
 
 Values are written by their column type (`encode`/`decode`): `uuid` and text as JSON strings, integers and booleans as
 JSON literals, `timestamptz` as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (microseconds: the stored precision), `date` as
@@ -119,6 +120,14 @@ RULES: tuple[TableRule, ...] = (
     TableRule("usage_counter", "session_id = ANY(%(sessions)s)"),
     TableRule("quota_snapshot", "owner_id = ANY(%(users)s)"),
     TableRule("usage_daily", ORG_ROWS),
+    # The community is hub-wide (ADR-061): every export carries it completely; its user columns have no foreign key.
+    TableRule("community_epoch", ALL_ROWS),
+    TableRule("community_wrap", ALL_ROWS),
+    TableRule("community_request", ALL_ROWS),
+    TableRule("community_reject", ALL_ROWS),
+    TableRule("community_member", ALL_ROWS),
+    TableRule("community_moderator", ALL_ROWS),
+    TableRule("community_message", ALL_ROWS),
     TableRule("audit", ALL_ROWS, append_only=True),
     TableRule("audit_checkpoint", ALL_ROWS, append_only=True),
 )

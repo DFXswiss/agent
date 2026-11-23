@@ -637,6 +637,11 @@ Automated: Chromium (desktop and mobile emulation: Pixel 7 and iPhone 15 profile
 Firefox also that a changed lazy chunk or stylesheet is refused (§10.2, automated in Chromium only). Results recorded in
 `docs/platform/manual-checks/<version>.md`.
 
+### 12.8 Community
+
+The community screen (`/community`), its navigation entry with the unread badge, the settings section "Account" and
+the background job are specified in `12-community.md` §6 (KOR-26, ADR-061).
+
 ## 13. Test hooks
 
 - `data-testid` convention: `<screen>.<element>[.<qualifier>]`, lowercase kebab parts, e.g. `invite.create-passkey`,

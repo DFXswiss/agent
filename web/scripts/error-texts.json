@@ -1378,5 +1378,53 @@
       "body": "Eine Kontokennung hat 12 Zeichen (Buchstaben und die Ziffern 2–7).",
       "action": "Prüfe die Kennung und gib sie erneut ein."
     }
+  },
+  "community_epoch_exists": {
+    "en": {
+      "title": "Community key already exists",
+      "body": "Another browser created the community key at the same moment.",
+      "action": "Reload the page; the key is fetched automatically."
+    },
+    "de": {
+      "title": "Community-Schlüssel existiert bereits",
+      "body": "Ein anderer Browser hat den Community-Schlüssel im selben Moment angelegt.",
+      "action": "Lade die Seite neu; der Schlüssel wird automatisch geholt."
+    }
+  },
+  "community_muted": {
+    "en": {
+      "title": "Muted in the community",
+      "body": "A moderator has muted you in the community. You can still read messages.",
+      "action": "Contact support if you think this is a mistake."
+    },
+    "de": {
+      "title": "In der Community stummgeschaltet",
+      "body": "Eine Moderatorin oder ein Moderator hat dich in der Community stummgeschaltet. Lesen kannst du weiterhin.",
+      "action": "Wende dich an den Support, wenn du das für einen Fehler hältst."
+    }
+  },
+  "community_no_key": {
+    "en": {
+      "title": "Community not unlocked yet",
+      "body": "This browser does not have the community key yet.",
+      "action": "Wait a moment; the key arrives as soon as another user is online."
+    },
+    "de": {
+      "title": "Community noch nicht entsperrt",
+      "body": "Dieser Browser hat den Community-Schlüssel noch nicht.",
+      "action": "Warte einen Moment; der Schlüssel kommt, sobald ein anderer Nutzer online ist."
+    }
+  },
+  "community_not_member": {
+    "en": {
+      "title": "Community not joined yet",
+      "body": "This browser has not joined the community yet.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Community noch nicht beigetreten",
+      "body": "Dieser Browser ist der Community noch nicht beigetreten.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
+    }
   }
 }

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ws/sse/community.json",
+  "title": "stream frame community",
+  "description": "Data of the stream frame community of GET /v1/stream (12-community.md section 5).",
+  "$ref": "objects.json#/$defs/data_community"
+}

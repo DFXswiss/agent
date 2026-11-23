@@ -79,6 +79,26 @@
     "body": "The browser returned an invalid passkey response.",
     "action": "Try again, or use another browser."
   },
+  "community_epoch_exists": {
+    "title": "Community key already exists",
+    "body": "Another browser created the community key at the same moment.",
+    "action": "Reload the page; the key is fetched automatically."
+  },
+  "community_muted": {
+    "title": "Muted in the community",
+    "body": "A moderator has muted you in the community. You can still read messages.",
+    "action": "Contact support if you think this is a mistake."
+  },
+  "community_no_key": {
+    "title": "Community not unlocked yet",
+    "body": "This browser does not have the community key yet.",
+    "action": "Wait a moment; the key arrives as soon as another user is online."
+  },
+  "community_not_member": {
+    "title": "Community not joined yet",
+    "body": "This browser has not joined the community yet.",
+    "action": "Reload the page and try again."
+  },
   "counter_regressed": {
     "title": "Passkey possibly cloned",
     "body": "The passkey's signature counter went backwards, which can indicate a cloned authenticator.",

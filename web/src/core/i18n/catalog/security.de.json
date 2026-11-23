@@ -33,5 +33,7 @@
   "javascript.title": "Vertrauen in den ausgelieferten Code",
   "javascript.body": "Verschlüsselung im Webbrowser hängt vom JavaScript ab, das der Server ausliefert. Eine strikte Content Security Policy, Integritäts-Hashes für die Skripte der Startseite und ein reproduzierbarer Build begrenzen dieses Risiko, aber ein kompromittierter Server könnte trotzdem veränderten Code ausliefern, auch für später geladene Teile (Terminal, Diagramme, formatierter Text). Diese Seite kann das nicht selbst erkennen; nur ein unabhängiger Vergleich des Build-Hashes mit dem veröffentlichten kann es.",
   "devices.title": "Ausführungsgeräte",
-  "devices.body": "Die Geräte, die Ihre Tasks ausführen, entschlüsseln die Inhalte der ihnen zugewiesenen Workgroups: Sie verarbeiten Prompts, Dateien und Antworten im Klartext. Weisen Sie nur Geräte zu, denen Sie vertrauen; das Entfernen eines Geräts aus einer Workgroup wechselt deren Schlüssel."
+  "devices.body": "Die Geräte, die Ihre Tasks ausführen, entschlüsseln die Inhalte der ihnen zugewiesenen Workgroups: Sie verarbeiten Prompts, Dateien und Antworten im Klartext. Weisen Sie nur Geräte zu, denen Sie vertrauen; das Entfernen eines Geräts aus einer Workgroup wechselt deren Schlüssel.",
+  "community.title": "Community",
+  "community.body": "Community-Nachrichten kann jeder Nutzer der Plattform lesen; sie sind nicht vertraulich wie Aufgaben, Whiteboards und Zugangsdaten. Die Verschlüsselung hält Text und Absendernamen aus der Datenbank des Servers und seinen Backups heraus, aber ein manipulierter Server könnte Nachrichten lesen und sogar im Namen eines anderen Nutzers schreiben. Teile dort nichts Vertrauliches."
 }

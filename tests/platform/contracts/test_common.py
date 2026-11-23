@@ -165,6 +165,9 @@ CASES: list[tuple[str, object, bool]] = [
     ("bundle_ct", b64u(bytes(1025)), False),
     ("package_ct", b64u(bytes(400)), True),
     ("package_ct", b64u(bytes(64 * 1024 + 1)), False),
+    ("community_wrap_text", b64u(bytes(80)), True),
+    ("community_wrap_text", b64u(bytes(97)), False),
+    ("community_wrap_text", "", False),
     ("empty", {}, True),
     ("empty", {"a": 1}, False),
 ]

@@ -1,0 +1,28 @@
+{
+  "epoch": {
+    "epoch": 1,
+    "key_check": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  "wrap": {
+    "epoch": 1,
+    "wrap": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  "request": null,
+  "member": {
+    "joined": true,
+    "muted": false,
+    "posted": false,
+    "last_read_seq": 0
+  },
+  "moderator": false,
+  "unread": 0,
+  "head_seq": 0,
+  "limits": {
+    "text_chars": 2000,
+    "name_chars": 64,
+    "burst": 5,
+    "refill_seconds": 6
+  },
+  "unexpected": 1
+}

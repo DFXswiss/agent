@@ -14,7 +14,7 @@ import { ed25519Sign, ed25519VerifyB64u, type KeyPair } from './keys';
 import { label, LABEL_WRAP } from './labels';
 import { Secret } from './secret';
 
-export const SCOPES = ['org', 'wg', 'cred'] as const;
+export const SCOPES = ['org', 'wg', 'cred', 'community'] as const;
 export type Scope = (typeof SCOPES)[number];
 
 /** What a wrap is bound to. */

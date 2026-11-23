@@ -46,7 +46,7 @@ RECONNECT_MIN_SECONDS = 0.2
 RECONNECT_MAX_SECONDS = 5.0
 READY_TIMEOUT_SECONDS = 30.0
 WAKE = ""  # the empty message: wakes listeners (stop), ignored by every process
-_AUDIENCE_KINDS = frozenset({"org", "user", "device"})
+_AUDIENCE_KINDS = frozenset({"org", "user", "device", "all"})
 
 
 @dataclass(frozen=True)

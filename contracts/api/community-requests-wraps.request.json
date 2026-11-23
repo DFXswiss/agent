@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-requests-wraps.request.json",
+  "title": "POST /v1/community/requests/wraps request",
+  "description": "Body of POST /v1/community/requests/wraps (12-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "wraps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "epoch": {
+            "$ref": "../common.json#/$defs/epoch"
+          },
+          "wrap": {
+            "$ref": "../common.json#/$defs/community_wrap_text"
+          },
+          "sig": {
+            "$ref": "../common.json#/$defs/b64u_64"
+          }
+        },
+        "required": [
+          "request",
+          "epoch",
+          "wrap",
+          "sig"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "wraps"
+  ],
+  "additionalProperties": false
+}

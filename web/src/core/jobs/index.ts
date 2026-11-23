@@ -11,6 +11,7 @@ import { CryptoError } from '../crypto/errors';
 import type { SignedClient } from '../net/signedFetch';
 import { HubError } from '../net/signedFetch';
 import { backoff, SYSTEM_TIMERS, type Timers } from '../net/sse';
+import type { Prefs } from '../account/prefs';
 import type { Persist } from '../persist';
 import { baseName, collect, isNamed, type ModuleMap, ordered } from '../registry';
 import { setQueue } from '../store/slices/jobs';
@@ -32,6 +33,8 @@ export interface JobContext {
    * it: the listener (the reader's retry) may trigger jobs of the same org, which wait for the running one.
    */
   readonly changed?: (org: string) => unknown;
+  /** This browser's preferences (the community's chosen name and pinned author keys). */
+  readonly prefs?: Prefs;
 }
 
 export interface JobRun {

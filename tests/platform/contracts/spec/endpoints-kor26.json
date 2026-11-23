@@ -1,0 +1,152 @@
+{
+  "description": "Endpoints added by KOR-26: the community (docs/platform/spec/12-community.md section 4.1, ADR-061).",
+  "rights": [
+    "user",
+    "owner",
+    "community:moderator",
+    "root"
+  ],
+  "auth": [
+    "browser",
+    "root"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/community",
+      "rights": [
+        "user"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/join",
+      "rights": [
+        "user"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/epochs",
+      "rights": [
+        "user"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/community/request",
+      "rights": [
+        "user"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/community/requests",
+      "rights": [
+        "user"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/requests/wraps",
+      "rights": [
+        "user"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/request/reject",
+      "rights": [
+        "user"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/wraps",
+      "rights": [
+        "user"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/community/messages",
+      "rights": [
+        "user"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/messages",
+      "rights": [
+        "user"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/community/messages/{id}",
+      "rights": [
+        "owner",
+        "community:moderator"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/community/read",
+      "rights": [
+        "user"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/community/mutes",
+      "rights": [
+        "community:moderator"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/community/mutes/{user}",
+      "rights": [
+        "community:moderator"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/community/mutes/{user}",
+      "rights": [
+        "community:moderator"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/community/moderators",
+      "rights": [
+        "root"
+      ],
+      "section": "12.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/moderators",
+      "rights": [
+        "root"
+      ],
+      "section": "12.4"
+    }
+  ]
+}

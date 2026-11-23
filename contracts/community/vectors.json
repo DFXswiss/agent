@@ -1,0 +1,178 @@
+{
+  "about": "Community key check, key request, wraps and one message (12-community.md section 3, ADR-061).",
+  "author_kem_sk": "20v4FAorDAFeXOCwNw4J7a1BkAsraeRG43wQRyi-L0M",
+  "author_sig_pk": "Ygy_PttBhHKaDzkFOZ82w_JD0Wnle-YXkaSGGyK7JXw",
+  "community_key": "2XYFpYvj-WTx20ppTeP4858WuE-mbBnUbbC3ijOsh18",
+  "epoch": 1,
+  "invalid_bodies": [
+    {
+      "body": {
+        "name": "Anna\u202e",
+        "text": "x",
+        "v": 1
+      },
+      "name": "bidi_in_name"
+    },
+    {
+      "body": {
+        "name": "An\u200bna",
+        "text": "x",
+        "v": 1
+      },
+      "name": "zero_width_in_name"
+    },
+    {
+      "body": {
+        "name": "Zoe\u0308",
+        "text": "x",
+        "v": 1
+      },
+      "name": "not_nfc"
+    },
+    {
+      "body": {
+        "name": "Anna",
+        "text": "a\u0007b",
+        "v": 1
+      },
+      "name": "control_in_text"
+    },
+    {
+      "body": {
+        "name": "Anna",
+        "text": "a\u2066b",
+        "v": 1
+      },
+      "name": "bidi_in_text"
+    },
+    {
+      "body": {
+        "name": "Anna ",
+        "text": "x",
+        "v": 1
+      },
+      "name": "padded_name"
+    },
+    {
+      "body": {
+        "name": "Anna",
+        "text": "",
+        "v": 1
+      },
+      "name": "empty_text"
+    },
+    {
+      "body": {
+        "name": "Anna",
+        "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "v": 1
+      },
+      "name": "long_text"
+    },
+    {
+      "body": {
+        "name": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "text": "x",
+        "v": 1
+      },
+      "name": "long_name"
+    },
+    {
+      "body": {
+        "html": "<b>",
+        "name": "Anna",
+        "text": "x",
+        "v": 1
+      },
+      "name": "extra_key"
+    },
+    {
+      "body": {
+        "name": "Anna",
+        "text": "x",
+        "v": 2
+      },
+      "name": "version"
+    }
+  ],
+  "invalid_messages": [
+    {
+      "error": "signature_invalid",
+      "name": "tampered_ct",
+      "sealed": {
+        "ct": "y9b7CVHhRED9O2WdXOSZAOevhDR2wviVHsq0AoOCDt_pw7wJ_w_hzOCj2yifHgDbE4SaaESdbKmvYjHq9Njl6OZqZe_0LZwlPaDNHjQstoypd9W-RuVRtxs2wfa5MWwKc1OIOl5MMQs7AxHt9zpflaAA",
+        "header": {
+          "alg": "A256GCM-HKDF",
+          "author": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2",
+          "epoch": 1,
+          "id": "01a1ee56-5e00-7e11-8f00-0123456789ab",
+          "nonce": "3jxpVyGdslDskkHi",
+          "salt": "97pvyMbInjJHxN_w8_SUnNMpnquV-4d5QDH6dzO4xSA",
+          "ts": "2026-11-23T12:00:00.000Z",
+          "v": 1
+        },
+        "sig": "d0u0kNXBjvDu_4YEDNdvlPEhPXc7Rv1NSGnVcERmdCTW24F2vsMNvRpZE1ipRsq_jzXenxOo6IcZXkNfdqERCA"
+      }
+    },
+    {
+      "error": "signature_invalid",
+      "name": "other_author",
+      "sealed": {
+        "ct": "y9b7CVHhRED9O2WdXOSZAOevhDR2wviVHsq0AoOCDt_pw7wJ_w_hzOCj2yifHgDbE4SaaESdbKmvYjHq9Njl6OZqZe_0LZwlPaDNHjQstoypd9W-RuVRtxs2wfa5MWwKc1OIOl5MMQs7AxHt9zpflaCg",
+        "header": {
+          "alg": "A256GCM-HKDF",
+          "author": "01a1ee56-5e00-7d3c-9a1b-2c3d4e5f6a7b",
+          "epoch": 1,
+          "id": "01a1ee56-5e00-7e11-8f00-0123456789ab",
+          "nonce": "3jxpVyGdslDskkHi",
+          "salt": "97pvyMbInjJHxN_w8_SUnNMpnquV-4d5QDH6dzO4xSA",
+          "ts": "2026-11-23T12:00:00.000Z",
+          "v": 1
+        },
+        "sig": "d0u0kNXBjvDu_4YEDNdvlPEhPXc7Rv1NSGnVcERmdCTW24F2vsMNvRpZE1ipRsq_jzXenxOo6IcZXkNfdqERCA"
+      }
+    }
+  ],
+  "key_check": "Ee0HIKDmM-XRsx4g8ui8A6nVqXEPdHDVvdbEb5BBKnY",
+  "message": {
+    "body": {
+      "name": "Zo\u00eb M\u00fcller",
+      "text": "Gr\u00fcezi mitenand!\nSiehe https://example.org/a?b=1 - danke.",
+      "v": 1
+    },
+    "body_json": "{\"name\":\"Zo\u00eb M\u00fcller\",\"text\":\"Gr\u00fcezi mitenand!\\nSiehe https://example.org/a?b=1 - danke.\",\"v\":1}",
+    "sealed": {
+      "ct": "y9b7CVHhRED9O2WdXOSZAOevhDR2wviVHsq0AoOCDt_pw7wJ_w_hzOCj2yifHgDbE4SaaESdbKmvYjHq9Njl6OZqZe_0LZwlPaDNHjQstoypd9W-RuVRtxs2wfa5MWwKc1OIOl5MMQs7AxHt9zpflaCg",
+      "header": {
+        "alg": "A256GCM-HKDF",
+        "author": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2",
+        "epoch": 1,
+        "id": "01a1ee56-5e00-7e11-8f00-0123456789ab",
+        "nonce": "3jxpVyGdslDskkHi",
+        "salt": "97pvyMbInjJHxN_w8_SUnNMpnquV-4d5QDH6dzO4xSA",
+        "ts": "2026-11-23T12:00:00.000Z",
+        "v": 1
+      },
+      "sig": "d0u0kNXBjvDu_4YEDNdvlPEhPXc7Rv1NSGnVcERmdCTW24F2vsMNvRpZE1ipRsq_jzXenxOo6IcZXkNfdqERCA"
+    }
+  },
+  "request": {
+    "id": "01a1ee56-5e00-7547-b84c-d0d997b866f3",
+    "kem_pub": "YkkmtERe6bdD1TaVthZ4tbTePKGmUOcOBMowDY5xdjE",
+    "kem_sk": "DT1v8MP1y0FmNNmFyNSEQrKOWn50fd8VsGHCZa7fmD8",
+    "sig": "p3jD0fVvaFj_N7y2uyA5K9HcO8dpcHI_OaK0MIsgLo1g3qSkwmCPM3KA5cX_y4Uj7R4InJy6JOLWUsihMRG6DQ",
+    "text": "YWdlbnQuZGZ4LnN3aXNzL3YxL2NvbW11bml0eS1yZXF1ZXN0AHsiaWQiOiIwMWExZWU1Ni01ZTAwLTc1NDctYjg0Yy1kMGQ5OTdiODY2ZjMiLCJrZW1fcHViIjoiWWtrbXRFUmU2YmREMVRhVnRoWjR0YlRlUEtHbVVPY09CTW93RFk1eGRqRSIsInVzZXIiOiIwMWExZWU1Ni01ZTAwLTc3YmUtOGNmMy0xZjI3YmIwZTkyYTIifQ"
+  },
+  "request_wrap": {
+    "recipient": "01a1ee56-5e00-7547-b84c-d0d997b866f3",
+    "sig": "WPjZck1_MqmfDDFvZ1NkrMjWu7gsinGiqMyuEbkNn5sSeVDUVDZ0mfZniYCuCtfZcOumhDJbf31AA7UELeTrDQ",
+    "wrap": "o4hUPec-wO4AWhIiUvh2zkp6i9Ms9zwo1LCRQ67q_BfWC9JYIHnMMfyy3Gbh0toFaP820hINo4iHuCZHvSrUk9S2ZJcZ7XOezBRio-aGfiw",
+    "wrapper_sig_pk": "mpKDHvnxk2ioKHHsAXRgZWFUl2bk_AsuzUtYD9TqbfU"
+  },
+  "self_wrap": {
+    "recipient": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2",
+    "sig": "zf_FxOtfrY3eyvCBXcj8omjkxfwIHse33Mt-15mvFupXHMJZ-nNvPrOIeicZK1U6x3jxPuGBwViR7q_Qe1qeCA",
+    "wrap": "o4hUPec-wO4AWhIiUvh2zkp6i9Ms9zwo1LCRQ67q_BcdUK-Ruyb7Tv4vLJut7VVhu-fyhfzdOjNebHgfWsqrLQF0FydqqHNjqgzmWJcj1Q4"
+  },
+  "user": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+}

@@ -253,6 +253,7 @@ export class AppSession {
           rootKey: this.#deps.rootKey,
           now: this.#now,
           changed: (org) => this.#reader?.retry(org),
+          prefs: this.#deps.prefs,
         },
         this.#deps.jobs ?? backgroundJobs(),
       );

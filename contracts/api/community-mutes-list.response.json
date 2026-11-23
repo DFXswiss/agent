@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-mutes-list.response.json",
+  "title": "GET /v1/community/mutes response",
+  "description": "Body of a successful response to GET /v1/community/mutes (12-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "mutes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "muted_at": {
+            "$ref": "../common.json#/$defs/time"
+          }
+        },
+        "required": [
+          "user",
+          "muted_at"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "mutes"
+  ],
+  "additionalProperties": false
+}

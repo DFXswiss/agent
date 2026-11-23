@@ -45,7 +45,7 @@ from tests.platform.hub.platform.conftest import Platform
 from tests.platform.hub.whiteboards.support import Board
 
 Json = dict[str, Any]
-CANARIES = ("canary-prompt-7f3a", "canary-whiteboard-91bc", "canary-credential-0d2e")
+CANARIES = ("canary-prompt-7f3a", "canary-whiteboard-91bc", "canary-credential-0d2e", "canary-community-5c1d")
 
 
 @dataclass
@@ -264,6 +264,58 @@ class Estate:
                 " free_vm_slots_avg, reachable, state) VALUES ('device', %s, '2026-11-21T12:00:00Z', %s, 2, 0.25,"
                 " 1.5, true, 'active')",
                 (device.id, device.id),
+            ),
+            # the community (ADR-061): hub-wide, one row in every table
+            (
+                "INSERT INTO hub.community_epoch (epoch, key_check, created_by, created_at) VALUES (1, %s, %s, %s)",
+                (secrets.token_bytes(32), writer.id, now),
+            ),
+            (
+                "INSERT INTO hub.community_wrap (epoch, user_id, wrap, sig, created_at) VALUES (1, %s, %s, %s, %s)",
+                (writer.id, secrets.token_bytes(80), secrets.token_bytes(64), now),
+            ),
+            (
+                "INSERT INTO hub.community_request (user_id, id, kem_pub, sig, created_at, offered_at, epoch, wrap,"
+                " wrapped_by, wrap_sig, wrapped_at) VALUES (%s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s)",
+                (
+                    scene.admin.id,
+                    new_id(),
+                    secrets.token_bytes(32),
+                    secrets.token_bytes(64),
+                    now,
+                    now,
+                    secrets.token_bytes(80),
+                    writer.id,
+                    secrets.token_bytes(64),
+                    now,
+                ),
+            ),
+            (
+                "INSERT INTO hub.community_reject (wrapper_id, user_id, rejected_at) VALUES (%s, %s, %s)",
+                (scene.admin.id, writer.id, now),
+            ),
+            (
+                "INSERT INTO hub.community_member (user_id, joined_at, last_read_seq, muted_at, muted_by)"
+                " VALUES (%s, %s, 1, NULL, NULL), (%s, %s, 0, %s, %s)",
+                (writer.id, now, scene.admin.id, now, now, writer.id),
+            ),
+            ("INSERT INTO hub.community_moderator (user_id, granted_at) VALUES (%s, %s)", (writer.id, now)),
+            (
+                "INSERT INTO hub.community_message (seq, id, author_id, epoch, created_at, ct_bytes, header, ct, sig)"
+                " VALUES (1, %s, %s, 1, %s, 48, %s, %s, %s)",
+                (
+                    new_id(),
+                    writer.id,
+                    now,
+                    Jsonb({"v": 1, "id": "x"}),
+                    aead.seal_blob(secrets.token_bytes(32), CANARIES[3].encode(), b"aad"),
+                    secrets.token_bytes(64),
+                ),
+            ),
+            (
+                "INSERT INTO hub.community_message (seq, id, author_id, epoch, created_at, ct_bytes, deleted_at,"
+                " deleted_as, deleted_by) VALUES (2, %s, %s, 1, %s, 48, %s, 'moderator', %s)",
+                (new_id(), scene.admin.id, now, now, writer.id),
             ),
             ("UPDATE hub.metric_rollup_cursor SET received_through = %s", (now,)),
             (

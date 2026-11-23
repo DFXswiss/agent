@@ -51,19 +51,30 @@ function statusCode(status: number): string {
   return 'request_invalid';
 }
 
-/** A refused request: the catalog code, the HTTP status (0 without a response) and the hub's `detail`. */
+/**
+ * A refused request: the catalog code, the HTTP status (0 without a response), the hub's `detail` and, for a `429`,
+ * the whole seconds of its `Retry-After` header (null without one).
+ */
 export class HubError extends Error {
   readonly code: string;
   readonly status: number;
   readonly detail: unknown;
+  readonly retryAfter: number | null;
 
-  constructor(code: string, status: number, detail: unknown = null) {
+  constructor(code: string, status: number, detail: unknown = null, retryAfter: number | null = null) {
     super(code);
     this.name = 'HubError';
     this.code = code;
     this.status = status;
     this.detail = detail;
+    this.retryAfter = retryAfter;
   }
+}
+
+/** The seconds of a `Retry-After` header in whole seconds (`delta-seconds`); null for anything else. */
+export function retryAfterOf(headers: Pick<Headers, 'get'> | undefined): number | null {
+  const value = headers?.get('retry-after') ?? null;
+  return value !== null && /^[0-9]{1,6}$/.test(value) ? Number(value) : null;
 }
 
 /** Parses JSON text; null for anything that is not JSON. */
@@ -76,10 +87,10 @@ export function parseBody(raw: Uint8Array): unknown {
 }
 
 /** The error of a non-2xx answer: a known catalog code from `{"error"}`, otherwise the code of the status. */
-export function errorOf(status: number, body: unknown): HubError {
+export function errorOf(status: number, body: unknown, headers?: Pick<Headers, 'get'>): HubError {
   const data = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
   const code = typeof data.error === 'string' && KNOWN_CODES.has(data.error) ? data.error : statusCode(status);
-  return new HubError(code, status, data.detail ?? null);
+  return new HubError(code, status, data.detail ?? null, status === 429 ? retryAfterOf(headers) : null);
 }
 
 export interface ClientOptions {
@@ -197,10 +208,12 @@ export class SignedClient {
       this.#now(),
     );
     const body = parseBody(raw);
-    if (refusal === 'unsigned' && unsignedAllowed(response.status)) this.#fail(errorOf(response.status, body));
+    if (refusal === 'unsigned' && unsignedAllowed(response.status)) {
+      this.#fail(errorOf(response.status, body, response.headers));
+    }
     if (refusal !== null)
       throw new HubError(refusal === 'time_skew' ? 'time_skew' : 'signature_invalid', response.status);
-    if (!response.ok) this.#fail(errorOf(response.status, body));
+    if (!response.ok) this.#fail(errorOf(response.status, body, response.headers));
     return body;
   }
 

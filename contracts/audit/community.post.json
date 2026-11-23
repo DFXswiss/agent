@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/community.post.json",
+  "title": "audit detail community.post",
+  "description": "detail of audit rows with action community.post: community message posted (target community_message); never name or text. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "ct_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16384
+    }
+  },
+  "required": [
+    "seq",
+    "ct_bytes"
+  ],
+  "additionalProperties": false
+}

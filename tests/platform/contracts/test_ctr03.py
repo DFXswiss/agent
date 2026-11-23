@@ -23,7 +23,10 @@ SPEC_HINTS = (
     "hello reconcile session.start session.control prompt events log wraps credentials request ping decertified"
 )
 # 03-api.md section 5 (frames of GET /v1/stream).
-SPEC_SSE_FRAMES = "hello event terminal task session operation log wraps notification device_response metrics resync"
+# 03-api.md section 5 plus `community` of 12-community.md section 5 (KOR-26).
+SPEC_SSE_FRAMES = (
+    "hello event terminal task session operation log wraps notification device_response metrics community resync"
+)
 # 04-crypto.md section 4.7 (membership-log entry types) and section 4.8 (platform-log entry types).
 SPEC_MEMBERSHIP_TYPES = (
     "genesis invite invite_revoke accept role wg_create wg_archive grant ungrant device_assign device_unassign remove"

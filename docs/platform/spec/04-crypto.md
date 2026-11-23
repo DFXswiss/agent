@@ -512,6 +512,7 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | User settings (model access preference, model choice, locale) | session start |
 | Admission (ADR-060): `user_certify` entries, the identity proof of a platform registration, the capabilities a device announced (`device.features`), which account looked up which identity or account code (read log) | direct admission without consent steps |
 | Agents of a user (`11-agent-access.md` §2): agent ID, public keys, state, times, claim hash, the source address of an open pairing (≤ 70 min), which login confirmed which pairing, which actions were taken by an agent (`agent_id` of audit rows); the sealed identity and the sealed label are ciphertexts the hub cannot open | delegated agent access (ADR-056) |
+| Community metadata of `12-community.md` §2.3 (message IDs, authors, times, sizes, tombstones, key epochs and checks, key requests, members, read positions, mutes, moderators) | community (ADR-061); names and texts are ciphertext under the community key |
 
 Not visible: everything listed as confidential in `00-overview.md` §3, invitation and recovery codes, PRF
 outputs, scope keys, private keys, credential values, the handover secret of an agent pairing and an agent's name.
@@ -540,6 +541,7 @@ Log: `seq_conflict`, `log_empty`, `log_chain`, `log_genesis`, `log_accept`, `log
 | Compromised Claude Code session | Two sandbox layers (`05-runner.md` §4); no credentials, keys or network in the sandbox | Session can corrupt its own workspace and produce misleading output |
 | Compromised guest agent or VM | VM holds only its workgroup's plaintext and the in-memory model credential of running sessions; no device/scope keys; host only initiates connections | That workgroup's data and the provider credential in use |
 | Compromised runner device | per §5 the user trusts the device with plaintext | All workgroups assigned to the device; mitigated by assigning devices per workgroup and by decertification + rotation |
+| Community (`12-community.md`, ADR-061) | messages end-to-end encrypted under the community key, signed by the author; authors pinned on first sight | Not confidential: every user (and an active hub, which can obtain the key like a new user) reads them; an active hub serving other author keys can forge messages for readers who have not pinned that author yet |
 | Replay of signed requests | time window 120 s + nonce store (reused `agent-request-v1` rules) | – |
 | Malicious org member with write access | rights enforced at hub and verified by every reader; full audit | Abuse within granted rights |
 | Model provider / OpenRouter upstreams | user-chosen access; OpenRouter key guardrail (ZDR/allow-list) recorded per request (`provider` audit) | Upstream sees prompts in plaintext (inherent) |

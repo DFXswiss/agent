@@ -387,6 +387,38 @@
       "source": "03-api \u00a711 (additional)"
     },
     {
+      "code": "community_muted",
+      "statuses": [
+        403
+      ],
+      "origin": "hub",
+      "source": "12-community \u00a74.1"
+    },
+    {
+      "code": "community_not_member",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "12-community \u00a74.1"
+    },
+    {
+      "code": "community_epoch_exists",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "12-community \u00a74.1"
+    },
+    {
+      "code": "community_no_key",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "12-community \u00a74.1"
+    },
+    {
       "code": "invite_expired",
       "statuses": [
         410

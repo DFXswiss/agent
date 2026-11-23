@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-mutes-delete.response.json",
+  "title": "DELETE /v1/community/mutes/{user} response",
+  "description": "Body of a successful response to DELETE /v1/community/mutes/{user} (12-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "muted": {
+      "type": "boolean",
+      "const": false
+    }
+  },
+  "required": [
+    "muted"
+  ],
+  "additionalProperties": false
+}

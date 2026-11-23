@@ -1,0 +1,8 @@
+{
+  "title": "Konto",
+  "user-id": "Deine Nutzer-ID",
+  "user-id.help": "Diese ID braucht der Betreiber, zum Beispiel um dich zum Community-Moderator zu machen. Sie ist nicht geheim.",
+  "copy": "Kopieren",
+  "copied": "Kopiert.",
+  "copy-failed": "Kopieren hat nicht geklappt – markiere die ID und kopiere sie von Hand."
+}

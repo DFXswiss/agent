@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-requests-list.request.json",
+  "title": "GET /v1/community/requests request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "limit": {
+      "type": "string",
+      "pattern": "^([1-9][0-9]?|100)$",
+      "description": "query parameter text"
+    }
+  },
+  "additionalProperties": false
+}

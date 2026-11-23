@@ -1207,6 +1207,57 @@
         "account_code"
       ],
       "additionalProperties": false
+    },
+    "community_message_row": {
+      "type": "object",
+      "description": "one community message or tombstone (12-community.md section 4.1)",
+      "properties": {
+        "seq": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "author": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "deleted": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "author",
+                "moderator"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/community_message"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "seq",
+        "id",
+        "author",
+        "created_at",
+        "deleted",
+        "message"
+      ],
+      "additionalProperties": false
     }
   }
 }

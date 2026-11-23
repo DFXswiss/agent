@@ -55,6 +55,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `wg:read`, `wg:write` | access to the workgroup (default workgroup: every member has write) |
 | `task:read`, `task:write` | `wg:read` / `wg:write` on the task's workgroup |
 | `platform:inviter` | platform role from the platform log |
+| `community:moderator` | community moderator, granted by the operator at the hub (`12-community.md` §4.4, ADR-061) |
 | `device:any` | valid device signature, device `active` or `pending_certification` (only `GET /v1/device/state`) |
 | `device` | valid device signature, device `active` |
 | `device:wg` | device assigned to the workgroup |
@@ -244,6 +245,11 @@ a response with header `final:true` arrives (success or error – the outcome is
 | `GET /v1/monitoring/series` | as overview for the entity | `?entity_kind=&entity_id=&metric=&from=&to=&step=` (`step` ≥ 15 s raw within 48 h, ≥ 300 s from rollups) → `{points:[[ts,value]]}` |
 | `GET /v1/orgs/{org}/audit` | org:admin (all), org:member (rows of wgs with wg:read and own actions) | `?before=&action=&actor=&task=&session=&wg=` → audit rows newest first |
 | `GET /v1/orgs/{org}/audit/verify` | org:admin | → `{ok,head:{seq,hash},checkpoint}` |
+
+### 4.12 Community
+
+The endpoints of the community (`/v1/community…`), its error codes and the audience `all` with the frame `community` are
+specified in `12-community.md` §4 and §5 (KOR-26, ADR-061).
 
 ## 5. Browser live channel
 

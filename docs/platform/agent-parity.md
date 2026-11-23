@@ -82,5 +82,11 @@ alone cannot do). Alternatives in a command are written `a\|b` (an escaped bar, 
 | audit | screens/audit | `audit [--verify]` | api |
 | platform-invites | screens/platform-invites | `platform invite\|list\|revoke` | api |
 | security | screens/security | `guide` / build hash check | api |
+| community-read | screens/community | `api GET /v1/community`, `api GET /v1/community/messages` (ciphertext; opening needs the community key, KOR-26) | stage c |
+| community-post | screens/community | `api POST /v1/community/messages` (sealing under the community key and the key request flow, `12-community.md` §4.2) | stage c |
+| community-delete-own | screens/community | `api DELETE /v1/community/messages/{id}` | api |
+| community-moderate | screens/community | `api DELETE /v1/community/messages/{id}`, `api PUT\|DELETE /v1/community/mutes/{user}`, `api GET /v1/community/mutes` | api |
+| community-read-position | screens/community | `api PUT /v1/community/read` | api |
+| account-user-id | settings/account | `api GET /v1/me` | api |
 | diagnose | – (agent only) | `diagnose` | done |
 | error-pages | screens/errors, screens/notfound | (no action: every failure of the tool is one JSON object with error and next) | done |

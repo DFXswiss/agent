@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-mutes-put.request.json",
+  "title": "PUT /v1/community/mutes/{user} request",
+  "description": "Body of PUT /v1/community/mutes/{user} (12-community.md section 4.1).",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

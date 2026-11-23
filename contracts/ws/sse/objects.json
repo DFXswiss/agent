@@ -454,9 +454,53 @@
           "$ref": "#/$defs/frame_metrics"
         },
         {
+          "$ref": "#/$defs/frame_community"
+        },
+        {
           "$ref": "#/$defs/frame_resync"
         }
       ]
+    },
+    "data_community": {
+      "type": "object",
+      "description": "community change (12-community.md section 5): new or removed message (its seq), new key request, my key, my mute",
+      "properties": {
+        "change": {
+          "type": "string",
+          "enum": [
+            "message",
+            "delete",
+            "request",
+            "key",
+            "mute"
+          ]
+        },
+        "seq": {
+          "$ref": "../../common.json#/$defs/seq"
+        }
+      },
+      "required": [
+        "change",
+        "seq"
+      ],
+      "additionalProperties": false
+    },
+    "frame_community": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "community"
+        },
+        "data": {
+          "$ref": "#/$defs/data_community"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
     }
   }
 }

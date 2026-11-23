@@ -79,6 +79,26 @@
     "body": "Der Browser hat eine ungültige Passkey-Antwort geliefert.",
     "action": "Versuche es noch einmal oder verwende einen anderen Browser."
   },
+  "community_epoch_exists": {
+    "title": "Community-Schlüssel existiert bereits",
+    "body": "Ein anderer Browser hat den Community-Schlüssel im selben Moment angelegt.",
+    "action": "Lade die Seite neu; der Schlüssel wird automatisch geholt."
+  },
+  "community_muted": {
+    "title": "In der Community stummgeschaltet",
+    "body": "Eine Moderatorin oder ein Moderator hat dich in der Community stummgeschaltet. Lesen kannst du weiterhin.",
+    "action": "Wende dich an den Support, wenn du das für einen Fehler hältst."
+  },
+  "community_no_key": {
+    "title": "Community noch nicht entsperrt",
+    "body": "Dieser Browser hat den Community-Schlüssel noch nicht.",
+    "action": "Warte einen Moment; der Schlüssel kommt, sobald ein anderer Nutzer online ist."
+  },
+  "community_not_member": {
+    "title": "Community noch nicht beigetreten",
+    "body": "Dieser Browser ist der Community noch nicht beigetreten.",
+    "action": "Lade die Seite neu und versuche es noch einmal."
+  },
   "counter_regressed": {
     "title": "Passkey möglicherweise kopiert",
     "body": "Der Signaturzähler des Passkeys ist zurückgegangen; das kann auf einen kopierten Authenticator hinweisen.",

@@ -19,6 +19,7 @@ const MOBILE_SPECS = [
   'security.spec.ts',
   'errors.spec.ts',
   'performance.spec.ts',
+  'community.spec.ts',
 ].map((name) => `**/e2e/${name}`);
 /** Device specs that also run on the phones. */
 const MOBILE_DEVICE_SPECS = ['**/devices/responsive.spec.ts', '**/devices/task-overview.spec.ts'];

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-moderators-post.response.json",
+  "title": "POST /v1/community/moderators response",
+  "description": "Body of a successful response to POST /v1/community/moderators (12-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "user": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "moderator": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "user",
+    "moderator"
+  ],
+  "additionalProperties": false
+}

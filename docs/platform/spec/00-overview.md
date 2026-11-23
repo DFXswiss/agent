@@ -21,6 +21,7 @@ The concept in full (47 ideas) and the client's binding rules, which take preced
 | `07-testing.md` | test strategy, coverage gates, E2E, live tests, CI |
 | `08-monitoring.md` | metrics device → VM → session, reuse of the existing monitoring stack, display |
 | `09-milestones.md` | milestones and acceptance criteria |
+| `12-community.md` | the community: one group chat of all users (data, API, crypto, web; KOR-26, ADR-061) |
 | `../adr/NNN-*.md` | one decision per file |
 
 Not part of the specification: `docs/host-*.md` are workspace-internal operator notes required by `PROJECT.md`

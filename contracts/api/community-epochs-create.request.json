@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-epochs-create.request.json",
+  "title": "POST /v1/community/epochs request",
+  "description": "Body of POST /v1/community/epochs (12-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "epoch": {
+      "$ref": "../common.json#/$defs/epoch"
+    },
+    "key_check": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    },
+    "wrap": {
+      "$ref": "../common.json#/$defs/community_wrap_text"
+    },
+    "sig": {
+      "$ref": "../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "epoch",
+    "key_check",
+    "wrap",
+    "sig"
+  ],
+  "additionalProperties": false
+}

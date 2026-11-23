@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-requests-wraps.response.json",
+  "title": "POST /v1/community/requests/wraps response",
+  "description": "Body of a successful response to POST /v1/community/requests/wraps (12-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "stored": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "skipped": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "stored",
+    "skipped"
+  ],
+  "additionalProperties": false
+}
