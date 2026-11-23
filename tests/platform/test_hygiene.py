@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import itertools
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -55,6 +56,7 @@ FORBIDDEN_NAME_DIGESTS = frozenset(
         "c6e00751a13c85cb5e7f4fc8ed70c187",
         "0763b652c49e388875387249986c7ee0",
         "d864ad2dbc304f7e0a73555bb196dd4b",
+        "4d194df9104edefb4d862f9b71a98e69",
     }
 )
 
@@ -112,8 +114,11 @@ IPV6_RE = re.compile(r"(?<![\w:.])([0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7})(?
 
 
 def name_findings(text: str) -> list[str]:
+    """Internal names by digest: each word, and each two neighbouring words written together (a name spelled with a
+    blank, as in a concept quotation, KOR-38)."""
     found = []
-    for token in set(re.findall(r"[a-z0-9]+", text.lower())):
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    for token in set(words) | {first + second for first, second in itertools.pairwise(words)}:
         for candidate in {token, token.rstrip("0123456789")}:
             if hashlib.sha256(candidate.encode()).hexdigest()[:32] in FORBIDDEN_NAME_DIGESTS:
                 found.append(f"internal name (digest of {candidate[:2]}…)")
@@ -250,6 +255,8 @@ def test_names_are_matched_by_digest() -> None:
     assert name_findings("nothing internal here") == []
     assert name_findings("".join(chr(c) for c in (100, 102, 120, 53, 48, 48)))  # spelled by code point
     assert name_findings("".join(chr(c) for c in (100, 102, 120, 112, 114, 100, 49)))  # trailing digits stripped
+    assert name_findings("".join(chr(c) for c in (68, 70, 88, 32, 53, 48, 48)))  # two words, upper case
+    assert name_findings("".join(chr(c) for c in (100, 102, 120, 32, 115, 116, 117, 102, 102)))  # two words
 
 
 @pytest.mark.parametrize(

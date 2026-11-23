@@ -7,8 +7,13 @@ the golden image, the test doubles and the monitoring assets in **agent**. The l
 documentation and the same in both repositories except for `decisions/`, `acceptance/` and the result files of each
 repository.
 
+**Read first: [KONZEPT.md](KONZEPT.md)** – the concept (47 ideas) and the binding rules of the client, in German.
+It is the first source for everyone, human or AI agent, working on agent.dfx.swiss; specification, ADRs and code
+must not contradict it, and every new rule of the client is entered there first.
+
 | Document | Content |
 |---|---|
+| [KONZEPT.md](KONZEPT.md) | Concept and binding rules: the full concept with anchors per idea and bullet (part A), the client's rules E-01 … with date and wording (B), interpretations until the client decides (C), maintenance and open deviations (D) |
 | [PLATFORM-DESIGN.md](PLATFORM-DESIGN.md) | Design overview: principles, components, trust boundaries, data flows, the DESIGN.md sections it replaces, coexistence, known limits |
 | [spec/](spec/00-overview.md) | Implementation specification 00–10 (overview, requirements, data model, API, crypto, runner, web, testing, monitoring, milestones, work packages) |
 | [spec-deviations.md](spec-deviations.md) | As-built register: where the implementation refines or deviates from the specification, with the deciding package |
