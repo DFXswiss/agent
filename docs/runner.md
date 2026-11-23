@@ -138,8 +138,11 @@ handled by its state: `queued` or `running` is left alone; `failed` is retried
 with its attempt count incremented and the previous attempt's activity,
 worktree and log files removed; `done` is queued again only when it is a pull
 request whose current head SHA is known and differs from the SHA stored on the
-row. A `done` row is otherwise a duplicate, and a row whose recorded trigger is
-missing (a row written before triggers existed) is treated as already handled.
+row. A `done` row whose stored head is a commit id and whose current head cannot
+be read is skipped and left unread, so an unreadable answer does not discard the
+mention; a `done` row that cannot be shown to have moved otherwise is a
+duplicate. A row whose recorded trigger is missing (a row written before
+triggers existed) is treated as already handled.
 The recorded trigger is a high-water mark: only a comment newer than the
 recorded one counts as a new request, so a deleted or edited later mention does
 not bring back an earlier one. A new generation gets a fresh `created_at`, so it
@@ -428,9 +431,10 @@ mention already queued by another device must not be inserted again.
 
 ## Not yet
 
-- Job types other than `pr-review` (`merge-conflict`, `pr-mergeable`, …) have
-  no worker. Dispatch refuses a policy that allows one, and the worker fails a
-  queued one instead of guessing.
+- Skills other than `pr-review` (`merge-conflict`, `pr-mergeable`, …) have no
+  worker. Dispatch refuses a policy whose allowed queue types map to a skill
+  without a worker, and the worker fails a queued one instead of guessing. Only
+  `pr-review` has a worker today.
 - More prompt templates than `prompts/pr-review.md`.
 - A schedule or service unit for the subcommands.
 - Container packaging.

@@ -82,9 +82,10 @@ def _repo_named(repo_l: str, patterns: list[str]) -> bool:
     """Whether `repo_l` is named by an exact entry or an `<owner>/*` entry.
 
     The wildcard is deliberately narrow: exactly one slash, ending in `/*`, with
-    a non-empty owner. `*`, `*/*`, `owner/prefix*` and `owner/` therefore name
-    nothing, which keeps a typo from widening an allow-list to every repository
-    this runner can reach. Both sides are already lower-cased by the caller.
+    a non-empty owner that contains no `*`. `*`, `*/*`, `owner/prefix*` and
+    `owner/` therefore name nothing, which keeps a typo from widening an
+    allow-list to every repository this runner can reach. Both sides are already
+    lower-cased by the caller.
     """
     for pattern in patterns:
         if repo_l == pattern:
@@ -92,7 +93,7 @@ def _repo_named(repo_l: str, patterns: list[str]) -> bool:
         if not pattern.endswith("/*") or pattern.count("/") != 1:
             continue
         owner = pattern[:-2]
-        if owner and repo_l.startswith(owner + "/"):
+        if owner and "*" not in owner and repo_l.startswith(owner + "/"):
             return True
     return False
 
