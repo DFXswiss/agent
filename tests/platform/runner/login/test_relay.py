@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import pytest
 from agent_doubles.login_cli import codes
 from agent_doubles.login_cli.cli import authorize_url
 from agent_runner.credentials import cache
+from agent_runner.login import pty
 from agent_runner.login import requests as login_requests
 from agent_runner.login.relay import LoginSession
 from agent_runner.sync.http import HubRefusal, HubTransportError
@@ -57,7 +59,11 @@ def test_relay_stores_the_subscription_and_removes_the_temporary_directory(
     run_request(store_dsn, tmp_path, "claude.login", MANUAL, check, argv=cli_argv(login))
 
 
-def test_a_hard_wrapped_token_is_joined(store_dsn: str, tmp_path: Path, doubles: Callable[..., Login]) -> None:
+def test_a_token_wrapped_in_a_narrow_window_is_joined(
+    store_dsn: str, tmp_path: Path, doubles: Callable[..., Login], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The double lays out for the PTY's width like the real UI: in 40 columns the token spans three rows."""
+    monkeypatch.setattr(pty, "COLUMNS", 40)
     login = doubles()
 
     async def check(run: Run) -> None:
@@ -68,21 +74,79 @@ def test_a_hard_wrapped_token_is_joined(store_dsn: str, tmp_path: Path, doubles:
         async with cache.opened(run.env.context, ALICE, "claude_subscription") as body:
             assert body["token"] == codes.access_token(codes.DEFAULT_SEED, 1)
 
-    run_request(store_dsn, tmp_path, "claude.login", MANUAL, check, argv=cli_argv(login, "--columns", "40"))
+    run_request(store_dsn, tmp_path, "claude.login", MANUAL, check, argv=cli_argv(login))
 
 
-def test_a_refused_code_ends_code_invalid(store_dsn: str, tmp_path: Path, doubles: Callable[..., Login]) -> None:
+def test_a_refused_code_ends_code_invalid_at_once_while_the_cli_stays_open(
+    store_dsn: str, tmp_path: Path, doubles: Callable[..., Login]
+) -> None:
+    """Like the real program the double shows "OAuth error … Press Enter to retry" and does not end: the error on the
+    screen ends the login, long before `token_wait`, and the program is killed."""
     login = doubles()
 
     async def check(run: Run) -> None:
         await run.wait_bodies(1)
+        started = time.monotonic()
         follow = await run.follow({"code": "wrong#state"})
         await run.settle()
+        assert time.monotonic() - started < 30  # token_wait is 120 s
         assert run.bodies(follow) == [{"step": "failed", "code": "code_invalid"}]
         assert run.finals(follow) == [True]
         assert (ALICE, "claude_subscription") not in run.env.hub.records
+        assert "runner.login screen rows=" in run.env.log()
+        assert " prompt=no error=yes " in run.env.log()
+        run.secrets_absent("wrong#state", "Invalid state")
 
-    run_request(store_dsn, tmp_path, "claude.login", MANUAL, check, argv=cli_argv(login))
+    opts = dataclasses.replace(FAST, token_wait=120.0)
+    run_request(
+        store_dsn, tmp_path, "claude.login", MANUAL, check, argv=cli_argv(login, "--prompt-delay", "0.2"), opts=opts
+    )
+
+
+def test_a_code_sent_before_the_input_field_shows_is_typed_once_it_shows(
+    store_dsn: str, tmp_path: Path, doubles: Callable[..., Login]
+) -> None:
+    """The real program drops what is typed before its input field shows (KOR-21); the code arrives while the double
+    still shows "Opening browser…" and is only typed once the field is on the screen."""
+    login = doubles()
+
+    async def check(run: Run) -> None:
+        first = await run.wait_bodies(1)
+        shown = time.monotonic()
+        pasted = await asyncio.to_thread(code_for, login, first[0]["url"])
+        assert time.monotonic() - shown < 6  # before the field shows
+        follow = await run.follow({"code": pasted})
+        await run.settle()
+        assert run.bodies(follow) == [{"step": "done"}]
+        assert time.monotonic() - shown >= 8
+
+    argv = cli_argv(login, "--prompt-delay", "8")
+    run_request(store_dsn, tmp_path, "claude.login", MANUAL, check, argv=argv)
+
+
+SILENT_CLI = (
+    "import os, subprocess, sys, time; "
+    "subprocess.run([os.environ['BROWSER'], 'https://auth.example/oauth/authorize?x=1']); "
+)
+
+
+@pytest.mark.parametrize(
+    ("tail", "code"),
+    [
+        ("print('Opening browser', flush=True); time.sleep(30)", "timeout"),
+        ("print('bye'); sys.exit(0)", "login_cli_failed"),
+    ],
+)
+def test_an_input_field_that_never_shows_ends_the_login(store_dsn: str, tmp_path: Path, tail: str, code: str) -> None:
+    async def check(run: Run) -> None:
+        await run.wait_bodies(1)
+        follow = await run.follow({"code": "some#code"})
+        await run.settle()
+        assert run.bodies(follow) == [{"step": "failed", "code": code}]
+        assert "runner.login screen rows=1 marker=no token_blocks=0 prompt=no error=" in run.env.log()
+
+    opts = dataclasses.replace(FAST, prompt_wait=0.5)
+    run_request(store_dsn, tmp_path, "claude.login", MANUAL, check, argv=script_argv(SILENT_CLI + tail), opts=opts)
 
 
 @pytest.mark.parametrize("body", [{"code": "two words"}, {"code": 7}, {"mode": "manual"}, {"code": "x", "more": 1}])
@@ -263,6 +327,7 @@ def test_a_cli_that_cannot_start_or_opens_no_valid_url_fails(
 URL_THEN = (
     "import os, subprocess, sys; "
     "subprocess.run([os.environ['BROWSER'], 'https://auth.example/oauth/authorize?x=1']); "
+    "print('Paste code here if prompted', flush=True); "
     "line = sys.stdin.readline(); "
 )
 
@@ -282,6 +347,23 @@ def test_the_end_of_the_cli_is_mapped_to_a_failure_code(store_dsn: str, tmp_path
         follow = await run.follow({"code": "some#code"})
         await run.settle()
         assert run.bodies(follow) == [{"step": "failed", "code": code}]
+
+    run_request(store_dsn, tmp_path, "claude.login", MANUAL, check, argv=script_argv(URL_THEN + tail))
+
+
+def test_an_unreadable_token_screen_logs_its_shape_only(store_dsn: str, tmp_path: Path) -> None:
+    broken = "sk-" + "ant-oat01-" + "B" * 40 + " (copy)"
+    tail = f"print('Your OAuth token (valid for 1 year):'); print(); print({broken!r}); sys.exit(0)"
+
+    async def check(run: Run) -> None:
+        await run.wait_bodies(1)
+        follow = await run.follow({"code": "some#code"})
+        await run.settle()
+        assert run.bodies(follow) == [{"step": "failed", "code": "token_invalid"}]
+        log = run.env.log()
+        assert "runner.login screen rows=4 marker=yes token_blocks=0 prompt=yes error=no request_id=" in log
+        for text in ("B" * 40, "auth.example", "some#code", "OAuth token"):
+            assert text not in log  # the form of the screen only, never its text, the URL or the code
 
     run_request(store_dsn, tmp_path, "claude.login", MANUAL, check, argv=script_argv(URL_THEN + tail))
 

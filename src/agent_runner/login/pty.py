@@ -3,7 +3,9 @@
 `claude setup-token` is an interactive terminal program: it needs a TTY for its prompt and prints the token in its
 terminal UI. `PtyProcess.spawn` starts the command as the leader of a new session with the PTY's slave side as
 standard input, output and error and a wide window (`COLUMNS` x `ROWS`), so the UI wraps as little as possible. The
-master side is read by an event-loop reader into a bounded buffer; `write` types into the terminal.
+master side is read by an event-loop reader into a bounded buffer and, decoded incrementally, into a `Screen` of the
+window's size (KOR-21: the program draws with cursor positioning, so the login reads the screen, not the raw output);
+`write` types into the terminal.
 
 On macOS the output that is still buffered in the PTY is lost once the child is reaped, so `wait_eof` reads the master
 side until end of file before `reap` collects the exit status (DBL-03 report). `kill` ends the whole process group
@@ -13,6 +15,7 @@ side until end of file before `reap` collects the exit status (DBL-03 report). `
 from __future__ import annotations
 
 import asyncio
+import codecs
 import contextlib
 import fcntl
 import os
@@ -22,6 +25,8 @@ import subprocess
 import termios
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+
+from agent_runner.login.screen import Screen
 
 COLUMNS = 1000
 ROWS = 50
@@ -36,10 +41,12 @@ class SpawnFailed(Exception):
 
 
 class PtyProcess:
-    def __init__(self, process: subprocess.Popen[bytes], master: int) -> None:
+    def __init__(self, process: subprocess.Popen[bytes], master: int, rows: int, columns: int) -> None:
         self.process = process
         self.master = master
         self.output = bytearray()
+        self.screen = Screen(rows, columns)
+        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self.eof = False
         self.changed = asyncio.Event()
         self.loop = asyncio.get_running_loop()
@@ -47,10 +54,12 @@ class PtyProcess:
 
     @classmethod
     def spawn(cls, argv: Sequence[str], env: Mapping[str, str], cwd: Path) -> PtyProcess:
-        """Start `argv` with exactly `env` in `cwd`; `SpawnFailed` when it cannot be started."""
+        """Start `argv` with exactly `env` in `cwd` in a `ROWS` x `COLUMNS` window; `SpawnFailed` when it cannot be
+        started."""
+        rows, columns = ROWS, COLUMNS
         master, slave = os.openpty()
         try:
-            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLUMNS, 0, 0))
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
             process = subprocess.Popen(
                 list(argv),
                 stdin=slave,
@@ -67,7 +76,7 @@ class PtyProcess:
         finally:
             os.close(slave)
         os.set_blocking(master, False)
-        return cls(process, master)
+        return cls(process, master, rows, columns)
 
     def _readable(self) -> None:
         try:
@@ -78,6 +87,7 @@ class PtyProcess:
             chunk = b""
         if chunk:
             self.output += chunk
+            self.screen.feed(self._decoder.decode(chunk))
             if len(self.output) > MAX_OUTPUT:
                 del self.output[: len(self.output) - MAX_OUTPUT]
         else:

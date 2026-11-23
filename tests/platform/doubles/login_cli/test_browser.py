@@ -33,7 +33,7 @@ def test_mailbox_automation_chain_in_headless_chromium(
     )
     assert login.ca is not None
     term = terminal("setup-token", "--auth-url", login.auth.page_url, "--ca-file", str(login.ca.ca_file), "--seed", "b")
-    term.read_until(PROMPT.encode())
+    term.read_until_shown(PROMPT)
     url = (tmp_path / "url.txt").read_text()
     with sync_api.sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -65,7 +65,7 @@ def test_mailbox_automation_chain_in_headless_chromium(
     assert login.mail.store.counts()[USER] == {"INBOX": 0, "Junk": 1}
     term.type(pasted)
     assert term.finish() == 0
-    assert codes.access_token(codes.DEFAULT_SEED, 1) in term.text
+    assert codes.access_token(codes.DEFAULT_SEED, 1) in "".join(term.lines)
     state = login.auth.state()
     assert (state["ok"], state["failures"]) == (True, [])
 

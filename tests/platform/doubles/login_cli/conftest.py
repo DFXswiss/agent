@@ -3,13 +3,16 @@ browser (cookies, redirects, forms) and a PTY runner for the login-CLI double.""
 
 from __future__ import annotations
 
+import fcntl
 import http.cookiejar
 import os
 import pty
 import re
 import select
+import struct
 import subprocess
 import sys
+import termios
 import time
 import urllib.error
 import urllib.request
@@ -27,10 +30,12 @@ from agent_doubles.common.client import DoubleClient
 from agent_doubles.login_cli.authpage import AuthPageDouble, Scenario
 from agent_doubles.mail.double import MailDouble
 from agent_doubles.mail.testca import DoubleCA
+from agent_runner.login.screen import Screen
 
 USER = "subscriber@example.test"
 PASSWORD = "mailbox-password"  # not a secret: the mail double only compares it
 SRC = Path(__file__).resolve().parents[4] / "src"
+ROWS = 50
 
 
 class FakeClock:
@@ -188,10 +193,11 @@ def login(start_login: Callable[..., Login]) -> Login:
 
 @dataclass
 class Terminal:
-    """The login-CLI double running in a PTY, as the runner starts it."""
+    """The login-CLI double running in a PTY, as the runner starts it (window `ROWS` x `columns`)."""
 
     process: subprocess.Popen[bytes]
     master: int
+    columns: int = 120
     output: bytes = b""
 
     def read_until(self, marker: bytes, timeout: float = 20) -> bytes:
@@ -235,7 +241,27 @@ class Terminal:
 
     @property
     def text(self) -> str:
+        """The raw output (control sequences included), line ends normalised."""
         return self.output.decode("utf-8", "replace").replace("\r\n", "\n")
+
+    @property
+    def lines(self) -> list[str]:
+        """The rows of the terminal screen the output draws (the runner reads the same, KOR-21)."""
+        screen = Screen(ROWS, self.columns)
+        screen.feed(self.output.decode("utf-8", "replace"))
+        return screen.lines()
+
+    def read_until_shown(self, text: str, timeout: float = 20) -> list[str]:
+        """Read until `text` stands in a row of the screen."""
+        deadline = time.monotonic() + timeout
+        while not any(text in line for line in self.lines):
+            assert time.monotonic() < deadline, self.lines
+            ready, _, _ = select.select([self.master], [], [], 0.1)
+            if ready:
+                chunk = os.read(self.master, 4096)
+                assert chunk, self.output
+                self.output += chunk
+        return self.lines
 
 
 @pytest.fixture
@@ -249,7 +275,9 @@ def terminal(tmp_path: Path) -> Iterator[Callable[..., Terminal]]:
     helper.write_text(f"#!/bin/sh\nprintf '%s' \"$1\" > {partial} && mv {partial} {target}\n")
     helper.chmod(0o700)
 
-    def start(*args: str, browser: bool = True, extra_env: dict[str, str] | None = None) -> Terminal:
+    def start(
+        *args: str, browser: bool = True, extra_env: dict[str, str] | None = None, columns: int = 120
+    ) -> Terminal:
         env = {k: v for k, v in os.environ.items() if k.startswith(("COVERAGE", "PATH", "LANG", "LC_", "SYSTEMROOT"))}
         env["PYTHONPATH"] = str(SRC)
         env["HOME"] = str(tmp_path)
@@ -257,6 +285,7 @@ def terminal(tmp_path: Path) -> Iterator[Callable[..., Terminal]]:
             env["BROWSER"] = str(helper)
         env.update(extra_env or {})
         master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, columns, 0, 0))
         process = subprocess.Popen(
             [sys.executable, "-m", "agent_doubles.login_cli", *args],
             stdin=slave,
@@ -267,7 +296,7 @@ def terminal(tmp_path: Path) -> Iterator[Callable[..., Terminal]]:
             start_new_session=True,
         )
         os.close(slave)
-        term = Terminal(process, master)
+        term = Terminal(process, master, columns)
         started.append(term)
         return term
 
