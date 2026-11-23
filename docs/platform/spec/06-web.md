@@ -313,10 +313,13 @@ state explains how to create a task. Details: `decisions/KOR-32.md`.
   - `session.hook` with `deny` – muted row "Blocked: <tool> (<reason>)".
   - `session.status` errors and task/session state changes – system rows.
   - Countdown summaries (§4.4).
-- Long chats (HOT-05): only a window at the end of the timeline is rendered (150 rows; "Show earlier items" adds 100;
+- Long prompts, messages and tool inputs/outputs show 20 000 characters at a time ("Show more"); a tool row renders its
+  details only while expanded.
+- Long chats (HOT-05): only a window at the end of the timeline is rendered (100 rows; "Show earlier items" adds 50;
   the window keeps its first row while new items arrive; "Jump to the latest item" scrolls to and focuses the last
   row); rows are memoized on their content, so a new event renders only the new row; rows off screen skip layout and
-  paint (`content-visibility: auto`, still in the accessibility tree and found by the browser's find-in-page). Kinds
+  paint (`content-visibility: auto`; rendered rows stay in the accessibility tree and in the browser's find-in-page,
+  which does not reach rows outside the window, closed details or text beyond the shown characters). Kinds
   with a verified body but without a renderer are skipped and do not break a run of file changes; an event kind the
   client's kind matrix does not know yet stays the neutral row "Unverifiable item (kind_not_allowed)". The
   reader writes settled events to the store at most once per frame (16 ms), so a burst of thousands of events costs

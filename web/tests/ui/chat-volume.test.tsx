@@ -3,12 +3,13 @@
 // with "Show earlier items" and "Jump to the latest item", and unknown kinds are skipped without breaking a run.
 // The browser proof with 5 000 file events is `e2e/devices/chat-volume.spec.ts`.
 import { act, fireEvent, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { PAGE, WINDOW } from '../../src/core/chat/files';
 import { type EventEntry, putEvents } from '../../src/core/store/slices/events';
 import { putTasks, type TaskRow } from '../../src/core/store/slices/tasks';
 import { FILES_PAGE } from '../../src/ui/chat-items/file-group';
-import { PATCH_CHARS } from '../../src/ui/chat-items/file/FilePatch';
+import { CLIP_CHARS as PATCH_CHARS } from '../../src/ui/chat-items/file/Clipped';
+import { LINE_CHARS } from '../../src/ui/chat-items/session.tool';
 import { ChatTab } from '../../src/ui/task-tabs/chat/ChatTab';
 import { taskRow, type TaskWorld, taskWorld } from '../core/tasks/world';
 import { MAIN, mount, TASK, verified } from './chat-world';
@@ -68,9 +69,9 @@ describe('file groups', () => {
     fireEvent.click(first);
     expect(first).toHaveTextContent('Hide changes');
     expect(screen.getByTestId('chat.file.patch').textContent).toHaveLength(PATCH_CHARS);
-    fireEvent.click(screen.getByTestId('chat.file.patch.more'));
+    fireEvent.click(screen.getByTestId('chat.more'));
     expect(screen.getByTestId('chat.file.patch').textContent).toHaveLength(PATCH_CHARS + 5);
-    expect(screen.queryByTestId('chat.file.patch.more')).toBeNull();
+    expect(screen.queryByTestId('chat.more')).toBeNull();
     fireEvent.click(first);
     expect(screen.queryByTestId('chat.file.patch')).toBeNull();
     fireEvent.click(toggle);
@@ -86,6 +87,49 @@ describe('file groups', () => {
       Array.from({ length: 1200 }, (_, index) => fileEvent(t, index)),
     );
     expect(screen.getByTestId('chat.files.summary')).toHaveTextContent('1.200 Dateien geändert');
+  });
+});
+
+describe('large items', () => {
+  it('clips long messages and renders tool details only while open, clipped as well', async () => {
+    const t = await chat();
+    const big = 'y'.repeat(PATCH_CHARS + 7);
+    put(t, [
+      verified(t, 'session.output', { text: big }, { session: MAIN }),
+      verified(
+        t,
+        'session.tool',
+        { name: 'Bash', input_summary: big, input: big, result_summary: big },
+        { session: MAIN },
+      ),
+      verified(t, 'prompt', { text: big }),
+    ]);
+    const output = screen.getByTestId('chat.output');
+    expect(output.textContent).toContain('y'.repeat(PATCH_CHARS));
+    expect(output.textContent).not.toContain('y'.repeat(PATCH_CHARS + 1));
+    fireEvent.click(within(output).getByTestId('chat.more'));
+    expect(within(output).queryByTestId('chat.more')).toBeNull();
+    expect(output.textContent).toContain(big);
+    const prompt = screen.getByTestId('chat.prompt');
+    expect(within(prompt).getByTestId('chat.prompt.text').textContent).toHaveLength(PATCH_CHARS);
+    fireEvent.click(within(prompt).getByTestId('chat.more'));
+    expect(within(prompt).getByTestId('chat.prompt.text').textContent).toBe(big);
+    const tool = screen.getByTestId('chat.tool') as HTMLDetailsElement;
+    // the summary line is bounded too
+    expect(within(tool).getByTestId('chat.tool.summary').textContent).toBe(`Bash ${'y'.repeat(LINE_CHARS)}…`);
+    expect(within(tool).queryByTestId('chat.tool.input')).toBeNull();
+    act(() => {
+      tool.open = true;
+      tool.dispatchEvent(new Event('toggle'));
+    });
+    expect(within(tool).getByTestId('chat.tool.input').textContent).toHaveLength(PATCH_CHARS);
+    expect(within(tool).getByTestId('chat.tool.result').textContent).toHaveLength(PATCH_CHARS);
+    expect(within(tool).getAllByTestId('chat.more')).toHaveLength(2);
+    act(() => {
+      tool.open = false;
+      tool.dispatchEvent(new Event('toggle'));
+    });
+    expect(within(tool).queryByTestId('chat.tool.input')).toBeNull();
   });
 });
 
@@ -115,7 +159,11 @@ describe('long chats', () => {
     expect(screen.getAllByTestId('chat.item')).toHaveLength(WINDOW + PAGE);
     // jump to the latest item: the window shrinks, the last row is scrolled to and focused
     const scroll = vi.fn();
+    const original = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = scroll;
+    onTestFinished(() => {
+      Element.prototype.scrollIntoView = original;
+    });
     fireEvent.click(screen.getByTestId('chat.latest'));
     expect(scroll).toHaveBeenCalledWith({ block: 'end' });
     const rows = screen.getAllByTestId('chat.item');
