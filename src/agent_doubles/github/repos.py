@@ -4,7 +4,8 @@ refs, pull requests and issue comments, and the seeding format.
 Seeding (``POST /_double/seed`` or ``--seed FILE``) adds to what exists; names already present are refused, a
 reset (``POST /_double/reset``) empties everything. Format (every key optional)::
 
-    {"users": [{"login": "octo-user", "id": 101, "name": "Octo User", "email": null, "tokens": ["<token>"]}],
+    {"users": [{"login": "octo-user", "id": 101, "name": "Octo User", "email": null, "tokens": ["<token>"],
+                "personal_tokens": ["<token>"], "collaborator": ["octo-org/hello"]}],
      "installations": [{"id": 31, "account": "octo-org", "account_type": "Organization",
                         "repository_selection": "selected", "repositories": ["octo-org/hello"],
                         "users": ["octo-user"], "permissions": {"contents": "write", ...}}],
@@ -27,7 +28,9 @@ repository, issues first. Commit ``files`` are changes against the parent (``nul
 without ``from`` starts empty. An installation whose account is a user that is not listed in ``users`` is visible to
 that user; repositories of an installation with ``repository_selection: "all"`` are all repositories of its account.
 A repository is accessible with a token when one of the installations visible to the token's user covers it;
-anything else is ``404``.
+anything else is ``404``. ``personal_tokens`` are tokens without the GitHub App (classic personal access tokens,
+KOR-27): they reach the repositories the user owns and those named in ``collaborator`` (with write access; a name
+that is not seeded is simply not reachable), and GitHub refuses them the installation routes.
 
 Time is logical: seeded and created objects take timestamps from `World.stamp`, which starts at ``base_time`` and
 advances one second per object, so object ids are deterministic.
@@ -149,6 +152,7 @@ class User:
     name: str | None
     email: str | None
     type: str = "User"
+    collaborator: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -383,6 +387,7 @@ class World:
         with self.lock:
             self.users: dict[str, User] = {}
             self.tokens: dict[str, str] = {}
+            self.personal: set[str] = set()
             self.installations: dict[int, Installation] = {}
             self.repos: dict[str, Repo] = {}
             self._tick = 0
@@ -408,6 +413,15 @@ class World:
 
     def add_token(self, login: str, token: str) -> None:
         self.tokens[token] = login
+
+    def is_personal(self, token: str) -> bool:
+        return token in self.personal
+
+    def personal_repos(self, user: User) -> list[Repo]:
+        """The repositories a personal token of `user` reaches (own and `collaborator`), by full name."""
+        named = {name.lower() for name in user.collaborator}
+        found = [repo for repo in self.repos.values() if repo.owner.lower() == user.login.lower() or repo.key in named]
+        return sorted(found, key=lambda repo: repo.key)
 
     def account_id(self, login: str) -> int:
         """The id of user `login`, or a stable id for an organisation the seed only names."""
@@ -453,6 +467,7 @@ class World:
         data = _object(payload, "seed")
         _check_keys(data, {"users", "installations", "repositories", "device_flow", "faults", "expectations"}, "seed")
         saved = (dict(self.users), dict(self.tokens), dict(self.installations), dict(self.repos), self._tick, self._ids)
+        personal = set(self.personal)
         try:
             for raw in _list(data.get("users", []), "users"):
                 self._seed_user(_object(raw, "user"))
@@ -463,10 +478,11 @@ class World:
         except SeedError:
             # A refused seed leaves nothing behind (seeding only adds new objects, so restoring the tables suffices).
             self.users, self.tokens, self.installations, self.repos, self._tick, self._ids = saved
+            self.personal = personal
             raise
 
     def _seed_user(self, data: dict[str, Any]) -> None:
-        _check_keys(data, {"login", "id", "name", "email", "tokens"}, "user")
+        _check_keys(data, {"login", "id", "name", "email", "tokens", "personal_tokens", "collaborator"}, "user")
         login = _text(data, "login", "user")
         if not LOGIN_RE.match(login):
             raise SeedError(f"invalid login {login!r}")
@@ -478,13 +494,20 @@ class World:
             _optional_text(data, "name", "user"),
             _optional_text(data, "email", "user"),
         )
+        for name in _list(data.get("collaborator", []), "user.collaborator"):
+            if not isinstance(name, str) or "/" not in name:
+                raise SeedError("user.collaborator must name repositories as owner/name")
+            user.collaborator.append(name)
         self.users[login.lower()] = user
-        for token in _list(data.get("tokens", []), "user.tokens"):
-            if not isinstance(token, str) or not token:
-                raise SeedError("user.tokens must be non-empty strings")
-            if token in self.tokens:
-                raise SeedError("a token belongs to one user only")
-            self.add_token(user.login.lower(), token)
+        for key in ("tokens", "personal_tokens"):
+            for token in _list(data.get(key, []), f"user.{key}"):
+                if not isinstance(token, str) or not token:
+                    raise SeedError(f"user.{key} must be non-empty strings")
+                if token in self.tokens:
+                    raise SeedError("a token belongs to one user only")
+                self.add_token(user.login.lower(), token)
+                if key == "personal_tokens":
+                    self.personal.add(token)
 
     def _seed_installation(self, data: dict[str, Any]) -> None:
         _check_keys(

@@ -31,6 +31,10 @@ and an optional value (versions, counts, seconds; never a secret). The order is 
   ignored (rights, owner, symbolic link, format), warn `none_usable` (value: the number of ignored files) when none
   is usable and warn `dir_unusable` (value: the reason) when the directory cannot be used. No token, file name or
   organization is shown.
+- `operator_github` (KOR-27, ADR-053): ok `off` without the setting, ok `usable` when the operator's GitHub token
+  file passes the checks of every connect (`github.operator`), else warn with the reason (`missing`, `directory`,
+  `not_regular`, `owner`, `mode`, `unreadable`, `format`): connects of approved users fail until it is fixed, the
+  daemon runs on (as for `operator_subscriptions`). Never the token, the account or the approved users.
 - `test_mode`: ok for `AGENT_RUNNER_TEST_MODE=0`; warn `test_mode_on` (production MUST run with 0).
 - `sync`: ok when nothing waits for an operator; one fail per marker: `device_revoked`, `sync_fatal`
   (`origin_seq_conflict`, ...), `platform_stopped`, `org_stopped`.
@@ -66,6 +70,7 @@ from agent_runner.config import DEFAULT_LOGIN_ARGV, Config
 from agent_runner.encoding import b64u_decode
 from agent_runner.enroll.platform import fetch_hub_config
 from agent_runner.errors import RunnerError
+from agent_runner.github import operator as operator_github
 from agent_runner.identity import Identity
 from agent_runner.login.relay import LoginFailed, login_env, resolve
 from agent_runner.model.operator import IGNORED, USABLE, Pool, configured
@@ -340,6 +345,11 @@ def check_operator_subscriptions(config: Config) -> Check:
     if states[IGNORED]:
         return Check(OPERATOR_SUBSCRIPTIONS, WARN, "files_ignored", states[USABLE])
     return Check(OPERATOR_SUBSCRIPTIONS, OK, "usable", states[USABLE])
+
+
+def check_operator_github(config: Config) -> Check:
+    result, detail = operator_github.check(config)
+    return Check("operator_github", result, detail)
 
 
 def check_test_mode(test_mode: bool) -> Check:

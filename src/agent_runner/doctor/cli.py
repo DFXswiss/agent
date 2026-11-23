@@ -234,6 +234,7 @@ def cmd_doctor(args: argparse.Namespace, ctx: Any) -> int:
         *checks.check_hub(config, identity, options),
         checks.check_textfile(config.textfile_dir),
         checks.check_operator_subscriptions(config),
+        checks.check_operator_github(config),
         checks.check_test_mode(config.test_mode),
         *checks.check_sync(facts),
     ]

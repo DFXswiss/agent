@@ -58,6 +58,8 @@ NAMES = (
     "VM_PREFIX",
     "OPERATOR_SUBSCRIPTION_DIR",
     "OPERATOR_SUBSCRIPTION_ORGS",
+    "OPERATOR_GITHUB_TOKEN_FILE",
+    "OPERATOR_GITHUB_USERS",
 )
 # Required for the daemon (`run`, `service install`); commands that never talk to the hub load without them.
 HUB_NAMES = frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"})
@@ -122,6 +124,10 @@ class Config:
     """Directory of the operator's subscription token files (platform devices only; KOR-23, ADR-052)."""
     operator_subscription_orgs: frozenset[str] = frozenset()
     """Organizations whose sessions may use the operator's subscriptions; only together with the directory."""
+    operator_github_token_file: Path | None = None
+    """The operator's GitHub token file (platform devices only; KOR-27, ADR-053)."""
+    operator_github_users: frozenset[str] = frozenset()
+    """Users whose `github.connect` uses the operator's token; only together with the file."""
 
     @property
     def pg_dir(self) -> Path:
@@ -174,6 +180,7 @@ def load_config(
     if openrouter is not None and device_kind == "org":
         raise RunnerError("config_invalid", "OPENROUTER_KEY_FILE")
     operator_dir, operator_orgs = _operator(raw, require, device_kind)
+    github_file, github_users = _operator_github(raw, require, device_kind)
     automation_raw = raw("LOGIN_AUTOMATION") or ("on" if device_kind == "platform" else "off")
     if automation_raw not in ("on", "off"):
         raise RunnerError("config_invalid", "LOGIN_AUTOMATION")
@@ -207,6 +214,8 @@ def load_config(
         vm_prefix=_vm_prefix(raw("VM_PREFIX")),
         operator_subscription_dir=operator_dir,
         operator_subscription_orgs=operator_orgs,
+        operator_github_token_file=github_file,
+        operator_github_users=github_users,
     )
 
 
@@ -228,6 +237,8 @@ def environment(config: Config) -> dict[str, str]:
         "VM_PREFIX": config.vm_prefix or None,
         "OPERATOR_SUBSCRIPTION_DIR": config.operator_subscription_dir,
         "OPERATOR_SUBSCRIPTION_ORGS": ",".join(sorted(config.operator_subscription_orgs)) or None,
+        "OPERATOR_GITHUB_TOKEN_FILE": config.operator_github_token_file,
+        "OPERATOR_GITHUB_USERS": ",".join(sorted(config.operator_github_users)) or None,
     }
     for name, value in optional_text.items():
         if value is not None:
@@ -396,6 +407,44 @@ def _org_ids(value: str) -> frozenset[str]:
         except ValueError:
             raise RunnerError("config_invalid", "OPERATOR_SUBSCRIPTION_ORGS") from None
         found.add(str(parsed))
+    return frozenset(found)
+
+
+def _operator_github(
+    raw: Callable[[str], str], require: frozenset[str], device_kind: DeviceKind | None
+) -> tuple[Path | None, frozenset[str]]:
+    """`OPERATOR_GITHUB_TOKEN_FILE` and `OPERATOR_GITHUB_USERS` (KOR-27): both or neither, platform devices only.
+
+    Only the path is checked here: the file is replaced atomically while the daemon runs, so its type, owner, mode
+    and content are checked at each read (`github.operator.read_token`)."""
+    path = _optional(
+        raw("OPERATOR_GITHUB_TOKEN_FILE"),
+        "OPERATOR_GITHUB_TOKEN_FILE",
+        require,
+        lambda v: _absolute(v, "OPERATOR_GITHUB_TOKEN_FILE"),
+    )
+    users = _user_ids(raw("OPERATOR_GITHUB_USERS"))
+    if path is not None and device_kind == "org":
+        raise RunnerError("config_invalid", "OPERATOR_GITHUB_TOKEN_FILE")
+    if users and device_kind == "org":
+        raise RunnerError("config_invalid", "OPERATOR_GITHUB_USERS")
+    if path is not None and not users:
+        raise RunnerError("config_invalid", "OPERATOR_GITHUB_USERS")
+    if users and path is None:
+        raise RunnerError("config_invalid", "OPERATOR_GITHUB_TOKEN_FILE")
+    return path, users
+
+
+def _user_ids(value: str) -> frozenset[str]:
+    """Comma-separated user IDs (UUIDs, normalized to lower case); empty = nobody."""
+    if not value.strip():
+        return frozenset()
+    found: set[str] = set()
+    for part in value.split(","):
+        try:
+            found.add(str(uuid.UUID(part.strip())))
+        except ValueError:
+            raise RunnerError("config_invalid", "OPERATOR_GITHUB_USERS") from None
     return frozenset(found)
 
 

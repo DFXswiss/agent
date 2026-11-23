@@ -82,7 +82,7 @@ def test_default_home_expands_user(base: dict[str, str]) -> None:
 
 
 def test_every_name_is_listed_once() -> None:
-    assert len(NAMES) == len(set(NAMES)) == 26
+    assert len(NAMES) == len(set(NAMES)) == 28
     assert "VM_PREFIX" in NAMES
     assert "TEST_MODE" in NAMES
     assert frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"}) == HUB_NAMES
@@ -340,6 +340,44 @@ def test_openrouter_key_file_checks(base: dict[str, str], key_file: Path, tmp_pa
     refused(base, "OPENROUTER_KEY_FILE")
 
 
+USER_A = "01a1ee56-5e00-7359-8ec3-2c90dd7ae358"
+USER_B = "01a1ee56-5e00-73da-a86c-5c56722cfde3"
+
+
+@pytest.mark.parametrize("kind", [None, "platform"])
+def test_operator_github_settings_on_platform_devices(kind: str | None, base: dict[str, str], tmp_path: Path) -> None:
+    base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = str(tmp_path / "not-yet-there.token")
+    base["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = f" {USER_A.upper()} , {USER_B},{USER_A}"
+    found = load(base, device_kind=kind)
+    # the file is checked at each read, not here: the operator may place it after the start
+    assert found.operator_github_token_file == tmp_path / "not-yet-there.token"
+    assert found.operator_github_users == frozenset({USER_A, USER_B})
+
+
+def test_operator_github_settings_default_off(base: dict[str, str]) -> None:
+    found = load(base)
+    assert (found.operator_github_token_file, found.operator_github_users) == (None, frozenset())
+    base["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = " "
+    assert load(base).operator_github_users == frozenset()
+
+
+def test_operator_github_settings_are_refused(base: dict[str, str], tmp_path: Path) -> None:
+    token = str(tmp_path / "github.token")
+    base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = token
+    refused(base, "OPERATOR_GITHUB_USERS")
+    base["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = "alice"
+    refused(base, "OPERATOR_GITHUB_USERS")
+    base["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = f"{USER_A},"
+    refused(base, "OPERATOR_GITHUB_USERS")
+    base["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = USER_A
+    refused(base, "OPERATOR_GITHUB_TOKEN_FILE", device_kind="org")
+    base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = "relative.token"
+    refused(base, "OPERATOR_GITHUB_TOKEN_FILE")
+    del base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"]
+    refused(base, "OPERATOR_GITHUB_TOKEN_FILE")
+    refused(base, "OPERATOR_GITHUB_USERS", device_kind="org")
+
+
 @pytest.mark.parametrize("value", ["Iv1.0123456789abcdef", "Iv23liAbCdEf", "client_id-1"])
 def test_github_client_id(value: str, base: dict[str, str]) -> None:
     base["AGENT_RUNNER_GITHUB_CLIENT_ID"] = value
@@ -434,6 +472,8 @@ def test_environment_round_trip_everything(base: dict[str, str], tmp_path: Path,
             "AGENT_RUNNER_LOGIN_ARGV": '["login-double"]',
             "AGENT_RUNNER_LOGIN_AUTOMATION": "on",
             "AGENT_RUNNER_VM_PREFIX": "wp-run01-",
+            "AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE": str(tmp_path / "github.token"),
+            "AGENT_RUNNER_OPERATOR_GITHUB_USERS": f"{USER_B},{USER_A}",
         }
     )
     cfg = load(base)
@@ -525,6 +565,27 @@ def test_operator_subscriptions_take_a_directory_and_organizations(
     assert env["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] == str(operator_dir)
     assert env["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] == ",".join(sorted({ORG_A, ORG_B}))
     assert load(env, device_kind=kind) == cfg
+
+
+def test_operator_subscriptions_and_operator_github_together(
+    base: dict[str, str], operator_dir: Path, tmp_path: Path
+) -> None:
+    """KOR-23 and KOR-27 side by side: both pairs load, round-trip through the service environment and are refused
+    together on org devices."""
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = str(operator_dir)
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = ORG_A
+    base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = str(tmp_path / "github.token")
+    base["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = USER_A
+    cfg = load(base, device_kind="platform")
+    assert (cfg.operator_subscription_dir, cfg.operator_subscription_orgs) == (operator_dir, frozenset({ORG_A}))
+    assert (cfg.operator_github_token_file, cfg.operator_github_users) == (
+        tmp_path / "github.token",
+        frozenset({USER_A}),
+    )
+    assert load(environment(cfg), device_kind="platform") == cfg
+    refused(base, "OPERATOR_SUBSCRIPTION_DIR", device_kind="org")
+    del base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"], base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"]
+    refused(base, "OPERATOR_GITHUB_TOKEN_FILE", device_kind="org")
 
 
 def test_operator_subscriptions_need_both_settings(base: dict[str, str], operator_dir: Path) -> None:

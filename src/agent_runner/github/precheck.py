@@ -8,9 +8,9 @@ the dedupe tag and the registration:
   (`github_not_connected` otherwise). `github.list_repositories` uses only this; its pre-check data carries the
   workgroup's allow-list for the executor (`allowed`).
 - `repo_access(request)` (every type with `repo`): additionally `GET /repos/{repo}` with the owner's token: `404` ->
-  `repo_not_accessible` (the repository is allowed by the settings but not reachable through the owner's GitHub App
-  installations), `401` -> `github_not_connected`; any other failure -> `upstream_error` (a pre-check is not retried:
-  the session may request the operation again).
+  `repo_not_accessible` (the repository is allowed by the settings but not reachable with the owner's token: GitHub App
+  installations, or the account's own access for the operator's token of ADR-053), `401` -> `github_not_connected`;
+  any other failure -> `upstream_error` (a pre-check is not retried: the session may request the operation again).
 
 RUN-10 registers its own pre-checks for `github.checkout`, `github.commit` and `github.push` (the registry allows one
 per type) and calls `repo_access` first, so every `github.*` type gets the same connection and access checks.

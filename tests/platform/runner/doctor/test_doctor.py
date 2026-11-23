@@ -174,7 +174,7 @@ def test_a_healthy_device_only_warns_about_the_test_mode(case: Case) -> None:
     found = check_map(out)
     assert list(found) == [
         "os", "lima", "vz", "postgresql", "golden", "landlock", "login_cli", "hub", "clock", "textfile",
-        "operator_subscriptions", "test_mode", "sync",
+        "operator_subscriptions", "operator_github", "test_mode", "sync",
     ]  # fmt: skip
     assert found["os"] == [("ok", "supported", "darwin")]
     assert found["lima"] == [("ok", "version", "2.3.1")]
@@ -188,9 +188,54 @@ def test_a_healthy_device_only_warns_about_the_test_mode(case: Case) -> None:
     assert found["textfile"] == [("ok", "writable", None)]
     assert found["operator_subscriptions"] == [("ok", "off", None)]
     assert found["test_mode"] == [("warn", "test_mode_on", None)]
+    assert found["operator_github"] == [("ok", "off", None)]
     assert found["sync"] == [("ok", "clear", None)]
     assert out.splitlines()[-1] == "runner.doctor result=warn"
     assert case.stops == [case.home / "pg"]
+
+
+def test_doctor_shows_the_operator_subscriptions_and_the_operator_github_lines_together(
+    case: Case, tmp_path: Path
+) -> None:
+    from agent_runner.model.operator import TOKEN_PREFIX  # noqa: PLC0415
+
+    case.enroll()
+    case.golden()
+    subscriptions = tmp_path / "operator-subscriptions"
+    subscriptions.mkdir(mode=0o700)
+    (subscriptions / "abo1.token").write_text(TOKEN_PREFIX + "01-subscriptiondoubletoken\n")
+    (subscriptions / "abo1.token").chmod(0o600)
+    github = tmp_path / "operator-github"
+    github.mkdir(mode=0o700)
+    (github / "github.token").write_text("github-double-token\n")
+    (github / "github.token").chmod(0o600)
+    case.env["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = str(subscriptions)
+    case.env["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = "01a1ee56-5e00-73da-a86c-5c56722cfde3"
+    case.env["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = str(github / "github.token")
+    case.env["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = "01a1ee56-5e00-7359-8ec3-2c90dd7ae358"
+    code, out, _err = case.cli("doctor")
+    found = check_map(out)
+    assert found["operator_subscriptions"] == [("ok", "usable", "1")]
+    assert found["operator_github"] == [("ok", "usable", None)]
+    assert list(found).index("operator_github") == list(found).index("operator_subscriptions") + 1
+    assert "doubletoken" not in out
+    assert "double-token" not in out
+    assert code == 0  # an enrolled device with a golden (warn test_mode only)
+
+
+def test_doctor_checks_the_operators_github_token_file_without_naming_it(case: Case, tmp_path: Path) -> None:
+    token_file = tmp_path / "github.token"
+    secret = "doctor-check-double-token-1"
+    case.env["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = str(token_file)
+    case.env["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = "01a1ee56-5e00-7359-8ec3-2c90dd7ae358"
+    _code, out, _err = case.cli("doctor")
+    assert check_map(out)["operator_github"] == [("warn", "missing", None)]
+    token_file.write_text(secret + "\n")
+    token_file.chmod(0o600)
+    _code, out, _err = case.cli("doctor")
+    assert check_map(out)["operator_github"] == [("ok", "usable", None)]
+    assert secret not in out
+    assert "01a1ee56" not in out
 
 
 def test_doctor_reports_every_failure(case: Case) -> None:

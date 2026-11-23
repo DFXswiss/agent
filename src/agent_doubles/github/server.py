@@ -5,18 +5,20 @@ Routes (`ROUTES`, the REST subset the runner uses, 05-runner.md §11.4 and §12.
 - Device flow on the web host: ``POST /login/device/code``, ``POST /login/oauth/access_token`` (form or JSON
   parameters; JSON answers when ``Accept`` names ``application/json``, else form-encoded like GitHub) and
   ``GET /login/device`` (an informational page; the decision is made through ``POST /_double/device``).
-- REST on the API host: user and installations, repositories, commits, tarball (``302`` to the codeload-like route
-  ``GET /codeload/{owner}/{repo}/legacy.tar.gz/{ref}``), refs, the Git Data API, compare, pull requests and issue
-  comments.
+- REST on the API host: user, installations and the user's repositories (``GET /user/repos``), repositories,
+  commits, tarball (``302`` to the codeload-like route ``GET /codeload/{owner}/{repo}/legacy.tar.gz/{ref}``), refs,
+  the Git Data API, compare, pull requests and issue comments.
 
 API requests must carry ``Accept: application/vnd.github+json``, ``X-GitHub-Api-Version: 2022-11-28`` and
 ``Authorization: Bearer <token>`` (``token <token>`` is accepted too, as by GitHub). A missing or different header is
 answered as GitHub would and recorded as a failure (an unsupported version is ``400``, a missing credential ``401``);
 an unknown token is a plain ``401 Bad credentials`` (no failure: revoked tokens are a legitimate test case). A
 repository the token's user cannot reach through an installation is ``404``, a write without the installation
-permission ``403 Resource not accessible by integration``. Unknown routes answer ``404``, are journaled and are
-failures; so are invalid JSON bodies, forced ref updates (the runner never forces) and a codeload request that
-carries an ``Authorization`` header (a token forwarded across the redirect).
+permission ``403 Resource not accessible by integration``. A personal token (``personal_tokens`` of the seed, no
+GitHub App) is refused the installation routes with ``403`` as by GitHub, reaches the repositories of
+`World.personal_repos` with write access and gets ``X-OAuth-Scopes: repo`` on every API answer. Unknown routes
+answer ``404``, are journaled and are failures; so are invalid JSON bodies, forced ref updates (the runner never
+forces) and a codeload request that carries an ``Authorization`` header (a token forwarded across the redirect).
 
 Every API answer carries the rate-limit headers (``x-ratelimit-limit``/``-remaining``/``-used``/``-reset``/
 ``-resource``) per user; faults (`agent_doubles.github.faults`) inject errors, rate limits, delays and disconnects.
@@ -117,6 +119,7 @@ ROUTES = (
     Route("GET", "/user", "api", "user"),
     Route("GET", "/user/installations", "api", "installations"),
     Route("GET", "/user/installations/{installation_id}/repositories", "api", "installation_repositories"),
+    Route("GET", "/user/repos", "api", "user_repos"),
     Route("GET", "/repos/{owner}/{repo}", "api", "repository"),
     Route("GET", "/repos/{owner}/{repo}/commits/{ref}", "api", "commit"),
     Route("GET", "/repos/{owner}/{repo}/tarball/{ref}", "api", "tarball"),
@@ -151,6 +154,11 @@ WRITE_PERMISSIONS = {
     "create_pull": "pull_requests",
     "create_comment": "issues",
 }
+# Routes GitHub answers only for GitHub App user tokens (a personal token gets `APP_ONLY_MESSAGE` with `403`).
+APP_ONLY = frozenset({"installations", "installation_repositories"})
+APP_ONLY_MESSAGE = (
+    "You must authenticate with an access token authorized to a GitHub App in order to list installations"
+)
 
 
 def match_route(method: str, path: str) -> tuple[Route, dict[str, str]] | None:
@@ -192,6 +200,7 @@ class Call:
     raw: bytes
     headers: dict[str, str]
     user: User | None = None
+    personal: bool = False
     repo: Repo | None = None
     fault: Fault | None = None
 
@@ -626,6 +635,8 @@ class _Handler(DoubleHandler):
                 ("x-github-media-type", "github.v3; format=json"),
                 *self.double.rate_headers(call.user, exhausted),
             ]
+            if call.personal:
+                sent.append(("x-oauth-scopes", "repo"))
         return sent
 
     # --- API checks -----------------------------------------------------------------------------------
@@ -648,6 +659,7 @@ class _Handler(DoubleHandler):
             raise Reply(401, render.error_body(401, "Requires authentication"))
         with double.world.lock:
             call.user = double.world.user_for_token(token.strip())
+            call.personal = double.world.is_personal(token.strip())
 
     def _api(self, call: Call) -> None:
         route = call.route
@@ -655,7 +667,13 @@ class _Handler(DoubleHandler):
         with world.lock:
             if call.user is None:
                 raise Reply(401, render.error_body(401, "Bad credentials"))
-            if "owner" in call.params:
+            if call.personal and route.name in APP_ONLY:
+                raise Reply(403, render.error_body(403, APP_ONLY_MESSAGE))
+            if "owner" in call.params and call.personal:
+                call.repo = world.repo(call.params["owner"], call.params["repo"])
+                if call.repo is None or call.repo not in world.personal_repos(call.user):
+                    raise not_found()
+            elif "owner" in call.params:
                 call.repo = world.repo(call.params["owner"], call.params["repo"])
                 inst = world.installation_for(call.user, call.repo) if call.repo else None
                 if inst is None:
@@ -737,12 +755,27 @@ class _Handler(DoubleHandler):
         payload = {"total_count": len(repos), "repository_selection": inst.selection, "repositories": listed}
         return 200, payload, headers
 
+    def _r_user_repos(self, call: Call) -> Result:
+        """The user's repositories: those of a personal token, else those of the visible installations."""
+        world = self.double.world
+        if call.personal:
+            repos = world.personal_repos(call.the_user)
+        else:
+            covered = {
+                repo.key: repo
+                for inst in world.visible_installations(call.the_user)
+                for repo in world.installation_repos(inst)
+            }
+            repos = [covered[key] for key in sorted(covered)]
+        page, headers = self._paginate(call, repos)
+        return 200, [render.repository(self.double.urls, repo) for repo in page], headers
+
     # --- repositories, commits, tarball -------------------------------------------------------------
 
     def _r_repository(self, call: Call) -> Result:
         world = self.double.world
         inst = world.installation_for(call.the_user, call.the_repo)
-        push = inst is not None and inst.permissions.get("contents") == "write"
+        push = call.personal or (inst is not None and inst.permissions.get("contents") == "write")
         return 200, render.repository(self.double.urls, call.the_repo, push=push), []
 
     def _resolve(self, call: Call, ref: str) -> str:

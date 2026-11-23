@@ -163,6 +163,34 @@ def test_installations_and_their_repositories(start_github: Callable[..., Any], 
         assert gh.api("GET", path, token=OTHER if "31" in path else "double-user-token").status == 404
 
 
+def test_personal_tokens_without_the_app(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    """KOR-27: a personal token is refused the installation routes, lists and reaches its own and its collaborator
+    repositories (write access, `X-OAuth-Scopes`); `/user/repos` of an App user token lists its installations'."""
+    data = seed()
+    data["users"].append(
+        {"login": "op-account", "personal_tokens": ["personal-token"], "collaborator": [REPO[7:], "octo-org/none"]}
+    )
+    data["repositories"].append({"full_name": "op-account/own", "branches": [{"name": "main", "commits": [{}]}]})
+    gh = start_github(data)
+    for path in ("/user/installations", "/user/installations/31/repositories"):
+        refused = gh.api("GET", path, token="personal-token")
+        assert refused.status == 403
+        assert refused.json()["message"].startswith("You must authenticate with an access token authorized")
+    user = gh.api("GET", "/user", token="personal-token")
+    assert (user.status, user.headers["x-oauth-scopes"]) == (200, "repo")
+    assert "x-oauth-scopes" not in gh.api("GET", "/user").headers
+    listed = gh.get("/user/repos", token="personal-token")
+    assert [r["full_name"] for r in listed] == ["octo-org/hello", "op-account/own"]
+    assert gh.get(REPO, token="personal-token")["permissions"]["push"] is True
+    assert gh.api("GET", "/repos/octo-org/second", token="personal-token").status == 404
+    assert gh.api("GET", "/repos/octo-org/none", token="personal-token").status == 404
+    created = gh.api("POST", f"{REPO}/git/refs", {"ref": "refs/heads/op", "sha": head(gh)}, token="personal-token")
+    assert created.status == 201
+    assert [r["full_name"] for r in gh.get("/user/repos")] == ["octo-org/hello", "octo-org/second"]
+    assert gh.get("/user/repos", token=OTHER) == []
+    assert gh.state()["ok"] is True
+
+
 def test_pagination_with_link_headers(start_github: Callable[..., Any]) -> None:
     names = [f"octo-org/r{i:02d}" for i in range(5)]
     gh = start_github(

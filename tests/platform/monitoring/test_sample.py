@@ -24,7 +24,7 @@ def test_writes_every_metric_like_the_runner(tmp_path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     names = stack.textfile_metrics(text)
     assert names == {metric.name for metric in textfile.metrics_of(sample.snapshot(0.0), spend=sample.SPEND)}
-    assert len(names) == 40
+    assert len(names) == 42
     assert values(text, "agent_runner_textfile_timestamp_seconds") == [1795600000.0]
     assert values(text, "agent_runner_device_capacity_low") == [0]
     assert values(text, "agent_runner_vm_probe_ok") == [1, 0]

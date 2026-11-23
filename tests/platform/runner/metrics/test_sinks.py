@@ -18,6 +18,7 @@ import pytest
 
 from agent_guest.schema import SchemaSet
 from agent_runner.crypto.errors import CryptoError
+from agent_runner.github import operator as operator_github
 from agent_runner.metrics import counters, outbox, textfile
 from agent_runner.metrics.device import DeviceValues
 from agent_runner.metrics.session import SessionEntry
@@ -67,7 +68,8 @@ def snapshot(**overrides: Any) -> Snapshot:
         sync_fatal=False,
         backlog=3,
         counters={"agent_runner_device_verify_failures_total": 2, "agent_runner_device_metrics_dropped_total": 0,
-                  "agent_runner_vm_start_failures_total": 1},
+                  "agent_runner_vm_start_failures_total": 1, "agent_runner_operator_github_connects_total": 0,
+                  "agent_runner_operator_github_connect_failures_total": 0},
     )  # fmt: skip
     running = VmEntry(
         vm_id="vm-0a1b2c3d",
@@ -119,6 +121,7 @@ def test_every_metric_has_help_and_type_and_labels_are_ids() -> None:
         "agent_runner_device_vm_memory_used_bytes", "agent_runner_device_pool_ready",
         "agent_runner_device_capacity_low", "agent_runner_device_verify_failures_total",
         "agent_runner_device_metrics_dropped_total", "agent_runner_vm_start_failures_total",
+        "agent_runner_operator_github_connects_total", "agent_runner_operator_github_connect_failures_total",
         "agent_runner_device_model_spend_usd", "agent_runner_vm_probe_ok", "agent_runner_vm_state",
         "agent_runner_vm_cpu_ratio", "agent_runner_vm_memory_bytes", "agent_runner_vm_memory_limit_bytes",
         "agent_runner_vm_disk_used_bytes", "agent_runner_vm_disk_limit_bytes", "agent_runner_vm_uptime_seconds",
@@ -339,13 +342,19 @@ def test_device_counters_read_their_sources() -> None:
         "agent_runner_device_verify_failures_total": 0,
         "agent_runner_device_metrics_dropped_total": 4,
         "agent_runner_vm_start_failures_total": 0,
+        "agent_runner_operator_github_connects_total": 0,
+        "agent_runner_operator_github_connect_failures_total": 0,
     }
     audit.counters(context)[audit.VERIFY_FAILURES] += 3
     vars(context)[vm_tasks.MANAGER_KEY] = SimpleNamespace(env=SimpleNamespace(start_failures=2))
+    operator_github.state_for(context).connects += 5
+    operator_github.state_for(context).failures += 1
     assert counters.device_values(context, 0) == {
         "agent_runner_device_verify_failures_total": 3,
         "agent_runner_device_metrics_dropped_total": 0,
         "agent_runner_vm_start_failures_total": 2,
+        "agent_runner_operator_github_connects_total": 5,
+        "agent_runner_operator_github_connect_failures_total": 1,
     }
     assert {counter.name for counter in counters.SESSION_COUNTERS} >= {"agent_runner_session_model_tokens_total"}
     assert (

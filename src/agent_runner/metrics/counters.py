@@ -8,6 +8,8 @@ Device counters are read from the daemon at each sample; the areas that count th
 | `agent_runner_device_verify_failures_total` | `orgs.audit.counters(context)["verify_failures"]` (RUN-03) |
 | `agent_runner_device_metrics_dropped_total` | samples older than 48 h dropped before the push (`metrics.outbox`) |
 | `agent_runner_vm_start_failures_total` | `VmEnv.start_failures` of the shared VM manager (VM-02), else 0 |
+| `agent_runner_operator_github_connects_total` | `github.operator.state_for(context).connects` (KOR-27) |
+| `agent_runner_operator_github_connect_failures_total` | `github.operator.state_for(context).failures` (KOR-27) |
 
 Session counters come from the guest's `GET /v1/metrics` (cgroup and journal counts of the guest, contracts/changes/
 RUN-15.md); a counter the guest does not send is left out for that session.
@@ -22,6 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from agent_runner.github import operator as operator_github
 from agent_runner.orgs import audit
 from agent_runner.vm import tasks as vm_tasks
 
@@ -54,6 +57,14 @@ def _vm_start_failures(context: Any, _dropped: int) -> int:
     return int(manager.env.start_failures) if manager is not None else 0
 
 
+def _operator_connects(context: Any, _dropped: int) -> int:
+    return operator_github.state_for(context).connects
+
+
+def _operator_failures(context: Any, _dropped: int) -> int:
+    return operator_github.state_for(context).failures
+
+
 DEVICE_COUNTERS = (
     DeviceCounter(
         "agent_runner_device_verify_failures_total",
@@ -69,6 +80,16 @@ DEVICE_COUNTERS = (
         "agent_runner_vm_start_failures_total",
         "Failed attempts to clone or start a Lima VM.",
         _vm_start_failures,
+    ),
+    DeviceCounter(
+        "agent_runner_operator_github_connects_total",
+        "GitHub connections made with the operator's GitHub token (approved users).",
+        _operator_connects,
+    ),
+    DeviceCounter(
+        "agent_runner_operator_github_connect_failures_total",
+        "GitHub connections with the operator's GitHub token that failed.",
+        _operator_failures,
     ),
 )
 

@@ -46,6 +46,12 @@ agent_runner_device_metrics_dropped_total 0
 # HELP agent_runner_vm_start_failures_total Failed attempts to clone or start a Lima VM.
 # TYPE agent_runner_vm_start_failures_total counter
 agent_runner_vm_start_failures_total 1
+# HELP agent_runner_operator_github_connects_total GitHub connections made with the operator's GitHub token (approved users).
+# TYPE agent_runner_operator_github_connects_total counter
+agent_runner_operator_github_connects_total 0
+# HELP agent_runner_operator_github_connect_failures_total GitHub connections with the operator's GitHub token that failed.
+# TYPE agent_runner_operator_github_connect_failures_total counter
+agent_runner_operator_github_connect_failures_total 0
 # HELP agent_runner_vm_probe_ok 1 when the guest of a VM that should run answered.
 # TYPE agent_runner_vm_probe_ok gauge
 agent_runner_vm_probe_ok{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a"} 1

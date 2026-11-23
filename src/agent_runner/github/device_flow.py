@@ -16,6 +16,11 @@
    must not discard the connection), the write with the same record bytes, so it never stores a second version;
 6. response 2 `{step:"done", login}` (final).
 
+A user approved for the operator's GitHub account (KOR-27, ADR-053, `github.operator`) skips steps 1-3: the
+operator's token file is read, checked with step 4 (scopes from `X-OAuth-Scopes`, as far as GitHub names them) and
+stored with step 5; the only response is `{step:"done", login}` (final) - the web client takes `done` as the first
+response as well. An unusable file is `credential_missing`; log lines of this way carry `source=operator`.
+
 Failures end with `{step:"failed", code}` (final): `upstream_error`, `upstream_unreachable`, `timeout`, `token_invalid`
 (an access token that is not printable ASCII up to 4096 characters), `credential_missing` (this device holds no `CK`
 of the owner) - the codes of `contracts/requests/objects.json`. The token is never logged or answered. A failure of a
@@ -29,7 +34,7 @@ import re
 from typing import Any
 
 from agent_runner.credentials.cache import CredentialUnavailable, put
-from agent_runner.github import ops
+from agent_runner.github import operator, ops
 from agent_runner.github.client import GitHubClient, GitHubError, GitHubResponse, settings_for
 from agent_runner.requests.service import RESPOND_DELAYS, Flow
 from agent_runner.sessions.records import time_text
@@ -165,16 +170,61 @@ async def poll(flow: Flow, web: GitHubClient, client_id: str, grant: tuple[str, 
         raise ConnectFailed("upstream_error")
 
 
-async def _user(client: GitHubClient) -> tuple[str, int]:
+async def _user(client: GitHubClient) -> tuple[str, int, list[str]]:
+    """`(login, id, scopes)` of `GET /user`; the scopes are those GitHub names in `X-OAuth-Scopes` (classic tokens;
+    GitHub App user tokens and fine-grained tokens name none)."""
     answer = await client.request("GET", "/user")
     data = answer.data if isinstance(answer.data, dict) else {}
     login, user_id = data.get("login"), data.get("id")
     if not isinstance(login, str) or not LOGIN_RE.fullmatch(login):
         raise ConnectFailed("upstream_error")
     try:
-        return login, ops.integer(user_id)
+        return login, ops.integer(user_id), scopes(answer.headers.get("x-oauth-scopes"))
     except GitHubError:
         raise ConnectFailed("upstream_error") from None
+
+
+async def _store(flow: Flow, token: str, user: tuple[str, int, list[str]]) -> None:
+    """Credential `github {token, login, user_id, scopes, created_at}` under the owner's `CK` (step 5)."""
+    login, user_id, granted = user
+    body = {
+        "token": token,
+        "login": login,
+        "user_id": user_id,
+        "scopes": granted,
+        "created_at": time_text(flow.service.sync.wall()),
+    }
+    try:
+        await put(flow.context, flow.user, "github", body, flow.id, delays=RESPOND_DELAYS, sleep=flow.sleep)
+    except CredentialUnavailable as unavailable:
+        flow.service.line(f"github_connect store_failed reason={unavailable.reason} code={unavailable.code}")
+        raise ConnectFailed("credential_missing" if unavailable.reason == "key_missing" else "upstream_error") from None
+    except HubRefusal as refusal:
+        raise ConnectFailed(
+            "upstream_error", f"step=store kind=hub status={refusal.status} error={refusal.code}"
+        ) from None
+    except HubTransportError as error:
+        raise ConnectFailed("upstream_unreachable", f"step=store kind=hub {error.describe()}") from None
+    finally:
+        body.clear()
+
+
+async def _connect_operator(flow: Flow) -> str:
+    """The operator's token (KOR-27, `github.operator`) checked with `GET /user` and stored; the GitHub login. An
+    unusable file is `credential_missing` (its reason is logged by `read_token`)."""
+    settings = settings_for(flow.context)
+    state = operator.state_for(flow.context)
+    try:
+        token = operator.read_token(flow.context.config.operator_github_token_file, state, flow.service.line)
+    except operator.Unusable as unusable:
+        raise ConnectFailed("credential_missing", f"step=operator_file reason={unusable.reason}") from None
+    async with settings.client(token, flow.user) as api:
+        try:
+            user = await _user(api)
+        except GitHubError as error:
+            raise _failed("user", error) from None
+    await _store(flow, token, user)
+    return user[0]
 
 
 async def _connect(flow: Flow) -> str:
@@ -195,39 +245,26 @@ async def _connect(flow: Flow) -> str:
         raise ConnectFailed("token_invalid")
     async with settings.client(token, flow.user) as api:
         try:
-            login, user_id = await _user(api)
+            login, user_id, _named = await _user(api)
         except GitHubError as error:
             raise _failed("user", error) from None
-    body = {
-        "token": token,
-        "login": login,
-        "user_id": user_id,
-        "scopes": scopes(issued.get("scope")),
-        "created_at": time_text(flow.service.sync.wall()),
-    }
-    try:
-        await put(flow.context, flow.user, "github", body, flow.id, delays=RESPOND_DELAYS, sleep=flow.sleep)
-    except CredentialUnavailable as unavailable:
-        flow.service.line(f"github_connect store_failed reason={unavailable.reason} code={unavailable.code}")
-        raise ConnectFailed("credential_missing" if unavailable.reason == "key_missing" else "upstream_error") from None
-    except HubRefusal as refusal:
-        raise ConnectFailed(
-            "upstream_error", f"step=store kind=hub status={refusal.status} error={refusal.code}"
-        ) from None
-    except HubTransportError as error:
-        raise ConnectFailed("upstream_unreachable", f"step=store kind=hub {error.describe()}") from None
-    finally:
-        body.clear()
+    await _store(flow, token, (login, user_id, scopes(issued.get("scope"))))
     return login
 
 
 async def connect(flow: Flow) -> None:
+    by_operator = operator.approved(flow.context, flow.user)
+    source = " source=operator" if by_operator else ""
     try:
-        login = await _connect(flow)
+        login = await (_connect_operator(flow) if by_operator else _connect(flow))
     except ConnectFailed as failed:
         detail = f" {failed.detail}" if failed.detail else ""
-        flow.service.line(f"github_connect failed request_id={flow.id} code={failed.code}{detail}")
+        flow.service.line(f"github_connect failed request_id={flow.id} code={failed.code}{source}{detail}")
+        if by_operator:
+            operator.state_for(flow.context).failures += 1
         await flow.respond({"step": "failed", "code": failed.code}, final=True)
         return
-    flow.service.line(f"github_connect done request_id={flow.id}")
+    flow.service.line(f"github_connect done request_id={flow.id}{source}")
+    if by_operator:
+        operator.state_for(flow.context).connects += 1
     await flow.respond({"step": "done", "login": login}, final=True)

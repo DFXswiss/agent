@@ -264,6 +264,14 @@ def test_ref_resolution_and_history() -> None:
             "unknown issue or pull request",
         ),
         ({"users": [{"login": "a", "tokens": ["t"]}, {"login": "b", "tokens": ["t"]}]}, "one user only"),
+        ({"users": [{"login": "a", "tokens": ["t"], "personal_tokens": ["t"]}]}, "one user only"),
+        ({"users": [{"login": "a", "personal_tokens": [""]}]}, "personal_tokens must be non-empty strings"),
+        ({"users": [{"login": "a", "collaborator": ["hello"]}]}, "collaborator must name repositories"),
+        ({"users": [{"login": "a", "collaborator": [1]}]}, "collaborator must name repositories"),
+        (
+            {"users": [{"login": "a", "personal_tokens": ["p"]}], "installations": [{"account": "o", "users": ["x"]}]},
+            "is not seeded",
+        ),
         ({"repositories": [{"full_name": "o/r", "issues": [{"title": "t", "user": "u", "x": 1}]}]}, "unknown keys"),
         ({"installations": [{"account": "o", "account_type": "Team"}]}, "account_type must be one of"),
         ({"installations": [{"account": "o", "repository_selection": "some"}]}, "repository_selection must be one of"),
@@ -278,6 +286,7 @@ def test_seed_refusals_leave_nothing_behind(seed: Any, message: str) -> None:
     with pytest.raises(SeedError, match=message):
         world.seed(seed)
     assert (world.users, world.tokens, world.repos, world.installations) == ({}, {}, {}, {})
+    assert world.personal == set()
 
 
 def test_seeded_pull_needs_known_user_and_state() -> None:

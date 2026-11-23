@@ -324,6 +324,8 @@ def config(github_url: str = "http://127.0.0.1:9") -> SimpleNamespace:
         github_client_id=CLIENT_ID,
         github_api_url=github_url,
         github_web_url=github_url,
+        operator_github_token_file=None,
+        operator_github_users=frozenset(),
     )
 
 

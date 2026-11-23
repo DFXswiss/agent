@@ -195,6 +195,7 @@ def run10(
     *,
     allowed: Sequence[str] = (REPO,),
     guest: FilesGuest | None = None,
+    token: str = TOKEN,
 ) -> None:
     guest = guest or FilesGuest(root=root / "guest")
 
@@ -210,7 +211,7 @@ def run10(
             install(env.context, found.pipeline)
             await found.settings(list(allowed))
             async with session(env.pool) as conn:
-                await _store(conn, ALICE, "github", 1, make_record(github_body(token=TOKEN)))
+                await _store(conn, ALICE, "github", 1, make_record(github_body(token=token)))
                 await store_scope_key(conn, env.sync.storage_key, ("cred", ALICE, 1), ck(), source="wrap")
             await body(R10(found, guest, github, root / "tmp"))
 
