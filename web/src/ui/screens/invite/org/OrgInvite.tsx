@@ -9,6 +9,8 @@
 // self-wraps queued for the job, the org installed and remembered as the last org → `/o/:org`. A signed-in user goes
 // to `existing_account` directly. Cancelled gestures return to the step with "try again"; refusals of the package or
 // the log block (nothing is sent); `invite_registered` and invalid invitations end in the invalid state.
+// With the pairing of the user's AI agent (11-agent-access.md section 5.2) the page names the agent, the proposed
+// display name replaces the name field, both sign-ins are pairing-tagged, and `/connect` finishes the pairing.
 import { type FormEvent, useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { CeremonyCancelled } from '../../../../core/account/ceremony';
@@ -24,6 +26,7 @@ import {
 import { type SignIn, signIn } from '../../../../core/account/login';
 import { type Lookup, register } from '../../../../core/account/register';
 import { meOrgs } from '../../../../core/account/session';
+import type { PairingLink } from '../../../../core/agents/link';
 import type { Identity } from '../../../../core/crypto/keys';
 import { parseTime } from '../../../../core/encoding/time';
 import { formatEventTime } from '../../../../core/i18n';
@@ -35,11 +38,16 @@ import { errorCode } from '../../../shell/errors';
 import { unlockSignIn, uploadMissingSlot, withdrawRegistration } from '../../../prf-missing/device';
 import { PrfRequired } from '../../../prf-missing/PrfRequired';
 import { PrfMissing } from '../../../prf-missing/PrfMissing';
+import { AgentNotice, ProposedName } from '../AgentNotice';
 import { afterVerify, failedStep, type OrgStep, verifyFailed } from './machine';
 
 export interface OrgInviteProps {
   readonly code: string;
   readonly lookup: Lookup;
+  /** The pairing of the agent's invitation, or null. */
+  readonly pairing?: PairingLink | null;
+  /** The display name the agent proposed, or null. */
+  readonly proposedName?: string | null;
 }
 
 const PRIMARY = 'min-h-11 rounded bg-gray-900 px-4 text-white disabled:opacity-60';
@@ -48,11 +56,21 @@ const INPUT = 'min-h-11 rounded border border-gray-400 px-3';
 
 type Step<S extends OrgStep['step']> = Extract<OrgStep, { step: S }>;
 
-export function OrgInvite({ code, lookup }: OrgInviteProps) {
+export function OrgInvite({ code, lookup, pairing: linked = null, proposedName = null }: OrgInviteProps) {
   const { app, credentials, origin } = useAppEnv();
   const { t, error, locale } = useI18n();
   const [step, setStep] = useState<OrgStep>({ step: 'org_verify' });
-  const [name, setName] = useState('');
+  const [name, setName] = useState(proposedName ?? '');
+  /** The agent's pairing; dropped when it expired before a sign-in (the invitation is then accepted without it). */
+  const [pairing, setPairing] = useState(linked);
+  const tag = pairing === null ? {} : { pairingId: pairing.pairingId };
+  /** The notice of a failed sign-in; an expired pairing is dropped so that the next sign-in works without it. */
+  const signInNotice = (caught: unknown, cancelled: string): string => {
+    if (caught instanceof CeremonyCancelled) return cancelled;
+    const failed = errorCode(caught);
+    if (failed === 'pairing_unknown') setPairing(null);
+    return error(failed).title;
+  };
   const [nameInvalid, setNameInvalid] = useState(false);
 
   useEffect(() => {
@@ -121,7 +139,7 @@ export function OrgInvite({ code, lookup }: OrgInviteProps) {
   const unlockNew = async (current: Step<'unlock_passkey'>) => {
     setStep({ ...current, busy: true, notice: null });
     try {
-      const result = await signIn({ anon: app.anon, credentials, origin });
+      const result = await signIn({ anon: app.anon, credentials, origin, ...tag });
       if (result.userId !== current.registration.userId) {
         setStep({ ...current, busy: false, notice: t('invite.unlock.other-account') });
         return;
@@ -137,9 +155,7 @@ export function OrgInvite({ code, lookup }: OrgInviteProps) {
       const { userId, identity } = current.registration;
       void accept(current.invitation, { userId, identity });
     } catch (caught) {
-      const notice =
-        caught instanceof CeremonyCancelled ? t('invite.unlock.cancelled') : error(errorCode(caught)).title;
-      setStep({ ...current, busy: false, notice });
+      setStep({ ...current, busy: false, notice: signInNotice(caught, t('invite.unlock.cancelled')) });
     }
   };
 
@@ -162,12 +178,10 @@ export function OrgInvite({ code, lookup }: OrgInviteProps) {
     setStep({ ...current, busy: true, notice: null });
     let result: SignIn;
     try {
-      result = await signIn({ anon: app.anon, credentials, origin });
+      result = await signIn({ anon: app.anon, credentials, origin, ...tag });
       await app.begin(result);
     } catch (caught) {
-      const notice =
-        caught instanceof CeremonyCancelled ? t('invite-org.existing.cancelled') : error(errorCode(caught)).title;
-      setStep({ ...current, busy: false, notice });
+      setStep({ ...current, busy: false, notice: signInNotice(caught, t('invite-org.existing.cancelled')) });
       return;
     }
     const recovery = { ...current, mode: 'recovery', signIn: result, busy: false, notice: null } as const;
@@ -198,38 +212,44 @@ export function OrgInvite({ code, lookup }: OrgInviteProps) {
     void accept(current.invitation, { userId: userId!, identity: identity! });
   };
 
-  if (step.step === 'done') return <Navigate to={`/o/${step.org}`} replace />;
+  if (step.step === 'done') {
+    if (pairing !== null) return <Navigate to="/connect" replace state={{ resume: pairing }} />;
+    return <Navigate to={`/o/${step.org}`} replace />;
+  }
 
   const orgName = (invitation: OrgInvitation) => invitation.orgName || t('invite-org.org-unnamed');
 
-  const nameField = (disabled: boolean) => (
-    <>
-      <label htmlFor="invite-display-name">{t('invite.name.label')}</label>
-      <input
-        id="invite-display-name"
-        className={INPUT}
-        autoComplete="name"
-        maxLength={200}
-        value={name}
-        aria-invalid={nameInvalid}
-        aria-describedby="invite-display-name-hint"
-        onChange={(event) => {
-          setName(event.target.value);
-          setNameInvalid(false);
-        }}
-        disabled={disabled}
-        data-testid="invite.display-name"
-      />
-      <p id="invite-display-name-hint" className="text-sm text-gray-700">
-        {t('invite.name.hint')}
-      </p>
-      {nameInvalid && (
-        <p role="alert" className="text-red-800" data-testid="invite.display-name.invalid">
-          {t('invite.name.invalid')}
+  const nameField = (disabled: boolean) =>
+    proposedName !== null ? (
+      <ProposedName name={proposedName} />
+    ) : (
+      <>
+        <label htmlFor="invite-display-name">{t('invite.name.label')}</label>
+        <input
+          id="invite-display-name"
+          className={INPUT}
+          autoComplete="name"
+          maxLength={200}
+          value={name}
+          aria-invalid={nameInvalid}
+          aria-describedby="invite-display-name-hint"
+          onChange={(event) => {
+            setName(event.target.value);
+            setNameInvalid(false);
+          }}
+          disabled={disabled}
+          data-testid="invite.display-name"
+        />
+        <p id="invite-display-name-hint" className="text-sm text-gray-700">
+          {t('invite.name.hint')}
         </p>
-      )}
-    </>
-  );
+        {nameInvalid && (
+          <p role="alert" className="text-red-800" data-testid="invite.display-name.invalid">
+            {t('invite.name.invalid')}
+          </p>
+        )}
+      </>
+    );
 
   const notice = (text: string | null) =>
     text !== null && (
@@ -291,6 +311,7 @@ export function OrgInvite({ code, lookup }: OrgInviteProps) {
             {t('invite-org.intro.title', { org: orgName(step.invitation) })}
           </h2>
           {summary(step.invitation)}
+          {pairing !== null && <AgentNotice pairing={pairing} />}
           {nameField(step.step === 'create_passkey')}
           <p>{t('invite.create.explain')}</p>
           <button
@@ -342,6 +363,7 @@ export function OrgInvite({ code, lookup }: OrgInviteProps) {
             {t('invite-org.existing.title', { org: orgName(step.invitation) })}
           </h2>
           {summary(step.invitation)}
+          {pairing !== null && <AgentNotice pairing={pairing} />}
           {step.mode === 'sign_in' && (
             <>
               <p>{t('invite-org.existing.explain')}</p>

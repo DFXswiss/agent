@@ -18,7 +18,7 @@ alone cannot do). Alternatives in a command are written `a\|b` (an escaped bar, 
 | Action | Screen | Command | State |
 |---|---|---|---|
 | connect-agent | screens/connect | `pair` | done |
-| register | screens/invite | `register` | stage b |
+| register | screens/invite | `register` | done |
 | login-unlock | screens/login | (not needed: the agent's key replaces the session) | done |
 | recover | screens/recover | (passkey ceremony; recovery code via `recovery new`) | api |
 | sign-out | shell | `api POST /v1/session/end` | api |
@@ -62,15 +62,15 @@ alone cannot do). Alternatives in a command are written `a\|b` (an escaped bar, 
 | devices-unassign | screens/devices | `device unassign` (with rotation) | api |
 | devices-invite | screens/devices | `device invite` | api |
 | devices-profile | screens/devices | `device rename` | api |
-| tasks-list | screens/tasks | `task list` | api |
-| task-create | screens/home, screens/tasks | `task create` | stage c |
-| task-view | screens/task (chat) | `task show` | stage c |
-| task-prompt | screens/task (composer) | `task prompt` | stage c |
+| tasks-list | screens/tasks | `task list` | done |
+| task-create | screens/home, screens/tasks | `task create` | done |
+| task-view | screens/task (chat) | `task show` | done |
+| task-prompt | screens/task (composer) | `task prompt` | done |
 | task-close | screens/task | `task close` | api |
 | session-view | screens/session | `session show` | api |
 | session-terminal | screens/session (terminal) | `session terminal` | api |
 | session-control | screens/session | `session stop\|interrupt` | api |
-| session-follow | screens/task, screens/session (live stream) | `task follow` | stage c |
+| session-follow | screens/task, screens/session (live stream) | `task follow` | done |
 | operations | screens/task (tabs) | `task operations` | api |
 | whiteboard-list | screens/whiteboard | `whiteboard list` | stage c |
 | whiteboard-write | screens/whiteboard | `whiteboard add\|edit\|delete [--notify]` | stage c |

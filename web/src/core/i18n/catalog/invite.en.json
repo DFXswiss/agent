@@ -30,5 +30,8 @@
   "recovery.download": "Download as text file",
   "recovery.file": "agent.dfx.swiss recovery code\n\n{code}\n\nThis code unlocks your account if you lose your passkeys. Keep it secret.\n",
   "recovery.continue": "Continue",
-  "unlock.other-account": "This passkey belongs to another account. Choose the passkey you just created."
+  "unlock.other-account": "This passkey belongs to another account. Choose the passkey you just created.",
+  "agent.title": "Your AI agent will be connected",
+  "agent.main": "Creating your passkey also connects this agent as your main orchestrator. You do not need to do anything else.",
+  "agent.display-name": "Your display name: {name} (proposed by your agent; you can change it later in the settings)."
 }

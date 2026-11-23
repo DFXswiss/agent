@@ -30,5 +30,8 @@
   "recovery.download": "Als Textdatei herunterladen",
   "recovery.file": "agent.dfx.swiss Wiederherstellungscode\n\n{code}\n\nMit diesem Code entsperren Sie Ihr Konto, wenn Sie Ihre Passkeys verlieren. Halten Sie ihn geheim.\n",
   "recovery.continue": "Weiter",
-  "unlock.other-account": "Dieser Passkey gehört zu einem anderen Konto. Wählen Sie den eben erstellten Passkey."
+  "unlock.other-account": "Dieser Passkey gehört zu einem anderen Konto. Wählen Sie den eben erstellten Passkey.",
+  "agent.title": "Ihr KI-Agent wird verbunden",
+  "agent.main": "Mit dem Anlegen Ihres Passkeys wird dieser Agent auch als Ihr Hauptorchestrator verbunden. Sonst müssen Sie nichts tun.",
+  "agent.display-name": "Ihr Anzeigename: {name} (von Ihrem Agenten vorgeschlagen; Sie können ihn später in den Einstellungen ändern)."
 }

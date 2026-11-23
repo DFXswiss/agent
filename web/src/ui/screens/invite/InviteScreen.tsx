@@ -5,19 +5,29 @@
 // is withdrawn (account deleted, invitation free again) and "Try again with another passkey" returns to the intro
 // (KOR-22, ADR-055). A cancelled gesture returns to the step before with "try again"; a failed accept retries with the identical request (same IDs, idempotent). Org invitations branch into
 // `org/` (WEB-08).
-import { type FormEvent, useEffect, useState } from 'react';
+//
+// An invitation of the user's AI agent (11-agent-access.md section 5.2) carries a pairing after the code
+// (`#<code>&p=…&f=…&c=…&a=…&h=…&u=<name>`): the pairing is looked up with the invitation (mismatch or expiry end in
+// the invalid state), the page names the agent and warns as `/connect` does, `u` replaces the name field, and the sign-in
+// after the new passkey is the pairing-tagged ceremony. When the account is ready, `/connect` takes over with the
+// pairing (route state `resume`) and confirms with that session – the user creates the passkey and nothing else.
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { CeremonyCancelled } from '../../../core/account/ceremony';
 import { createOrg, displayName, preparePrivateOrg } from '../../../core/account/genesis';
 import { signIn } from '../../../core/account/login';
 import { codeToInviteId, lookupInvite, register } from '../../../core/account/register';
+import { parseInviteFragment } from '../../../core/agents/link';
+import { lookupPairing } from '../../../core/agents/pairing';
 import { formatEventTime } from '../../../core/i18n';
+import { HubError } from '../../../core/net/signedFetch';
 import { parseTime } from '../../../core/encoding/time';
 import { useI18n } from '../../i18n';
 import { withdrawRegistration } from '../../prf-missing/device';
 import { PrfRequired } from '../../prf-missing/PrfRequired';
 import { useAppEnv } from '../../shell/context';
 import { errorCode } from '../../shell/errors';
+import { AgentNotice, ProposedName } from './AgentNotice';
 import { forgetFragment, takeFragment } from './fragment';
 import { afterLookup, failedLookup, type Step } from './machine';
 import { OrgInvite } from './org/OrgInvite';
@@ -27,9 +37,13 @@ const PRIMARY = 'min-h-11 rounded bg-gray-900 px-4 text-white disabled:opacity-6
 export function InviteScreen() {
   const { app, credentials, origin } = useAppEnv();
   const { t, error, locale } = useI18n();
-  const [code] = useState(takeFragment);
+  const [fragment] = useState(takeFragment);
+  const invite = useMemo(() => parseInviteFragment(fragment), [fragment]);
+  const { code } = invite;
+  /** The agent's pairing; dropped when it expired before the sign-in (the account is then made without it). */
+  const [pairing, setPairing] = useState(invite.pairing);
   const [step, setStep] = useState<Step>({ step: 'parsing' });
-  const [name, setName] = useState('');
+  const [name, setName] = useState(invite.displayName ?? '');
   const [nameInvalid, setNameInvalid] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
@@ -41,9 +55,11 @@ export function InviteScreen() {
     const run = async () => {
       setStep({ step: 'parsing' });
       try {
+        if (!invite.valid) throw new HubError('pairing_mismatch', 0);
         const id = await codeToInviteId(code);
         setStep({ step: 'lookup' });
         const lookup = await lookupInvite(app.anon, id);
+        if (invite.pairing !== null) await lookupPairing(app.anon, invite.pairing);
         if (live) setStep(afterLookup(lookup));
       } catch (caught) {
         if (live) setStep(failedLookup(caught));
@@ -53,7 +69,7 @@ export function InviteScreen() {
     return () => {
       live = false;
     };
-  }, [app, code, attempt]);
+  }, [app, code, invite, attempt]);
 
   const createPasskey = async (event: FormEvent, current: Extract<Step, { step: 'intro' }>) => {
     event.preventDefault();
@@ -78,7 +94,8 @@ export function InviteScreen() {
   const unlock = async (current: Extract<Step, { step: 'unlock_passkey' }>) => {
     setStep({ ...current, busy: true, notice: null });
     try {
-      const result = await signIn({ anon: app.anon, credentials, origin });
+      const tag = pairing === null ? {} : { pairingId: pairing.pairingId };
+      const result = await signIn({ anon: app.anon, credentials, origin, ...tag });
       if (result.userId !== current.registration.userId) {
         setStep({ ...current, busy: false, notice: t('invite.unlock.other-account') });
         return;
@@ -99,8 +116,10 @@ export function InviteScreen() {
         failed: null,
       });
     } catch (caught) {
-      const notice =
-        caught instanceof CeremonyCancelled ? t('invite.unlock.cancelled') : error(errorCode(caught)).title;
+      const code = errorCode(caught);
+      // the agent's request expired meanwhile: the next sign-in finishes the account without it
+      if (code === 'pairing_unknown') setPairing(null);
+      const notice = caught instanceof CeremonyCancelled ? t('invite.unlock.cancelled') : error(code).title;
       setStep({ ...current, busy: false, notice });
     }
   };
@@ -125,7 +144,10 @@ export function InviteScreen() {
     }
   };
 
-  if (step.step === 'done') return <Navigate to={`/o/${step.org}`} replace />;
+  if (step.step === 'done') {
+    if (pairing !== null) return <Navigate to="/connect" replace state={{ resume: pairing }} />;
+    return <Navigate to={`/o/${step.org}`} replace />;
+  }
 
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-4 p-6" data-testid="invite.page" data-step={step.step}>
@@ -153,7 +175,9 @@ export function InviteScreen() {
           </button>
         </section>
       )}
-      {step.step === 'org' && <OrgInvite code={code} lookup={step.lookup} />}
+      {step.step === 'org' && (
+        <OrgInvite code={code} lookup={step.lookup} pairing={pairing} proposedName={invite.displayName} />
+      )}
       {(step.step === 'intro' || step.step === 'create_passkey') && (
         <form
           className="flex flex-col gap-3"
@@ -171,29 +195,36 @@ export function InviteScreen() {
               }),
             })}
           </p>
-          <label htmlFor="invite-display-name">{t('invite.name.label')}</label>
-          <input
-            id="invite-display-name"
-            className="min-h-11 rounded border border-gray-400 px-3"
-            autoComplete="name"
-            maxLength={200}
-            value={name}
-            aria-invalid={nameInvalid}
-            aria-describedby="invite-display-name-hint"
-            onChange={(event) => {
-              setName(event.target.value);
-              setNameInvalid(false);
-            }}
-            disabled={step.step === 'create_passkey'}
-            data-testid="invite.display-name"
-          />
-          <p id="invite-display-name-hint" className="text-sm text-gray-700">
-            {t('invite.name.hint')}
-          </p>
-          {nameInvalid && (
-            <p role="alert" className="text-red-800" data-testid="invite.display-name.invalid">
-              {t('invite.name.invalid')}
-            </p>
+          {pairing !== null && <AgentNotice pairing={pairing} />}
+          {invite.displayName !== null ? (
+            <ProposedName name={invite.displayName} />
+          ) : (
+            <>
+              <label htmlFor="invite-display-name">{t('invite.name.label')}</label>
+              <input
+                id="invite-display-name"
+                className="min-h-11 rounded border border-gray-400 px-3"
+                autoComplete="name"
+                maxLength={200}
+                value={name}
+                aria-invalid={nameInvalid}
+                aria-describedby="invite-display-name-hint"
+                onChange={(event) => {
+                  setName(event.target.value);
+                  setNameInvalid(false);
+                }}
+                disabled={step.step === 'create_passkey'}
+                data-testid="invite.display-name"
+              />
+              <p id="invite-display-name-hint" className="text-sm text-gray-700">
+                {t('invite.name.hint')}
+              </p>
+              {nameInvalid && (
+                <p role="alert" className="text-red-800" data-testid="invite.display-name.invalid">
+                  {t('invite.name.invalid')}
+                </p>
+              )}
+            </>
           )}
           <p>{t('invite.create.explain')}</p>
           <button

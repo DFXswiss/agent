@@ -8,7 +8,7 @@ import { errorCode } from '../../shell/errors';
 export type Step =
   | { readonly step: 'parsing' }
   | { readonly step: 'lookup' }
-  /** Unknown, used, revoked or expired invitation; `invite_expired` separately. */
+  /** Unknown, used, revoked or expired invitation; `invite_expired` separately; a broken or expired agent pairing. */
   | { readonly step: 'invalid'; readonly code: string }
   /** A code that is not a code (`invite_code_length`, `invite_code_invalid`): "Check the code". */
   | { readonly step: 'malformed'; readonly code: string }
@@ -35,7 +35,14 @@ export type Step =
     }
   | { readonly step: 'done'; readonly org: string };
 
-const INVALID = new Set(['invite_unknown', 'invite_expired', 'invite_registered']);
+// the pairing of an agent's invitation (11-agent-access.md section 5.2): a broken link or an expired request
+const INVALID = new Set([
+  'invite_unknown',
+  'invite_expired',
+  'invite_registered',
+  'pairing_mismatch',
+  'pairing_unknown',
+]);
 const MALFORMED = new Set(['invite_code_length', 'invite_code_invalid']);
 
 /** The step for a failed parse or lookup. */

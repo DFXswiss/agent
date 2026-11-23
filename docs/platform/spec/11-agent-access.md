@@ -99,15 +99,26 @@ browser session (600/min per key). Error codes (new, `03-api.md` §11): `pairing
    from the request; on failure `?agent=failed`). The settings page reads the state from `GET /v1/me/agents`, never
    from the query.
 
-### 5.2 New account (invitation) – stage b, not built yet
-Designed, not built in this package: neither the web registration with pairing parameters nor the tool's `register`
-command exists yet; today a new user registers in the browser as before and then pairs as in §5.1.
-`<origin>/invite#<code>&p=…&f=…&c=…&a=…&h=…&u=<display name>` (the code stays the first part; the parameters follow
-after `&`). The registration (`04-crypto.md` §5.1, KOR-22 screens) uses `u` as display name (no name field; changeable
-later), shows the agent block with the warning of §5.1 step 2, and runs its login step as the pairing-tagged
-ceremony. After the private organization is created (or the org invitation accepted) the browser confirms (§5.1 step
-3; a new gesture if more than 300 s passed) and hands over (step 4). Without `u` the name field is shown as before;
-without pairing parameters the invitation is unchanged.
+### 5.2 New account (invitation)
+1. Agent (`register`, §8.4): reads the invitation link from stdin or `AGENT_PLATFORM_INVITE` (never the command line),
+   checks it with `POST /v1/invites/lookup` (`invite_registered` → `hub_refused`), creates the pairing as in §5.1
+   step 1 and opens `<origin>/invite#<code>&p=…&f=…&c=…&a=…&h=…&u=<display name>` (the code stays the first part; the
+   parameters follow after `&`). The link carries the invitation code and is never printed.
+2. Browser `/invite`: the parameters after the code must be exactly a pairing link (§5.1) and at most one `u` of 1–80
+   characters after trimming; anything else, a fingerprint that does not match, or a pairing that is not open ends in
+   the invalid state before anything is created ("This link is not valid" / "Connection request expired"). Without
+   parameters the invitation is unchanged; without `u` the name field is shown as before.
+3. The registration (`04-crypto.md` §5.1, the KOR-22 screens) shows the agent block – name and computer as the link
+   states them, full access, main orchestrator, the warning of §5.1 step 2 – and uses `u` as display name (no name
+   field; changeable later in the settings). The sign-in after the new passkey (gesture 2) is the pairing-tagged
+   ceremony. An org invitation does the same, for a new user and for an existing account signing in from the page.
+   If the pairing expired before the sign-in (`pairing_unknown`), the page says so and the next sign-in finishes the
+   account without the agent.
+4. After the private organization is created (or the org invitation accepted) the page continues on `/connect` with
+   the pairing in the route state instead of a fragment: it confirms at once with the identity the registration
+   unlocked (§5.1 step 3; the replacement question when the user has a main orchestrator; a new gesture on
+   `pairing_gesture_required`) and hands over (§5.1 step 4). The user creates the passkey and does nothing else.
+5. Agent: §5.1 step 5; `register` returns like `pair`, plus the invitation's `scope` and the display name.
 
 ### 5.3 Revocation
 Settings "Connected agents" shows the main orchestrator ("Hauptorchestrator") and the history of earlier ones (each
@@ -176,13 +187,13 @@ pairing. Texts it prints (`reason`, `next`) come from fixed lists in the tool, n
 
 Parity: every action and view of the web client has a row in `docs/platform/agent-parity.md`; a test of `agent-core`
 fails when a screen or settings section of the web client has no row, a test of the agent repository when a `done`
-row names a command the tool lacks. Rows in stage b or c are not built yet. Until a convenient command exists, `agent-platform api
+row names a command the tool lacks. Rows in stage c are not built yet. Until a convenient command exists, `agent-platform api
 <METHOD> <path> [--body <json>|-]` sends any signed request and prints the verified answer.
 
 | Command | Effect |
 |---|---|
 | `pair --hub <url> [--name] [--host] [--no-browser]` | §5.1; prints the link it opened; waits for the claim (10 min); the user's approval replaces the previous main orchestrator, also the one running this command (the tool then holds only the new state) |
-| `register --display-name <name> [--name] [--host]` (invitation link on stdin or `AGENT_PLATFORM_INVITE`) | §5.2 (stage b, not built yet) |
+| `register --display-name <name> [--name] [--host]` (invitation link on stdin or `AGENT_PLATFORM_INVITE`) | §5.2; waits like `pair`; never prints the link |
 | `status` | hub, agent, user, organizations, credentials (kind, version, expiry, origin), devices |
 | `claude connect` | read the local Claude Code login (§8.5) and store it as `login_token` |
 | `claude sync` | store the local token again when it changed; never replaces a `setup_token` record (unless `--replace`); retries a `409 version_conflict` once on the new version |
@@ -194,7 +205,8 @@ row names a command the tool lacks. Rows in stage b or c are not built yet. Unti
 | `wg list|create|grant`, `repos list|allow|disallow`, `device assign` | workgroups, allowed repositories, platform device |
 | `github connect` | device request `github.connect`; opens the verification page, copies the user code to the clipboard, waits |
 | `diagnose [--task <id>]` | why a task does not start: device, assignment, model access, credentials (incl. expiry), last transition, with `reason` and `next` from fixed lists |
-| `task list|create|prompt|show|follow|close|stop|interrupt`, `whiteboard …`, `notifications …`, `member …`, `audit`, `monitoring`, `quotas`, `passkey list|remove|add`, `recovery new`, `agents list|revoke` | the rest of the parity matrix: through `api` today; the convenient commands, and those that need the client's encryption (task, prompt, whiteboard entry, `CK` rotation), are stage c, not built yet |
+| `task list --wg [--state]`, `task create --wg --text`, `task prompt --task --text`, `task show --task`, `task follow --task [--after] [--wait]` | tasks sealed and opened on the user's computer like the web client (`task.meta` with the derived title and `prompt` under the workgroup's current epoch, signed by the identity; reading runs the reader checks and opens with the user's own workgroup key; `--text -` reads stdin; `follow` returns the new chat events after a position and `next_after` for the next call, waiting up to `--wait` seconds for the first) |
+| `task close|stop|interrupt`, `whiteboard …`, `notifications …`, `member …`, `audit`, `monitoring`, `quotas`, `passkey list|remove|add`, `recovery new`, `agents list|revoke` | the rest of the parity matrix: through `api` today; the convenient commands, and those that need the client's encryption (whiteboard entry, `CK` rotation), are stage c, not built yet |
 | `guide` | prints the guide for AI agents shipped with the tool |
 
 Notification (hub, `agents/notify.py`): every account-changing action of an agent – passkey removed, recovery code
@@ -224,7 +236,7 @@ token as the lasting way.
 
 | Attacker | Protection | Residual risk |
 |---|---|---|
-| Third party sends a pairing link (or, stage b, an invitation link) with its own agent | loopback handover: `r` reaches only a listener on the confirming computer, and without `r` the agent can neither claim nor open the identity; unclaimed pairings expire in 10 min; the page warns to confirm only a connection the user just asked for (name and computer on the page come from the link and prove nothing) | another local OS user of a shared computer listening on the loopback port; a careless user on a computer where the attacker already runs code |
+| Third party sends a pairing link (or an invitation link with a pairing) with its own agent | loopback handover: `r` reaches only a listener on the confirming computer, and without `r` the agent can neither claim nor open the identity; unclaimed pairings expire in 10 min; the page warns to confirm only a connection the user just asked for (name and computer on the page come from the link and prove nothing) | another local OS user of a shared computer listening on the loopback port; a careless user on a computer where the attacker already runs code |
 | Malicious hub or database writer | fragment fingerprint against key swaps; `r` never reaches the hub, so it cannot open `bundle_ct` even with its own key in a phishing link and cannot give the agent a forged identity; the tool verifies logs, wraps and the platform log itself (§8.3) | hub serves malicious JavaScript (as `04-crypto.md` §9); withholding data; forged agent rows in the list (labels are not signed) |
 | Agent (stolen, prompt-injected or careless) pairs an agent of its own, or two orchestrators at once | an agent cannot confirm a pairing **with its agent key**: `POST /v1/me/agents` is not open to agents (§6) and needs the pairing-tagged passkey session; the unique index `agent_one_per_user` and the per-user lock allow one `confirmed`/`active` agent only; the approval page names the one it replaces | under equal rights an agent can replace the recovery code (`PUT /v1/me/bundles/recovery`, signed request, no assertion), run the anonymous recovery with a software authenticator to register a passkey of its own, sign in pairing-tagged with it and confirm a pairing – so a stolen agent key can pair (and replace) agents. Countered only by visibility: notifications `recovery_replaced` and `recovery_finished` (passkey added), the passkey list, the account audit, "Disconnect all agents" and `runbooks/agent-account-takeover.md`. A user who confirms a foreign pairing replaces their own orchestrator (the warning of §5.1 step 2) |
 | Replayed confirmation or claim | pairing single-use; confirmation only from the pairing-tagged session within 300 s; claim bound to the agent key and to `claim_hash`; signed-request nonce store | – |
@@ -235,7 +247,7 @@ token as the lasting way.
 | Claude login token leak | read-only, never logged; encrypted under `CK` before it leaves the computer | the token is valid until it expires (hours) and has the scopes of the Claude Code login |
 
 ## 10. Tests
-Not built yet, so not tested yet: the invitation with pairing and `register` (stage b), E2E-41 (stage b) and E2E-42
+Not built yet, so not tested yet: E2E-42
 (stage c, needs the commands of the parity matrix in stage c). Everything else below is part of this package.
 
 Hub: resolver, route parity (every registered user route admits an active agent, the exception list exactly the
@@ -245,11 +257,11 @@ confirmations), notifications of account-changing agent actions, per-source limi
 binding, claim with and without the right secret, revocation, audit `agent_id` and hash compatibility, orphan
 deletion and export with agent rows, migration on the previous schema with data. Web: fragment parsing, fingerprint,
 seal/open against the vectors, `/connect` screen (mismatch, expired, gesture retry, same-tab handover, "replaces
-<name>"), invitation with pairing (stage b), settings list (main orchestrator and history) and disconnect, audit marker,
+<name>"), invitation with pairing (platform and org invitation, broken link, expired request, expiry before the sign-in, `/connect` resumed from the route state), settings list (main orchestrator and history) and disconnect, audit marker,
 `login_token` records in the settings and the CK re-wrap job. Agent tool: every command against a real hub (test
 PostgreSQL) and the doubles, the listener (host header, foreign pairing, bad `r`, bind address), token readers
 against fake `security` programs and credential files, secret canaries on every output and error path. E2E-40
-(pairing of an existing account, token transfer, a second pairing that replaces the first, revocation), E2E-41 (stage b; new
+(pairing of an existing account, token transfer, a second pairing that replaces the first, revocation), E2E-41 (new
 account through the invitation with pairing), E2E-42 (stage c; after the pairing the agent alone, without a browser, runs a
 whole user journey: organization, invitation with role admin, workgroup, device, task with prompt followed to the
 result, whiteboard entry, role change, its attempt to confirm a pairing refused, revoking itself); attack tests: a

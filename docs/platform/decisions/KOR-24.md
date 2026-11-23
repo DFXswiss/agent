@@ -102,3 +102,28 @@ hub test suite and while fixing the findings of the second security review.
     - `claude watch` creates a `credential_changed` notification for every token refresh. Follow-up: group them.
     - The global pairing creation lock and the overall cap (10 000 open pairings) are a minor denial-of-service
       surface; the limits per address, /24, /64, /56 and /48 (decision 7) bound a single source.
+
+## Stage b: invitation with pairing
+
+22. **Fail closed before the registration.** The parameters after the invitation code must be exactly a pairing link
+    and at most one display name (1–80 characters, as the name field); the invitation screen looks the pairing up
+    with the invitation. A broken link, a fingerprint that does not match or a pairing that is not open ends in the
+    invalid state (`pairing_mismatch` / `pairing_unknown`) before a passkey or an account exists: a half-made account
+    whose agent never connects would leave the user with a step to repeat.
+23. **A request that expires during the registration does not strand the account.** When the pairing-tagged sign-in
+    after the new passkey is refused with `pairing_unknown` (the agent's ten minutes ran out), the page says so and the
+    next sign-in finishes the account without the agent; the agent's `register` ends with `pairing_timeout` and can
+    pair the now existing account with `pair`.
+24. **`/connect` finishes the pairing.** After the account is ready the invitation screen navigates to `/connect` with
+    the pairing in the route state (no fragment, no secret: `r` is drawn there). `/connect` confirms at once with the
+    identity the registration unlocked and keeps its replacement question, its repeated gesture on
+    `pairing_gesture_required` and its handover. One confirmation path for both entries instead of a second copy in the
+    invitation screens. A route state that is not a valid pairing is ignored (the page then reads the fragment).
+25. **Org invitations too.** The org path of the invitation screen takes the same pairing and name: a new user (sign-in
+    after the passkey) and an existing account signing in from the page are pairing-tagged. An existing account that
+    was already signed in joins without a ceremony; `/connect` then asks for the gesture (`pairing_gesture_required`).
+26. **E2E-40/41 as scenario specs.** `e2e/platform/traceability.json` may only be changed by acceptance packages
+    (ADR-027), and a spec that names an unknown test ID fails the traceability check. The two entries are therefore
+    covered here by the web suite against the real hub (`web/e2e/connect.spec.ts`, `web/e2e/invite-agent.spec.ts`) and
+    by the tool's tests against the hub double; the orchestrator route `agent-tool` is ready for the scenario specs,
+    which the next acceptance package registers (`board/reports/KOR-24.md`).

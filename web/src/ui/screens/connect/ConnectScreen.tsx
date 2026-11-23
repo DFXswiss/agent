@@ -10,7 +10,13 @@
 // `pairing_gesture_required` (more than 300 s since the ceremony) offers the gesture again with the same confirmation
 // body. Then the same tab hands over to the agent's loopback listener with a form POST. A tab that is already
 // unlocked loads the agents at once, so the replaced agent is named before the gesture.
+//
+// After an invitation with pairing (11-agent-access.md section 5.2) the invitation screen navigates here with the
+// pairing in the route state (`resume`) instead of a fragment: the account was just made or joined with the
+// pairing-tagged sign-in, so the page confirms at once with the unlocked identity – no second gesture unless the hub
+// asks for one (`pairing_gesture_required`) or a main orchestrator is to be replaced.
 import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { CeremonyCancelled } from '../../../core/account/ceremony';
 import { type SignIn, signIn } from '../../../core/account/login';
 import { type PairingLink, parsePairingLink } from '../../../core/agents/link';
@@ -24,6 +30,7 @@ import {
   submitPairing,
 } from '../../../core/agents/pairing';
 import type { Identity } from '../../../core/crypto/keys';
+import { isRecord } from '../../../core/registry';
 import { mainOrchestrator } from '../../../core/store/slices/agents';
 import { useNow } from '../../countdown/useNow';
 import { useStore } from '../../hooks/useStore';
@@ -45,6 +52,23 @@ type Status =
   | { readonly step: 'replace'; readonly identity: Identity; readonly replaces: string }
   | { readonly step: 'handover' };
 
+/** The pairing the invitation screen hands over in the route state, or null. */
+function resumedPairing(state: unknown): PairingLink | null {
+  if (!isRecord(state) || !isRecord(state.resume)) return null;
+  const resume = state.resume as unknown as PairingLink;
+  return parsePairingLink(
+    new URLSearchParams({
+      p: resume.pairingId,
+      f: resume.fingerprint,
+      c: String(resume.port),
+      a: resume.name,
+      h: resume.host,
+    }).toString(),
+  );
+}
+
+const READY: Status = { step: 'ready', notice: null };
+
 const BUTTON = 'min-h-11 rounded bg-gray-900 px-4 text-white disabled:opacity-60';
 const SECONDARY = 'min-h-11 rounded border border-gray-400 px-4';
 const MINUTE = 60_000;
@@ -62,7 +86,8 @@ function Age({ requestedAt }: { readonly requestedAt: number }) {
 export function ConnectScreen() {
   const { app, credentials, origin } = useAppEnv();
   const { t, error } = useI18n();
-  const [link] = useState<PairingLink | null>(() => parsePairingLink(takeConnectFragment()));
+  const resume = resumedPairing(useLocation().state);
+  const [link] = useState<PairingLink | null>(() => resume ?? parsePairingLink(takeConnectFragment()));
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [status, setStatus] = useState<Status>(() => (link === null ? { step: 'invalid' } : { step: 'loading' }));
   const prepared = useRef<PreparedPairing | null>(null);
@@ -77,7 +102,7 @@ export function ConnectScreen() {
       (found) => {
         if (!live) return;
         setPairing(found);
-        setStatus({ step: 'ready', notice: null });
+        setStatus(resume !== null && app.store.getState().me.identity !== null ? { step: 'working' } : READY);
         if (app.store.getState().me.identity !== null) void loadAgents(app.tasks);
       },
       (caught: unknown) => live && setStatus({ step: 'error', code: errorCode(caught) }),
@@ -85,6 +110,8 @@ export function ConnectScreen() {
     return () => {
       live = false;
     };
+    // `resume` belongs to the first render (the link is taken from it once)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app, link]);
 
   const fail = (caught: unknown) => {
@@ -121,6 +148,15 @@ export function ConnectScreen() {
     }
     await confirm(identity);
   };
+
+  // after an invitation with pairing: confirm with the identity the invitation unlocked, once the pairing is checked
+  const resumed = useRef(false);
+  useEffect(() => {
+    const held = app.store.getState().me.identity;
+    if (resume === null || pairing === null || held === null || resumed.current) return;
+    resumed.current = true;
+    void check(held);
+  });
 
   const replace = (identity: Identity, replaces: string) => {
     shown.current = replaces;

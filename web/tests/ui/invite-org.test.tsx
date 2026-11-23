@@ -4,11 +4,14 @@
 // recovery-code unlock), cancelled gestures, blocking refusals of the package and the log, invalid invitations,
 // `invite_registered` and a failed `accept` with retry.
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrgInvitation } from '../../src/core/account/join';
 import { signIn } from '../../src/core/account/login';
 import { codeToInviteId, register } from '../../src/core/account/register';
+import { fingerprint } from '../../src/core/crypto/agent';
+import { Identity } from '../../src/core/crypto/keys';
 import { b64uEncode } from '../../src/core/encoding/b64u';
+import { formatTime } from '../../src/core/encoding/time';
 import { uuid7 } from '../../src/core/encoding/ids';
 import { CryptoError } from '../../src/core/crypto/errors';
 import { formatCode, inviteSecrets } from '../../src/core/crypto/invite';
@@ -116,12 +119,12 @@ async function orgWithInvite(hub: SimHub, names = true): Promise<OrgSetup> {
 
 /** Opens `/invite#CODE` with an org invitation; `before` prepares the app (sign-in …). */
 async function openOrgInvite(
-  options: { hub?: SimHub; auth?: FakeAuthenticator; names?: boolean } = {},
+  options: { hub?: SimHub; auth?: FakeAuthenticator; names?: boolean; suffix?: string } = {},
   before?: (made: Made, setup: OrgSetup) => Promise<void>,
 ) {
   const hub = options.hub ?? new SimHub();
   const setup = await orgWithInvite(hub, options.names);
-  window.history.replaceState({ key: 'invite' }, '', `/invite#${CODE}`);
+  window.history.replaceState({ key: 'invite' }, '', `/invite#${CODE}${options.suffix ?? ''}`);
   const harness = await renderApp('/invite', { hub, auth: options.auth ?? new FakeAuthenticator() }, async (made) => {
     if (before) await before(made, setup);
     else await made.app.restore();
@@ -543,5 +546,89 @@ describe('OrgInvite: refusals', () => {
     });
     hub.override.set('POST /v1/invites/lookup', lookup!);
     expect(await codeToInviteId(CODE)).toBe(setup.inviteId);
+  });
+});
+
+describe('OrgInvite: with the pairing of an agent (11-agent-access.md section 5.2)', () => {
+  const PAIRING = '01a1ee56-5e00-7242-9e24-f87629ad2977';
+  let submitted: HTMLFormElement[] = [];
+
+  beforeEach(() => {
+    submitted = [];
+    vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
+      submitted.push(this);
+    });
+  });
+
+  /** A hub that knows the open pairing of a fresh agent, and the fragment suffix of the agent's invitation. */
+  async function agentHub(name = '&u=Erin') {
+    const hub = new SimHub();
+    const agent = await Identity.generate();
+    hub.override.set(`GET /v1/agent-pairings/${PAIRING}`, () => ({
+      pairing_id: PAIRING,
+      pub: agent.public(),
+      state: 'open',
+      expires_at: formatTime(Date.now() + 600_000),
+    }));
+    hub.override.set('POST /v1/me/agents', () => ({ agent_id: PAIRING }));
+    hub.override.set('GET /v1/me/agents', () => ({ agents: [] }));
+    const fp = await fingerprint(agent.kemPublic(), agent.sigPublic());
+    return { hub, suffix: `&p=${PAIRING}&f=${fp}&c=40123&a=Claude+Code&h=Mac${name}` };
+  }
+
+  const logins = (hub: SimHub) =>
+    hub.log.filter((entry) => entry.target === '/v1/passkeys/login/begin').map((entry) => JSON.parse(entry.body));
+
+  it('registers a new user with the proposed name, joins and connects the agent', async () => {
+    const { hub, suffix } = await agentHub();
+    const harness = await openOrgInvite({ hub, suffix });
+    expect(await screen.findByTestId('invite.agent')).toBeInTheDocument();
+    expect(screen.getByTestId('invite.proposed-name')).toHaveTextContent('Erin');
+    expect(screen.queryByTestId('invite.display-name')).toBeNull();
+    fireEvent.click(screen.getByTestId('invite.create-passkey'));
+    fireEvent.click(await screen.findByTestId('invite.unlock'));
+    await waitFor(() => expect(submitted).toHaveLength(1));
+    expect(harness.router.state.location.pathname).toBe('/connect');
+    expect(accepted(harness.setup, harness.app.userId!)).toBe(true);
+    expect(logins(hub)).toEqual([{ pairing_id: PAIRING }]);
+  });
+
+  it('signs an existing user in with the pairing; an expired request is dropped and the org opens', async () => {
+    const auth = new FakeAuthenticator();
+    const { hub, suffix } = await agentHub('');
+    const harness = await openOrgInvite({ hub, auth, suffix }, async (made) => {
+      await existingUser(made, { slot: true });
+      await made.app.signOut();
+    });
+    fireEvent.click(await screen.findByTestId('invite.existing-account'));
+    expect(screen.getByTestId('invite.agent')).toBeInTheDocument();
+    hub.override.set('POST /v1/passkeys/login/begin', new HubFailure(404, 'pairing_unknown'));
+    fireEvent.click(screen.getByTestId('invite.sign-in'));
+    expect(await screen.findByTestId('invite.notice')).toHaveTextContent('Connection request expired');
+    expect(screen.queryByTestId('invite.agent')).toBeNull();
+    hub.override.delete('POST /v1/passkeys/login/begin');
+    fireEvent.click(screen.getByTestId('invite.sign-in'));
+    await waitFor(() => expect(screen.getByTestId('invite.existing')).toHaveAttribute('data-mode', 'ready'));
+    fireEvent.change(screen.getByTestId('invite.display-name'), { target: { value: 'Ada' } });
+    fireEvent.click(screen.getByTestId('invite.join'));
+    await waitFor(() => expect(harness.router.state.location.pathname).toBe(`/o/${harness.setup.w.org}`));
+    expect(logins(hub).at(-1)).toEqual({});
+    expect(submitted).toHaveLength(0);
+  });
+
+  it('signs an existing user in with the pairing and connects the agent after the join', async () => {
+    const { hub, suffix } = await agentHub();
+    const harness = await openOrgInvite({ hub, suffix }, async (made) => {
+      await existingUser(made, { slot: true });
+      await made.app.signOut();
+    });
+    fireEvent.click(await screen.findByTestId('invite.existing-account'));
+    fireEvent.click(screen.getByTestId('invite.sign-in'));
+    await waitFor(() => expect(screen.getByTestId('invite.existing')).toHaveAttribute('data-mode', 'ready'));
+    expect(screen.getByTestId('invite.proposed-name')).toHaveTextContent('Erin');
+    fireEvent.click(screen.getByTestId('invite.join'));
+    await waitFor(() => expect(submitted).toHaveLength(1));
+    expect(harness.router.state.location.pathname).toBe('/connect');
+    expect(logins(hub).at(-1)).toEqual({ pairing_id: PAIRING });
   });
 });

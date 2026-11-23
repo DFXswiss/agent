@@ -1,6 +1,6 @@
-// The strict pairing link of `/connect#…` (11-agent-access.md section 5.1).
+// The strict pairing link of `/connect#…` (11-agent-access.md section 5.1) and the invitation of an agent (section 5.2).
 import { describe, expect, it } from 'vitest';
-import { parsePairingLink, parsePort } from '../../../src/core/agents/link';
+import { parseInviteFragment, parsePairingLink, parsePort } from '../../../src/core/agents/link';
 
 const ID = '01a1ee56-5e00-7242-9e24-f87629ad2977';
 const FP = 'CzOH3lkVGYJwp1q24gW2DQ';
@@ -45,5 +45,40 @@ describe('parsePort', () => {
     expect(parsePort('01024')).toBeNull();
     expect(parsePort('99999')).toBeNull();
     expect(parsePort('4e3')).toBeNull();
+  });
+});
+
+describe('parseInviteFragment', () => {
+  const pairing = parsePairingLink(valid);
+  const CODE = 'ABCDE-FGHIJ';
+
+  it('leaves a plain invitation unchanged', () => {
+    expect(parseInviteFragment(CODE)).toEqual({ code: CODE, pairing: null, displayName: null, valid: true });
+    expect(parseInviteFragment('')).toEqual({ code: '', pairing: null, displayName: null, valid: true });
+  });
+
+  it('reads the pairing after the code, with and without a display name', () => {
+    expect(parseInviteFragment(`${CODE}&${valid}`)).toEqual({ code: CODE, pairing, displayName: null, valid: true });
+    expect(parseInviteFragment(`${CODE}&u=+Ada+Lovelace+&${valid}`)).toEqual({
+      code: CODE,
+      pairing,
+      displayName: 'Ada Lovelace',
+      valid: true,
+    });
+  });
+
+  it('refuses parameters that are not exactly a pairing and one name of 1–80 characters', () => {
+    const invalid = { code: CODE, pairing: null, displayName: null, valid: false };
+    for (const rest of [
+      `${valid}&x=1`,
+      `u=Ada&u=Bob&${valid}`,
+      `u=+&${valid}`,
+      `u=${'a'.repeat(81)}&${valid}`,
+      'u=Ada',
+      '',
+    ]) {
+      expect(parseInviteFragment(`${CODE}&${rest}`), rest).toEqual(invalid);
+    }
+    expect(parseInviteFragment(`${CODE}&u=${'a'.repeat(80)}&${valid}`).displayName).toHaveLength(80);
   });
 });
