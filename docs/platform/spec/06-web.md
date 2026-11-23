@@ -135,9 +135,8 @@ States and steps (`04-crypto.md` §5.1–§5.3):
 | `intro` | what the invitation grants: org name and workgroup names (from the package fields `org_name`/`wg_names`), role, expiry; buttons "Create passkey" and "I already have an account" (org invitations only); with a valid session the client goes to `existing_account` directly | – |
 | `existing_account` (org invites) | "Join <org> with your existing account" | login ceremony §3.4 if no session; then `accept` with the registered identity (`04-crypto.md` §5.2a); `invite_registered` → error state |
 | `create_passkey` | gesture 1 explained ("Your device will ask you to create a passkey") | `POST /v1/passkeys/register/begin` (ES256 only), `navigator.credentials.create()`, `POST /v1/passkeys/register/finish` (incl. the self-wrap of the user's new `CK_1`) |
-| `unlock_passkey` | gesture 2 explained ("Confirm once more to sign in") | login ceremony §3.4 |
-| `recovery_code` | §3.2 | `PUT /v1/me/bundles/{slot}` after PRF |
-| `prf_missing` | §3.3 | – |
+| `unlock_passkey` | gesture 2 explained ("Confirm once more to sign in") | login ceremony §3.4; `PUT /v1/me/bundles/{slot}` with the PRF output |
+| `prf_required` | §3.3 – the new passkey gave no PRF output: the registration is withdrawn, "Try again with another passkey" returns to `intro` (KOR-22); with PRF the flow goes from `unlock_passkey` straight to `accept` | `DELETE /v1/me/registration` |
 | `accept` | progress "Joining …" | `POST /v1/orgs/{org}/log` (`accept`) or `POST /v1/orgs` (genesis for platform invites, §3.1.1) |
 | `done` | navigate to `/o/:org` with the first-task composer (§4) | – |
 
@@ -147,28 +146,50 @@ ignores the abandoned one).
 
 #### 3.1.1 Platform invitation
 
-No package. After `recovery_code` the client creates the private organization: name "Private" (`de`: "Privat"),
+No package. After gesture 2 (with PRF) the client creates the private organization: name "Private" (`de`: "Privat"),
 default workgroup "Default" (`de`: "Standard"), `OK_1`, `WK_1`, self-wraps (the user's `CK_1` exists since registration), `genesis{private:true}`, profile
 events, `member.profile` with the display name entered on the intro screen (required, 1–80 chars), all in
 `POST /v1/orgs` with `platform_invite_id` (`04-crypto.md` §5.3). Org invites also ask for the display name and send
 `member.profile` right after `accept`.
 
-### 3.2 Recovery code display and confirmation
+### 3.2 Recovery code (KOR-22, ADR-055)
 
-- The code is shown once in groups `XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX` in a monospace block with "Copy" and "Download as
-  text file" (file generated client-side via `Blob`, name `agent-recovery-code.txt`).
-- Continue requires retyping the **last group** (6 characters, case-insensitive); mismatch → inline error.
-- "Skip" is offered only behind a confirmation dialog that states the consequence: for a private organization with a
-  single member, losing all passkeys and the code loses all data (`04-crypto.md` §5.5 step 4). Skipping sets a
-  persistent banner "Recovery code not confirmed" until confirmed in `/settings`, where a **new** code can be generated
-  (replaces the recovery slot, `PUT /v1/me/bundles/recovery` with `new_recovery_id`). The browser seals the new slot
-  with the identity in memory, shows the code, requires the retyped last group (no skip), then runs
-  `POST /v1/me/recovery/begin`, the passkey gesture and the `PUT` with `assertion`; the old code stays valid until
-  the hub accepts the new one (KOR-01).
+No step of the registration asks for the recovery code, and nothing re-types it.
 
-### 3.3 `prf_missing` guidance
+- **Passkey with PRF (normal case):** after gesture 2 the platform opens. No code exists (the unset recovery slot of
+  `04-crypto.md` §4.1) and none is shown; no reminder, no banner, no dialog.
+- **Code display** (wherever a code is shown): one screen with the code in groups `XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX` in a
+  monospace block, "Copy", "Download as text file" (file generated client-side via `Blob`, name
+  `agent-recovery-code.txt`), one line saying what it is for here, and **one** button. No re-typing, no "Skip".
+- **Passkey without PRF:** not accepted for a new account (§3.3 "PRF required").
+- **Settings** ("Passkeys and recovery", §3.6): "Recovery code" with one line of purpose and, while no code exists (the
+  slot is the unset one), one quiet line "You have no recovery code yet." The button reads "Create recovery code", or
+  "Create a new recovery code" once one exists. The browser draws the code, seals the identity in memory with it and
+  shows it with "Done"; "Done" runs `POST /v1/me/recovery/begin`, the passkey gesture and `PUT
+  /v1/me/bundles/recovery` with `assertion` (KOR-01); an old code stays valid until the hub accepted the new one. A
+  cancelled gesture keeps the shown code for another try; "Cancel" leaves without sending anything.
+- **After a recovery** (§3.5) the new code replaces the used one and is shown with "Continue".
 
-Shown when the login ceremony returns no PRF result (detected **per login**, `04-crypto.md` §5.4):
+### 3.3 PRF required; `prf_missing` guidance
+
+**PRF required (KOR-22, ADR-055).** A passkey whose sign-in gives no PRF output is not accepted – at registration
+(gesture 2 of §3.1), when adding a passkey (§3.6) and for the new passkey of a recovery (§3.5). One message for all
+three: "This passkey cannot unlock your data. You need a passkey that supports PRF.", one line about what happened
+(registration: no account was created, the invitation is still valid; adding: the passkey was not added; recovery:
+the passkey was not added, the recovery code still works), what works (the passkeys built into the device: iCloud
+Keychain on Apple devices from iOS 18 / macOS 15, Google Password Manager on Android and in Chrome), what does not
+(Bitwarden currently does not support PRF for the passkeys it stores), the hint to delete the unusable passkey in the
+password manager, and "Try again with another passkey". The provider list lives in one place, the `passkeys`
+catalog (`passkeys.prf-required.*`). Clean-up before the message: registration – `DELETE /v1/me/registration`
+(`03-api.md` §4.1) deletes the unfinished account and frees the invitation at once, then the browser signs out; if the
+hub cannot (older hub), the message adds that the invitation is usable again after 24 h at the latest (orphan job);
+adding – the previous session removes the new passkey (`DELETE /v1/passkeys/{id}`, which also ends its new session);
+recovery – the new passkey removes itself (its session ends), the browser signs out, and "Try again" begins the
+recovery again with the same code (nothing was replaced).
+
+**`prf_missing` guidance** – for accounts that exist already (made before KOR-22, or a PRF passkey that signs in from a
+browser or password manager that gives no PRF output, e.g. a synced passkey in a browser without PRF support). Shown
+when the login ceremony returns no PRF result (detected **per login**, `04-crypto.md` §5.4):
 
 1. Explain: "This passkey cannot unlock your encryption keys on this device."
 2. Options: (a) enter the recovery code (unlock only: bundle from the signed `GET /v1/me/bundles/recovery`, no rotation and
@@ -176,7 +197,6 @@ Shown when the login ceremony returns no PRF result (detected **per login**, `04
    after unlocking, create a non-extractable AES-GCM key in IndexedDB that encrypts the identity bundle locally
    (`persist/device-key`); next login on this browser unlocks with it; (c) add a PRF-capable passkey from another
    signed-in device (§3.6).
-3. During registration with a non-PRF authenticator, option (b) is offered directly after the recovery code.
 The device key is per browser profile, listed in `/settings` ("This browser can unlock without passkey PRF") with
 "Forget" (deletes the IndexedDB entry).
 
@@ -190,13 +210,13 @@ code per §3.3) → load `GET /v1/me`, verify logs of all orgs (§11.3), fetch w
 ### 3.5 Recovery (`/recover`)
 
 Enter code → `POST /v1/recovery/begin` → decrypt recovery bundle → sign proof → `POST /v1/recovery/finish` → create a
-new passkey (gesture 1) → login (gesture 2) → upload passkey slot → **new recovery code** (§3.2, mandatory, no skip)
-→ home. Rate-limit responses (`429`) show the retry time.
+new passkey (gesture 1) → login (gesture 2) → upload passkey slot (a new passkey without PRF is refused, §3.3) → **new
+recovery code** (§3.2: stored at once, shown with one "Continue", no re-typing) → home. Rate-limit responses (`429`) show the retry time.
 
 ### 3.6 Passkeys in `/settings`
 
 List (`GET /v1/me`: created, last used, `prf_seen`), "Add passkey" (`04-crypto.md` §5.6; option "on another device"
-uses the platform's hybrid/QR UI of `create()`), "Remove" (`DELETE /v1/passkeys/{id}`; disabled for the last one,
+uses the platform's hybrid/QR UI of `create()`; a passkey without PRF output is removed again, §3.3), "Remove" (`DELETE /v1/passkeys/{id}`; disabled for the last one,
 `last_passkey`).
 
 ## 4. First task and countdown

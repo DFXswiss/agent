@@ -32,7 +32,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 | R-1.3 | §1 b1 | New devices are added only by invitation. | Org device invitations (`invite kind=device`) and platform device invitations (operator CLI). | HUB, RUN | 04 §5.8, §5.9 | E2E-04 (incl. enroll with used/invalid code → `invite_unknown`), E2E-05 |
 | R-1.4 | §1 b2 | Invitations are generated as codes and passed on. | 128-bit code, text form `XXXXX-…`, link `/invite#<code>`; hub sees only `invite_id`. | WEB, HUB | 04 §3, §5.7 | E2E-02, E2E-03 |
 | R-1.5 | §1 b3 | Users accept the invitation. | `accept` log entry signed by invitee and `sk_inv`. | WEB, HUB | 04 §5.2 | E2E-02 |
-| R-1.6 | §1 b3 | Users set up a passkey. | WebAuthn with UV required and PRF; recovery code mandatory. ADR-006. | WEB, HUB | 04 §5.1, 03 §4.1 | E2E-01, E2E-30 |
+| R-1.6 | §1 b3 | Users set up a passkey. | WebAuthn with UV required and PRF: a passkey without PRF output is refused at registration, when added and in a recovery (KOR-22); a recovery code is created on request in the settings. ADR-006, ADR-055. | WEB, HUB | 04 §5.1, 03 §4.1 | E2E-01, E2E-30 |
 | R-1.7 | §1 b3 | Users sign in at `agent.dfx.swiss`. | Passkey login certifies a session key (12 h) and unlocks the identity in one gesture; RP ID = host of `AGENT_HUB_PUBLIC_URL` (localhost in tests). | WEB, HUB | 04 §5.4, §4.9 | E2E-01, E2E-30 |
 | R-1.8 | §1 b4 | Devices are paired with an invitation code. | `agent-runner enroll --code`. | RUN, HUB | 04 §5.8, 03 §6.1 | E2E-04 |
 | R-1.9 | §1 b4 | Devices then authenticate cryptographically with a device-specific key, like SSH, without requiring SSH. | Ed25519 device key, `agent-request-v1` signed requests and signed WebSocket upgrade. | RUN, HUB | 03 §1, §6 | E2E-04, U-HUB-auth |
