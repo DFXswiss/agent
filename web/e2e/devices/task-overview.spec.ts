@@ -31,7 +31,7 @@ test('the overview explains how to create a task, then lists it; Tasks sits dire
   page,
   baseURL,
 }) => {
-  await freshUser(page, baseURL!);
+  const user = await freshUser(page, baseURL!);
   if (await page.getByTestId('shell.nav').isVisible()) {
     const entries = page.getByTestId('shell.nav').locator('[data-testid^="shell.nav."]');
     await expect(entries.nth(0)).toHaveAttribute('data-testid', 'shell.nav.home');
@@ -50,6 +50,9 @@ test('the overview explains how to create a task, then lists it; Tasks sits dire
   const rows = page.getByTestId('tasks.row');
   await expect(rows.getByTestId('tasks.row.title')).toHaveText(['Summarize the open invoices']);
   await expect(rows.getByTestId('tasks.row.wg')).toHaveText(['Default']);
+  // the overview is a link of its own: a reload unlocks again and shows it after the log is verified
+  await visit(page, `/o/${user.org}/tasks`);
+  await expect(rows.getByTestId('tasks.row.title')).toHaveText(['Summarize the open invoices']);
   await rows.first().click();
   await expect(page.getByTestId('task.title')).toHaveText('Summarize the open invoices');
 });
