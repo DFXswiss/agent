@@ -173,7 +173,9 @@ describe('workgroup settings', () => {
       },
     ]);
     open(t, readerWg);
-    expect(await screen.findByTestId('wg-settings.view.repositories')).toHaveTextContent('No repository is allowed.');
+    expect(await screen.findByTestId('wg-settings.view.repositories')).toHaveTextContent(
+      'Every repository of the GitHub connection is allowed.',
+    );
     expect(screen.getByTestId('wg-settings.view.draft')).toHaveTextContent('drafts by default');
     expect(screen.getByTestId('wg-settings.title')).toHaveTextContent('Research');
   });

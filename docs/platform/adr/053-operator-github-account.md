@@ -46,8 +46,9 @@ Status: Accepted (2026-11-23)
   token at GitHub does.
 - **The token reaches as far as the account.** It is not limited to selected repositories like an App installation.
   Inside the platform the protection lies in: the approval per user (the request is bound to the signing user; a forged request is refused
-  before any handler runs), the workgroup allow-list as the formal boundary of every operation (checked before
-  GitHub is asked, audited; it is set by the workgroup's admins, who need not be approved users: in an organization
+  before any handler runs), the workgroup allow-list, when the admins set one, as the formal
+  boundary of every operation (checked before GitHub is asked, audited; without a list the account's access is the
+  boundary, ADR-054; it is set by the workgroup's admins, who need not be approved users: in an organization
   shared with others, a workgroup admin can allow any repository the account reaches for the tasks of an approved
   member), the formal checks of the operation pipeline (protected branches, fast-forward only,
   draft pull requests), and the audit of every operation. Choosing the account and its rights is the operator's

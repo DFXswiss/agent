@@ -149,7 +149,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 | R-9.1 | §9 b1 | Users can connect and disconnect their GitHub account. | Device flow on the execution device; disconnect hard-deletes the credential everywhere. | WEB, RUN, HUB | 03 §4.8, §4.10 | E2E-20 |
 | R-9.2 | §9 b2 | Authorised repository access. | `github.checkout`, `github.get_pull_request`, `github.list_repositories`. | RUN | 03 §9 | E2E-21, LIVE-02 |
 | R-9.3 | §9 b2 | Branches, commits, pushes, pull requests and comments. | Operation types of 03 §9, REST/Git Data API only. | RUN | 03 §9 | E2E-21, LIVE-02 |
-| R-9.4 | §9 b3 | Rights limited to the connected account and released repositories. | GitHub App installation + workgroup repository allow-list. | RUN | 03 §9 | E2E-22  (incl. `repo_not_accessible`) |
+| R-9.4 | §9 b3 | Rights limited to the connected account and released repositories. | GitHub App installation or the connected account's access + optional workgroup repository allow-list (ADR-054). | RUN | 03 §9 | E2E-22  (incl. `repo_not_accessible`) |
 | R-9.5 | §9 b3 | All actions are audited. | | HUB, RUN | 02 §2.9 | E2E-15, E2E-21 |
 | R-9.6 | §9 b4 (recommendation) | Check GitHub App with granular permissions. | **Adopted**: GitHub App with user-to-server tokens. ADR-015. | RUN, DBL | 05 | E2E-20, LIVE-02 |
 | R-9.7 | §9 b5 | Claude Code must not run git commands itself; GitHub actions only as controlled platform operations. | No git in the sandbox (no Bash, Landlock exec allow-list); operations executed by RUN on the host. | SBX, RUN | 05 §4, 03 §9 | E2E-23, ATK-02 |

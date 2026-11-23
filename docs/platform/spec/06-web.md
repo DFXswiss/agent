@@ -384,8 +384,8 @@ screen says so. Private organizations are only created from a platform invitatio
   the GitHub login, or the error. Hint to select repositories when installing the GitHub App.
 - **Disconnect:** `DELETE /v1/me/credentials/github` + link to the GitHub settings page to revoke the app
   authorization.
-- Workgroup settings (`/o/:org/w/:wg/settings`, `wg:write`): repository allow-list (`owner/name`, validated with the
-  regex of `03-api.md` §9), protected branch patterns (defaults prefilled), PR draft default; saved as
+- Workgroup settings (`/o/:org/w/:wg/settings`, `wg:write`): optional repository allow-list (`owner/name`, validated
+  with the regex of `03-api.md` §9; empty = every repository of the GitHub connection, ADR-054), protected branch patterns (defaults prefilled), PR draft default; saved as
   `settings.workgroup` event (latest wins; concurrent edit warning when a newer event arrived meanwhile).
 
 ### 8.2 Model access

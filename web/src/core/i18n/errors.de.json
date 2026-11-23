@@ -396,8 +396,8 @@
   },
   "repo_not_allowed": {
     "title": "Repository nicht erlaubt",
-    "body": "Das Repository steht nicht auf der Freigabeliste dieser Workgroup.",
-    "action": "Füge es in den Workgroup-Einstellungen hinzu."
+    "body": "Diese Workgroup ist auf bestimmte Repositories begrenzt, und dieses gehört nicht dazu.",
+    "action": "Füge es in den Workgroup-Einstellungen hinzu oder leere die Liste, um alle Repositories der GitHub-Verbindung zu erlauben."
   },
   "request_invalid": {
     "title": "Ungültige Anfrage",

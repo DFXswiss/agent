@@ -938,13 +938,13 @@
   "repo_not_allowed": {
     "en": {
       "title": "Repository not allowed",
-      "body": "The repository is not on the allow-list of this workgroup.",
-      "action": "Add it in the workgroup settings."
+      "body": "This workgroup is limited to specific repositories, and this one is not among them.",
+      "action": "Add it in the workgroup settings, or clear the list to allow every repository of the GitHub connection."
     },
     "de": {
       "title": "Repository nicht erlaubt",
-      "body": "Das Repository steht nicht auf der Freigabeliste dieser Workgroup.",
-      "action": "Füge es in den Workgroup-Einstellungen hinzu."
+      "body": "Diese Workgroup ist auf bestimmte Repositories begrenzt, und dieses gehört nicht dazu.",
+      "action": "Füge es in den Workgroup-Einstellungen hinzu oder leere die Liste, um alle Repositories der GitHub-Verbindung zu erlauben."
     }
   },
   "request_invalid": {

@@ -396,8 +396,8 @@
   },
   "repo_not_allowed": {
     "title": "Repository not allowed",
-    "body": "The repository is not on the allow-list of this workgroup.",
-    "action": "Add it in the workgroup settings."
+    "body": "This workgroup is limited to specific repositories, and this one is not among them.",
+    "action": "Add it in the workgroup settings, or clear the list to allow every repository of the GitHub connection."
   },
   "request_invalid": {
     "title": "Invalid request",

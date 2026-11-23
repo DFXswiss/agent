@@ -1,5 +1,6 @@
-// Workgroup settings (06-web.md section 8.1, 03-api.md sections 9 and 10, ADR-015): the repository allow-list
-// (`owner/name`, the regex of section 9, stored lower case), the protected branch patterns (defaults
+// Workgroup settings (06-web.md section 8.1, 03-api.md sections 9 and 10, ADR-015, ADR-054): the optional
+// repository allow-list (empty = every repository of the GitHub connection; `owner/name`, the regex of section 9,
+// stored lower case), the protected branch patterns (defaults
 // `main`, `master`, `develop`, `release/*`) and the PR draft default (true). They are a `settings.workgroup` event of
 // the workgroup scope, written by users with `wg:write`; the newest verified one wins (by `scope_seq`).
 //

@@ -65,7 +65,9 @@ test('a reader sees the settings without controls; an unknown workgroup is not f
   await page.getByTestId('login.submit').click();
   await expect(page.getByTestId('wg-settings.read-only')).toBeVisible();
   await expect(page.getByTestId('wg-settings.title')).toContainText('Readers');
-  await expect(page.getByTestId('wg-settings.view.repositories')).toHaveText('No repository is allowed.');
+  await expect(page.getByTestId('wg-settings.view.repositories')).toHaveText(
+    'Every repository of the GitHub connection is allowed.',
+  );
   await expect(page.getByTestId('wg-settings.view.protected')).toContainText('release/*');
   await expect(page.getByTestId('wg-settings.view.draft')).toHaveText('Pull requests are drafts by default.');
   await expect(page.getByTestId('wg-settings.form')).toHaveCount(0);
