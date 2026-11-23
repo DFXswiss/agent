@@ -80,6 +80,31 @@
       "workflow": ".github/workflows/a38-guard.yml",
       "job": "guard",
       "reason": "The report guard itself: trusted pinned workflow that audits A38 reports; not a pull-request test."
+    },
+    {
+      "workflow": ".github/workflows/platform-runner.yml",
+      "job": "lint",
+      "reason": "Platform gate for the ad5f2026-agent-platform branch only: pull_request and push trigger on that branch, so it never runs on pull requests to develop, the branch A38 enforces."
+    },
+    {
+      "workflow": ".github/workflows/platform-runner.yml",
+      "job": "runner",
+      "reason": "Platform gate for the ad5f2026-agent-platform branch only: pull_request and push trigger on that branch, so it never runs on pull requests to develop, the branch A38 enforces."
+    },
+    {
+      "workflow": ".github/workflows/platform-runner.yml",
+      "job": "guest-linux",
+      "reason": "Calls the reusable platform-guest-linux.yml from the platform gate of the ad5f2026-agent-platform branch only; it never runs on pull requests to develop, the branch A38 enforces."
+    },
+    {
+      "workflow": ".github/workflows/platform-runner.yml",
+      "job": "combine",
+      "reason": "Combined platform coverage report of the ad5f2026-agent-platform branch only: pull_request and push trigger on that branch, so it never runs on pull requests to develop, the branch A38 enforces."
+    },
+    {
+      "workflow": ".github/workflows/platform-guest-linux.yml",
+      "job": "guest-linux",
+      "reason": "Reusable Linux-only platform guest tests, triggered only by workflow_call from platform-runner.yml and by manual workflow_dispatch; never a pull-request run on develop, the branch A38 enforces."
     }
   ]
 }
