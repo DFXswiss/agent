@@ -8,7 +8,7 @@ import { b64uDecode } from '../../../src/core/encoding/b64u';
 import { Identity } from '../../../src/core/crypto/keys';
 import { parseTime } from '../../../src/core/encoding/time';
 import { verifyPlatformLog } from '../../../src/core/log/platform';
-import { buildBatch, checkBatch } from '../../../src/core/log/rotation';
+import { buildBatch, checkBatch, SELF_OWED } from '../../../src/core/log/rotation';
 import { verifyLog } from '../../../src/core/log/verify';
 import type { Planner } from '../../../src/core/org/batch';
 import { grantPlan, leavePlan, removePlan, rolePlan, ungrantPlan } from '../../../src/core/org/members';
@@ -75,7 +75,8 @@ describe('member action batches against the rotation vectors', () => {
       ts: body.ts,
     });
     expect(built.body.entries[0]).toEqual(c.entry);
-    const self = body.type === 'remove' && body.subject === body.by;
+    // a self-remove and a self-demotion owe their rotation to the others (`pending`, ADR-058 section 3)
+    const self = SELF_OWED.has(body.type) && body.subject === body.by;
     expect(built.required).toEqual(self ? [] : c.required);
     expect(built.body.entries.slice(1).map((e) => e.body.type)).toEqual(self ? [] : c.required.map(() => 'rotate'));
     await expect(

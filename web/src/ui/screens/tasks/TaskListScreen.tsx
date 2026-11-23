@@ -10,6 +10,7 @@ import { useI18n } from '../../i18n';
 import { Composer } from '../../composer/Composer';
 import { useDirectory, useOrgView } from './hooks';
 import { StateFilter, TaskTable } from './TaskTable';
+import { Unlocking } from '../../unlock/Unlocking';
 
 export interface TaskListProps {
   readonly org: string;
@@ -70,6 +71,7 @@ export function TaskListScreen() {
           {t('wg-settings.link')}
         </Link>
       </div>
+      <Unlocking org={org} wg={wg} />
       {state.canWriteWg(userId, wg) && <Composer org={org} wg={wg} />}
       <TaskList org={org} wg={wg} />
     </main>

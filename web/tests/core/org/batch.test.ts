@@ -1,6 +1,6 @@
 // U-WEB-log (WEB-06): the append flow `submitBatch` against the simulated hub of tests/core/org/world.ts – the batch
 // of a removal (entry + R + wraps for every remaining recipient), the automatic rebuild after `seq_conflict` (at most
-// three attempts), a change another admin already made, refusals, the progress reports and what is kept afterwards.
+// three attempts), a change another admin already made, refusals, the retry reports and what is kept afterwards.
 import { describe, expect, it } from 'vitest';
 import { CryptoError } from '../../../src/core/crypto/errors';
 import { ORG, WG } from '../../../src/core/log/state';
@@ -9,6 +9,7 @@ import {
   actionErrorCode,
   actorOf,
   BATCH_ATTEMPTS,
+  install,
   OrgActionError,
   requireHead,
   submitBatch,
@@ -16,6 +17,7 @@ import {
   verifiedPlatform,
 } from '../../../src/core/org/batch';
 import { removePlan, ungrantPlan } from '../../../src/core/org/members';
+import { createStore } from '../../../src/core/store';
 import { blockOrg, orgEntry } from '../../../src/core/store/slices/orgs';
 import { setIdentity } from '../../../src/core/store/slices/me';
 import { idOf } from '../log/world';
@@ -54,13 +56,8 @@ describe('submitBatch', () => {
         { scope: WG, scope_id: w.world.defaultWg },
       ]),
     );
-    expect(steps).toEqual([
-      { step: 'rotate', done: 1, total: 3 },
-      { step: 'rotate', done: 2, total: 3 },
-      { step: 'rotate', done: 3, total: 3 },
-      { step: 'wrap', recipients: 3 },
-      { step: 'send' },
-    ]);
+    // only a new attempt is reported (key handling stays out of sight, ADR-058 section 4)
+    expect(steps).toEqual([]);
     // the hub took it: everyone but bob holds the new epochs
     expect(w.world.state.member(bob.id)).toBeNull();
     expect(holds(w, cy, ORG, w.org)).toBe(true);
@@ -74,14 +71,19 @@ describe('submitBatch', () => {
     expect(entry.keys.has(`wg ${one} 2`)).toBe(true);
   });
 
-  it('keeps no keys of a workgroup the admin cannot read', async () => {
+  it('keeps the new keys of the scopes the user reads only', async () => {
     const { w, one } = await withMembers({ as: 'cy' });
     const { bob } = w.others;
     const { built } = await submitBatch(w.context, w.org, ungrantPlan(bob.id, one));
     expect(built!.required).toEqual([{ scope: WG, scope_id: one }]);
     const entry = orgEntry(w.store.getState().orgs, w.org);
     expect(entry.log!.state.epoch(WG, one)).toBe(2);
-    expect(entry.keys.has(`wg ${one} 2`)).toBe(false);
+    // cy reads workgroup one as admin (ADR-058)
+    expect(entry.keys.has(`wg ${one} 2`)).toBe(true);
+    // bob no longer reads it: installed for bob, the new key is not kept
+    const other = createStore();
+    install(other, w.org, bob.id, built!);
+    expect(orgEntry(other.getState().orgs, w.org).keys.size).toBe(0);
   });
 
   it('rebuilds after seq_conflict on the re-read log', async () => {

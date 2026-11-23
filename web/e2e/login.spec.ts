@@ -52,7 +52,7 @@ test('without PRF the recovery code unlocks, a wrong code is refused', async ({ 
   await expect(page.getByTestId('prf-missing.explain')).toBeVisible();
   await page.getByTestId('prf-missing.recovery.input').fill('AAAAA-AAAAA-AAAAA-AAAAA-AAAAAA');
   await page.getByTestId('prf-missing.recovery.submit').click();
-  await expect(page.getByTestId('prf-missing.error')).toHaveText('Cannot decrypt');
+  await expect(page.getByTestId('prf-missing.error')).toHaveText('Cannot be opened');
   await page.getByTestId('prf-missing.recovery.input').fill(done.recoveryCode.toLowerCase());
   await page.getByTestId('prf-missing.recovery.submit').click();
   await expect(page).toHaveURL(new RegExp(`/o/${done.org}$`));

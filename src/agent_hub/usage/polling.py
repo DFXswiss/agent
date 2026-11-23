@@ -30,7 +30,7 @@ _POLL_OWNERS = (
     "SELECT e.owner_id FROM (SELECT DISTINCT a.user_id AS owner_id, d.device_id FROM hub.wg_device d"
     " JOIN hub.wg w ON w.id = d.wg_id"
     " JOIN hub.org_member md ON md.org_id = w.org_id AND md.principal_id = d.device_id AND md.removed_seq IS NULL"
-    " JOIN hub.wg_access a ON a.wg_id = d.wg_id AND a.revoked_seq IS NULL"
+    " JOIN hub.wg_access a ON a.wg_id = d.wg_id AND a.revoked_seq IS NULL AND NOT a.inherited"
     " JOIN hub.org_member mu ON mu.org_id = w.org_id AND mu.principal_id = a.user_id AND mu.removed_seq IS NULL"
     " JOIN hub.device dv ON dv.id = d.device_id AND dv.state = 'active'"
     " JOIN hub.principal p ON p.id = dv.id AND p.disabled_at IS NULL"

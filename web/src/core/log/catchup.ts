@@ -3,13 +3,18 @@
 // the verified log entitles and the user may create (W1/W2) are wrapped, for the recipient key of the verified log.
 //
 // Any key holder computes from the verified log the recipients that are entitled to the current epoch of a scope
-// but have no wrap yet. Older epochs are wrapped only on request (section 5.10).
+// but have no wrap yet. Older epochs are wrapped only on request (section 5.10), with one exception: an admin that
+// reads a workgroup by inheritance gets every epoch of it (`catchUpEpochs`, ADR-058 section 2).
+//
+// Transition rule (ADR-058 section 2, `compatSkip`): until every runner verifies ADR-058, the browser does not wrap a
+// `wg` key for a device when its own user reads that workgroup only by inheritance and did not create the epoch (an
+// older runner would ignore such a wrap while the hub keeps the first wrap of a slot).
 import { b64uDecode } from '../encoding/b64u';
 import type { Identity } from '../crypto/keys';
 import type { Secret } from '../crypto/secret';
 import { signWrap, wrapKey } from '../crypto/wrap';
 import { excludedFor, type PlatformState } from './platform';
-import type { OrgState } from './state';
+import { DEVICE, epochKey, type OrgState, WG } from './state';
 import type { VerifiedLog } from './verify';
 import {
   compareSlots,
@@ -25,7 +30,30 @@ import {
 /** The scope keys a client holds: the key of `(scope, scope_id, epoch)` or null. */
 export type KeyRing = (scope: string, scopeId: string, epoch: number) => Secret | null;
 
-/** Sorted `org`/`wg` slots of the current epochs without a wrap that `wrapper` may create. */
+/**
+ * The epochs catch-up gives an entitled recipient: the current one, and for an admin reading a workgroup by
+ * inheritance every epoch from 1 (ADR-058 section 2).
+ */
+export function catchUpEpochs(state: OrgState, scope: string, scopeId: string, recipient: string): number[] {
+  const current = state.epoch(scope, scopeId);
+  const first = scope === WG && state.inherited(recipient, scopeId) ? 1 : current;
+  return Array.from({ length: current - first + 1 }, (_, index) => first + index);
+}
+
+/**
+ * The transition rule of ADR-058 section 2: true if `wrapper` must not wrap `slot`, i.e. a `wg` key for a device
+ * while the wrapper reads that workgroup only by inheritance and did not create the epoch.
+ */
+export function compatSkip(state: OrgState, wrapper: string, slot: WrapSlot): boolean {
+  return (
+    slot.scope === WG &&
+    state.member(slot.recipient)?.kind === DEVICE &&
+    state.inherited(wrapper, slot.scope_id) &&
+    state.epochAuthors.get(epochKey(WG, slot.scope_id, slot.epoch)) !== wrapper
+  );
+}
+
+/** Sorted `org`/`wg` slots (current epochs, `catchUpEpochs`) without a wrap that `wrapper` may create. */
 export function missingWraps(
   log: VerifiedLog,
   wrapper: string,
@@ -38,9 +66,14 @@ export function missingWraps(
   return state
     .scopes()
     .flatMap(([scope, scopeId]) =>
-      state
-        .readers(scope, scopeId, skip)
-        .map((recipient) => ({ scope, scope_id: scopeId, epoch: state.epoch(scope, scopeId), recipient })),
+      state.readers(scope, scopeId, skip).flatMap((recipient) =>
+        catchUpEpochs(state, scope, scopeId, recipient).map((epoch) => ({
+          scope,
+          scope_id: scopeId,
+          epoch,
+          recipient,
+        })),
+      ),
     )
     .filter((slot) => !have.has(slotKey(slot)) && mayWrap(log, slot, wrapper, skip))
     .sort(compareSlots);
@@ -75,10 +108,10 @@ const isSlot = (slot: unknown): slot is WrapSlot => {
 };
 
 /**
- * The slots of the hub's catch-up answer that the verified log confirms: well-formed, the **current** epoch of a
- * scope of this log (older epochs only on request, section 5.10), recipient entitled now, `wrapper` allowed (W1/W2).
- * Anything else is dropped (a malicious hub could ask for a wrap to an outsider or for history). Sorted, without
- * duplicates.
+ * The slots of the hub's catch-up answer that the verified log confirms: well-formed, an epoch `catchUpEpochs` gives
+ * the recipient (the current one; every epoch for an admin reading a workgroup by inheritance), recipient entitled
+ * now, `wrapper` allowed (W1/W2) and not withheld by the transition rule (`compatSkip`). Anything else is dropped (a
+ * malicious hub could ask for a wrap to an outsider or for history). Sorted, without duplicates.
  */
 export function confirmedSlots(
   log: VerifiedLog,
@@ -90,7 +123,12 @@ export function confirmedSlots(
   const state = log.state;
   const unique = new Map([...offered].filter(isSlot).map((slot) => [slotKey(slot), slot]));
   return [...unique.values()]
-    .filter((slot) => slot.epoch === state.epoch(slot.scope, slot.scope_id) && mayWrap(log, slot, wrapper, skip))
+    .filter(
+      (slot) =>
+        catchUpEpochs(state, slot.scope, slot.scope_id, slot.recipient).includes(slot.epoch) &&
+        mayWrap(log, slot, wrapper, skip) &&
+        !compatSkip(state, wrapper, slot),
+    )
     .sort(compareSlots);
 }
 

@@ -158,8 +158,8 @@ test('a passkey without PRF is refused with the hint; nothing remains and the sa
   await page.getByTestId('invite.create-passkey').click();
   await page.getByTestId('invite.unlock').click();
   const message = page.getByTestId('prf-required');
-  await expect(message).toContainText('You need a passkey that supports PRF.');
-  await expect(message).toContainText('Bitwarden currently does not support PRF');
+  await expect(message).toContainText('You need a passkey that can open your data.');
+  await expect(message).toContainText('Passkeys stored in Bitwarden currently cannot open your data.');
   await expect(message).toContainText('Delete the passkey you just created');
   await expect(page.getByTestId('prf-required.later')).toHaveCount(0);
   // the registration was withdrawn at the hub; no passkey slot, no organization

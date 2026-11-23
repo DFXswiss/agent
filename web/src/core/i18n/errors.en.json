@@ -85,8 +85,8 @@
     "action": "Use another passkey or the recovery code."
   },
   "decrypt_failed": {
-    "title": "Cannot decrypt",
-    "body": "The data could not be decrypted with your keys.",
+    "title": "Cannot be opened",
+    "body": "This content cannot be opened on this device.",
     "action": "Unlock with another passkey or your recovery code."
   },
   "delivery_failed": {
@@ -110,8 +110,8 @@
     "action": "Retry the task."
   },
   "epoch_stale": {
-    "title": "Outdated key",
-    "body": "The data was encrypted with an outdated key.",
+    "title": "Outdated content",
+    "body": "This content was saved in an outdated way and was not accepted.",
     "action": "Reload the page and try again."
   },
   "event_conflict": {
@@ -140,8 +140,8 @@
     "action": "Reload the page and try again."
   },
   "hpke_short": {
-    "title": "Damaged key data",
-    "body": "Encrypted key data is too short.",
+    "title": "Damaged data",
+    "body": "Protected data is damaged.",
     "action": "If it happens again, contact support with the error code."
   },
   "hub_unreachable": {
@@ -240,8 +240,8 @@
     "action": "If it happens again, contact support with the error code."
   },
   "log_epoch": {
-    "title": "Invalid key change",
-    "body": "A key change in the membership history is invalid.",
+    "title": "Invalid change",
+    "body": "A change in the membership history is invalid.",
     "action": "If it happens again, contact support with the error code."
   },
   "log_fork": {
@@ -385,13 +385,13 @@
     "action": "Open the platform under its official address and contact support."
   },
   "prf_length": {
-    "title": "Passkey key invalid",
-    "body": "The passkey returned a key of the wrong length.",
+    "title": "Passkey answer invalid",
+    "body": "The passkey returned an invalid answer.",
     "action": "Use another passkey or your recovery code."
   },
   "prf_missing": {
     "title": "Passkey cannot unlock",
-    "body": "This passkey cannot unlock your encryption keys on this device.",
+    "body": "This passkey cannot open your data on this device.",
     "action": "Use your recovery code, remember this browser or add another passkey."
   },
   "prompt_refused": {
@@ -430,9 +430,9 @@
     "action": "Ask an administrator for write access."
   },
   "rotation_required": {
-    "title": "Key rotation required",
-    "body": "A key must be rotated before this change.",
-    "action": "Wait for the automatic rotation, then try again."
+    "title": "Change not possible yet",
+    "body": "The organization changed in the meantime.",
+    "action": "Reload the page and try again."
   },
   "rp_id_mismatch": {
     "title": "Passkey for another site",
@@ -545,8 +545,8 @@
     "action": "Retry the task."
   },
   "wrap_unauthorized": {
-    "title": "Unauthorized key share",
-    "body": "A key share was not created by an authorized person and was ignored.",
+    "title": "Unauthorized share",
+    "body": "Something was shared by a person without the right to do so and was ignored.",
     "action": "No action needed."
   }
 }

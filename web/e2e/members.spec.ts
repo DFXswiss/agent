@@ -1,7 +1,8 @@
 // Members and rights (06-web.md section 7.1) against the real hub: an admin invites (link and code shown once, open
 // invitations revoked), a second user joins with the code (API, the screen is WEB-08), the admin changes the role,
-// grants workgroup access with history, removes the member with the rotation progress; a plain member sees no admin
-// controls, leaves, and the admin's browser rotates what the member could read automatically with a toast.
+// (an admin reads every workgroup as admin, ADR-058), grants workgroup access with history, removes the member while
+// the dialog shows "Saving …"; a plain member sees no admin controls, leaves, and the admin's browser rotates what the
+// member could read automatically and silently.
 import type { BrowserContext, Page } from '@playwright/test';
 import { ORG, WG } from '../src/core/log/state';
 import { expect, test } from './fixtures/test.ts';
@@ -101,9 +102,14 @@ test('a member joins; the admin changes the role, grants with history and remove
   await row.getByTestId('members.item.role-change').click();
   await page.getByTestId('members.role.confirm').click();
   await expect(row.getByTestId('members.item.role')).toHaveText('Admin');
+  // as an admin, bob reads every workgroup (ADR-058)
+  await expect(row.getByTestId('members.item.access')).toContainText('Researchreads as admin');
+  // demoting the admin it made: one honest sentence; the rotation of what bob read only as admin is built silently
   await row.getByTestId('members.item.role-change').click();
+  await expect(page.getByTestId('members.role.demote')).toContainText('already read');
   await page.getByTestId('members.role.confirm').click();
   await expect(row.getByTestId('members.item.role')).toHaveText('Member');
+  expect((await adaUser.log(ada.org)).state.epoch(WG, wg)).toBe(2);
   // grant with history
   await row.getByTestId('members.item.grant').click();
   await page.getByTestId('members.grant.access').selectOption('write');
@@ -115,8 +121,8 @@ test('a member joins; the admin changes the role, grants with history and remove
   await page.getByTestId('members.ungrant.confirm').click();
   await expect(page.getByTestId('members.ungrant')).toHaveCount(0);
   await expect(row.getByTestId('members.item.access')).not.toContainText('Research');
-  expect((await adaUser.log(ada.org)).state.epoch(WG, wg)).toBe(2);
-  // remove: the dialog explains, then shows the rotation progress (the append is held back briefly to watch it)
+  expect((await adaUser.log(ada.org)).state.epoch(WG, wg)).toBe(3);
+  // remove: the dialog explains, then shows "Saving …" (the append is held back briefly to watch it)
   await row.getByTestId('members.item.remove').click();
   await expect(page.getByTestId('members.remove')).toContainText('already read');
   let release: () => void = () => undefined;
@@ -126,9 +132,8 @@ test('a member joins; the admin changes the role, grants with history and remove
     await route.continue();
   });
   await page.getByTestId('members.remove.confirm').click();
-  await expect(page.getByTestId('members.remove.progress.rotate')).toHaveText('Rotating keys 2/2');
-  await expect(page.getByTestId('members.remove.progress.wrap')).toHaveText('Wrapping for 1 recipients');
-  await expect(page.getByTestId('members.remove.progress.send')).toBeVisible();
+  await expect(page.getByTestId('members.remove.progress.save')).toHaveText('Saving …');
+  await expect(page.getByTestId('members.remove')).not.toContainText('key');
   release();
   await expect(page.getByTestId('members.remove')).toHaveCount(0);
   await expect(member(page, 'Bob Member')).toHaveCount(0);
@@ -137,7 +142,7 @@ test('a member joins; the admin changes the role, grants with history and remove
   const tail = log.entries.slice(-3).map((entry) => entry.body.type);
   expect(tail).toEqual(['remove', 'rotate', 'rotate']);
   expect(log.state.epoch(ORG, ada.org)).toBe(2);
-  expect(log.state.epoch(WG, wg)).toBe(2);
+  expect(log.state.epoch(WG, wg)).toBe(3);
   expect(log.state.epoch(WG, log.state.defaultWg)).toBe(2);
   // the hub refuses the removed member at once
   await expect(bob.user.request('GET', `/v1/orgs/${ada.org}`)).rejects.toThrow(/403|404/);
@@ -187,10 +192,9 @@ test('a plain member sees no admin controls and leaves; the admin rotates automa
   await expect(bob.page.getByTestId('members.loading')).toBeVisible();
   await navigateInApp(bob.page, `/o/${unknown}/workgroups`);
   await expect(bob.page.getByTestId('workgroups.loading')).toBeVisible();
-  // the admin's browser owes the rotation and sends it with a toast
-  await expect(page.getByTestId('rotation-toast.item')).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId('rotation-toast.close').click();
-  await expect(page.getByTestId('rotation-toast.item')).toHaveCount(0);
+  // the admin's browser owes the rotation and sends it silently (no notice, ADR-058)
+  await expect.poll(async () => (await adaUser.log(ada.org)).state.pendingScopes().length, { timeout: 15_000 }).toBe(0);
+  await expect(page.getByTestId('rotation-toast')).toHaveCount(0);
   const log = await adaUser.log(ada.org);
   expect(log.state.pendingScopes()).toEqual([]);
   expect(log.state.epoch(ORG, ada.org)).toBe(2);

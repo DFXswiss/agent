@@ -15,7 +15,7 @@
   "create.working": "Warte auf Ihr Gerät…",
   "cancelled": "Die Passkey-Erstellung wurde abgebrochen – bitte erneut versuchen.",
   "unlock.title": "Noch einmal bestätigen",
-  "unlock.explain": "Bestätigen Sie noch einmal, um sich anzumelden. Damit werden Ihre Schlüssel auf diesem Gerät entsperrt.",
+  "unlock.explain": "Bestätigen Sie noch einmal, um sich anzumelden.",
   "unlock": "Mit Passkey anmelden",
   "unlock.working": "Warte auf Ihren Passkey…",
   "unlock.cancelled": "Die Anmeldung wurde abgebrochen – bitte erneut versuchen.",

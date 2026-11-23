@@ -15,7 +15,7 @@
   "create.working": "Waiting for your device…",
   "cancelled": "Passkey creation was cancelled – try again.",
   "unlock.title": "Confirm once more",
-  "unlock.explain": "Confirm once more to sign in. This unlocks your encryption keys on this device.",
+  "unlock.explain": "Confirm once more to sign in.",
   "unlock": "Sign in with passkey",
   "unlock.working": "Waiting for your passkey…",
   "unlock.cancelled": "Sign-in was cancelled – try again.",

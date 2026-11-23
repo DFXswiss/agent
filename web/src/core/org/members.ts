@@ -6,7 +6,10 @@
 //
 // Rights mirror the log rules (04-crypto.md section 4.7): role, grant, ungrant and remove of others need an admin;
 // the last admin can neither be demoted nor removed nor leave (`last_admin`); the default workgroup's write access is
-// not reducible (ADR-024 addendum: no `ungrant`, no `grant` on it).
+// not reducible (ADR-024 addendum: no `ungrant`, no `grant` on it). Every admin reads every workgroup by inheritance
+// (ADR-058): `grant` and `ungrant` act on the explicit access only (a `grant` of `read` to an admin makes it explicit,
+// an `ungrant` of an admin's explicit access leaves the inherited read). A grant needs no key of the granting admin:
+// the key holders deliver it by catch-up. Demoting an admin is a normal batch; `buildBatch` adds the rotation.
 import { ADMIN, MEMBER, type OrgState, READ, USER, WRITE } from '../log/state';
 import { type Directory, selectDirectory } from '../tasks/directory';
 import type { StoreState } from '../store/store';
@@ -20,6 +23,8 @@ export interface MemberAccess {
   readonly wg: string;
   readonly access: Access;
   readonly isDefault: boolean;
+  /** Read only because the member is an admin ("reads as admin"; nothing to ungrant). */
+  readonly inherited: boolean;
 }
 
 /** One row of the member list. */
@@ -59,7 +64,9 @@ export function memberRows(state: OrgState, me: string, directory: Directory): M
       role: p.role as Role,
       access: order.flatMap((wg) => {
         const access = state.wgAccess(p.id, wg) as Access | null;
-        return access === null ? [] : [{ wg, access, isDefault: wg === state.defaultWg }];
+        return access === null
+          ? []
+          : [{ wg, access, isDefault: wg === state.defaultWg, inherited: state.inherited(p.id, wg) }];
       }),
       isMe: p.id === me,
       lastAdmin: isLastAdmin(state, p.id),
@@ -77,11 +84,11 @@ export function canManage(state: OrgState, me: string): boolean {
   return state.isAdmin(me);
 }
 
-/** Workgroups `subject` can still be granted (not the default one, not archived) with the access it has now. */
+/** Workgroups `subject` can be granted (not the default one, not archived) with its explicit access now. */
 export function grantable(state: OrgState, subject: string): { wg: string; access: Access | null }[] {
   return workgroupOrder(state)
     .filter((wg) => wg !== state.defaultWg && state.writable(wg))
-    .map((wg) => ({ wg, access: state.wgAccess(subject, wg) as Access | null }));
+    .map((wg) => ({ wg, access: state.explicitAccess(subject, wg) as Access | null }));
 }
 
 function requireAdmin(state: OrgState, me: string): void {
@@ -104,25 +111,27 @@ export function rolePlan(subject: string, role: Role): Planner {
   };
 }
 
-/** `grant` of `access` on `wg` (optionally with the older epochs); null once the subject has exactly that access. */
+/** `grant` of `access` on `wg` (optionally with the older epochs); null once the subject has exactly that explicit
+ *  access. */
 export function grantPlan(subject: string, wg: string, access: Access, history = false): Planner {
   return (log, me) => {
     const state = log.state;
     requireAdmin(state, me);
     requireUser(state, subject);
     if (wg === state.defaultWg || !state.writable(wg)) refuse('forbidden');
-    if (state.wgAccess(subject, wg) === access) return null;
+    if (state.explicitAccess(subject, wg) === access) return null;
     return { entries: [{ type: 'grant', subject, wg, access }], history };
   };
 }
 
-/** `ungrant` (+ R: the workgroup's rotation); null once the subject has no access. */
+/** `ungrant` of the explicit access (+ R: the workgroup's rotation unless the subject still reads it as admin); null
+ *  once the subject has no explicit access. */
 export function ungrantPlan(subject: string, wg: string): Planner {
   return (log, me) => {
     const state = log.state;
     requireAdmin(state, me);
     if (wg === state.defaultWg) refuse('forbidden');
-    if (state.member(subject) === null || state.wgAccess(subject, wg) === null) return null;
+    if (state.member(subject) === null || state.explicitAccess(subject, wg) === null) return null;
     return { entries: [{ type: 'ungrant', subject, wg }] };
   };
 }

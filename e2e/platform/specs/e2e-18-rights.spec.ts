@@ -1,8 +1,9 @@
 // E2E-18 (07-testing.md section 2.1; 04-crypto.md sections 4.3, 4.7, 6.4; 03-api.md sections 3, 4; 06-web.md sections
 // 7.1, 7.2): rights in the backend and in the user interface. An admin creates a further workgroup (the creating admin
 // gets write), invites a member and a second admin and grants the member read access on the further workgroup on the
-// members screen (a person added at workgroup level); the second admin has no access to it without a `grant`. The
-// member's and the second admin's screens hide what they may not do; direct API calls with their sessions for
+// members screen (a person added at workgroup level); the second admin reads it by inheritance (ADR-058: every admin
+// reads every workgroup of the org) but cannot write it without a `grant`. The member's and the second admin's
+// screens hide what they may not do; direct API calls with their sessions for
 // forbidden writes get `403 forbidden` (log entries without the right `log_rights`, events `author_not_writer`; reads
 // without the right `404 not_found`, the hub's rule against existence oracles). An event the hub refused
 // – the member's whiteboard entry in the workgroup it only reads – stored by a tampered hub is flagged
@@ -99,8 +100,10 @@ test('@E2E-18 @R-5.4 @R-8.1 @R-8.2 @R-8.3 @R-8.4 @R-8.5 @R-8.6 @R-11.3 @R-P.5 ri
   expect(log.state.member(carl.user.userId)).toMatchObject({ role: 'admin' });
   expect(log.state.wgAccess(ada.user.userId, research)).toBe('write');
   expect(log.state.wgAccess(bob.user.userId, research)).toBe('read');
-  // being admin does not imply access to a workgroup (wg_create gives only the creator write)
-  expect(log.state.wgAccess(carl.user.userId, research)).toBeNull();
+  // an admin reads every workgroup by inheritance (ADR-058); wg_create gives only the creator write
+  expect(log.state.wgAccess(carl.user.userId, research)).toBe('read');
+  expect(log.state.inherited(carl.user.userId, research)).toBe(true);
+  expect(log.state.inherited(ada.user.userId, research)).toBe(false);
   // the default workgroup: write for every member (R-8.4)
   for (const user of [ada.user, bob.user, carl.user])
     expect(log.state.wgAccess(user.userId, log.state.defaultWg)).toBe('write');
@@ -134,8 +137,15 @@ test('@E2E-18 @R-5.4 @R-8.1 @R-8.2 @R-8.3 @R-8.4 @R-8.5 @R-8.6 @R-11.3 @R-P.5 ri
   await expect(bob.page.getByTestId('devices.list')).toBeAttached();
   await expect(bob.page.getByTestId('devices.add.open')).toHaveCount(0);
   await expect(bob.page.getByTestId('devices.assign.open')).toHaveCount(0);
-  // The second admin manages members but does not see the workgroup it has no grant for in the composer.
-  await visit(carl.page, `/o/${org}`);
+  // The second admin manages members and reads the workgroup, but does not get it in the composer (write only).
+  await visit(carl.page, `/o/${org}/workgroups`);
+  await expect(
+    carl.page.getByTestId('workgroups.item').filter({ hasText: WG_NAME }).getByTestId('workgroups.item.access'),
+  ).toHaveText('Read');
+  await navigate(carl.page, `/o/${org}/w/${research}/whiteboard`);
+  await expect(carl.page.getByTestId('whiteboard.empty')).toBeVisible({ timeout: 60_000 });
+  await expect(carl.page.getByTestId('whiteboard.create')).toHaveCount(0);
+  await navigate(carl.page, `/o/${org}`);
   await expect(carl.page.getByTestId('home.wg').locator('option')).toHaveCount(1);
   await expect(carl.page.getByTestId('home.wg').locator('option', { hasText: WG_NAME })).toHaveCount(0);
   await navigate(carl.page, `/o/${org}/members`);
@@ -223,9 +233,32 @@ test('@E2E-18 @R-5.4 @R-8.1 @R-8.2 @R-8.3 @R-8.4 @R-8.5 @R-8.6 @R-11.3 @R-P.5 ri
     { level: 'workgroup', text: FORGED_TEXT },
   );
   expect(await refusal(bob.user, 'POST', '/v1/events', { events: [{ event: entry }] })).toBe('400 author_not_writer');
-  // the second admin cannot read the workgroup it was not granted
-  expect(await refusal(carl.user, 'GET', `/v1/scopes/${research}/events`)).toBe('404 not_found');
+  // the second admin reads the workgroup by inheritance but writes nothing in it without a `grant`
+  expect(await refusal(carl.user, 'GET', `/v1/scopes/${research}/events`)).toBe('ok');
   expect(await refusal(carl.user, 'GET', `/v1/workgroups/${research}/device-candidates`)).toBe('404 not_found');
+  const carlLog = await memberLog(carl.user, org);
+  // (the key reaches the second admin by catch-up from the creating admin's browser)
+  await expect
+    .poll(async () => (await carl.user.keys(org, carlLog)).has(epochKey(WG, research, 1)), { timeout: 60_000 })
+    .toBe(true);
+  const carlTask = uuid7();
+  expect(
+    await refusal(carl.user, 'POST', '/v1/tasks', {
+      task_id: carlTask,
+      wg_id: research,
+      events: [
+        await wgEvent(carl.user, carlLog, org, research, { kind: 'task.meta', task: carlTask }, { title: 'not mine' }),
+        await wgEvent(
+          carl.user,
+          carlLog,
+          org,
+          research,
+          { kind: 'prompt', task: carlTask },
+          { text: 'hi', attachments: [] },
+        ),
+      ],
+    }),
+  ).toBe('403 forbidden');
 
   // A tampered hub stores the refused event anyway: the reader browsers flag it and never show its text.
   const stored = await orchestrator.call<{ scope_seq: number }>('POST', '/hub-db/forge-event', {
@@ -234,7 +267,7 @@ test('@E2E-18 @R-5.4 @R-8.1 @R-8.2 @R-8.3 @R-8.4 @R-8.5 @R-8.6 @R-11.3 @R-P.5 ri
   });
   expect(stored.scope_seq).toBeGreaterThan(0);
   // (a tampered insert sends no live frame: the readers load the board afresh)
-  for (const reader of [page, bob.page]) {
+  for (const reader of [page, bob.page, carl.page]) {
     await visit(reader, `/o/${org}/w/${research}/whiteboard`);
     const flagged = reader.locator('[data-testid="whiteboard.item"][data-type="unverifiable"]');
     await expect(flagged).toHaveAttribute('data-code', 'author_not_writer', { timeout: 30_000 });

@@ -52,7 +52,7 @@ the names in code; renaming requires an ADR.
 | `platform_entry` [AO] | `seq` PK, `entry_text`, `entry_hash` UNIQUE, `type`, `subject_id` NULL, `received_at` | |
 | `org_member` [P] | (`org_id`,`principal_id`) PK, `kind`, `role` CHECK in (`admin`,`member`,`device`), `joined_seq`, `removed_seq` NULL | |
 | `wg` [P] | `id` PK, `org_id`, `is_default` bool, `created_seq`, `archived_seq` NULL | |
-| `wg_access` [P] | (`wg_id`,`user_id`) PK, `access` CHECK in (`read`,`write`), `granted_seq`, `revoked_seq` NULL | default wg rows created for every member |
+| `wg_access` [P] | (`wg_id`,`user_id`) PK, `access` CHECK in (`read`,`write`), `granted_seq`, `revoked_seq` NULL, `inherited` boolean (only with `read`; KOR-34) | the effective access: default wg rows created for every member; `inherited` rows give every admin `read` on every other workgroup (ADR-058); credential eligibility ignores inherited rows |
 | `wg_device` [P] | (`wg_id`,`device_id`) PK, `assigned_seq`, `unassigned_seq` NULL | |
 | `platform_role` [P] | (`user_id`,`role`) PK, `granted_seq`, `revoked_seq` NULL | role `inviter` |
 | `scope_epoch` | (`scope`,`scope_id`,`epoch`) PK, `created_at`, `created_seq` NULL | scope ∈ `org`,`wg`,`cred`; current = max epoch |

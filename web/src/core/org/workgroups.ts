@@ -4,7 +4,8 @@
 // - Create: one batch `wg_create` (the creating admin gets write), `grant` for the chosen members, `device_assign` for
 //   the chosen devices of the org, the wraps of the new `WK_1` for every reader (built by `buildBatch`) and the
 //   `wg.profile` event sealed with the current `OK` at `lh` = the batch's last entry (the hub checks events against
-//   the log after the batch; the workgroup must exist at `lh`). Other admins get no access without a `grant`.
+//   the log after the batch; the workgroup must exist at `lh`). Every other admin reads it by inheritance (ADR-058),
+//   so `WK_1` is wrapped for every admin too.
 // - Rename: a new `wg.profile` event (`POST /v1/events`), read into the store at once.
 // - Archive: `wg_archive` (never the default workgroup).
 import { uuid7 } from '../encoding/ids';

@@ -18,7 +18,7 @@ test('without PRF the code unlocks and remembers the browser; forgetting it brin
   await withoutPrf(page, first);
   await page.getByTestId('login.submit').click();
   await expect(page.getByTestId('prf-missing.explain')).toHaveText(
-    'This passkey cannot unlock your encryption keys on this device.',
+    'This passkey cannot open your data on this device.',
   );
   await expect(page.getByTestId('prf-missing.other-device')).toContainText('Add passkey');
   await page.getByTestId('prf-missing.recovery.input').fill(done.recoveryCode);

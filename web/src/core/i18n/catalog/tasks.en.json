@@ -7,7 +7,7 @@
   "loading": "Loading…",
   "not-found": "This workgroup was not found.",
   "wg.unnamed": "Workgroup",
-  "title.loading": "Title is being decrypted…",
+  "title.loading": "Loading title …",
   "title.unverifiable": "Unverifiable title ({code})",
   "owner.unknown": "Member",
   "state.scheduling": "Waiting",

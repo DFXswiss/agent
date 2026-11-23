@@ -421,7 +421,7 @@ describe('credentials slice', () => {
     expect(store.getState().credentials.entries).toEqual([]);
     for (let index = 0; index < MAX_NOTICES + 1; index += 1) {
       noteCredentialRotation(store, {
-        result: { status: 'rotated', epoch: index + 2, records: index, dropped: 0 },
+        result: { status: 'blocked', kinds: ['mailbox'] },
         at: index,
       });
     }

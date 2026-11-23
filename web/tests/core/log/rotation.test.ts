@@ -15,7 +15,6 @@ import {
   createOrgBody,
   decertificationBatch,
   pendingRotation,
-  type BatchProgress,
 } from '../../../src/core/log/rotation';
 import { slotJson } from '../../../src/core/log/wraps';
 import { actor, actors, type Actor, idOf, platformWith, TS, World } from './world';
@@ -30,10 +29,10 @@ const code = async (promise: Promise<unknown>) => {
   return null;
 };
 
-let alice: Actor, bob: Actor, carol: Actor, device: Actor, dev2: Actor;
+let alice: Actor, bob: Actor, carol: Actor, dave: Actor, device: Actor, dev2: Actor;
 
 beforeAll(async () => {
-  [alice, bob, carol, device, dev2] = await actors('alice', 'bob', 'carol', 'device', 'dev2');
+  [alice, bob, carol, dave, device, dev2] = await actors('alice', 'bob', 'carol', 'dave', 'device', 'dev2');
 });
 
 describe('genesis batch (POST /v1/orgs)', () => {
@@ -90,6 +89,7 @@ describe('membership batches', () => {
     world = await World.create(alice);
     await world.admitUser(alice, bob);
     await world.admitUser(alice, carol, 'admin');
+    await world.admitUser(alice, dave);
     await world.admitDevice(alice, device, [world.defaultWg]);
     world.add(dev2);
     wg = await idOf('wg one');
@@ -103,7 +103,6 @@ describe('membership batches', () => {
   });
 
   it('creates a workgroup with grants and an assignment in one batch (wraps of WK_1 for all recipients)', async () => {
-    const progress: BatchProgress[] = [];
     const built = await world.batch(
       alice,
       [
@@ -111,17 +110,16 @@ describe('membership batches', () => {
         { type: 'grant', subject: bob.id, wg, access: 'write' },
         { type: 'device_assign', device: device.id, wg },
       ],
-      { progress: (step) => progress.push(step), events: [{ marker: 1 }] },
+      { events: [{ marker: 1 }] },
     );
     expect(built.newKeys.map((k) => k.scope_id)).toEqual([wg]);
-    expect(new Set(built.body.wraps.map((w) => w.recipient_id))).toEqual(new Set([alice.id, bob.id, device.id]));
+    // the other admin (carol) reads every workgroup by inheritance (ADR-058) and gets WK_1 as well
+    expect(new Set(built.body.wraps.map((w) => w.recipient_id))).toEqual(
+      new Set([alice.id, bob.id, carol.id, device.id]),
+    );
     expect(built.body.events).toEqual([{ marker: 1 }]);
-    expect(progress).toEqual([
-      { step: 'rotate', done: 1, total: 1 },
-      { step: 'wrap', recipients: 3 },
-    ]);
-    for (const who of [alice, bob, device]) expect(world.currentKey(who.id, 'wg', wg)).not.toBeNull();
-    expect(world.currentKey(carol.id, 'wg', wg)).toBeNull();
+    for (const who of [alice, bob, carol, device]) expect(world.currentKey(who.id, 'wg', wg)).not.toBeNull();
+    expect(world.currentKey(dave.id, 'wg', wg)).toBeNull();
   });
 
   it('wraps the org key for a device at its first assignment (ADR-007)', async () => {
@@ -152,22 +150,32 @@ describe('membership batches', () => {
     const built = await world.batch(
       alice,
       [
-        { type: 'grant', subject: carol.id, wg, access: 'read' },
+        { type: 'grant', subject: dave.id, wg, access: 'read' },
         { type: 'device_assign', device: dev2.id, wg },
       ],
       { history: true },
     );
     expect(built.body.wraps.map((w) => [w.scope, w.epoch, w.recipient_id])).toEqual([
       ['org', 2, dev2.id],
-      ['wg', 1, carol.id],
-      ['wg', 2, carol.id],
-      ['wg', 2, dev2.id],
+      ['wg', 1, dave.id],
+      ...[dave.id, dev2.id].sort().map((id) => ['wg', 2, id]),
     ]);
     await world.batch(alice, [{ type: 'device_unassign', device: dev2.id, wg }]);
   });
 
+  it('makes the read of an admin explicit with a grant (no wraps: it reads already)', async () => {
+    const built = await world.batch(alice, [{ type: 'grant', subject: carol.id, wg, access: 'read' }]);
+    expect(built.body.wraps).toEqual([]);
+    expect(world.state.inherited(carol.id, wg)).toBe(false);
+    expect(world.state.explicitAccess(carol.id, wg)).toBe('read');
+  });
+
   it('ungrants and removes with one rotate per element of R, in order after the triggers', async () => {
-    const ungrant = await world.batch(alice, [{ type: 'ungrant', subject: carol.id, wg }]);
+    // an admin's explicit access goes, the inherited read stays: nothing to rotate
+    const admin = await world.batch(alice, [{ type: 'ungrant', subject: carol.id, wg }]);
+    expect(admin.required).toEqual([]);
+    expect(world.state.inherited(carol.id, wg)).toBe(true);
+    const ungrant = await world.batch(alice, [{ type: 'ungrant', subject: dave.id, wg }]);
     expect(ungrant.required).toEqual([{ scope: 'wg', scope_id: wg }]);
     const removal = await world.batch(alice, [{ type: 'remove', subject: bob.id }]);
     expect(removal.required).toEqual(asJson([`org ${world.org}`, `wg ${world.defaultWg}`, `wg ${wg}`]));
@@ -180,15 +188,17 @@ describe('membership batches', () => {
     const leave = await world.batch(carol, [{ type: 'remove', subject: carol.id }]);
     expect(leave.required).toEqual([]);
     expect(leave.body.wraps).toEqual([]);
+    // the admin read every workgroup: all of them are owed
     expect(world.state.pendingScopes()).toEqual([
       ['org', world.org],
-      ['wg', world.defaultWg],
+      ...[world.defaultWg, wg].sort().map((id) => ['wg', id]),
     ]);
     const memberJob = pendingRotation(world.log!, { author: device });
     expect(memberJob).toBeNull();
     const job = (await pendingRotation(world.log!, { author: alice, ts: TS }))!;
     expect(job.body.entries.map((e) => [e.body.type, e.body.scope])).toEqual([
       ['rotate', 'org'],
+      ['rotate', 'wg'],
       ['rotate', 'wg'],
     ]);
     expect(job.log.state.pendingScopes()).toEqual([]);

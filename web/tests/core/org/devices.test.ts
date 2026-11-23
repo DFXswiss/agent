@@ -258,17 +258,9 @@ describe('rights and platform access', () => {
     expect(hasPlatformAccess(w.world.state, platform.with({ orgAccess: new Map([[w.org, false]]) }))).toBe(false);
   });
 
-  it('offers the workgroups whose WK and OK the user holds', async () => {
+  it('offers every writable workgroup, whatever keys the user holds (ADR-058)', async () => {
     const { w, one } = await setup({ as: 'bob' });
-    const state = w.world.state;
-    expect(assignableWorkgroups(state, keyRing(w.store, w.org))).toEqual([w.world.defaultWg, one]);
-    // without the key of `one`
-    const partial = (scope: string, id: string, epoch: number) =>
-      scope === WG && id === one ? null : keyRing(w.store, w.org)(scope, id, epoch);
-    expect(assignableWorkgroups(state, partial)).toEqual([w.world.defaultWg]);
-    expect(
-      assignableWorkgroups(state, (scope, id, epoch) => (scope === ORG ? null : partial(scope, id, epoch))),
-    ).toEqual([]);
+    expect(assignableWorkgroups(w.world.state)).toEqual([w.world.defaultWg, one]);
   });
 });
 
@@ -363,7 +355,8 @@ describe('assign, unassign, unpair', () => {
       steps.push(s.step),
     );
     expect(done.built).not.toBeNull();
-    expect(steps).toContain('send');
+    // only a new attempt would be reported (key handling stays out of sight)
+    expect(steps).toEqual([]);
     expect(w.world.state.assigned(pdev.id, one)).toBe(true);
     expect(holds(w, pdev, WG, one)).toBe(true);
     expect(holds(w, pdev, ORG, w.org)).toBe(true);

@@ -182,8 +182,8 @@ describe('InviteScreen', () => {
     fireEvent.click(screen.getByTestId('invite.unlock'));
     const message = await screen.findByTestId('prf-required');
     expect(message).toHaveAttribute('data-context', 'register');
-    expect(message).toHaveTextContent('Sie brauchen einen Passkey, der PRF unterstützt.');
-    expect(message).toHaveTextContent('Bitwarden unterstützt PRF');
+    expect(message).toHaveTextContent('Sie brauchen einen Passkey, der Ihre Daten öffnen kann.');
+    expect(message).toHaveTextContent('Mit den in Bitwarden gespeicherten Passkeys');
     expect(message).toHaveTextContent('Löschen Sie den eben angelegten Passkey');
     expect(screen.queryByTestId('prf-required.later')).toBeNull();
     // no account, no bound invitation, signed out

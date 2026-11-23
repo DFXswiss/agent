@@ -193,13 +193,13 @@
   },
   "decrypt_failed": {
     "en": {
-      "title": "Cannot decrypt",
-      "body": "The data could not be decrypted with your keys.",
+      "title": "Cannot be opened",
+      "body": "This content cannot be opened on this device.",
       "action": "Unlock with another passkey or your recovery code."
     },
     "de": {
-      "title": "Entschlüsselung fehlgeschlagen",
-      "body": "Die Daten konnten mit deinen Schlüsseln nicht entschlüsselt werden.",
+      "title": "Nicht lesbar",
+      "body": "Dieser Inhalt lässt sich auf diesem Gerät nicht öffnen.",
       "action": "Entsperre mit einem anderen Passkey oder deinem Wiederherstellungscode."
     }
   },
@@ -253,13 +253,13 @@
   },
   "epoch_stale": {
     "en": {
-      "title": "Outdated key",
-      "body": "The data was encrypted with an outdated key.",
+      "title": "Outdated content",
+      "body": "This content was saved in an outdated way and was not accepted.",
       "action": "Reload the page and try again."
     },
     "de": {
-      "title": "Veralteter Schlüssel",
-      "body": "Die Daten wurden mit einem veralteten Schlüssel verschlüsselt.",
+      "title": "Veralteter Inhalt",
+      "body": "Dieser Inhalt wurde veraltet gespeichert und nicht angenommen.",
       "action": "Lade die Seite neu und versuche es noch einmal."
     }
   },
@@ -325,13 +325,13 @@
   },
   "hpke_short": {
     "en": {
-      "title": "Damaged key data",
-      "body": "Encrypted key data is too short.",
+      "title": "Damaged data",
+      "body": "Protected data is damaged.",
       "action": "If it happens again, contact support with the error code."
     },
     "de": {
-      "title": "Beschädigte Schlüsseldaten",
-      "body": "Verschlüsselte Schlüsseldaten sind zu kurz.",
+      "title": "Beschädigte Daten",
+      "body": "Geschützte Daten sind beschädigt.",
       "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
     }
   },
@@ -565,13 +565,13 @@
   },
   "log_epoch": {
     "en": {
-      "title": "Invalid key change",
-      "body": "A key change in the membership history is invalid.",
+      "title": "Invalid change",
+      "body": "A change in the membership history is invalid.",
       "action": "If it happens again, contact support with the error code."
     },
     "de": {
-      "title": "Ungültiger Schlüsselwechsel",
-      "body": "Ein Schlüsselwechsel in der Mitgliederhistorie ist ungültig.",
+      "title": "Ungültige Änderung",
+      "body": "Eine Änderung in der Mitgliederhistorie ist ungültig.",
       "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
     }
   },
@@ -865,25 +865,25 @@
   },
   "prf_length": {
     "en": {
-      "title": "Passkey key invalid",
-      "body": "The passkey returned a key of the wrong length.",
+      "title": "Passkey answer invalid",
+      "body": "The passkey returned an invalid answer.",
       "action": "Use another passkey or your recovery code."
     },
     "de": {
-      "title": "Passkey-Schlüssel ungültig",
-      "body": "Der Passkey hat einen Schlüssel mit falscher Länge geliefert.",
+      "title": "Passkey-Antwort ungültig",
+      "body": "Der Passkey hat eine ungültige Antwort geliefert.",
       "action": "Verwende einen anderen Passkey oder deinen Wiederherstellungscode."
     }
   },
   "prf_missing": {
     "en": {
       "title": "Passkey cannot unlock",
-      "body": "This passkey cannot unlock your encryption keys on this device.",
+      "body": "This passkey cannot open your data on this device.",
       "action": "Use your recovery code, remember this browser or add another passkey."
     },
     "de": {
       "title": "Passkey kann nicht entsperren",
-      "body": "Dieser Passkey kann deine Verschlüsselungsschlüssel auf diesem Gerät nicht entsperren.",
+      "body": "Dieser Passkey kann deine Daten auf diesem Gerät nicht öffnen.",
       "action": "Verwende deinen Wiederherstellungscode, merke dir diesen Browser oder füge einen anderen Passkey hinzu."
     }
   },
@@ -973,14 +973,14 @@
   },
   "rotation_required": {
     "en": {
-      "title": "Key rotation required",
-      "body": "A key must be rotated before this change.",
-      "action": "Wait for the automatic rotation, then try again."
+      "title": "Change not possible yet",
+      "body": "The organization changed in the meantime.",
+      "action": "Reload the page and try again."
     },
     "de": {
-      "title": "Schlüsselrotation nötig",
-      "body": "Vor dieser Änderung muss ein Schlüssel rotiert werden.",
-      "action": "Warte auf die automatische Rotation und versuche es dann noch einmal."
+      "title": "Änderung noch nicht möglich",
+      "body": "Die Organisation hat sich inzwischen geändert.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
     }
   },
   "rp_id_mismatch": {
@@ -1249,13 +1249,13 @@
   },
   "wrap_unauthorized": {
     "en": {
-      "title": "Unauthorized key share",
-      "body": "A key share was not created by an authorized person and was ignored.",
+      "title": "Unauthorized share",
+      "body": "Something was shared by a person without the right to do so and was ignored.",
       "action": "No action needed."
     },
     "de": {
-      "title": "Unberechtigte Schlüsselfreigabe",
-      "body": "Eine Schlüsselfreigabe stammt nicht von einer berechtigten Person und wurde ignoriert.",
+      "title": "Unberechtigte Freigabe",
+      "body": "Etwas wurde von einer Person ohne Berechtigung freigegeben und ignoriert.",
       "action": "Keine Aktion nötig."
     }
   },

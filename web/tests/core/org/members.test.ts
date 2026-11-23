@@ -54,11 +54,11 @@ describe('member rows', () => {
     expect(rows[2]!.access).toEqual(
       order.flatMap((wg) =>
         wg === w.world.defaultWg
-          ? [{ wg, access: 'write', isDefault: true }]
+          ? [{ wg, access: 'write', isDefault: true, inherited: false }]
           : wg === one
-            ? [{ wg, access: 'read', isDefault: false }]
+            ? [{ wg, access: 'read', isDefault: false, inherited: false }]
             : wg === old
-              ? [{ wg, access: 'write', isDefault: false }]
+              ? [{ wg, access: 'write', isDefault: false, inherited: false }]
               : [],
       ),
     );
@@ -78,6 +78,32 @@ describe('member rows', () => {
     expect(grantable(state, a.bob!.id)).toEqual([{ wg: one, access: 'read' }]);
     expect(grantable(state, a.cy!.id)).toEqual([{ wg: one, access: null }]);
     expect(grantable(state, a.cy!.id).some((g) => g.wg === old)).toBe(false);
+  });
+});
+
+describe('an admin reading by inheritance (ADR-058)', () => {
+  it('shows the inherited read, grants explicit access over it and ungrants only explicit access', async () => {
+    const { w, a, one } = await setup();
+    await w.world.batch(a.ada!, [{ type: 'role', subject: a.cy!.id, role: 'admin' }]);
+    const log = w.world.log!;
+    const state = log.state;
+    const cy = memberRows(state, a.ada!.id, names({})).find((r) => r.id === a.cy!.id)!;
+    expect(cy.access.find((item) => item.wg === one)).toEqual({
+      wg: one,
+      access: 'read',
+      isDefault: false,
+      inherited: true,
+    });
+    expect(grantable(state, a.cy!.id)).toEqual([{ wg: one, access: null }]);
+    expect(grantPlan(a.cy!.id, one, 'read')(log, a.ada!.id)).toEqual({
+      entries: [{ type: 'grant', subject: a.cy!.id, wg: one, access: 'read' }],
+      history: false,
+    });
+    expect(ungrantPlan(a.cy!.id, one)(log, a.ada!.id)).toBeNull();
+    // demoting an admin is a normal batch; the rotation is added by `buildBatch`
+    expect(rolePlan(a.cy!.id, 'member')(log, a.ada!.id)).toEqual({
+      entries: [{ type: 'role', subject: a.cy!.id, role: 'member' }],
+    });
   });
 });
 

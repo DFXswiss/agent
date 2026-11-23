@@ -1,7 +1,8 @@
 """The catch-up list of `GET /v1/orgs/{org}/catch-up` (04-crypto.md sections 5.11 and 6.3 W2).
 
 For the calling member the hub lists, from its verified log, the slots `{scope, scope_id, epoch, recipient_id}` of the
-**current** epochs that have no stored wrap and that the caller may create (W1/W2, `agent_hub.log.catchup`):
+**current** epochs (for an admin reading a workgroup by inheritance: every epoch of it, ADR-058) that have no stored
+wrap and that the caller may create (W1/W2, `agent_hub.log.catchup`):
 
 - the `org` scope and every workgroup scope of this org (e.g. the wraps for a new member or a new device, or the
   caller's own self-wraps after `accept`);

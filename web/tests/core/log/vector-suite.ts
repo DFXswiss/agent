@@ -213,6 +213,19 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       const missing = catchup.missingWraps(log, plan.wrapper, existing, plan.excluded);
       same(missing.map(wraps.slotJson), plan.missing, `catch-up ${plan.wrapper}`);
     }
+    // admins reading by inheritance get every epoch (ADR-058 section 2); the browser confirms exactly these slots
+    const adminLog = await ctx.log({ log: data.admin_catch_up.log, founder: data.founder });
+    const adminExisting = slots(data.admin_catch_up.existing);
+    for (const plan of data.admin_catch_up.plans) {
+      const missing = catchup.missingWraps(adminLog, plan.wrapper, adminExisting, plan.excluded);
+      same(missing.map(wraps.slotJson), plan.missing, `admin catch-up ${plan.wrapper}`);
+      const offered = plan.missing.map(wraps.slotOf);
+      const confirmed = catchup
+        .confirmedSlots(adminLog, plan.wrapper, offered, plan.excluded)
+        .concat(offered.filter((slot: wraps.WrapSlot) => catchup.compatSkip(adminLog.state, plan.wrapper, slot)))
+        .sort(wraps.compareSlots);
+      same(confirmed.map(wraps.slotJson), plan.missing, `admin catch-up confirmed ${plan.wrapper}`);
+    }
     const credExisting = slots(data.cred_catch_up.existing);
     for (const plan of data.cred_catch_up.plans) {
       const missing = catchup.missingCredWraps([log], plan.owner, plan.wrapper, plan.current_epoch, credExisting);

@@ -201,7 +201,9 @@ def test_subscriber_collection_rules() -> None:
 def test_subscribers_are_discovered_on_first_use(restore_signals: None) -> None:
     signals._state.clear()
     found = signals.subscribers()
-    discovered = [subscriber for _area, value in discover(SIGNAL_SUBSCRIBERS) for subscriber in value["log.appended"]]
+    discovered = [
+        subscriber for _area, value in discover(SIGNAL_SUBSCRIBERS) for subscriber in value.get("log.appended", ())
+    ]
     assert list(found["log.appended"]) == discovered != []
     assert signals.emit("signals.unused", event_id=UUID(int=1)) == 0
 

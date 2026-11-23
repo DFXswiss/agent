@@ -1,12 +1,13 @@
 // Members and rights (06-web.md section 7.1, route `/o/:org/members`, right org:member, edit: admin). The list comes
 // from the verified log (display names from `member.profile`); admins see the controls – invite, change role (hidden for
-// the last admin), grant workgroup access (optionally with history), ungrant, remove – each change through the
-// confirmation dialog with the rotation progress (`submitBatch`). Every member can leave (hidden for the last admin).
-// Controls the user's verified rights do not allow are not rendered (section 1.2).
+// the last admin), grant workgroup access (optionally with history; every writable workgroup, the key holders deliver
+// the key), ungrant an explicit access, remove – each change through the confirmation dialog ("Saving …",
+// `submitBatch`). An access an admin has only by its role shows "reads as admin" and has nothing to ungrant (ADR-058).
+// Every member can leave (hidden for the last admin). Controls the user's verified rights do not allow are not
+// rendered (section 1.2).
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { keyRing, type Planner, submitBatch, type SubmitProgress } from '../../../core/org/batch';
-import { invitable } from '../../../core/org/invites';
+import { type Planner, submitBatch, type SubmitProgress } from '../../../core/org/batch';
 import {
   type Access,
   canManage,
@@ -51,9 +52,7 @@ interface GrantDialogProps {
 function GrantDialog({ member, state, directory, onClose, org }: GrantDialogProps) {
   const { app } = useAppEnv();
   const { t } = useI18n();
-  // only workgroups whose current key the admin holds: the grant carries the wraps (04-crypto.md section 5.10)
-  const held = keyRing(app.store, org);
-  const choices = grantable(state, member.id).filter((choice) => invitable(state, held, choice.wg));
+  const choices = grantable(state, member.id);
   const [wg, setWg] = useState(choices[0]?.wg ?? '');
   const [access, setAccess] = useState<Access>('read');
   const [history, setHistory] = useState(false);
@@ -141,8 +140,10 @@ function MemberItem({
         {row.access.map((item) => (
           <li key={item.wg} className="flex items-center gap-1 rounded border border-gray-200 px-2">
             <span>{directory.workgroups.get(item.wg) ?? t('members.wg.unnamed')}</span>
-            <span className="text-gray-600">{t(`members.access.${item.access}`)}</span>
-            {admin && !item.isDefault && (
+            <span className="text-gray-600" data-inherited={item.inherited}>
+              {item.inherited ? t('members.access.inherited') : t(`members.access.${item.access}`)}
+            </span>
+            {admin && !item.isDefault && !item.inherited && (
               <button
                 type="button"
                 className="min-h-11 min-w-11 underline"
@@ -250,7 +251,9 @@ export function MembersScreen() {
           run={run(rolePlan(open.member.id, open.member.role === 'admin' ? 'member' : 'admin'))}
           onDone={close}
           onClose={close}
-        />
+        >
+          {open.member.role === 'admin' && <p data-testid="members.role.demote">{t('members.role.demote')}</p>}
+        </ActionDialog>
       )}
       {open?.kind === 'remove' && (
         <ActionDialog
@@ -263,7 +266,6 @@ export function MembersScreen() {
           onClose={close}
         >
           <p>{t('members.remove.body')}</p>
-          <p>{t('members.rotation.note')}</p>
         </ActionDialog>
       )}
       {open?.kind === 'ungrant' && (
@@ -279,8 +281,7 @@ export function MembersScreen() {
           onDone={close}
           onClose={close}
         >
-          <p>{t('members.remove.body')}</p>
-          <p>{t('members.rotation.note')}</p>
+          <p>{open.member.role === 'admin' ? t('members.ungrant.admin-body') : t('members.remove.body')}</p>
         </ActionDialog>
       )}
       {open?.kind === 'grant' && (

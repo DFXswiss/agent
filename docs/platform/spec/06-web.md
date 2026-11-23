@@ -176,7 +176,7 @@ No step of the registration asks for the recovery code, and nothing re-types it.
 
 **PRF required (KOR-22, ADR-055).** A passkey whose sign-in gives no PRF output is not accepted – at registration
 (gesture 2 of §3.1), when adding a passkey (§3.6) and for the new passkey of a recovery (§3.5). One message for all
-three: "This passkey cannot unlock your data. You need a passkey that supports PRF.", one line about what happened
+three: "This passkey cannot open your data. You need a passkey that can open your data.", one line about what happened
 (registration: no account was created, the invitation is still valid; adding: the passkey was not added; recovery:
 the passkey was not added, the recovery code still works), what works (the passkeys built into the device: iCloud
 Keychain on Apple devices from iOS 18 / macOS 15, Google Password Manager on Android and in Chrome), what does not
@@ -193,13 +193,14 @@ recovery again with the same code (nothing was replaced).
 browser or password manager that gives no PRF output, e.g. a synced passkey in a browser without PRF support). Shown
 when the login ceremony returns no PRF result (detected **per login**, `04-crypto.md` §5.4):
 
-1. Explain: "This passkey cannot unlock your encryption keys on this device."
+1. Explain: "This passkey cannot open your data on this device."
 2. Options: (a) enter the recovery code (unlock only: bundle from the signed `GET /v1/me/bundles/recovery`, no rotation and
    no new passkey; the §3.5 recovery flow is only for users without any working passkey); (b) "Remember this browser":
    after unlocking, create a non-extractable AES-GCM key in IndexedDB that encrypts the identity bundle locally
    (`persist/device-key`); next login on this browser unlocks with it; (c) add a PRF-capable passkey from another
    signed-in device (§3.6).
-The device key is per browser profile, listed in `/settings` ("This browser can unlock without passkey PRF") with
+The device key is per browser profile, listed in `/settings` ("This browser is remembered and opens your data even
+without a suitable passkey") with
 "Forget" (deletes the IndexedDB entry).
 
 ### 3.4 Login and unlock (`/login`)
@@ -276,6 +277,17 @@ with `task.set_title` (shown as "renamed by session").
 Newest activity first (`GET /v1/workgroups/{wg}/tasks?order=activity`, KOR-32), with decrypted title, state badge,
 owner display name, last activity; filter by state; infinite scroll (`next_before`). Composer at the top (same as §4.1) for users with
 `wg:write`. Task creation is possible in any workgroup with write access.
+
+**Being unlocked (ADR-058 §2).** When the user may read a workgroup but holds no key of its current epoch (typically an
+admin reading it by inheritance before a key holder has delivered the key by catch-up), the task list keeps its
+metadata and shows one calm line above it, and the task page and the workgroup whiteboard show that line instead of
+their content: "Being unlocked – the content appears as soon as a member or device of this workgroup has been online."
+No error, no code, nothing to do; it disappears with the key. If the verified log shows that no active principal other
+than admins reading by inheritance can hold the key (no explicit member, no assigned device, the author of the current
+epoch gone), the line says instead: "Older content of this workgroup can no longer be opened: nobody who could still share it is
+left. New content becomes readable for you shortly." – the rotation job (§11, job 4) of an admin then rotates the
+workgroup silently, so new content is readable for every reader again (`core/jobs/rotation.ts`, ADR-058 §2). The
+line appears only once the org's job queue has run and is idle (`core/org/unlock.ts`).
 
 ### 5.1a Task overview (`/o/:org/tasks`, KOR-32)
 
@@ -357,36 +369,43 @@ usage; each node links to `/o/:org/s/:session`.
 - Bell with unread badge (from `GET /v1/me.unread_notifications`, updated by SSE `notification`).
 - Center (`/notifications`): newest first, content-free texts built client-side from kind + decrypted target names
   ("New whiteboard entry in workgroup X", "Task Y is waiting for you", "Task Y failed", "Z accepted the invitation",
-  "Key rotation required in org X"); click marks read and navigates; "Mark all read".
+  and, for rows of the retired kind `rotation.required` that the hub no longer creates (ADR-058 §3), the neutral
+  "Access in X is being updated"); click marks read and navigates; "Mark all read".
 - Toasts for live notifications (auto-dismiss 6 s, accessible live region).
 
 ## 7. Organization management
 
 ### 7.1 Members and rights (`/o/:org/members`)
 
-- List: members (display name from `member.profile`, role, workgroups with access), devices are on §7.3.
+- List: members (display name from `member.profile`, role, workgroups with access), devices are on §7.3. An access a
+  member has only because it is an admin (ADR-058) is shown as "reads as admin" and has no ungrant control.
 - Admin actions:
   - **Invite user:** role (member default, admin), workgroups with read/write (default workgroup always write),
     expiry (72 h default, 1 h–30 d). Result screen shows link `<origin>/invite#<code>` and the code, with copy buttons
     and a warning to transmit confidentially; the code is not shown again. Open invitations list with revoke
     (`03-api.md` §4.2).
   - **Change role** (`role` entry); last-admin protection: the control is hidden for the last admin, the hub
-    returns `last_admin` otherwise.
-  - **Remove member** and **ungrant**: confirmation dialog explaining "already read content stays with the person",
-    then the client builds the atomic batch (entry + `rotate` for every affected scope + wraps for all remaining
-    recipients) with a progress view ("Rotating keys 2/5", "Wrapping for 7 recipients") and sends one
-    `POST /v1/orgs/{org}/log`. On `seq_conflict` the client re-reads the log and rebuilds the batch automatically
-    (max 3 attempts).
-  - **Grant workgroup access** (read/write) with wraps of the current `WK` and an option "also give access to
-    history" (wraps of older epochs).
+    returns `last_admin` otherwise. Demoting an admin goes through the same batch as a removal (the rotation of every
+    workgroup it read only as admin is added automatically); the dialog says in one sentence that already read
+    content stays with the person. An admin that demotes itself owes nothing in its batch: the rotation becomes
+    pending (job 4).
+  - **Remove member** and **ungrant** (of an explicit access only; an admin keeps its inherited read): confirmation
+    dialog explaining "already read content stays with the person", then the client builds the atomic batch (entry +
+    `rotate` for every affected scope + wraps for all remaining recipients) while the dialog shows only "Saving …"
+    (key handling stays out of sight, ADR-058 §4) and sends one `POST /v1/orgs/{org}/log`. On `seq_conflict` the
+    client re-reads the log and rebuilds the batch automatically (max 3 attempts; "attempt 2 of 3" is shown).
+  - **Grant workgroup access** (read/write) on any workgroup that is not archived, with an option "also give access
+    to older content". The batch carries the wraps the admin holds; it does not need to hold the key itself – the
+    key holders deliver the rest by catch-up. Granting `read` to an admin makes the access explicit (it then survives
+    a demotion).
 - Members can **leave** the org (self `remove`; for the last admin hidden).
 
 ### 7.2 Workgroups (`/o/:org/workgroups`)
 
 List with names (decrypted `wg.profile`), my access, devices, archived flag. Admin: create (new `WK_1`, one batch with `wg_create` (the creating admin gets write), `grant` entries for chosen
-members, self-wrap + wraps for those members and chosen devices (`device_assign`), `wg.profile` event); other admins
-get no access without an explicit `grant`, rename (`wg.profile`), archive (not the
-default workgroup).
+members, self-wrap + wraps for those members, every other admin and chosen devices (`device_assign`), `wg.profile`
+event); the note says "Every admin of the organization can read it. You can write." (ADR-058), rename
+(`wg.profile`), archive (not the default workgroup).
 
 ### 7.3 Devices (`/o/:org/devices`)
 
@@ -395,9 +414,15 @@ default workgroup).
 - **Add org device** (admin): choose workgroups → code + instructions block:
   `agent-runner enroll --hub <origin> --code <code>` (copy button), expiry 24 h default; the device appears live when
   it accepts.
-- **Assign platform device** to a workgroup (admin; any writer in a private org): candidate list
-  (`GET /v1/workgroups/{wg}/device-candidates`), platform-log verification, batch.
-- **Unassign** from a workgroup / **Unpair** (remove from org): confirmation + automatic rotation batch (§7.1).
+  Invitations carry the keys of the chosen workgroups, so only workgroups whose current key the admin holds are
+  offered ("You can add a device as soon as a workgroup is unlocked for you").
+- **Assign platform device** / **assign to a further workgroup** (admin; any writer in a private org): every
+  workgroup that is not archived; candidate list (`GET /v1/workgroups/{wg}/device-candidates`), platform-log
+  verification, batch. The batch wraps the keys the admin holds; the transition rule of ADR-058 §2 (`compatSkip`)
+  withholds a workgroup key the admin reads only by inheritance and did not create, which the key holders deliver by
+  catch-up.
+- **Unassign** from a workgroup / **Unpair** (remove from org): confirmation ("the device loses access to new
+  content; content it already read stays on the device") + automatic rotation batch (§7.1).
 - Rename (admin, `device.profile`).
 
 ### 7.4 Platform invitations (`/platform/invites`, `platform:inviter`)
@@ -535,12 +560,17 @@ Run while signed in and unlocked; serialized per org; status visible in a small 
 2. **Wrap verification:** every fetched wrap is checked (signature, W1–W2); violations are ignored and counted
    (`wrap_unauthorized`).
 3. **Catch-up wrapping:** after every log change and every 10 minutes: `GET /v1/orgs/{org}/catch-up`, create the
-   wraps the user may create, `POST /v1/wraps`.
+   wraps the user may create, `POST /v1/wraps`. The browser confirms exactly the slots `catchUpEpochs` gives (the
+   current epoch; every epoch of a workgroup for an admin reading it by inheritance, ADR-058 §2) and, until every
+   runner verifies ADR-058, never wraps a workgroup key for a device when the user reads that workgroup only by
+   inheritance and did not create the epoch (`compatSkip`).
 4. **Pending rotations:** if `rotation_pending` is non-empty and the user is admin (or wg writer for wg scopes):
-   build and send the rotation batch automatically, with a toast.
+   build and send the rotation batch automatically and silently (no notice, ADR-058 §3).
 5. **Credential re-wrap:** when a device becomes eligible for the user's `CK` (new assignment in a workgroup where the
-   user is a member) wrap `CK` for it; when a device lost eligibility, rotate `CK` and re-encrypt all own credential
-   records (`POST /v1/me/credentials/rotate`).
+   user has explicit access; the inherited read of an admin does not count, ADR-058 §1) wrap `CK` for it; when a
+   device lost eligibility, rotate `CK` and re-encrypt all own credential records (`POST /v1/me/credentials/rotate`)
+   silently; only a renewal blocked by records the browser cannot open shows one sentence asking the user to delete
+   or replace them.
    Additionally every device in `cred_holders` of `GET /v1/me` that no verified log of the user's orgs entitles
    counts as lost: rotate `CK` (and delete the records it wrote) – also for orgs whose log this browser does not hold
    (KOR-04; waits while an org has no verdict yet).

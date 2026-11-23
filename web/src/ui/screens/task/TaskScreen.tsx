@@ -16,6 +16,7 @@ import { useAppEnv } from '../../shell/context';
 import { LoadError } from '../errors/pages';
 import { useDirectory, useOrgView, useTitle } from '../tasks/hooks';
 import { activeTab, Tabs } from './Tabs';
+import { Unlocking } from '../../unlock/Unlocking';
 
 const TABS = taskTabs();
 
@@ -120,7 +121,9 @@ function TaskView({ row }: { readonly row: TaskRow }) {
         {writer && <TaskMenu task={row} />}
       </header>
       <Tabs tabs={tabs} label={t('task.tabs.label')} testId="task.tabs" />
-      <active.Component orgId={row.org_id} taskId={row.task_id} />
+      <Unlocking org={row.org_id} wg={row.wg_id}>
+        <active.Component orgId={row.org_id} taskId={row.task_id} />
+      </Unlocking>
     </main>
   );
 }

@@ -8,6 +8,7 @@ import { type BoardLocation, boardPath, canReadBoard, orgBoard, wgBoard } from '
 import { useI18n } from '../../i18n';
 import { Board } from '../../whiteboard/Board';
 import { useDirectory, useOrgView } from '../tasks/hooks';
+import { Unlocking } from '../../unlock/Unlocking';
 
 export function WhiteboardScreen() {
   const { org, wg } = useParams() as { readonly org: string; readonly wg?: string };
@@ -58,7 +59,13 @@ export function WhiteboardScreen() {
           </NavLink>
         ))}
       </nav>
-      <Board location={location} />
+      {wg === undefined ? (
+        <Board location={location} />
+      ) : (
+        <Unlocking org={org} wg={wg}>
+          <Board location={location} />
+        </Unlocking>
+      )}
     </main>
   );
 }

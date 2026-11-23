@@ -144,7 +144,7 @@ user_settings: settings | user_id:uuid model_access:code model_id:code locale:co
 vm: tasks | id:code device_id:uuid wg_id:uuid state:code golden_version:code cpus:number@metrics
   memory_mib:number@metrics disk_gib:number@metrics created_at:time state_at:time
 wg: logs | id:uuid@ids org_id:uuid is_default:flag created_seq:number archived_seq:number
-wg_access: logs | wg_id:uuid user_id:uuid access:code granted_seq:number revoked_seq:number
+wg_access: logs | wg_id:uuid user_id:uuid access:code granted_seq:number revoked_seq:number inherited:flag
 wg_device: logs | wg_id:uuid device_id:uuid assigned_seq:number unassigned_seq:number
 whiteboard_entry: events | id:uuid@ids org_id:uuid level:code wg_id:uuid task_id:uuid author_id:uuid
   created_event_id:uuid latest_event_id:uuid created_at:time updated_at:time deleted:flag notify:flag@notifications

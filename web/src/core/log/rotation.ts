@@ -5,7 +5,8 @@
 // `checkBatch` runs, in this order:
 // 1. L1-L8 for every entry (`appendEntries`; a wrong first `seq` is `seq_conflict`);
 // 2. the rotation obligation: R = the union of `R(before, after, subject)` over the entries, except a member that
-//    leaves by itself (its R becomes `OrgState.pending`). If R is not empty the batch MUST contain exactly one
+//    leaves by itself or an admin that demotes itself (it cannot rotate what it no longer reads; its R becomes
+//    `OrgState.pending`, ADR-058 section 3). If R is not empty the batch MUST contain exactly one
 //    `rotate` per element of R and no other `rotate`, each after the last entry contributing to R
 //    (`rotation_required`);
 // 3. W3 for every wrap of the batch, created by `wrappedBy`, which must be active after the batch;
@@ -14,8 +15,10 @@
 //
 // `buildBatch` produces exactly such a batch from the verified log: the requested entries, one `rotate` per element
 // of R with a fresh key, wraps of every new epoch for all remaining recipients and wraps of the current epochs for
-// every principal the batch newly entitles (grant, device assignment, accept), then runs `checkBatch` on its own
-// result. It is a pure function of the log: after `seq_conflict` the caller re-reads the log and builds again.
+// every principal the batch newly entitles (grant, device assignment, accept; every held epoch of a workgroup for a
+// grant with history and for a principal that reads it by inheritance, ADR-058 section 2), then runs `checkBatch` on
+// its own result. Wraps of epochs the batch does not create follow the transition rule `compatSkip`. It is a pure
+// function of the log: after `seq_conflict` the caller re-reads the log and builds again.
 import { formatTime } from '../encoding/time';
 import { fail } from '../crypto/errors';
 import type { Identity } from '../crypto/keys';
@@ -24,10 +27,17 @@ import { buildEntries, type Body, type Entry, type LogFields, type LogSigner } f
 import { excludedFor, type PlatformState } from './platform';
 import { epochKey, ORG, pairKey, requiredSet, type Scope, splitKey, WG, WRITE } from './state';
 import { appendEntries, type VerifiedLog } from './verify';
-import { buildWraps, type KeyRing } from './catchup';
+import { buildWraps, compatSkip, type KeyRing } from './catchup';
 import { checkWrap, compareSlots, slotKey, type WrapRecord, type WrapSlot } from './wraps';
 
 export { requiredSet };
+
+/** Entry types whose R is owed by the others (`OrgState.pending`) when the subject is the author itself. */
+export const SELF_OWED: ReadonlySet<string> = new Set(['remove', 'role']);
+
+/** The entry owes no rotation in its own batch: genesis, or a self-`remove`/self-`role` (`SELF_OWED`). */
+const owesNothing = (seq: number, body: Body): boolean =>
+  seq === 0 || (SELF_OWED.has(body.type as string) && entrySubject(body) === body.by);
 
 /** The principal an entry is about: `subject`, else `device`, else its author `by`. */
 export function entrySubject(body: Body): string {
@@ -101,9 +111,8 @@ export async function checkBatch(
   for (const [index, body] of bodies.entries()) {
     const seq = first + index;
     if (body.type === 'rotate') rotates.push([index, pairKey(body.scope as string, body.scope_id as string)]);
-    const subject = entrySubject(body);
-    if (seq === 0 || (body.type === 'remove' && subject === body.by)) continue;
-    const lost = requiredSet(after.states[seq - 1]!, after.states[seq]!, subject);
+    if (owesNothing(seq, body)) continue;
+    const lost = requiredSet(after.states[seq - 1]!, after.states[seq]!, entrySubject(body));
     if (lost.size > 0) {
       for (const scope of lost) required.add(scope);
       lastTrigger = index;
@@ -161,7 +170,8 @@ export interface BatchInput {
   /** The scope keys the author holds (to give newly entitled principals the current epochs). */
   readonly keys?: KeyRing;
   /** For the `grant` entries of the batch: also wrap the older epochs of that workgroup the author holds for its
-   *  subject ("also give access to history", 06-web.md section 7.1). Other newly entitled principals get the
+   *  subject ("also give access to history", 06-web.md section 7.1). A principal that newly reads a workgroup by
+   *  inheritance (`role` → admin) always gets them (ADR-058 section 2); other newly entitled principals get the
    *  current epochs only. */
   readonly history?: boolean;
   /** The verified platform state (`device_assign` with `platform_seq`, decertified devices). */
@@ -172,14 +182,7 @@ export interface BatchInput {
   readonly ts?: string;
   /** Source of fresh scope keys (default: 32 random bytes). */
   readonly newKey?: () => Secret;
-  /** Progress of the slow steps ("Rotating keys 2/5", "Wrapping for 7 recipients"). */
-  readonly progress?: (step: BatchProgress) => void;
 }
-
-/** A progress report of `buildBatch`. */
-export type BatchProgress =
-  | { readonly step: 'rotate'; readonly done: number; readonly total: number }
-  | { readonly step: 'wrap'; readonly recipients: number };
 
 /** The body of `POST /v1/orgs/{org}/log` (03-api.md section 4.3). */
 export interface AppendBody {
@@ -215,7 +218,7 @@ export async function buildBatch(input: BatchInput): Promise<BuiltBatch> {
     key: input.author.identity.sig.privateKey,
     ...(input.author.invite && { invite: input.author.invite }),
   };
-  // 1. the requested entries, and R over them (a self-remove owes its rotation instead: `pending`)
+  // 1. the requested entries, and R over them (a self-remove or self-demotion owes its rotation instead: `pending`)
   const requested = await buildEntries({ org, head: input.log?.head ?? null }, signer, input.entries, ts);
   const trial = await appendEntries(input.log, requested, founder, options);
   const first = trial.entries.length - requested.length;
@@ -223,7 +226,7 @@ export async function buildBatch(input: BatchInput): Promise<BuiltBatch> {
   for (const [index, entry] of requested.entries()) {
     const seq = first + index;
     const body = entry.body;
-    if (seq === 0 || (body.type === 'remove' && entrySubject(body) === body.by)) continue;
+    if (owesNothing(seq, body)) continue;
     for (const scope of requiredSet(trial.states[seq - 1]!, trial.states[seq]!, entrySubject(body)))
       required.add(scope);
   }
@@ -251,10 +254,10 @@ export async function buildBatch(input: BatchInput): Promise<BuiltBatch> {
   for (const key of created) {
     const [scope, scopeId] = splitKey(key);
     newKeys.push({ scope, scope_id: scopeId, epoch: state.epoch(scope, scopeId), key: newKey() });
-    input.progress?.({ step: 'rotate', done: newKeys.length, total: created.length });
   }
   // 4. the slots: every reader of a new epoch, and the newly entitled principals of the other scopes (with a null
-  //    log every scope is created by `genesis`, so `before` is only read for an existing org)
+  //    log every scope is created by `genesis`, so `before` is only read for an existing org); wraps of epochs the
+  //    batch does not create skip what the transition rule withholds (`compatSkip`)
   const before = input.log?.state ?? null;
   const history = new Set(
     input.history ? input.entries.flatMap((e) => (e.type === 'grant' ? [pairKey(e.subject, e.wg)] : [])) : [],
@@ -269,14 +272,14 @@ export async function buildBatch(input: BatchInput): Promise<BuiltBatch> {
     const current = state.epoch(scope, scopeId);
     for (const recipient of state.readers(scope, scopeId, skip)) {
       if (before!.canRead(recipient, scope, scopeId)) continue;
-      const older = scope === WG && history.has(pairKey(recipient, scopeId));
+      const older = scope === WG && (history.has(pairKey(recipient, scopeId)) || state.inherited(recipient, scopeId));
       for (let epoch = older ? 1 : current; epoch <= current; epoch += 1) {
-        slots.push({ scope, scope_id: scopeId, epoch, recipient });
+        const slot = { scope, scope_id: scopeId, epoch, recipient };
+        if (!compatSkip(state, input.author.id, slot)) slots.push(slot);
       }
     }
   }
   slots.sort(compareSlots);
-  input.progress?.({ step: 'wrap', recipients: new Set(slots.map((slot) => slot.recipient)).size });
   const fresh = new Map(newKeys.map((k) => [epochKey(k.scope, k.scope_id, k.epoch), k.key]));
   const held = input.keys ?? (() => null);
   const keys: KeyRing = (scope, scopeId, epoch) =>

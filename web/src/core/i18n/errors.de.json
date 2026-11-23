@@ -85,8 +85,8 @@
     "action": "Verwende einen anderen Passkey oder den Wiederherstellungscode."
   },
   "decrypt_failed": {
-    "title": "Entschlüsselung fehlgeschlagen",
-    "body": "Die Daten konnten mit deinen Schlüsseln nicht entschlüsselt werden.",
+    "title": "Nicht lesbar",
+    "body": "Dieser Inhalt lässt sich auf diesem Gerät nicht öffnen.",
     "action": "Entsperre mit einem anderen Passkey oder deinem Wiederherstellungscode."
   },
   "delivery_failed": {
@@ -110,8 +110,8 @@
     "action": "Starte den Task noch einmal."
   },
   "epoch_stale": {
-    "title": "Veralteter Schlüssel",
-    "body": "Die Daten wurden mit einem veralteten Schlüssel verschlüsselt.",
+    "title": "Veralteter Inhalt",
+    "body": "Dieser Inhalt wurde veraltet gespeichert und nicht angenommen.",
     "action": "Lade die Seite neu und versuche es noch einmal."
   },
   "event_conflict": {
@@ -140,8 +140,8 @@
     "action": "Lade die Seite neu und versuche es noch einmal."
   },
   "hpke_short": {
-    "title": "Beschädigte Schlüsseldaten",
-    "body": "Verschlüsselte Schlüsseldaten sind zu kurz.",
+    "title": "Beschädigte Daten",
+    "body": "Geschützte Daten sind beschädigt.",
     "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
   },
   "hub_unreachable": {
@@ -240,8 +240,8 @@
     "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
   },
   "log_epoch": {
-    "title": "Ungültiger Schlüsselwechsel",
-    "body": "Ein Schlüsselwechsel in der Mitgliederhistorie ist ungültig.",
+    "title": "Ungültige Änderung",
+    "body": "Eine Änderung in der Mitgliederhistorie ist ungültig.",
     "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
   },
   "log_fork": {
@@ -385,13 +385,13 @@
     "action": "Öffne die Plattform unter ihrer offiziellen Adresse und melde dich beim Support."
   },
   "prf_length": {
-    "title": "Passkey-Schlüssel ungültig",
-    "body": "Der Passkey hat einen Schlüssel mit falscher Länge geliefert.",
+    "title": "Passkey-Antwort ungültig",
+    "body": "Der Passkey hat eine ungültige Antwort geliefert.",
     "action": "Verwende einen anderen Passkey oder deinen Wiederherstellungscode."
   },
   "prf_missing": {
     "title": "Passkey kann nicht entsperren",
-    "body": "Dieser Passkey kann deine Verschlüsselungsschlüssel auf diesem Gerät nicht entsperren.",
+    "body": "Dieser Passkey kann deine Daten auf diesem Gerät nicht öffnen.",
     "action": "Verwende deinen Wiederherstellungscode, merke dir diesen Browser oder füge einen anderen Passkey hinzu."
   },
   "prompt_refused": {
@@ -430,9 +430,9 @@
     "action": "Bitte die Administration um Schreibrecht."
   },
   "rotation_required": {
-    "title": "Schlüsselrotation nötig",
-    "body": "Vor dieser Änderung muss ein Schlüssel rotiert werden.",
-    "action": "Warte auf die automatische Rotation und versuche es dann noch einmal."
+    "title": "Änderung noch nicht möglich",
+    "body": "Die Organisation hat sich inzwischen geändert.",
+    "action": "Lade die Seite neu und versuche es noch einmal."
   },
   "rp_id_mismatch": {
     "title": "Passkey einer anderen Website",
@@ -545,8 +545,8 @@
     "action": "Starte den Task noch einmal."
   },
   "wrap_unauthorized": {
-    "title": "Unberechtigte Schlüsselfreigabe",
-    "body": "Eine Schlüsselfreigabe stammt nicht von einer berechtigten Person und wurde ignoriert.",
+    "title": "Unberechtigte Freigabe",
+    "body": "Etwas wurde von einer Person ohne Berechtigung freigegeben und ignoriert.",
     "action": "Keine Aktion nötig."
   }
 }

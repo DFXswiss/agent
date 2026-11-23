@@ -2,14 +2,16 @@
 // organizations are built only through `buildBatch` (seeded choices among the operations that are allowed in the
 // current state), then verified three ways – from scratch, incrementally page by page (`extendLog`, the reader) and
 // batch by batch with hub semantics (`appendEntries`) – and every state projection, head and catch-up plan must be
-// identical. Each batch also passes `checkBatch` with the hub's receipt time.
+// identical. Each batch also passes `checkBatch` with the hub's receipt time. Afterwards catch-up rounds by every admin
+// (W3-checked like at the hub) close every gap an admin can close: what admins read by inheritance (ADR-058) arrives
+// by catch-up, not necessarily in the batch.
 import { describe, expect, it } from 'vitest';
 import { CryptoError } from '../../../src/core/crypto/errors';
 import type { LogFields } from '../../../src/core/log/entries';
-import { missingWraps } from '../../../src/core/log/catchup';
+import { buildWraps, compatSkip, missingWraps } from '../../../src/core/log/catchup';
 import { checkBatch } from '../../../src/core/log/rotation';
 import { appendEntries, extendLog, verifyLog, type VerifiedLog } from '../../../src/core/log/verify';
-import { slotOf } from '../../../src/core/log/wraps';
+import { checkWrap, slotOf } from '../../../src/core/log/wraps';
 import { actor, type Actor, EXPIRES, idOf, inviteFor, T0, World } from './world';
 
 /** mulberry32: a small seeded PRNG (test choices only). */
@@ -200,14 +202,24 @@ describe('property: incremental verification equals a rebuild', () => {
       expect(view(hub!)).toEqual(view(full));
       expect(reader.head).toEqual(full.head);
       expect(world.log!.head).toEqual(full.head);
-      // the builder wrapped everything its authors could: what is still missing, an admin does not hold the key of
-      const existing = world.wraps.map((w) => slotOf(w));
-      for (const admin of full.state.admins()) {
+      // catch-up by every admin until nothing changes: what is still missing, no admin may wrap or holds the key of
+      const open = (admin: string) => {
         const ring = world.ring(admin);
-        expect(missingWraps(full, admin, existing).filter((s) => ring(s.scope, s.scope_id, s.epoch) !== null)).toEqual(
-          [],
+        const existing = world.wraps.map((w) => slotOf(w));
+        return missingWraps(full, admin, existing).filter(
+          (s) => ring(s.scope, s.scope_id, s.epoch) !== null && !compatSkip(full.state, admin, s),
         );
+      };
+      for (let round = 0; round < 4; round += 1) {
+        for (const admin of full.state.admins()) {
+          const wraps = await buildWraps(world.actors.get(admin)!.identity, open(admin), world.ring(admin), [
+            full.state,
+          ]);
+          for (const wrap of wraps) await checkWrap(wrap, admin, full, [], true);
+          await world.store(wraps);
+        }
       }
+      for (const admin of full.state.admins()) expect(open(admin)).toEqual([]);
     }, 60_000);
   }
 

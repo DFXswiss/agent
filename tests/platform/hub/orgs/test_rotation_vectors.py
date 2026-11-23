@@ -68,7 +68,8 @@ def test_hub_computes_the_rotate_set(vector_hub: HubHarness, case: Json) -> None
     _seed(vector_hub, len(prefix), private=True, log=prefix)
     entry, required = case["entry"], case["required"]
     body = entry["body"]
-    leave = body["type"] == "remove" and body.get("subject") == body["by"]
+    # leaving and self-demotion owe their R to the others (`pending`, ADR-058)
+    leave = body["type"] in ("remove", "role") and body.get("subject") == body["by"]
     if required and not leave:
         with pytest.raises(HubError) as refused:
             _submit(vector_hub, body["by"], [entry], [])

@@ -1,6 +1,6 @@
 // U-WEB-sync (WEB-06): the jobs of 06-web.md section 11.3 (catch-up wrapping) and 11.4 (pending rotations) against
 // the simulated hub of tests/core/org/world.ts: what the hub offers is checked against the verified logs, own `cred`
-// slots are wrapped with the own CK, owed rotations and unassignments of decertified devices are sent with a notice,
+// slots are wrapped with the own CK, owed rotations and unassignments of decertified devices are sent silently,
 // and the job registrations (order, triggers).
 import { describe, expect, it } from 'vitest';
 import { b64uDecode } from '../../../src/core/encoding/b64u';
@@ -15,7 +15,6 @@ import { ed25519KeyPair } from '../../../src/core/crypto/keys';
 import { verifyPlatformLog } from '../../../src/core/log/platform';
 import { ORG, WG } from '../../../src/core/log/state';
 import { blockOrg, ensureOrg } from '../../../src/core/store/slices/orgs';
-import { dismissRotation, MAX_NOTICES, noteRotation } from '../../../src/core/store/slices/rotation';
 import { setIdentity } from '../../../src/core/store/slices/me';
 import type { Actor } from '../log/world';
 import { idOf, seed, T0 } from '../log/world';
@@ -163,7 +162,7 @@ describe('catch-up job', () => {
 });
 
 describe('rotation job', () => {
-  it('rotates what a member owed after leaving, with a notice', async () => {
+  it('rotates what a member owed after leaving, silently', async () => {
     const { w, a, one } = await setup();
     await w.world.batch(a.cy!, [{ type: 'remove', subject: a.cy!.id }]);
     await w.sync();
@@ -173,7 +172,7 @@ describe('rotation job', () => {
     expect(w.world.state.pendingScopes()).toEqual([]);
     expect(w.world.state.epoch(WG, one)).toBe(2);
     expect(holds(w, a.dev1!, WG, one)).toBe(true);
-    expect(w.store.getState().rotation.notices).toMatchObject([{ org: w.org, scopes: 3, devices: 0, at: T0 }]);
+    expect(Object.keys(w.store.getState())).not.toContain('rotation');
     // nothing owed any more
     expect(await rotatePending(jobContext(w), run(w))).toBe(0);
   });
@@ -204,12 +203,8 @@ describe('rotation job', () => {
     w.hub.platform = await verifyPlatformLog(w.platform.entries, w.platform.root);
     expect(await rotatePending(jobContext(w), run(w))).toBe(MAX_BATCHES);
     expect(w.world.state.assigned(a.pdev!.id, one)).toBe(false);
-    const notices = w.store.getState().rotation.notices;
-    // the unassignment rotates workgroup one and the org (pdev's only workgroup); the leave owed the default one
-    expect(notices).toMatchObject([
-      { devices: 1, scopes: 2 },
-      { devices: 0, scopes: 1 },
-    ]);
+    // the unassignment rotated workgroup one and the org (pdev's only workgroup); the leave owed the default one
+    expect(w.world.state.epoch(ORG, w.org)).toBe(2);
     expect(w.world.state.pendingScopes()).toEqual([]);
   });
 
@@ -232,20 +227,6 @@ describe('rotation job', () => {
     setIdentity(w.store, null);
     expect(await rotatePending(jobContext(w), run(w))).toBe(0);
     expect(w.client.of(`POST /v1/orgs/${w.org}/log`)).toHaveLength(0);
-  });
-});
-
-describe('rotation notices', () => {
-  it('keeps the newest notices until dismissed', async () => {
-    const { w } = await setup();
-    for (let i = 0; i < MAX_NOTICES + 1; i += 1) noteRotation(w.store, { org: w.org, scopes: i, devices: 0, at: T0 });
-    const notices = w.store.getState().rotation.notices;
-    expect(notices.map((n) => n.scopes)).toEqual([1, 2, 3]);
-    const before = w.store.getState().rotation;
-    dismissRotation(w.store, 999);
-    expect(w.store.getState().rotation).toBe(before);
-    dismissRotation(w.store, notices[0]!.id);
-    expect(w.store.getState().rotation.notices.map((n) => n.scopes)).toEqual([2, 3]);
   });
 });
 

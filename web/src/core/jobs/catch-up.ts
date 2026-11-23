@@ -1,8 +1,9 @@
 // Job 3 of 06-web.md section 11: catch-up wrapping (04-crypto.md section 5.11, 03-api.md section 4.3). After every log
 // change (sign-in, SSE `log` frame) and every `INTERVAL_MS`: `GET /v1/orgs/{org}/catch-up` lists the slots of the
-// current epochs without a wrap that the user may create; the browser creates and uploads (`POST /v1/wraps`) only those
-// the verified log confirms (W1/W2, current epoch, recipient entitled now, recipient key from the verified log – never
-// from the hub):
+// current epochs (every epoch for an admin reading a workgroup by inheritance, ADR-058) without a wrap that the user may
+// create; the browser creates and uploads (`POST /v1/wraps`) only those the verified log confirms (W1/W2, an epoch
+// `catchUpEpochs` gives, recipient entitled now, not withheld by the transition rule `compatSkip`, recipient key from
+// the verified log – never from the hub):
 // - `org`/`wg` slots with the scope keys the user holds (`catchUpWraps` of `core/log`);
 // - the user's own `cred` slots (devices entitled to the user's `CK`, 04-crypto.md section 5.2a): `CK` is opened from
 //   the user's own self-wrap of the newest epoch (signature checked with the own identity); slots of another owner

@@ -480,7 +480,7 @@ describe('rotateCredentialKey', () => {
 });
 
 describe('the job', () => {
-  it('rotates with a toast, retries a version conflict once and passes other failures on', async () => {
+  it('rotates silently, retries a version conflict once and passes other failures on', async () => {
     const t = await credWorld();
     await seed(t, 'anthropic_api_key', API_KEY);
     await unassign(t);
@@ -490,7 +490,7 @@ describe('the job', () => {
       return t.hub.rotate(body as never);
     });
     expect(await rewrap(jobContext(t), run(t))).toEqual({ status: 'rotated', epoch: 2, records: 1, dropped: 0 });
-    expect(t.store.getState().credentials.notices).toMatchObject([{ result: { status: 'rotated', epoch: 2 } }]);
+    expect(t.store.getState().credentials.notices).toEqual([]);
     expect(t.client.of('POST /v1/me/credentials/rotate')).toHaveLength(2);
     const u = await credWorld();
     await unassign(u);
@@ -507,6 +507,17 @@ describe('the job', () => {
     });
     await expect(rewrap(jobContext(u), run(u))).rejects.toBeInstanceOf(TypeError);
     expect(u.store.getState().credentials.notices).toEqual([]);
+  });
+
+  it('leaves a notice when the renewal is blocked (the user must act)', async () => {
+    const t = await credWorld();
+    const stranger = await actor('stranger of the job');
+    await seed(t, 'github', { token: 'x' }, { author: stranger });
+    await unassign(t);
+    expect(await rewrap(jobContext(t), run(t))).toEqual({ status: 'blocked', kinds: ['github'] });
+    expect(t.store.getState().credentials.notices).toMatchObject([
+      { result: { status: 'blocked', kinds: ['github'] } },
+    ]);
   });
 
   it('acts only in the queue of the first verified org and leaves no toast after a sign-out', async () => {

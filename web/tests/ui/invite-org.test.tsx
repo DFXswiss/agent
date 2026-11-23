@@ -260,7 +260,7 @@ describe('OrgInvite: new user', () => {
     fireEvent.change(await screen.findByTestId('invite.display-name'), { target: { value: 'Erin' } });
     fireEvent.click(screen.getByTestId('invite.create-passkey'));
     fireEvent.click(await screen.findByTestId('invite.unlock'));
-    expect(await screen.findByTestId('prf-required')).toHaveTextContent('You need a passkey that supports PRF.');
+    expect(await screen.findByTestId('prf-required')).toHaveTextContent('You need a passkey that can open your data.');
     expect(harness.hub.users.size).toBe(0);
     expect([...harness.hub.invites.values()].every((invite) => invite.registered === null)).toBe(true);
     expect(accepted(harness.setup, harness.setup.w.me.id)).toBe(true);

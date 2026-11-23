@@ -5,7 +5,8 @@ sections 4.7 and 5.10): entries, the rotation obligation and the wraps.
 
 1. L1-L8 for every entry (`verify.append_entries`; a wrong first `seq` is `seq_conflict`);
 2. the rotation obligation: R = the union of `R(state before, state after, subject)` over the entries, except a
-   member that leaves by itself (it cannot rotate; its R becomes `OrgState.pending`). If R is not empty the batch
+   member that leaves by itself or an admin that demotes itself (it cannot rotate what it no longer reads; its R
+   becomes `OrgState.pending`, ADR-058 section 3). If R is not empty the batch
    MUST contain exactly one `rotate` per element of R and no other `rotate`, each after the last entry that
    contributes to R (`rotation_required`);
 3. W3 for every wrap of the batch, created by the appending principal `wrapped_by`, which must be active after the
@@ -30,6 +31,9 @@ from agent_hub.log.rotation import entry_subject, required_set
 from agent_hub.log.state import ORG, WG, Scope
 from agent_hub.log.verify import VerifiedLog, append_entries
 from agent_hub.log.wraps import WrapSlot, check_wrap
+
+SELF_OWED = frozenset({"remove", "role"})
+"""Entry types whose R is owed by the others (`OrgState.pending`) when the subject is the author itself."""
 
 
 @dataclass(frozen=True)
@@ -79,7 +83,7 @@ def check_batch(
         if body["type"] == "rotate":
             rotates.append((index, cast(Scope, (body["scope"], body["scope_id"]))))
         subject = entry_subject(body)
-        if seq == 0 or (body["type"] == "remove" and subject == body["by"]):
+        if seq == 0 or (body["type"] in SELF_OWED and subject == body["by"]):
             continue
         lost = required_set(after.states[seq - 1], after.states[seq], subject)
         if lost:

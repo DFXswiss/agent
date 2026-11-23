@@ -3,9 +3,10 @@
 - `event.appended` (events) of a `whiteboard.entry` with `notify` 1: the `notification` frames of the rows the storing
   transaction wrote and the `ping` hints to the devices of the pinged sessions;
 - `task.state` (sessions): `task.idle` / `task.failed` to the owner;
-- `invite.accepted` (invites): `invite.accepted` to the inviting admin;
-- `log.appended` (orgs) and `device.decertified` (platform): `rotation.required` to the admins of the orgs with a
-  pending rotation.
+- `invite.accepted` (invites): `invite.accepted` to the inviting admin.
+
+Owed rotations (`log.appended`, `device.decertified`) no longer notify anybody: the admins' browsers run them silently
+(KOR-34, ADR-058 section 3).
 
 Signals carry identifiers only and no app context: like the other areas' subscribers, these read and write with the
 pool of a bound hub context (bound by the job `notifications.bind_context`, `agent_hub.notifications.jobs`) and do
@@ -106,26 +107,8 @@ def on_invite_accepted(_name: str, ids: Mapping[str, Any]) -> None:
     _queue(_rows(lambda connection, now: rules.invite_rule(connection, org, invite, subject, now)))
 
 
-def on_log_appended(_name: str, ids: Mapping[str, Any]) -> None:
-    """`log.appended` (`org_id`, `seq`): the org may owe a rotation now."""
-    org = ids["org_id"]
-    _queue(_rows(lambda connection, now: rules.rotation_rule(connection, [org], now)))
-
-
-def on_device_decertified(_name: str, ids: Mapping[str, Any]) -> None:
-    """`device.decertified` (`device`): every org of the device owes a rotation."""
-    device = ids["device"]
-
-    def produce(connection: Any, now: Any) -> list[rules.Notification]:
-        return rules.rotation_rule(connection, rules.orgs_of_device(connection, device), now)
-
-    _queue(_rows(produce))
-
-
 SUBSCRIBERS: Mapping[str, Sequence[signals.Subscriber]] = {
     "event.appended": [on_event],
     "task.state": [on_task_state],
     "invite.accepted": [on_invite_accepted],
-    "log.appended": [on_log_appended],
-    "device.decertified": [on_device_decertified],
 }

@@ -258,8 +258,8 @@ def main_builder() -> LogBuilder:
     log.add("device_unassign", "alice", device=pid("device"), wg=W0)  # 15
     log.add("rotate", "alice", scope="wg", scope_id=W0, epoch=2)  # 16
     log.add("ungrant", "alice", subject=pid("bob"), wg=W1)  # 17
-    log.add("rotate", "alice", scope="wg", scope_id=W1, epoch=2)  # 18
-    log.add("remove", "alice", subject=pid("carol"))  # 19
+    log.add("remove", "alice", subject=pid("carol"))  # 18 (an admin: it read W1 by inheritance, ADR-058)
+    log.add("rotate", "alice", scope="wg", scope_id=W1, epoch=2)  # 19 (R of 17 and 18)
     log.add("rotate", "alice", scope="org", scope_id=ORG, epoch=2)  # 20
     log.add("rotate", "alice", scope="wg", scope_id=W0, epoch=3)  # 21
     log.add("wg_create", "alice", wg=W2, epoch=1)  # 22
@@ -978,7 +978,7 @@ def build_platform_log() -> Json:
 
 def edge_builder() -> LogBuilder:
     """A log for the edge cases of R: a device without workgroup, a device with one workgroup, an archived workgroup,
-    an admin without workgroup access."""
+    an admin without explicit workgroup access (it reads every workgroup by inheritance, ADR-058)."""
     log = LogBuilder()
     log.genesis()  # 0
     log.add("wg_create", "alice", wg=W1, epoch=1)  # 1
@@ -1060,6 +1060,16 @@ def build_rotation() -> Json:
         edge_case("reader_ungranted", lambda b: b.add("ungrant", "alice", subject=pid("bob"), wg=W1)),
         edge_case("admin_without_wg_access_removed", lambda b: b.add("remove", "alice", subject=pid("carol"))),
         edge_case("admin_demoted", lambda b: b.add("role", "alice", subject=pid("carol"), role="member")),
+        edge_case("admin_demotes_itself", lambda b: b.add("role", "carol", subject=pid("carol"), role="member")),
+        edge_case("admin_leaves", lambda b: b.add("remove", "carol", subject=pid("carol"))),
+        edge_case("member_promoted", lambda b: b.add("role", "alice", subject=pid("bob"), role="admin")),
+        edge_case(
+            "admin_explicit_access_ungranted",
+            lambda b: (
+                b.add("grant", "alice", subject=pid("carol"), wg=W1, access="write"),
+                b.add("ungrant", "alice", subject=pid("carol"), wg=W1),
+            ),
+        ),
         edge_case("device_assigned", lambda b: b.add("device_assign", "alice", device=pid("device"), wg=W0)),
         edge_case("rejoined_member_removed", lambda b: b.add("remove", "alice", subject=pid("bob")), "rejoin"),
     ]
@@ -1087,11 +1097,18 @@ def build_rotation() -> Json:
     full_wraps = (
         [make_wrap("alice", "org", ORG, 2, r) for r in ("alice", "carol", "dev2")]
         + [make_wrap("alice", "wg", W0, 2, r) for r in ("alice", "carol")]
-        + [make_wrap("alice", "wg", W1, 2, r) for r in ("alice", "dev2")]
-        + [make_wrap("alice", "wg", W2, 2, "alice")]
+        + [make_wrap("alice", "wg", W1, 2, r) for r in ("alice", "carol", "dev2")]
+        + [make_wrap("alice", "wg", W2, 2, r) for r in ("alice", "carol")]
     )
     remove_batch = batch(remove_bob, rot("org", ORG, 2), rot("wg", W0, 2), rot("wg", W1, 2), rot("wg", W2, 2))
-    w1_wraps = [make_wrap("alice", "wg", W1, 2, r) for r in ("alice", "dev2")]
+    w1_wraps = [make_wrap("alice", "wg", W1, 2, r) for r in ("alice", "carol", "dev2")]
+
+    def demote_carol(b: LogBuilder) -> object:
+        return b.add("role", "alice", subject=pid("carol"), role="member")
+
+    demotion_wraps = [make_wrap("alice", "wg", W1, 2, r) for r in ("alice", "bob", "dev2")] + [
+        make_wrap("alice", "wg", W2, 2, r) for r in ("alice", "bob")
+    ]
     w3 = pid("wg/three")
     valid_batches = []
     for name, append, batch_wraps in (
@@ -1104,15 +1121,19 @@ def build_rotation() -> Json:
                 lambda b: b.add("wg_create", "alice", wg=w3, epoch=1),
                 lambda b: b.add("grant", "alice", subject=pid("bob"), wg=w3, access="write"),
             ),
-            [make_wrap("alice", "wg", w3, 1, r) for r in ("alice", "bob")],
+            [make_wrap("alice", "wg", w3, 1, r) for r in ("alice", "bob", "carol")],
         ),
         (
             "manual_rotation",
             batch(rot("wg", W1, 2)),
-            [make_wrap("alice", "wg", W1, 2, r) for r in ("alice", "bob", "dev2")],
+            [make_wrap("alice", "wg", W1, 2, r) for r in ("alice", "bob", "carol", "dev2")],
         ),
+        ("admin_demoted_with_rotation", batch(demote_carol, rot("wg", W1, 2), rot("wg", W2, 2)), demotion_wraps),
+        ("admin_demotes_itself", batch(lambda b: b.add("role", "carol", subject=pid("carol"), role="member")), []),
     ):
         args = {**base, "append": append, "wraps": batch_wraps}
+        if name == "admin_demotes_itself":
+            args["wrapped_by"] = pid("carol")
         result = cast(Any, ctx.run("check_batch", args))
         valid_batches.append(
             {
@@ -1173,6 +1194,32 @@ def build_rotation() -> Json:
             "signature_invalid",
         ),
         neg("seq_conflict", "check_batch", {**base, "append": remove_batch[1:], "wraps": []}, "seq_conflict"),
+        neg(
+            "wg_create_without_admin_wrap",
+            "check_batch",
+            {
+                **base,
+                "append": batch(lambda b: b.add("wg_create", "alice", wg=w3, epoch=1)),
+                "wraps": [make_wrap("alice", "wg", w3, 1, "alice")],
+            },
+            "rotation_required",
+        ),
+        neg(
+            "admin_demoted_without_rotation",
+            "check_batch",
+            {**base, "append": batch(demote_carol), "wraps": []},
+            "rotation_required",
+        ),
+        neg(
+            "admin_demoted_wrap_for_demoted",
+            "check_batch",
+            {
+                **base,
+                "append": batch(demote_carol, rot("wg", W1, 2), rot("wg", W2, 2)),
+                "wraps": [*demotion_wraps, make_wrap("alice", "wg", W1, 2, "carol")],
+            },
+            "wrap_unauthorized",
+        ),
     ]
     return {
         "about": "Rotation obligation of 04-crypto.md section 4.7: R(before, after, subject) for every entry type and "
@@ -1194,9 +1241,18 @@ def build_rotation() -> Json:
 
 def build_wraps() -> Json:
     """W1-W3 against the final state of the main log, `cred` wraps and catch-up plans (sections 5.11, 6.3)."""
-    main, plat = main_builder(), platform_builder()
-    ctx = Context({"main": main.entries, "platform": plat.entries})
+    main, plat, edge = main_builder(), platform_builder(), edge_builder()
+    ctx = Context({"main": main.entries, "platform": plat.entries, "edge": edge.entries})
     full = len(main.entries)
+
+    def edge_args(wrapper: str, scope: str, scope_id: str, epoch: int, recipient: str, **extra: object) -> Json:
+        return {
+            "log": _ref("edge", EDGE_COUNT),
+            "founder": sig_pk("alice"),
+            "wrap": make_wrap(wrapper, scope, scope_id, epoch, recipient),
+            "wrapped_by": pid(wrapper),
+            **extra,
+        }
 
     def args(wrapper: str, scope: str, scope_id: str, epoch: int, recipient: str, **extra: object) -> Json:
         return _main_args(
@@ -1211,6 +1267,12 @@ def build_wraps() -> Json:
         ("W2_device_for_device", args("device", "wg", W1, 2, "pdev")),
         ("W2_org_older_epoch_for_device", args("alice", "org", ORG, 1, "device")),
         ("W2_former_holder_of_old_epoch", args("bob", "wg", W1, 1, "device")),
+        ("W2_former_admin_held_epoch_by_inheritance", args("carol", "wg", W1, 1, "device")),
+        ("W2_member_for_admin_without_explicit_access", edge_args("bob", "wg", W1, 1, "carol")),
+        ("W2_device_for_admin_without_explicit_access", edge_args("dev2", "wg", W1, 1, "carol")),
+        ("W2_admin_by_inheritance_for_member", edge_args("carol", "wg", W1, 1, "bob")),
+        ("W2_admin_by_inheritance_for_device", edge_args("carol", "wg", W1, 1, "dev2")),
+        ("W2_for_admin_on_archived_workgroup", edge_args("alice", "wg", W2, 1, "carol")),
     ):
         ctx.run("check_wrap", case)
         valid.append({"name": name, "args": case})
@@ -1230,7 +1292,18 @@ def build_wraps() -> Json:
         neg("recipient_removed", "check_wrap", args("alice", "org", ORG, 3, "bob"), "wrap_unauthorized"),
         neg("epoch_in_future", "check_wrap", args("alice", "wg", W1, 3, "device"), "wrap_unauthorized"),
         neg("removed_member_wraps_new_epoch", "check_wrap", args("bob", "wg", W1, 2, "device"), "wrap_unauthorized"),
-        neg("removed_admin_never_holder", "check_wrap", args("carol", "wg", W1, 2, "device"), "wrap_unauthorized"),
+        neg(
+            "removed_admin_at_hub",
+            "check_wrap",
+            args("carol", "wg", W1, 1, "device", require_active=True),
+            "wrap_unauthorized",
+        ),
+        neg(
+            "cred_admin_inherited_read_not_eligible",
+            "check_cred_wrap",
+            {**edge_args("carol", "cred", pid("carol"), 1, "dev2"), "current_epoch": 1},
+            "wrap_unauthorized",
+        ),
         neg("hub_forges_wrap", "check_wrap", args("hub", "wg", W1, 2, "device"), "wrap_unauthorized"),
         neg(
             "removed_wrapper_at_hub",
@@ -1305,13 +1378,26 @@ def build_wraps() -> Json:
         }
         for wrapper in ("alice", "device", "bob")
     ]
+    rotated = edge.copy()
+    rotated.add("rotate", "alice", scope="wg", scope_id=W1, epoch=2)  # 13: carol needs W1 epochs 1 and 2
+    edge_log = verify.verify_log(rotated.entries, sig_pk("alice"))
+    edge_existing = [wraps.WrapSlot("wg", W1, 2, r) for r in (pid("alice"), pid("bob"), pid("dev2"))]
+    admin_plans = [
+        {
+            "wrapper": pid(wrapper),
+            "excluded": [],
+            "missing": [slot.to_json() for slot in catchup.missing_wraps(edge_log, pid(wrapper), edge_existing)],
+        }
+        for wrapper in ("dev2", "bob", "carol")
+    ]
     return {
-        "about": "Wrap rules W1-W3 of 04-crypto.md section 6.3 against the final state of the main log of log.json, "
-        "cred wraps, and catch-up plans (section 5.11). See README.md, 'Log vectors'.",
+        "about": "Wrap rules W1-W3 of 04-crypto.md section 6.3 against the final state of the main log of log.json "
+        "and, for admins without explicit workgroup access (ADR-058), the edge log of log-rotation.json; cred wraps, "
+        "and catch-up plans (section 5.11). See README.md, 'Log vectors'.",
         "identities": _identities(),
         "ids": _ids(),
         "founder": sig_pk("alice"),
-        "logs": {"main": main.entries, "platform": plat.entries},
+        "logs": {"main": main.entries, "platform": plat.entries, "edge": edge.entries, "edge_rotated": rotated.entries},
         "scope_keys": {
             f"{scope}/{scope_id}/{epoch}": b64u_encode(scope_key(scope, scope_id, epoch))
             for scope, scope_id, epoch in (
@@ -1326,6 +1412,11 @@ def build_wraps() -> Json:
         "cred_valid": cred_valid,
         "catch_up": {"existing": [slot.to_json() for slot in existing], "plans": plans},
         "cred_catch_up": {"existing": [slot.to_json() for slot in cred_existing], "plans": cred_plans},
+        "admin_catch_up": {
+            "log": _ref("edge_rotated", EDGE_COUNT + 1),
+            "existing": [slot.to_json() for slot in edge_existing],
+            "plans": admin_plans,
+        },
         "invalid": invalid,
     }
 

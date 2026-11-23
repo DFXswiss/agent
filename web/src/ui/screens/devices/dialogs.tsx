@@ -1,9 +1,10 @@
 // The device dialogs (06-web.md section 7.3): assign a platform device (workgroup, then the candidates the verified
 // platform log certifies; others are shown as not certified and cannot be chosen), assign an org device to a further
-// workgroup, and rename. Each runs through the confirmation dialog with the batch progress of the member screen.
+// workgroup (every writable workgroup, ADR-058: key holders deliver what the admin does not hold), and rename. Each
+// runs through the confirmation dialog of the member screen.
 import { useEffect, useId, useState } from 'react';
 import type { OrgState } from '../../../core/log/state';
-import { actionErrorCode, keyRing } from '../../../core/org/batch';
+import { actionErrorCode } from '../../../core/org/batch';
 import {
   assignableWorkgroups,
   assignDevice,
@@ -97,13 +98,13 @@ export function AssignPlatformDialog(props: {
   const { org, state, directory, onClose } = props;
   const { app } = useAppEnv();
   const { t, error } = useI18n();
-  const choices = assignableWorkgroups(state, keyRing(app.store, org));
-  const [wg, setWg] = useState(choices[0] ?? '');
+  // never empty: the default workgroup is never archived
+  const choices = assignableWorkgroups(state);
+  const [wg, setWg] = useState(choices[0]!);
   // the candidates of the workgroup they were loaded for (a change of the workgroup shows "loading" until its own)
   const [loaded, setLoaded] = useState<{ wg: string; rows: CandidateRow[] | null; code: string | null } | null>(null);
   const [chosen, setChosen] = useState('');
   useEffect(() => {
-    if (wg === '') return;
     loadCandidates(app.tasks, org, wg).then(
       (found) => setLoaded({ wg, rows: found, code: null }),
       (failure: unknown) => setLoaded({ wg, rows: null, code: actionErrorCode(failure) }),
@@ -131,28 +132,24 @@ export function AssignPlatformDialog(props: {
       onDone={onClose}
       onClose={onClose}
     >
-      {choices.length === 0 ? (
-        <p data-testid="devices.assign.no-workgroup">{t('devices.assign.no-workgroup')}</p>
-      ) : (
-        <div className="flex flex-col gap-3">
-          <WorkgroupSelect
-            choices={choices}
-            value={wg}
-            onChange={setWg}
-            directory={directory}
-            testId="devices.assign.wg"
-          />
-          <p>{t('devices.assign.note')}</p>
-          {code !== null && (
-            <p role="alert" className="text-red-800" data-testid="devices.assign.load-error" data-code={code}>
-              {error(code).title}
-            </p>
-          )}
-          {rows === null && code === null && <p data-testid="devices.assign.loading">{t('devices.assign.loading')}</p>}
-          {rows !== null && rows.length === 0 && <p data-testid="devices.assign.none">{t('devices.assign.none')}</p>}
-          {rows !== null && rows.length > 0 && <Candidates rows={rows} chosen={chosen} onChoose={setChosen} />}
-        </div>
-      )}
+      <div className="flex flex-col gap-3">
+        <WorkgroupSelect
+          choices={choices}
+          value={wg}
+          onChange={setWg}
+          directory={directory}
+          testId="devices.assign.wg"
+        />
+        <p>{t('devices.assign.note')}</p>
+        {code !== null && (
+          <p role="alert" className="text-red-800" data-testid="devices.assign.load-error" data-code={code}>
+            {error(code).title}
+          </p>
+        )}
+        {rows === null && code === null && <p data-testid="devices.assign.loading">{t('devices.assign.loading')}</p>}
+        {rows !== null && rows.length === 0 && <p data-testid="devices.assign.none">{t('devices.assign.none')}</p>}
+        {rows !== null && rows.length > 0 && <Candidates rows={rows} chosen={chosen} onChoose={setChosen} />}
+      </div>
     </ActionDialog>
   );
 }
@@ -168,7 +165,7 @@ export function AssignToWorkgroupDialog(props: {
   const { org, row, state, directory, onClose } = props;
   const { app } = useAppEnv();
   const { t } = useI18n();
-  const choices = assignableWorkgroups(state, keyRing(app.store, org)).filter((wg) => !row.workgroups.includes(wg));
+  const choices = assignableWorkgroups(state).filter((wg) => !row.workgroups.includes(wg));
   const [wg, setWg] = useState(choices[0] ?? '');
   return (
     <ActionDialog

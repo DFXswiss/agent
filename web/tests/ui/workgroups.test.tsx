@@ -1,16 +1,13 @@
 // U-WEB-ui-workgroups and U-WEB-ui-orgs (screens): the workgroup screen (create with members and devices, rename,
-// archive, rights), the org switcher (names, switching, "Create organization" with its refusal) and the rotation
-// toasts, in jsdom against the org world of tests/core/org/world.ts.
+// archive, rights), the org switcher (names, switching, "Create organization" with its refusal), in jsdom against the org world of tests/core/org/world.ts.
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HubError } from '../../src/core/net/signedFetch';
 import { setProfile } from '../../src/core/store/slices/me';
-import { noteRotation } from '../../src/core/store/slices/rotation';
 import { setActiveOrg } from '../../src/core/store/slices/session';
 import { OrgSwitcher } from '../../src/ui/shell/header/org-switcher';
-import { RotationToasts, TOAST_MS } from '../../src/ui/shell/header/rotation-toast';
 import { WorkgroupsScreen } from '../../src/ui/screens/workgroups/WorkgroupsScreen';
-import { idOf, T0 } from '../core/log/world';
+import { idOf } from '../core/log/world';
 import { orgWorld } from '../core/org/world';
 import { mount, names } from './org-world';
 
@@ -233,25 +230,5 @@ describe('org switcher', () => {
     fireEvent.click(screen.getByTestId('org-switcher.create.confirm'));
     await waitFor(() => expect(posted).toHaveLength(2));
     expect(posted[1]).toBe(posted[0]);
-  });
-});
-
-describe('rotation toasts', () => {
-  it('announces each automatic rotation and closes by itself or with its button', async () => {
-    vi.useFakeTimers();
-    const w = await orgWorld();
-    w.client.on(`GET /v1/scopes/${w.org}/events`, () => ({ events: [], next_after: null, head: 0 }));
-    mount(w, [{ path: '*', element: <RotationToasts /> }], '/');
-    act(() => {
-      noteRotation(w.store, { org: w.org, scopes: 3, devices: 0, at: T0 });
-      noteRotation(w.store, { org: 'unknown', scopes: 2, devices: 1, at: T0 });
-    });
-    const items = screen.getAllByTestId('rotation-toast.item');
-    expect(items[0]).toHaveTextContent('Organization: keys of 3 scopes rotated automatically.');
-    expect(items[1]).toHaveTextContent('1 decertified device(s) unassigned, keys of 2 scopes rotated');
-    fireEvent.click(within(items[1]!).getByTestId('rotation-toast.close'));
-    expect(screen.getAllByTestId('rotation-toast.item')).toHaveLength(1);
-    act(() => vi.advanceTimersByTime(TOAST_MS));
-    expect(screen.queryAllByTestId('rotation-toast.item')).toHaveLength(0);
   });
 });

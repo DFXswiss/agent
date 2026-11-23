@@ -1,6 +1,6 @@
-"""U-HUB-notifications (other rules): `task.idle` after at least 10 s of `working`, `task.failed`, `invite.accepted`
-and `rotation.required`, each from the signal of its area, written once and sent as a `notification` frame
-(03-api.md section 4.9)."""
+"""U-HUB-notifications (other rules): `task.idle` after at least 10 s of `working`, `task.failed` and
+`invite.accepted`, each from the signal of its area, written once and sent as a `notification` frame (03-api.md
+section 4.9); owed rotations notify nobody (KOR-34)."""
 
 from __future__ import annotations
 
@@ -155,24 +155,17 @@ def _pending(hub: HubHarness, org: str, scopes: list[dict[str, str]]) -> None:
         connection.execute("UPDATE hub.org SET rotation_pending = %s WHERE id = %s", (json.dumps(scopes), org))
 
 
-def test_rotation_required_reminds_each_admin_once_until_read(
+def test_an_owed_rotation_notifies_nobody(
     board: Board, hub: HubHarness, bound: None, published: publish.MemoryPublisher
 ) -> None:
+    """KOR-34 (ADR-058 section 3): owed rotations run silently; neither a log append nor a decertification of a device
+    writes a `rotation.required` reminder any more."""
     scene = board.scene
-    _emit("log.appended", org_id=UUID(scene.org), seq=1)
-    assert _notifications(board, rules.ROTATION_REQUIRED) == []  # nothing pending
     _pending(hub, scene.org, [{"scope": "wg", "scope_id": scene.wg}])
     _emit("log.appended", org_id=UUID(scene.org), seq=1)
     _emit("device.decertified", device=UUID(scene.device.id))
-    assert _notifications(board, rules.ROTATION_REQUIRED) == [
-        (scene.admin.id, scene.org, None, None, None, hub.clock())
-    ]
-    with hub.pool.connection() as connection, connection.transaction():
-        connection.execute("UPDATE hub.notification SET read_at = %s", (hub.clock(),))
-    hub.clock.advance(1)
-    _emit("device.decertified", device=UUID(scene.device.id))
-    assert len(_notifications(board, rules.ROTATION_REQUIRED)) == 2
-    assert _frames(published) == [(scene.admin.id, rules.ROTATION_REQUIRED)] * 2
+    assert _notifications(board, rules.ROTATION_REQUIRED) == []
+    assert _frames(published) == []
 
 
 def test_a_failed_main_session_notifies_through_the_sessions_area(

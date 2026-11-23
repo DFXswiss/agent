@@ -40,9 +40,9 @@
 //
 // Records: written by the user or a device entitled now → re-encrypted by the user. Written by a device that has lost
 // eligibility → deleted (re-signing them as the user's would launder whatever that device or a colluding hub wrote;
-// the user connects again); the toast counts them. Any other record the browser cannot open (signature, body, epoch)
-// blocks the rotation – nothing is deleted on the browser's own doubt – and a notice asks the user to delete or replace
-// it (shown once per sign-in).
+// the user connects again). A rotation runs silently (ADR-058 section 4). Any other record the browser cannot open
+// (signature, body, epoch) blocks the rotation – nothing is deleted on the browser's own doubt – and a notice asks the
+// user to delete or replace it (shown once per sign-in).
 //
 // `CK` belongs to the user while jobs run per org queue: only the queue of the first verified org acts, runs are
 // serialized per store (`exclusive`), and a run that finds the rotation done by another run or browser does nothing.
@@ -352,7 +352,7 @@ export function handledFor(store: Store): Set<string> {
 
 /**
  * One run: only the queue of the first verified org acts (`CK` is per user, the trigger reaches every org's queue),
- * the rotation (retried once after a `version_conflict`) and its toast.
+ * the rotation (retried once after a `version_conflict`), silent unless it is blocked (then a toast).
  */
 export async function rewrap(context: JobContext, run: JobRun): Promise<RotationResult | null> {
   if (verifiedLogs(context.store)[0]?.state.org !== run.org) return null;
@@ -367,7 +367,9 @@ export async function rewrap(context: JobContext, run: JobRun): Promise<Rotation
       if (!(error instanceof HubError) || error.code !== 'version_conflict') throw error;
       result = await rotateCredentialKey(requests, handled, stillCurrent);
     }
-    if (result !== null && stillCurrent()) noteCredentialRotation(context.store, { result, at: context.now() });
+    if (result?.status === 'blocked' && stillCurrent()) {
+      noteCredentialRotation(context.store, { result, at: context.now() });
+    }
     return result;
   });
 }

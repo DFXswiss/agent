@@ -6,8 +6,9 @@
   `joined_seq` and no `removed_seq`; `remove` sets `removed_seq`; `role` changes the role;
 - `wg`: `created_seq` at genesis/`wg_create`, `archived_seq` at `wg_archive`;
 - `wg_access`: the **effective** access of every active user (explicit access plus `write` on the default workgroup for
-  every member, ADR-024 addendum: not reducible); a new or changed access sets `granted_seq` and clears `revoked_seq`,
-  a lost access sets `revoked_seq` (ungrant, remove);
+  every member, ADR-024 addendum: not reducible, plus `read` on every other workgroup for every admin without explicit
+  access, marked `inherited`, ADR-058); a new or changed access (level or `inherited`) sets `granted_seq` and clears
+  `revoked_seq`, a lost access sets `revoked_seq` (ungrant, remove, demotion);
 - `wg_device`: the assignments of active devices with `assigned_seq`/`unassigned_seq`;
 - `scope_epoch`: every new epoch of an `org`/`wg` scope with `created_seq` and the receipt time.
 
@@ -29,22 +30,24 @@ from psycopg.types.json import Jsonb
 
 from agent_hub.log import rotation
 from agent_hub.log.platform import PlatformState
-from agent_hub.log.state import USER, WRITE, OrgState, Scope
+from agent_hub.log.state import USER, OrgState, Scope
 from agent_hub.log.verify import VerifiedLog
 
 Connection = psycopg.Connection[Any]
 
 
-def effective_access(state: OrgState | None) -> dict[tuple[str, str], str]:
-    """`(user, wg) -> read|write` of every active user, including the default workgroup."""
+def effective_access(state: OrgState | None) -> dict[tuple[str, str], tuple[str, bool]]:
+    """`(user, wg) -> (read|write, inherited)` of every active user, including the default workgroup and the
+    inherited read of admins (`OrgState.wg_access`)."""
     if state is None:
         return {}
-    found: dict[tuple[str, str], str] = {}
+    found: dict[tuple[str, str], tuple[str, bool]] = {}
     for principal in state.principals.values():
         if principal.active and principal.kind == USER:
-            found[(principal.id, state.default_wg)] = WRITE
-    # `remove` drops the explicit access of the removed principal, so `access` holds active members only.
-    found.update(state.access)
+            for wg in state.workgroups:
+                level = state.wg_access(principal.id, wg)
+                if level is not None:
+                    found[(principal.id, wg)] = (level, state.inherited(principal.id, wg))
     return found
 
 
@@ -91,13 +94,14 @@ def _workgroups(connection: Connection, org: UUID, before: OrgState | None, afte
 
 def _access(connection: Connection, before: OrgState | None, after: OrgState, seq: int) -> None:
     old, new = effective_access(before), effective_access(after)
-    for (user, wg), level in sorted(new.items()):
-        if old.get((user, wg)) != level:
+    for (user, wg), (level, inherited) in sorted(new.items()):
+        if old.get((user, wg)) != (level, inherited):
             connection.execute(
-                "INSERT INTO hub.wg_access (wg_id, user_id, access, granted_seq, revoked_seq)"
-                " VALUES (%s, %s, %s, %s, NULL) ON CONFLICT (wg_id, user_id) DO UPDATE"
-                " SET access = EXCLUDED.access, granted_seq = EXCLUDED.granted_seq, revoked_seq = NULL",
-                (wg, user, level, seq),
+                "INSERT INTO hub.wg_access (wg_id, user_id, access, inherited, granted_seq, revoked_seq)"
+                " VALUES (%s, %s, %s, %s, %s, NULL) ON CONFLICT (wg_id, user_id) DO UPDATE"
+                " SET access = EXCLUDED.access, inherited = EXCLUDED.inherited, granted_seq = EXCLUDED.granted_seq,"
+                " revoked_seq = NULL",
+                (wg, user, level, inherited, seq),
             )
     for user, wg in sorted(set(old) - set(new)):
         connection.execute(

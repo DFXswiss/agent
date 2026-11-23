@@ -673,28 +673,18 @@ describe('usage strip', () => {
 });
 
 describe('rotation toast', () => {
-  it('announces each rotation, closes by itself or with its button', async () => {
+  it('shows one plain sentence only when the renewal is blocked, closes by itself or with its button', async () => {
     const t = await world();
     vi.useFakeTimers();
     mount(t, [{ path: '/', element: <CredentialRotationToasts /> }], '/');
-    const rotated = (dropped: number) => ({ status: 'rotated' as const, epoch: 2, records: 2, dropped });
-    act(() => noteCredentialRotation(t.store, { result: rotated(0), at: 0 }));
-    expect(screen.getByTestId('credential-rotation.item')).toHaveTextContent('2 record(s) re-encrypted.');
-    expect(screen.getByTestId('credential-rotation.item')).not.toHaveTextContent('deleted');
+    const blocked = { status: 'blocked' as const, kinds: ['mailbox' as const, 'anthropic_api_key' as const] };
+    act(() => noteCredentialRotation(t.store, { result: blocked, at: 0 }));
+    expect(screen.getByTestId('credential-rotation.item')).toHaveTextContent(
+      'Some stored credentials can no longer be opened (Mailbox for the automatic login, Anthropic API key).',
+    );
     act(() => vi.advanceTimersByTime(TOAST_MS));
     expect(screen.queryByTestId('credential-rotation.item')).toBeNull();
-    act(() => noteCredentialRotation(t.store, { result: rotated(1), at: 0 }));
-    expect(screen.getByTestId('credential-rotation.item')).toHaveTextContent('1 record(s) stored by that device');
-    fireEvent.click(screen.getByTestId('credential-rotation.close'));
-    act(() =>
-      noteCredentialRotation(t.store, {
-        result: { status: 'blocked', kinds: ['mailbox', 'anthropic_api_key'] },
-        at: 0,
-      }),
-    );
-    expect(screen.getByTestId('credential-rotation.item')).toHaveTextContent(
-      'blocked: Mailbox for the automatic login, Anthropic API key cannot be opened',
-    );
+    act(() => noteCredentialRotation(t.store, { result: blocked, at: 0 }));
     fireEvent.click(screen.getByTestId('credential-rotation.close'));
     expect(screen.queryByTestId('credential-rotation.item')).toBeNull();
   });

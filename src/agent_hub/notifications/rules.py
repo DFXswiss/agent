@@ -15,8 +15,8 @@ A `notification` row is content-free: recipient, kind, org, workgroup, task, a r
   Both task rules notify an owner only while the owner still reads the task's workgroup.
 - `invite.accepted` (`invite_rule`): to the admin who created the org invitation (while still an admin of the org;
   never to the accepting subject itself), `ref` = the subject (user or device).
-- `rotation.required` (`rotation_rule`): to every admin of an org whose `rotation_pending` is not empty, unless the
-  admin still has an unread `rotation.required` of that org (one open reminder per admin and org).
+- `rotation.required` is no longer created (KOR-34, ADR-058 section 3: owed rotations run silently in the admins'
+  browsers, 06-web.md section 11 job 4); the kind stays valid so that existing rows still list and render.
 
 The after-commit rules run from the subscribers of `agent_hub.notifications.signals` and are idempotent: a row whose
 recipient, kind, org, task, reference and time match an existing row is not written again (task and invitation rules),
@@ -236,30 +236,6 @@ def invite_rule(
     if duplicate is not None:
         return []
     return _write(connection, found[0], INVITE_ACCEPTED, now, org_id=org_id, ref=str(subject_id))
-
-
-def rotation_rule(connection: Connection, org_ids: Iterable[UUID], now: datetime) -> list[Notification]:
-    """`rotation.required` to the admins of the orgs with a pending rotation (module docstring)."""
-    created: list[Notification] = []
-    for org_id in sorted(set(org_ids)):
-        admins = connection.execute(
-            "SELECT m.principal_id FROM hub.org_member m JOIN hub.org o ON o.id = m.org_id"
-            " WHERE m.org_id = %s AND m.role = 'admin' AND m.removed_seq IS NULL AND o.rotation_pending <> '[]'"
-            " AND NOT EXISTS (SELECT 1 FROM hub.notification n WHERE n.recipient_id = m.principal_id"
-            " AND n.kind = %s AND n.org_id = m.org_id AND n.read_at IS NULL) ORDER BY m.principal_id",
-            (org_id, ROTATION_REQUIRED),
-        ).fetchall()
-        for (admin,) in admins:
-            created.extend(_write(connection, admin, ROTATION_REQUIRED, now, org_id=org_id))
-    return created
-
-
-def orgs_of_device(connection: Connection, device_id: UUID) -> list[UUID]:
-    """The orgs in which the device is a member (a decertification marks their rotation pending)."""
-    rows = connection.execute(
-        "SELECT org_id FROM hub.org_member WHERE principal_id = %s AND kind = 'device' ORDER BY org_id", (device_id,)
-    ).fetchall()
-    return [found[0] for found in rows]
 
 
 def publish_rows(rows: Iterable[Notification]) -> None:

@@ -34,10 +34,11 @@ async function setup(as: 'ada' | 'bob' = 'ada') {
       await world.batch(a.ada!, [{ type: 'wg_create', wg: one, epoch: 1 }]);
       await world.admitUser(a.ada!, a.bob!, 'member', {});
       await world.admitUser(a.ada!, a.cy!, 'admin', {});
-      // a workgroup of cy that ada cannot read
+      // a workgroup of cy: ada reads it as admin (ADR-058), but its key has not reached ada's browser yet
       await world.batch(a.cy!, [{ type: 'wg_create', wg: hidden, epoch: 1 }]);
     },
   });
+  (w.store.getState().orgs.byId[w.org]!.keys as Map<string, unknown>).delete(`wg ${hidden} 1`);
   const a = w.others as Record<string, Actor>;
   const directory = {
     orgName: 'Grüße AG',

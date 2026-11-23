@@ -26,7 +26,7 @@
   "deleted": "Dieser Eintrag wurde gelöscht.",
   "author.unnamed": "Mitglied …{id}",
   "item.unverifiable": "Nicht prüfbarer Eintrag (Fehlercode: {code})",
-  "item.locked": "Dieser Eintrag lässt sich mit deinen Schlüsseln nicht entschlüsseln.",
+  "item.locked": "Dieser Eintrag ist für dich nicht lesbar.",
   "item.missing": "Dieser Eintrag ist nicht verfügbar.",
   "history": "Historie",
   "history.title": "Historie des Eintrags",

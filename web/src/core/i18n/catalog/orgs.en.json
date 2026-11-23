@@ -7,8 +7,5 @@
   "create.confirm": "Create",
   "create.name": "Name of the organization",
   "create.display-name": "Your display name",
-  "create.platform-note": "A new organization uses your own devices. Platform devices of DFX become available once the operator grants platform access.",
-  "rotation.scopes": "{org}: keys of {scopes} scopes rotated automatically.",
-  "rotation.devices": "{org}: {devices} decertified device(s) unassigned, keys of {scopes} scopes rotated.",
-  "rotation.close": "Close"
+  "create.platform-note": "A new organization uses your own devices. Platform devices of DFX become available once the operator grants platform access."
 }

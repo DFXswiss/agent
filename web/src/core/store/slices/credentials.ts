@@ -1,8 +1,7 @@
 // Slice `credentials` (06-web.md sections 8.2 and 11 job 5): the user's credential records as `core/credentials`
 // last opened them (`unknown` until loaded) – kind, version, epoch, update time and the non-secret summary only (never
-// a token, key or password) – and the toasts of the credential re-wrap job (every automatic `CK` rotation leaves a
-// notice until it is dismissed, so does a rotation blocked by records the browser cannot open; at most `MAX_NOTICES`,
-// oldest dropped).
+// a token, key or password) – and the toasts of the credential re-wrap job (a rotation runs silently; one blocked by
+// records the browser cannot open leaves a notice until it is dismissed; at most `MAX_NOTICES`, oldest dropped).
 import type { CredentialKind, Summary } from '../../credentials/records';
 import type { RotationResult } from '../../jobs/credential-rewrap';
 import type { Slice, Store } from '../store';
@@ -20,8 +19,8 @@ export interface CredentialEntry {
 
 export interface CredentialRotationNotice {
   readonly id: number;
-  /** A rotation (new epoch, re-encrypted and dropped records) or a rotation blocked by unreadable records. */
-  readonly result: RotationResult;
+  /** A rotation blocked by unreadable records (the user deletes or replaces them). */
+  readonly result: Extract<RotationResult, { status: 'blocked' }>;
   readonly at: number;
 }
 

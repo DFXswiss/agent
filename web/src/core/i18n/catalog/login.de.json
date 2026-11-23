@@ -1,6 +1,6 @@
 {
   "title": "Anmelden",
-  "explain": "Melden Sie sich mit Ihrem Passkey an. Dieselbe Bestätigung entsperrt Ihre Schlüssel auf diesem Gerät.",
+  "explain": "Melden Sie sich mit Ihrem Passkey an.",
   "submit": "Mit Passkey anmelden",
   "working": "Warte auf Ihren Passkey…",
   "cancelled": "Die Anmeldung wurde abgebrochen – bitte erneut versuchen."

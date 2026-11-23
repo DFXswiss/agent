@@ -13,8 +13,8 @@
 // 4. on `seq_conflict` (another browser appended first) the log is re-read and steps 1-3 run again, at most
 //    `BATCH_ATTEMPTS` times in total; any other refusal ends the flow with its code.
 // After success the verified log of the batch replaces the stored one and the new keys of scopes the user reads are
-// kept in memory. `progress` reports the slow steps for the progress view ("Rotating keys 2/5", "Wrapping for 7
-// recipients", "Sending", a new attempt after `seq_conflict`).
+// kept in memory. `progress` reports a new attempt after `seq_conflict` (the dialog otherwise shows only "Saving …";
+// key handling stays out of sight, ADR-058 section 4).
 import { formatTime } from '../encoding/time';
 import { CryptoError } from '../crypto/errors';
 import type { Identity } from '../crypto/keys';
@@ -22,7 +22,7 @@ import type { Secret } from '../crypto/secret';
 import type { KeyRing } from '../log/catchup';
 import type { LogFields } from '../log/entries';
 import type { PlatformState } from '../log/platform';
-import { type BatchProgress, buildBatch, type BuiltBatch } from '../log/rotation';
+import { buildBatch, type BuiltBatch } from '../log/rotation';
 import { epochKey } from '../log/state';
 import type { VerifiedLog } from '../log/verify';
 import { HubError, type SignedClient } from '../net/signedFetch';
@@ -125,8 +125,10 @@ export interface BatchPlan {
 export type Planner = (log: VerifiedLog, userId: string) => BatchPlan | null;
 
 /** A progress report of `submitBatch`. */
-export type SubmitProgress =
-  BatchProgress | { readonly step: 'send' } | { readonly step: 'retry'; readonly attempt: number };
+export interface SubmitProgress {
+  readonly step: 'retry';
+  readonly attempt: number;
+}
 
 /** The appended batch, or null if the planner found nothing to do. */
 export interface Submitted {
@@ -175,13 +177,11 @@ export async function submitBatch(
         history: plan.history === true,
         platform: verifiedPlatform(context.store),
         ts: formatTime(context.now()),
-        ...(progress && { progress }),
       });
       const fresh = new Map(result.newKeys.map((key) => [epochKey(key.scope, key.scope_id, key.epoch), key.key]));
       const keys: KeyRing = (scope, scopeId, epoch) =>
         fresh.get(epochKey(scope, scopeId, epoch)) ?? held(scope, scopeId, epoch);
       const events = plan.events === undefined ? [] : await plan.events(result, keys, actor);
-      progress?.({ step: 'send' });
       const answer = await context.client.request('POST', `/v1/orgs/${encodeURIComponent(org)}/log`, {
         body: { ...result.body, events },
       });

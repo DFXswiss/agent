@@ -499,7 +499,7 @@ describe('task page', () => {
     t.client.on(`POST /v1/tasks/${row.task_id}/prompts`, () => ({ scope_seq: 3, session_id: 's2' }));
     mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}`);
     expect(screen.getByTestId('task.loading')).toHaveTextContent('Loading the task…');
-    expect(await screen.findByTestId('task.title')).toHaveTextContent('Title is being decrypted…');
+    expect(await screen.findByTestId('task.title')).toHaveTextContent('Loading title …');
     expect(screen.queryByTestId('chat.prompt')).toBeNull();
     act(() =>
       putEvents(t.store, t.wg, [

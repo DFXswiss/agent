@@ -99,7 +99,7 @@ test('@E2E-30 @R-1.6 @R-1.7 @R-5.6 @R-14.1 @R-P.5 a second passkey, a passkey si
   await signOut(page);
   await signIn(page);
   await expect(page.getByTestId('prf-missing.explain')).toHaveText(
-    'This passkey cannot unlock your encryption keys on this device.',
+    'This passkey cannot open your data on this device.',
   );
   await page.getByTestId('prf-missing.recovery.input').fill('AAAAA-AAAAA-AAAAA-AAAAA-AAAAAA');
   await anonymousBudget(COST.lookup);

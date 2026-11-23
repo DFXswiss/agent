@@ -28,7 +28,7 @@ test('a second passkey on another device unlocks the same identity, the first is
   expect(await platform.credentials()).toHaveLength(1);
   await page.getByTestId('passkeys.add.confirm').click();
   await expect(page.getByTestId('passkeys.add.notice')).toHaveText(
-    'The passkey was added. It signs in and unlocks your keys.',
+    'The passkey was added. It signs you in and opens your data.',
   );
   const items = page.getByTestId('passkeys.item');
   await expect(items).toHaveCount(2);

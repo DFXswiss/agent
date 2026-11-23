@@ -187,9 +187,14 @@ function role(state: OrgState, body: Body): OrgState {
   const principal = state.member(body.subject as string);
   if (principal === null || principal.kind !== USER || principal.role === body.role) fail('log_rights');
   if (principal.role === ADMIN && state.admins().length === 1) fail('last_admin');
-  return state.with({
+  let after = state.with({
     principals: new Map(state.principals).set(principal.id, { ...principal, role: body.role as string }),
   });
+  if (principal.id === body.by) {
+    // self-demotion: like leaving, the subject cannot rotate what it no longer reads (ADR-058 section 3)
+    after = after.with({ pending: new Set([...after.pending, ...requiredSet(state, after, principal.id)]) });
+  }
+  return after;
 }
 
 function wgCreate(state: OrgState, body: Body, seq: number): OrgState {

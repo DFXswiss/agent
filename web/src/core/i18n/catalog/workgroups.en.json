@@ -16,7 +16,7 @@
   "create.open": "Create workgroup",
   "create.title": "Create workgroup",
   "create.confirm": "Create",
-  "create.note": "You get write access. Other admins get no access unless you choose them here.",
+  "create.note": "Every admin of the organization can read it. You can write.",
   "create.members": "Members",
   "create.devices": "Devices",
   "rename.open": "Rename",
@@ -25,5 +25,7 @@
   "archive.open": "Archive",
   "archive.title": "Archive {name}",
   "archive.confirm": "Archive",
-  "archive.body": "Archived workgroups keep their history but take no new tasks or changes."
+  "archive.body": "Archived workgroups keep their history but take no new tasks or changes.",
+  "unlocking": "Being unlocked – the content appears as soon as a member or device of this workgroup has been online.",
+  "unlocking.lost": "Older content of this workgroup can no longer be opened: nobody who could still share it is left. New content becomes readable for you shortly."
 }

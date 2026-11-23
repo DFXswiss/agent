@@ -11,7 +11,8 @@
 // Changes (admin only: `device_assign`, `device_unassign` and `remove` are admin entries of the log, 04-crypto.md
 // section 4.7; in a private org the single member is the admin):
 // - assign a device to a workgroup: one batch `device_assign` (platform devices with `platform_seq`, only with platform
-//   access, ADR-026) + the wraps of the current `WK` and `OK` for the device (built by `buildBatch`, ADR-007), then the
+//   access, ADR-026) + the wraps of the current `WK` and `OK` the user holds for the device (built by `buildBatch`,
+//   ADR-007; the transition rule of ADR-058 withholds a `WK` the user reads only as admin, catch-up delivers it), then the
 //   wrap of the user's own `CK` (`wrapCredentialKey`, best effort like the first-task flow);
 // - platform candidates (`GET /v1/workgroups/{wg}/device-candidates`) are offered only when the verified platform log
 //   certifies them with the listed keys (compiled root key);
@@ -24,7 +25,7 @@ import { formatTime } from '../encoding/time';
 import { newHeader, sealEvent } from '../crypto/event';
 import type { LogFields } from '../log/entries';
 import type { PlatformState } from '../log/platform';
-import { DEVICE, ORG, type OrgState, WG } from '../log/state';
+import { DEVICE, ORG, type OrgState } from '../log/state';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import { memoize } from '../store/selectors';
@@ -194,12 +195,11 @@ export function hasPlatformAccess(state: OrgState, platform: PlatformState | nul
 }
 
 /**
- * Workgroups a device can be assigned to by the user: not archived, and the user holds the current `WK` and `OK` (the
- * batch wraps both for the device, ADR-007). In the order of `workgroupOrder`.
+ * Workgroups a device can be assigned to: every workgroup that is not archived, in the order of `workgroupOrder`. The
+ * batch wraps the keys the user holds for the device; the other key holders deliver the rest by catch-up (ADR-058).
  */
-export function assignableWorkgroups(state: OrgState, held: ReturnType<typeof keyRing>): string[] {
-  if (held(ORG, state.org, state.epoch(ORG, state.org)) === null) return [];
-  return workgroupOrder(state).filter((wg) => state.writable(wg) && held(WG, wg, state.epoch(WG, wg)) !== null);
+export function assignableWorkgroups(state: OrgState): string[] {
+  return workgroupOrder(state).filter((wg) => state.writable(wg));
 }
 
 // --- platform candidates ---

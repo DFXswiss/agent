@@ -1,8 +1,7 @@
-// Toasts of the credential re-wrap job (06-web.md section 11 job 5): every automatic rotation of the credential key
-// `CK` (a device lost access to the user's credentials) is announced in a polite live region with the number of
-// re-encrypted records and of records of that device that were deleted; a rotation blocked by records the browser
-// cannot open names them (the user deletes or replaces them in /settings). Each toast closes by itself after
-// `TOAST_MS` or with its button.
+// Toasts of the credential re-wrap job (06-web.md section 11 job 5): the automatic renewal runs silently (ADR-058
+// section 4); only when it is blocked by records the browser cannot open does one plain sentence in a polite live region
+// name them (the user deletes or replaces them in /settings). Each toast closes by itself after `TOAST_MS` or with its
+// button.
 import { useEffect } from 'react';
 import { type CredentialRotationNotice, dismissCredentialRotation } from '../../../core/store/slices/credentials';
 import { useStore } from '../../hooks/useStore';
@@ -25,14 +24,9 @@ function Toast({ notice }: { readonly notice: CredentialRotationNotice }) {
       data-testid="credential-rotation.item"
     >
       <span data-status={result.status}>
-        {result.status === 'blocked'
-          ? t('credentials.rotation.blocked', {
-              kinds: result.kinds.map((kind) => t(`credentials.kind.${kind}`)).join(', '),
-            })
-          : t('credentials.rotation.done', { records: result.records })}
-        {result.status === 'rotated' &&
-          result.dropped > 0 &&
-          ` ${t('credentials.rotation.dropped', { dropped: result.dropped })}`}
+        {t('credentials.rotation.blocked', {
+          kinds: result.kinds.map((kind) => t(`credentials.kind.${kind}`)).join(', '),
+        })}
       </span>
       <button
         type="button"

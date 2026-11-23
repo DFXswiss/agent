@@ -16,7 +16,7 @@
   "create.open": "Workgroup anlegen",
   "create.title": "Workgroup anlegen",
   "create.confirm": "Anlegen",
-  "create.note": "Du erhältst Schreibzugriff. Andere Admins erhalten keinen Zugriff, ausser du wählst sie hier aus.",
+  "create.note": "Alle Admins der Organisation können sie lesen. Du kannst schreiben.",
   "create.members": "Mitglieder",
   "create.devices": "Geräte",
   "rename.open": "Umbenennen",
@@ -25,5 +25,7 @@
   "archive.open": "Archivieren",
   "archive.title": "{name} archivieren",
   "archive.confirm": "Archivieren",
-  "archive.body": "Archivierte Workgroups behalten ihre Historie, nehmen aber keine neuen Tasks oder Änderungen an."
+  "archive.body": "Archivierte Workgroups behalten ihre Historie, nehmen aber keine neuen Tasks oder Änderungen an.",
+  "unlocking": "Wird freigeschaltet – die Inhalte erscheinen, sobald ein Mitglied oder Gerät dieser Workgroup online war.",
+  "unlocking.lost": "Ältere Inhalte dieser Workgroup lassen sich nicht mehr öffnen: Niemand, der sie teilen könnte, ist mehr dabei. Neue Inhalte werden in Kürze für dich lesbar."
 }

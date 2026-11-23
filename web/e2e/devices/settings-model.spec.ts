@@ -146,17 +146,14 @@ test('connects the subscription by the relay, shows the quotas and rotates CK wh
   await expect(page.getByTestId('composer.prompt')).toBeVisible();
   const me = (await api.request('GET', '/v1/me')) as { orgs: { org_id: string; default_wg: string }[] };
   await unassign(api, user.org, me.orgs[0]!.default_wg, user.device);
-  const toast = page.getByTestId('credential-rotation.item');
-  await expect(toast).toContainText('1 record(s) re-encrypted');
-  await expect(toast).toContainText('1 record(s) stored by that device were deleted');
+  // silently (ADR-058 section 4): no notice, the records show the result
   await expect
     .poll(
       async () =>
         ((await api.request('GET', '/v1/me/credentials')) as { credentials: { epoch: number }[] }).credentials,
     )
     .toEqual([expect.objectContaining({ kind: 'anthropic_api_key', epoch: 2, version: 2 })]);
-  await page.getByTestId('credential-rotation.close').click();
-  await expect(toast).toHaveCount(0);
+  await expect(page.getByTestId('credential-rotation.item')).toHaveCount(0);
   await settings(page);
   await expect(page.getByTestId('credentials.item.anthropic_api_key')).toHaveAttribute('data-status', 'verified');
   await expect(page.getByTestId('credentials.item.claude_subscription')).toHaveCount(0);

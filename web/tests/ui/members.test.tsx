@@ -1,7 +1,7 @@
-// U-WEB-ui-members (screens): the member screen, the invitation area, the confirmation dialog with the rotation
-// progress and the focus trap, in jsdom against the org world of tests/core/org/world.ts (verified log, keys, the
+// U-WEB-ui-members (screens): the member screen, the invitation area, the confirmation dialog ("Saving …", the attempt
+// after `seq_conflict`) and the focus trap, in jsdom against the org world of tests/core/org/world.ts (verified log, keys, the
 // simulated hub). The Playwright specs run the same screens against the real hub; these tests cover the states that
-// are slow or impossible to produce there (progress steps, refusals, retries, empty and unnamed rows).
+// are slow or impossible to produce there (refusals, retries, empty and unnamed rows, inherited access).
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createI18n } from '../../src/core/i18n';
@@ -49,6 +49,9 @@ describe('member screen', () => {
     expect(within(items[2]!).getByTestId('members.item.access')).toHaveTextContent('StandardWrite');
     expect(within(items[2]!).getByTestId('members.item.access')).toHaveTextContent('WorkgroupRead');
     expect(within(items[0]!).queryByTestId('members.item.remove')).toBeNull();
+    // cy is an admin: workgroup one is read as admin, with nothing to ungrant (ADR-058)
+    expect(within(items[1]!).getByTestId('members.item.access')).toHaveTextContent('Workgroupreads as admin');
+    expect(within(items[1]!).queryByTestId('members.item.ungrant')).toBeNull();
     expect(screen.getByTestId('members.leave')).toBeInTheDocument();
     expect(one).toBeTruthy();
   });
@@ -69,6 +72,10 @@ describe('member screen', () => {
     const { bob, cy } = w.others;
     mount(w, at('/x'), `/o/${w.org}/members`);
     const row = () => screen.getAllByTestId('members.item').find((item) => item.dataset.member === bob.id)!;
+    // ungranting a member: it loses the workgroup (the dialog says so); cancelled here
+    fireEvent.click(within(row()).getByTestId('members.item.ungrant'));
+    expect(screen.getByTestId('members.ungrant')).toHaveTextContent('they cannot read new content');
+    fireEvent.click(screen.getByTestId('members.ungrant.cancel'));
     // role
     fireEvent.click(within(row()).getByTestId('members.item.role-change'));
     fireEvent.click(screen.getByTestId('members.role.confirm'));
@@ -87,12 +94,23 @@ describe('member screen', () => {
     fireEvent.click(screen.getByTestId('members.grant.confirm'));
     await waitFor(() => expect(screen.queryByTestId('members.grant')).toBeNull());
     expect(w.world.state.wgAccess(cy.id, one)).toBe('write');
-    // ungrant bob's workgroup one
+    // ungrant bob's explicit access to workgroup one: as an admin now, bob keeps reading it as admin
     fireEvent.click(within(row()).getByTestId('members.item.ungrant'));
     expect(screen.getByTestId('members.ungrant')).toHaveTextContent('Workgroup');
+    expect(screen.getByTestId('members.ungrant')).toHaveTextContent('stays an admin and keeps reading');
     fireEvent.click(screen.getByTestId('members.ungrant.confirm'));
     await waitFor(() => expect(screen.queryByTestId('members.ungrant')).toBeNull());
-    expect(w.world.state.wgAccess(bob.id, one)).toBeNull();
+    expect(w.world.state.explicitAccess(bob.id, one)).toBeNull();
+    expect(w.world.state.inherited(bob.id, one)).toBe(true);
+    // demoting an admin: one honest sentence, "Saving …", and the rotation is built automatically
+    const epoch = w.world.state.epoch('wg', one);
+    fireEvent.click(within(row()).getByTestId('members.item.role-change'));
+    expect(screen.getByTestId('members.role.demote')).toHaveTextContent('Content the person has already read');
+    fireEvent.click(screen.getByTestId('members.role.confirm'));
+    expect(screen.getByTestId('members.role.progress.save')).toHaveTextContent('Saving …');
+    await waitFor(() => expect(screen.queryByTestId('members.role')).toBeNull());
+    expect(w.world.state.isAdmin(bob.id)).toBe(false);
+    expect(w.world.state.epoch('wg', one)).toBe(epoch + 1);
     // remove
     fireEvent.click(within(row()).getByTestId('members.item.remove'));
     fireEvent.click(screen.getByTestId('members.remove.confirm'));
@@ -253,25 +271,21 @@ describe('dialog and progress', () => {
     opener.remove();
   });
 
-  it('shows every progress step and the attempt after seq_conflict', () => {
-    let view = advance(NO_PROGRESS, { step: 'rotate', done: 2, total: 5 });
-    view = advance(view, { step: 'wrap', recipients: 7 });
-    view = advance(view, { step: 'send' });
+  it('shows "Saving …" and the attempt after seq_conflict', () => {
     const { rerender } = render(
       <I18nProvider value={createI18n('en')}>
-        <Progress view={view} testId="p" />
+        <Progress view={NO_PROGRESS} testId="p" />
       </I18nProvider>,
     );
-    expect(screen.getByTestId('p.progress.rotate')).toHaveTextContent('Rotating keys 2/5');
-    expect(screen.getByTestId('p.progress.wrap')).toHaveTextContent('Wrapping for 7 recipients');
-    expect(screen.getByTestId('p.progress.send')).toHaveTextContent('Sending');
+    expect(screen.getByTestId('p.progress')).toHaveTextContent('Saving …');
+    expect(screen.queryByTestId('p.progress.attempt')).toBeNull();
     rerender(
       <I18nProvider value={createI18n('en')}>
-        <Progress view={advance(view, { step: 'retry', attempt: 2 })} testId="p" />
+        <Progress view={advance({ step: 'retry', attempt: 2 })} testId="p" />
       </I18nProvider>,
     );
     expect(screen.getByTestId('p.progress.attempt')).toHaveTextContent('attempt 2 of 3');
-    expect(screen.getByTestId('p.progress')).toHaveTextContent('Preparing');
+    expect(screen.getByTestId('p.progress.save')).toBeInTheDocument();
   });
 
   it('runs, reports progress, shows a refusal and retries', async () => {
@@ -279,7 +293,7 @@ describe('dialog and progress', () => {
     const run = vi.fn(
       (progress: (step: never) => void) =>
         new Promise<void>((resolve, reject) => {
-          progress({ step: 'rotate', done: 1, total: 1 } as never);
+          progress({ step: 'retry', attempt: 2 } as never);
           if (run.mock.calls.length === 1) reject(new HubError('last_admin', 403));
           else release = resolve;
         }),
@@ -293,7 +307,7 @@ describe('dialog and progress', () => {
     fireEvent.click(screen.getByTestId('a.confirm'));
     expect(await screen.findByTestId('a.error')).toHaveAttribute('data-code', 'last_admin');
     fireEvent.click(screen.getByTestId('a.confirm'));
-    expect(await screen.findByTestId('a.progress.rotate')).toBeInTheDocument();
+    expect(await screen.findByTestId('a.progress.attempt')).toBeInTheDocument();
     expect(screen.getByTestId('a.confirm')).toBeDisabled();
     expect(screen.getByTestId('a.cancel')).toBeDisabled();
     await act(async () => release());

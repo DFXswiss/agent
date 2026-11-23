@@ -350,23 +350,24 @@ describe('admin controls', () => {
     );
   });
 
-  it('offers no workgroup when the admin holds no key', async () => {
-    const { w } = await deviceWorld({ private: true });
+  it('invites devices only once a workgroup is unlocked, but assigns to every workgroup (ADR-058)', async () => {
+    const { w, one } = await deviceWorld({ private: true });
     w.store.update('orgs', (orgs) => ({
       ...orgs,
       byId: { ...orgs.byId, [w.org]: { ...orgs.byId[w.org]!, keys: new Map() } },
     }));
     mount(w, at, `/o/${w.org}/devices`);
     fireEvent.click(screen.getByTestId('devices.add.open'));
-    expect(screen.getByTestId('devices.add.none')).toBeVisible();
+    expect(screen.getByTestId('devices.add.none')).toHaveTextContent('as soon as a workgroup is unlocked for you');
     expect(screen.getByTestId('devices.add.submit')).toBeDisabled();
     fireEvent.click(screen.getByTestId('devices.add.cancel'));
     fireEvent.click(screen.getByTestId('devices.assign.open'));
-    expect(screen.getByTestId('devices.assign.no-workgroup')).toBeVisible();
-    expect(screen.getByTestId('devices.assign.confirm')).toBeDisabled();
+    const choices = within(screen.getByTestId('devices.assign.wg')).getAllByRole('option');
+    expect(choices.map((option) => (option as HTMLOptionElement).value)).toEqual([w.world.defaultWg, one]);
+    expect(screen.getByTestId('devices.assign')).toHaveTextContent('The device can then run tasks of this workgroup.');
     fireEvent.click(screen.getByTestId('devices.assign.cancel'));
-    fireEvent.click(within(item(w.others.dev2.id)).getByTestId('devices.item.to-wg'));
-    expect(screen.getByTestId('devices.to-wg.none')).toBeVisible();
+    fireEvent.click(within(item(w.others.dev1.id)).getByTestId('devices.item.to-wg'));
+    expect(screen.getByTestId('devices.to-wg.none')).toHaveTextContent('already assigned to every workgroup');
   });
 });
 

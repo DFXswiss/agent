@@ -86,7 +86,7 @@ describe('chat items (src/ui/chat-items/<kind>.tsx)', () => {
 describe('header items (src/ui/shell/header/<area>.tsx)', () => {
   it('uses the specified glob', () => {
     expect(globPatterns('src/ui/registries/header-items.ts')).toEqual(["'../shell/header/*.tsx'"]);
-    expect(headerItems().map((item) => item.id)).toEqual(expect.arrayContaining(['org-switcher', 'rotation-toast']));
+    expect(headerItems().map((item) => item.id)).toEqual(expect.arrayContaining(['org-switcher', 'credentials']));
   });
 
   it('collects fixture items', () => {
