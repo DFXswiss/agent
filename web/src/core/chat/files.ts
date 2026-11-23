@@ -71,8 +71,8 @@ export function sameItem(a: TimelineItem, b: TimelineItem): boolean {
 }
 
 /** Rows rendered at first and kept while new items arrive; "Show earlier" adds `PAGE` rows. */
-export const WINDOW = 150;
-export const PAGE = 100;
+export const WINDOW = 100;
+export const PAGE = 50;
 
 /**
  * The index of the first rendered row (a window at the end of the list, so the DOM stays bounded however long the
