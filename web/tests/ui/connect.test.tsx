@@ -12,7 +12,7 @@ import { fingerprint, sealLabel } from '../../src/core/crypto/agent';
 import { Identity } from '../../src/core/crypto/keys';
 import { formatTime } from '../../src/core/encoding/time';
 import { takeConnectFragment } from '../../src/ui/screens/connect/fragment';
-import { FakeAuthenticator } from '../core/account/authenticator';
+import { FakeAuthenticator, giveRecoveryCode } from '../core/account/authenticator';
 import { HubFailure, ORIGIN, SimHub } from '../core/account/hub';
 import { renderApp } from './harness';
 
@@ -84,7 +84,7 @@ async function connectPage(options: Options = {}) {
   const harness = await renderApp('/connect', { hub, auth }, async (made) => {
     const invite = hub.addInvite();
     const registration = await register(made.app.anon, auth, invite);
-    recoveryCode = registration.recoveryCode;
+    recoveryCode = await giveRecoveryCode(hub, registration);
     if (options.current !== undefined) {
       agents.push(await oldAgent(registration.identity, registration.userId, options.current));
     }
