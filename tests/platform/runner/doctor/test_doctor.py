@@ -1,12 +1,16 @@
 """U-RUN-service / CLI: `agent-runner status [--json]` and `agent-runner doctor [--clear NAME]` (05-runner.md section
-1.2) with injected tools: a scripted `limactl`, the injected cluster over a migrated test database and the
-contract-checking fake hub with signed answers."""
+1.2) with injected tools: a scripted `limactl`, the injected cluster over a migrated test database, the
+contract-checking fake hub with signed answers and a shell script as the login command (`login_cli`, KOR-20)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
+import plistlib
+import signal
 import subprocess
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -24,7 +28,9 @@ from agent_runner.doctor import cli as doctor_cli
 from agent_runner.encoding import b64u_encode
 from agent_runner.errors import RunnerError
 from agent_runner.identity import Device, ensure_private_dir, write_device, write_keys
+from agent_runner.login.relay import login_env
 from agent_runner.sync import outbox
+from agent_runner.vm import golden as golden_module
 
 from ..assignments.orgkit import cluster_tools
 from ..conftest import runner_env
@@ -35,6 +41,8 @@ WALL = 1_795_000_000.0
 HOST = "127.0.0.1:9"
 URL = f"http://{HOST}"
 DEVICE_ID = pid("rdev")
+PIN = golden_module.load_source().claude_version
+"""The Claude Code pin of the golden build (`images/versions.json` of this checkout)."""
 
 
 @dataclass
@@ -60,7 +68,9 @@ class Case:
     hub: FakeHub
     limactl: Limactl
     stops: list[Path]
+    bin: Path
     wall: float = WALL
+    login_timeout: float = checks.LOGIN_VERSION_TIMEOUT_S
     err: str = ""
 
     def cli(self, *argv: str, platform: str = "darwin") -> tuple[int, str, str]:
@@ -86,6 +96,13 @@ class Case:
     def sql(self, statement: str, *params: object) -> None:
         with psycopg.connect(self.dsn) as conn:
             conn.execute(statement, params or None)
+
+    def claude(self, body: str = f"echo '{PIN} (Claude Code)'", *, name: str = "claude", mode: int = 0o755) -> Path:
+        """The login command found in `PATH`: a shell script with `body`."""
+        path = self.bin / name
+        path.write_text(f"#!/bin/sh\n{body}\n")
+        path.chmod(mode)
+        return path
 
     def golden(self, abi: int | None = 4) -> None:
         ensure_private_dir(self.home)
@@ -123,11 +140,16 @@ def case(
     env_for = runner_env
     textfile = tmp_path / "textfile"
     textfile.mkdir()
-    env = env_for(runner_home, AGENT_RUNNER_HUB_URL=URL, AGENT_RUNNER_TEXTFILE_DIR=str(textfile))
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    env = env_for(
+        runner_home, AGENT_RUNNER_HUB_URL=URL, AGENT_RUNNER_TEXTFILE_DIR=str(textfile), PATH=f"{tools}:/usr/bin:/bin"
+    )
     keys = device_keys()
     hub = FakeHub(device_id=DEVICE_ID, device_public=keys.signing_key().public_key().public_bytes_raw(), host=HOST)
     hub.wall = lambda: WALL
-    built = Case(runner_home, store_dsn, env, make_host, hub, Limactl(), [])
+    built = Case(runner_home, store_dsn, env, make_host, hub, Limactl(), [], tools)
+    built.claude()
     monkeypatch.setattr(
         doctor_cli,
         "default_options",
@@ -135,6 +157,7 @@ def case(
             transport=httpx.ASGITransport(app=hub),  # type: ignore[arg-type]
             wall=lambda: built.wall,
             limactl=built.limactl,
+            login_timeout=built.login_timeout,
         ),
     )
     return built
@@ -150,7 +173,8 @@ def test_a_healthy_device_only_warns_about_the_test_mode(case: Case) -> None:
     assert (code, err) == (0, "")
     found = check_map(out)
     assert list(found) == [
-        "os", "lima", "vz", "postgresql", "golden", "landlock", "hub", "clock", "textfile", "test_mode", "sync",
+        "os", "lima", "vz", "postgresql", "golden", "landlock", "login_cli", "hub", "clock", "textfile", "test_mode",
+        "sync",
     ]  # fmt: skip
     assert found["os"] == [("ok", "supported", "darwin")]
     assert found["lima"] == [("ok", "version", "2.3.1")]
@@ -158,6 +182,7 @@ def test_a_healthy_device_only_warns_about_the_test_mode(case: Case) -> None:
     assert found["postgresql"] == [("ok", "reachable", "auth=trust_loopback")]
     assert found["golden"] == [("ok", "ready", "g1")]
     assert found["landlock"] == [("ok", "abi", "4")]
+    assert found["login_cli"] == [("ok", "version", PIN)]
     assert found["hub"] == [("ok", "pinned_key", "active")]
     assert found["clock"] == [("ok", "skew_seconds", "0")]
     assert found["textfile"] == [("ok", "writable", None)]
@@ -174,6 +199,7 @@ def test_doctor_reports_every_failure(case: Case) -> None:
     case.limactl.info = (0, json.dumps({"vmTypes": ["qemu"]}))
     case.wall = WALL + 10
     case.env["AGENT_RUNNER_TEXTFILE_DIR"] = str(case.home / "missing")
+    (case.bin / "claude").unlink()
     for key, value in (
         ("sync_fatal", "origin_seq_conflict"),
         ("platform_stopped", "log_fork"),
@@ -198,6 +224,7 @@ def test_doctor_reports_every_failure(case: Case) -> None:
     assert found["lima"] == [("fail", "lima_missing")]
     assert found["vz"] == [("fail", "vz_unavailable")]
     assert found["landlock"] == [("fail", "abi")]
+    assert found["login_cli"] == [("fail", "login_cli_missing")]
     assert found["clock"] == [("fail", "skew_seconds")]
     assert found["textfile"] == [("fail", "textfile_unwritable")]
     assert found["sync"] == [
@@ -344,6 +371,7 @@ def test_real_default_options() -> None:
     made = doctor_cli.default_options()
     assert made.transport is None
     assert made.limactl is None
+    assert made.login_timeout == checks.LOGIN_VERSION_TIMEOUT_S == 10.0
 
 
 def test_the_default_limactl_runs_from_path(case: Case, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -351,6 +379,132 @@ def test_the_default_limactl_runs_from_path(case: Case, monkeypatch: pytest.Monk
     case.env["PATH"] = str(case.home)  # no limactl there
     found = check_map(case.cli("doctor")[1])
     assert found["lima"] == [("fail", "lima_missing", None)]
+
+
+# --- login_cli (KOR-20) ---------------------------------------------------------------------------------------------
+
+
+def login_cli(case: Case) -> tuple[int, list[tuple[str, str, str | None]]]:
+    """Exit code and `login_cli` line of a device whose other checks pass (the test mode only warns)."""
+    if not (case.home / "device.json").exists():
+        case.enroll()
+        case.golden()
+    code, out, err = case.cli("doctor")
+    assert err == ""
+    return code, check_map(out)["login_cli"]
+
+
+def test_another_claude_code_version_warns(case: Case) -> None:
+    case.claude("echo '9.9.9 (Claude Code)'")
+    assert login_cli(case) == (0, [("warn", "version_mismatch", "9.9.9")])
+    case.claude(f"echo 'claude-code {PIN}-beta.1 (Claude Code)'")
+    assert login_cli(case) == (0, [("warn", "version_mismatch", f"{PIN}-beta.1")])
+
+
+def test_a_missing_login_command_fails(case: Case) -> None:
+    (case.bin / "claude").unlink()
+    assert login_cli(case) == (1, [("fail", "login_cli_missing", None)])
+    case.env["PATH"] = ""  # the runner's PATH is all the lookup uses
+    assert login_cli(case) == (1, [("fail", "login_cli_missing", None)])
+
+
+def test_a_login_command_that_cannot_run_fails(case: Case) -> None:
+    case.claude(mode=0o644)
+    assert login_cli(case) == (1, [("fail", "login_cli_missing", None)])
+    script = case.claude()
+    script.write_text("no interpreter line\n")  # executable, but exec(2) refuses it
+    assert login_cli(case) == (1, [("fail", "login_cli_missing", None)])
+    case.claude(f"echo '{PIN} (Claude Code)'\nexit 3")  # starts, but fails (for example node not found)
+    assert login_cli(case) == (1, [("fail", "login_cli_missing", None)])
+
+
+def test_the_lookup_uses_the_path_of_the_installed_daemon(case: Case) -> None:
+    plist = case.home / "swiss.dfx.agent-runner.plist"  # under pytest `service` keeps the plist in the runner home
+    case.env["PATH"] = "/usr/bin:/bin"  # the caller's PATH has no claude
+    assert login_cli(case) == (1, [("fail", "login_cli_missing", None)])
+    plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"PATH": f"{case.bin}:/usr/bin:/bin"}}))
+    assert login_cli(case) == (0, [("ok", "version", PIN)])
+    plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"PATH": "/usr/bin:/bin"}}))
+    case.env["PATH"] = f"{case.bin}:/usr/bin:/bin"  # the daemon would not find it: the caller's PATH does not count
+    assert login_cli(case) == (1, [("fail", "login_cli_missing", None)])
+    for broken in ({}, {"EnvironmentVariables": "x"}, {"EnvironmentVariables": {"PATH": 1}}):
+        plist.write_bytes(plistlib.dumps(broken))  # no usable PATH in the plist: the caller's
+        assert login_cli(case) == (0, [("ok", "version", PIN)])
+
+
+def test_a_version_that_does_not_come_in_time_warns_and_the_command_is_killed(case: Case) -> None:
+    pids = case.bin / "pids"
+    case.claude(f"sleep 30 &\necho $$ $! > {pids}\nwait")
+    case.login_timeout = 0.3
+    started = time.monotonic()
+    assert login_cli(case) == (0, [("warn", "version_unknown", None)])
+    assert time.monotonic() - started < 10
+    deadline = time.monotonic() + 5
+    for found in pids.read_text().split():  # the command and its child: the whole process group is gone
+        while True:
+            try:
+                os.kill(int(found), 0)
+            except ProcessLookupError:
+                break
+            assert time.monotonic() < deadline, f"process {found} still runs"
+            time.sleep(0.05)
+
+
+def test_a_descendant_that_left_the_group_does_not_hold_the_check(case: Case) -> None:
+    pids = case.bin / "pids"
+    # perl's setsid moves the child into a session of its own: killing the group misses it, and it keeps stdout open
+    case.claude(f"perl -MPOSIX -e 'setsid(); print STDERR $$; sleep 30' 2> {pids} &\nsleep 30")
+    case.login_timeout = 0.5
+    started = time.monotonic()
+    try:
+        assert login_cli(case) == (0, [("warn", "version_unknown", None)])
+        assert time.monotonic() - started < 10
+    finally:
+        os.kill(int(pids.read_text()), signal.SIGKILL)
+
+
+@pytest.mark.parametrize("body", ["echo 'no version here'", "true", f"echo 'v{PIN}x'"])
+def test_an_unreadable_version_warns(case: Case, body: str) -> None:
+    case.claude(body)
+    assert login_cli(case) == (0, [("warn", "version_unknown", None)])
+
+
+def test_the_version_check_runs_with_the_allow_list_environment_of_the_login(case: Case) -> None:
+    seen = case.bin / "seen"
+    script = case.claude(f"env > {seen}\npwd >> {seen}\necho '{PIN} (Claude Code)'")
+    case.env["ANTHROPIC_API_KEY"] = "never-passed-on"
+    case.env["CLAUDE_CONFIG_DIR"] = str(case.home / "profile")
+    assert login_cli(case) == (0, [("ok", "version", PIN)])
+    *variables, cwd = seen.read_text().splitlines()
+    env = dict(line.split("=", 1) for line in variables)
+    workdir = Path(env["HOME"]).parent
+    assert Path(cwd).resolve() == workdir.resolve()  # started in the temporary directory
+    assert {k: v for k, v in env.items() if k not in {"PWD", "SHLVL", "_", "OLDPWD"}} == login_env(workdir, str(script))
+    assert env["CLAUDE_CONFIG_DIR"] == str(workdir / "config")
+    assert env["PATH"].split(":")[0] == str(case.bin)
+    assert not workdir.exists()  # removed after the check
+    assert not (case.home / "profile").exists()
+
+
+def test_a_different_login_command_is_only_checked_for_being_executable(case: Case) -> None:
+    ran = case.bin / "ran"
+    double = case.claude(f"touch {ran}", name="login-double")
+    case.env["AGENT_RUNNER_LOGIN_ARGV"] = json.dumps([str(double), "--seed", "1"])
+    assert login_cli(case) == (0, [("ok", "executable", None)])
+    assert not ran.exists()
+    case.env["AGENT_RUNNER_LOGIN_ARGV"] = json.dumps(["login-double"])  # looked up in PATH
+    assert login_cli(case) == (0, [("ok", "executable", None)])
+    case.env["AGENT_RUNNER_LOGIN_ARGV"] = json.dumps([str(case.bin)])  # a directory is no program
+    assert login_cli(case) == (1, [("fail", "login_cli_missing", None)])
+    assert not ran.exists()
+
+
+def test_without_a_readable_pin_the_version_is_reported_with_a_warning(case: Case, tmp_path: Path) -> None:
+    template = tmp_path / "elsewhere" / "images" / "golden.yaml"
+    template.parent.mkdir(parents=True)
+    template.write_text("images: []\n")
+    case.env["AGENT_RUNNER_GOLDEN_TEMPLATE"] = str(template)
+    assert login_cli(case) == (0, [("warn", "pin_missing", PIN)])
 
 
 # --- status ---------------------------------------------------------------------------------------------------------
