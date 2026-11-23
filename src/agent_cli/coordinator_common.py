@@ -1604,6 +1604,24 @@ def a38_model_second(c: dict[str, Any]) -> bool:
     )
 
 
+def parse_lane_status(output: str, returncode: int) -> str:
+    """Return the only valid STATUS record, failing closed on extras.
+
+    Unlike ``parse_model_result`` this does not look at RESULT. A lane started
+    for an external caller may carry its own result line (for example
+    ``RESULT: 0 defects``), which is the caller's protocol, not this one.
+    """
+    if returncode != 0:
+        return 'timeout' if returncode == 124 else 'unavailable'
+    text = output or ""
+    if len(list(_STATUS_RECORD_RE.finditer(text))) != 1:
+        return 'partial'
+    status_matches = list(_STATUS_RE.finditer(text))
+    if len(status_matches) != 1:
+        return 'partial'
+    return status_matches[0].group(1).lower()
+
+
 def parse_model_result(output: str, returncode: int) -> tuple[str, str]:
     """Return the only valid STATUS/RESULT records, failing closed on extras."""
     if returncode != 0:
