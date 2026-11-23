@@ -67,7 +67,7 @@ export async function connectLive(wiring: LiveWiring): Promise<LiveConnection> {
     cursors,
     timers,
     handlers: {
-      events: (scope, items) => wiring.reader.ingest(org, scope, items),
+      events: (scope, items) => wiring.reader.ingest(org, scope, items, { defer: true }),
       state: (state) => setLiveState(store, state),
       frame: (type, data) => {
         if (type === 'log') {

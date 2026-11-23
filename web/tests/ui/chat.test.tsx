@@ -150,6 +150,11 @@ describe('chat timeline and items', () => {
     expect(tools[0]).toHaveAttribute('data-error', 'true');
     expect(within(tools[0]!).getByTestId('chat.tool.error')).toHaveTextContent('Error');
     expect(within(tools[1]!).getByTestId('chat.tool.summary')).toHaveTextContent('');
+    // the three file changes in a row are one group; its list is not in the DOM until opened
+    expect(kinds).not.toContain('session.file');
+    expect(screen.getByTestId('chat.files.summary')).toHaveTextContent('3 files changed');
+    expect(screen.queryByTestId('chat.file')).toBeNull();
+    fireEvent.click(screen.getByTestId('chat.files.toggle'));
     expect(screen.getAllByTestId('chat.file').map((item) => item.getAttribute('data-op'))).toEqual([
       'delete',
       'edit',

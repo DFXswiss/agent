@@ -76,7 +76,8 @@ test('shows every base item of the timeline in order', async ({ page, baseURL })
   await expect(tool).toContainText('1.2 s');
   // file change with its patch
   await expect(page.getByTestId('chat.file.path')).toHaveText('src/app.py');
-  await page.getByTestId('chat.file').locator('summary').click();
+  await expect(page.getByTestId('chat.file.patch')).toHaveCount(0);
+  await page.getByTestId('chat.file.toggle').click();
   await expect(page.getByTestId('chat.file.patch')).toHaveText('-old\n+new');
   await expect(page.getByTestId('chat.hook')).toContainText('Blocked: Bash (network)');
   await expect(page.getByTestId('chat.status')).toHaveAttribute('data-state', 'failed');

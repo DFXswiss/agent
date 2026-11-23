@@ -285,10 +285,21 @@ activity; filter by state; infinite scroll (`next_before`). Composer at the top 
   - `session.tool` – collapsed row "Read src/app.py", "Edit …" (expand: input/result summaries, error flag).
   - `operation.params` / `operation.result` + `operation` rows – inline card with type, state badge (live), and
     result links (PR URL, commit SHA, comment URL); duplicates show "duplicate of …" linking the original.
-  - `session.file` – "Changed `path`" with an expandable patch (monospace, no syntax highlighting dependency).
+  - `session.file` – "Changed `path`" with an expandable patch (monospace, no syntax highlighting dependency). The
+    patch is rendered only while expanded and at most 20 000 characters at a time ("Show more"). Two or more
+    consecutive `session.file` items of one session are one row "N files changed" with the time span (HOT-05); it
+    expands to the list of files, 50 at a time ("Show more files"), each with its own expandable patch.
   - `session.hook` with `deny` – muted row "Blocked: <tool> (<reason>)".
   - `session.status` errors and task/session state changes – system rows.
   - Countdown summaries (§4.4).
+- Long chats (HOT-05): only a window at the end of the timeline is rendered (150 rows; "Show earlier items" adds 100;
+  the window keeps its first row while new items arrive; "Jump to the latest item" scrolls to and focuses the last
+  row); rows are memoized on their content, so a new event renders only the new row; rows off screen skip layout and
+  paint (`content-visibility: auto`, still in the accessibility tree and found by the browser's find-in-page). Kinds
+  with a verified body but without a renderer are skipped and do not break a run of file changes; an event kind the
+  client's kind matrix does not know yet stays the neutral row "Unverifiable item (kind_not_allowed)". The
+  reader writes settled events to the store at most once per frame (16 ms), so a burst of thousands of events costs
+  a few store updates.
 - Input: only here, only for `task:write`. Send = `prompt` event via `POST /v1/tasks/{task}/prompts`. While the main
   session is `working`, input stays enabled (prompt is queued by the session) and a **Stop** button (`interrupt`)
   plus a menu **End session** (`stop`) are shown (`POST /v1/sessions/{id}/control`). "Close task"

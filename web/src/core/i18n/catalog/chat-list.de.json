@@ -1,0 +1,10 @@
+{
+  "earlier": "Frühere Einträge anzeigen ({count} weitere)",
+  "latest": "Zum neuesten Eintrag springen",
+  "files.summary": "{count} Dateien geändert",
+  "files.show": "Dateien anzeigen",
+  "files.hide": "Dateien ausblenden",
+  "files.more": "Weitere Dateien anzeigen ({count} weitere)",
+  "patch.hide": "Änderungen ausblenden",
+  "patch.more": "Mehr anzeigen ({count} weitere Zeichen)"
+}
