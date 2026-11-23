@@ -36,7 +36,7 @@ document differ, this document wins; §4.6 lists the spike defects that MUST NOT
 | `agent-runner enroll --hub URL --code CODE [--platform]` | §2.1 |
 | `agent-runner run` | foreground daemon (development, tests, launchd target) |
 | `agent-runner status [--json]` | identity, hub connection, outbox backlog, VMs, sessions, pool, capacity |
-| `agent-runner doctor` | checks: Lima ≥ 2.3, vz available, golden ready, Landlock ABI in golden (from build record), PostgreSQL, login command on the host (`login_cli`: `LOGIN_ARGV[0]` resolved like §11.2; for the default command its `--version`, with a time limit and the login's allow-list env, equals the golden's Claude Code pin, else warn `version_mismatch`; missing or not executable: fail `login_cli_missing`; details in `runbooks/runner-installation.md` §4), hub reachability and pinned key, textfile dir writable, clock skew < 5 s against hub time |
+| `agent-runner doctor` | checks: Lima ≥ 2.3, vz available, golden ready, Landlock ABI in golden (from build record), PostgreSQL, login command on the host (`login_cli`: `LOGIN_ARGV[0]` resolved like §11.2; for the default command its `--version`, with a time limit and the login's allow-list env, equals the golden's Claude Code pin, else warn `version_mismatch`; missing or not executable: fail `login_cli_missing`; details in `runbooks/runner-installation.md` §4), hub reachability and pinned key, textfile dir writable, the operator's subscriptions (`operator_subscriptions`: ok `off`/`usable` with the count of usable token files, warn `files_ignored`/`none_usable`/`dir_unusable`; no file name or organization; ADR-052), clock skew < 5 s against hub time |
 | `agent-runner image build [--claude-version V]` / `image list` / `image retire VERSION` | §3.1 |
 | `agent-runner pool status` | pool VMs and refill state |
 | `agent-runner service install` / `service uninstall` | §1.1 |
@@ -61,6 +61,8 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `TEXTFILE_DIR` | empty = textfile sink off | node_exporter textfile directory (08 §3) |
 | `MODEL_CATALOG` | packaged `model-catalog.json` | §10.5 |
 | `OPENROUTER_KEY_FILE` | empty | platform devices only; file 0600; refused on org devices (`config_invalid`) |
+| `OPERATOR_SUBSCRIPTION_DIR` | empty | platform devices only (refused on org devices); directory 0700 of the runner account, not a symlink, holding the operator's subscription token files `<name>.token` (§10.1, ADR-052); only together with `OPERATOR_SUBSCRIPTION_ORGS` |
+| `OPERATOR_SUBSCRIPTION_ORGS` | empty = nobody | comma-separated organization IDs whose sessions may use the operator's subscriptions; only together with `OPERATOR_SUBSCRIPTION_DIR` (one without the other: `config_invalid`) |
 | `GITHUB_CLIENT_ID` | required for GitHub features | public client ID of the GitHub App |
 | `GITHUB_API_URL` / `GITHUB_WEB_URL` | `https://api.github.com` / `https://github.com` | doubles in tests |
 | `MODEL_UPSTREAM_ANTHROPIC` / `MODEL_UPSTREAM_OPENROUTER` | `https://api.anthropic.com` / `https://openrouter.ai/api` | doubles in tests |
@@ -569,8 +571,15 @@ Prompts for a session are delivered strictly in event order; a prompt arriving w
 ### 10.1 Selection
 
 Inputs: owner's `user_settings.model_access` (from `GET /v1/device/state`), owner's credentials decryptable on
-this device, device kind. `auto` order: `claude_subscription` → `anthropic_api_key` → `platform` (only on
-platform devices with `OPENROUTER_KEY_FILE`). An explicit preference that is unavailable → session `failed`
+this device, device kind. `auto` order: `claude_subscription` → `anthropic_api_key` → operator subscription → `platform` (only on
+platform devices with `OPENROUTER_KEY_FILE`). **Operator subscription** (ADR-052, runner only): on a platform device
+with `OPERATOR_SUBSCRIPTION_DIR`, a session of an organization listed in `OPERATOR_SUBSCRIPTION_ORGS` takes a usable
+token file of the operator's pool (the file with the fewest bound sessions, then the one unused the longest); the
+explicit preference `claude_subscription` takes it too when the owner has no own subscription on this device. It is
+reported as `claude_subscription` (`session_transition`, web); only the runner log and the textfile metrics show the
+pool. Token files: regular files of the runner account, mode 0600, one access token in the format of §11.2, opened
+with `O_NOFOLLOW` and checked before reading (anything else is ignored, logged once by name and never read). Other
+organizations see no difference; an empty pool changes nothing (`model_access_unavailable` or the next kind). An explicit preference that is unavailable → session `failed`
 reason `model_access_unavailable` (no silent fallback). Model: owner's `model_id` if allowed for the access kind
 in the catalog, else the catalog default (`platform`: `deepseek/deepseek-v4.1-flash-1017`; API key/subscription:
 Claude Code default, no `--model`). Chosen kind and model are reported in `session_transition`.
@@ -584,6 +593,14 @@ Claude Code default, no `--model`). Chosen kind and model are reported in `sessi
   `oauth-2025-04-20` to `anthropic-beta`. Upstream base from the credential provisioning (§1.3 upstream URLs).
 - Routes: `POST /model/v1/messages`, `POST /model/v1/messages/count_tokens`, `HEAD|GET /model/api/hello` (local
   200). Anything else → 404 + `guest.error gateway_route`.
+- Operator subscription (ADR-052): the session is bound to its token file (`runner.operator_binding`), not to a value.
+  The gateway runs in the guest and cannot read the file, so the runner provisions the file's current content again
+  whenever the file's identity (device, inode, mtime, size) changes (daemon task `operator_subscriptions`, every 2 s,
+  and the reconcile step `model`); a token replaced in the file never ends the session. The upstream status of the
+  gateway's `usage` records feeds the pool: `401`/`403` for the content the session holds block the file until it
+  changes and move the session to another usable file at its next renewal (none: it keeps its token; refusals within
+  60 s after the gateway got a token are ignored, one session blocks at most one file per 10 min); `429` defers the
+  file for 300 s for new sessions only (the record carries no `retry-after`); running sessions stay on it.
 - No credential (it is memory only in `agent-guest-api`; a restart loses it): journal `guest.error
   credential_missing` and hold the request without a model slot, polling every 0.2 s, until the runner provisions
   again (it ignores reports within 10 s of its last provisioning), at most 22 s and only while the session is active;

@@ -175,7 +175,8 @@ wipe never changes the identity (legacy rule).
 | `ping` | `id` uuid PK, `session_id`, `kind` CHECK in (`whiteboard.entry`,`subagent.finished`,`operation.finished`), `level` NULL CHECK in (`org`,`workgroup`,`task`) (set exactly for `whiteboard.entry`), `ref`, `created_at`, `sent_at` NULL, `delivered_at` NULL | pings this device hands to a guest: the durable `pings` of `GET /v1/device/state` and the runner's own `subagent.finished`/`operation.finished` (05 §9); `sent_at` once the guest kept it (unsent rows are resent by reconcile), `delivered_at` once the guest journaled `ping.delivered`; rows of sessions ended an hour ago are deleted (RUN-14) |
 
 Further runner tables added by later migrations (`profile_event`, `prompt_event`, `workgroup_settings`,
-`operation_result`, `metric_pending`, `read_event`) and added columns are listed in
+`operation_result`, `metric_pending`, `read_event`, `operator_binding` – the operator's token file a session is bound
+to, file name only, ADR-052) and added columns are listed in
 [`../spec-deviations.md`](../spec-deviations.md#02-data-model).
 
 ## 5. Guest journal (SQLite, `/var/lib/agent-guest/journal.db`, owner root (the `agent-guest-control` process), 0600; the unprivileged `agent-guest-api` process writes only through `api.sock`)

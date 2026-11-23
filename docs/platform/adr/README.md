@@ -55,5 +55,6 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [049](049-capacity-refusal-attempts.md) | A session the device refuses for lack of capacity gets a new attempt of the task, placed away from the refusing device until it reports a free slot | §3, §14.3 | no |
 | [050](050-hedged-outbox-push.md) | An outbox push whose answer is late is sent once more on another connection; the first answer counts | §6, §14.6 | no |
 | [051](051-login-reads-the-terminal-screen.md) | The subscription login reads the terminal screen of `claude setup-token` (cursor positioning, input field, error while running) | §4 | no |
+| [052](052-operator-subscriptions.md) | Operator subscriptions: sessions of approved organizations use the operator's Claude subscriptions on a platform device (runner only, bound to token files) | §4 | no |
 
 New decisions get the next free number; a superseded ADR keeps its file and is marked `Superseded by ADR-NNN`.
