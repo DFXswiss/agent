@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/requests/claude.login.response.json",
+  "title": "device response body claude.login",
+  "description": "Plaintext body of a device response to claude.login (seq 1..n, final on the last; 05-runner.md section 11). Never contains a secret.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "authorize"
+        },
+        "url": {
+          "type": "string",
+          "description": "https URL, or http on the loopback host (hermetic doubles)",
+          "pattern": "^(https://[!-~]{1,2040}|http://(127\\.0\\.0\\.1|localhost)(:[0-9]{1,5})?(/[!-~]{0,2000})?)$",
+          "maxLength": 2048
+        },
+        "automation": {
+          "type": "string",
+          "const": "failed"
+        }
+      },
+      "required": [
+        "step",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "progress"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "browser_started",
+            "email_entered",
+            "magic_link_received",
+            "authorized"
+          ]
+        }
+      },
+      "required": [
+        "step",
+        "stage"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "done"
+        },
+        "email": {
+          "type": "string",
+          "pattern": "^[!-?A-~]{1,64}@[A-Za-z0-9-]{1,63}(\\.[A-Za-z0-9-]{1,63}){0,8}$",
+          "maxLength": 254
+        }
+      },
+      "required": [
+        "step"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "failed"
+        },
+        "code": {
+          "$ref": "objects.json#/$defs/failure_code"
+        }
+      },
+      "required": [
+        "step",
+        "code"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

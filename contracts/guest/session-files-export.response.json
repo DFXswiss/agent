@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/session-files-export.response.json",
+  "title": "guest POST /v1/sessions/{id}/files/export response",
+  "description": "Manifest of POST /v1/sessions/{id}/files/export (03-api.md section 7.1). The response body is application/x-tar; its first member is '.agent-export-manifest.json' with this JSON (canonical) and the header X-Manifest-Sha256 carries its sha256_hex (decisions CTR-02).",
+  "type": "object",
+  "properties": {
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/manifest_file"
+      },
+      "minItems": 0,
+      "maxItems": 100000
+    },
+    "skipped": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/manifest_skip"
+      },
+      "minItems": 0,
+      "maxItems": 100000
+    }
+  },
+  "required": [
+    "files",
+    "skipped"
+  ],
+  "additionalProperties": false
+}

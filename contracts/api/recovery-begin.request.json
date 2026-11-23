@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/recovery-begin.request.json",
+  "title": "POST /v1/recovery/begin request",
+  "description": "Body of POST /v1/recovery/begin (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "recovery_id": {
+      "$ref": "../common.json#/$defs/recovery_id"
+    }
+  },
+  "required": [
+    "recovery_id"
+  ],
+  "additionalProperties": false
+}

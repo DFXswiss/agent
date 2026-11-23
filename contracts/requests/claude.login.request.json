@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/requests/claude.login.request.json",
+  "title": "device request body claude.login",
+  "description": "first request {mode} (manual = setup-token relay, automatic = mailbox automation, 05-runner.md section 11.3); follow-up request (header follows set) {code} (05-runner.md section 11.2)",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "automatic"
+          ]
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "authorization code pasted by the user",
+          "pattern": "^[!-~]+$",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

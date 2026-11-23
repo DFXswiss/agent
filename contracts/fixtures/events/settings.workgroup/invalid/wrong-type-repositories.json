@@ -1,0 +1,8 @@
+{
+  "repositories": "not-a-container",
+  "protected_branches": [
+    "main",
+    "release/*"
+  ],
+  "pr_draft_default": true
+}

@@ -1,0 +1,22 @@
+{
+  "expected_seq": 5,
+  "entries": [
+    {
+      "body": {
+        "org": "01930001-0000-7000-8000-000000000001",
+        "seq": 7,
+        "prev": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU",
+        "type": "rotate",
+        "by": "0193000a-0000-7000-8000-00000000000a",
+        "ts": "2026-11-21T12:00:00.000Z",
+        "v": 1,
+        "scope": "wg",
+        "scope_id": "01930002-0000-7000-8000-000000000002",
+        "epoch": 2
+      },
+      "sig": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
+    }
+  ],
+  "wraps": [],
+  "events": []
+}

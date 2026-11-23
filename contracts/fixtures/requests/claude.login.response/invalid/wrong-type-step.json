@@ -1,0 +1,4 @@
+{
+  "step": 12345,
+  "url": "https://auth.example/oauth/authorize?code=true"
+}

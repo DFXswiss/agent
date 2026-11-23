@@ -1,0 +1,25 @@
+{
+  "enrollments": [
+    {
+      "invite_id": "Dw8PDw8PDw8PDw8PDw8PDw",
+      "device_id": "01930014-0000-7000-8000-000000000014",
+      "pub": {
+        "kem": "SUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUk",
+        "sig": "SkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSko"
+      },
+      "enroll_sig": "S0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLSw",
+      "inv_sig": "TExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTA",
+      "agent_version": "0.1.0",
+      "os": "macOS 27.2",
+      "arch": "arm64",
+      "capacity": {
+        "vm_memory_budget_mib": 65536,
+        "vm_memory_used_mib": 0,
+        "vm_slots_total": 8,
+        "vm_slots_free": 8,
+        "pool_ready": 2
+      },
+      "created_at": "2026-11-21T12:00:00.000Z"
+    }
+  ]
+}

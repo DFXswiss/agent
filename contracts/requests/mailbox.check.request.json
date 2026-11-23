@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/requests/mailbox.check.request.json",
+  "title": "device request body mailbox.check",
+  "description": "no parameters",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

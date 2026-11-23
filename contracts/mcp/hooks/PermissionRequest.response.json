@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/hooks/PermissionRequest.response.json",
+  "title": "hook PermissionRequest response",
+  "description": "Response of POST /hooks/PermissionRequest (03-api.md section 8.2; never a notice on Stop or other events).",
+  "$ref": "../../common.json#/$defs/empty"
+}

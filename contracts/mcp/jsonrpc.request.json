@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/jsonrpc.request.json",
+  "title": "JSON-RPC request",
+  "description": "without id: notification",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "type": "string",
+      "const": "2.0"
+    },
+    "id": {
+      "$ref": "objects.json#/$defs/rpc_id"
+    },
+    "method": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_/.-]+$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "params": {
+      "type": "object",
+      "additionalProperties": {}
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "method"
+  ],
+  "additionalProperties": false
+}

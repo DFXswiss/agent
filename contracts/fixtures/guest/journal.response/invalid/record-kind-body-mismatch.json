@@ -1,0 +1,15 @@
+{
+  "records": [
+    {
+      "seq": 18,
+      "ts": "2026-11-21T10:00:00.000Z",
+      "session_id": "01a1ee56-5e00-7003-8f1b-340691d99f03",
+      "kind": "guest.error",
+      "body": {
+        "state": "working",
+        "at": "2026-11-21T10:00:00.000Z"
+      }
+    }
+  ],
+  "head": 18
+}

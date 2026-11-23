@@ -1,0 +1,5 @@
+{
+  "repo": "example-org/example-repo",
+  "ref": "main",
+  "zz_unexpected": "x"
+}

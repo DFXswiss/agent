@@ -1,0 +1,5 @@
+{
+  "operation_id": 12345,
+  "type": "github.list_repositories",
+  "params": {}
+}

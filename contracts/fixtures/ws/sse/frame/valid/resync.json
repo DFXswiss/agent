@@ -1,0 +1,6 @@
+{
+  "event": "resync",
+  "data": {
+    "reason": "replay_limit"
+  }
+}

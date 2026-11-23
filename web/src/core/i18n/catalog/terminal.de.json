@@ -1,0 +1,18 @@
+{
+  "label": "Nur-Lese-Ansicht – Prompts werden im Chat eingegeben",
+  "viewport": "Terminal-Ausgabe (nur lesen)",
+  "loading": "Terminal-Verlauf wird geladen …",
+  "empty": "Noch keine Terminal-Ausgabe.",
+  "failed": "Das Terminal konnte nicht geladen werden: {reason}",
+  "chunk-unavailable": "Die Terminalansicht konnte nicht geladen werden (Verbindung unterbrochen oder Code abgewiesen). Lade die Seite neu.",
+  "unverifiable": "{count} nicht prüfbare Terminal-Abschnitte wurden ausgelassen ({code}).",
+  "mode.label": "Terminal-Modus",
+  "mode.follow": "Live",
+  "mode.history": "Verlauf",
+  "slider": "Position in der Aufzeichnung",
+  "position": "{position} von {end}",
+  "play": "Abspielen",
+  "pause": "Pause",
+  "speed.label": "Wiedergabegeschwindigkeit",
+  "speed": "{speed}×"
+}

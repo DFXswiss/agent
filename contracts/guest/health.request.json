@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/health.request.json",
+  "title": "guest GET /v1/health request",
+  "description": "Request of GET /v1/health (03-api.md section 7.1).",
+  "$ref": "../common.json#/$defs/empty"
+}

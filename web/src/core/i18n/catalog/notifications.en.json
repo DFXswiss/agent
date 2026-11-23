@@ -1,0 +1,23 @@
+{
+  "title": "Notifications",
+  "bell": "Notifications",
+  "bell.unread": "Notifications, {count} unread",
+  "empty": "No notifications.",
+  "unread": "Unread",
+  "mark-all": "Mark all read",
+  "more": "Load more",
+  "reload": "Try again",
+  "toast.close": "Close notification",
+  "text.whiteboard.org": "New whiteboard entry in organization “{org}”",
+  "text.whiteboard.workgroup": "New whiteboard entry in workgroup “{wg}”",
+  "text.whiteboard.task": "New whiteboard entry in task “{task}”",
+  "text.task.idle": "Task “{task}” is waiting for you",
+  "text.task.failed": "Task “{task}” failed",
+  "text.invite.accepted": "{subject} accepted the invitation to “{org}”",
+  "text.rotation.required": "Key rotation required in organization “{org}”",
+  "text.unknown": "New notification in “{org}”",
+  "unnamed.org": "…",
+  "unnamed.wg": "…",
+  "unnamed.task": "…",
+  "unnamed.subject": "Someone"
+}

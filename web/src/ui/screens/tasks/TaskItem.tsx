@@ -1,0 +1,82 @@
+// One row of a task list (06-web.md sections 5.1, 12.4): the decrypted title (or the neutral "unverifiable" label
+// with its code), the state badge, the owner's display name (the signed author of the task's first user-written
+// `task.meta`; the hub's `owner_id` is ignored, KOR-04) and the last activity as absolute local time with a
+// relative label as secondary text.
+import { Link } from 'react-router-dom';
+import { parseTime } from '../../../core/encoding/time';
+import { formatEventTime } from '../../../core/i18n';
+import type { TaskRow } from '../../../core/store/slices/tasks';
+import type { Directory } from '../../../core/tasks/directory';
+import { useI18n } from '../../i18n';
+import { useOwner, useTitle } from './hooks';
+
+const BADGE: Readonly<Record<string, string>> = {
+  scheduling: 'bg-amber-100 text-amber-900',
+  starting: 'bg-blue-100 text-blue-900',
+  working: 'bg-green-100 text-green-900',
+  failed: 'bg-red-100 text-red-900',
+};
+
+const UNITS: readonly [Intl.RelativeTimeFormatUnit, number][] = [
+  ['day', 86_400_000],
+  ['hour', 3_600_000],
+  ['minute', 60_000],
+];
+
+/** "2 min ago" style label (seconds below one minute). */
+export function relativeLabel(locale: string, ms: number): string {
+  const format = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' });
+  const past = Math.max(0, ms);
+  for (const [unit, size] of UNITS) if (past >= size) return format.format(-Math.floor(past / size), unit);
+  return format.format(-Math.floor(past / 1000), 'second');
+}
+
+export function TaskItem({
+  org,
+  row,
+  directory,
+  now,
+}: {
+  org: string;
+  row: TaskRow;
+  directory: Directory;
+  now: number;
+}) {
+  const { t, locale } = useI18n();
+  const title = useTitle(row);
+  const owner = useOwner(row);
+  const activity = parseTime(row.last_activity_at);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return (
+    <li className="border-b border-gray-100" data-testid="tasks.row" data-task={row.task_id}>
+      <Link
+        className="flex min-h-11 flex-col gap-1 px-2 py-2 sm:flex-row sm:items-center sm:gap-3"
+        to={`/o/${encodeURIComponent(org)}/t/${encodeURIComponent(row.task_id)}`}
+      >
+        <span className="flex-1 font-medium" data-testid="tasks.row.title" data-status={title.status}>
+          {title.status === 'verified' && title.text}
+          {title.status === 'missing' && <span className="text-gray-500">{t('tasks.title.loading')}</span>}
+          {title.status === 'unverifiable' && (
+            <span className="text-gray-500">{t('tasks.title.unverifiable', { code: title.code })}</span>
+          )}
+        </span>
+        <span
+          className={`self-start rounded px-2 text-xs ${BADGE[row.state] ?? 'bg-gray-100 text-gray-800'}`}
+          data-testid="tasks.row.state"
+          data-state={row.state}
+        >
+          {t(`tasks.state.${row.state}`)}
+        </span>
+        <span className="text-sm text-gray-700" data-testid="tasks.row.owner">
+          {(owner === null ? undefined : directory.members.get(owner)) ?? t('tasks.owner.unknown')}
+        </span>
+        <span className="text-xs text-gray-600">
+          <time dateTime={row.last_activity_at} data-testid="tasks.row.activity">
+            {formatEventTime(activity, { locale, timeZone, now })}
+          </time>{' '}
+          <span>({relativeLabel(locale, now - activity)})</span>
+        </span>
+      </Link>
+    </li>
+  );
+}

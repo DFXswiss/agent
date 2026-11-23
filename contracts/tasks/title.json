@@ -1,0 +1,133 @@
+{
+  "about": "Task title derivation of 06-web.md section 4.2 (web/src/core/tasks/title.ts; the runner check of task.set_title uses the same cases). Whitespace = the Unicode White_Space property (U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000). Line breaks = CR LF, LF, CR, U+000B, U+000C, U+0085, U+2028, U+2029. title = the first line that is not empty after every whitespace run is replaced by one space and one leading and one trailing space are removed; more than 80 code points -> the first 79 code points + U+2026. No such line -> \"\".",
+  "cases": [
+    {
+      "name": "simple",
+      "prompt": "Fix the login bug",
+      "title": "Fix the login bug"
+    },
+    {
+      "name": "leading_blank_lines_and_indent",
+      "prompt": "\n\n   Summarize the PR\nsecond line",
+      "title": "Summarize the PR"
+    },
+    {
+      "name": "whitespace_only_lines_skipped",
+      "prompt": " \t\n　\n \nHello",
+      "title": "Hello"
+    },
+    {
+      "name": "runs_collapsed",
+      "prompt": "Bitte  fasse \t PR #12 zusammen  ",
+      "title": "Bitte fasse PR #12 zusammen"
+    },
+    {
+      "name": "crlf",
+      "prompt": "\r\n  Erste Zeile  \r\nZweite",
+      "title": "Erste Zeile"
+    },
+    {
+      "name": "cr_only",
+      "prompt": "Line one\rLine two",
+      "title": "Line one"
+    },
+    {
+      "name": "line_separator",
+      "prompt": "Erste Zweite",
+      "title": "Erste"
+    },
+    {
+      "name": "paragraph_separator",
+      "prompt": "Erste Zweite",
+      "title": "Erste"
+    },
+    {
+      "name": "next_line",
+      "prompt": "EinsZwei",
+      "title": "Eins"
+    },
+    {
+      "name": "vertical_tab_and_form_feed",
+      "prompt": "\u000b\fTitle\u000brest",
+      "title": "Title"
+    },
+    {
+      "name": "tab_inside",
+      "prompt": "a\tb",
+      "title": "a b"
+    },
+    {
+      "name": "exactly_80",
+      "prompt": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "name": "81_cut",
+      "prompt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+      "title": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
+    },
+    {
+      "name": "80_astral",
+      "prompt": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+    },
+    {
+      "name": "81_astral_cut",
+      "prompt": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
+    },
+    {
+      "name": "combining_marks_count_separately",
+      "prompt": "ééééééééééééééééééééééééééééééééééééééééé",
+      "title": "ééééééééééééééééééééééééééééééééééééééée…"
+    },
+    {
+      "name": "collapse_before_length",
+      "prompt": "word                                                             xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "title": "word xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "name": "cut_after_space",
+      "prompt": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bcccccccccc",
+      "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa …"
+    },
+    {
+      "name": "non_ascii",
+      "prompt": "Grüße aus Zürich – 🏔 bitte prüfen",
+      "title": "Grüße aus Zürich – 🏔 bitte prüfen"
+    },
+    {
+      "name": "empty",
+      "prompt": "",
+      "title": ""
+    },
+    {
+      "name": "whitespace_only",
+      "prompt": "  \n\t \n\r\n",
+      "title": ""
+    },
+    {
+      "name": "zero_width_space_is_not_whitespace",
+      "prompt": "​\nText",
+      "title": "​"
+    },
+    {
+      "name": "byte_order_mark_is_not_whitespace",
+      "prompt": "﻿Hallo",
+      "title": "﻿Hallo"
+    },
+    {
+      "name": "information_separator_is_not_whitespace",
+      "prompt": "A\u001cB \u001f",
+      "title": "A\u001cB \u001f"
+    },
+    {
+      "name": "long_first_line_wins",
+      "prompt": "Kurz?\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "title": "Kurz?"
+    }
+  ],
+  "ellipsis": "…",
+  "invalid": [],
+  "max_code_points": 80
+}

@@ -1,0 +1,37 @@
+{
+  "org_id": 12345,
+  "private": true,
+  "platform_access": true,
+  "default_wg": "01930002-0000-7000-8000-000000000002",
+  "log_head": {
+    "seq": 5,
+    "hash": "FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQ"
+  },
+  "workgroups": [
+    {
+      "wg_id": "01930002-0000-7000-8000-000000000002",
+      "is_default": true,
+      "archived": false,
+      "my_access": "write",
+      "devices": [
+        "01930014-0000-7000-8000-000000000014"
+      ],
+      "epoch": 1
+    }
+  ],
+  "members": [
+    {
+      "principal_id": "0193000a-0000-7000-8000-00000000000a",
+      "kind": "user",
+      "role": "admin",
+      "joined_seq": 0
+    },
+    {
+      "principal_id": "01930014-0000-7000-8000-000000000014",
+      "kind": "device",
+      "role": "device",
+      "joined_seq": 3
+    }
+  ],
+  "rotation_pending": []
+}

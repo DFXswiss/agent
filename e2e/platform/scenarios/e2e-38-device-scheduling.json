@@ -1,0 +1,107 @@
+{
+  "name": "e2e-38-device-scheduling",
+  "description": "E2E-38: tasks in a workgroup with two devices (capacity-based choice, the sticky running VM, the stopped VM) and one in a workgroup with only one of them assigned.",
+  "steps": [
+    {
+      "id": "capacity",
+      "expect": {
+        "user_text_contains": "E2E38-FIRST",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Most capacity kz38-answer-f1g3h5."
+          }
+        ]
+      }
+    },
+    {
+      "id": "sticky",
+      "expect": {
+        "user_text_contains": "E2E38-STICKY",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Same VM kz38-answer-j7k9l2."
+          }
+        ]
+      }
+    },
+    {
+      "id": "stopped",
+      "expect": {
+        "user_text_contains": "E2E38-STOPPED",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Restarted VM kz38-answer-m3n5b7."
+          }
+        ]
+      }
+    },
+    {
+      "id": "assigned-only",
+      "expect": {
+        "user_text_contains": "E2E38-ASSIGNED",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Assigned device kz38-answer-p4q6r8."
+          }
+        ]
+      }
+    },
+    {
+      "id": "sticky-against-capacity",
+      "expect": {
+        "user_text_contains": "E2E38-STICKY-PLATFORM",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Running VM wins kz38-answer-t8y1u3."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Scheduling"
+          }
+        ]
+      }
+    }
+  ]
+}

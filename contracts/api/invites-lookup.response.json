@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/invites-lookup.response.json",
+  "title": "POST /v1/invites/lookup response",
+  "description": "Body of a successful response to POST /v1/invites/lookup (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "$ref": "../common.json#/$defs/principal_kind"
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "platform",
+        "org"
+      ]
+    },
+    "expires_at": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "registered": {
+      "type": "boolean"
+    },
+    "org_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "package_ct": {
+      "$ref": "../common.json#/$defs/package_ct"
+    },
+    "log_head": {
+      "$ref": "../common.json#/$defs/log_head"
+    },
+    "log": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/log_entry"
+      },
+      "minItems": 1,
+      "maxItems": 100000
+    }
+  },
+  "required": [
+    "kind",
+    "scope",
+    "expires_at",
+    "registered"
+  ],
+  "additionalProperties": false
+}

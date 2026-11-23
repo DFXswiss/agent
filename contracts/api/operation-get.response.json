@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/operation-get.response.json",
+  "title": "GET /v1/operations/{id} response",
+  "description": "Body of a successful response to GET /v1/operations/{id} (03-api.md section 4.7).",
+  "type": "object",
+  "properties": {
+    "operation": {
+      "$ref": "objects.json#/$defs/operation_row"
+    },
+    "transitions": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/operation_transition"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    }
+  },
+  "required": [
+    "operation",
+    "transitions"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/tools-list.result.json",
+  "title": "tools/list result",
+  "description": "Result of tools/list: exactly the twelve tools of 03-api.md section 8.1; inputSchema is the dereferenced mcp/tools/<tool>.input.json.",
+  "type": "object",
+  "properties": {
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "get_context",
+              "list_workgroups",
+              "list_members",
+              "list_tasks",
+              "get_task",
+              "get_task_messages",
+              "get_whiteboard",
+              "get_notifications",
+              "request_operation",
+              "get_operation",
+              "list_operations",
+              "get_subagent_result"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "inputSchema": {
+            "type": "object",
+            "description": "JSON Schema (type object, additionalProperties false)",
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "inputSchema"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 12,
+      "maxItems": 12
+    }
+  },
+  "required": [
+    "tools"
+  ],
+  "additionalProperties": false
+}

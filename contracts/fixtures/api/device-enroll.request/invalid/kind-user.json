@@ -1,0 +1,21 @@
+{
+  "device_id": "01930014-0000-7000-8000-000000000014",
+  "kind": "user",
+  "invite_id": "BwcHBwcHBwcHBwcHBwcHBw",
+  "pub": {
+    "kem": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg",
+    "sig": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk"
+  },
+  "agent_version": "0.1.0",
+  "os": "macos",
+  "arch": "arm64",
+  "capacity": {
+    "vm_memory_budget_mib": 65536,
+    "vm_memory_used_mib": 8192,
+    "vm_slots_total": 8,
+    "vm_slots_free": 6,
+    "pool_ready": 2
+  },
+  "enroll_sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA",
+  "inv_sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+}

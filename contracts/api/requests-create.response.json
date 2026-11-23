@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/requests-create.response.json",
+  "title": "POST /v1/device-requests response",
+  "description": "Body of a successful response to POST /v1/device-requests (03-api.md section 4.10).",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "state": {
+      "$ref": "../common.json#/$defs/request_state"
+    },
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "request_id",
+    "state"
+  ],
+  "additionalProperties": false
+}

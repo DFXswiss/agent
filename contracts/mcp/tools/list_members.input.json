@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/tools/list_members.input.json",
+  "title": "platform tool list_members input",
+  "description": "Arguments of the platform tool list_members (03-api.md section 8.1).",
+  "$ref": "../objects.json#/$defs/input_list_members"
+}

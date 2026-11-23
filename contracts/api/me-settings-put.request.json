@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-settings-put.request.json",
+  "title": "PUT /v1/me/settings request",
+  "description": "Body of PUT /v1/me/settings (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "model_access": {
+      "$ref": "../common.json#/$defs/model_access_pref"
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/model_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "locale": {
+      "$ref": "../common.json#/$defs/locale"
+    }
+  },
+  "required": [
+    "model_access",
+    "model_id",
+    "locale"
+  ],
+  "additionalProperties": false
+}

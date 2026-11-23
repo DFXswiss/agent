@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "2025-06-18",
+  "capabilities": {
+    "tools": {
+      "listChanged": false
+    },
+    "resources": {}
+  },
+  "serverInfo": {
+    "name": "agent-dfx-swiss-platform",
+    "version": "1.0.0"
+  }
+}

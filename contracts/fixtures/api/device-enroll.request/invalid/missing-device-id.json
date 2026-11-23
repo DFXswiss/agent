@@ -1,0 +1,38 @@
+{
+  "kind": "org",
+  "invite_id": "BwcHBwcHBwcHBwcHBwcHBw",
+  "pub": {
+    "kem": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg",
+    "sig": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk"
+  },
+  "agent_version": "0.1.0",
+  "os": "macos",
+  "arch": "arm64",
+  "capacity": {
+    "vm_memory_budget_mib": 65536,
+    "vm_memory_used_mib": 8192,
+    "vm_slots_total": 8,
+    "vm_slots_free": 6,
+    "pool_ready": 2
+  },
+  "entry": {
+    "body": {
+      "org": "01930001-0000-7000-8000-000000000001",
+      "seq": 3,
+      "prev": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY",
+      "type": "accept",
+      "by": "01930014-0000-7000-8000-000000000014",
+      "ts": "2026-11-21T12:00:00.000Z",
+      "v": 1,
+      "invite_id": "BwcHBwcHBwcHBwcHBwcHBw",
+      "subject": "01930014-0000-7000-8000-000000000014",
+      "kind": "device",
+      "pub": {
+        "kem": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg",
+        "sig": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk"
+      }
+    },
+    "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA",
+    "inv_sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "description": "agent-request-v1 / agent-response-v1 texts and a hub signature produced by agent_core.signing (request_text, response_text, HubSigner with seed sha256('agent.dfx.swiss web-02 test hub key')); regenerate with the snippet in docs/platform/decisions/WEB-02.md.",
+  "hub_key": {
+    "id": "hub-test",
+    "public_key": "4vcLoAp_3Y7ntICfJvRTDkBO8zl7uJe-SXmTpel7jTc"
+  },
+  "request": {
+    "key_id": "session.0123456789abcdef0123456789abcdef",
+    "method": "POST",
+    "host": "hub.example:8443",
+    "target": "/v1/events?x=1",
+    "agent_time": "2026-11-21T12:00:00Z",
+    "nonce": "AAECAwQFBgcICQoLDA0ODw",
+    "body": "{\"events\":[]}",
+    "body_hash": "24de1c4a19c43ad41b013f13dcd858c17b0daa7f33a53f19913e5b11366d1c2e",
+    "text": "agent-request-v1\nsession.0123456789abcdef0123456789abcdef\nPOST\nhub.example:8443\n/v1/events?x=1\n2026-11-21T12:00:00Z\nAAECAwQFBgcICQoLDA0ODw\n24de1c4a19c43ad41b013f13dcd858c17b0daa7f33a53f19913e5b11366d1c2e"
+  },
+  "response": {
+    "status": 200,
+    "hub_time": "2026-11-21T12:00:01Z",
+    "body": "{\"results\":[]}",
+    "text": "agent-response-v1\nsession.0123456789abcdef0123456789abcdef\nAAECAwQFBgcICQoLDA0ODw\n2026-11-21T12:00:00Z\n200\n2026-11-21T12:00:01Z\n5021e624e752b001ce3e3846e8f158ed4aeb93a4c9a72fdb35a0c5b14a0eea84",
+    "signature": "DRLvZbAcOc75tj1WXMq_xknM518-Sq2Juc7XAdFCuj3YbBtWsJrBFAPN3qsS9gN-GJSdUy7veCyR3c2NVCyOAQ"
+  },
+  "error_response": {
+    "status": 403,
+    "hub_time": "2026-11-21T12:00:01Z",
+    "body": "{\"error\":\"forbidden\"}",
+    "text": "agent-response-v1\nsession.0123456789abcdef0123456789abcdef\nAAECAwQFBgcICQoLDA0ODw\n2026-11-21T12:00:00Z\n403\n2026-11-21T12:00:01Z\n2815fee6edc3716bd6c85027399f06e03168706e7fcac786ecf0c66e6190843f",
+    "signature": "tPvDky3iuap2M_cr2HkI0bn97U-_P9dZHfGQWu0V9HCLPwslxz7VudBbbxIC1X5xQQDRJb-MweE1ieDf4qSfCw"
+  }
+}

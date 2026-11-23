@@ -1,0 +1,33 @@
+{
+  "ceremony_id": "0193005d-0000-7000-8000-00000000005d",
+  "options": {
+    "rp": {
+      "id": "agent.example.org",
+      "name": "agent.dfx.swiss"
+    },
+    "user": {
+      "id": "AZMACgAAcACAAAAAAAAACg",
+      "name": "0193000a-0000-7000-8000-00000000000a",
+      "displayName": "0193000a-0000-7000-8000-00000000000a"
+    },
+    "challenge": "Hx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8",
+    "pubKeyCredParams": [
+      {
+        "type": "public-key",
+        "alg": -7
+      }
+    ],
+    "authenticatorSelection": {
+      "residentKey": "required",
+      "userVerification": "required"
+    },
+    "extensions": {
+      "prf": {
+        "eval": {
+          "first": "Hdi0C-3e3_nqvg8u0YFDnSGwY91I0C7wjroihwZICEU"
+        }
+      }
+    },
+    "timeout": 300000
+  }
+}

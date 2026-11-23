@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/auth.recovery.json",
+  "title": "audit detail auth.recovery",
+  "description": "detail of audit rows with action auth.recovery: recovery ceremony step (rotate: the recovery code was replaced, KOR-01). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "step": {
+      "type": "string",
+      "enum": [
+        "begin",
+        "finish",
+        "rotate"
+      ]
+    }
+  },
+  "required": [
+    "step"
+  ],
+  "additionalProperties": false
+}

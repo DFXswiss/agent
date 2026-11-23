@@ -1,0 +1,13 @@
+{
+  "upstream_base_url": "https://api.anthropic.example",
+  "auth_header": "authorization",
+  "auth_value": "Bearer test-not-a-real-token",
+  "extra_headers": [],
+  "access": "subscription",
+  "models_allowed": [
+    {
+      "model_id": "claude-opus-5-5",
+      "context_window": 1000000
+    }
+  ]
+}

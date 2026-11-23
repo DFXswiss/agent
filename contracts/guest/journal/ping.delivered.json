@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/journal/ping.delivered.json",
+  "title": "journal body ping.delivered",
+  "description": "Body of the journal record kind ping.delivered (03-api.md section 7.2, 02-data-model.md section 5).",
+  "$ref": "record.json#/$defs/body_ping_delivered"
+}

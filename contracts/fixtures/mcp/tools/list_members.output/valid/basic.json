@@ -1,0 +1,16 @@
+{
+  "members": [
+    {
+      "id": "01a1ee56-5e00-7014-8f1b-340691d99f14",
+      "kind": "user",
+      "display_name": "Ada",
+      "role": "admin"
+    },
+    {
+      "id": "01a1ee56-5e00-7015-8f1b-340691d99f15",
+      "kind": "device",
+      "display_name": "runner",
+      "role": "device"
+    }
+  ]
+}

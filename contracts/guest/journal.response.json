@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/journal.response.json",
+  "title": "guest GET /v1/journal response",
+  "description": "Response of GET /v1/journal (03-api.md section 7.1).",
+  "type": "object",
+  "properties": {
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "journal/record.json#/$defs/record"
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    },
+    "head": {
+      "$ref": "../common.json#/$defs/seq"
+    }
+  },
+  "required": [
+    "records",
+    "head"
+  ],
+  "additionalProperties": false
+}

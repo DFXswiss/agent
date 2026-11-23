@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/model.provider_outside_allowlist.json",
+  "title": "audit detail model.provider_outside_allowlist",
+  "description": "detail of audit rows with action model.provider_outside_allowlist: OpenRouter provider outside the catalog allow-list. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "provider": {
+      "type": "string",
+      "pattern": "^[ -~]+$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "model": {
+      "$ref": "../common.json#/$defs/model_id"
+    }
+  },
+  "required": [
+    "provider",
+    "model"
+  ],
+  "additionalProperties": false
+}

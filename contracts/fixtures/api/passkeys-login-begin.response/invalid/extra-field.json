@@ -1,0 +1,18 @@
+{
+  "ceremony_id": "0193005c-0000-7000-8000-00000000005c",
+  "hub_value": "Ojo6Ojo6Ojo6Ojo6Ojo6Ojo6Ojo6Ojo6Ojo6Ojo6Ojo",
+  "options": {
+    "rpId": "agent.example.org",
+    "allowCredentials": [],
+    "userVerification": "required",
+    "extensions": {
+      "prf": {
+        "eval": {
+          "first": "Hdi0C-3e3_nqvg8u0YFDnSGwY91I0C7wjroihwZICEU"
+        }
+      }
+    },
+    "timeout": 300000
+  },
+  "unexpected_field": 1
+}

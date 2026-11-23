@@ -1,0 +1,17 @@
+{
+  "files": {
+    "items": [
+      {
+        "path": "README.md",
+        "size": 12,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "skipped": [
+    {
+      "path": "link-to-etc",
+      "reason": "symlink"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/platform-log-append.response.json",
+  "title": "POST /v1/platform/log response",
+  "description": "Body of a successful response to POST /v1/platform/log (03-api.md section 4.3).",
+  "type": "object",
+  "properties": {
+    "head": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "hash": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "seq",
+        "hash"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "head"
+  ],
+  "additionalProperties": false
+}

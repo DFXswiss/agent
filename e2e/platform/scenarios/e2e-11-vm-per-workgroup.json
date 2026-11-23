@@ -1,0 +1,23 @@
+{
+  "name": "e2e-11-vm-per-workgroup",
+  "description": "E2E-11: one task in the default workgroup and one in a second workgroup of the same org, one after the other on the same device; each gets its own VM.",
+  "steps": [
+    {
+      "id": "default-wg",
+      "expect": { "user_text_contains": "E2E11-DEFAULT", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": { "content": [{ "type": "text", "text": "Default workgroup kz11-answer-d9f3g6h1." }] }
+    },
+    {
+      "id": "second-wg",
+      "expect": { "user_text_contains": "E2E11-SECOND", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": { "content": [{ "type": "text", "text": "Second workgroup kz11-answer-s4j8k2l5." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Workgroups" }] }
+    }
+  ]
+}

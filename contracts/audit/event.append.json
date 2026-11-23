@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/event.append.json",
+  "title": "audit detail event.append",
+  "description": "detail of audit rows with action event.append: event stored (header metadata only). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "$ref": "../common.json#/$defs/event_kind"
+    },
+    "scope": {
+      "$ref": "../common.json#/$defs/scope"
+    },
+    "scope_seq": {
+      "$ref": "../common.json#/$defs/positive"
+    },
+    "ct_bytes": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "kind",
+    "scope",
+    "scope_seq",
+    "ct_bytes"
+  ],
+  "additionalProperties": false
+}

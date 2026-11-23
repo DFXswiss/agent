@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/recovery-begin.response.json",
+  "title": "POST /v1/recovery/begin response",
+  "description": "Body of a successful response to POST /v1/recovery/begin (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "bundle_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct"
+    },
+    "challenge": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    }
+  },
+  "required": [
+    "user_id",
+    "bundle_ct",
+    "challenge"
+  ],
+  "additionalProperties": false
+}

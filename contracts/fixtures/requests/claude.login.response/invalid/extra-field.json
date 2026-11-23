@@ -1,0 +1,5 @@
+{
+  "step": "authorize",
+  "url": "https://auth.example/oauth/authorize?code=true",
+  "unexpected": 1
+}

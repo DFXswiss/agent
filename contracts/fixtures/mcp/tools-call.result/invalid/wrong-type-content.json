@@ -1,0 +1,11 @@
+{
+  "content": {
+    "items": [
+      {
+        "type": "text",
+        "text": "{\"workgroups\":[]}"
+      }
+    ]
+  },
+  "isError": false
+}

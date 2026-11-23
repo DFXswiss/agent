@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-platform-log.request.json",
+  "title": "GET /v1/device/platform-log request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "after": {
+      "$ref": "../common.json#/$defs/q_seq"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_log"
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/github.create_pull_request.params.json",
+  "title": "operation github.create_pull_request params",
+  "description": "Parameters of the operation type github.create_pull_request (03-api.md section 9); additionalProperties false, integers without booleans.",
+  "$ref": "objects.json#/$defs/params_github_create_pull_request"
+}

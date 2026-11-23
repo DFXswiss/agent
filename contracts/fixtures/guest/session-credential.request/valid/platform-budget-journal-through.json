@@ -1,0 +1,14 @@
+{
+  "upstream_base_url": "https://openrouter.example/api",
+  "auth_header": "authorization",
+  "auth_value": "Bearer test-not-a-real-key",
+  "extra_headers": [],
+  "provider_allowlist": [],
+  "access": "platform",
+  "models_allowed": [],
+  "budget": {
+    "usd_per_day": 5,
+    "spent_usd": 1.25,
+    "journal_through": 42
+  }
+}

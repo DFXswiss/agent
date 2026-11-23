@@ -1,0 +1,7 @@
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "Tool Bash is forbidden in agent.dfx.swiss sessions. Request actions through the platform tools (mcp__platform__request_operation)."
+  }
+}

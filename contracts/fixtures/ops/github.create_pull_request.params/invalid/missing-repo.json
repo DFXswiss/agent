@@ -1,0 +1,7 @@
+{
+  "head": "feature/x",
+  "base": "main",
+  "title": "Fix the parser",
+  "body": "Details.",
+  "draft": true
+}

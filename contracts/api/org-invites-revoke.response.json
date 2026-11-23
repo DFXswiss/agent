@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-invites-revoke.response.json",
+  "title": "POST /v1/orgs/{org}/invites/{id}/revoke response",
+  "description": "Body of a successful response to POST /v1/orgs/{org}/invites/{id}/revoke (03-api.md section 4.2).",
+  "type": "object",
+  "properties": {
+    "seq": {
+      "$ref": "../common.json#/$defs/seq"
+    }
+  },
+  "required": [
+    "seq"
+  ],
+  "additionalProperties": false
+}

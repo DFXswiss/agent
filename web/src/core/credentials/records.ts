@@ -1,0 +1,376 @@
+// The user's credential records (06-web.md section 8.2, 03-api.md section 4.8, 04-crypto.md section 4.4): build them
+// under the user's current credential key `CK`, store, list, open and delete them. Everything confidential is
+// encrypted and opened here; only the non-secret summary of a record (`summarize`) leaves this module – tokens, API
+// keys and passwords never reach the store or the UI.
+//
+// - `ownKeys`: the user's own `CK` self-wraps (`GET /v1/wraps?scope=cred&scope_id=<me>`): wrapped by and for the user,
+//   signature checked with the own identity, opened with the own X25519 key; newest epoch first, with the hub's
+//   `created_at` of the wrap (the start of the epoch, used by the rotation job). Wraps that do not verify or open are
+//   skipped.
+// - `sealRecord`: the record of a body (`crypto/credential.ts`): header `{v, alg, id, owner, kind, version, epoch,
+//   author, ts}` + fresh salt and nonce, encrypted under `CK_epoch`, signed by the author.
+// - `openRecord`: owner = the user, kind as asked, author the user or a device the verified logs entitle to the user's
+//   `CK` (a caller may widen this, `AuthorKeys`), signature, `CK` of the record's epoch, and a body exactly as
+//   `contracts/credentials/<kind>.json` allows it (`params_invalid` otherwise).
+// - `putCredential`: `PUT /v1/me/credentials/{kind}` with `expected_version` (0 = create; an update keeps the stored
+//   record ID, HUB-13); a `409 version_conflict` (another browser or device wrote in between) is retried once with
+//   the stored version.
+// - `deleteCredential`: `DELETE /v1/me/credentials/{kind}`; `404` counts as done.
+// - `loadCredentials`: the list (`GET /v1/me/credentials`) with every record opened and summarized, into the
+//   `credentials` slice.
+import { uuid7 } from '../encoding/ids';
+import { bodyJson, parseJson } from '../encoding/json';
+import { formatTime } from '../encoding/time';
+import { CryptoError } from '../crypto/errors';
+import { KINDS, newHeader, openCredential, sealCredential, verifyCredential } from '../crypto/credential';
+import type { Fields } from '../crypto/fields';
+import type { Identity } from '../crypto/keys';
+import type { Secret } from '../crypto/secret';
+import type { Sealed } from '../crypto/signed';
+import { unwrapKey, verifyWrap } from '../crypto/wrap';
+import { authorKey, isGithubBody } from '../github/connection';
+import { CRED } from '../log/wraps';
+import { HubError } from '../net/signedFetch';
+import { isRecord } from '../registry';
+import { EMAIL_RE } from '../requests/bodies';
+import { type RequestsContext, RequestError } from '../requests/client';
+import { type CredentialEntry, setCredentials } from '../store/slices/credentials';
+
+export type CredentialKind = 'github' | 'anthropic_api_key' | 'claude_subscription' | 'mailbox';
+export const CREDENTIAL_KINDS = KINDS as readonly CredentialKind[];
+
+export const isCredentialKind = (value: unknown): value is CredentialKind =>
+  (CREDENTIAL_KINDS as readonly unknown[]).includes(value);
+
+function refuse(code: string): never {
+  throw new RequestError(code);
+}
+
+// --- bodies (contracts/credentials/*.json) ---
+
+const PRINTABLE_RE = /^[!-~]{1,4096}$/;
+const HOST_RE = /^[A-Za-z0-9.-]{1,253}$/;
+const IMAP_USER_RE = /^[ -~]{1,256}$/;
+
+const keysAre = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
+  Object.keys(value).sort().join(',') === [...keys].sort().join(',');
+
+export const isEmail = (value: unknown): value is string =>
+  typeof value === 'string' && value.length <= 254 && EMAIL_RE.test(value);
+
+export interface ApiKeyBody {
+  readonly key: string;
+}
+
+export interface MailboxBody {
+  readonly imap_host: string;
+  readonly imap_port: number;
+  readonly imap_user: string;
+  readonly imap_password: string;
+  readonly email: string;
+}
+
+export interface SubscriptionBody {
+  readonly token: string;
+  readonly email: string | null;
+  readonly kind: 'setup_token';
+}
+
+export const isApiKeyBody = (value: unknown): value is ApiKeyBody =>
+  isRecord(value) && keysAre(value, ['key']) && typeof value.key === 'string' && PRINTABLE_RE.test(value.key);
+
+export const isMailboxBody = (value: unknown): value is MailboxBody =>
+  isRecord(value) &&
+  keysAre(value, ['imap_host', 'imap_port', 'imap_user', 'imap_password', 'email']) &&
+  typeof value.imap_host === 'string' &&
+  HOST_RE.test(value.imap_host) &&
+  Number.isSafeInteger(value.imap_port) &&
+  (value.imap_port as number) >= 1 &&
+  (value.imap_port as number) <= 65535 &&
+  typeof value.imap_user === 'string' &&
+  IMAP_USER_RE.test(value.imap_user) &&
+  typeof value.imap_password === 'string' &&
+  [...value.imap_password].length >= 1 &&
+  [...value.imap_password].length <= 1024 &&
+  isEmail(value.email);
+
+export const isSubscriptionBody = (value: unknown): value is SubscriptionBody =>
+  isRecord(value) &&
+  keysAre(value, ['token', 'email', 'kind']) &&
+  typeof value.token === 'string' &&
+  PRINTABLE_RE.test(value.token) &&
+  (value.email === null || isEmail(value.email)) &&
+  value.kind === 'setup_token';
+
+export const MAILBOX_FIELDS = ['imap_host', 'imap_port', 'imap_user', 'imap_password', 'email'] as const;
+export type MailboxForm = Readonly<Record<(typeof MAILBOX_FIELDS)[number], string>>;
+
+/** The `mailbox` body of a form (texts trimmed except the password, port as a number), or null if not allowed. */
+export function mailboxBody(values: MailboxForm): MailboxBody | null {
+  const port = values.imap_port.trim();
+  const body = {
+    imap_host: values.imap_host.trim(),
+    imap_port: /^[0-9]{1,5}$/.test(port) ? Number(port) : 0,
+    imap_user: values.imap_user.trim(),
+    imap_password: values.imap_password,
+    email: values.email.trim(),
+  };
+  return isMailboxBody(body) ? body : null;
+}
+
+const BODY_CHECKS: Readonly<Record<CredentialKind, (value: unknown) => boolean>> = {
+  github: (value) => isGithubBody(value) && Number.isFinite(Date.parse(value.created_at)),
+  anthropic_api_key: isApiKeyBody,
+  claude_subscription: isSubscriptionBody,
+  mailbox: isMailboxBody,
+};
+
+/** Whether `body` is exactly what `contracts/credentials/<kind>.json` allows. */
+export function validBody(kind: CredentialKind, body: unknown): boolean {
+  return BODY_CHECKS[kind](body);
+}
+
+/** What of an opened record may be shown: never a token, key or password. */
+export type Summary =
+  | { readonly kind: 'github'; readonly login: string }
+  | { readonly kind: 'anthropic_api_key' }
+  | { readonly kind: 'claude_subscription'; readonly email: string | null }
+  | { readonly kind: 'mailbox'; readonly email: string; readonly host: string };
+
+/** The non-secret part of a checked body (`validBody`). */
+export function summarize(kind: CredentialKind, body: unknown): Summary {
+  const value = body as Record<string, unknown>;
+  switch (kind) {
+    case 'github':
+      return { kind, login: value.login as string };
+    case 'anthropic_api_key':
+      return { kind };
+    case 'claude_subscription':
+      return { kind, email: value.email as string | null };
+    case 'mailbox':
+      return { kind, email: value.email as string, host: value.imap_host as string };
+  }
+}
+
+// --- the credential key ---
+
+export interface OwnKey {
+  readonly epoch: number;
+  readonly key: Secret;
+  /** Unix ms of the hub's `created_at` of the self-wrap (null when the hub gave none). */
+  readonly createdAt: number | null;
+}
+
+const createdAt = (value: unknown): number | null => {
+  const parsed = typeof value === 'string' ? Date.parse(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+/** The user's own `CK` self-wraps that verify and open, newest epoch first (module comment). */
+export async function ownKeys(context: RequestsContext, userId: string, identity: Identity): Promise<OwnKey[]> {
+  const body = await context.client.request('GET', `/v1/wraps?scope=cred&scope_id=${encodeURIComponent(userId)}`);
+  const wraps = isRecord(body) && Array.isArray(body.wraps) ? body.wraps.filter(isRecord) : [];
+  const own = wraps
+    .filter((w) => w.scope === CRED && w.scope_id === userId && w.recipient_id === userId && w.wrapped_by === userId)
+    .filter((w) => Number.isSafeInteger(w.epoch) && (w.epoch as number) >= 1 && typeof w.wrap === 'string')
+    .sort((a, b) => (b.epoch as number) - (a.epoch as number));
+  const found = new Map<number, OwnKey>();
+  for (const wrap of own) {
+    const epoch = wrap.epoch as number;
+    if (found.has(epoch)) continue;
+    const slot = { scope: CRED, scope_id: userId, epoch, recipient: userId };
+    try {
+      await verifyWrap(identity.sigPublic(), slot, wrap.wrap as string, wrap.sig);
+      found.set(epoch, {
+        epoch,
+        key: await unwrapKey(identity.kem, slot, wrap.wrap as string),
+        createdAt: createdAt(wrap.created_at),
+      });
+    } catch {
+      // a wrap that does not verify or open is skipped (another one of the epoch may)
+    }
+  }
+  return [...found.values()];
+}
+
+/** The newest own `CK`, or `epoch_stale` when none opens. */
+export async function currentKey(context: RequestsContext, userId: string, identity: Identity): Promise<OwnKey> {
+  return (await ownKeys(context, userId, identity))[0] ?? refuse('epoch_stale');
+}
+
+// --- records ---
+
+export interface SealInput {
+  readonly id: string;
+  readonly owner: string;
+  readonly kind: CredentialKind;
+  readonly version: number;
+  readonly epoch: number;
+  readonly author: string;
+  readonly ts: string;
+  readonly key: Secret;
+  readonly body: unknown;
+  readonly signer: CryptoKey;
+  /** Fixed salt and nonce (test vectors only). */
+  readonly saltNonce?: readonly [Uint8Array, Uint8Array];
+}
+
+/** A credential record (module comment); `params_invalid` for a body the kind does not allow. */
+export function sealRecord(input: SealInput): Promise<Sealed> {
+  if (!validBody(input.kind, input.body)) refuse('params_invalid');
+  const header = newHeader({
+    id: input.id,
+    owner: input.owner,
+    kind: input.kind,
+    version: input.version,
+    epoch: input.epoch,
+    author: input.author,
+    ts: input.ts,
+  });
+  return sealCredential(input.key, header, bodyJson(input.body), input.signer, input.saltNonce);
+}
+
+/** The signing key of a record's author, or null when the author may not have written it. */
+export type AuthorKeys = (author: unknown, header: Fields) => Uint8Array | null;
+
+export interface Opened {
+  readonly header: Fields;
+  readonly body: unknown;
+  readonly summary: Summary;
+}
+
+/** Verifies and opens a record of `kind` (module comment); `keys` are the user's own `CK`s by epoch. */
+export async function openRecord(
+  context: RequestsContext,
+  kind: CredentialKind,
+  record: unknown,
+  keys: readonly OwnKey[],
+  authors?: AuthorKeys,
+): Promise<Opened> {
+  const { userId, identity } = context.store.getState().me;
+  if (userId === null || identity === null) refuse('unauthorized');
+  const header = isRecord(record) && isRecord(record.header) ? (record.header as Fields) : {};
+  if (header.owner !== userId || header.kind !== kind) refuse('header_invalid');
+  const resolve: AuthorKeys = authors ?? ((author) => authorKey(context.store, userId, identity, author));
+  const sigKey = resolve(header.author, header) ?? refuse('author_not_writer');
+  const checked = await verifyCredential(record, sigKey);
+  const key = keys.find((item) => item.epoch === checked.epoch)?.key ?? refuse('epoch_stale');
+  const body = parseJson(await openCredential(key, record, sigKey));
+  if (!validBody(kind, body)) refuse('params_invalid');
+  return { header: checked, body, summary: summarize(kind, body) };
+}
+
+/** An item of `GET /v1/me/credentials`. */
+export interface ListedCredential {
+  readonly kind: CredentialKind;
+  readonly version: number;
+  readonly epoch: number;
+  readonly updatedAt: string;
+}
+
+const isListed = (
+  value: unknown,
+): value is { kind: CredentialKind; version: number; epoch: number; updated_at: string } =>
+  isRecord(value) &&
+  isCredentialKind(value.kind) &&
+  Number.isSafeInteger(value.version) &&
+  (value.version as number) >= 1 &&
+  Number.isSafeInteger(value.epoch) &&
+  (value.epoch as number) >= 1 &&
+  typeof value.updated_at === 'string';
+
+/** `GET /v1/me/credentials`, sorted by kind; a malformed answer is `unavailable`. */
+export async function listCredentials(context: RequestsContext): Promise<ListedCredential[]> {
+  const body = await context.client.request('GET', '/v1/me/credentials');
+  if (!isRecord(body) || !Array.isArray(body.credentials) || !body.credentials.every(isListed)) {
+    throw new HubError('unavailable', 200);
+  }
+  return body.credentials
+    .map((item) => ({ kind: item.kind, version: item.version, epoch: item.epoch, updatedAt: item.updated_at }))
+    .sort((a, b) => CREDENTIAL_KINDS.indexOf(a.kind) - CREDENTIAL_KINDS.indexOf(b.kind));
+}
+
+/** `GET /v1/me/credentials/{kind}`: the stored record, or null when there is none. */
+export async function fetchRecord(context: RequestsContext, kind: CredentialKind): Promise<unknown> {
+  try {
+    const body = await context.client.request('GET', `/v1/me/credentials/${kind}`);
+    return isRecord(body) ? (body.record ?? null) : null;
+  } catch (error) {
+    if (error instanceof HubError && error.code === 'not_found') return null;
+    throw error;
+  }
+}
+
+/** The code of a record that could not be opened (crypto and refusals keep theirs). */
+const openCode = (error: unknown): string =>
+  error instanceof CryptoError || error instanceof RequestError ? error.code : 'unavailable';
+
+/** Loads, opens and summarizes every record into the `credentials` slice (module comment). */
+export async function loadCredentials(context: RequestsContext): Promise<readonly CredentialEntry[]> {
+  const generation = context.store.generation;
+  const { userId, identity } = context.store.getState().me;
+  if (userId === null || identity === null) refuse('unauthorized');
+  const listed = await listCredentials(context);
+  const keys = listed.length === 0 ? [] : await ownKeys(context, userId, identity);
+  const entries: CredentialEntry[] = [];
+  for (const item of listed) {
+    const record = await fetchRecord(context, item.kind);
+    if (record === null) continue;
+    try {
+      const opened = await openRecord(context, item.kind, record, keys);
+      entries.push({ ...item, status: 'verified', summary: opened.summary, code: null });
+    } catch (error) {
+      entries.push({ ...item, status: 'unverifiable', summary: null, code: openCode(error) });
+    }
+  }
+  if (context.store.generation === generation) setCredentials(context.store, entries);
+  return entries;
+}
+
+async function putOnce(context: RequestsContext, kind: CredentialKind, body: unknown): Promise<number> {
+  const { userId, identity } = context.store.getState().me;
+  if (userId === null || identity === null) refuse('unauthorized');
+  const listed = (await listCredentials(context)).find((item) => item.kind === kind);
+  const stored = listed === undefined ? null : await fetchRecord(context, kind);
+  const storedId = isRecord(stored) && isRecord(stored.header) ? stored.header.id : undefined;
+  const expected = stored === null ? 0 : listed!.version;
+  const key = await currentKey(context, userId, identity);
+  const record = await sealRecord({
+    id: typeof storedId === 'string' ? storedId : uuid7(context.now()),
+    owner: userId,
+    kind,
+    version: expected + 1,
+    epoch: key.epoch,
+    author: userId,
+    ts: formatTime(context.now()),
+    key: key.key,
+    body,
+    signer: identity.sig.privateKey,
+  });
+  const answer = await context.client.request('PUT', `/v1/me/credentials/${kind}`, {
+    body: { record, expected_version: expected },
+  });
+  if (!isRecord(answer) || answer.version !== expected + 1) throw new HubError('unavailable', 200);
+  return expected + 1;
+}
+
+/** Stores `body` as the user's `kind` credential (module comment); returns the new version. */
+export async function putCredential(context: RequestsContext, kind: CredentialKind, body: unknown): Promise<number> {
+  if (!validBody(kind, body)) refuse('params_invalid');
+  try {
+    return await putOnce(context, kind, body);
+  } catch (error) {
+    if (!(error instanceof HubError) || (error.code !== 'version_conflict' && error.code !== 'epoch_stale'))
+      throw error;
+    return putOnce(context, kind, body);
+  }
+}
+
+/** `DELETE /v1/me/credentials/{kind}` (`404` counts as done). */
+export async function deleteCredential(context: RequestsContext, kind: CredentialKind): Promise<void> {
+  try {
+    await context.client.request('DELETE', `/v1/me/credentials/${kind}`);
+  } catch (error) {
+    if (!(error instanceof HubError) || error.code !== 'not_found') throw error;
+  }
+}

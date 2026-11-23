@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/error.response.json",
+  "title": "guest error response",
+  "description": "Error body of the guest control protocol: HTTP status + {error, detail?} like the hub (03-api.md section 1); the codes are a closed list of the guest (decisions CTR-02).",
+  "type": "object",
+  "properties": {
+    "error": {
+      "type": "string",
+      "enum": [
+        "request_invalid",
+        "unauthorized",
+        "not_found",
+        "already_assigned",
+        "not_assigned",
+        "id_conflict",
+        "state_conflict",
+        "size_exceeded",
+        "path_invalid",
+        "sandbox_failed",
+        "rate_limited",
+        "unavailable"
+      ]
+    },
+    "detail": {
+      "type": "object",
+      "properties": {
+        "pointers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(/[^/]*)*$",
+            "maxLength": 256
+          },
+          "minItems": 1,
+          "maxItems": 32
+        }
+      },
+      "required": [
+        "pointers"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "error"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,9 @@
+{
+  "origin_seq": 4,
+  "item_kind": "operation_transition",
+  "body": {
+    "operation_id": "0193002d-0000-7000-8000-00000000002d",
+    "state": "executing",
+    "at": "2026-11-21T12:00:00.000Z"
+  }
+}

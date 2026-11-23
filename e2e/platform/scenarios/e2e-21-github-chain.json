@@ -1,0 +1,238 @@
+{
+  "name": "e2e-21-github-chain",
+  "description": "E2E-21: the operation chain of a session against the GitHub double: list repositories, check out, create a branch, write a file, commit, push, open a draft pull request, comment on it and read it back. Each step waits for the previous operation's result; the push takes the commit SHA from the commit's result.",
+  "steps": [
+    {
+      "id": "list",
+      "expect": {
+        "user_text_contains": "E2E21-CHAIN",
+        "has_tool_result": false,
+        "tools_include": ["Write"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Looking at the repositories first."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_repositories",
+              "params": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "checkout",
+      "expect": {
+        "tool_result_contains": "\"repo\":\"octo-org/hello\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "octo-org/hello"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "branch",
+      "expect": {
+        "tool_result_contains": "\"dir\":\"repos/octo-org/hello\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_branch",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e21/notes",
+                "from": "main"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "write",
+      "expect": {
+        "tool_result_contains": "\"branch\":\"e2e21/notes\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/octo-org/hello/NOTES.md",
+              "content": "Notes kz21-file-g3w8n5c1\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "commit",
+      "expect": {
+        "tool_result_is_error": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e21/notes",
+                "message": "Add the notes."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push",
+      "expect": {
+        "tool_result_contains": "\"files_changed\":1"
+      },
+      "capture": {
+        "commit": {
+          "regex": "\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e21/notes",
+                "commit_sha": "${commit}"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "pull-request",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/octo-org/hello/tree/e2e21/notes\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_pull_request",
+              "params": {
+                "repo": "octo-org/hello",
+                "head": "e2e21/notes",
+                "base": "main",
+                "title": "Add the notes kz21-title-p9d4r7v2",
+                "body": "Written by the session.",
+                "draft": true
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "comment",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/octo-org/hello/pull/1\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1,
+                "body": "Ready for review kz21-comment-t6j2h8q4"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "get-pull-request",
+      "expect": {
+        "tool_result_contains": "issuecomment-"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.get_pull_request",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "done",
+      "expect": {
+        "tool_result_contains": "Ready for review kz21-comment-t6j2h8q4"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Draft pull request #1 is open: https://github.example/octo-org/hello/pull/1 kz21-answer-z1f5k9m3."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Notes PR"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "not-available.title": "Not available",
+  "not-available.body": "This page does not exist or you cannot see it.",
+  "home": "Go to the start page",
+  "retry": "Try again",
+  "unsupported.missing": "Missing in this browser: {features}.",
+  "unsupported.supported": "Supported browsers",
+  "feature.webauthn": "passkeys (WebAuthn)",
+  "feature.streams": "streaming fetch",
+  "feature.x25519": "X25519 in WebCrypto",
+  "feature.ed25519": "Ed25519 in WebCrypto",
+  "feature.indexeddb": "IndexedDB storage (it may be disabled in private browsing)",
+  "browser.chrome": "Google Chrome, current version (desktop and Android)",
+  "browser.edge": "Microsoft Edge, current version",
+  "browser.safari": "Safari, current version (macOS and iOS)",
+  "browser.firefox": "Mozilla Firefox, current version"
+}

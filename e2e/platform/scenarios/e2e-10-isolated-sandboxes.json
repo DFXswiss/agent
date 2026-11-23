@@ -1,0 +1,89 @@
+{
+  "name": "e2e-10-isolated-sandboxes",
+  "description": "E2E-10: two sessions of one workgroup VM in parallel. Session B writes a secret into its workspace and then waits 30 s for its final answer; meanwhile session A (adversary, ATK-24 steps with the foreign workspace taken from its prompt) reads, greps and writes B's workspace - each attempt must fail - writes its own file and finishes. Then B finishes.",
+  "steps": [
+    {
+      "id": "b-write",
+      "expect": { "user_text_contains": "E2E10-BRAVO", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Storing the secret of B." },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": { "file_path": "${cwd}/secret-b.txt", "content": "kz10-secret-b-w5n2q7z4\n" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "b-hold",
+      "expect": { "tool_result_is_error": false, "tool_result_contains": "secret-b.txt" },
+      "delay_ms": 30000,
+      "reply": { "content": [{ "type": "text", "text": "Bravo finished kz10-answer-b-e3r8t1y6." }] }
+    },
+    {
+      "id": "a-read",
+      "expect": { "user_text_contains": "E2E10-ALPHA", "has_tool_result": false },
+      "capture": { "foreign": { "regex": "compare with (/srv/sessions/[0-9a-f-]{36}/work)", "source": "messages" } },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Reading the other session's workspace." },
+          { "type": "tool_use", "name": "Read", "input": { "file_path": "${foreign}/secret-b.txt" } }
+        ]
+      }
+    },
+    {
+      "id": "a-grep",
+      "expect": { "tool_result_is_error": true },
+      "reply": {
+        "content": [{ "type": "tool_use", "name": "Grep", "input": { "pattern": "kz10", "path": "${foreign}" } }]
+      }
+    },
+    {
+      "id": "a-glob",
+      "expect": { "tool_result_is_error": true },
+      "reply": {
+        "content": [{ "type": "tool_use", "name": "Glob", "input": { "pattern": "*.txt", "path": "${foreign}" } }]
+      }
+    },
+    {
+      "id": "a-write-foreign",
+      "expect": { "tool_result_is_error": true },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": { "file_path": "${foreign}/planted.txt", "content": "planted by A\n" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a-write-own",
+      "expect": { "tool_result_is_error": true },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": { "file_path": "${cwd}/alpha.txt", "content": "kz10-alpha-own-p4l9\n" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a-done",
+      "expect": { "tool_result_is_error": false, "tool_result_contains": "alpha.txt" },
+      "reply": { "content": [{ "type": "text", "text": "Alpha finished kz10-answer-a-k2u7i5o3." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Isolation" }] }
+    }
+  ]
+}

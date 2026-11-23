@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/platform-enrollments.response.json",
+  "title": "GET /v1/platform/enrollments response",
+  "description": "Body of a successful response to GET /v1/platform/enrollments (03-api.md section 4.3): the verified pending enrollments and the whole platform log, which the operator CLI verifies against its root key and extends (contract change HUB-04).",
+  "type": "object",
+  "properties": {
+    "enrollments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "invite_id": {
+            "$ref": "../common.json#/$defs/invite_id"
+          },
+          "device_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "pub": {
+            "$ref": "../common.json#/$defs/pub_keys"
+          },
+          "enroll_sig": {
+            "$ref": "../common.json#/$defs/b64u_64"
+          },
+          "inv_sig": {
+            "$ref": "../common.json#/$defs/b64u_64"
+          },
+          "agent_version": {
+            "$ref": "../common.json#/$defs/version_text"
+          },
+          "os": {
+            "$ref": "../common.json#/$defs/label_text"
+          },
+          "arch": {
+            "$ref": "../common.json#/$defs/label_text"
+          },
+          "capacity": {
+            "$ref": "../common.json#/$defs/capacity"
+          },
+          "created_at": {
+            "$ref": "../common.json#/$defs/time"
+          }
+        },
+        "required": [
+          "invite_id",
+          "device_id",
+          "pub",
+          "enroll_sig",
+          "inv_sig",
+          "agent_version",
+          "os",
+          "arch",
+          "capacity",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    },
+    "log": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/platform_entry"
+      },
+      "minItems": 0,
+      "maxItems": 100000
+    }
+  },
+  "required": [
+    "enrollments",
+    "log"
+  ],
+  "additionalProperties": false
+}

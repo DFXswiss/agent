@@ -1,0 +1,7 @@
+{
+  "repo": "a/b",
+  "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "dir": "/tmp/x",
+  "files": 1,
+  "bytes": 1
+}

@@ -1,0 +1,6 @@
+{
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "agent.dfx.swiss notice: 2 new item(s) available (whiteboard.entry, operation.finished). Use mcp__platform__get_notifications to see them."
+  }
+}

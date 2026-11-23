@@ -1,0 +1,48 @@
+{
+  "vms": [
+    {
+      "vm_id": "vm-0a1b2c3d",
+      "device_id": "01930014-0000-7000-8000-000000000014",
+      "wg_id": "01930002-0000-7000-8000-000000000002",
+      "state": "running",
+      "latest": {
+        "ts": "2026-11-21T12:00:00.000Z",
+        "cpu_ratio": 0.75,
+        "mem_used_bytes": 1073741824,
+        "mem_limit_bytes": 8589934592,
+        "disk_used_bytes": null,
+        "disk_limit_bytes": null,
+        "net_rx_bytes": 1000,
+        "net_tx_bytes": 2000,
+        "uptime_seconds": 120,
+        "reachable": true,
+        "state": "running",
+        "free_vm_slots": null,
+        "free_mem_bytes": null
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "session_id": "01930004-0000-7000-8000-000000000004",
+      "task_id": "01930003-0000-7000-8000-000000000003",
+      "wg_id": "01930002-0000-7000-8000-000000000002",
+      "state": "working",
+      "latest": null,
+      "usage": {
+        "requests": 3,
+        "input_tokens": 1200,
+        "output_tokens": 300,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "thinking_tokens": 0,
+        "cost_micro_usd": 1500,
+        "cost_basis": "provider",
+        "context_used_tokens": 1500,
+        "context_window_tokens": 128000,
+        "last_provider": "DeepSeek",
+        "updated_at": "2026-11-21T12:00:05.250Z"
+      }
+    }
+  ]
+}

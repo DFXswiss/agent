@@ -1,0 +1,56 @@
+{
+  "name": "e2e-27-access-platform",
+  "description": "E2E-27 step 1: the platform default (DeepSeek ID) through the platform OpenRouter key; the double accepts only the run's key as Bearer token (access check) and the configured model ID.",
+  "openrouter": {
+    "provider": "DoubleCloud"
+  },
+  "steps": [
+    {
+      "id": "e2e-27-access-platform-answer",
+      "expect": {
+        "user_text_contains": "E2E27-PLATFORM",
+        "has_tools": true,
+        "has_tool_result": false,
+        "model": "deepseek/deepseek-v4.1-flash-1017"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Platform default answer kz27-platform-b5n1v8."
+          }
+        ],
+        "usage": {
+          "input_tokens": 52000,
+          "cache_read_input_tokens": 10000,
+          "cache_creation_input_tokens": 2000,
+          "output_tokens": 800
+        },
+        "cost": 0.0021
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "e2e-27-access-platform-title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Usage"
+          }
+        ],
+        "usage": {
+          "input_tokens": 52000,
+          "cache_read_input_tokens": 10000,
+          "cache_creation_input_tokens": 2000,
+          "output_tokens": 800
+        },
+        "cost": 0.0021
+      }
+    }
+  ]
+}

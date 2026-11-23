@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/passkeys-register-finish.response.json",
+  "title": "POST /v1/passkeys/register/finish response",
+  "description": "Body of a successful response to POST /v1/passkeys/register/finish (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "credential_id": {
+      "$ref": "../common.json#/$defs/credential_id"
+    }
+  },
+  "required": [
+    "user_id",
+    "credential_id"
+  ],
+  "additionalProperties": false
+}

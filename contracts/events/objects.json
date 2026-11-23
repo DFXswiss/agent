@@ -1,0 +1,1133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/events/objects.json",
+  "title": "event definitions",
+  "description": "Event envelopes restricted by kind and the plaintext bodies of every event kind (03-api.md section 10, 04-crypto.md section 4.3). The envelope and header themselves are common.json#/$defs/event.",
+  "$defs": {
+    "ct": {
+      "type": "string",
+      "description": "AES-256-GCM ciphertext, at most 256 KiB decoded (04-crypto.md E8)",
+      "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+      "minLength": 22,
+      "maxLength": 349526
+    },
+    "ct_terminal": {
+      "type": "string",
+      "description": "AES-256-GCM ciphertext of a terminal chunk, at most 64 KiB decoded (04-crypto.md E8)",
+      "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+      "minLength": 22,
+      "maxLength": 87382
+    },
+    "header_device": {
+      "type": "object",
+      "description": "event header, exact key set (04-crypto.md section 4.3); the device-authored kinds except session.terminal, all workgroup-scoped (scope wg, wg set)",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "alg": {
+          "type": "string",
+          "const": "A256GCM-HKDF"
+        },
+        "id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "org": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "scope": {
+          "type": "string",
+          "const": "wg"
+        },
+        "scope_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "../common.json#/$defs/epoch"
+        },
+        "wg": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "task": {
+          "$ref": "../common.json#/$defs/uuid_or_empty"
+        },
+        "session": {
+          "$ref": "../common.json#/$defs/uuid_or_empty"
+        },
+        "author": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "task.meta",
+            "session.output",
+            "session.tool",
+            "session.hook",
+            "session.file",
+            "session.status",
+            "operation.params",
+            "operation.result",
+            "platform.read"
+          ]
+        },
+        "ref": {
+          "$ref": "../common.json#/$defs/uuid_or_empty"
+        },
+        "ts": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "lh": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "salt": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        },
+        "nonce": {
+          "$ref": "../common.json#/$defs/b64u_12"
+        }
+      },
+      "required": [
+        "v",
+        "alg",
+        "id",
+        "org",
+        "scope",
+        "scope_id",
+        "epoch",
+        "wg",
+        "task",
+        "session",
+        "author",
+        "kind",
+        "ref",
+        "ts",
+        "lh",
+        "salt",
+        "nonce"
+      ],
+      "additionalProperties": false
+    },
+    "header_operation_params": {
+      "type": "object",
+      "description": "event header of kind operation.params",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "alg": {
+          "type": "string",
+          "const": "A256GCM-HKDF"
+        },
+        "id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "org": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "scope": {
+          "type": "string",
+          "const": "wg"
+        },
+        "scope_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "../common.json#/$defs/epoch"
+        },
+        "wg": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "task": {
+          "$ref": "../common.json#/$defs/uuid_or_empty"
+        },
+        "session": {
+          "$ref": "../common.json#/$defs/uuid_or_empty"
+        },
+        "author": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "kind": {
+          "type": "string",
+          "const": "operation.params"
+        },
+        "ref": {
+          "$ref": "../common.json#/$defs/uuid_or_empty"
+        },
+        "ts": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "lh": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "salt": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        },
+        "nonce": {
+          "$ref": "../common.json#/$defs/b64u_12"
+        }
+      },
+      "required": [
+        "v",
+        "alg",
+        "id",
+        "org",
+        "scope",
+        "scope_id",
+        "epoch",
+        "wg",
+        "task",
+        "session",
+        "author",
+        "kind",
+        "ref",
+        "ts",
+        "lh",
+        "salt",
+        "nonce"
+      ],
+      "additionalProperties": false
+    },
+    "event_other": {
+      "type": "object",
+      "description": "event of any kind except session.terminal",
+      "properties": {
+        "header": {
+          "$ref": "../common.json#/$defs/event_header_other"
+        },
+        "ct": {
+          "$ref": "#/$defs/ct"
+        },
+        "sig": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "header",
+        "ct",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "event_terminal": {
+      "type": "object",
+      "description": "event of kind session.terminal (at most 64 KiB ciphertext)",
+      "properties": {
+        "header": {
+          "$ref": "../common.json#/$defs/event_header_terminal"
+        },
+        "ct": {
+          "$ref": "#/$defs/ct_terminal"
+        },
+        "sig": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "header",
+        "ct",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "event_device": {
+      "description": "event of a device-authored kind (04-crypto.md section 4.3): the outbox item event",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "header": {
+              "$ref": "#/$defs/header_device"
+            },
+            "ct": {
+              "$ref": "#/$defs/ct"
+            },
+            "sig": {
+              "$ref": "../common.json#/$defs/b64u_64"
+            }
+          },
+          "required": [
+            "header",
+            "ct",
+            "sig"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "$ref": "#/$defs/event_terminal"
+        }
+      ]
+    },
+    "event_operation_params": {
+      "type": "object",
+      "description": "event of kind operation.params (03-api.md section 8.3)",
+      "properties": {
+        "header": {
+          "$ref": "#/$defs/header_operation_params"
+        },
+        "ct": {
+          "$ref": "#/$defs/ct"
+        },
+        "sig": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "header",
+        "ct",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "idempotency_key": {
+      "$ref": "../mcp/objects.json#/$defs/idempotency_key"
+    },
+    "body_org_profile": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "display name (UTF-8 body JSON, non-ASCII allowed)",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "description": "free text",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "body_wg_profile": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "display name (UTF-8 body JSON, non-ASCII allowed)",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "description": "free text",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "body_member_profile": {
+      "type": "object",
+      "properties": {
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "display_name"
+      ],
+      "additionalProperties": false
+    },
+    "body_device_profile": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "body_task_meta": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "1-120 characters, single line",
+          "pattern": "^[^\r\n]{1,120}$"
+        },
+        "description": {
+          "type": "string",
+          "description": "free text",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "body_prompt": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "prompt text (at most 64 Ki characters)",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "attachments": {
+          "type": "array",
+          "description": "reserved, empty in v1",
+          "items": {
+            "type": "null"
+          },
+          "minItems": 0,
+          "maxItems": 0
+        }
+      },
+      "required": [
+        "text",
+        "attachments"
+      ],
+      "additionalProperties": false
+    },
+    "body_whiteboard_entry": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "org",
+            "workgroup",
+            "task"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "description": "Markdown, at most 64 KiB",
+          "minLength": 1,
+          "maxLength": 65536
+        }
+      },
+      "required": [
+        "level",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "body_whiteboard_edit": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Markdown, at most 64 KiB",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "base_event_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "text",
+        "base_event_id"
+      ],
+      "additionalProperties": false
+    },
+    "body_whiteboard_delete": {
+      "type": "object",
+      "properties": {
+        "base_event_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "base_event_id"
+      ],
+      "additionalProperties": false
+    },
+    "body_settings_workgroup": {
+      "type": "object",
+      "properties": {
+        "repositories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "owner/name, lower case (03-api.md section 9)",
+            "pattern": "^[a-z0-9-]{1,39}/[a-z0-9._-]{1,100}$"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "protected_branches": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "branch name or glob pattern with *",
+            "pattern": "^[A-Za-z0-9._/*+-]{1,200}$"
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "pr_draft_default": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "repositories",
+        "protected_branches",
+        "pr_draft_default"
+      ],
+      "additionalProperties": false
+    },
+    "body_session_output": {
+      "$ref": "../guest/journal/record.json#/$defs/body_session_output"
+    },
+    "body_session_tool": {
+      "$ref": "../guest/journal/record.json#/$defs/body_session_tool"
+    },
+    "body_session_hook": {
+      "$ref": "../guest/journal/record.json#/$defs/body_session_hook"
+    },
+    "body_session_file": {
+      "$ref": "../guest/journal/record.json#/$defs/body_session_file"
+    },
+    "body_session_terminal": {
+      "$ref": "../guest/journal/record.json#/$defs/body_session_terminal"
+    },
+    "body_session_status": {
+      "description": "error status of a session (03-api.md section 10)",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "failed"
+            },
+            "reason": {
+              "$ref": "../common.json#/$defs/session_failure_reason"
+            },
+            "details": {
+              "type": "object",
+              "description": "flat non-confidential metadata: printable ASCII text up to 256 characters, integers, booleans, null",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[ -~]*$",
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "requested",
+                "vm_assigning",
+                "vm_ready",
+                "sandbox_ready",
+                "agent_starting",
+                "prompt_delivering",
+                "working",
+                "idle",
+                "suspended",
+                "resuming",
+                "stopping",
+                "stopped"
+              ]
+            },
+            "reason": {
+              "$ref": "../common.json#/$defs/error_code"
+            },
+            "details": {
+              "type": "object",
+              "description": "flat non-confidential metadata: printable ASCII text up to 256 characters, integers, booleans, null",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[ -~]*$",
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "body_operation_params": {
+      "description": "type and parameters of an operation (03-api.md section 10); params per ops/<type>.params.json",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.list_repositories"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_list_repositories"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.checkout"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_checkout"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.get_pull_request"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_get_pull_request"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.create_branch"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_create_branch"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.commit"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_commit"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.push"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_push"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.create_pull_request"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_create_pull_request"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.comment"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_comment"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "subagent.request"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_subagent_request"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "task.set_title"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_task_set_title"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "body_operation_result": {
+      "description": "final outcome of an operation (03-api.md section 10)",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "succeeded"
+            },
+            "result": {
+              "$ref": "../ops/objects.json#/$defs/result"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "failed",
+                "rejected",
+                "denied",
+                "expired"
+              ]
+            },
+            "error": {
+              "$ref": "../ops/objects.json#/$defs/error"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "error"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "body_platform_read": {
+      "description": "a read through the session platform API (03-api.md section 10): tool, arguments, result count",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "get_context"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_get_context"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "list_workgroups"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_list_workgroups"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "list_members"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_list_members"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "list_tasks"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_list_tasks"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "get_task"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_get_task"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "get_task_messages"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_get_task_messages"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "get_whiteboard"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_get_whiteboard"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "get_notifications"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_get_notifications"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "get_operation"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_get_operation"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "list_operations"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_list_operations"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "get_subagent_result"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_get_subagent_result"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

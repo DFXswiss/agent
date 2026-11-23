@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/whiteboard-history.response.json",
+  "title": "GET /v1/whiteboards/{entry}/history response",
+  "description": "Body of a successful response to GET /v1/whiteboards/{entry}/history (03-api.md section 4.9).",
+  "type": "object",
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/stored_event"
+      },
+      "minItems": 1,
+      "maxItems": 10000
+    }
+  },
+  "required": [
+    "events"
+  ],
+  "additionalProperties": false
+}

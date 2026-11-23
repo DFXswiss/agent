@@ -1,0 +1,9 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-00000000002d",
+  "type": "github.create_branch",
+  "params": {
+    "repo": "example-org/example-repo",
+    "branch": "feature/x",
+    "from": "main"
+  }
+}

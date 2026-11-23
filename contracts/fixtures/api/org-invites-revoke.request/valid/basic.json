@@ -1,0 +1,15 @@
+{
+  "entry": {
+    "body": {
+      "org": "01930001-0000-7000-8000-000000000001",
+      "seq": 6,
+      "prev": "FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQ",
+      "type": "invite_revoke",
+      "by": "0193000a-0000-7000-8000-00000000000a",
+      "ts": "2026-11-21T12:00:00.000Z",
+      "v": 1,
+      "invite_id": "BgYGBgYGBgYGBgYGBgYGBg"
+    },
+    "sig": "RkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRg"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "description": "Closed list of outbox item kinds (03-api.md section 6.1, 02-data-model.md section 4).",
+  "kinds": [
+    "event",
+    "session_transition",
+    "vm_state",
+    "operation_transition",
+    "usage",
+    "quota",
+    "metrics",
+    "audit",
+    "wrap"
+  ]
+}

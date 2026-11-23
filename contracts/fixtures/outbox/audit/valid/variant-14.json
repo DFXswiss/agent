@@ -1,0 +1,10 @@
+{
+  "action": "model.provider_outside_allowlist",
+  "result": "ok",
+  "target_kind": "device",
+  "target_id": "01930014-0000-7000-8000-000000000014",
+  "detail": {
+    "provider": "Other",
+    "model": "deepseek/deepseek-v4.1-flash-1017"
+  }
+}

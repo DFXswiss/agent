@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/outbox/quota.json",
+  "title": "outbox body quota",
+  "description": "Body of the outbox item kind quota (03-api.md section 6.1).",
+  "$ref": "objects.json#/$defs/body_quota"
+}

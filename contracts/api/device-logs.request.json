@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-logs.request.json",
+  "title": "GET /v1/device/logs request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "org": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "after": {
+      "$ref": "../common.json#/$defs/q_seq"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_log"
+    }
+  },
+  "required": [
+    "org"
+  ],
+  "additionalProperties": false
+}

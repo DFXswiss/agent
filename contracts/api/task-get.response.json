@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-get.response.json",
+  "title": "GET /v1/tasks/{task} response",
+  "description": "task, its sessions (tree via parent_session_id), usage per session and latest transitions",
+  "type": "object",
+  "properties": {
+    "task": {
+      "$ref": "objects.json#/$defs/task_row"
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "$ref": "objects.json#/$defs/session_row"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "objects.json#/$defs/usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "transitions": {
+            "type": "array",
+            "items": {
+              "$ref": "objects.json#/$defs/session_transition"
+            },
+            "minItems": 0,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "session",
+          "usage",
+          "transitions"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "transitions": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/task_transition"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    }
+  },
+  "required": [
+    "task",
+    "sessions",
+    "transitions"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,1311 @@
+{
+  "about": "Platform log of 04-crypto.md section 4.8: every entry type, a decertification, the states, and one broken variant per rule P1-P4 and per type rule (section 6.2). See README.md, 'Log vectors'.",
+  "identities": {
+    "alice": {
+      "id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+      "kem": "MUbmKmKwNkQPw8Miz0JMpgezZnLgQkVVJRaqvWyM8x8",
+      "kem_sk": "39qKjFp6ZFABGlEfI6AFhz6FBTruUdHbuZaXhV0C-LY",
+      "sig": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+      "sig_sk": "z83FrSmKU6gL8G3GhKUZgqLzQNIq8v7uao6DFBcKTJ4"
+    },
+    "hub": {
+      "id": "01a1ee56-5e00-7d67-9a08-bbc30843835b",
+      "kem": "pLb7TNNIzyLkGKrxOHQfiyfwWNXaP3OIvGvgGUWVHGA",
+      "kem_sk": "-upud0xmXCV9Zb7lFWGqI-dVQSg79WDfv13TE0tCau0",
+      "sig": "qAyJz0Z2Jwd68Ji4YUK5CXaHx54QTIOJKxi_VUI3KVA",
+      "sig_sk": "hfVCr2bGDXSI1nFPJNRSuL4Oe-HKB8mQkjNmjuvg9PI"
+    },
+    "pdev": {
+      "id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+      "kem": "kfuyCHIGeIwz3lnXneEPUvXjbgX7FUaeidjRY056SVU",
+      "kem_sk": "UTGGglitnXWRTRIZrdaIEszxK8mCdNwMtqtpPdNP8ww",
+      "sig": "ZWJpEXa_JHY2GoF7vWLbsC3LePRe8lPpZu6tSC09A2Q",
+      "sig_sk": "HPJiZcVh1C-_MbNt0YrUKyDFrs026oBVy-krIqVqKXE"
+    },
+    "qdev": {
+      "id": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+      "kem": "RGKN_sDtqYIId5BYX0WbsxdUTYHJEzbO0t9k9cRKLlc",
+      "kem_sk": "KfLSbLAks6LKftbC_qiiDxEmILpRzRS4PfSEZQkfkuc",
+      "sig": "PTS_NI9cakjz3Crp2LNy8V8WU7qOMRhYOte5E2KzKI8",
+      "sig_sk": "FNiEdb8Kk1HLe8cffxMpZV5PR9t7r688etdNBtvXlRs"
+    },
+    "root": {
+      "id": "01a1ee56-5e00-7b2c-b0f3-4250d87dae4a",
+      "kem": "feY6aPjlA0VHh-qzqvRKFOKwzdE_jII0YFlMhmZ8_EM",
+      "kem_sk": "uFwJe8KcUWBbcpZFmyUjqBAjewsOaJHZ7WYhBbaQV80",
+      "sig": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI",
+      "sig_sk": "QFbowk9fpGVhWNcH--8__qxjTo7c1gXGrTqh-zNFZxw"
+    }
+  },
+  "invalid": [
+    {
+      "args": {
+        "entries": [],
+        "log": {
+          "count": 0,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_empty",
+      "name": "log_empty",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "expires": "2026-11-24T12:00:00.000Z",
+              "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+              "pk_inv": "xgYLebs9KmDWfLKLso5G0yQoiS3p0UwZInMoJ_LDHk4",
+              "prev": "pCpTj-mE9zgiHY_jfQ_pMYop4aFTD0ZhhQk-HlIJ_GY",
+              "seq": 2,
+              "ts": "2026-11-21T12:01:00.000Z",
+              "type": "device_invite",
+              "v": 1
+            },
+            "sig": "ToHYvi0l0U-pXLOEMsJSff6eHDqhBnKVIbBQIcmoxNl1IUUNTwLVGRTb5SiZ9I0F9dWdiao-0k8q7CgSZy77Cw"
+          }
+        ],
+        "log": {
+          "count": 1,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_chain",
+      "name": "P1_seq_gap",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "expires": "2026-11-24T12:00:00.000Z",
+              "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+              "pk_inv": "xgYLebs9KmDWfLKLso5G0yQoiS3p0UwZInMoJ_LDHk4",
+              "prev": "W3S9V202pQVQ4h19CWn7ox-k6LW_TC4WwmTj-QzAsiU",
+              "seq": 1,
+              "ts": "2026-11-21T12:01:00.000Z",
+              "type": "device_invite",
+              "v": 1
+            },
+            "sig": "3ZYEH5jmG7O8tEZnV4_mpsTlwsef3t9q6giQmYaCfPXQKmhw1hP_RouRplxxbn-5E_P_hGf9MHphwUGuAHJ0BA"
+          }
+        ],
+        "log": {
+          "count": 1,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_chain",
+      "name": "P2_prev",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "expires": "2026-11-24T12:00:00.000Z",
+              "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+              "pk_inv": "xgYLebs9KmDWfLKLso5G0yQoiS3p0UwZInMoJ_LDHk4",
+              "prev": "",
+              "seq": 0,
+              "ts": "2026-11-21T12:01:00.000Z",
+              "type": "device_invite",
+              "v": 1
+            },
+            "sig": "k3jwwuC95Zo-i6HdUSfNwKJ1xq1yY2xSxktrteo-5fGaoNfSbuqHnFzPAJ1LvLyMUBR-mmBdtyeHy80mhtcEDg"
+          }
+        ],
+        "log": {
+          "count": 0,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_genesis",
+      "name": "P3_root_not_first",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "prev": "pCpTj-mE9zgiHY_jfQ_pMYop4aFTD0ZhhQk-HlIJ_GY",
+              "pub": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI",
+              "seq": 1,
+              "ts": "2026-11-21T12:01:00.000Z",
+              "type": "root",
+              "v": 1
+            },
+            "sig": "UJOxkikrbIG0LF1bfUlMvHvKKRL3okrgfP6-kNrD0-8syj4rM34Xmjz1XFfJkmmCS-TlXULOyxUQohqLorB4Cg"
+          }
+        ],
+        "log": {
+          "count": 1,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_genesis",
+      "name": "P3_second_root",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [],
+        "log": {
+          "count": 1,
+          "name": "platform"
+        },
+        "root": "qAyJz0Z2Jwd68Ji4YUK5CXaHx54QTIOJKxi_VUI3KVA"
+      },
+      "error": "platform_root_mismatch",
+      "name": "P3_root_not_pinned",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "expires": "2026-11-24T12:00:00.000Z",
+              "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+              "pk_inv": "xgYLebs9KmDWfLKLso5G0yQoiS3p0UwZInMoJ_LDHk4",
+              "prev": "pCpTj-mE9zgiHY_jfQ_pMYop4aFTD0ZhhQk-HlIJ_GY",
+              "seq": 1,
+              "ts": "2026-11-21T12:01:00.000Z",
+              "type": "device_invite",
+              "v": 1
+            },
+            "sig": "fPchf5EiLgne1_XE3IyKDMwB-Jil0OWEd5M6l97zq8DVfQdCm6Vqb6Uq_ttRbOsDZlREo_cZzyXCH2y72uGQAA"
+          }
+        ],
+        "log": {
+          "count": 1,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_signature",
+      "name": "P4_wrong_key",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "agent_version": "0.1.0",
+              "arch": "arm64",
+              "by": "platform-root",
+              "capacity": {
+                "pool_ready": 2,
+                "vm_memory_budget_mib": 65536,
+                "vm_memory_used_mib": 0,
+                "vm_slots_free": 8,
+                "vm_slots_total": 8
+              },
+              "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+              "enroll_sig": "OohVDjChjI7X_yabla1lwOScerwjiUGXkA5ANBxW8WzfizO1HuiT_CNadOFA7X0fZN5NqtJ8tAwKInLHdECIDw",
+              "inv_sig": "3y8hpfK_M9nKvZO5qMY2KrGnhVi4ecL8mojL0-TGCeDrqxES73tok4bN4YHDHz_-XP00Vto1Gm7CVc60ZZYNAg",
+              "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+              "os": "macos",
+              "prev": "W3S9V202pQVQ4h19CWn7ox-k6LW_TC4WwmTj-QzAsiU",
+              "pub": {
+                "kem": "kfuyCHIGeIwz3lnXneEPUvXjbgX7FUaeidjRY056SVU",
+                "sig": "ZWJpEXa_JHY2GoF7vWLbsC3LePRe8lPpZu6tSC09A2Q"
+              },
+              "seq": 2,
+              "ts": "2026-11-21T12:02:00.000Z",
+              "type": "device_certify",
+              "v": 1
+            },
+            "sig": "rf5hMMMoUoGAi8e82GvIkz5IGGKX6n3UqCPtK1zG2a0D695UPohi2GtHSFjekP6PYweKUPjbGhvzxfzCdMdSCA"
+          }
+        ],
+        "log": {
+          "count": 2,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_signature",
+      "name": "P4_hub_certifies_device",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "agent_version": "0.1.0",
+              "arch": "arm64",
+              "by": "platform-root",
+              "capacity": {
+                "pool_ready": 2,
+                "vm_memory_budget_mib": 65536,
+                "vm_memory_used_mib": 0,
+                "vm_slots_free": 8,
+                "vm_slots_total": 8
+              },
+              "device": "01a1ee56-5e00-76ac-a04d-12639e532939",
+              "enroll_sig": "mLaMRi9l4nopcrb4dTDy0fSEuYV8zBCdiMwb1NQ26HgJEDlwjMnF1j6zeoCYqIMsPulu-LWVYbvRxzTyiDjbAw",
+              "inv_sig": "sq5Ug2iy9Cuf3JALGOioGgNlEsfd2zZNmFTZWS1Krh5MM5B1c0Egw49mVEGhfbW5zMbcElBOEJDpj6AOqPXtCQ",
+              "invite_id": "2jyMBFtygPAPPDqVW6ggjQ",
+              "os": "macos",
+              "prev": "f_6jKqHjA0IHiHmTo2hNZ-g9vnY5rien7G-goaoOGVk",
+              "pub": {
+                "kem": "nF7IxPXgtxeyVCef81j1lAtOjHw_NNcu4nWS_RPYkWE",
+                "sig": "vElSw3m-DIWBsFyyzwmy-3qlKQj4bjih7WnVQ4DNULI"
+              },
+              "seq": 3,
+              "ts": "2026-11-21T12:03:00.000Z",
+              "type": "device_certify",
+              "v": 1
+            },
+            "sig": "hIg5-gy9TLUwzuIMeFB_bMUikHMY5I0fjTQ9vBnXccZwTARRe-nOlG8MGPry0OzqXlbJFJEaB2rGrfRAvHEsAA"
+          }
+        ],
+        "log": {
+          "count": 3,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "invite_not_in_log",
+      "name": "certify_unknown_invite",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "agent_version": "0.1.0",
+              "arch": "arm64",
+              "by": "platform-root",
+              "capacity": {
+                "pool_ready": 2,
+                "vm_memory_budget_mib": 65536,
+                "vm_memory_used_mib": 0,
+                "vm_slots_free": 8,
+                "vm_slots_total": 8
+              },
+              "device": "01a1ee56-5e00-76ac-a04d-12639e532939",
+              "enroll_sig": "nhj5UYZ6zpK417q3MxA_eBdF0hs7IdMw5_pMQfMFbS0Od-q7zQwtiGWCfKrreLjAnv9pl8f9C675n0yz39QMCw",
+              "inv_sig": "KLchKEyeFXanXXcxbLyGEXWcoNwBxNpDSMvuaHZiLtINEBmBMajuz5tbaObKWEbksQ874JThotT78qiFouDpBg",
+              "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+              "os": "macos",
+              "prev": "D-TGbefig35Fnpszady7wTtWfFSiQ6MjZsoMu1LuQ3U",
+              "pub": {
+                "kem": "nF7IxPXgtxeyVCef81j1lAtOjHw_NNcu4nWS_RPYkWE",
+                "sig": "vElSw3m-DIWBsFyyzwmy-3qlKQj4bjih7WnVQ4DNULI"
+              },
+              "seq": 4,
+              "ts": "2026-11-21T12:04:00.000Z",
+              "type": "device_certify",
+              "v": 1
+            },
+            "sig": "7yAtGgdezN1cdxBJpDtyiHuqbvTPJCX6ZHFcuI-Z4hoRIG4OkS_knZdgHYOW43_jJqb0qSNv1ovII8vYZVbrCw"
+          }
+        ],
+        "log": {
+          "count": 4,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "invite_not_in_log",
+      "name": "certify_with_user_invite",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "agent_version": "0.1.0",
+              "arch": "arm64",
+              "by": "platform-root",
+              "capacity": {
+                "pool_ready": 2,
+                "vm_memory_budget_mib": 65536,
+                "vm_memory_used_mib": 0,
+                "vm_slots_free": 8,
+                "vm_slots_total": 8
+              },
+              "device": "01a1ee56-5e00-76ac-a04d-12639e532939",
+              "enroll_sig": "8sbyKNoujQXrsfcQIUopjapwCgvkgCtUqOrKzO-wvITwg6VjaOFyJR2_3--2xgatxvR9N9OuA3RbXqcpmiLICw",
+              "inv_sig": "7fmV-VjlxVmHg5mmaOKSNRpCE7PzgC96Rf_2dbEPCJZCTlLmn9OdjSo0Rr7C-7IWV4Dcl8Fv2yxXwA5gJE6UDA",
+              "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+              "os": "macos",
+              "prev": "f_6jKqHjA0IHiHmTo2hNZ-g9vnY5rien7G-goaoOGVk",
+              "pub": {
+                "kem": "nF7IxPXgtxeyVCef81j1lAtOjHw_NNcu4nWS_RPYkWE",
+                "sig": "vElSw3m-DIWBsFyyzwmy-3qlKQj4bjih7WnVQ4DNULI"
+              },
+              "seq": 3,
+              "ts": "2026-11-21T12:03:00.000Z",
+              "type": "device_certify",
+              "v": 1
+            },
+            "sig": "OrLxETtdDGgF4fLaHgdAV22lNWeBS-avFscoSRx-TMpeefR08DJPfPjwCeAJdtYp2j6PCq87o_edSbXOHRtSBA"
+          }
+        ],
+        "log": {
+          "count": 3,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "invite_consumed",
+      "name": "certify_twice",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "agent_version": "0.1.0",
+              "arch": "arm64",
+              "by": "platform-root",
+              "capacity": {
+                "pool_ready": 2,
+                "vm_memory_budget_mib": 65536,
+                "vm_memory_used_mib": 0,
+                "vm_slots_free": 8,
+                "vm_slots_total": 8
+              },
+              "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+              "enroll_sig": "OohVDjChjI7X_yabla1lwOScerwjiUGXkA5ANBxW8WzfizO1HuiT_CNadOFA7X0fZN5NqtJ8tAwKInLHdECIDw",
+              "inv_sig": "3y8hpfK_M9nKvZO5qMY2KrGnhVi4ecL8mojL0-TGCeDrqxES73tok4bN4YHDHz_-XP00Vto1Gm7CVc60ZZYNAg",
+              "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+              "os": "macos",
+              "prev": "W3S9V202pQVQ4h19CWn7ox-k6LW_TC4WwmTj-QzAsiU",
+              "pub": {
+                "kem": "pLb7TNNIzyLkGKrxOHQfiyfwWNXaP3OIvGvgGUWVHGA",
+                "sig": "qAyJz0Z2Jwd68Ji4YUK5CXaHx54QTIOJKxi_VUI3KVA"
+              },
+              "seq": 2,
+              "ts": "2026-11-21T12:02:00.000Z",
+              "type": "device_certify",
+              "v": 1
+            },
+            "sig": "lQ-J9WcomqZR0BEAiC4Lx6ZuTwwo4i0ajYf4-3m_sbcOfUlkSkLw7i84DAHm1KhVzlQu1GKX0AKJw6P6aldWAQ"
+          }
+        ],
+        "log": {
+          "count": 2,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_accept",
+      "name": "certify_swapped_key",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "agent_version": "0.1.0",
+              "arch": "arm64",
+              "by": "platform-root",
+              "capacity": {
+                "pool_ready": 2,
+                "vm_memory_budget_mib": 65536,
+                "vm_memory_used_mib": 0,
+                "vm_slots_free": 8,
+                "vm_slots_total": 8
+              },
+              "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+              "enroll_sig": "5WLzR0-TPL7lGDGtQbdCIYKW8ztR2ioYl9D-Tjg9aSqjFdiChatWlvo-ug6JOpoeCg2EdpOP1flnJgoT3iKPBA",
+              "inv_sig": "5FHIdJ8ucvdvfhV4DQrupu5nZufjFezYKHzeg6nFL6KQ80cb3bEs1RJepsMxDcJEleZo1kuZo1wZjrPbB5hSAw",
+              "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+              "os": "macos",
+              "prev": "EJPyPt9odU2no6Y4-eVa31hkIOc2A67Qc4fL_Fd6ovc",
+              "pub": {
+                "kem": "kfuyCHIGeIwz3lnXneEPUvXjbgX7FUaeidjRY056SVU",
+                "sig": "ZWJpEXa_JHY2GoF7vWLbsC3LePRe8lPpZu6tSC09A2Q"
+              },
+              "seq": 7,
+              "ts": "2026-11-21T12:07:00.000Z",
+              "type": "device_certify",
+              "v": 1
+            },
+            "sig": "2kvyu_XFa1IsSX9pRviBGNq-ZGZ8ULArJL2KAJEwfx0xXghwOPd1DeGbwhbBYHgrxeYXZfqf_CJ7C2hMuF6BAQ"
+          }
+        ],
+        "log": {
+          "count": 7,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "certify_certified_device",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "device": "01a1ee56-5e00-76ac-a04d-12639e532939",
+              "prev": "f_6jKqHjA0IHiHmTo2hNZ-g9vnY5rien7G-goaoOGVk",
+              "seq": 3,
+              "ts": "2026-11-21T12:03:00.000Z",
+              "type": "device_decertify",
+              "v": 1
+            },
+            "sig": "vWyNgLuLzoWPf5LxTw9diRzZxPrcv7-amvMWJfGoflPyHsbuyIQ6mZEBa-6GQNuWelP__2L6dpY1xXl9DGBTDg"
+          }
+        ],
+        "log": {
+          "count": 3,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "decertify_unknown",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+              "prev": "uJuJiBj7P4wCkKXLRcSRPVk37vr-LLrIdigHNC2f84c",
+              "seq": 9,
+              "ts": "2026-11-21T12:09:00.000Z",
+              "type": "device_decertify",
+              "v": 1
+            },
+            "sig": "4YbChYVHgHtp-ETlKXnu6848kaUu0_Tc6fXbc8ubc5mgCbRVA61Sd7vJBxT4KtJ5PSs7gA4JfaYR7ShTnEsMDw"
+          }
+        ],
+        "log": {
+          "count": 9,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "decertify_twice",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "prev": "uUCmSMhRpHAILpj9UeoXGhHDnjL41uRXyY0c0TBoGik",
+              "role": "inviter",
+              "seq": 5,
+              "subject": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "ts": "2026-11-21T12:05:00.000Z",
+              "type": "role_grant",
+              "v": 1
+            },
+            "sig": "vpNK-vDjWo-THiB2viPNRUHesenNBc5qg0ua8a2I869R1tyHvOSZulhK1vfs1IZeLfp-4yJVaoy5mKx0ywuFAQ"
+          }
+        ],
+        "log": {
+          "count": 5,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "role_grant_twice",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "prev": "D-TGbefig35Fnpszady7wTtWfFSiQ6MjZsoMu1LuQ3U",
+              "role": "inviter",
+              "seq": 4,
+              "subject": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "ts": "2026-11-21T12:04:00.000Z",
+              "type": "role_revoke",
+              "v": 1
+            },
+            "sig": "7vWoAoMQSwZk-1IriAqXdZptS0RHHrHrIItKxSlWsxhhV8gdxn5IhPiHe03TKZBSjDLBwYo_ddv6QZA4EQPaDw"
+          }
+        ],
+        "log": {
+          "count": 4,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "role_revoke_not_held",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "expires": "2026-11-24T12:00:00.000Z",
+              "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+              "pk_inv": "xgYLebs9KmDWfLKLso5G0yQoiS3p0UwZInMoJ_LDHk4",
+              "prev": "f_6jKqHjA0IHiHmTo2hNZ-g9vnY5rien7G-goaoOGVk",
+              "seq": 3,
+              "ts": "2026-11-21T12:03:00.000Z",
+              "type": "user_invite",
+              "v": 1
+            },
+            "sig": "GQeEaj0nsf6Vn8vCWUqhfGWb5f_xjPQxCUa2qmqoNqM6LH9LVodWpQmG0JxUs6jtn32ehq4XnNi3WDStYIQ9Cw"
+          }
+        ],
+        "log": {
+          "count": 3,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "invite_id_reused",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "expires": "2026-11-24T12:00:00.000Z",
+              "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+              "pk_inv": "xgYLebs9KmDWfLKLso5G0yQoiS3p0UwZInMoJ_LDHk4",
+              "prev": "pCpTj-mE9zgiHY_jfQ_pMYop4aFTD0ZhhQk-HlIJ_GY",
+              "seq": 1,
+              "ts": "2026-11-21T12:01:00.000Z",
+              "type": "device_delete",
+              "v": 1
+            },
+            "sig": "f6dA5yXoR155H7P2Q1Eht49nx4_U1BGnd177m2oIUyDIOdGGpAwY4FBBtsGRruy3GGNDxBc0aOjTmlNjzhEvBA"
+          }
+        ],
+        "log": {
+          "count": 1,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_type",
+      "name": "unknown_type",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "expires": "2026-11-24T12:00:00.000Z",
+              "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+              "pk_inv": "xgYLebs9KmDWfLKLso5G0yQoiS3p0UwZInMoJ_LDHk4",
+              "prev": "pCpTj-mE9zgiHY_jfQ_pMYop4aFTD0ZhhQk-HlIJ_GY",
+              "seq": 1,
+              "ts": "2026-11-21T12:01:00.000Z",
+              "type": "device_invite",
+              "v": 1
+            },
+            "sig": "3mWY5DoKWkDfNY6ZRLv8UfXY9CpT4JfiuV8K2Vn9wFmgcb7ok7NOp6JtgE5-XEiaeuTID4mlwmrLPO_Te_JDAA"
+          }
+        ],
+        "log": {
+          "count": 1,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "header_invalid",
+      "name": "by_not_root",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "append": [
+          {
+            "body": {
+              "by": "platform-root",
+              "prev": "D-TGbefig35Fnpszady7wTtWfFSiQ6MjZsoMu1LuQ3U",
+              "role": "inviter",
+              "seq": 4,
+              "subject": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "ts": "2026-11-21T12:04:00.000Z",
+              "type": "role_grant",
+              "v": 1
+            },
+            "sig": "3teN6AzvVXmlF1Yujdt7__TN4Vekb4vBMPE-FkA6QseVjB8eHrkOJlUNxvJvqQh_tPbB83U1ylM1rds6eBgKBw"
+          }
+        ],
+        "entries": [],
+        "log": {
+          "count": 3,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "seq_conflict",
+      "name": "seq_conflict",
+      "op": "append_platform_log"
+    }
+  ],
+  "invite_codes": {
+    "pdev": "Mq7nkXvzk6Gj6XHpFdF_nw",
+    "platform-user": "gdS9DMkbBn-BJx6G3qdyzA",
+    "qdev": "vQl_etUEhrtl_6PcMbd6Sw"
+  },
+  "logs": {
+    "platform": [
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "",
+          "pub": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI",
+          "seq": 0,
+          "ts": "2026-11-21T12:00:00.000Z",
+          "type": "root",
+          "v": 1
+        },
+        "sig": "0Wd1z6S-8qSwNwITOurQxKdWHIAbi2bbdEJH2EDtfSyQasRldGmbg2xLqrDyHOkzEKHZuDhIy1w48Ov1cM73AA"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "expires": "2026-11-24T12:00:00.000Z",
+          "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+          "pk_inv": "xgYLebs9KmDWfLKLso5G0yQoiS3p0UwZInMoJ_LDHk4",
+          "prev": "pCpTj-mE9zgiHY_jfQ_pMYop4aFTD0ZhhQk-HlIJ_GY",
+          "seq": 1,
+          "ts": "2026-11-21T12:01:00.000Z",
+          "type": "device_invite",
+          "v": 1
+        },
+        "sig": "dq8YC4oOd9BLPytel1S6TxO5jV6IjGxBN6533o1bfZGoeNEKYmIyCFwmLem2RN3I5xROyuxBb51HOnkre6ZeCw"
+      },
+      {
+        "body": {
+          "agent_version": "0.1.0",
+          "arch": "arm64",
+          "by": "platform-root",
+          "capacity": {
+            "pool_ready": 2,
+            "vm_memory_budget_mib": 65536,
+            "vm_memory_used_mib": 0,
+            "vm_slots_free": 8,
+            "vm_slots_total": 8
+          },
+          "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+          "enroll_sig": "OohVDjChjI7X_yabla1lwOScerwjiUGXkA5ANBxW8WzfizO1HuiT_CNadOFA7X0fZN5NqtJ8tAwKInLHdECIDw",
+          "inv_sig": "3y8hpfK_M9nKvZO5qMY2KrGnhVi4ecL8mojL0-TGCeDrqxES73tok4bN4YHDHz_-XP00Vto1Gm7CVc60ZZYNAg",
+          "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+          "os": "macos",
+          "prev": "W3S9V202pQVQ4h19CWn7ox-k6LW_TC4WwmTj-QzAsiU",
+          "pub": {
+            "kem": "kfuyCHIGeIwz3lnXneEPUvXjbgX7FUaeidjRY056SVU",
+            "sig": "ZWJpEXa_JHY2GoF7vWLbsC3LePRe8lPpZu6tSC09A2Q"
+          },
+          "seq": 2,
+          "ts": "2026-11-21T12:02:00.000Z",
+          "type": "device_certify",
+          "v": 1
+        },
+        "sig": "R9Vy1pkt2mWTdgGeENbPTOdd2KvrQJ_pGOaHdeA3_HclHAyarbOJamdTMENJKTfkctye1AGIK4-US3VUaK_aBg"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "expires": "2026-11-24T12:00:00.000Z",
+          "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+          "pk_inv": "HEDyM2LPaDxe3ZbKXPPDUIZXxRE_tpriqwD3t-Tvzqg",
+          "prev": "f_6jKqHjA0IHiHmTo2hNZ-g9vnY5rien7G-goaoOGVk",
+          "seq": 3,
+          "ts": "2026-11-21T12:03:00.000Z",
+          "type": "user_invite",
+          "v": 1
+        },
+        "sig": "zpcsLj6rCN8Ff09N2fVgQ_vo96uyoi_1wa9g8AhCk52zmA9i2L3en32YQckypzWi5dO3yZuNRwzxtnjmLGIEDA"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "D-TGbefig35Fnpszady7wTtWfFSiQ6MjZsoMu1LuQ3U",
+          "role": "inviter",
+          "seq": 4,
+          "subject": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "ts": "2026-11-21T12:04:00.000Z",
+          "type": "role_grant",
+          "v": 1
+        },
+        "sig": "3teN6AzvVXmlF1Yujdt7__TN4Vekb4vBMPE-FkA6QseVjB8eHrkOJlUNxvJvqQh_tPbB83U1ylM1rds6eBgKBw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "granted": true,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "uUCmSMhRpHAILpj9UeoXGhHDnjL41uRXyY0c0TBoGik",
+          "seq": 5,
+          "ts": "2026-11-21T12:05:00.000Z",
+          "type": "org_platform_access",
+          "v": 1
+        },
+        "sig": "y3qwlYdP33xKp20kxSfgHoTQLXlkMbY_MoRtRIMqTz2FfE91mxJVk3M_0-bfUWuBA87k_hG_5yC3ilxqbEJKDQ"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "expires": "2026-11-24T12:00:00.000Z",
+          "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+          "pk_inv": "j4Q3Bx-WfHPEyuljbP9rnp1elInZ73Ey1LuWfNhw9eU",
+          "prev": "hkS2vpiflDrUh-I0QMTUfIx-6iAji6AbFyqFaOrLSyc",
+          "seq": 6,
+          "ts": "2026-11-21T12:06:00.000Z",
+          "type": "device_invite",
+          "v": 1
+        },
+        "sig": "OUDfrKBJL8jV5w5xQrwG_-8nDajZ_o79xf-d7dwGAK3nCzk-ZTz_ET8vYmZWnQRhFKi4y_wvbgyaTYm5LfmjDQ"
+      },
+      {
+        "body": {
+          "agent_version": "0.1.0",
+          "arch": "arm64",
+          "by": "platform-root",
+          "capacity": {
+            "pool_ready": 2,
+            "vm_memory_budget_mib": 65536,
+            "vm_memory_used_mib": 0,
+            "vm_slots_free": 8,
+            "vm_slots_total": 8
+          },
+          "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+          "enroll_sig": "mIFvIpKZ3l0_tSw_a9bVjbft8V2rkpRHVzwK6q-1Ah8309oXYCYa4anSjH6JFVz7BEFrTSF9V3NCt80iH2ucDA",
+          "inv_sig": "azsR0TYmQCvOyehXcRftR8qCb3D_sY32J5kTBx7Bkfz_dPwBvqiEjtGOX69KAHAa66YFmHuyl1BfTxBT6DaiDA",
+          "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+          "os": "macos",
+          "prev": "EJPyPt9odU2no6Y4-eVa31hkIOc2A67Qc4fL_Fd6ovc",
+          "pub": {
+            "kem": "RGKN_sDtqYIId5BYX0WbsxdUTYHJEzbO0t9k9cRKLlc",
+            "sig": "PTS_NI9cakjz3Crp2LNy8V8WU7qOMRhYOte5E2KzKI8"
+          },
+          "seq": 7,
+          "ts": "2026-11-21T12:07:00.000Z",
+          "type": "device_certify",
+          "v": 1
+        },
+        "sig": "hK-RtXUymQCOCkozBPUDhD98ZmclXDno5azdS0guehFq1xPdYx5dK1Dl5Y6_qAGpR0g_-yYq9Gu5INevx0N8Dw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+          "prev": "EJiQrTEKxgF7WXDPR9yxFcV9ZaBqTRpZLoELytGvpWc",
+          "seq": 8,
+          "ts": "2026-11-21T12:08:00.000Z",
+          "type": "device_decertify",
+          "v": 1
+        },
+        "sig": "0YLSvdhlA6e3oslGj_K97ewlBheMnofWJvZGHXJUVjdaDZhFGSDRjRJjXpEN8O2GnZS5rCMLBlr557p9c-u_Cw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "uJuJiBj7P4wCkKXLRcSRPVk37vr-LLrIdigHNC2f84c",
+          "role": "inviter",
+          "seq": 9,
+          "subject": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "ts": "2026-11-21T12:09:00.000Z",
+          "type": "role_revoke",
+          "v": 1
+        },
+        "sig": "VJaK5PsMX7FI8VychS-WrAjAGUIy-lep61ZDucWkd4vzWiHoJDZ-vvQJjHUL4U0S5rIi6lnL5kJS9ggM_5rNAA"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "granted": false,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "VAuWoRDRtduNG-PHR1182d5N62DgXl0y5Ray23ONK8Y",
+          "seq": 10,
+          "ts": "2026-11-21T12:10:00.000Z",
+          "type": "org_platform_access",
+          "v": 1
+        },
+        "sig": "1j7pqLy0W3iFRdBVZfmdnekS37_WbDdTKcy2j-CHbJxoA8bWhGTa3kS0SKUxMoNBTJoNU7xnaJgvprWKLTDnCw"
+      }
+    ]
+  },
+  "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI",
+  "valid": {
+    "heads": [
+      {
+        "hash": "pCpTj-mE9zgiHY_jfQ_pMYop4aFTD0ZhhQk-HlIJ_GY",
+        "seq": 0
+      },
+      {
+        "hash": "W3S9V202pQVQ4h19CWn7ox-k6LW_TC4WwmTj-QzAsiU",
+        "seq": 1
+      },
+      {
+        "hash": "f_6jKqHjA0IHiHmTo2hNZ-g9vnY5rien7G-goaoOGVk",
+        "seq": 2
+      },
+      {
+        "hash": "D-TGbefig35Fnpszady7wTtWfFSiQ6MjZsoMu1LuQ3U",
+        "seq": 3
+      },
+      {
+        "hash": "uUCmSMhRpHAILpj9UeoXGhHDnjL41uRXyY0c0TBoGik",
+        "seq": 4
+      },
+      {
+        "hash": "hkS2vpiflDrUh-I0QMTUfIx-6iAji6AbFyqFaOrLSyc",
+        "seq": 5
+      },
+      {
+        "hash": "EJPyPt9odU2no6Y4-eVa31hkIOc2A67Qc4fL_Fd6ovc",
+        "seq": 6
+      },
+      {
+        "hash": "EJiQrTEKxgF7WXDPR9yxFcV9ZaBqTRpZLoELytGvpWc",
+        "seq": 7
+      },
+      {
+        "hash": "uJuJiBj7P4wCkKXLRcSRPVk37vr-LLrIdigHNC2f84c",
+        "seq": 8
+      },
+      {
+        "hash": "VAuWoRDRtduNG-PHR1182d5N62DgXl0y5Ray23ONK8Y",
+        "seq": 9
+      },
+      {
+        "hash": "OWRtKOYovyVq_gqjbqRcgInoENRwHAO9yi-f1PC4h_w",
+        "seq": 10
+      }
+    ],
+    "log": {
+      "count": 11,
+      "name": "platform"
+    },
+    "platform_access": [
+      {
+        "access": true,
+        "count": 6,
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "private": false
+      },
+      {
+        "access": false,
+        "count": 11,
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "private": false
+      },
+      {
+        "access": true,
+        "count": 11,
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "private": true
+      }
+    ],
+    "projections": [
+      {
+        "devices": [],
+        "head": {
+          "hash": "pCpTj-mE9zgiHY_jfQ_pMYop4aFTD0ZhhQk-HlIJ_GY",
+          "seq": 0
+        },
+        "invites": [],
+        "org_access": {},
+        "roles": []
+      },
+      {
+        "devices": [],
+        "head": {
+          "hash": "W3S9V202pQVQ4h19CWn7ox-k6LW_TC4WwmTj-QzAsiU",
+          "seq": 1
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {},
+        "roles": []
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          }
+        ],
+        "head": {
+          "hash": "f_6jKqHjA0IHiHmTo2hNZ-g9vnY5rien7G-goaoOGVk",
+          "seq": 2
+        },
+        "invites": [
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {},
+        "roles": []
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          }
+        ],
+        "head": {
+          "hash": "D-TGbefig35Fnpszady7wTtWfFSiQ6MjZsoMu1LuQ3U",
+          "seq": 3
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {},
+        "roles": []
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          }
+        ],
+        "head": {
+          "hash": "uUCmSMhRpHAILpj9UeoXGhHDnjL41uRXyY0c0TBoGik",
+          "seq": 4
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {},
+        "roles": [
+          {
+            "role": "inviter",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          }
+        ],
+        "head": {
+          "hash": "hkS2vpiflDrUh-I0QMTUfIx-6iAji6AbFyqFaOrLSyc",
+          "seq": 5
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
+        },
+        "roles": [
+          {
+            "role": "inviter",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          }
+        ],
+        "head": {
+          "hash": "EJPyPt9odU2no6Y4-eVa31hkIOc2A67Qc4fL_Fd6ovc",
+          "seq": 6
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
+        },
+        "roles": [
+          {
+            "role": "inviter",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "certified"
+          }
+        ],
+        "head": {
+          "hash": "EJiQrTEKxgF7WXDPR9yxFcV9ZaBqTRpZLoELytGvpWc",
+          "seq": 7
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
+        },
+        "roles": [
+          {
+            "role": "inviter",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "uJuJiBj7P4wCkKXLRcSRPVk37vr-LLrIdigHNC2f84c",
+          "seq": 8
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
+        },
+        "roles": [
+          {
+            "role": "inviter",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "VAuWoRDRtduNG-PHR1182d5N62DgXl0y5Ray23ONK8Y",
+          "seq": 9
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
+        },
+        "roles": []
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "OWRtKOYovyVq_gqjbqRcgInoENRwHAO9yi-f1PC4h_w",
+          "seq": 10
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "roles": []
+      }
+    ]
+  }
+}

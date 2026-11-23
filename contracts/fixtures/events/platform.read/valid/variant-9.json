@@ -1,0 +1,7 @@
+{
+  "tool": "list_operations",
+  "arguments": {
+    "limit": 10
+  },
+  "result_count": 3
+}

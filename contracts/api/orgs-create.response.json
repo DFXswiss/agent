@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/orgs-create.response.json",
+  "title": "POST /v1/orgs response",
+  "description": "Body of a successful response to POST /v1/orgs (03-api.md section 4.3).",
+  "type": "object",
+  "properties": {
+    "org_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "default_wg": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "org_id",
+    "default_wg"
+  ],
+  "additionalProperties": false
+}

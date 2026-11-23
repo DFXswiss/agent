@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/device.enroll.json",
+  "title": "audit detail device.enroll",
+  "description": "detail of audit rows with action device.enroll: device enrolled. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "device_kind": {
+      "$ref": "../common.json#/$defs/device_kind"
+    },
+    "state": {
+      "type": "string",
+      "description": "the device state after the enrollment: active (org device) or pending_certification (platform device)",
+      "enum": [
+        "active",
+        "pending_certification"
+      ]
+    }
+  },
+  "required": [
+    "device_kind"
+  ],
+  "additionalProperties": false
+}

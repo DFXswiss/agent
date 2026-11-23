@@ -1,0 +1,11 @@
+{
+  "name": "idle",
+  "description": "Boot scenario of the orchestrator: no request is expected. A spec that uses the model double loads its own scenario (scenarios/e2e-NN-<slug>.json) through POST /doubles/model/scenario; with this scenario still loaded the final check only requires that no request arrived.",
+  "steps": [
+    {
+      "id": "never",
+      "expect": { "user_text_contains": "orchestrator idle scenario: no request expected" },
+      "reply": { "content": [{ "type": "text", "text": "unexpected" }] }
+    }
+  ]
+}

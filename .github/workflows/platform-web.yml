@@ -1,0 +1,55 @@
+# Platform web gate (docs/platform/spec/07-testing.md section 8): the same commands as `make platform-web`.
+# The Playwright suite runs against the real hub (scripts/hub_test_server.py) on a throwaway PostgreSQL.
+name: platform-web
+
+on:
+  pull_request:
+    branches: [ad5f2026-agent-platform]
+  push:
+    branches: [ad5f2026-agent-platform]
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    services:
+      # Throwaway test server; the password is a constant of this container only.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 127.0.0.1:55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      AGENT_HUB_TEST_POSTGRES: postgresql://postgres:postgres@127.0.0.1:55432/postgres
+      WEB_E2E_PYTHON: python
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - working-directory: .
+        run: pip install -e ".[platform]"
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: npm run build:check
+      - run: npm run build

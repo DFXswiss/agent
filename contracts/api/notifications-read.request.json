@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/notifications-read.request.json",
+  "title": "POST /v1/notifications/read request",
+  "description": "Body of POST /v1/notifications/read (03-api.md section 4.9).",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "minItems": 1,
+          "maxItems": 200
+        }
+      },
+      "required": [
+        "ids"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "all": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "all"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

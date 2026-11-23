@@ -1,0 +1,56 @@
+{
+  "name": "e2e-16-usage-platform",
+  "description": "E2E-16 step 1: a platform session (OpenRouter-shaped answers with usage.cost 0.0021 USD each and provider DoubleCloud); every request (also the title) reports the same tokens, so the context share is input + cache of any of them.",
+  "openrouter": {
+    "provider": "DoubleCloud"
+  },
+  "steps": [
+    {
+      "id": "e2e-16-usage-platform-answer",
+      "expect": {
+        "user_text_contains": "E2E16-PLATFORM",
+        "has_tools": true,
+        "has_tool_result": false,
+        "model": "deepseek/deepseek-v4.1-flash-1017"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Platform answer kz16-platform-r4t8w2."
+          }
+        ],
+        "usage": {
+          "input_tokens": 52000,
+          "cache_read_input_tokens": 10000,
+          "cache_creation_input_tokens": 2000,
+          "output_tokens": 800
+        },
+        "cost": 0.0021
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "e2e-16-usage-platform-title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Usage"
+          }
+        ],
+        "usage": {
+          "input_tokens": 52000,
+          "cache_read_input_tokens": 10000,
+          "cache_creation_input_tokens": 2000,
+          "output_tokens": 800
+        },
+        "cost": 0.0021
+      }
+    }
+  ]
+}

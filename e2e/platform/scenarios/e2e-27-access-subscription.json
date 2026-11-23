@@ -1,0 +1,51 @@
+{
+  "name": "e2e-27-access-subscription",
+  "description": "E2E-27 step 3: the user's subscription token; the double accepts only that token as Bearer with oauth-2025-04-20 among the anthropic-beta values, and the chosen model.",
+  "steps": [
+    {
+      "id": "e2e-27-access-subscription-answer",
+      "expect": {
+        "user_text_contains": "E2E27-SUBSCRIPTION",
+        "has_tools": true,
+        "has_tool_result": false,
+        "model": "claude-haiku-5-5"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Subscription answer kz27-sub-w9g4j7."
+          }
+        ],
+        "usage": {
+          "input_tokens": 52000,
+          "cache_read_input_tokens": 10000,
+          "cache_creation_input_tokens": 2000,
+          "output_tokens": 800
+        }
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "e2e-27-access-subscription-title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Usage"
+          }
+        ],
+        "usage": {
+          "input_tokens": 52000,
+          "cache_read_input_tokens": 10000,
+          "cache_creation_input_tokens": 2000,
+          "output_tokens": 800
+        }
+      }
+    }
+  ]
+}

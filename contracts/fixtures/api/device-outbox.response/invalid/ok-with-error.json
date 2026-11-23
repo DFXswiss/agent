@@ -1,0 +1,10 @@
+{
+  "acked_through": 1,
+  "results": [
+    {
+      "origin_seq": 1,
+      "status": "ok",
+      "error": "kind_not_allowed"
+    }
+  ]
+}

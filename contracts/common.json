@@ -1,0 +1,2791 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/common.json",
+  "title": "Common definitions",
+  "description": "Named formats and shared structures of all contracts (03-api.md section 1, 04-crypto.md sections 1 and 4).",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "description": "UUIDv7, lower-case text with dashes (04-crypto.md section 1)",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "uuid_or_empty": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/uuid"
+        },
+        {
+          "type": "string",
+          "const": ""
+        }
+      ]
+    },
+    "time": {
+      "type": "string",
+      "description": "ISO-8601 UTC with milliseconds, YYYY-MM-DDTHH:MM:SS.mmmZ (03-api.md section 1)",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+    },
+    "b64u": {
+      "type": "string",
+      "description": "canonical base64url without padding (04-crypto.md section 1)",
+      "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$"
+    },
+    "b64u_12": {
+      "type": "string",
+      "description": "b64u of exactly 12 bytes (16 characters)",
+      "pattern": "^[A-Za-z0-9_-]{16}$"
+    },
+    "b64u_16": {
+      "type": "string",
+      "description": "b64u of exactly 16 bytes (22 characters)",
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$"
+    },
+    "b64u_32": {
+      "type": "string",
+      "description": "b64u of exactly 32 bytes (43 characters)",
+      "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+    },
+    "b64u_64": {
+      "type": "string",
+      "description": "b64u of exactly 64 bytes (86 characters)",
+      "pattern": "^[A-Za-z0-9_-]{85}[AQgw]$"
+    },
+    "b64u_65": {
+      "type": "string",
+      "description": "b64u of exactly 65 bytes (87 characters)",
+      "pattern": "^[A-Za-z0-9_-]{86}[AEIMQUYcgkosw048]$"
+    },
+    "b64u_80": {
+      "type": "string",
+      "description": "b64u of exactly 80 bytes (107 characters)",
+      "pattern": "^[A-Za-z0-9_-]{106}[AEIMQUYcgkosw048]$"
+    },
+    "sha256_hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "positive": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "org",
+        "wg"
+      ]
+    },
+    "key_scope": {
+      "type": "string",
+      "enum": [
+        "org",
+        "wg",
+        "cred"
+      ]
+    },
+    "session_key_id": {
+      "type": "string",
+      "pattern": "^session\\.[0-9a-f]{32}$"
+    },
+    "device_key_id": {
+      "type": "string",
+      "pattern": "^device\\.[0-9a-f]{32}$"
+    },
+    "hub_key_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]{1,64}$"
+    },
+    "invite_id": {
+      "type": "string",
+      "description": "b64u(HKDF(code, P||'invite-id')[:16]) (04-crypto.md section 3)",
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$"
+    },
+    "recovery_id": {
+      "type": "string",
+      "description": "b64u(HKDF(code, P||'recovery-id')[:16]) (04-crypto.md section 3)",
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$"
+    },
+    "credential_id": {
+      "type": "string",
+      "description": "WebAuthn credential ID as b64u (1 to 1023 bytes)",
+      "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+      "minLength": 2,
+      "maxLength": 1364
+    },
+    "bundle_slot": {
+      "type": "string",
+      "description": "identity bundle slot: recovery or passkey:<canonical b64u credential ID>",
+      "pattern": "^(recovery|passkey:(?:(?:[A-Za-z0-9_-]{4})+(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?|(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])))$",
+      "maxLength": 1372
+    },
+    "vm_id": {
+      "type": "string",
+      "pattern": "^vm-[0-9a-f]{8}$"
+    },
+    "error_code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "hub_error_code": {
+      "type": "string",
+      "enum": [
+        "request_invalid",
+        "header_invalid",
+        "params_invalid",
+        "non_ascii",
+        "kind_not_allowed",
+        "epoch_stale",
+        "invite_code_invalid",
+        "ceremony_invalid",
+        "client_data_invalid",
+        "challenge_mismatch",
+        "origin_mismatch",
+        "attestation_invalid",
+        "authenticator_data_invalid",
+        "rp_id_mismatch",
+        "user_presence_missing",
+        "user_verification_missing",
+        "credential_invalid",
+        "statement_invalid",
+        "certificate_expiry_invalid",
+        "counter_regressed",
+        "size_exceeded",
+        "signature_missing",
+        "key_unknown",
+        "key_revoked",
+        "time_skew",
+        "signature_invalid",
+        "nonce_replayed",
+        "session_expired",
+        "unauthorized",
+        "forbidden",
+        "last_admin",
+        "last_passkey",
+        "device_not_assigned",
+        "platform_invite_required",
+        "platform_access_denied",
+        "not_found",
+        "invite_unknown",
+        "id_conflict",
+        "event_conflict",
+        "seq_conflict",
+        "version_conflict",
+        "origin_seq_gap",
+        "origin_seq_conflict",
+        "no_device",
+        "already_assigned",
+        "rotation_required",
+        "no_device_available",
+        "invite_registered",
+        "invite_expired",
+        "rate_limited",
+        "unavailable",
+        "decrypt_failed",
+        "prf_length",
+        "recovery_code_length",
+        "hpke_short",
+        "invite_code_length",
+        "wrap_unauthorized",
+        "log_empty",
+        "log_chain",
+        "log_genesis",
+        "log_accept",
+        "log_signature",
+        "log_rights",
+        "log_epoch",
+        "log_type",
+        "invite_not_in_log",
+        "invite_consumed",
+        "invite_revoked",
+        "author_not_writer"
+      ],
+      "description": "codes the hub sends (enums/error-codes.json)"
+    },
+    "operation_error_code": {
+      "type": "string",
+      "enum": [
+        "unknown_type",
+        "params_invalid",
+        "repo_not_allowed",
+        "repo_not_accessible",
+        "branch_protected",
+        "branch_exists",
+        "non_fast_forward",
+        "path_invalid",
+        "secret_detected",
+        "size_exceeded",
+        "github_not_connected",
+        "not_found",
+        "limit_exceeded",
+        "budget_exceeded",
+        "rights_denied",
+        "hub_unreachable",
+        "upstream_error",
+        "timeout",
+        "model_not_allowed",
+        "tree_mismatch",
+        "no_changes"
+      ],
+      "description": "enums/operation-error-codes.json"
+    },
+    "session_failure_reason": {
+      "type": "string",
+      "enum": [
+        "model_access_unavailable",
+        "vm_start_failed",
+        "guest_unreachable",
+        "sandbox_failed",
+        "agent_start_failed",
+        "agent_exited",
+        "prompt_refused",
+        "delivery_failed",
+        "device_offline",
+        "device_shutdown",
+        "capacity_exhausted",
+        "runtime_exceeded",
+        "budget_exceeded",
+        "oom",
+        "unassigned"
+      ],
+      "description": "enums/session-failure-reasons.json"
+    },
+    "prf_input": {
+      "type": "string",
+      "description": "prf.eval.first = SHA-256('agent.dfx.swiss/prf/v1') (04-crypto.md section 3)",
+      "const": "Hdi0C-3e3_nqvg8u0YFDnSGwY91I0C7wjroihwZICEU"
+    },
+    "model_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"
+    },
+    "version_text": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$"
+    },
+    "label_text": {
+      "type": "string",
+      "pattern": "^[ -~]{1,64}$"
+    },
+    "log_head": {
+      "type": "object",
+      "description": "membership-log head",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "hash": {
+          "$ref": "#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "seq",
+        "hash"
+      ],
+      "additionalProperties": false
+    },
+    "pub_keys": {
+      "type": "object",
+      "description": "X25519 and Ed25519 public keys",
+      "properties": {
+        "kem": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "sig": {
+          "$ref": "#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "kem",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "org_role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "member"
+      ]
+    },
+    "member_role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "member",
+        "device"
+      ]
+    },
+    "principal_kind": {
+      "type": "string",
+      "enum": [
+        "user",
+        "device"
+      ]
+    },
+    "wg_access": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write"
+      ]
+    },
+    "model_access": {
+      "type": "string",
+      "enum": [
+        "subscription",
+        "api_key",
+        "platform"
+      ]
+    },
+    "model_access_pref": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "subscription",
+        "api_key",
+        "platform"
+      ]
+    },
+    "locale": {
+      "type": "string",
+      "enum": [
+        "de",
+        "en"
+      ]
+    },
+    "device_kind": {
+      "type": "string",
+      "enum": [
+        "platform",
+        "org"
+      ]
+    },
+    "device_state": {
+      "type": "string",
+      "enum": [
+        "pending_certification",
+        "active",
+        "decertified",
+        "removed"
+      ]
+    },
+    "platform_role": {
+      "type": "string",
+      "enum": [
+        "inviter"
+      ]
+    },
+    "task_state": {
+      "type": "string",
+      "enum": [
+        "scheduling",
+        "starting",
+        "working",
+        "idle",
+        "failed",
+        "closed"
+      ]
+    },
+    "session_state": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "vm_assigning",
+        "vm_ready",
+        "sandbox_ready",
+        "agent_starting",
+        "prompt_delivering",
+        "working",
+        "idle",
+        "suspended",
+        "resuming",
+        "stopping",
+        "stopped",
+        "failed"
+      ]
+    },
+    "operation_state": {
+      "type": "string",
+      "enum": [
+        "received",
+        "rejected",
+        "accepted",
+        "duplicate",
+        "denied",
+        "executing",
+        "succeeded",
+        "failed",
+        "expired"
+      ]
+    },
+    "operation_type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z_]*(\\.[a-z][a-z_]*)+$",
+      "maxLength": 64
+    },
+    "event_kind": {
+      "type": "string",
+      "enum": [
+        "org.profile",
+        "wg.profile",
+        "member.profile",
+        "device.profile",
+        "whiteboard.entry",
+        "whiteboard.edit",
+        "whiteboard.delete",
+        "settings.workgroup",
+        "task.meta",
+        "prompt",
+        "session.output",
+        "session.tool",
+        "session.hook",
+        "session.file",
+        "session.terminal",
+        "session.status",
+        "operation.params",
+        "operation.result",
+        "platform.read"
+      ]
+    },
+    "credential_kind": {
+      "type": "string",
+      "enum": [
+        "github",
+        "anthropic_api_key",
+        "claude_subscription",
+        "mailbox"
+      ]
+    },
+    "request_kind": {
+      "type": "string",
+      "enum": [
+        "github.connect",
+        "claude.login",
+        "credential.check",
+        "mailbox.check"
+      ]
+    },
+    "request_state": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "delivered",
+        "answered",
+        "failed",
+        "expired"
+      ]
+    },
+    "capacity": {
+      "type": "object",
+      "description": "device capacity (02-data-model.md section 2.1)",
+      "properties": {
+        "vm_memory_budget_mib": {
+          "$ref": "#/$defs/count"
+        },
+        "vm_memory_used_mib": {
+          "$ref": "#/$defs/count"
+        },
+        "vm_slots_total": {
+          "$ref": "#/$defs/count"
+        },
+        "vm_slots_free": {
+          "$ref": "#/$defs/count"
+        },
+        "pool_ready": {
+          "$ref": "#/$defs/count"
+        }
+      },
+      "required": [
+        "vm_memory_budget_mib",
+        "vm_memory_used_mib",
+        "vm_slots_total",
+        "vm_slots_free",
+        "pool_ready"
+      ],
+      "additionalProperties": false
+    },
+    "empty": {
+      "type": "object",
+      "description": "the empty object {}",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "description": "error body {error, detail?} (03-api.md sections 1 and 11)",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/hub_error_code"
+        },
+        "detail": {
+          "type": "object",
+          "description": "non-confidential structured data (03-api.md section 1)",
+          "properties": {
+            "pointers": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(/[^/]*)*$",
+                "maxLength": 256
+              },
+              "minItems": 1,
+              "maxItems": 64
+            },
+            "expected_seq": {
+              "$ref": "#/$defs/seq"
+            },
+            "expected": {
+              "$ref": "#/$defs/seq"
+            },
+            "candidates_available": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "wrap": {
+      "type": "object",
+      "description": "key wrap as sent by its creator (04-crypto.md section 4.2)",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/key_scope"
+        },
+        "scope_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "recipient_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "wrap": {
+          "type": "string",
+          "description": "HPKE enc(32) || AES-256-GCM(32-byte key) (48)",
+          "pattern": "^[A-Za-z0-9_-]{106}[AEIMQUYcgkosw048]$"
+        },
+        "sig": {
+          "$ref": "#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "scope",
+        "scope_id",
+        "epoch",
+        "recipient_id",
+        "wrap",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "stored_wrap": {
+      "type": "object",
+      "description": "key wrap as stored by the hub",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/key_scope"
+        },
+        "scope_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "recipient_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "wrap": {
+          "$ref": "#/$defs/b64u_80"
+        },
+        "sig": {
+          "$ref": "#/$defs/b64u_64"
+        },
+        "wrapped_by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "created_at": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "required": [
+        "scope",
+        "scope_id",
+        "epoch",
+        "recipient_id",
+        "wrap",
+        "sig",
+        "wrapped_by",
+        "created_at"
+      ],
+      "additionalProperties": false
+    },
+    "event_header": {
+      "type": "object",
+      "description": "event header, exact key set (04-crypto.md section 4.3, E1)",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "alg": {
+          "type": "string",
+          "const": "A256GCM-HKDF"
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "scope_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "task": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "session": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "author": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/event_kind"
+        },
+        "ref": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "lh": {
+          "$ref": "#/$defs/seq"
+        },
+        "salt": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "nonce": {
+          "$ref": "#/$defs/b64u_12"
+        }
+      },
+      "required": [
+        "v",
+        "alg",
+        "id",
+        "org",
+        "scope",
+        "scope_id",
+        "epoch",
+        "wg",
+        "task",
+        "session",
+        "author",
+        "kind",
+        "ref",
+        "ts",
+        "lh",
+        "salt",
+        "nonce"
+      ],
+      "additionalProperties": false
+    },
+    "event_header_terminal": {
+      "type": "object",
+      "description": "event header, exact key set (04-crypto.md section 4.3, E1); kind session.terminal",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "alg": {
+          "type": "string",
+          "const": "A256GCM-HKDF"
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "scope_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "task": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "session": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "author": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "type": "string",
+          "const": "session.terminal"
+        },
+        "ref": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "lh": {
+          "$ref": "#/$defs/seq"
+        },
+        "salt": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "nonce": {
+          "$ref": "#/$defs/b64u_12"
+        }
+      },
+      "required": [
+        "v",
+        "alg",
+        "id",
+        "org",
+        "scope",
+        "scope_id",
+        "epoch",
+        "wg",
+        "task",
+        "session",
+        "author",
+        "kind",
+        "ref",
+        "ts",
+        "lh",
+        "salt",
+        "nonce"
+      ],
+      "additionalProperties": false
+    },
+    "event_header_other": {
+      "type": "object",
+      "description": "event header, exact key set (04-crypto.md section 4.3, E1); every kind except session.terminal",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "alg": {
+          "type": "string",
+          "const": "A256GCM-HKDF"
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "scope_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "task": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "session": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "author": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "org.profile",
+            "wg.profile",
+            "member.profile",
+            "device.profile",
+            "whiteboard.entry",
+            "whiteboard.edit",
+            "whiteboard.delete",
+            "settings.workgroup",
+            "task.meta",
+            "prompt",
+            "session.output",
+            "session.tool",
+            "session.hook",
+            "session.file",
+            "session.status",
+            "operation.params",
+            "operation.result",
+            "platform.read"
+          ]
+        },
+        "ref": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "lh": {
+          "$ref": "#/$defs/seq"
+        },
+        "salt": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "nonce": {
+          "$ref": "#/$defs/b64u_12"
+        }
+      },
+      "required": [
+        "v",
+        "alg",
+        "id",
+        "org",
+        "scope",
+        "scope_id",
+        "epoch",
+        "wg",
+        "task",
+        "session",
+        "author",
+        "kind",
+        "ref",
+        "ts",
+        "lh",
+        "salt",
+        "nonce"
+      ],
+      "additionalProperties": false
+    },
+    "event_header_prompt": {
+      "type": "object",
+      "description": "event header, exact key set (04-crypto.md section 4.3, E1); kind prompt",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "alg": {
+          "type": "string",
+          "const": "A256GCM-HKDF"
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "scope_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "task": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "session": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "author": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "type": "string",
+          "const": "prompt"
+        },
+        "ref": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "lh": {
+          "$ref": "#/$defs/seq"
+        },
+        "salt": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "nonce": {
+          "$ref": "#/$defs/b64u_12"
+        }
+      },
+      "required": [
+        "v",
+        "alg",
+        "id",
+        "org",
+        "scope",
+        "scope_id",
+        "epoch",
+        "wg",
+        "task",
+        "session",
+        "author",
+        "kind",
+        "ref",
+        "ts",
+        "lh",
+        "salt",
+        "nonce"
+      ],
+      "additionalProperties": false
+    },
+    "event": {
+      "description": "encrypted, signed event (04-crypto.md section 4.3); terminal chunks at most 64 KiB, other kinds at most 256 KiB (E8)",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "header": {
+              "$ref": "#/$defs/event_header_other"
+            },
+            "ct": {
+              "type": "string",
+              "description": "AES-256-GCM ciphertext, at most 256 KiB decoded (04-crypto.md E8)",
+              "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+              "minLength": 22,
+              "maxLength": 349526
+            },
+            "sig": {
+              "$ref": "#/$defs/b64u_64"
+            }
+          },
+          "required": [
+            "header",
+            "ct",
+            "sig"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "header": {
+              "$ref": "#/$defs/event_header_terminal"
+            },
+            "ct": {
+              "type": "string",
+              "description": "AES-256-GCM ciphertext, at most 64 KiB decoded (04-crypto.md E8)",
+              "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+              "minLength": 22,
+              "maxLength": 87382
+            },
+            "sig": {
+              "$ref": "#/$defs/b64u_64"
+            }
+          },
+          "required": [
+            "header",
+            "ct",
+            "sig"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "event_prompt": {
+      "type": "object",
+      "description": "event of kind prompt",
+      "properties": {
+        "header": {
+          "$ref": "#/$defs/event_header_prompt"
+        },
+        "ct": {
+          "type": "string",
+          "description": "AES-256-GCM ciphertext, at most 256 KiB decoded (04-crypto.md E8)",
+          "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+          "minLength": 22,
+          "maxLength": 349526
+        },
+        "sig": {
+          "$ref": "#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "header",
+        "ct",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_genesis": {
+      "type": "object",
+      "description": "body of a genesis entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "genesis"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        },
+        "pub": {
+          "$ref": "#/$defs/pub_keys"
+        },
+        "default_wg": {
+          "$ref": "#/$defs/uuid"
+        },
+        "private": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "subject",
+        "pub",
+        "default_wg",
+        "private"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_invite_user": {
+      "type": "object",
+      "description": "body of a invite entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "invite"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "invite_id": {
+          "$ref": "#/$defs/invite_id"
+        },
+        "pk_inv": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "kind": {
+          "type": "string",
+          "const": "user"
+        },
+        "role": {
+          "$ref": "#/$defs/org_role"
+        },
+        "wgs": {
+          "type": "object",
+          "description": "map wg ID -> read|write",
+          "additionalProperties": {
+            "$ref": "#/$defs/wg_access"
+          }
+        },
+        "expires": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "invite_id",
+        "pk_inv",
+        "kind",
+        "role",
+        "wgs",
+        "expires"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_invite_device": {
+      "type": "object",
+      "description": "body of a invite entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "invite"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "invite_id": {
+          "$ref": "#/$defs/invite_id"
+        },
+        "pk_inv": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "kind": {
+          "type": "string",
+          "const": "device"
+        },
+        "wgs": {
+          "type": "object",
+          "description": "map wg ID -> device",
+          "additionalProperties": {
+            "type": "string",
+            "const": "device"
+          }
+        },
+        "expires": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "invite_id",
+        "pk_inv",
+        "kind",
+        "wgs",
+        "expires"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_invite_revoke": {
+      "type": "object",
+      "description": "body of a invite_revoke entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "invite_revoke"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "invite_id": {
+          "$ref": "#/$defs/invite_id"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "invite_id"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_accept": {
+      "type": "object",
+      "description": "body of a accept entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "accept"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "invite_id": {
+          "$ref": "#/$defs/invite_id"
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/principal_kind"
+        },
+        "pub": {
+          "$ref": "#/$defs/pub_keys"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "invite_id",
+        "subject",
+        "kind",
+        "pub"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_role": {
+      "type": "object",
+      "description": "body of a role entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "role"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        },
+        "role": {
+          "$ref": "#/$defs/org_role"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "subject",
+        "role"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_wg_create": {
+      "type": "object",
+      "description": "body of a wg_create entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "wg_create"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid"
+        },
+        "epoch": {
+          "type": "integer",
+          "const": 1
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "wg",
+        "epoch"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_wg_archive": {
+      "type": "object",
+      "description": "body of a wg_archive entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "wg_archive"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "wg"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_grant": {
+      "type": "object",
+      "description": "body of a grant entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "grant"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid"
+        },
+        "access": {
+          "$ref": "#/$defs/wg_access"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "subject",
+        "wg",
+        "access"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_ungrant": {
+      "type": "object",
+      "description": "body of a ungrant entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "ungrant"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "subject",
+        "wg"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_device_assign": {
+      "type": "object",
+      "description": "body of a device_assign entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "device_assign"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "device": {
+          "$ref": "#/$defs/uuid"
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid"
+        },
+        "platform_seq": {
+          "$ref": "#/$defs/seq"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "device",
+        "wg"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_device_unassign": {
+      "type": "object",
+      "description": "body of a device_unassign entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "device_unassign"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "device": {
+          "$ref": "#/$defs/uuid"
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "device",
+        "wg"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_remove": {
+      "type": "object",
+      "description": "body of a remove entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "remove"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "subject"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_rotate": {
+      "type": "object",
+      "description": "body of a rotate entry",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "rotate"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "scope_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "scope",
+        "scope_id",
+        "epoch"
+      ],
+      "additionalProperties": false
+    },
+    "log_entry_body": {
+      "description": "membership-log entry body: common fields org, seq, prev, type, by, ts, v plus exactly the fields of its type (04-crypto.md section 4.7)",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/log_body_genesis"
+        },
+        {
+          "$ref": "#/$defs/log_body_invite_user"
+        },
+        {
+          "$ref": "#/$defs/log_body_invite_device"
+        },
+        {
+          "$ref": "#/$defs/log_body_invite_revoke"
+        },
+        {
+          "$ref": "#/$defs/log_body_role"
+        },
+        {
+          "$ref": "#/$defs/log_body_wg_create"
+        },
+        {
+          "$ref": "#/$defs/log_body_wg_archive"
+        },
+        {
+          "$ref": "#/$defs/log_body_grant"
+        },
+        {
+          "$ref": "#/$defs/log_body_ungrant"
+        },
+        {
+          "$ref": "#/$defs/log_body_device_assign"
+        },
+        {
+          "$ref": "#/$defs/log_body_device_unassign"
+        },
+        {
+          "$ref": "#/$defs/log_body_remove"
+        },
+        {
+          "$ref": "#/$defs/log_body_rotate"
+        }
+      ]
+    },
+    "log_entry": {
+      "description": "membership-log entry (04-crypto.md section 4.7); inv_sig exactly on accept entries",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/log_entry_body"
+            },
+            "sig": {
+              "$ref": "#/$defs/b64u_64"
+            }
+          },
+          "required": [
+            "body",
+            "sig"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/log_body_accept"
+            },
+            "sig": {
+              "$ref": "#/$defs/b64u_64"
+            },
+            "inv_sig": {
+              "$ref": "#/$defs/b64u_64"
+            }
+          },
+          "required": [
+            "body",
+            "sig",
+            "inv_sig"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "platform_body_root": {
+      "type": "object",
+      "description": "body of a root entry",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "root"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "pub": {
+          "type": "string",
+          "description": "Ed25519 public key of the platform root",
+          "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "pub"
+      ],
+      "additionalProperties": false
+    },
+    "platform_body_device_invite": {
+      "type": "object",
+      "description": "body of a device_invite entry",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "device_invite"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "invite_id": {
+          "$ref": "#/$defs/invite_id"
+        },
+        "pk_inv": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "expires": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "invite_id",
+        "pk_inv",
+        "expires"
+      ],
+      "additionalProperties": false
+    },
+    "platform_body_device_certify": {
+      "type": "object",
+      "description": "body of a device_certify entry; agent_version, os, arch and capacity are copied from the enrollment body so that enroll_sig and inv_sig can be checked over the enrollment text (contracts/changes/CRY-02.md)",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "device_certify"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "device": {
+          "$ref": "#/$defs/uuid"
+        },
+        "pub": {
+          "$ref": "#/$defs/pub_keys"
+        },
+        "invite_id": {
+          "$ref": "#/$defs/invite_id"
+        },
+        "enroll_sig": {
+          "$ref": "#/$defs/b64u_64"
+        },
+        "inv_sig": {
+          "$ref": "#/$defs/b64u_64"
+        },
+        "agent_version": {
+          "$ref": "#/$defs/version_text"
+        },
+        "os": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,32}$"
+        },
+        "arch": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,32}$"
+        },
+        "capacity": {
+          "$ref": "#/$defs/capacity"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "device",
+        "pub",
+        "invite_id",
+        "enroll_sig",
+        "inv_sig",
+        "agent_version",
+        "os",
+        "arch",
+        "capacity"
+      ],
+      "additionalProperties": false
+    },
+    "platform_body_device_decertify": {
+      "type": "object",
+      "description": "body of a device_decertify entry",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "device_decertify"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "device": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "device"
+      ],
+      "additionalProperties": false
+    },
+    "platform_body_role_grant": {
+      "type": "object",
+      "description": "body of a role_grant entry",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "role_grant"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        },
+        "role": {
+          "$ref": "#/$defs/platform_role"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "subject",
+        "role"
+      ],
+      "additionalProperties": false
+    },
+    "platform_body_role_revoke": {
+      "type": "object",
+      "description": "body of a role_revoke entry",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "role_revoke"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        },
+        "role": {
+          "$ref": "#/$defs/platform_role"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "subject",
+        "role"
+      ],
+      "additionalProperties": false
+    },
+    "platform_body_user_invite": {
+      "type": "object",
+      "description": "body of a user_invite entry",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "user_invite"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "invite_id": {
+          "$ref": "#/$defs/invite_id"
+        },
+        "pk_inv": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "expires": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "invite_id",
+        "pk_inv",
+        "expires"
+      ],
+      "additionalProperties": false
+    },
+    "platform_body_org_platform_access": {
+      "type": "object",
+      "description": "body of a org_platform_access entry",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "org_platform_access"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "granted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "org",
+        "granted"
+      ],
+      "additionalProperties": false
+    },
+    "platform_entry_body": {
+      "description": "platform-log entry body: common fields seq, prev, type, by, ts, v plus exactly the fields of its type (04-crypto.md section 4.8)",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/platform_body_root"
+        },
+        {
+          "$ref": "#/$defs/platform_body_device_invite"
+        },
+        {
+          "$ref": "#/$defs/platform_body_device_certify"
+        },
+        {
+          "$ref": "#/$defs/platform_body_device_decertify"
+        },
+        {
+          "$ref": "#/$defs/platform_body_role_grant"
+        },
+        {
+          "$ref": "#/$defs/platform_body_role_revoke"
+        },
+        {
+          "$ref": "#/$defs/platform_body_user_invite"
+        },
+        {
+          "$ref": "#/$defs/platform_body_org_platform_access"
+        }
+      ]
+    },
+    "platform_entry": {
+      "type": "object",
+      "description": "platform-log entry, signed by the platform root (04-crypto.md section 4.8)",
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/platform_entry_body"
+        },
+        "sig": {
+          "$ref": "#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "body",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "credential_header": {
+      "type": "object",
+      "description": "credential record header, exact key set (04-crypto.md section 4.4)",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "alg": {
+          "type": "string",
+          "const": "A256GCM-HKDF"
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "owner": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/credential_kind"
+        },
+        "version": {
+          "$ref": "#/$defs/positive"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "author": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "salt": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "nonce": {
+          "$ref": "#/$defs/b64u_12"
+        }
+      },
+      "required": [
+        "v",
+        "alg",
+        "id",
+        "owner",
+        "kind",
+        "version",
+        "epoch",
+        "author",
+        "ts",
+        "salt",
+        "nonce"
+      ],
+      "additionalProperties": false
+    },
+    "credential_record": {
+      "type": "object",
+      "description": "encrypted credential record (04-crypto.md section 4.4)",
+      "properties": {
+        "header": {
+          "$ref": "#/$defs/credential_header"
+        },
+        "ct": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+          "minLength": 22,
+          "maxLength": 87382
+        },
+        "sig": {
+          "$ref": "#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "header",
+        "ct",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "device_request_header": {
+      "type": "object",
+      "description": "device request header, exact key set (04-crypto.md section 4.5)",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "user": {
+          "$ref": "#/$defs/uuid"
+        },
+        "device": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/request_kind"
+        },
+        "follows": {
+          "$ref": "#/$defs/uuid_or_empty"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "enc_alg": {
+          "type": "string",
+          "const": "HPKE-X25519-A256GCM"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "user",
+        "device",
+        "kind",
+        "follows",
+        "ts",
+        "enc_alg"
+      ],
+      "additionalProperties": false
+    },
+    "device_response_header": {
+      "type": "object",
+      "description": "device response header, exact key set (04-crypto.md section 4.5)",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "user": {
+          "$ref": "#/$defs/uuid"
+        },
+        "device": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/request_kind"
+        },
+        "in_reply_to": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/positive"
+        },
+        "final": {
+          "type": "boolean"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "enc_alg": {
+          "type": "string",
+          "const": "HPKE-X25519-A256GCM"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "user",
+        "device",
+        "kind",
+        "in_reply_to",
+        "seq",
+        "final",
+        "ts",
+        "enc_alg"
+      ],
+      "additionalProperties": false
+    },
+    "device_request_envelope": {
+      "type": "object",
+      "description": "device request, HPKE to the device (04-crypto.md section 4.5)",
+      "properties": {
+        "header": {
+          "$ref": "#/$defs/device_request_header"
+        },
+        "ct": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+          "minLength": 64,
+          "maxLength": 349526
+        },
+        "sig": {
+          "$ref": "#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "header",
+        "ct",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "device_response_envelope": {
+      "type": "object",
+      "description": "device response, HPKE to the user identity (04-crypto.md section 4.5)",
+      "properties": {
+        "header": {
+          "$ref": "#/$defs/device_response_header"
+        },
+        "ct": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+          "minLength": 64,
+          "maxLength": 349526
+        },
+        "sig": {
+          "$ref": "#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "header",
+        "ct",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "bundle_ct": {
+      "type": "string",
+      "description": "identity bundle: b64u(nonce12 || AES-GCM(KEK, plaintext)) (04-crypto.md section 4.1)",
+      "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+      "minLength": 38,
+      "maxLength": 1366
+    },
+    "package_ct": {
+      "type": "string",
+      "description": "sealed invitation package (04-crypto.md section 4.6)",
+      "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+      "minLength": 38,
+      "maxLength": 87382
+    },
+    "event_result": {
+      "type": "object",
+      "description": "result of one appended event",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "scope_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "scope_seq": {
+          "$ref": "#/$defs/positive"
+        },
+        "replayed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "scope_id",
+        "scope_seq",
+        "replayed"
+      ],
+      "additionalProperties": false
+    },
+    "stored_event": {
+      "type": "object",
+      "description": "event with its hub order and receive time",
+      "properties": {
+        "scope_seq": {
+          "$ref": "#/$defs/positive"
+        },
+        "received_at": {
+          "$ref": "#/$defs/time"
+        },
+        "event": {
+          "$ref": "#/$defs/event"
+        }
+      },
+      "required": [
+        "scope_seq",
+        "received_at",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "q_seq": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,15})$",
+      "description": "query parameter text"
+    },
+    "q_limit_log": {
+      "type": "string",
+      "pattern": "^([1-9][0-9]{0,2}|1000)$",
+      "description": "query parameter text"
+    },
+    "q_limit_list": {
+      "type": "string",
+      "pattern": "^([1-9][0-9]?|1[0-9]{2}|200)$",
+      "description": "query parameter text"
+    },
+    "q_before": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,256}$",
+      "description": "query parameter text"
+    },
+    "q_epoch": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,9}$",
+      "description": "query parameter text"
+    },
+    "next_before": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/q_before"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "next_after": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/seq"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

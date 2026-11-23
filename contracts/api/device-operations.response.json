@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-operations.response.json",
+  "title": "POST /v1/device/operations response",
+  "description": "decision of the hub (H1-H6, 03-api.md section 8.3)",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "const": "accepted"
+        },
+        "child_session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "replayed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "const": "duplicate"
+        },
+        "duplicate_of": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "original": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "$ref": "../common.json#/$defs/operation_state"
+            },
+            "result_event_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "additionalProperties": false
+        },
+        "replayed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "state",
+        "duplicate_of",
+        "original"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "denied",
+            "rejected"
+          ]
+        },
+        "error_code": {
+          "$ref": "../common.json#/$defs/operation_error_code"
+        },
+        "replayed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "state",
+        "error_code"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

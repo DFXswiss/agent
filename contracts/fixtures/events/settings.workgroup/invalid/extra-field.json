@@ -1,0 +1,11 @@
+{
+  "repositories": [
+    "dfxswiss/agent"
+  ],
+  "protected_branches": [
+    "main",
+    "release/*"
+  ],
+  "pr_draft_default": true,
+  "unexpected": 1
+}

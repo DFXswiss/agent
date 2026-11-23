@@ -1,0 +1,11 @@
+{
+  "action": "ping.delivered",
+  "result": "ok",
+  "target_kind": "device",
+  "target_id": "01930014-0000-7000-8000-000000000014",
+  "detail": {
+    "ping_id": "01a1ee56-5e00-7007-8f1b-340691d99f07",
+    "kind": "whiteboard.entry",
+    "via": "hook"
+  }
+}

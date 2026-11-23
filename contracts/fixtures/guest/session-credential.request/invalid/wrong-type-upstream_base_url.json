@@ -1,0 +1,22 @@
+{
+  "upstream_base_url": 12345,
+  "auth_header": "authorization",
+  "auth_value": "Bearer test-not-a-real-key",
+  "extra_headers": [
+    {
+      "name": "x-title",
+      "value": "agent.dfx.swiss"
+    }
+  ],
+  "provider_allowlist": [
+    "Fireworks",
+    "Nebius"
+  ],
+  "access": "platform",
+  "models_allowed": [
+    {
+      "model_id": "deepseek/deepseek-v4.1-flash-1017",
+      "context_window": 1048576
+    }
+  ]
+}

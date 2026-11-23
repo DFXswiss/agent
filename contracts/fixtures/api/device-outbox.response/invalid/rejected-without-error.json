@@ -1,0 +1,9 @@
+{
+  "acked_through": 1,
+  "results": [
+    {
+      "origin_seq": 1,
+      "status": "rejected"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/sessions-create.response.json",
+  "title": "guest POST /v1/sessions response",
+  "description": "Response of POST /v1/sessions (03-api.md section 7.1).",
+  "type": "object",
+  "properties": {
+    "state": {
+      "type": "string",
+      "const": "sandbox_ready"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "additionalProperties": false
+}

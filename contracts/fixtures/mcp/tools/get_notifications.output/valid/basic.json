@@ -1,0 +1,11 @@
+{
+  "notifications": [
+    {
+      "ping_id": "01a1ee56-5e00-7007-8f1b-340691d99f07",
+      "kind": "whiteboard.entry",
+      "level": "org",
+      "ref": "01a1ee56-5e00-701e-8f1b-340691d99f1e",
+      "at": "2026-11-21T10:00:00.000Z"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "event": "PreToolUse",
+  "tool": "Bash",
+  "decision": "deny",
+  "rule": 2,
+  "reason": "Tool Bash is forbidden in agent.dfx.swiss sessions. Request actions through the platform tools (mcp__platform__request_operation).",
+  "zz_unexpected": "x"
+}

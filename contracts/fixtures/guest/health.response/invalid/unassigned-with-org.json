@@ -1,0 +1,10 @@
+{
+  "guest_version": "1.0.0",
+  "claude_version": "2.1.330",
+  "state": "unassigned",
+  "org_id": "01a1ee56-5e00-7001-8f1b-340691d99f01",
+  "wg_id": "01a1ee56-5e00-7002-8f1b-340691d99f02",
+  "sessions": [],
+  "landlock_abi": 6,
+  "boot_id": "0b6f7f2c-8d1e-4f3a-9c5b-7a6e5d4c3b2a"
+}

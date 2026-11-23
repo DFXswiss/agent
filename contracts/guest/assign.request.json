@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/assign.request.json",
+  "title": "guest POST /v1/assign request",
+  "description": "Request of POST /v1/assign (03-api.md section 7.1).",
+  "type": "object",
+  "properties": {
+    "vm_id": {
+      "$ref": "../common.json#/$defs/vm_id"
+    },
+    "org_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "wg_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "vm_id",
+    "org_id",
+    "wg_id"
+  ],
+  "additionalProperties": false
+}

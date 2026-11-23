@@ -1,0 +1,11 @@
+{
+  "capabilities": {
+    "tools": {
+      "listChanged": false
+    }
+  },
+  "serverInfo": {
+    "name": "agent-dfx-swiss-platform",
+    "version": "1.0.0"
+  }
+}

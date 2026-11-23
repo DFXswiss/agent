@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/journal-ack.response.json",
+  "title": "guest POST /v1/journal/ack response",
+  "description": "Response of POST /v1/journal/ack (03-api.md section 7.1).",
+  "$ref": "../common.json#/$defs/empty"
+}

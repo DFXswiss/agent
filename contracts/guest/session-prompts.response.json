@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/session-prompts.response.json",
+  "title": "guest POST /v1/sessions/{id}/prompts response",
+  "description": "Response of POST /v1/sessions/{id}/prompts (03-api.md section 7.1).",
+  "type": "object",
+  "properties": {
+    "state": {
+      "type": "string",
+      "const": "registered"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "additionalProperties": false
+}

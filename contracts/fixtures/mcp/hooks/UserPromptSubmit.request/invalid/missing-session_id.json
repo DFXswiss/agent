@@ -1,0 +1,6 @@
+{
+  "transcript_path": "/home/s/.claude/projects/w/5f0c.jsonl",
+  "cwd": "/srv/agent/sessions/w",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Summarise the open pull requests."
+}

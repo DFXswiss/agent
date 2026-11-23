@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/health.response.json",
+  "title": "guest GET /v1/health response",
+  "description": "Response of GET /v1/health (03-api.md section 7.1).",
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "not assigned to a workgroup (or broken)",
+      "properties": {
+        "guest_version": {
+          "$ref": "../common.json#/$defs/version_text"
+        },
+        "claude_version": {
+          "$ref": "../common.json#/$defs/version_text"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "unassigned",
+            "broken"
+          ]
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/session_state"
+              }
+            },
+            "required": [
+              "session_id",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "landlock_abi": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "boot_id": {
+          "$ref": "objects.json#/$defs/boot_id"
+        }
+      },
+      "required": [
+        "guest_version",
+        "claude_version",
+        "state",
+        "sessions",
+        "landlock_abi",
+        "boot_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "assigned to exactly one workgroup",
+      "properties": {
+        "guest_version": {
+          "$ref": "../common.json#/$defs/version_text"
+        },
+        "claude_version": {
+          "$ref": "../common.json#/$defs/version_text"
+        },
+        "state": {
+          "type": "string",
+          "const": "assigned"
+        },
+        "org_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wg_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/session_state"
+              }
+            },
+            "required": [
+              "session_id",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "landlock_abi": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "boot_id": {
+          "$ref": "objects.json#/$defs/boot_id"
+        }
+      },
+      "required": [
+        "guest_version",
+        "claude_version",
+        "state",
+        "org_id",
+        "wg_id",
+        "sessions",
+        "landlock_abi",
+        "boot_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "broken after an assignment",
+      "properties": {
+        "guest_version": {
+          "$ref": "../common.json#/$defs/version_text"
+        },
+        "claude_version": {
+          "$ref": "../common.json#/$defs/version_text"
+        },
+        "state": {
+          "type": "string",
+          "const": "broken"
+        },
+        "org_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wg_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/session_state"
+              }
+            },
+            "required": [
+              "session_id",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "landlock_abi": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "boot_id": {
+          "$ref": "objects.json#/$defs/boot_id"
+        }
+      },
+      "required": [
+        "guest_version",
+        "claude_version",
+        "state",
+        "org_id",
+        "wg_id",
+        "sessions",
+        "landlock_abi",
+        "boot_id"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

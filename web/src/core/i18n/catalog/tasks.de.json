@@ -1,0 +1,19 @@
+{
+  "filter.label": "Status",
+  "filter.all": "Alle",
+  "reload": "Erneut versuchen",
+  "empty": "Noch keine Aufgaben.",
+  "more": "Mehr laden",
+  "loading": "Wird geladen …",
+  "not-found": "Diese Arbeitsgruppe wurde nicht gefunden.",
+  "wg.unnamed": "Arbeitsgruppe",
+  "title.loading": "Titel wird entschlüsselt …",
+  "title.unverifiable": "Nicht überprüfbarer Titel ({code})",
+  "owner.unknown": "Mitglied",
+  "state.scheduling": "Wartet",
+  "state.starting": "Startet",
+  "state.working": "Arbeitet",
+  "state.idle": "Bereit",
+  "state.failed": "Fehlgeschlagen",
+  "state.closed": "Geschlossen"
+}

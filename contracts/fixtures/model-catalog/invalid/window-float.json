@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "access": {
+    "platform": {
+      "default": "deepseek/deepseek-v4.1-flash-1017",
+      "allowed": [
+        "deepseek/deepseek-v4.1-flash-1017",
+        "deepseek/deepseek-v4-pro"
+      ],
+      "providers_allowed": []
+    },
+    "api_key": {
+      "default": null,
+      "allowed": [
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+        "claude-fable-5-2"
+      ]
+    },
+    "subscription": {
+      "default": null,
+      "allowed": [
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+        "claude-fable-5-2"
+      ]
+    }
+  },
+  "models": {
+    "m": {
+      "context_window": 1.5,
+      "max_output": 1,
+      "price_per_mtok": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      }
+    }
+  }
+}

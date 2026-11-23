@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/hooks/PostToolUse.request.json",
+  "title": "hook PostToolUse request",
+  "description": "Body of POST /hooks/PostToolUse as sent by Claude Code (03-api.md section 8.2). Third-party input: the listed fields are checked, further fields are ignored (open object, decisions CTR-02) so that a new Claude Code field never makes a hook fail open.",
+  "type": "object",
+  "$comment": "open: Claude Code PostToolUse hook input (third-party, versioned)",
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "transcript_path": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "permission_mode": {
+      "type": "string"
+    },
+    "hook_event_name": {
+      "type": "string",
+      "const": "PostToolUse"
+    },
+    "tool_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tool_input": {
+      "type": "object",
+      "description": "tool input as sent by Claude Code",
+      "additionalProperties": {}
+    },
+    "tool_response": {},
+    "tool_use_id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "hook_event_name",
+    "tool_name",
+    "tool_input"
+  ],
+  "additionalProperties": {}
+}
