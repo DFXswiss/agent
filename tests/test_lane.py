@@ -4403,3 +4403,439 @@ def test_audit_text_falls_back_to_stderr_only_when_configured(
     assert store.row["payload"]["final_text"] == (
         "driver failed before output" if fallback else ""
     )
+
+
+# Final text of an external reviewer lane, shape kept from a reproduced run and
+# content replaced: the caller's own result line ("RESULT: <N> defects") ahead
+# of sections and the single STATUS line the lane starter asks for. The raw text
+# carried no escape or control characters.
+EXTERNAL_REVIEWER_FINAL_TEXT = (
+    "The reviewed function returns the expected value for every input.\n"
+    "\n"
+    "RESULT: 0 defects\n"
+    "\n"
+    "HINTS\n"
+    "none\n"
+    "\n"
+    "NOT-VERIFIABLE\n"
+    "none\n"
+    "\n"
+    "STATUS: complete"
+)
+
+
+def test_lane_status_reads_the_status_line_alone() -> None:
+    from agent_cli.coordinator_common import parse_lane_status, parse_model_result
+
+    sample = EXTERNAL_REVIEWER_FINAL_TEXT
+    assert sanitize_terminal_text(sample) == sample
+    assert parse_lane_status(sample, 0) == "complete"
+    # The joint verdict still requires one role-valid RESULT record.
+    assert parse_model_result(sample, 0) == ("partial", "")
+    clean = "Review done.\n\nSTATUS: complete\nRESULT: approved\n"
+    assert parse_lane_status(clean, 0) == "complete"
+    assert parse_model_result(clean, 0) == ("complete", "approved")
+    assert parse_lane_status("Review done.\n\nSTATUS: partial\n", 0) == "partial"
+    assert parse_lane_status("Review done.\r\nSTATUS: complete\r\n", 0) == "complete"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "Review done.\n",
+        "Review done.\nSTATUS: complete\nSTATUS: complete\n",
+        "Review done.\nSTATUS: complete\nSTATUS: partial\n",
+        "Review done.\nSTATUS: finished\n",
+        "Review done.STATUS: complete\n",
+        "Review done.\n  STATUS: complete\n",
+        "Review done.\nSTATUS: complete, all checked\n",
+    ],
+)
+def test_lane_status_fails_closed(text: str) -> None:
+    from agent_cli.coordinator_common import parse_lane_status
+
+    assert parse_lane_status(text, 0) == "partial"
+
+
+@pytest.mark.parametrize(
+    ("returncode", "expected"), [(124, "timeout"), (1, "unavailable"), (-9, "unavailable")]
+)
+def test_lane_status_nonzero_returncode_is_unchanged(
+    returncode: int, expected: str
+) -> None:
+    from agent_cli.coordinator_common import parse_lane_status, parse_model_result
+
+    assert parse_lane_status(EXTERNAL_REVIEWER_FINAL_TEXT, returncode) == expected
+    assert parse_model_result(EXTERNAL_REVIEWER_FINAL_TEXT, returncode) == (
+        expected,
+        "",
+    )
+
+
+def _launch_driver_d_with_final_text(tmp_path: Path, final_text: str) -> LaneResult:
+    write_operator_ai_accounts(tmp_path)
+    config_dir = tmp_path / "router-config"
+    config_dir.mkdir()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"]["account-d"]["config_dir"] = str(config_dir)
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("review\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        wrapper_index = next(i for i, value in enumerate(argv) if "tool-d-key" in value)
+        Path(argv[wrapper_index + 2]).write_text(
+            json.dumps({"type": "result", "result": final_text}) + "\n",
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return launch(
+        role="reviewer",
+        vendor="driver-d",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+
+def test_launch_keeps_joint_verdict_and_reports_lane_status(tmp_path: Path) -> None:
+    result = _launch_driver_d_with_final_text(tmp_path, EXTERNAL_REVIEWER_FINAL_TEXT)
+    assert result.lane_status == "complete"
+    assert result.status == "partial"
+    assert result.protocol_result == ""
+
+
+def test_launch_duplicate_status_fails_closed_for_both_verdicts(
+    tmp_path: Path,
+) -> None:
+    result = _launch_driver_d_with_final_text(
+        tmp_path, "STATUS: complete\n" + EXTERNAL_REVIEWER_FINAL_TEXT
+    )
+    assert result.lane_status == "partial"
+    assert result.status == "partial"
+
+
+def _run_cli_lane_with(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, result: LaneResult
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    spec = tmp_path / "spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    monkeypatch.setattr("agent_cli.main.launch", lambda **_kwargs: result)
+    run(
+        [
+            "lane",
+            "run",
+            "--role",
+            "reviewer",
+            "--vendor",
+            "driver-a",
+            "--session",
+            DEFAULT_SESSION,
+            "--spec-file",
+            str(spec),
+            "--cwd",
+            str(tmp_path),
+            "--no-tmux",
+        ]
+    )
+
+
+def _cli_lane_result(*, status: str, lane_status: str, returncode: int = 0) -> LaneResult:
+    return LaneResult(
+        role="reviewer",
+        vendor="driver-a",
+        model=OPERATOR_MODEL_A,
+        status=status,
+        argv=["tool-a"],
+        returncode=returncode,
+        stdout=EXTERNAL_REVIEWER_FINAL_TEXT,
+        stderr="",
+        lane_status=lane_status,
+    )
+
+
+def test_cli_lane_run_reports_the_lane_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run_cli_lane_with(
+        tmp_path,
+        monkeypatch,
+        _cli_lane_result(status="partial", lane_status="complete"),
+    )
+    out = capsys.readouterr().out
+    assert out.endswith("lane role=reviewer vendor=driver-a STATUS=complete rc=0\n")
+
+
+@pytest.mark.parametrize(
+    ("status", "lane_status", "returncode", "printed"),
+    [
+        ("partial", "partial", 0, "STATUS=partial rc=0"),
+        ("unavailable", "unavailable", 1, "STATUS=unavailable rc=1"),
+        ("timeout", "timeout", 124, "STATUS=timeout rc=124"),
+        # A result that was never parsed falls back to the joint verdict.
+        ("unavailable", "", 0, "STATUS=unavailable rc=0"),
+    ],
+)
+def test_cli_lane_run_exits_2_unless_the_lane_status_is_complete(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    lane_status: str,
+    returncode: int,
+    printed: str,
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _run_cli_lane_with(
+            tmp_path,
+            monkeypatch,
+            _cli_lane_result(
+                status=status, lane_status=lane_status, returncode=returncode
+            ),
+        )
+    assert exc.value.code == 2
+    assert capsys.readouterr().out.endswith(
+        f"lane role=reviewer vendor=driver-a {printed}\n"
+    )
+
+
+def _write_spec(tmp_path: Path, text: str = "review\n") -> Path:
+    spec = tmp_path / "spec.md"
+    spec.write_text(text, encoding="utf-8")
+    return spec
+
+
+def test_launch_refuses_an_unknown_role(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    with pytest.raises(SystemExit, match="role must be"):
+        launch(
+            role="not-a-role",
+            vendor="driver-a",
+            spec_file=str(_write_spec(tmp_path)),
+            cwd=str(tmp_path),
+            dry_run=True,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+
+
+def test_launch_refuses_a_binding_for_another_driver(tmp_path: Path) -> None:
+    from agent_cli.ai_accounts import load_ai_accounts
+
+    write_operator_ai_accounts(tmp_path)
+    other = load_ai_accounts(tmp_path, defer_model_configuration=True).for_lane(
+        DEFAULT_SESSION, "reviewer", "driver-b", require_execution=False
+    )
+    with pytest.raises(SystemExit, match="does not match requested vendor"):
+        launch(
+            role="reviewer",
+            vendor="driver-a",
+            spec_file=str(_write_spec(tmp_path)),
+            cwd=str(tmp_path),
+            dry_run=True,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+            binding=other,
+        )
+
+
+def test_launch_accepts_a_binding_for_the_requested_driver(tmp_path: Path) -> None:
+    from agent_cli.ai_accounts import load_ai_accounts
+
+    write_operator_ai_accounts(tmp_path)
+    binding = load_ai_accounts(tmp_path, defer_model_configuration=True).for_lane(
+        DEFAULT_SESSION, "reviewer", "driver-a", require_execution=False
+    )
+    result = launch(
+        role="reviewer",
+        vendor="driver-a",
+        spec_file=str(_write_spec(tmp_path)),
+        cwd=str(tmp_path),
+        dry_run=True,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+        binding=binding,
+    )
+    assert result.vendor == "driver-a"
+    assert result.model == binding.model
+
+
+def test_launch_write_lane_ignores_read_directories_for_a_driver_without_them(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    extra = tmp_path / "extra-read"
+    extra.mkdir()
+    result = launch(
+        role="implementer",
+        vendor="driver-a",
+        spec_file=str(_write_spec(tmp_path)),
+        cwd=str(tmp_path),
+        dry_run=True,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+        read_dirs=(str(extra),),
+    )
+    assert result.vendor == "driver-a"
+    assert not any(str(extra.resolve()) in arg for arg in result.argv)
+
+
+def test_launch_keeps_child_stderr_when_the_output_file_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    config_dir = tmp_path / "router-config"
+    config_dir.mkdir()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"]["account-d"]["config_dir"] = str(config_dir)
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.lane._run_in_tmux",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=2, stdout="pane text\n", stderr="child stderr\n"
+        ),
+    )
+    result = launch(
+        role="implementer",
+        vendor="driver-d",
+        spec_file=str(_write_spec(tmp_path)),
+        cwd=str(worktree),
+        tmux=True,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+    assert result.status == "unavailable"
+    assert result.stdout == ""
+    assert "child stderr" in result.stderr
+    assert "pane text" not in result.stderr
+
+
+def test_launch_refuses_an_empty_spec(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    with pytest.raises(SystemExit, match="spec-file is empty"):
+        launch(
+            role="reviewer",
+            vendor="driver-a",
+            spec_file=str(_write_spec(tmp_path, " \n")),
+            cwd=str(tmp_path),
+            dry_run=True,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+
+
+def test_launch_removes_the_empty_github_profile_when_the_command_cannot_be_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = _write_spec(tmp_path)
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    monkeypatch.setattr("tempfile.tempdir", str(temp_root))
+
+    def broken_wrap(inner: list[str], *, name: str, cwd: str) -> list[str]:
+        assert any(temp_root.glob("agent-lane-empty-gh-*"))
+        raise RuntimeError("wrap failed")
+
+    monkeypatch.setattr("agent_cli.lane.tmux_wrap_argv", broken_wrap)
+    with pytest.raises(RuntimeError, match="wrap failed"):
+        launch(
+            role="reviewer",
+            vendor="driver-a",
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            dry_run=True,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+    assert not any(temp_root.glob("agent-lane-empty-gh-*"))
+
+
+@pytest.mark.parametrize(
+    ("patch", "message"),
+    [
+        ("separator", "tmux argv missing command separator"),
+        ("session", "tmux session name missing"),
+    ],
+)
+def test_launch_in_tmux_refuses_an_incomplete_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, patch: str, message: str
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    started: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.lane._run_in_tmux",
+        lambda inner, **_kwargs: started.append(inner),
+    )
+    if patch == "separator":
+        monkeypatch.setattr(
+            "agent_cli.lane.tmux_wrap_argv",
+            lambda inner, *, name, cwd: ["tmux", "new-session", "-d", *inner],
+        )
+    else:
+        monkeypatch.setattr("agent_cli.lane.lane_tmux_name", lambda **_kwargs: None)
+    with pytest.raises(SystemExit, match=message):
+        launch(
+            role="reviewer",
+            vendor="driver-a",
+            spec_file=str(_write_spec(tmp_path)),
+            cwd=str(tmp_path),
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+    assert started == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["lane"], "Usage: agent lane"),
+        (["lane", "start"], "Usage: agent lane"),
+        (
+            [
+                "lane",
+                "run",
+                "--role",
+                "not-a-role",
+                "--vendor",
+                "driver-a",
+                "--session",
+                DEFAULT_SESSION,
+                "--spec-file",
+                "spec.md",
+            ],
+            "role must be",
+        ),
+    ],
+)
+def test_cli_lane_refuses_bad_arguments_before_launch(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    message: str,
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    _write_spec(tmp_path)
+
+    def no_launch(**_kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("launch must not start")
+
+    monkeypatch.setattr("agent_cli.main.launch", no_launch)
+    with pytest.raises(SystemExit) as exc:
+        run(argv)
+    captured = capsys.readouterr()
+    assert message in f"{exc.value.code}{captured.err}{captured.out}"
