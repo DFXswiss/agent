@@ -70,3 +70,10 @@ Delegated agent access, stage a of the agent tool `agent-platform` (ADR-056, `sp
     `agent-core` (`tests/platform/test_agent_parity.py`), which has the web source. Bars inside a command cell are
     escaped (`a\|b`, as a Markdown table needs); a row that does not split into four cells fails the test instead of
     being skipped (before, rows with `a|b` commands were silently skipped).
+16. **Tasks first (stage c, owner's priority after the rollout of stage a).** `task list|create|prompt|show` seal and
+    open on the user's computer exactly as the web client (`web/src/core/tasks/send.ts`, `pull.ts`): `task.meta`
+    with the derived title (vectors `contracts/tasks/title.json`) and `prompt` under the workgroup's current epoch,
+    signed by the identity; reading runs `check_event`, leaves out what does not verify (counted as `unverified`) and
+    marks events without key as `locked`. A lost answer is not resent automatically (the hub would need the identical
+    sealed bytes); `task list` shows whether the task exists. The shared parity matrix and the guide name the commands
+    with the next agent-core change (they are copies of agent-core files); `agent-platform task --help` documents them.

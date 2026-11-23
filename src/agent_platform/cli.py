@@ -18,7 +18,7 @@ from collections.abc import Callable, Mapping, Sequence
 from importlib import resources
 from typing import Any, NoReturn, TextIO
 
-from agent_platform import __version__, claude, diagnose, orgs
+from agent_platform import __version__, claude, diagnose, orgs, tasks
 from agent_platform.account import Account
 from agent_platform.credentials import put_record, read_record
 from agent_platform.errors import PlatformError
@@ -228,6 +228,26 @@ def cmd_device_assign(account: Account, args: argparse.Namespace, context: Conte
     return orgs.device_assign(account, args.wg)
 
 
+def _text(args: argparse.Namespace, context: Context) -> str:
+    return context.read_stdin() if args.text == "-" else str(args.text)
+
+
+def cmd_task_list(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tasks.task_list(account, args.wg, args.state)
+
+
+def cmd_task_create(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tasks.task_create(account, args.wg, _text(args, context))
+
+
+def cmd_task_prompt(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tasks.task_prompt(account, args.task, _text(args, context))
+
+
+def cmd_task_show(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tasks.task_show(account, args.task)
+
+
 def cmd_diagnose(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
     return diagnose.diagnose(account, args.task)
 
@@ -279,6 +299,21 @@ def _account_commands(tree: Tree) -> None:
     tree.add(credentials, "set-api-key", with_account(cmd_set_api_key), "store an Anthropic API key (stdin)")
     sub = tree.add(tree.commands, "diagnose", with_account(cmd_diagnose), "why a task does not start")
     sub.add_argument("--task")
+
+
+def _task_commands(tree: Tree) -> None:
+    group = tree.group("task", "tasks (sealed and opened on this computer)")
+    sub = tree.add(group, "list", with_account(cmd_task_list), "tasks of a workgroup with their titles")
+    sub.add_argument("--wg", required=True)
+    sub.add_argument("--state", choices=list(tasks.STATES))
+    sub = tree.add(group, "create", with_account(cmd_task_create), "a new task with its first prompt")
+    sub.add_argument("--wg", required=True)
+    sub.add_argument("--text", required=True, help="the prompt, or - to read it from stdin")
+    sub = tree.add(group, "prompt", with_account(cmd_task_prompt), "a further prompt to a task")
+    sub.add_argument("--task", required=True)
+    sub.add_argument("--text", required=True, help="the prompt, or - to read it from stdin")
+    sub = tree.add(group, "show", with_account(cmd_task_show), "a task and its chat, opened and verified")
+    sub.add_argument("--task", required=True)
 
 
 def _claude_commands(tree: Tree) -> None:
@@ -336,6 +371,7 @@ def build_parser() -> Parser:
     _account_commands(tree)
     _claude_commands(tree)
     _org_commands(tree)
+    _task_commands(tree)
     return parser
 
 

@@ -113,6 +113,7 @@ class HubFake:
         self.invites: dict[str, Json] = {}
         self.devices: dict[str, list[Any]] = {}
         self.candidates: dict[str, list[Any]] = {}
+        self.no_device: set[str] = set()
         self.tasks: dict[str, Json] = {}
         self.hooks: dict[tuple[str, str], Hook] = {}
         self.requests: list[Request] = []
@@ -415,6 +416,9 @@ class HubFake:
             ("GET", r"/v1/scopes/(?P<scope>[0-9a-f-]+)/events", self.r_events),
             ("GET", r"/v1/workgroups/(?P<wg>[0-9a-f-]+)/device-candidates", self.r_candidates),
             ("GET", r"/v1/tasks/(?P<task>[0-9a-f-]+)", self.r_task),
+            ("POST", r"/v1/tasks", self.r_task_create),
+            ("POST", r"/v1/tasks/(?P<task>[0-9a-f-]+)/prompts", self.r_task_prompt),
+            ("GET", r"/v1/workgroups/(?P<wg>[0-9a-f-]+)/tasks", self.r_wg_tasks),
         ]
         for route_method, pattern, handler in table:
             match = re.fullmatch(pattern, path)
@@ -634,15 +638,24 @@ class HubFake:
         head = {"seq": last["body"]["seq"], "hash": entry_hash(last)}
         return 200, {"entries": items, "head": head, "next_after": items[-1]["seq"] if more else None}
 
+    def org_of_wg(self, wg: str) -> str | None:
+        for org in self.orgs.values():
+            if wg in org.log.state.workgroups:
+                return org.id
+        return None
+
     def r_events(self, request: Request, body: Any, scope: str) -> tuple[int, Any]:
-        if self._member(request, scope) is None:
+        if self._member(request, self.org_of_wg(scope) or scope) is None:
             return 404, {"error": "not_found"}
         kinds = set(request.query.get("kinds", "").split(","))
         after = int(request.query.get("after", "0"))
+        task = request.query.get("task")
         found = [
             item
             for item in self.events.get(scope, [])
-            if item["scope_seq"] > after and item["event"]["header"]["kind"] in kinds
+            if item["scope_seq"] > after
+            and item["event"]["header"]["kind"] in kinds
+            and (task is None or item["event"]["header"]["task"] == task)
         ]
         return 200, {"events": found, "next_after": None, "head": len(self.events.get(scope, []))}
 
@@ -652,6 +665,51 @@ class HubFake:
     def r_task(self, request: Request, body: Any, task: str) -> tuple[int, Any]:
         found = self.tasks.get(task)
         return (404, {"error": "not_found"}) if found is None else (200, found)
+
+    # --- tasks (the checks of agent_hub/tasks/service.py that the tool's tests rely on) ---
+
+    def _task_events(self, wg: str, task: str, events: list[Json], kinds: list[str]) -> bool:
+        headers = [event["header"] for event in events]
+        return [h["kind"] for h in headers] == kinds and all(
+            (h["scope"], h["scope_id"], h["task"]) == ("wg", wg, task) for h in headers
+        )
+
+    def r_task_create(self, request: Request, body: Json) -> tuple[int, Any]:
+        wg, task = body["wg_id"], body["task_id"]
+        org = self.org_of_wg(wg)
+        if org is None or self._member(request, org) is None:
+            return 404, {"error": "not_found"}
+        if task in self.tasks:
+            return 200, {**self.tasks[task]["created"], "replayed": True}
+        if not self._task_events(wg, task, body["events"], ["task.meta", "prompt"]):
+            return 400, {"error": "invalid"}
+        if wg in self.no_device:
+            return 409, {"error": "no_device"}
+        for event in body["events"]:
+            self.store_event(wg, event)
+        row = {"task_id": task, "org_id": org, "wg_id": wg, "owner_id": request.user, "state": "queued"}
+        row |= {"state_reason": None, "created_at": now_ms_text(), "last_activity_at": now_ms_text()}
+        created = {"task": row, "session": {"session_id": uuid7()}, "events": []}
+        self.tasks[task] = {"task": row, "sessions": [], "transitions": [], "created": created}
+        return 200, created
+
+    def r_task_prompt(self, request: Request, body: Json, task: str) -> tuple[int, Any]:
+        found = self.tasks.get(task)
+        if found is None:
+            return 404, {"error": "not_found"}
+        wg = found["task"]["wg_id"]
+        if not self._task_events(wg, task, [body["event"]], ["prompt"]):
+            return 400, {"error": "invalid"}
+        self.store_event(wg, body["event"])
+        return 200, {"scope_seq": len(self.events[wg]), "session_id": found["created"]["session"]["session_id"]}
+
+    def r_wg_tasks(self, request: Request, body: Any, wg: str) -> tuple[int, Any]:
+        org = self.org_of_wg(wg)
+        if org is None or self._member(request, org) is None:
+            return 404, {"error": "not_found"}
+        state = request.query.get("state")
+        rows = [t["task"] for t in self.tasks.values() if t["task"]["wg_id"] == wg]
+        return 200, {"tasks": [r for r in rows if state is None or r["state"] == state], "next_before": None}
 
 
 def head_of(log: VerifiedLog) -> Head:

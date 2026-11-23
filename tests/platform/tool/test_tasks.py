@@ -1,0 +1,134 @@
+"""`task list|create|prompt|show` (stage c, 11-agent-access.md section 8.4): tasks sealed and opened on the user's
+computer, against the hub double. The title rule against `contracts/tasks/title.json`."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from agent_platform import tasks
+from agent_platform.errors import PlatformError
+from agent_runner.crypto.ids import uuid7
+
+from .conftest import Tool
+from .hubfake import HubFake, User
+
+TITLES = Path(__file__).resolve().parents[3] / "contracts" / "tasks" / "title.json"
+
+
+def default_wg(hub: HubFake, user: User) -> str:
+    for org in hub.orgs.values():
+        if org.log.state.member(user.id) is not None:
+            return org.log.state.default_wg
+    raise AssertionError("no org")
+
+
+@pytest.mark.parametrize("case", json.loads(TITLES.read_text())["cases"], ids=lambda case: case["name"])
+def test_title_vectors(case: dict[str, str]) -> None:
+    assert tasks.derive_title(case["prompt"]) == case["title"]
+
+
+def test_create_list_prompt_show(tool: Tool, hub: HubFake, account: User) -> None:
+    wg = default_wg(hub, account)
+    code, created = tool.run("task", "create", "--wg", wg, "--text", "  Fix the login bug\nwith details")
+    assert code == 0, created
+    task = created["task_id"]
+    assert created["title"] == "Fix the login bug"
+    assert created["session_id"]
+    code, prompted = tool.run("task", "prompt", "--task", task, "--text", "-", stdin="And add a test.")
+    assert code == 0, prompted
+    assert prompted["scope_seq"] == 3
+    code, listed = tool.run("task", "list", "--wg", wg)
+    assert listed["tasks"] == [
+        {
+            "task_id": task,
+            "state": "queued",
+            "title": "Fix the login bug",
+            "created_at": listed["tasks"][0]["created_at"],
+            "last_activity_at": listed["tasks"][0]["last_activity_at"],
+        }
+    ]
+    assert tool.run("task", "list", "--wg", wg, "--state", "closed")[1]["tasks"] == []
+    code, shown = tool.run("task", "show", "--task", task)
+    assert code == 0, shown
+    assert shown["title"] == "Fix the login bug"
+    assert [event["body"]["text"] for event in shown["events"]] == [
+        "  Fix the login bug\nwith details",
+        "And add a test.",
+    ]
+    assert {event["author"] for event in shown["events"]} == {account.id}
+    assert shown["unverified"] == 0
+    # the hub received ciphertext only
+    sent = b"".join(hub.bodies)
+    assert b"login bug" not in sent
+    assert b"add a test" not in sent
+
+
+def test_show_leaves_out_what_does_not_verify_and_marks_locked_events(tool: Tool, hub: HubFake, account: User) -> None:
+    wg = default_wg(hub, account)
+    task = tool.run("task", "create", "--wg", wg, "--text", "Hello")[1]["task_id"]
+    other = tool.run("task", "create", "--wg", wg, "--text", "Other")[1]["task_id"]
+    stored = hub.events[wg]
+    forged: Any = json.loads(json.dumps(stored[1]))
+    forged["event"]["ct"] = forged["event"]["ct"][:-4] + "AAAA"
+    stored.append({**forged, "scope_seq": len(stored) + 1})
+    # a hub that answers events of another task for this one
+    foreign = [item for item in stored if item["event"]["header"]["task"] == other]
+    hub.hooks[("GET", f"/v1/scopes/{wg}/events")] = lambda body, request: (
+        (200, {"events": [*[i for i in stored if i["event"]["header"]["task"] == task], *foreign], "next_after": None}),
+    )[0]
+    shown = tool.run("task", "show", "--task", task)[1]
+    assert [event["body"]["text"] for event in shown["events"]] == ["Hello"]
+    assert shown["unverified"] == 3
+    del hub.hooks[("GET", f"/v1/scopes/{wg}/events")]
+    # without the workgroup key the events are listed as locked
+    hub.wraps[:] = [wrap for wrap in hub.wraps if wrap["scope"] != "wg"]
+    shown = tool.run("task", "show", "--task", task)[1]
+    assert shown["title"] is None
+    assert [event.get("locked") for event in shown["events"]] == [True]
+    assert tool.run("task", "list", "--wg", wg)[1]["tasks"][0]["title"] is None
+    code, document = tool.run("task", "prompt", "--task", task, "--text", "x")
+    assert (code, document["error"], document["reason"]) == (1, "hub_refused", "epoch_stale")
+
+
+def test_no_device_and_bad_input(tool: Tool, hub: HubFake, account: User) -> None:
+    wg = default_wg(hub, account)
+    hub.no_device.add(wg)
+    assert tool.run("task", "create", "--wg", wg, "--text", "Hello")[1]["error"] == "no_device"
+    for argv in (
+        ("task", "create", "--wg", "not-a-uuid", "--text", "Hello"),
+        ("task", "create", "--wg", wg, "--text", "   "),
+        ("task", "create", "--wg", wg, "--text", "x" * (tasks.PROMPT_MAX + 1)),
+        ("task", "show", "--task", "x"),
+    ):
+        assert tool.run(*argv)[1]["error"] == "invalid_argument", argv
+    assert tool.run("task", "create", "--wg", uuid7(), "--text", "Hello")[1]["error"] == "no_org"
+    with pytest.raises(PlatformError):
+        tasks.task_list(None, wg, "bogus")  # type: ignore[arg-type]
+
+
+def test_refusals_and_malformed_answers(tool: Tool, hub: HubFake, account: User) -> None:
+    wg = default_wg(hub, account)
+    hub.hooks[("POST", "/v1/tasks")] = lambda body, request: (403, {"error": "forbidden"})
+    _, document = tool.run("task", "create", "--wg", wg, "--text", "Hello")
+    assert (document["error"], document["hub_error"]) == ("hub_refused", "forbidden")
+    del hub.hooks[("POST", "/v1/tasks")]
+    task = tool.run("task", "create", "--wg", wg, "--text", "Hello")[1]["task_id"]
+    hub.hooks[("GET", f"/v1/tasks/{task}")] = lambda body, request: (200, {"task": {"task_id": task}})
+    assert tool.run("task", "show", "--task", task)[1]["reason"] == "response_invalid"
+    del hub.hooks[("GET", f"/v1/tasks/{task}")]
+    hub.hooks[("GET", f"/v1/scopes/{wg}/events")] = lambda body, request: (200, {"events": None})
+    assert tool.run("task", "show", "--task", task)[1]["reason"] == "response_invalid"
+    del hub.hooks[("GET", f"/v1/scopes/{wg}/events")]
+    hub.hooks[("GET", f"/v1/workgroups/{wg}/tasks")] = lambda body, request: (200, {"tasks": None})
+    assert tool.run("task", "list", "--wg", wg)[1]["reason"] == "response_invalid"
+    hub.hooks[("GET", f"/v1/workgroups/{wg}/tasks")] = lambda body, request: (200, {"tasks": ["x"]})
+    assert tool.run("task", "list", "--wg", wg)[1]["tasks"] == []
+    del hub.hooks[("GET", f"/v1/workgroups/{wg}/tasks")]
+    # paging: a second page after `next_after`
+    pages = iter([(200, {"events": [], "next_after": 5}), (200, {"events": [], "next_after": None})])
+    hub.hooks[("GET", f"/v1/scopes/{wg}/events")] = lambda body, request: next(pages)
+    assert tool.run("task", "show", "--task", task)[1]["events"] == []
