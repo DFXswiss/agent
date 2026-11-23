@@ -132,3 +132,38 @@ def test_refusals_and_malformed_answers(tool: Tool, hub: HubFake, account: User)
     pages = iter([(200, {"events": [], "next_after": 5}), (200, {"events": [], "next_after": None})])
     hub.hooks[("GET", f"/v1/scopes/{wg}/events")] = lambda body, request: next(pages)
     assert tool.run("task", "show", "--task", task)[1]["events"] == []
+
+
+def test_follow_returns_new_events_and_the_next_position(
+    tool: Tool, hub: HubFake, account: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tasks, "FOLLOW_POLL_S", 0.01)
+    wg = default_wg(hub, account)
+    task = tool.run("task", "create", "--wg", wg, "--text", "Hello")[1]["task_id"]
+    code, first = tool.run("task", "follow", "--task", task, "--wait", "0")
+    assert code == 0, first
+    assert [event["body"]["text"] for event in first["events"]] == ["Hello"]
+    assert (first["state"], first["unverified"], first["next_after"]) == ("queued", 0, 2)
+    # nothing new: an empty answer once the wait is over
+    empty = tool.run("task", "follow", "--task", task, "--after", "2", "--wait", "0")[1]
+    assert (empty["events"], empty["next_after"]) == ([], 2)
+    # a prompt arrives while the call waits: the first poll does not see it yet
+    tool.run("task", "prompt", "--task", task, "--text", "Next")
+    path = f"/v1/scopes/{wg}/events"
+
+    def later(body: object, request: Any) -> tuple[int, Any] | None:
+        del hub.hooks[("GET", path)]
+        return 200, {"events": [], "next_after": None}
+
+    hub.hooks[("GET", path)] = later
+    waited = tool.run("task", "follow", "--task", task, "--after", "2", "--wait", "5")[1]
+    assert [event["body"]["text"] for event in waited["events"]] == ["Next"]
+    assert waited["next_after"] == 3
+    # an item the hub sends for another task, and one without a position, are left out
+    other = tool.run("task", "create", "--wg", wg, "--text", "Other")[1]["task_id"]
+    foreign = [item for item in hub.events[wg] if item["event"]["header"]["task"] == other]
+    hub.hooks[("GET", path)] = lambda body, request: (200, {"events": [*foreign, "x"], "next_after": None})
+    odd = tool.run("task", "follow", "--task", task, "--after", "3", "--wait", "0")[1]
+    assert (odd["events"], odd["unverified"], odd["next_after"]) == ([], 3, foreign[-1]["scope_seq"])
+    for argv in (("--after", "-1"), ("--wait", "601")):
+        assert tool.run("task", "follow", "--task", task, *argv)[1]["error"] == "invalid_argument"

@@ -1,5 +1,5 @@
 """Tasks of the agent tool (stage c, 11-agent-access.md section 8.4; twin of `web/src/core/tasks/`): `task list`,
-`task create`, `task prompt` and `task show`.
+`task create`, `task prompt`, `task show` and `task follow`.
 
 The tool seals what the web client seals: a new task is `POST /v1/tasks` with the events `task.meta` (`{"title"}`,
 derived from the prompt as `web/src/core/tasks/title.ts`, vectors `contracts/tasks/title.json`) and `prompt`
@@ -14,6 +14,7 @@ exists; the tool does not resend on its own.
 from __future__ import annotations
 
 import re
+import time
 from typing import Any, cast
 from urllib.parse import urlencode
 
@@ -31,6 +32,8 @@ from agent_runner.crypto.log.state import WG
 PROMPT_MAX = 65536
 TITLE_MAX = 80
 PAGE = 1000
+FOLLOW_POLL_S = 2.0
+FOLLOW_WAIT_MAX_S = 600
 STATES = ("open", "closed")
 CHAT_KINDS = (
     "prompt",
@@ -137,9 +140,8 @@ def task_prompt(account: Account, task: str, text: str) -> dict[str, Any]:
     return {"task_id": task, "scope_seq": answer.get("scope_seq"), "session_id": answer.get("session_id")}
 
 
-def _events(account: Account, wg: str, query: dict[str, str]) -> list[Any]:
+def _events(account: Account, wg: str, query: dict[str, str], after: int = 0) -> list[Any]:
     found: list[Any] = []
-    after = 0
     while True:
         target = f"/v1/scopes/{segment(wg)}/events?{urlencode({**query, 'limit': PAGE})}&after={after}"
         page = account.call("GET", target)
@@ -227,3 +229,36 @@ def task_list(account: Account, wg: str, state: str | None) -> dict[str, Any]:
         if isinstance(row, dict)
     ]
     return {"org_id": org, "wg_id": wg, "tasks": tasks}
+
+
+def task_follow(account: Account, task: str, after: int, wait: int) -> dict[str, Any]:
+    """The task's chat events after the scope position `after`, waiting up to `wait` seconds for the first one.
+
+    The tool prints one JSON object per command, so following is a loop of calls: each returns the new events (opened
+    and verified like `task show`) and `next_after`, the position to pass to the next call, and the task's state.
+    """
+    if after < 0 or not 0 <= wait <= FOLLOW_WAIT_MAX_S:
+        raise PlatformError("invalid_argument")
+    row = _task_row(account, task)
+    wg = str(row["wg_id"])
+    org = find_org(account, wg)
+    deadline = time.monotonic() + wait
+    query = {"kinds": ",".join(CHAT_KINDS), "task": task}
+    while True:
+        items = _events(account, wg, query, after)
+        if items or time.monotonic() >= deadline:
+            break
+        time.sleep(FOLLOW_POLL_S)
+    events: list[dict[str, Any]] = []
+    skipped = 0
+    last = after
+    for item in items:
+        seq = item.get("scope_seq") if isinstance(item, dict) else None
+        last = max(last, seq) if isinstance(seq, int) else last
+        opened = _open(account, org, wg, item)
+        if opened is None or opened["task"] != task:
+            skipped += 1
+            continue
+        events.append(opened)
+    state = _task_row(account, task).get("state")
+    return {"task_id": task, "state": state, "events": events, "next_after": last, "unverified": skipped}

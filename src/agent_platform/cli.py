@@ -248,6 +248,10 @@ def cmd_task_show(account: Account, args: argparse.Namespace, context: Context) 
     return tasks.task_show(account, args.task)
 
 
+def cmd_task_follow(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tasks.task_follow(account, args.task, args.after, args.wait)
+
+
 def cmd_diagnose(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
     return diagnose.diagnose(account, args.task)
 
@@ -314,6 +318,10 @@ def _task_commands(tree: Tree) -> None:
     sub.add_argument("--text", required=True, help="the prompt, or - to read it from stdin")
     sub = tree.add(group, "show", with_account(cmd_task_show), "a task and its chat, opened and verified")
     sub.add_argument("--task", required=True)
+    sub = tree.add(group, "follow", with_account(cmd_task_follow), "new chat events after a position (waits)")
+    sub.add_argument("--task", required=True)
+    sub.add_argument("--after", type=int, default=0, help="next_after of the previous call (0: from the start)")
+    sub.add_argument("--wait", type=int, default=60, help="seconds to wait for the first new event (0-600)")
 
 
 def _claude_commands(tree: Tree) -> None:
