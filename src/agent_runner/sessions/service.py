@@ -151,10 +151,11 @@ class SessionService:
 
     @staticmethod
     def _owner_member(book: Any, item: Desired) -> bool:
-        """The task owner named by the hub has access to the workgroup in the verified log (B2: the hub may not run
-        sessions for someone outside the workgroup, nor use their credentials)."""
+        """The task owner named by the hub has explicit access to the workgroup in the verified log (B2: the hub may
+        not run sessions for someone outside the workgroup, nor use their credentials; an admin's inherited read does
+        not make it a session owner, ADR-058 section 1)."""
         log = book.log(item.org_id)
-        return log is not None and log.state.wg_access(item.owner_id, item.wg_id) is not None
+        return log is not None and log.state.explicit_access(item.owner_id, item.wg_id) is not None
 
     async def _refuse_owner(self, book: Any, item: Desired) -> None:
         if not book.remember_refusal(("session_owner", item.session_id)):

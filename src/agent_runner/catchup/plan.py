@@ -4,23 +4,29 @@ The device computes, from its verified logs only, the wraps it may create (`cryp
 hub uses for `GET /v1/orgs/{org}/catch-up`):
 
 - `org`/`wg` scopes of every acting org: the recipients entitled to the **current** epoch (members of the org,
-  members and devices of a workgroup, decertified platform devices excluded) for which this device is a holder (W1:
-  itself; W2: it is entitled now or held the epoch by the log); older epochs are only wrapped on request (5.10);
-- `cred` scope of a user: the owner and the devices assigned to a workgroup in which the owner has access, over every
-  acting org. The device cannot read a user's current `CK` epoch from the logs; it plans for the newest epoch it holds
-  (the hub refuses an epoch beyond the owner's current one, and an older epoch only gives the recipient a key it
-  might need for older records).
+  members and devices of a workgroup, admins reading a workgroup by inheritance, decertified platform devices
+  excluded) for which this device is a holder (W1: itself; W2: it is entitled now or held the epoch by the log);
+  older epochs are only wrapped on request (5.10), except for an admin reading a workgroup by inheritance, who gets
+  every epoch from 1 (`catch_up_epochs`, ADR-058 section 2);
+- `cred` scope of a user: the owner and the devices assigned to a workgroup in which the owner has explicit access,
+  over every acting org (an admin's inherited read does not count, ADR-058 section 1). The device cannot read a
+  user's current `CK` epoch from the logs; it plans for the newest epoch it holds (the hub refuses an epoch beyond
+  the owner's current one, and an older epoch only gives the recipient a key it might need for older records).
 
 A slot is planned only when the device holds the key of that epoch. The device does not see which wraps the hub
 already stores for others: slots uploaded once (stored or ignored as existing) are remembered per daemon (`done`), so
-every slot is sent at most once per daemon; slots the hub refused are skipped until a verified log head changes
-(`refused`). The plan is sorted by slot and cut to `MAX_WRAPS` (200 per reconcile run).
+every slot is sent at most once per daemon; slots the hub refused are skipped until a verified log head changes or
+`RETRY_AFTER_S` (15 minutes, host clock) have passed (`refused`; ADR-058 section 6: a hub of an older version refuses
+wraps a newer runner may create, and the retry starts the back-fill by itself once the hub is updated). The plan is
+sorted by slot and cut to `MAX_WRAPS` (200 per reconcile run).
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 from agent_runner.crypto.log.catchup import missing_cred_wraps, missing_wraps
 from agent_runner.crypto.log.state import DEVICE
@@ -28,6 +34,8 @@ from agent_runner.crypto.log.wraps import CRED, WrapSlot
 from agent_runner.orgs.book import OrgBook
 
 MAX_WRAPS = 200
+RETRY_AFTER_S = 15 * 60
+"""Host-clock seconds after which a refused slot is offered again even when no verified head changed."""
 ATTRIBUTE = "catchup_memory"
 
 Slot = tuple[str, str, int]
@@ -36,10 +44,17 @@ Heads = tuple[tuple[str, int, str], ...]
 
 @dataclass
 class Memory:
-    """What this daemon uploaded (`done`) and what the hub refused at which verified heads (`refused`)."""
+    """What this daemon uploaded (`done`) and what the hub refused at which verified heads and host-clock time
+    (`refused`)."""
 
     done: set[WrapSlot] = field(default_factory=set)
-    refused: dict[WrapSlot, Heads] = field(default_factory=dict)
+    refused: dict[WrapSlot, tuple[Heads, float]] = field(default_factory=dict)
+    clock: Callable[[], float] = time.monotonic
+
+    def waiting(self, now: Heads) -> set[WrapSlot]:
+        """Refused slots not offered again yet: same verified heads and less than `RETRY_AFTER_S` ago."""
+        since = self.clock() - RETRY_AFTER_S
+        return {slot for slot, (at, when) in self.refused.items() if at == now and when > since}
 
 
 def heads(book: OrgBook) -> Heads:
@@ -70,7 +85,7 @@ def plan(book: OrgBook, held: Iterable[Slot], memory: Memory, limit: int | None 
     """The slots this device uploads in this run (sorted, at most `limit`, default `MAX_WRAPS`)."""
     holding = set(held)
     now = heads(book)
-    skip = set(memory.done) | {slot for slot, at in memory.refused.items() if at == now}
+    skip = set(memory.done) | memory.waiting(now)
     chosen: set[WrapSlot] = set()
     acting = book.acting_orgs()
     for org in acting:
@@ -99,18 +114,21 @@ def recipient_kem(book: OrgBook, slot: WrapSlot) -> str:
     raise KeyError(slot.recipient)
 
 
-def memory_for(context: object) -> Memory:
+def memory_for(context: Any) -> Memory:
+    """The memory of this daemon, kept on the context; refusal times use the host clock."""
     found = getattr(context, ATTRIBUTE, None)
     if isinstance(found, Memory):
         return found
-    made = Memory()
+    made = Memory(clock=context.host.clock)
     setattr(context, ATTRIBUTE, made)
     return made
 
 
 def refuse(memory: Memory, slots: Iterable[WrapSlot], at: Heads) -> None:
+    """Remember slots the hub refused at the verified heads `at`, now on the memory's clock."""
+    when = memory.clock()
     for slot in slots:
-        memory.refused[slot] = at
+        memory.refused[slot] = (at, when)
 
 
 def finish(memory: Memory, slots: Iterable[WrapSlot]) -> None:

@@ -1,11 +1,12 @@
-"""Copied from agent-core src/agent_hub/log/wraps.py at e051302eeb8e.
+"""Copied from agent-core src/agent_hub/log/wraps.py at 0346281bb510.
 
 Wrap rules W1-W3 (04-crypto.md sections 4.2 and 6.3).
 
 Entitlement (who may receive a scope key) is the current read right of the verified log: members of the org scope,
-users with access to a workgroup and devices assigned to it, and for the `cred` scope of a user the owner plus
-devices assigned to any workgroup in which the owner has access (in any org; section 2, ADR-007). Decertified
-platform devices are passed as `excluded`.
+users with access to a workgroup (explicit, or inherited as admin, ADR-058) and devices assigned to it, and for the
+`cred` scope of a user the owner plus devices assigned to any workgroup in which the owner has **explicit** access
+(in any org; section 2, ADR-007, ADR-058 section 1: the inherited read of an admin does not spread credentials).
+Decertified platform devices are passed as `excluded`.
 
 - W1: a principal may wrap a scope epoch for itself if it holds the key (it is entitled now; e.g. the self-wrap of
   the package keys after `accept`, section 5.2).
@@ -51,12 +52,13 @@ class WrapSlot:
 
 
 def cred_readers(states: Iterable[OrgState], owner: str, excluded: Iterable[str] = ()) -> frozenset[str]:
-    """The owner and every active device assigned to a workgroup in which the owner has access, over all orgs."""
+    """The owner and every active device assigned to a workgroup in which the owner has explicit access, over all
+    orgs."""
     skip = set(excluded)
     found = {owner}
     for state in states:
         for device in state.principals.values():
-            eligible = any(state.wg_access(owner, wg) is not None for wg in state.device_wgs(device.id))
+            eligible = any(state.explicit_access(owner, wg) is not None for wg in state.device_wgs(device.id))
             if device.kind == DEVICE and device.id not in skip and eligible:
                 found.add(device.id)
     return frozenset(found)

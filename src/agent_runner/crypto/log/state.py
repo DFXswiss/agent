@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/state.py at e051302eeb8e.
+"""Copied from agent-core src/agent_hub/log/state.py at 0346281bb510.
 
 The rights state of one organization as derived from its verified membership log (04-crypto.md section 4.7).
 
@@ -6,9 +6,11 @@ The rights state of one organization as derived from its verified membership log
 (E5 checks rights "at `lh`"). Derived rights (section 4.7, ADR-024 addendum):
 
 - an active user member reads the org scope and **writes the default workgroup** (not reducible in v1);
-- an admin writes the org scope (management, org whiteboard, profiles) but has **no implicit workgroup access**,
-  except the creating admin of a workgroup (`wg_create`) who gets `write` on it;
-- workgroup access of users comes from `invite.wgs` (applied at `accept`), `grant` and `ungrant`;
+- an admin writes the org scope (management, org whiteboard, profiles) and **reads every workgroup** of the org
+  (inherited read, ADR-058); the creating admin of a workgroup (`wg_create`) gets explicit `write` on it;
+- explicit workgroup access of users comes from `invite.wgs` (applied at `accept`), `grant` and `ungrant`; the
+  effective access (`wg_access`) is the explicit access if there is one, else `read` for an active admin; the
+  credential scope uses the explicit access only (`explicit_access`, ADR-058 section 1);
 - devices read the workgroups they are assigned to (`invite.wgs` at `accept`, `device_assign`, `device_unassign`) and
   the org scope while they have at least one assignment (ADR-007);
 - an archived workgroup stays readable but is no longer writable (decision CRY-02).
@@ -122,14 +124,27 @@ class OrgState:
 
     # --- workgroups ---
 
-    def wg_access(self, principal: str, wg: str) -> str | None:
-        """`read`/`write` of an active user on a workgroup (default workgroup: `write`), else None."""
+    def explicit_access(self, principal: str, wg: str) -> str | None:
+        """`read`/`write` of an active user on a workgroup from membership alone (default workgroup: `write`), else
+        None; the admin role adds nothing here (credential scope, ADR-058 section 1)."""
         found = self.member(principal)
         if found is None or found.kind != USER or wg not in self.workgroups:
             return None
         if wg == self.default_wg:
             return WRITE
         return self.access.get((principal, wg))
+
+    def wg_access(self, principal: str, wg: str) -> str | None:
+        """The effective `read`/`write` of an active user on a workgroup: the explicit access, else `read` for an
+        active admin of the org (ADR-058), else None."""
+        explicit = self.explicit_access(principal, wg)
+        if explicit is None and wg in self.workgroups and self.is_admin(principal):
+            return READ
+        return explicit
+
+    def inherited(self, principal: str, wg: str) -> bool:
+        """The user reads the workgroup only because it is an admin (no explicit access)."""
+        return self.explicit_access(principal, wg) is None and self.wg_access(principal, wg) is not None
 
     def assigned(self, device: str, wg: str) -> bool:
         """An active device assigned to the workgroup."""
@@ -206,6 +221,7 @@ class OrgState:
                     "archived_seq": wg.archived_seq,
                     "epoch": self.epoch(WG, wg.id),
                     "access": {p: a for p in sorted(self.principals) if (a := self.wg_access(p, wg.id)) is not None},
+                    "inherited": [p for p in sorted(self.principals) if self.inherited(p, wg.id)],
                     "devices": [p for p in sorted(self.principals) if self.assigned(p, wg.id)],
                 }
                 for wg in sorted(self.workgroups.values(), key=lambda wg: wg.id)

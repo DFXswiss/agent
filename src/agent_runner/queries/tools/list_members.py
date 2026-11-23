@@ -1,9 +1,10 @@
 """`list_members {scope: "org" | "workgroup"}` (03-api.md section 8.1, ADR-024).
 
 - `org` (organization level): every active user (`role` admin/member) and device (`role` device) of the org;
-- `workgroup` (workgroup level, the owner needs access): the users with access to the session's workgroup (`access`
-  read/write; default workgroup: every user writes) and the devices assigned to it (`access` write: they author the
-  session events of the workgroup).
+- `workgroup` (workgroup level, the owner needs access): the users with explicit access to the session's workgroup
+  (`access` read/write; default workgroup: every user writes; an admin's inherited read is not listed, sessions do
+  not inherit, ADR-058 section 1) and the devices assigned to it (`access` write: they author the session events of
+  the workgroup).
 
 Platform devices whose certification has ended are left out (no readers, no authors). Names come from the verified
 `member.profile` (users) and `device.profile` (devices) events; sorted by kind (users first), then name, and cut
@@ -54,7 +55,7 @@ async def list_members(call: QueryCall) -> QueryOutcome:
                 if level == "org":
                     extra = {"role": principal.role}
                 elif user:
-                    access = state.wg_access(principal.id, scope.wg_id)
+                    access = state.explicit_access(principal.id, scope.wg_id)
                     if access is None:
                         continue
                     extra = {"access": access}

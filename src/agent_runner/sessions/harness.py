@@ -75,7 +75,8 @@ def context_markdown(
 
 
 def rights(state: OrgState | None, owner_id: str, wg_id: str) -> str:
-    access = None if state is None else state.wg_access(owner_id, wg_id)
+    """The owner's explicit access; an admin's inherited read does not reach a session (ADR-058 section 1)."""
+    access = None if state is None else state.explicit_access(owner_id, wg_id)
     return access if access in ("read", "write") else "none"
 
 

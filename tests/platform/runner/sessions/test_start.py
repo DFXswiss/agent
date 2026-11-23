@@ -15,6 +15,8 @@ import pytest
 
 from agent_guest import harness as guest_harness
 from agent_guest.schema import SchemaSet
+from agent_runner.crypto.log import verify
+from agent_runner.crypto.log.vectors import W1, LogBuilder, pid, sig_pk
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestProtocolError, GuestRefused, GuestUnreachable
 from agent_runner.inbox.pull import inbox_for
@@ -381,6 +383,19 @@ def test_context_markdown_equals_the_guest_format() -> None:
 def test_rights_and_default_flag_without_state() -> None:
     assert harness.rights(None, OWNER, WG) == "none"
     assert harness.is_default(None, WG) is False
+
+
+def test_rights_of_an_admin_reading_only_by_inheritance_are_none() -> None:
+    """ADR-058 section 1: the session context shows the explicit access; the inherited read of an admin is none."""
+    log = LogBuilder()
+    log.genesis()
+    log.add("wg_create", "alice", wg=W1, epoch=1)
+    log.invite_user("alice", "bob", role="admin")
+    log.accept("bob")
+    state = verify.verify_log(log.entries, sig_pk("alice")).state
+    assert state.wg_access(pid("bob"), W1) == "read"
+    assert harness.rights(state, pid("bob"), W1) == "none"
+    assert harness.rights(state, pid("alice"), W1) == "write"
 
 
 def test_records_reject_bad_reasons() -> None:

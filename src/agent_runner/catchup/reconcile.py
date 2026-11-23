@@ -9,7 +9,8 @@ hub in one request. The hub stores new slots and ignores existing ones (`{stored
 The hub refuses the whole request when one wrap violates W1-W3 by its own (possibly newer) log state
 (`wrap_unauthorized`, `header_invalid`, `signature_invalid`): the device then halves the request until the refused
 wraps are isolated (a few refused slots cost a few requests, not one per wrap), so a single stale slot never blocks
-the others, and remembers the refused ones until a verified log head changes. Other
+the others, and remembers the refused ones until a verified log head changes or 15 minutes have passed on the host
+clock (`plan.RETRY_AFTER_S`, ADR-058 section 6). Other
 refusals and transport errors fail the step (logged by the engine; the next run tries again). Devices never rotate:
 a scope with a pending rotation is wrapped for its current epoch only, as the log says.
 """

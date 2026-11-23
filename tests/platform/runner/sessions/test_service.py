@@ -13,6 +13,8 @@ from typing import Any, cast
 import pytest
 
 from agent_runner import registry
+from agent_runner.crypto.log import verify
+from agent_runner.crypto.log.vectors import W1, LogBuilder, pid, sig_pk
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestRefused, GuestUnreachable
 from agent_runner.reconcile.engine import Engine
@@ -577,6 +579,24 @@ def test_sessions_of_owners_outside_the_workgroup_are_refused_and_audited_once(r
         await env.sync.pusher.drain()
 
     run(rig, body)
+
+
+def test_an_admin_reading_only_by_inheritance_is_no_session_owner() -> None:
+    """ADR-058 section 1: B2 uses the explicit access; an admin's inherited read does not make it a session owner."""
+    log = LogBuilder()
+    log.genesis()
+    log.add("wg_create", "alice", wg=W1, epoch=1)
+    log.invite_user("alice", "bob", role="admin")
+    log.accept("bob")
+    verified = verify.verify_log(log.entries, sig_pk("alice"))
+    assert verified.state.inherited(pid("bob"), W1)
+    book = SimpleNamespace(log=lambda _org: verified)
+
+    def owner(user: str) -> bool:
+        return SessionService._owner_member(book, cast(Any, SimpleNamespace(org_id="o", wg_id=W1, owner_id=user)))
+
+    assert owner(pid("alice")) is True
+    assert owner(pid("bob")) is False
 
 
 def _bob() -> str:

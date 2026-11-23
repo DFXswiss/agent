@@ -1,11 +1,13 @@
 """U-RUN-crypto / catch-up wrapping (05-runner.md section 2.5, 04-crypto.md section 5.11): planning against the log
-vectors (`contracts/vectors/log-wraps.json`), the upload limit of 200, refusals and the step in a reconcile run."""
+vectors (`contracts/vectors/log-wraps.json`, including the admin history of ADR-058), the upload limit of 200,
+refusals (retried after a head change or 15 minutes) and the step in a reconcile run."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -40,14 +42,15 @@ def label_of(principal: str) -> str:
     return str(next(name for name, ident in VECTORS["identities"].items() if ident["id"] == principal))
 
 
-def vector_book(wrapper: str) -> OrgBook:
+def vector_book(wrapper: str, log_ref: Json | None = None) -> OrgBook:
     ident = VECTORS["identities"][label_of(wrapper)]
     kind = "platform" if label_of(wrapper) == "pdev" else "org"
     book = OrgBook(
         device_id=wrapper, kem_public=ident["kem"], sig_public=ident["sig"], root=v.sig_pk("root"), kind=kind
     )
     book.platform = verify_platform_log(VECTORS["logs"]["platform"], v.sig_pk("root"))
-    log = verify_log(VECTORS["logs"]["main"], VECTORS["founder"], platform=book.platform.state)
+    entries = VECTORS["logs"]["main"] if log_ref is None else VECTORS["logs"][log_ref["name"]][: log_ref["count"]]
+    log = verify_log(entries, VECTORS["founder"], platform=book.platform.state)
     book.logs = {log.state.org: log}
     return book
 
@@ -69,6 +72,24 @@ def test_plans_match_the_catch_up_vectors(vector: Json) -> None:
     assert plan.plan(book, set(), memory) == []
     some = {(s.scope, s.scope_id, s.epoch) for s in expected[:1]}
     assert plan.plan(book, some, memory) == [s for s in expected if (s.scope, s.scope_id, s.epoch) in some]
+
+
+def test_an_admin_reading_by_inheritance_gets_every_epoch() -> None:
+    """ADR-058 section 2: the device plans every epoch it holds of a workgroup an admin reads by inheritance."""
+    section = VECTORS["admin_catch_up"]
+    existing = {slot(item) for item in section["existing"]}
+    planned = 0
+    for vector in section["plans"]:
+        if vector["excluded"]:
+            continue
+        book = vector_book(vector["wrapper"], section["log"])
+        expected = sorted(slot(item) for item in vector["missing"])
+        held = {(s.scope, s.scope_id, s.epoch) for s in expected}
+        assert plan.plan(book, held, plan.Memory(done=set(existing))) == expected
+        planned += 1
+    assert planned
+    epochs = {s.epoch for p in section["plans"] for s in map(slot, p["missing"]) if s.scope == "wg"}
+    assert {1, 2} <= epochs
 
 
 def test_cred_plans_match_the_vectors() -> None:
@@ -100,6 +121,22 @@ def test_the_plan_is_limited_and_remembers() -> None:
     assert plan.MAX_WRAPS == 200
 
 
+def test_a_refused_slot_is_retried_after_15_minutes() -> None:
+    [vector] = [p for p in DEVICE_PLANS if label_of(p["wrapper"]) == "device"]
+    book = vector_book(vector["wrapper"])
+    expected = sorted(slot(item) for item in vector["missing"])
+    held = {(s.scope, s.scope_id, s.epoch) for s in expected}
+    now = [5000.0]
+    memory = plan.Memory(done={slot(item) for item in VECTORS["catch_up"]["existing"]}, clock=lambda: now[0])
+    plan.refuse(memory, expected[:1], plan.heads(book))
+    assert memory.refused[expected[0]] == (plan.heads(book), 5000.0)
+    now[0] += plan.RETRY_AFTER_S - 1
+    assert plan.plan(book, held, memory) == expected[1:]
+    now[0] += 1
+    assert plan.plan(book, held, memory) == expected
+    assert plan.RETRY_AFTER_S == 900
+
+
 def test_recipient_keys_come_from_the_logs() -> None:
     [vector] = [p for p in DEVICE_PLANS if label_of(p["wrapper"]) == "device"]
     book = vector_book(vector["wrapper"])
@@ -112,9 +149,13 @@ def test_recipient_keys_come_from_the_logs() -> None:
 
 
 def test_memory_is_kept_on_the_context() -> None:
-    context = type("Ctx", (), {})()
+    def clock() -> float:
+        return 7.0
+
+    context = SimpleNamespace(host=SimpleNamespace(clock=clock))
     made = plan.memory_for(context)
     assert plan.memory_for(context) is made
+    assert made.clock is clock
 
 
 # --- the step in a reconcile run (platform device `rdev` of the RUN-03 rig) ----------------------------------------
@@ -247,6 +288,26 @@ def test_refused_batches_are_split_and_refused_slots_wait_for_a_new_head(rig: Ri
             spec.log.invite_user("alice", "carol")
             await once(env)
             assert sorted(w["recipient_id"] for w in uploads.requests[-1]) == [pid("bob"), pid("bob")]
+
+    asyncio.run(body())
+
+
+def test_refused_slots_are_retried_after_15_minutes_without_a_new_head(rig: Rig) -> None:
+    async def body() -> None:
+        async with rig.env(standard_world("a")) as env:
+            uploads = Uploads(env, refuse={pid("bob")})
+            await once(env)
+            assert len(uploads.stored) == 4
+            count = len(uploads.requests)
+            # an updated hub accepts them now; the device offers them again once 15 minutes have passed
+            uploads.refuse = set()
+            env.clock.now += plan.RETRY_AFTER_S - 1
+            await once(env)
+            assert len(uploads.requests) == count
+            env.clock.now += 1
+            await once(env)
+            assert sorted(w["recipient_id"] for w in uploads.requests[-1]) == [pid("bob"), pid("bob")]
+            assert len(uploads.stored) == 6
 
     asyncio.run(body())
 

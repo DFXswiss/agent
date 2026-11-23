@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/verify.py at e051302eeb8e.
+"""Copied from agent-core src/agent_hub/log/verify.py at 0346281bb510.
 
 Membership-log verification L1-L10 and the state transition of every entry type (04-crypto.md sections 4.7, 6.1).
 
@@ -169,7 +169,11 @@ def _role(state: OrgState, body: Body) -> OrgState:
         fail("log_rights")
     if principal.role == ADMIN and state.admins() == [principal.id]:
         fail("last_admin")
-    return replace(state, principals={**state.principals, principal.id: replace(principal, role=str(body["role"]))})
+    after = replace(state, principals={**state.principals, principal.id: replace(principal, role=str(body["role"]))})
+    if principal.id == body["by"]:
+        # self-demotion: like leaving, the subject cannot rotate what it no longer reads (ADR-058 section 3)
+        after = replace(after, pending=after.pending | rotation.required_set(state, after, principal.id))
+    return after
 
 
 def _wg_create(state: OrgState, body: Body, seq: int) -> OrgState:

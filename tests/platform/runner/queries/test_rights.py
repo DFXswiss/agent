@@ -2,7 +2,8 @@
 
 An owner who loses the workgroup access keeps the organization level and is `forbidden` on the workgroup level; a
 removed owner reads nothing; a device that is no longer assigned to the session's workgroup or cannot act for the org
-answers `unavailable`. The change takes effect at the next call, with no cache in between."""
+answers `unavailable`. The change takes effect at the next call, with no cache in between. An admin's inherited read
+(ADR-058) gives a session nothing: sessions use the explicit access only."""
 
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from typing import Any
 from agent_runner.orgs.book import book_for
 
 from ..reconcile.rig import Rig
-from .kit import BOB, ODEV, RDEV, TASK, TASK_ONE, WG, WG_ONE, RKit, run, task_row
+from .kit import ALICE, BOB, CAROL, ODEV, RDEV, TASK, TASK_ONE, WG, WG_ONE, WG_TWO, RKit, run, task_row
 
 WORKGROUP_READS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("list_members", {"scope": "workgroup"}),
@@ -99,5 +100,33 @@ def test_the_task_owner_not_the_session_decides(rig: Rig) -> None:
         sid = await k.session(1, wg=WG, owner=BOB, task=TASK)
         found = await k.ok(sid, "list_members", {"scope": "workgroup"})
         assert BOB in {m["id"] for m in found["members"]}
+
+    run(rig, body)
+
+
+def test_an_admin_reading_only_by_inheritance_gives_a_session_nothing_more(rig: Rig) -> None:
+    async def body(k: RKit) -> None:
+        await k.pull()
+        k.hub.tasks = [task_row(TASK_ONE, WG_ONE, owner=ALICE)]
+        # carol becomes admin and takes alice's explicit access: alice and carol each read one workgroup as admin only
+        await k.extend(
+            lambda log: log.add("role", "alice", subject=CAROL, role="admin"),
+            lambda log: log.add("ungrant", "carol", subject=ALICE, wg=WG_ONE),
+        )
+        log = book_for(k.env.context).log(k.events.spec.org)
+        assert log is not None
+        assert log.state.inherited(ALICE, WG_ONE)
+        assert log.state.inherited(CAROL, WG_TWO)
+        mine = await k.session(1, wg=WG_ONE, owner=ALICE, task=TASK_ONE)
+        for tool, arguments in WORKGROUP_READS:
+            assert await k.error(mine, tool, arguments) == "forbidden", tool
+        listed = (await k.ok(mine, "list_workgroups"))["workgroups"]
+        assert {w["id"]: w["my_access"] for w in listed} == {WG: "write", WG_ONE: None, WG_TWO: "write"}
+        theirs = await k.session(2, wg=WG_ONE, owner=CAROL, task=TASK_ONE)
+        listed = (await k.ok(theirs, "list_workgroups"))["workgroups"]
+        assert {w["id"]: w["my_access"] for w in listed} == {WG: "write", WG_ONE: "write", WG_TWO: None}
+        found = await k.ok(theirs, "list_members", {"scope": "workgroup"})
+        users = {m["id"]: m["access"] for m in found["members"] if m["kind"] == "user"}
+        assert users == {BOB: "read", CAROL: "write"}
 
     run(rig, body)

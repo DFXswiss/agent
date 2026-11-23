@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/signed.py at e051302eeb8e.
+"""Copied from agent-core src/agent_hub/crypto/signed.py at 0346281bb510.
 
 The shared shape of events (04-crypto.md section 4.3) and credential records (section 4.4).
 

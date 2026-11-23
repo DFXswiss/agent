@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/test_rotation.py at e051302eeb8e.
+"""Copied from agent-core tests/platform/hub/log/test_rotation.py at 0346281bb510.
 
 U-HUB-log: the rotate set R and the atomic append batch (agent_hub.log.rotation, agent_hub.log.batch)."""
 
@@ -61,7 +61,7 @@ def test_required_set_is_empty_for_entries_that_do_not_reduce_reading() -> None:
     log.add("grant", "alice", subject=pid("carol"), wg=W1, access="read")
     assert _r(log) == frozenset()
     log.add("role", "alice", subject=pid("carol"), role="member")
-    assert _r(log) == frozenset()
+    assert _r(log) == frozenset({(WG, W2)})  # W1 is explicit now; W2 was read only as admin (ADR-058)
     log.add("rotate", "alice", scope="wg", scope_id=W1, epoch=2)
     assert _r(log) == frozenset()
 
@@ -101,7 +101,7 @@ def test_batch_with_excluded_recipient_and_pending_leave() -> None:
         lambda b: b.add("remove", "bob", subject=pid("bob")),
         lambda b: b.add("rotate", "alice", scope="wg", scope_id=W1, epoch=2),
     )
-    wraps = [make_wrap("alice", "wg", W1, 2, "alice")]
+    wraps = [make_wrap("alice", "wg", W1, 2, r) for r in ("alice", "carol")]  # carol: admin (ADR-058)
     with pytest.raises(CryptoError, match="rotation_required"):
         check_batch(base, append, wraps, wrapped_by=pid("alice"), now=NOW)
     result = check_batch(base, append, wraps, wrapped_by=pid("alice"), now=NOW, excluded=[pid("dev2")])
@@ -117,7 +117,7 @@ def test_batch_with_two_triggers_needs_the_union() -> None:
         lambda b: b.add("rotate", "alice", scope="wg", scope_id=W1, epoch=2),
     )
     wraps = [make_wrap("alice", "org", ORG_ID, 2, r) for r in ("alice", "bob", "carol")]
-    wraps.append(make_wrap("alice", "wg", W1, 2, "alice"))
+    wraps += [make_wrap("alice", "wg", W1, 2, r) for r in ("alice", "carol")]
     result = check_batch(base, append, wraps, wrapped_by=pid("alice"), now=NOW)
     assert result.required == {(ORG, ORG_ID), (WG, W1)}
 

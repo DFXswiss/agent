@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/test_verify.py at e051302eeb8e.
+"""Copied from agent-core tests/platform/hub/log/test_verify.py at 0346281bb510.
 
 U-HUB-log, U-HUB-rights: L1-L10, the transition of every entry type, derived rights, the Spike D malicious-hub
 cases and the property "incremental state = state rebuilt from the whole log"."""
@@ -78,7 +78,14 @@ def test_derived_rights_along_the_log(main_log: verify.VerifiedLog) -> None:
     assert main_log.state_at(3).wg_access(bob, W0) == "write"  # every member writes the default workgroup
     assert main_log.state_at(3).wg_access(bob, W1) == "read"  # from invite.wgs at accept
     assert main_log.state_at(10).is_admin(bob)
-    assert main_log.state_at(10).wg_access(bob, W2) is None  # admin has no implicit workgroup access
+    assert main_log.state_at(10).wg_access(bob, W2) is None  # W2 does not exist yet
+    carol = pid("carol")
+    assert main_log.state_at(7).wg_access(carol, W1) == "read"  # every admin reads every workgroup (ADR-058)
+    assert main_log.state_at(7).inherited(carol, W1)
+    assert main_log.state_at(7).explicit_access(carol, W1) is None
+    assert not main_log.state_at(7).can_write_wg(carol, W1)  # the inherited right is read only
+    assert not main_log.state_at(7).inherited(carol, W0)  # every member writes the default workgroup
+    assert not main_log.state_at(11).inherited(bob, W1)  # demoted, and explicit read anyway
     assert main_log.state_at(12).can_write_wg(bob, W1)
     assert main_log.state_at(17).wg_access(bob, W1) is None
     assert main_log.state_at(5).device_wgs(device) == [W1]
@@ -95,7 +102,7 @@ def test_epoch_holders(main_log: verify.VerifiedLog) -> None:
     holders = main_log.epoch_holders(WG, W1, 1)
     assert pid("bob") in holders
     assert pid("pdev") in holders
-    assert pid("carol") not in holders
+    assert pid("carol") in holders  # an admin held W1 by inheritance (ADR-058)
     assert pid("bob") not in main_log.epoch_holders(WG, W1, 2)
     assert main_log.epoch_holders(WG, W1, 9) == frozenset()
 
@@ -174,7 +181,8 @@ def test_rejoin_after_leaving_starts_from_the_new_invitation() -> None:
     assert bob.active
     assert bob.joined_seq == 6
     assert bob.role == "admin"
-    assert state.wg_access(pid("bob"), W1) is None
+    assert state.explicit_access(pid("bob"), W1) is None  # the old write did not come back
+    assert state.wg_access(pid("bob"), W1) == "read"  # inherited as admin (ADR-058)
 
 
 def test_former_user_cannot_rejoin_as_a_device() -> None:

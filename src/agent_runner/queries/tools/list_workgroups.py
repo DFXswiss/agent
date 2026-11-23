@@ -1,5 +1,6 @@
 """`list_workgroups {}` (03-api.md section 8.1, ADR-024): the names of all workgroups of the organization - also of
-workgroups the session cannot read otherwise - with `my_access` of the task owner (null without access).
+workgroups the session cannot read otherwise - with `my_access` of the task owner (null without access). `my_access`
+is the explicit access: the inherited read of an admin does not count, sessions do not inherit (ADR-058 section 1).
 
 Organization level: the owner must be an active member. Archived workgroups are left out (they take no tasks). The
 default workgroup comes first, the others by name. Names come from the verified `wg.profile` events.
@@ -29,7 +30,7 @@ async def list_workgroups(call: QueryCall) -> QueryOutcome:
                         "id": wg.id,
                         "name": common.display(name, wg.id),
                         "is_default": wg.id == state.default_wg,
-                        "my_access": state.wg_access(scope.owner_id, wg.id),
+                        "my_access": state.explicit_access(scope.owner_id, wg.id),
                     }
                 )
         found.sort(key=lambda item: (not item["is_default"], item["name"], item["id"]))

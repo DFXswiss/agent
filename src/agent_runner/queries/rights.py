@@ -5,7 +5,8 @@ of the call (`OrgBook`, never a cached answer of the hub), intersected with the 
 
 - organization level (workgroup names, members of the org, org whiteboard): the owner is an active user of the org;
 - workgroup level (tasks, chat messages, workgroup and task whiteboards, operations, workgroup members): additionally
-  the owner has `read` or `write` access to the session's workgroup (default workgroup: `write`);
+  the owner has explicit `read` or `write` access to the session's workgroup (default workgroup: `write`); the
+  inherited read of an admin does not count, platform sessions do not inherit (ADR-058 section 1);
 - other workgroups: names only (`list_workgroups`), never their content - the device holds no keys for them anyway.
 
 An owner who was removed from the org is `forbidden` for every read; one who lost the workgroup access keeps the
@@ -47,7 +48,7 @@ class ReadScope:
     state: OrgState
     excluded: frozenset[str]
     access: str | None
-    """`read`/`write` of the owner on the session's workgroup, None without access."""
+    """Explicit `read`/`write` of the owner on the session's workgroup (`OrgState.explicit_access`), None without."""
 
     def require_workgroup(self) -> str:
         """The owner's access to the session's workgroup (`ReadRefused` forbidden without)."""
@@ -72,5 +73,5 @@ def read_scope(context: Any, session: LocalSession) -> ReadScope:
         owner_id=owner.id,
         state=state,
         excluded=book.excluded(session.org_id),
-        access=state.wg_access(owner.id, session.wg_id),
+        access=state.explicit_access(owner.id, session.wg_id),
     )

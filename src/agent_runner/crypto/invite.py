@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/invite.py at e051302eeb8e.
+"""Copied from agent-core src/agent_hub/crypto/invite.py at 0346281bb510.
 
 Invitation codes and packages (04-crypto.md sections 3 and 4.6), after Spike D `e2ee.invite_secrets`,
 `format_code`, `parse_code`, `seal_package` and `open_package`.
