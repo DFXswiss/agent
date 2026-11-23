@@ -40,6 +40,10 @@ export const LABEL_DEDUPE = 'dedupe\0';
 export const LABEL_RECOVERY_PROOF = 'recovery-proof\0';
 export const LABEL_ENROLL = 'enroll\0';
 export const LABEL_INVITE_REGISTER = 'invite-register\0';
+// Identity proof, account code and invited user ID (ADR-060).
+export const LABEL_INVITE_IDENTITY = 'invite-identity\0';
+export const LABEL_ACCOUNT_CODE = 'account-code\0';
+export const LABEL_USER_ID = 'user-id\0';
 
 // Delegated agent access (11-agent-access.md section 3), without the prefix P.
 export const LABEL_AGENT_KEY = 'agent-key\0';

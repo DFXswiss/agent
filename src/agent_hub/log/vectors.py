@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from agent_hub.crypto import enroll, event, invite, keys, signed, wrap
+from agent_hub.crypto import identity as identity_proof
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode, body_json, format_time, parse_time
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.crypto.vectors import Section, fixed, fixed_id
@@ -150,6 +151,44 @@ class LogBuilder:
         self.entries.append(entry)
         return entry
 
+    def admit(
+        self,
+        by: str,
+        label: str,
+        platform_seq: int,
+        by_platform_seq: int,
+        *,
+        role: str = "member",
+        wgs: Mapping[str, str] | None = None,
+        key_label: str | None = None,
+        proof_code: str = "",
+        by_proof_code: str = "",
+        signer: str | None = None,
+    ) -> Json:
+        """`admit` of `label` (keys of `key_label`, default its own) anchored at `platform_seq`, by `by` anchored at
+        `by_platform_seq`; a `proof_code`/`by_proof_code` makes the identity proof with that platform invitation code
+        (ADR-060). The IDs of `INVITED` labels are the IDs derived from their invitation."""
+        keys_of = pub(key_label or label)
+        subject, author = uid(label), uid(by)
+        body = self.body(
+            "admit",
+            by,
+            subject=subject,
+            pub=keys_of,
+            platform_seq=platform_seq,
+            id_sig=identity_proof.sign_identity(secrets(proof_code).signing, subject, keys_of) if proof_code else "",
+            by_platform_seq=by_platform_seq,
+            by_id_sig=(
+                identity_proof.sign_identity(secrets(by_proof_code).signing, author, pub(by)) if by_proof_code else ""
+            ),
+            role=role,
+            wgs=dict(wgs or {}),
+        )
+        body["by"] = author
+        entry = sign_log_entry(body, identity(signer or by).sig)
+        self.entries.append(entry)
+        return entry
+
     def copy(self) -> LogBuilder:
         """An independent builder with the same entries."""
         return LogBuilder(self.org, self.entries)
@@ -219,22 +258,63 @@ def platform_builder() -> PlatformBuilder:
     log.add("device_decertify", device=pid("qdev"))
     log.add("role_revoke", subject=pid("alice"), role="inviter")
     log.add("org_platform_access", org=ORG, granted=False)
+    # identity anchors of users (ADR-060)
+    found = secrets("erin-platform")
+    log.add("user_invite", invite_id=found.invite_id, pk_inv=found.pk_inv, expires=EXPIRES)  # 11
+    log.add("user_certify", user=pid("alice"), pub=pub("alice"))  # 12
+    log.add("user_certify", user=pid("dave"), pub=pub("dave"))  # 13
+    log.add("user_certify", user=pid("bob"), pub=pub("bob"))  # 14
+    log.add("user_decertify", user=pid("bob"))  # 15
+    log.add("user_certify", user=pid("bob"), pub=pub("hub"))  # 16 (bob's identity renewed)
     return log
 
 
 PDEV_SEQ = 2
 QDEV_SEQ = 7
 PDEV_RECERT_SEQ = 13
+BASE_PLATFORM_COUNT = 11
+"""The platform entries before the identity anchors (the membership vectors of the devices refer to them)."""
+ERIN_INVITE_SEQ = 11
+ALICE_CERT_SEQ = 12
+DAVE_CERT_SEQ = 13
+BOB_CERT_SEQ = 14
+BOB_RENEWED_SEQ = 16
+PLATFORM_COUNT = 17
+INVITED = {"erin": ("erin-platform", ERIN_INVITE_SEQ)}
+"""Labels registered through a platform invitation: their ID is derived from it (`identity.invited_user_id`)."""
+
+
+def uid(label: str) -> str:
+    """The user ID of a label: derived from its platform invitation for `INVITED` labels, else `pid`."""
+    if label in INVITED:
+        code_label, seq = INVITED[label]
+        return identity_proof.invited_user_id(secrets(code_label).invite_id, ts(seq))
+    return pid(label)
 
 
 def recertified_builder() -> PlatformBuilder:
     """The platform log, then `pdev` decertified (its key is compromised) and certified again with new keys."""
-    log = PlatformBuilder(platform_builder().entries)
+    log = PlatformBuilder(platform_builder().entries[:BASE_PLATFORM_COUNT])
     log.add("device_decertify", device=pid("pdev"))  # 11
     found = secrets("pdev-again")
     log.add("device_invite", invite_id=found.invite_id, pk_inv=found.pk_inv, expires=EXPIRES)  # 12
     log.certify("pdev", code_label="pdev-again", key_label="pdev-new")  # 13
     return log
+
+
+def admit_builder() -> LogBuilder:
+    """The main log, then direct admissions (ADR-060): dave by a root certification with read on `W1`, erin (ID
+    derived from its platform invitation) by the identity proof of that invitation as admin, then erin admits bob (a
+    former member) again with its earlier keys, anchored by bob's certification that was ended later; dave leaves."""
+    log = LogBuilder(ORG, main_builder().entries)
+    log.admit("alice", "dave", DAVE_CERT_SEQ, ALICE_CERT_SEQ, wgs={W1: "read"})  # 27
+    log.admit("alice", "erin", ERIN_INVITE_SEQ, ALICE_CERT_SEQ, role="admin", proof_code="erin-platform")  # 28
+    log.admit("erin", "bob", BOB_CERT_SEQ, ERIN_INVITE_SEQ, wgs={W1: "write"}, by_proof_code="erin-platform")  # 29
+    log.add("remove", "dave", subject=pid("dave"))  # 30 (an admitted member leaves)
+    return log
+
+
+ADMIT_COUNT = 31
 
 
 def main_builder() -> LogBuilder:
@@ -440,7 +520,7 @@ def _ref(name: str, count: int) -> Json:
     return {"name": name, "count": count}
 
 
-def _platform_ref(count: int = 11, name: str = "platform") -> Json:
+def _platform_ref(count: int = BASE_PLATFORM_COUNT, name: str = "platform") -> Json:
     return {"name": name, "count": count, "root": sig_pk("root")}
 
 
@@ -463,8 +543,14 @@ def build_log() -> Json:
     main = main_builder()
     plat = platform_builder()
     recert = recertified_builder()
-    ctx = Context({"main": main.entries, "platform": plat.entries, "platform_recertified": recert.entries})
+    admit = admit_builder()
+    ctx = Context(
+        {"main": main.entries, "platform": plat.entries, "platform_recertified": recert.entries, "admit": admit.entries}
+    )
     founder = sig_pk("alice")
+    admitted = verify.verify_log(
+        admit.entries, founder, platform=platform.verify_platform_log(plat.entries, sig_pk("root")).state
+    )
     verified = verify.verify_log(
         main.entries, founder, platform=platform.verify_platform_log(plat.entries, sig_pk("root")).state
     )
@@ -792,6 +878,7 @@ def build_log() -> Json:
             "log_rollback",
         ),
         neg("L10_lh_beyond_head", "require_lh", _main_args(27, lh=27), "log_fork"),
+        *_admit_negatives(ctx, admit),
     ]
     return {
         "about": "Membership log of 04-crypto.md section 4.7: a valid chain with every entry type, its states, and "
@@ -800,7 +887,12 @@ def build_log() -> Json:
         "ids": _ids(),
         "founder": founder,
         "platform_root": sig_pk("root"),
-        "logs": {"main": main.entries, "platform": plat.entries, "platform_recertified": recert.entries},
+        "logs": {
+            "main": main.entries,
+            "platform": plat.entries,
+            "platform_recertified": recert.entries,
+            "admit": admit.entries,
+        },
         "excluded": [
             {"platform": _platform_ref(), "log": _ref("main", 27), "excluded": []},
             {
@@ -817,6 +909,12 @@ def build_log() -> Json:
             "heads": [{"seq": s.seq, "hash": s.head} for s in verified.states],
             "projections": [s.projection() for s in verified.states],
         },
+        "admit_valid": {
+            "log": _ref("admit", ADMIT_COUNT),
+            "platform": _platform_ref(PLATFORM_COUNT),
+            "heads": [{"seq": s.seq, "hash": s.head} for s in admitted.states[27:]],
+            "projections": [s.projection() for s in admitted.states[27:]],
+        },
         "extends": [
             {"head": {"seq": 20, "hash": entry_hash(main.entries[20])}, "log": _ref("main", 27)},
             {"head": {"seq": 26, "hash": entry_hash(main.entries[26])}, "log": _ref("main", 27)},
@@ -824,6 +922,129 @@ def build_log() -> Json:
         "lh": {"log": _ref("main", 27), "needs_refresh": [{"lh": 26, "refresh": False}, {"lh": 27, "refresh": True}]},
         "invalid": invalid,
     }
+
+
+def _admit_negatives(ctx: Context, admit: LogBuilder) -> list[Json]:
+    """One broken variant per rule of `admit` (ADR-060), against the platform log with the identity anchors."""
+    neg = ctx.negative
+    full = _platform_ref(PLATFORM_COUNT)
+
+    def broken(count: int, build: Callable[[LogBuilder], object], platform_ref: Json = full) -> Json:
+        prefix = LogBuilder(ORG, admit.entries[:count])
+        build(prefix)
+        return {
+            "log": _ref("admit", count),
+            "founder": sig_pk("alice"),
+            "platform": platform_ref,
+            "entries": prefix.entries[count:],
+        }
+
+    def dave(**options: Any) -> Callable[[LogBuilder], object]:
+        fields: dict[str, Any] = {"label": "dave", "platform_seq": DAVE_CERT_SEQ, "by_platform_seq": ALICE_CERT_SEQ}
+        fields.update(options)
+        return lambda b: b.admit(fields.pop("by", "alice"), **fields)
+
+    return [
+        neg(
+            "admit_by_member",
+            "verify_log",
+            broken(28, lambda b: b.admit("dave", "bob", BOB_CERT_SEQ, DAVE_CERT_SEQ)),
+            "log_rights",
+        ),
+        neg("admit_default_wg", "verify_log", broken(27, dave(wgs={W0: "write"})), "log_rights"),
+        neg("admit_archived_wg", "verify_log", broken(27, dave(wgs={W2: "read"})), "log_rights"),
+        neg("admit_active_member", "verify_log", broken(28, dave()), "log_admit"),
+        neg("admit_device_subject", "verify_log", broken(27, dave(label="device", key_label="dave")), "log_admit"),
+        neg(
+            "admit_former_member_renewed_keys",
+            "verify_log",
+            broken(
+                29,
+                lambda b: b.admit(
+                    "erin", "bob", BOB_RENEWED_SEQ, ERIN_INVITE_SEQ, key_label="hub", by_proof_code="erin-platform"
+                ),
+            ),
+            "log_admit",
+        ),
+        neg("admit_anchor_not_identity", "verify_log", broken(27, dave(platform_seq=PDEV_SEQ)), "log_admit"),
+        neg(
+            "admit_certification_of_other_user",
+            "verify_log",
+            broken(27, dave(label="carol", key_label="dave")),
+            "log_admit",
+        ),
+        neg("admit_hub_swaps_keys", "verify_log", broken(27, dave(key_label="hub")), "log_admit"),
+        neg(
+            "admit_certification_with_proof",
+            "verify_log",
+            broken(27, dave(proof_code="erin-platform")),
+            "log_admit",
+        ),
+        neg(
+            "admit_invitation_without_proof",
+            "verify_log",
+            broken(27, dave(label="erin", platform_seq=ERIN_INVITE_SEQ)),
+            "log_admit",
+        ),
+        neg(
+            "admit_proof_of_other_code",
+            "verify_log",
+            broken(27, dave(label="erin", platform_seq=ERIN_INVITE_SEQ, proof_code="platform-user")),
+            "log_admit",
+        ),
+        neg(
+            "admit_hub_swaps_proven_keys",
+            "verify_log",
+            {**broken(28, lambda _b: None), "entries": [_resign(admit.entries[28], "alice", pub=pub("hub"))]},
+            "log_admit",
+        ),
+        neg(
+            "admit_proof_for_other_account",
+            "verify_log",
+            broken(27, dave(platform_seq=ERIN_INVITE_SEQ, proof_code="erin-platform")),
+            "log_admit",
+        ),
+        neg("admit_admitter_unproven", "verify_log", broken(27, dave(by_platform_seq=DAVE_CERT_SEQ)), "log_admit"),
+        neg(
+            "admit_admitter_proof_on_certification",
+            "verify_log",
+            broken(27, dave(by_proof_code="erin-platform")),
+            "log_admit",
+        ),
+        neg(
+            "admit_anchor_beyond_platform_log",
+            "verify_log",
+            broken(27, dave(), _platform_ref(DAVE_CERT_SEQ)),
+            "log_admit",
+        ),
+        neg("admit_forged_by_hub", "verify_log", broken(27, dave(signer="hub")), "log_signature"),
+        neg(
+            "admit_decertified_anchor_at_hub",
+            "append_log",
+            {
+                "log": _ref("admit", 29),
+                "founder": sig_pk("alice"),
+                "platform": full,
+                "append": [admit.entries[29]],
+                "now": ts(40),
+            },
+            "log_admit",
+        ),
+        neg(
+            "admit_batch_without_wraps",
+            "check_batch",
+            {
+                "log": _ref("admit", 27),
+                "founder": sig_pk("alice"),
+                "platform": full,
+                "append": [admit.entries[27]],
+                "wraps": [make_wrap("alice", "org", ORG, 3, "dave")],
+                "wrapped_by": pid("alice"),
+                "now": ts(40),
+            },
+            "log_admit",
+        ),
+    ]
 
 
 # --- platform-log.json ---
@@ -946,6 +1167,41 @@ def build_platform_log() -> Json:
             ),
             "log_rights",
         ),
+        neg(
+            "user_certify_while_certified",
+            "verify_platform_log",
+            broken(14, lambda b: b.add("user_certify", user=pid("dave"), pub=pub("hub"))),
+            "log_rights",
+        ),
+        neg(
+            "user_decertify_not_certified",
+            "verify_platform_log",
+            broken(14, lambda b: b.add("user_decertify", user=pid("bob"))),
+            "log_rights",
+        ),
+        neg(
+            "user_certify_device_id",
+            "verify_platform_log",
+            broken(12, lambda b: b.add("user_certify", user=pid("pdev"), pub=pub("alice"))),
+            "log_rights",
+        ),
+        neg(
+            "device_certify_user_id",
+            "verify_platform_log",
+            broken(
+                13,
+                lambda b: (
+                    b.add(
+                        "device_invite",
+                        invite_id=secrets("alice-dev").invite_id,
+                        pk_inv=secrets("alice-dev").pk_inv,
+                        expires=EXPIRES,
+                    ),
+                    b.certify("alice", code_label="alice-dev"),
+                ),
+            ),
+            "log_rights",
+        ),
         neg("unknown_type", "verify_platform_log", args(1, _presign(first, type="device_delete")), "log_type"),
         neg("by_not_root", "verify_platform_log", args(1, _presign(first, by=pid("alice"))), "header_invalid"),
         neg("seq_conflict", "append_platform_log", {**args(3), "append": [plat.entries[4]]}, "seq_conflict"),
@@ -954,11 +1210,15 @@ def build_platform_log() -> Json:
         "about": "Platform log of 04-crypto.md section 4.8: every entry type, a decertification, the states, and one "
         "broken variant per rule P1-P4 and per type rule (section 6.2). See README.md, 'Log vectors'.",
         "identities": {
-            name: value for name, value in _identities().items() if name in ("root", "pdev", "qdev", "hub", "alice")
+            name: value
+            for name, value in _identities().items()
+            if name in ("root", "pdev", "qdev", "hub", "alice", "bob", "dave", "erin")
         },
         "root": root,
         "logs": {"platform": plat.entries},
-        "invite_codes": {label: b64u_encode(code(label)) for label in ("pdev", "qdev", "platform-user")},
+        "invite_codes": {
+            label: b64u_encode(code(label)) for label in ("pdev", "qdev", "platform-user", "erin-platform")
+        },
         "valid": {
             "log": _ref("platform", len(plat.entries)),
             "heads": [{"seq": state.seq, "hash": state.head} for state in verified.states],

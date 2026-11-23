@@ -1,4 +1,9 @@
 {
+  "account_code_invalid": {
+    "title": "Kennung ungültig",
+    "body": "Eine Kontokennung hat 12 Zeichen (Buchstaben und die Ziffern 2–7).",
+    "action": "Prüfe die Kennung und gib sie erneut ein."
+  },
   "agent_exited": {
     "title": "Agent beendet",
     "body": "Claude Code wurde unerwartet beendet.",
@@ -154,6 +159,11 @@
     "body": "Ein Eintrag mit dieser ID existiert bereits mit anderem Inhalt.",
     "action": "Lade die Seite neu und versuche es noch einmal."
   },
+  "identity_unproven": {
+    "title": "Konto nicht gefunden",
+    "body": "Es gibt kein Konto mit dieser Kennung oder ID, das direkt aufgenommen werden kann.",
+    "action": "Prüfe die Kennung oder sende stattdessen einen Einladungslink."
+  },
   "invite_code_invalid": {
     "title": "Ungültiger Einladungscode",
     "body": "Der Einladungscode ist nicht gültig.",
@@ -228,6 +238,11 @@
     "title": "Ungültige Annahme",
     "body": "Eine Einladungsannahme in der Mitgliederhistorie ist ungültig.",
     "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+  },
+  "log_admit": {
+    "title": "Aufnahme abgelehnt",
+    "body": "Das Konto konnte nicht aufgenommen werden: Seine Identität ließ sich nicht bestätigen.",
+    "action": "Prüfe das Konto und versuche es erneut, oder sende einen Einladungslink."
   },
   "log_chain": {
     "title": "Mitgliederhistorie unterbrochen",
@@ -368,6 +383,11 @@
     "title": "Ungültiger Pfad",
     "body": "Ein Dateipfad ist nicht erlaubt.",
     "action": "Verwende einen Pfad innerhalb des Repositorys."
+  },
+  "peer_outdated": {
+    "title": "Ein Gerät braucht ein Update",
+    "body": "Ein Gerät dieser Organisation läuft mit einer älteren Version und würde die Änderung nicht verstehen.",
+    "action": "Aktualisiere das Gerät und versuche es dann erneut."
   },
   "platform_access_denied": {
     "title": "Keine Plattform-Geräte",

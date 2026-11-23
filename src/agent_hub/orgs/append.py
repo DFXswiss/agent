@@ -12,7 +12,9 @@
    with `now` (invitation expiry, certification validity) and the decertified platform devices excluded;
 5. `accept` of a user: `pub` is the appender's registered identity (`log_accept`) and the invitation is not bound to
    another registered user (`409 invite_registered`, 04-crypto.md section 5.2a); the invitation (of a user or a device)
-   is marked used, its package deleted and the use audited (`invite.use`);
+   is marked used, its package deleted and the use audited (`invite.use`); `admit` and `device_assign`: the hub checks
+   of `agent_hub.orgs.admit` (registered identity, `409 peer_outdated`), and each admitted user is notified
+   (`org.admitted`);
 6. storage: the entries (`membership_entry`), the projections (`agent_hub.orgs.projection`), the wraps, the deletion
    of the wraps of removed principals in this org, the head, `platform_access` and `rotation_pending` of the org and
    one audit row `log.<type>` per entry;
@@ -49,6 +51,7 @@ from agent_hub.log.state import DEVICE, USER, WG, OrgState
 from agent_hub.log.verify import VerifiedLog
 from agent_hub.notifications.rules import Notification
 from agent_hub.orgs import logs, projection
+from agent_hub.orgs.admit import admitted_notices, check_admits
 
 Connection = psycopg.Connection[Any]
 Body = dict[str, Any]
@@ -84,7 +87,7 @@ class AppendResult:
 Extra = Callable[[Connection, AppendResult], None]
 
 
-ROLE_CHANGES = frozenset({"role", "remove", "grant", "ungrant"})
+ROLE_CHANGES = frozenset({"role", "remove", "grant", "ungrant", "admit"})
 """Entry types that change who may do what; taken by an agent they notify its user (ADR-056 §5)."""
 
 
@@ -299,12 +302,14 @@ def append_batch(
     after = batch.log
     bodies = [cast(Body, entry["body"]) for entry in after.entries[log.head.seq + 1 :]]
     _accepts(connection, org_id, bodies, appender, now)
+    excluded = frozenset() if platform is None else platform.excluded(after.state)
+    admits = check_admits(connection, after, bodies, excluded)
     persist_range(connection, org_id, batch, first=log.head.seq + 1, wraps=wraps, appender=appender, now=now)
-    notices: list[Notification] = []
+    notices: list[Notification] = admitted_notices(connection, org_id, admits, now)
     if appender.kind == "user" and any(body["type"] in ROLE_CHANGES for body in bodies):
         # an agent's role change or removal: the user is told (ADR-056 §5; nothing for a browser session), live after
         # the commit (`publish_append`)
-        notices = account_change(connection, UUID(appender.id), "role_changed", now, target=org_id)
+        notices += account_change(connection, UUID(appender.id), "role_changed", now, target=org_id)
     stored = store_batch_events(connection, events, after, root_key=root_key, author=appender.id, now=now)
     projection.update_org(connection, org_id, after, platform, access)
     users, devices = members(after.state)

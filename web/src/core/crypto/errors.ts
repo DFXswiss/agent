@@ -20,6 +20,7 @@ export const CRYPTO_CODES = [
   'size_exceeded',
   'wrap_unauthorized',
   'platform_root_mismatch',
+  'account_code_invalid',
 ] as const;
 
 /** 04-crypto.md section 8, "Log" (raised by src/core/log, which builds on this package). */
@@ -29,6 +30,7 @@ export const LOG_CODES = [
   'log_chain',
   'log_genesis',
   'log_accept',
+  'log_admit',
   'log_signature',
   'log_rights',
   'log_epoch',

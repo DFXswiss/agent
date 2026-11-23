@@ -3,7 +3,8 @@
 A device is **eligible** for a user when it is an active device (`device.state = active`, principal not disabled) that
 is an active member of an org and currently assigned to a workgroup of that org in which the user has explicit access
 (read or write; every member has write on the default workgroup; the inherited read of an admin does not count,
-ADR-058) while the user is an active member of that org. This is the
+ADR-058) while the user is an active member of that org that joined by its own entry (`org_member.consented`; an org
+that admitted the user without its consent gets no `CK`, ADR-060). This is the
 `cred` reader rule W2 of `agent_hub.log.wraps.cred_readers`, answered from the projections of the membership logs,
 which are written in the same transaction as the log entries (`agent_hub.orgs.rights`).
 
@@ -32,6 +33,7 @@ _ELIGIBLE = (
     " JOIN hub.org_member md ON md.org_id = w.org_id AND md.principal_id = d.device_id AND md.removed_seq IS NULL"
     " JOIN hub.wg_access a ON a.wg_id = d.wg_id AND a.revoked_seq IS NULL AND NOT a.inherited"
     " JOIN hub.org_member mu ON mu.org_id = w.org_id AND mu.principal_id = a.user_id AND mu.removed_seq IS NULL"
+    " AND mu.consented"
     " JOIN hub.device dv ON dv.id = d.device_id AND dv.state = 'active'"
     " JOIN hub.principal p ON p.id = dv.id AND p.disabled_at IS NULL"
     " WHERE d.unassigned_seq IS NULL AND a.user_id = %(user)s"

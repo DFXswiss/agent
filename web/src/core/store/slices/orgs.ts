@@ -13,6 +13,11 @@ export interface OrgBlock {
   readonly stored: Head | null;
   readonly served: Head | null;
   readonly lh: number | null;
+  /**
+   * `outdated`: the log holds an entry type this bundle does not know (`log_type`), written by a newer version; the
+   * UI offers a reload instead of a verification error (ADR-060, forward compatibility).
+   */
+  readonly reason?: 'outdated';
 }
 
 export interface OrgEntry {
@@ -59,9 +64,13 @@ export function setLog(store: Store, org: string, log: VerifiedLog): void {
   updateOrg(store, org, (entry) => ({ ...entry, log }));
 }
 
-/** The blocking error state; the first block stays (its evidence is what support needs). */
-export function blockOrg(store: Store, org: string, block: OrgBlock): void {
-  updateOrg(store, org, (entry) => (entry.blocked === null ? { ...entry, blocked: block } : entry));
+/**
+ * The blocking error state; the first block stays (its evidence is what support needs). A refusal for an unknown
+ * entry type (`log_type`) is marked `outdated`.
+ */
+export function blockOrg(store: Store, org: string, block: Omit<OrgBlock, 'reason'>): void {
+  const blocked: OrgBlock = block.code === 'log_type' ? { ...block, reason: 'outdated' } : block;
+  updateOrg(store, org, (entry) => (entry.blocked === null ? { ...entry, blocked } : entry));
 }
 
 export function addKeys(store: Store, org: string, keys: ReadonlyMap<string, Secret>): void {

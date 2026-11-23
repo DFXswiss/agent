@@ -45,7 +45,7 @@ in `agent-core` (uses `agent_hub.crypto`); `contracts/` is owned by `agent-core`
 | Org key `OK_e` | 32 B, epoch e | admin browser (genesis/rotate) | org members (users), devices assigned to any wg of the org **(changed: devices receive OK, ADR-007)** | wraps only |
 | Workgroup key `WK_e` | 32 B, epoch e | admin/writer browser | wg members, **every org admin** (inherited read, ADR-058), devices assigned to the wg | wraps only |
 | Credential key `CK_e` (per user) | 32 B, epoch e | user browser | the user, devices assigned to any wg in which the user is an explicit member (not through the inherited read of an admin, ADR-058) | wraps only |
-| Invitation code | 16 B | inviting browser / operator CLI | invitee (out of band) | only `invite_id`, `pk_inv`, sealed package |
+| Invitation code | 16 B | inviting browser / operator CLI | invitee (out of band) | only `invite_id`, `pk_inv`, sealed package; since ADR-060 also the identity proof `id_sig` of a platform registration |
 | Per-event key `k_event` | 32 B | HKDF per event | transient | never |
 | Dedupe key `dk_e` | 32 B | HKDF from `WK_e` | runner | never; tags only |
 | Runner storage key | 32 B | HKDF from device seed | runner memory | never |
@@ -62,6 +62,9 @@ in `agent-core` (uses `agent_hub.crypto`); `contracts/` is owned by `agent-core`
 | `invite_id` | `b64u(HKDF(ikm=code16, info=P‖"invite-id")[:16])` |
 | `package_key` | `HKDF(ikm=code16, info=P‖"invite-package")` |
 | `sk_inv` | Ed25519 private key from seed `HKDF(ikm=code16, info=P‖"invite-sign")`; `pk_inv` its public key |
+| `id_sig` **(new, ADR-060)** | identity proof of a registration through a platform invitation: `Ed25519_{sk_inv}(P‖"invite-identity\0"‖canonical({"pub":{kem,sig},"user":user_id}))` |
+| invited user ID **(new, ADR-060)** | the user ID of a registration through the platform invitation `invite_id` whose `user_invite` entry has the time `ts`: UUIDv7 with the Unix milliseconds of `ts` and the random bits `SHA-256(P‖"user-id\0"‖invite_id_raw)[:10]` (version and variant bits set as for every UUIDv7) |
+| account code **(new, ADR-060)** | `base32(SHA-256(P‖"account-code\0"‖user_id‖"\0"‖sig_raw‖kem_raw))[:12]`, shown `XXXX-XXXX-XXXX`; the parser strips `-` and spaces, uppercases and reads `0`, `1`, `8` as `O`, `I`, `B`; anything but 12 characters of `A–Z2–7` is `account_code_invalid` |
 | `k_event` | `HKDF(ikm=scope_key, salt=header.salt (32 B), info=P‖"event")` |
 | `dk_e` **(new)** | `HKDF(ikm=WK_e, info=P‖"dedupe")` |
 | `k_cred` **(new)** | `HKDF(ikm=CK_e, salt=header.salt, info=P‖"credential")` |
@@ -70,7 +73,8 @@ in `agent-core` (uses `agent_hub.crypto`); `contracts/` is owned by `agent-core`
 
 Signature/AAD labels (all prefixed with `P`): `invite-register\0` (registration proof, ADR-043), `bundle\0`, `wrap\0`, `event-sig\0`, `log\0`, `platform-log\0`
 **(new)**, `invite-package\0`, `credential-sig\0` **(new)**, `request-wrap\0` **(new)**, `request-sig\0`
-**(new)**, `dedupe\0` **(new)**, `recovery-proof\0` **(new)**, `enroll\0` **(new)**.
+**(new)**, `dedupe\0` **(new)**, `recovery-proof\0` **(new)**, `enroll\0` **(new)**, `invite-identity\0`, `account-code\0` and
+`user-id\0` **(new, ADR-060)**.
 
 Enrollment text **(new)**: `P‖"enroll\0"‖canonical(enrollment body without enroll_sig and inv_sig)` (body of
 `POST /v1/device/enroll`). `enroll_sig` = Ed25519 of the device identity, `inv_sig` = Ed25519 of `sk_inv`, both over
@@ -198,6 +202,12 @@ Entry hash = `b64u(SHA-256(canonical(entry)))` (whole entry including signatures
 | `device_unassign` | `device`, `wg` | admin |
 | `remove` | `subject` (user or device) | admin, or `subject == by` (leave); at least one admin must remain |
 | `rotate` | `scope` org\|wg, `scope_id`, `epoch` (= current + 1) | org: admin; wg: admin or wg writer |
+| `admit` **(new, ADR-060)** | `subject`, `pub{kem,sig}`, `platform_seq`, `id_sig` (`""` or 64-byte b64u), `by_platform_seq`, `by_id_sig` (`""` or 64-byte b64u), `role` admin\|member, `wgs{wg: read\|write}` | admin; every `wgs` workgroup writable and not the default one (`log_rights`); then (`log_admit`) `subject` not an active principal (a former **user** with the same keys may be admitted again) and two identity anchors in the platform log (§4.8): the subject's `pub` at `platform_seq` with `id_sig`, and the admitting admin's keys (state before the entry) at `by_platform_seq` with `by_id_sig`; no platform state: `log_admit`. Effect as `accept` of a user invitation with `role` and `wgs`, but the principal has **not consented** (below). At the hub additionally: `pub` is the subject's registered identity of an active user, certifications still valid (`log_admit`), the batch wraps the current org epoch and default-workgroup epoch for the subject (`log_admit`), every active device of the org announced `log.admit` (`409 peer_outdated`) |
+
+**Consent (ADR-060):** a user that joined by its own signed entry (`genesis`, `accept`) has consented; a user that
+entered by `admit` has not, until it leaves and joins again through an invitation (its own `accept`). The devices of an org in which the owner has not
+consented are no recipients of the owner's credential key (§6.3), so being admitted never shares the admitted user's
+credentials. Everything else (reading, writing, leaving with `remove`) is the same as for any member.
 
 Derived rights: org member ⇒ read on org scope and **write on the default workgroup** (not reducible in v1);
 admin ⇒ org write (management, org whiteboard, profiles) **and read on every workgroup of the org** (inherited read,
@@ -230,7 +240,14 @@ Types: `root` (seq 0, `pub`), `device_invite` (`invite_id`, `pk_inv`, `expires`)
 (`device`, `pub{kem,sig}`, `invite_id`, `enroll_sig`, `inv_sig` – both over the enrollment text of §3),
 `device_decertify` (`device`), `role_grant` / `role_revoke` (`subject` user, `role` = `inviter`), `user_invite`
 (`invite_id`, `pk_inv`, `expires`; `pk_inv` since ADR-043; platform user invitation created by the operator CLI `agent-hub platform invite-user`,
-the bootstrap path for the first users and inviters), `org_platform_access` (`org`, `granted` bool; ADR-026).
+the bootstrap path for the first users and inviters), `org_platform_access` (`org`, `granted` bool; ADR-026),
+`user_certify` (`user`, `pub{kem,sig}`; ADR-060: the root attests the identity keys of an existing account; refused
+while the user has a valid certification or when the ID was ever certified as a device, and `device_certify` is refused
+for an ID that was ever certified as a user) and `user_decertify` (`user`; ends the valid certification).
+**Identity anchor (ADR-060):** the platform entry at `seq` anchors `(user, pub)` with the proof `p` if it is a
+`user_certify` of exactly `(user, pub)` and `p == ""` (at the hub: not decertified), or a `user_invite` for which `user`
+is the invited user ID (§3) and `p` is a valid `id_sig` of `(user, pub)` under its `pk_inv`. A proof made with one code
+therefore names exactly the one account registered through that invitation.
 The operator CLI submits entries with root-signed requests (`03-api.md` §1). Platform devices have no invitation
 package: they pin the hub key from `/v1/config` on first use and verify the platform log against their configured
 root key (`AGENT_RUNNER_PLATFORM_ROOT_KEY`) before trusting anything. The root public
@@ -423,6 +440,23 @@ verified log), right of `author` at entry `lh` (and the event's `lh` ≤ the rea
 refresh), epoch key availability, decrypt. Failures yield the error codes of §8 and the event is shown as
 "unverifiable" (never silently dropped, never rendered as content).
 
+### 5.13 Direct admission of an existing account **(new, ADR-060)**
+
+1. The admin's client (browser or agent tool) gets the account's identity: `GET /v1/users/{user}/identity` (by user
+   ID), `GET /v1/users/lookup?code=` (by the account code the person passed on) or one of `GET /v1/me/invitees`
+   (accounts registered through the admin's own platform invitations). It verifies the answer against the platform
+   log it verified with the compiled root key (§4.8 identity anchor) and, for a typed code, recomputes the account code
+   from the proven keys. It never takes keys from the hub unverified.
+2. It appends `admit{subject, pub, platform_seq, id_sig, by_platform_seq, by_id_sig, role, wgs}` (its own anchor from
+   its own identity answer) with the wraps of the current `OK` and default `WK` and of every listed `WK` it holds for
+   the subject (`POST /v1/orgs/{org}/log`); the rest arrives by catch-up (§5.11).
+3. The admitted user's browser finds the org in `GET /v1/me` and the notification `org.admitted`; it verifies the log
+   like any other (its own principal carries its own keys, and L5 proved the admitter's identity, so a hub cannot
+   invent an org for it) and can leave with `remove{subject = by}` at once.
+4. Accounts without an anchor (registered before ADR-060 or through an org invitation): the operator certifies them
+   with `agent-hub platform certify-user --user ID [--code …]`; until then the hub answers `404 identity_unproven` and
+   the admin sends an invitation link instead.
+
 ## 6. Verification rules
 
 ### 6.1 Log verification (clients and hub)
@@ -446,7 +480,7 @@ P1–P4 analogous to L1–L4 with the compiled root key; certifications are vali
 W1 a principal may wrap a scope epoch for itself if it holds the key. W2 a holder may wrap for any principal
 that the verified log entitles to that scope at that epoch (members of the scope, every org admin for a `wg` scope;
 devices assigned; for `cred` scope: the owner and devices assigned to any workgroup in which the owner is an explicit
-member). Holders are the creator of the epoch and every principal that could read the scope while the epoch was
+member, in orgs in which the owner has consented, §4.7). Holders are the creator of the epoch and every principal that could read the scope while the epoch was
 current (so an admin holds what it read by inheritance). W3 the hub stores a
 wrap only if W1/W2 hold for `wrapped_by` according to its own log state; recipients re-check W1/W2 and ignore
 wraps that violate them (`wrap_unauthorized`).
@@ -476,6 +510,7 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | Audit and read-log rows (actor, action, target IDs, result) | KONZEPT §6, §8 |
 | Credential metadata (owner, kind, version) | lifecycle |
 | User settings (model access preference, model choice, locale) | session start |
+| Admission (ADR-060): `user_certify` entries, the identity proof of a platform registration, the capabilities a device announced (`device.features`), which account looked up which identity or account code (read log) | direct admission without consent steps |
 | Agents of a user (`11-agent-access.md` §2): agent ID, public keys, state, times, claim hash, the source address of an open pairing (≤ 70 min), which login confirmed which pairing, which actions were taken by an agent (`agent_id` of audit rows); the sealed identity and the sealed label are ciphertexts the hub cannot open | delegated agent access (ADR-056) |
 
 Not visible: everything listed as confidential in `00-overview.md` §3, invitation and recovery codes, PRF
@@ -485,8 +520,8 @@ outputs, scope keys, private keys, credential values, the handover secret of an 
 
 Crypto/format: `non_ascii`, `header_invalid`, `signature_invalid`, `decrypt_failed`, `prf_length`, `prf_missing`,
 `recovery_code_length`, `hpke_short`, `invite_code_length`, `invite_code_invalid`, `event_conflict`,
-`epoch_stale`, `kind_not_allowed`, `size_exceeded`, `wrap_unauthorized`, `platform_root_mismatch`.
-Log: `seq_conflict`, `log_empty`, `log_chain`, `log_genesis`, `log_accept`, `log_signature`, `log_rights`,
+`epoch_stale`, `kind_not_allowed`, `size_exceeded`, `wrap_unauthorized`, `platform_root_mismatch`, `account_code_invalid`.
+Log: `seq_conflict`, `log_empty`, `log_chain`, `log_genesis`, `log_accept`, `log_admit`, `log_signature`, `log_rights`,
 `log_epoch`, `log_type`, `log_rollback`, `log_fork`, `invite_not_in_log`, `invite_consumed`, `invite_expired`,
 `invite_revoked`, `author_not_writer`, `last_admin`, `rotation_required`.
 
@@ -498,6 +533,7 @@ Log: `seq_conflict`, `log_empty`, `log_chain`, `log_genesis`, `log_accept`, `log
 | Active hub: inject member, swap keys, forge wraps, forge events | Clients verify log against founder key; `inv_sig` binds invitee keys to the code; wrap info binds recipient/epoch/scope; wraps and events signed | Withholding data; serving an old log (L9 detects rollback per client; cross-client fork detection via `lh`); serving another recovery slot makes the settings show "a code exists" (ADR-055) |
 | Hub serves malicious JavaScript | strict CSP without inline script, SRI for all assets including lazily loaded chunks (`06-web.md` §10.2), reproducible build with published hashes (`06-web.md` §10), root key compiled into the build | Not fully solvable for web E2EE; documented in the UI's "Security" page |
 | Intercepted invitation code | single use, expiry, revocation, accept visible in the log and the member list | First user of the code wins; channel must be confidential |
+| Active hub or another admin: forced admission (ADR-060) | identities only from root-anchored or invitation-anchored keys (§4.8), the admitter's own anchor in every `admit`, no credential key for orgs without consent, notification and immediate leave | The operator could certify a false identity for an account registered before ADR-060 (the certification of existing accounts rests on the hub's records at that moment unless `--code` is used); the holder of a platform invitation code could have the account of that invitation admitted with keys of its choice together with the hub; an admitter learns the admitted user's display name once it opens the org |
 | Removed member / unpaired device / demoted admin | atomic rotation batch (self-demotion and leaving: background rotation by the remaining admins), immediate refusal at the hub | Content already read |
 | Stolen phone or laptop | UV required on every ceremony; session key non-extractable; 12 h certificates; passkey removal | Unlocked open session until expiry or sign-out |
 | XSS | CSP, no inline script, keys non-extractable after import | XSS can use keys while the page is open |

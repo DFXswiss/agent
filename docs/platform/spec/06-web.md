@@ -387,6 +387,12 @@ usage; each node links to `/o/:org/s/:session`.
     expiry (72 h default, 1 h–30 d). Result screen shows link `<origin>/invite#<code>` and the code, with copy buttons
     and a warning to transmit confidentially; the code is not shown again. Open invitations list with revoke
     (`03-api.md` §4.2).
+  - **Add an existing account (ADR-060):** the account code the person sees in its settings (or one of the accounts
+    registered through the admin's own platform invitations), role, workgroups, one button. The identity is checked
+    against the platform log before the button is enabled (`core/org/admit.ts`); the person does nothing and finds the
+    org at its next sign-in, with the notification `org.admitted`. Settings → Passkeys shows the user's own account
+    code (computed from the unlocked identity). An org whose log holds an entry type the bundle does not know is shown
+    as "a newer version is available – reload" instead of the blocking error.
   - **Change role** (`role` entry); last-admin protection: the control is hidden for the last admin, the hub
     returns `last_admin` otherwise. Demoting an admin goes through the same batch as a removal (the rotation of every
     workgroup it read only as admin is added automatically); the dialog says in one sentence that already read

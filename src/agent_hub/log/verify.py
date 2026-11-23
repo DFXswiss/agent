@@ -15,7 +15,12 @@ against the state **before** it, in this order (the same in every implementation
 5. every other type: L4 `by` known and `sig` valid under its key as known before the entry (`log_signature`);
    L8 `by` not removed (`log_rights`);
 6. L5 the type rule of section 4.7 (`log_rights`; `last_admin`; `invite_*` for `invite_revoke`);
-   L6 `rotate.epoch == current + 1` and `wg_create.epoch == 1` (`log_epoch`).
+   L6 `rotate.epoch == current + 1` and `wg_create.epoch == 1` (`log_epoch`). `admit` (ADR-060): by an admin, every
+   workgroup writable and not the default one (`log_rights`), then the subject not an active principal (a former user
+   with the same identity keys may be admitted again), the subject's identity anchored at `platform_seq` with
+   `id_sig` and the admitting admin's identity (its keys in the state before the entry) at `by_platform_seq` with
+   `by_id_sig` (`PlatformState.identity_anchored`; without platform state refused) (`log_admit`). The admitted user
+   has not consented (`Principal.consented`): devices of this org are no recipients of its credential key.
 
 `now` (hub receipt time) switches on the checks that only the hub can make at append time: invitation expiry and,
 for `device_assign` of a platform device, that the org has platform access (ADR-026, the hub answers
@@ -123,6 +128,36 @@ def _accept(state: OrgState, body: Body, entry: Body, seq: int, now: datetime | 
         invites={**state.invites, invite.invite_id: replace(invite, accepted_seq=seq)},
         access=access,
         assignments=assignments,
+    )
+
+
+def _admit(state: OrgState, body: Body, seq: int, ctx: _Context) -> OrgState:
+    subject, role, by = cast(str, body["subject"]), cast(str, body["role"]), cast(str, body["by"])
+    pub, wgs = cast(dict[str, str], body["pub"]), cast(dict[str, str], body["wgs"])
+    _rights(all(state.writable(wg) and wg != state.default_wg for wg in wgs))
+    former = state.principals.get(subject)
+    rejoin_valid = former is None or (
+        not former.active and former.kind == USER and (former.kem, former.sig) == (pub["kem"], pub["sig"])
+    )
+    author = state.principals[by]
+    platform, current = ctx.platform, ctx.now is not None
+    anchored = platform is not None and (
+        platform.identity_anchored(cast(int, body["platform_seq"]), subject, pub, body["id_sig"], current=current)
+        and platform.identity_anchored(
+            cast(int, body["by_platform_seq"]),
+            by,
+            {"kem": author.kem, "sig": author.sig},
+            body["by_id_sig"],
+            current=current,
+        )
+    )
+    if not (rejoin_valid and anchored):
+        fail("log_admit")
+    principal = Principal(subject, USER, role, pub["kem"], pub["sig"], seq, consented=False)
+    return replace(
+        state,
+        principals={**state.principals, subject: principal},
+        access={**state.access, **{(subject, wg): level for wg, level in wgs.items()}},
     )
 
 
@@ -309,6 +344,7 @@ _ADMIN_ONLY: dict[str, Transition] = {
     "ungrant": lambda state, body, _s, _c: _ungrant(state, body),
     "device_assign": _device_assign,
     "device_unassign": lambda state, body, _s, _c: _device_unassign(state, body),
+    "admit": _admit,
 }
 _OTHERS: dict[str, Transition] = {
     "remove": lambda state, body, seq, _c: _remove(state, body, seq),

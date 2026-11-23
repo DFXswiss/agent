@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-invitees.response.json",
+  "title": "GET /v1/me/invitees response",
+  "description": "accounts registered through the caller's own platform invitations (ADR-060), newest first; identity is null while the account cannot be admitted directly",
+  "type": "object",
+  "properties": {
+    "invitees": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "invite_id": {
+            "$ref": "../common.json#/$defs/invite_id"
+          },
+          "registered_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "identity": {
+            "anyOf": [
+              {
+                "$ref": "objects.json#/$defs/user_identity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "user_id",
+          "invite_id",
+          "registered_at",
+          "identity"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "invitees"
+  ],
+  "additionalProperties": false
+}

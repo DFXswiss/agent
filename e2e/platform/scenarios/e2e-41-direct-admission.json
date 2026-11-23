@@ -1,0 +1,23 @@
+{
+  "name": "e2e-41-direct-admission",
+  "description": "E2E-41: a task of the admin in a team workgroup, then a task of the member admitted directly (admit) in the same workgroup.",
+  "steps": [
+    {
+      "id": "admin-task",
+      "expect": { "user_text_contains": "E2E40-ADMIN", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": { "content": [{ "type": "text", "text": "Admin task kz40-answer-a3c5e7." }] }
+    },
+    {
+      "id": "admitted-task",
+      "expect": { "user_text_contains": "E2E40-ADMITTED", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": { "content": [{ "type": "text", "text": "Admitted member task kz40-answer-b4d6f8." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Direct admission" }] }
+    }
+  ]
+}

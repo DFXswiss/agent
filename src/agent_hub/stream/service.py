@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from datetime import datetime, timedelta
 from typing import Any, TypeVar
 from uuid import UUID
@@ -283,14 +283,17 @@ class StreamService:
 
     # --- device sockets ---
 
-    async def run_device(self, websocket: WebSocket, device_id: UUID) -> None:
-        """Serve one device socket from the upgrade to the disconnect (agent_hub.stream.ws)."""
+    async def run_device(self, websocket: WebSocket, device_id: UUID, features: Sequence[str] = ()) -> None:
+        """Serve one device socket from the upgrade to the disconnect (agent_hub.stream.ws); `features` are the
+        capabilities the device announced (`agent_hub.device.features`)."""
         if self.closing:
             await websocket.close(RESTART)
             return
         window = self.context.config.device_online_seconds
         now = self._connect_time(device_id)
-        was_online = await asyncio.to_thread(self._transaction, presence.connect, device_id, self.instance, now, window)
+        was_online = await asyncio.to_thread(
+            self._transaction, presence.connect, device_id, self.instance, now, window, features=features
+        )
         if was_online is None:  # no longer usable (changed since the gate resolved the key)
             await websocket.close(POLICY)
             return

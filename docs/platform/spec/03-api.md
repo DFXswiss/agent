@@ -85,6 +85,9 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `PUT /v1/me/settings` | user | `{model_access,model_id,locale}` → settings |
 | `GET /v1/me/devices` | user | → devices eligible for device requests of this user (assigned to a wg in which the user is a member), with presence |
 | `GET /v1/me/quotas` | user | → `quota_snapshot` rows of the user; no rows = "not available" (never polled, or the polling device reported `unavailable`) |
+| `GET /v1/users/{user}/identity` **(ADR-060)** | user | → `user_identity {user_id,pub,platform_seq,id_sig,account_code}`: the public identity of an active account with its anchor in the platform log; clients verify it (`04-crypto.md` §4.8, §5.13); `404 identity_unproven` for an unknown, disabled or unanchored account |
+| `GET /v1/users/lookup` **(ADR-060)** | user | `?code=` (account code as typed; `400 account_code_invalid`) → `user_identity` of the account with this code, else `404 identity_unproven`; no search by name |
+| `GET /v1/me/invitees` **(ADR-060)** | user | → `{invitees:[{user_id,invite_id,registered_at,identity:user_identity\|null}]}`: accounts registered through the caller's own platform invitations, newest first |
 
 ### 4.2 Invitations
 
@@ -110,6 +113,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `GET /v1/platform/log` | user | `?after=` → platform log entries |
 | `POST /v1/platform/log` | entry signed by the platform root (operator CLI `agent-hub platform …`; no session needed) | `{expected_seq,entries[]}` → `{head}`; types of `04-crypto.md` §4.8 incl. `device_decertify` (hub then refuses the device, sets `decertified`, marks affected scopes `rotation_pending`, sends `decertified` hint) |
 | `GET /v1/platform/enrollments` | root-signed request (§1) | → pending platform device enrollments with verified `inv_sig` (for `certify-pending`) |
+| `GET /v1/platform/users/{user}` **(ADR-060)** | root-signed request (§1) | → `{user_id,pub,account_code,created_at,platform_invite_id,registered_at,certified_seq}` of an active user (for `certify-user`), else `404 not_found` |
 
 ### 4.4 Events
 
@@ -316,6 +320,11 @@ once they can be sealed, so `origin_seq` stays gapless and other scopes are not 
 ADR-047).
 
 ### 6.2 Device WebSocket (`GET /v1/device/ws`, signed upgrade request)
+
+The upgrade request may carry the header `Agent-Features: <feature>[,<feature>…]` (not signed, not a query parameter:
+an older hub ignores unknown headers but refuses unknown query parameters). The hub replaces `device.features` with it
+on every connection. `log.admit` (ADR-060): the runner verifies `admit` and `user_certify`/`user_decertify`; an
+`admit` batch is refused with `409 peer_outdated` (`detail.devices`) while an active device of the org lacks it.
 
 Hints from hub to device (JSON frames `{"type":…}`): `hello {hub_time}`, `reconcile {}` (pull
 `/v1/device/state`), `session.start {session_id}`, `session.control {session_id,action}`, `prompt {session_id,

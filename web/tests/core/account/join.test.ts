@@ -440,6 +440,7 @@ describe('logs with platform devices', () => {
     const { w, lookup, erin, request } = await invited({ setup });
     expect(needsPlatform(lookup().raw.log as unknown[])).toBe(true);
     expect(needsPlatform([null, { body: null }, { body: { type: 'device_assign' } }])).toBe(false);
+    expect(needsPlatform([{ body: { type: 'grant' } }, { body: { type: 'admit' } }])).toBe(true);
     const deferred = await openInvitation(CODE, lookup(), null);
     expect(deferred.log).toBeNull();
     expect(deferred.role).toBe('member');

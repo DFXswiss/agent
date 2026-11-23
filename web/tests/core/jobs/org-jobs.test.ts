@@ -14,7 +14,8 @@ import { buildPlatformEntries, entryHash } from '../../../src/core/log/entries';
 import { ed25519KeyPair } from '../../../src/core/crypto/keys';
 import { verifyPlatformLog } from '../../../src/core/log/platform';
 import { ORG, WG } from '../../../src/core/log/state';
-import { blockOrg, ensureOrg } from '../../../src/core/store/slices/orgs';
+import { VerifiedLog } from '../../../src/core/log/verify';
+import { blockOrg, ensureOrg, orgEntry, setLog } from '../../../src/core/store/slices/orgs';
 import { setIdentity } from '../../../src/core/store/slices/me';
 import type { Actor } from '../log/world';
 import { idOf, seed, T0 } from '../log/world';
@@ -143,6 +144,20 @@ describe('catch-up job', () => {
     ensureOrg(w.store, 'unverified');
     blockOrg(w.store, w.org, { code: 'log_fork', stored: null, served: null, lh: 1 });
     const slot = { scope: 'cred', scope_id: a.ada!.id, epoch: 1, recipient: a.dev1!.id };
+    expect(await credWraps(jobContext(w), a.ada!.id, a.ada!.identity, [slot])).toEqual([]);
+  });
+
+  it('wraps no CK for the devices of an org that admitted the user without consent (ADR-060)', async () => {
+    const { w, a } = await setup();
+    w.hub.stored.push(await credWrap(a.ada!, 1, Secret.of(new Uint8Array(32).fill(7))));
+    const slot = { scope: 'cred', scope_id: a.ada!.id, epoch: 1, recipient: a.dev1!.id };
+    expect(await credWraps(jobContext(w), a.ada!.id, a.ada!.identity, [slot])).toHaveLength(1);
+    const log = orgEntry(w.store.getState().orgs, w.org).log!;
+    const principal = log.state.principals.get(a.ada!.id)!;
+    const admitted = log.state.with({
+      principals: new Map(log.state.principals).set(principal.id, { ...principal, consented: false }),
+    });
+    setLog(w.store, w.org, new VerifiedLog(log.entries, [...log.states.slice(0, -1), admitted]));
     expect(await credWraps(jobContext(w), a.ada!.id, a.ada!.identity, [slot])).toEqual([]);
   });
 

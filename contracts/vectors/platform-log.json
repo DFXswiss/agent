@@ -8,6 +8,27 @@
       "sig": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
       "sig_sk": "z83FrSmKU6gL8G3GhKUZgqLzQNIq8v7uao6DFBcKTJ4"
     },
+    "bob": {
+      "id": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72",
+      "kem": "KIcVtO1wsZAw8MV5a4m1XcBH3pguMhagJYnYyBNIUyY",
+      "kem_sk": "vOFOYQl3Tk_D94g1to4RXQihMX88ZyGCp0vu_GH-irk",
+      "sig": "V8a9Mjo6ZnJT3Qjf7v40BLlDavhP3_TCzlaEqS3mGnY",
+      "sig_sk": "QM0q-lEsVIhUVte0WQt8gQqjZ39ryHy28PcvS9LTvQE"
+    },
+    "dave": {
+      "id": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c",
+      "kem": "Cae7EUId4Yrp_o9smE5aSDWMLt6DJv1dhkx2MoZRZ08",
+      "kem_sk": "LwiFpnPsd3OzFQ93Cb5D6LqhzKU23P0pkNVTu01ufuE",
+      "sig": "xN_4cExCtSTqY8Nj9OyW4zJJ5QL7UY3-K-LD0VGdIjs",
+      "sig_sk": "Qy1y7rkFmUhBhqaE9GkOHF_E8iEvpGToE8jytpw7lew"
+    },
+    "erin": {
+      "id": "01a1ee56-5e00-76ac-a04d-12639e532939",
+      "kem": "nF7IxPXgtxeyVCef81j1lAtOjHw_NNcu4nWS_RPYkWE",
+      "kem_sk": "iacYybU9gv47Za5il9dc96V8LnTsfJTQBe2fIkET0rI",
+      "sig": "vElSw3m-DIWBsFyyzwmy-3qlKQj4bjih7WnVQ4DNULI",
+      "sig_sk": "TRRoyo2etereJQStM6PJPlUqS3JzEscgxK-x8ri4IAA"
+    },
     "hub": {
       "id": "01a1ee56-5e00-7d67-9a08-bbc30843835b",
       "kem": "pLb7TNNIzyLkGKrxOHQfiyfwWNXaP3OIvGvgGUWVHGA",
@@ -600,6 +621,149 @@
           {
             "body": {
               "by": "platform-root",
+              "prev": "SeamzYFtzYA0dy4JW5D8-_YhkoceeNyV-VpOt0_V5xA",
+              "pub": {
+                "kem": "pLb7TNNIzyLkGKrxOHQfiyfwWNXaP3OIvGvgGUWVHGA",
+                "sig": "qAyJz0Z2Jwd68Ji4YUK5CXaHx54QTIOJKxi_VUI3KVA"
+              },
+              "seq": 14,
+              "ts": "2026-11-21T12:14:00.000Z",
+              "type": "user_certify",
+              "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c",
+              "v": 1
+            },
+            "sig": "PEtnydIMC3tdjyY6KJWGJMufJ7oMRnSKCiU_u4EWlGQXztSGk8IKIM1kh1gSXmLAp7IvB9j-gfvE8Yw7iW4_AQ"
+          }
+        ],
+        "log": {
+          "count": 14,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "user_certify_while_certified",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "prev": "SeamzYFtzYA0dy4JW5D8-_YhkoceeNyV-VpOt0_V5xA",
+              "seq": 14,
+              "ts": "2026-11-21T12:14:00.000Z",
+              "type": "user_decertify",
+              "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72",
+              "v": 1
+            },
+            "sig": "1rrEBjs82s6udylVQCoG81qBfJnh4I1AWHMfQH8d3-aIMGyBTR73ft81tb8Y6SfwxhmZ4d_DlaB53-O9Uus8CA"
+          }
+        ],
+        "log": {
+          "count": 14,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "user_decertify_not_certified",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "prev": "uanjZCV57Mz08TtMi5vDpiZEqzHM_1KcHmjjDVLR9Wg",
+              "pub": {
+                "kem": "MUbmKmKwNkQPw8Miz0JMpgezZnLgQkVVJRaqvWyM8x8",
+                "sig": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs"
+              },
+              "seq": 12,
+              "ts": "2026-11-21T12:12:00.000Z",
+              "type": "user_certify",
+              "user": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+              "v": 1
+            },
+            "sig": "0o82EdP3ImUIwNrQf2dSxoV0MwR6S8z2BEJIHTSaQp7Ry9wTTpbbDYtaqHgrWgsc1DnueyyHvJADAV6nEt3oCw"
+          }
+        ],
+        "log": {
+          "count": 12,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "user_certify_device_id",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "expires": "2026-11-24T12:00:00.000Z",
+              "invite_id": "pSGlUsheKO1s_uEo_RQzWQ",
+              "pk_inv": "4kGKr1jjUYCGfIBylTF0ZvKoe06UfGe6Nu8jHfemjps",
+              "prev": "bVZtDlkPmjt9NEDaYPfWye-fQvrC_rjJyqv-zsjXq0I",
+              "seq": 13,
+              "ts": "2026-11-21T12:13:00.000Z",
+              "type": "device_invite",
+              "v": 1
+            },
+            "sig": "-C7ire7qn6Ufp27C_OXcVkWvOPbPJvErG-uloskC4gEkYCJ--vMRWKbBBTts3eIw6DW6020tRFp6Bmw9xulkCw"
+          },
+          {
+            "body": {
+              "agent_version": "0.1.0",
+              "arch": "arm64",
+              "by": "platform-root",
+              "capacity": {
+                "pool_ready": 2,
+                "vm_memory_budget_mib": 65536,
+                "vm_memory_used_mib": 0,
+                "vm_slots_free": 8,
+                "vm_slots_total": 8
+              },
+              "device": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "enroll_sig": "s9uQmKE09Zc0FlYpMKJCjsayj17JpGfOVK_NBBx7KeyMl-VdRFbE_izn9EjXvFdAdSM32_LWEiaut9--FJQICQ",
+              "inv_sig": "OIMTlF_VRxME4uYJMuq5wIAlQXWenlkaQEqKcg8gNz1CbdGIsTsXAmVdJw8NVPVXq7n2Qa3MHN788GeJid-uAw",
+              "invite_id": "pSGlUsheKO1s_uEo_RQzWQ",
+              "os": "macos",
+              "prev": "zJKcndqM9jz39294uoGKWSph6FIsNpS5UKAhJtLw_04",
+              "pub": {
+                "kem": "MUbmKmKwNkQPw8Miz0JMpgezZnLgQkVVJRaqvWyM8x8",
+                "sig": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs"
+              },
+              "seq": 14,
+              "ts": "2026-11-21T12:14:00.000Z",
+              "type": "device_certify",
+              "v": 1
+            },
+            "sig": "6mki1MLPpOQNNNhOjhER9Q86yWTCvV9uKQrOWVDRTIlmy5yBkqDcO_-6-5238W9HTju16HNSjQGhx0FccsXmDw"
+          }
+        ],
+        "log": {
+          "count": 13,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "device_certify_user_id",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
               "expires": "2026-11-24T12:00:00.000Z",
               "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
               "pk_inv": "xgYLebs9KmDWfLKLso5G0yQoiS3p0UwZInMoJ_LDHk4",
@@ -680,6 +844,7 @@
     }
   ],
   "invite_codes": {
+    "erin-platform": "JPu8hxxFKQbilc6uxpIUQg",
     "pdev": "Mq7nkXvzk6Gj6XHpFdF_nw",
     "platform-user": "gdS9DMkbBn-BJx6G3qdyzA",
     "qdev": "vQl_etUEhrtl_6PcMbd6Sw"
@@ -861,6 +1026,96 @@
           "v": 1
         },
         "sig": "1j7pqLy0W3iFRdBVZfmdnekS37_WbDdTKcy2j-CHbJxoA8bWhGTa3kS0SKUxMoNBTJoNU7xnaJgvprWKLTDnCw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "expires": "2026-11-24T12:00:00.000Z",
+          "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+          "pk_inv": "N3_qC-_MATnBMcTy9ttk5r911rDWbHP_TGCQfxRgzLU",
+          "prev": "OWRtKOYovyVq_gqjbqRcgInoENRwHAO9yi-f1PC4h_w",
+          "seq": 11,
+          "ts": "2026-11-21T12:11:00.000Z",
+          "type": "user_invite",
+          "v": 1
+        },
+        "sig": "2okiLTgA0QPANaROQlTfEZoq_7dw_RRBbZVyG9BUKPjTVJQIFPcQQhxz_mPzZHUHLO6w3dJMO-XRXbrbz0gvBA"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "uanjZCV57Mz08TtMi5vDpiZEqzHM_1KcHmjjDVLR9Wg",
+          "pub": {
+            "kem": "MUbmKmKwNkQPw8Miz0JMpgezZnLgQkVVJRaqvWyM8x8",
+            "sig": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs"
+          },
+          "seq": 12,
+          "ts": "2026-11-21T12:12:00.000Z",
+          "type": "user_certify",
+          "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "v": 1
+        },
+        "sig": "JQxNsdQ_tlkjyP1vojU0OZEkQ9aWFkdO27SoEQuWyK3XAes-e9JdkhABy6rNKjVl9vK4Xws9RO-grGp2UHQSBA"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "bVZtDlkPmjt9NEDaYPfWye-fQvrC_rjJyqv-zsjXq0I",
+          "pub": {
+            "kem": "Cae7EUId4Yrp_o9smE5aSDWMLt6DJv1dhkx2MoZRZ08",
+            "sig": "xN_4cExCtSTqY8Nj9OyW4zJJ5QL7UY3-K-LD0VGdIjs"
+          },
+          "seq": 13,
+          "ts": "2026-11-21T12:13:00.000Z",
+          "type": "user_certify",
+          "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c",
+          "v": 1
+        },
+        "sig": "g1AkJSkuUDTJYEInUIfrH7Ng7zFJ1xc1DCCYxzoUMNwiOZTBrgkqHkKXAAoWQLtMwQy0kQmJyRt8ke34cRp5CQ"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "SeamzYFtzYA0dy4JW5D8-_YhkoceeNyV-VpOt0_V5xA",
+          "pub": {
+            "kem": "KIcVtO1wsZAw8MV5a4m1XcBH3pguMhagJYnYyBNIUyY",
+            "sig": "V8a9Mjo6ZnJT3Qjf7v40BLlDavhP3_TCzlaEqS3mGnY"
+          },
+          "seq": 14,
+          "ts": "2026-11-21T12:14:00.000Z",
+          "type": "user_certify",
+          "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72",
+          "v": 1
+        },
+        "sig": "nqRZCkO-yapiRNA3O2SsmTRZOGDTBANW0KO7VrhpwEyuo2ng7v-obgzyHJ_FuAwhJbiPBL6vFf34P6aQ0YIqDQ"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "0HNwgoIPXvij3Du1TB7IkAlnzcOS5zyz-shAyQ4zcFU",
+          "seq": 15,
+          "ts": "2026-11-21T12:15:00.000Z",
+          "type": "user_decertify",
+          "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72",
+          "v": 1
+        },
+        "sig": "h3Q7yS69TPjdJaeRV80fSSzNNDgEebqL0J_XUsqyMTddBuHNuc1Fkmthn04lwNHNkFWWZoHD0XlRa1CwiTm0Ag"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "2PxOoUXGtEVerqzxI6L1JnFKoHdDg5Q-o0oqzTu1qXw",
+          "pub": {
+            "kem": "pLb7TNNIzyLkGKrxOHQfiyfwWNXaP3OIvGvgGUWVHGA",
+            "sig": "qAyJz0Z2Jwd68Ji4YUK5CXaHx54QTIOJKxi_VUI3KVA"
+          },
+          "seq": 16,
+          "ts": "2026-11-21T12:16:00.000Z",
+          "type": "user_certify",
+          "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72",
+          "v": 1
+        },
+        "sig": "Db8DJfkgYL5OcyLdFQ-qnIV3wz_V6pPUgPyrSjeNWfIdZF84WGeDyaKtivCD6ye6L1jarY_9Nl9g1qQdXDu9Bw"
       }
     ]
   },
@@ -910,10 +1165,34 @@
       {
         "hash": "OWRtKOYovyVq_gqjbqRcgInoENRwHAO9yi-f1PC4h_w",
         "seq": 10
+      },
+      {
+        "hash": "uanjZCV57Mz08TtMi5vDpiZEqzHM_1KcHmjjDVLR9Wg",
+        "seq": 11
+      },
+      {
+        "hash": "bVZtDlkPmjt9NEDaYPfWye-fQvrC_rjJyqv-zsjXq0I",
+        "seq": 12
+      },
+      {
+        "hash": "SeamzYFtzYA0dy4JW5D8-_YhkoceeNyV-VpOt0_V5xA",
+        "seq": 13
+      },
+      {
+        "hash": "0HNwgoIPXvij3Du1TB7IkAlnzcOS5zyz-shAyQ4zcFU",
+        "seq": 14
+      },
+      {
+        "hash": "2PxOoUXGtEVerqzxI6L1JnFKoHdDg5Q-o0oqzTu1qXw",
+        "seq": 15
+      },
+      {
+        "hash": "TQ8CZKZU4CkStxCwHM6YX-XC_Fp3egQzcdrOd8YjnXg",
+        "seq": 16
       }
     ],
     "log": {
-      "count": 11,
+      "count": 17,
       "name": "platform"
     },
     "platform_access": [
@@ -945,7 +1224,8 @@
         },
         "invites": [],
         "org_access": {},
-        "roles": []
+        "roles": [],
+        "users": []
       },
       {
         "devices": [],
@@ -962,7 +1242,8 @@
           }
         ],
         "org_access": {},
-        "roles": []
+        "roles": [],
+        "users": []
       },
       {
         "devices": [
@@ -985,7 +1266,8 @@
           }
         ],
         "org_access": {},
-        "roles": []
+        "roles": [],
+        "users": []
       },
       {
         "devices": [
@@ -1014,7 +1296,8 @@
           }
         ],
         "org_access": {},
-        "roles": []
+        "roles": [],
+        "users": []
       },
       {
         "devices": [
@@ -1048,7 +1331,8 @@
             "role": "inviter",
             "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
           }
-        ]
+        ],
+        "users": []
       },
       {
         "devices": [
@@ -1084,7 +1368,8 @@
             "role": "inviter",
             "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
           }
-        ]
+        ],
+        "users": []
       },
       {
         "devices": [
@@ -1126,7 +1411,8 @@
             "role": "inviter",
             "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
           }
-        ]
+        ],
+        "users": []
       },
       {
         "devices": [
@@ -1173,7 +1459,8 @@
             "role": "inviter",
             "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
           }
-        ]
+        ],
+        "users": []
       },
       {
         "devices": [
@@ -1220,7 +1507,8 @@
             "role": "inviter",
             "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
           }
-        ]
+        ],
+        "users": []
       },
       {
         "devices": [
@@ -1262,7 +1550,8 @@
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
         },
-        "roles": []
+        "roles": [],
+        "users": []
       },
       {
         "devices": [
@@ -1304,7 +1593,367 @@
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
         },
-        "roles": []
+        "roles": [],
+        "users": []
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "uanjZCV57Mz08TtMi5vDpiZEqzHM_1KcHmjjDVLR9Wg",
+          "seq": 11
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "roles": [],
+        "users": []
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "bVZtDlkPmjt9NEDaYPfWye-fQvrC_rjJyqv-zsjXq0I",
+          "seq": 12
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "roles": [],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "SeamzYFtzYA0dy4JW5D8-_YhkoceeNyV-VpOt0_V5xA",
+          "seq": 13
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "roles": [],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "0HNwgoIPXvij3Du1TB7IkAlnzcOS5zyz-shAyQ4zcFU",
+          "seq": 14
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "roles": [],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 14,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "2PxOoUXGtEVerqzxI6L1JnFKoHdDg5Q-o0oqzTu1qXw",
+          "seq": 15
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "roles": [],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": false,
+            "certify_seq": 14,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "TQ8CZKZU4CkStxCwHM6YX-XC_Fp3egQzcdrOd8YjnXg",
+          "seq": 16
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "roles": [],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
       }
     ]
   }

@@ -16,6 +16,8 @@ from agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entr
 from agent_hub.log.rotation import entry_subject, required_set
 from agent_hub.log.state import ORG, WG, OrgState
 from agent_hub.log.vectors import (
+    ALICE_CERT_SEQ,
+    DAVE_CERT_SEQ,
     EXPIRES,
     PDEV_SEQ,
     QDEV_SEQ,
@@ -24,12 +26,14 @@ from agent_hub.log.vectors import (
     W1,
     W2,
     LogBuilder,
+    admit_builder,
     identity,
     main_builder,
     make_wrap,
     pid,
     secrets,
     sig_pk,
+    uid,
 )
 from agent_hub.log.vectors import (
     ORG as ORG_ID,
@@ -502,3 +506,23 @@ def test_rejoining_user_keeps_the_identity() -> None:
     log.invite_user("alice", "erin")
     log.accept("bob", code_label="erin", key_label="hub")
     _refused("log_accept", log.entries)
+
+
+def test_admit_needs_the_platform_state(plat_state: platform.PlatformState) -> None:
+    log = LogBuilder()
+    log.genesis()
+    log.admit("alice", "dave", DAVE_CERT_SEQ, ALICE_CERT_SEQ)
+    with pytest.raises(CryptoError, match="log_admit"):
+        verify.verify_log(log.entries, ALICE)
+    dave = verify.verify_log(log.entries, ALICE, platform=plat_state).state.principals[pid("dave")]
+    assert (dave.active, dave.consented, dave.role) == (True, False, "member")
+
+
+def test_admitted_users_have_not_consented(plat_state: platform.PlatformState) -> None:
+    state = verify.verify_log(admit_builder().entries, ALICE, platform=plat_state).state
+    dave, erin, bob = state.principals[pid("dave")], state.principals[uid("erin")], state.principals[pid("bob")]
+    assert (dave.active, dave.consented) == (False, False)
+    assert (erin.role, erin.consented) == ("admin", False)
+    assert (bob.consented, bob.joined_seq, state.wg_access(pid("bob"), W1)) == (False, 29, "write")
+    assert state.principals[pid("alice")].consented
+    assert state.principals[uid("erin")].consented is False

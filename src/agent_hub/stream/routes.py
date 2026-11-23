@@ -12,6 +12,8 @@ from fastapi import Query, Request
 from fastapi.responses import StreamingResponse
 from starlette.websockets import WebSocket
 
+from agent_hub.device.features import HEADER as FEATURES_HEADER
+from agent_hub.device.features import parse_features
 from agent_hub.device.keys import ActiveDevice
 from agent_hub.errors import HubError
 from agent_hub.http.context import CurrentPrincipal
@@ -54,4 +56,5 @@ async def device_ws(websocket: WebSocket, principal: ActiveDevice) -> None:
     if service is None:
         await websocket.close(1012)
         return
-    await service.run_device(websocket, cast(UUID, principal.principal_id))
+    features = parse_features(websocket.headers.get(FEATURES_HEADER))
+    await service.run_device(websocket, cast(UUID, principal.principal_id), features)

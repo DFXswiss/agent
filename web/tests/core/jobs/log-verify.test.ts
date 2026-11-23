@@ -111,6 +111,23 @@ describe('log verification job', () => {
     expect(await rejection(() => verifyOrgLog(fresh.context, hub.world.org))).toBe('log_chain');
   });
 
+  it('blocks an org whose log holds an unknown entry type as outdated (a newer version wrote it, ADR-060)', async () => {
+    await hub.world.admitUser(alice, bob);
+    hub.serve.org = (served) => {
+      const entries = [...served.entries];
+      const future = structuredClone(entries[1]) as { body: { type: string } };
+      future.body.type = 'from_the_future';
+      entries[1] = future;
+      return { ...served, entries };
+    };
+    const setup = await signedIn(hub, alice);
+    expect(await rejection(() => verifyOrgLog(setup.context, hub.world.org))).toBe('log_type');
+    expect(orgEntry(setup.store.getState().orgs, hub.world.org).blocked).toMatchObject({
+      code: 'log_type',
+      reason: 'outdated',
+    });
+  });
+
   it('refuses entries served without a head (log_chain)', async () => {
     for (const head of [null, { seq: 99, hash: 'x' }]) {
       hub.serve.org = (served) => ({ ...served, head: head && { ...head, hash: served.head!.hash } });

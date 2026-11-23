@@ -19,6 +19,7 @@ import * as enroll from '../../../src/core/crypto/enroll';
 import { CryptoError } from '../../../src/core/crypto/errors';
 import * as event from '../../../src/core/crypto/event';
 import * as hpke from '../../../src/core/crypto/hpke';
+import * as identityProof from '../../../src/core/crypto/identity';
 import * as invite from '../../../src/core/crypto/invite';
 import * as kdf from '../../../src/core/crypto/kdf';
 import * as keys from '../../../src/core/crypto/keys';
@@ -70,6 +71,7 @@ export const CONSUMED = [
   'encoding',
   'enroll',
   'event',
+  'identity',
   'invite',
   'kdf',
   'keys',
@@ -427,6 +429,33 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
     same(invite.registerText(proof.user_id, b(proof.challenge)), proof.text, 'register text');
     same(await invite.signRegister(secrets, proof.user_id, b(proof.challenge)), proof.inv_sig, 'inv_sig');
     await invite.verifyRegister(b(proof.pk_inv), proof.user_id, b(proof.challenge), proof.inv_sig);
+  },
+  identity: async (data) => {
+    const secrets = await invite.inviteSecrets(b(data.invite.code));
+    same([secrets.inviteId, secrets.pkInv], [data.invite.invite_id, data.invite.pk_inv], 'invite secrets');
+    same(await identityProof.invitedUserId(secrets.inviteId, data.invite.ts), data.user_id, 'invited user ID');
+    same(identityProof.identityText(data.user_id, data.pub), data.text, 'identity text');
+    const idSig = await identityProof.signIdentity(secrets.signing.privateKey, data.user_id, data.pub);
+    same(idSig, data.id_sig, 'id_sig');
+    same(await identityProof.identityValid(secrets.pkInv, data.user_id, data.pub, idSig), true, 'id_sig valid');
+    same(
+      await identityProof.identityValid(secrets.pkInv, data.user_id, data.other_pub, idSig),
+      data.id_sig_other_keys_valid,
+      'id_sig under other keys',
+    );
+    same(await identityProof.accountCode(data.user_id, data.pub), data.account_code, 'account code');
+    same(identityProof.formatAccountCode(data.account_code), data.account_code_text, 'account code text');
+    same(await identityProof.accountCode(data.user_id, data.other_pub), data.account_code_other_keys, 'other keys');
+    for (const item of data.parse) {
+      let outcome: Any;
+      try {
+        outcome = { code: identityProof.parseAccountCode(item.text) };
+      } catch (error) {
+        if (!(error instanceof CryptoError)) throw error;
+        outcome = { error: error.code };
+      }
+      same({ text: item.text, ...outcome }, item, `parse ${item.text}`);
+    }
   },
   recovery: async (data) => {
     const code = b(data.code);

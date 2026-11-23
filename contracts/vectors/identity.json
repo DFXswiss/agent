@@ -1,0 +1,51 @@
+{
+  "about": "Identity proof id_sig, derived user ID and account code of 04-crypto.md section 3 (ADR-060).",
+  "account_code": "XUODQBH7HBXI",
+  "account_code_other_keys": "J5SH4BSON5IB",
+  "account_code_text": "XUOD-QBH7-HBXI",
+  "id_sig": "6jLdJRgs9fRsGEGBYhx-JgS9tfyQe7layaqMsne2IF_onwESqW_0X--4pP3jWQQ55BodQcSrQ75axBhfHEyfDg",
+  "id_sig_other_keys_valid": false,
+  "invalid": [],
+  "invite": {
+    "code": "BNbMdG00TRN-Tt1W1CgKtw",
+    "invite_id": "FQ-Va_Z6BmGCf62ETdidoQ",
+    "pk_inv": "oGtXlaiOcBbB-cu8-QHCbPBIX0HUYUBYpDZ6PMAcQsQ",
+    "ts": "2026-11-21T12:34:56.789Z"
+  },
+  "other_pub": {
+    "kem": "iFDrQa9P3SnSDc2n71r40N190maUkzsL8ieedaTTbBk",
+    "sig": "1EC2ZFK0k65OyEd7iT7O_pIqImUJDz88ywZ0bG-vJbc"
+  },
+  "parse": [
+    {
+      "code": "ABCDEFGH2345",
+      "text": "abcd-efgh-2345"
+    },
+    {
+      "code": "ABCDEFGH2345",
+      "text": " ABCD EFGH 2345 "
+    },
+    {
+      "code": "OBCDIFGHB345",
+      "text": "0BCD-1FGH-8345"
+    },
+    {
+      "error": "account_code_invalid",
+      "text": "ABCD-EFGH-234"
+    },
+    {
+      "error": "account_code_invalid",
+      "text": "ABCD-EFGH-23456"
+    },
+    {
+      "error": "account_code_invalid",
+      "text": "AB9D-EFGH-2345"
+    }
+  ],
+  "pub": {
+    "kem": "MReWzGKvoyV2wQwJ6Kqqq7uY-TOGR-DPx3ZKdteKj3g",
+    "sig": "1NjE3kynoUZvbJ0JvH4hUE2BN4QgNET-3PEzx9oFTXI"
+  },
+  "text": "YWdlbnQuZGZ4LnN3aXNzL3YxL2ludml0ZS1pZGVudGl0eQB7InB1YiI6eyJrZW0iOiJNUmVXekdLdm95VjJ3UXdKNktxcXE3dVktVE9HUi1EUHgzWktkdGVLajNnIiwic2lnIjoiMU5qRTNreW5vVVp2YkowSnZINGhVRTJCTjRRZ05FVC0zUEV6eDlvRlRYSSJ9LCJ1c2VyIjoiMDFhMWZlMWEtNDQ5NS03MGNhLTkwZmYtMzRkYWRiZGY2N2I0In0",
+  "user_id": "01a1fe1a-4495-70ca-90ff-34dadbdf67b4"
+}

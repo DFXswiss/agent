@@ -14,6 +14,13 @@ Differences that follow from the hub being the appender, not a reader:
 - genesis cases go through `POST /v1/orgs` semantics (`create_org`), where the founder key is the caller's registered
   identity; `log_empty`, `L3_founder_not_pinned` (a reader's pinned key) and the reader rules L9/L10 have no hub
   counterpart (the contract requires at least one entry; L10 at the hub is `header_invalid`, tested with events).
+
+The `admit_*` variants (ADR-060) are appended to their prefix of the vector log `admit` against the platform log with
+the identity anchors; every vector principal is registered (erin under the ID derived from its platform invitation)
+and every vector device announced `log.admit`, so the hub-only checks of `agent_hub.orgs.admit` (registered identity,
+`peer_outdated`) pass and the hub answers each variant with the vector's code: the log rules run first. The valid
+admissions are appended up to the last one the hub accepts: the vector's third `admit` is anchored by a certification
+that was ended later, which readers accept and the hub refuses (`admit_decertified_anchor_at_hub`).
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ import pytest
 from psycopg_pool import ConnectionPool
 
 from agent_hub.config import load_config
+from agent_hub.crypto import wrap as wrap_format
 from agent_hub.crypto.encoding import canonical, parse_time
 from agent_hub.errors import HubError
 from agent_hub.log import vectors
@@ -45,7 +53,7 @@ from tests.platform.hub.orgs.support import insert_device, insert_identity, inse
 VECTORS = json.loads((Path(__file__).parents[4] / "contracts" / "vectors" / "log.json").read_text(encoding="utf-8"))
 USERS = ("alice", "bob", "carol", "dave", "erin", "hub")
 DEVICES = ("device", "dev2", "pdev", "qdev")
-LABELS = {vectors.pid(label): label for label in (*USERS, *DEVICES)}
+LABELS = {vectors.pid(label): label for label in (*USERS, *DEVICES)} | {vectors.uid("erin"): "erin"}
 HUB_CODES = {"L1_seq_gap": "seq_conflict", "L1_duplicate_entry": "seq_conflict"}
 NOT_AT_THE_HUB = {"log_empty", "L3_founder_not_pinned"}
 NO_PLATFORM_ACCESS = {"assign_without_platform_access": "platform_access_denied"}
@@ -83,8 +91,11 @@ def vector_hub(migrated_db: HubDatabase, hub_pool: Pool, clock: FixedClock) -> I
     config = load_config(hub_environ(migrated_db, AGENT_HUB_PLATFORM_ROOT_KEY=vectors.sig_pk("root")))
     for label in USERS:
         insert_identity(hub_pool, vectors.pid(label), vectors.identity(label), clock())
+    insert_identity(hub_pool, vectors.uid("erin"), vectors.identity("erin"), clock())
     for label in DEVICES:
         insert_device(hub_pool, vectors.pid(label), vectors.identity(label), clock(), "platform")
+    with hub_pool.connection() as connection, connection.transaction():
+        connection.execute("UPDATE hub.device SET features = '{log.admit}'")
     yield from start_hub(config, hub_pool, clock)
 
 
@@ -92,9 +103,10 @@ def _platform(hub: HubHarness, ref: Json) -> None:
     insert_platform_entries(hub.pool, VECTORS["logs"][ref["name"]][: ref["count"]], hub.clock())
 
 
-def _seed(hub: HubHarness, count: int, *, private: bool, log: list[Json] | None = None) -> None:
-    """The first `count` entries of a vector log (default: the main log) as the hub stores them."""
-    entries = (VECTORS["logs"]["main"] if log is None else log)[:count]
+def _seed(hub: HubHarness, count: int, *, private: bool, log: str | list[Json] = "main") -> None:
+    """The first `count` entries of a vector log (a log of `log.json` by name, default the main log, or the entries
+    of another vector file) as the hub stores them."""
+    entries = (VECTORS["logs"][log] if isinstance(log, str) else log)[:count]
     state = verify_platform_log(VECTORS["logs"]["platform"], vectors.sig_pk("root")).state
     verified = verify_log(entries, vectors.sig_pk("alice"), platform=state)
     now = hub.clock()
@@ -172,7 +184,7 @@ def test_broken_vector_is_refused_with_its_code(vector_hub: HubHarness, case: Js
         with pytest.raises(HubError) as refused:
             _create(vector_hub, appended[0])
     else:
-        _seed(vector_hub, count, private=case["name"] not in NO_PLATFORM_ACCESS)
+        _seed(vector_hub, count, private=case["name"] not in NO_PLATFORM_ACCESS, log=args["log"]["name"])
         for entry in appended[:-1]:
             _append(vector_hub, [entry], [], now)
         with pytest.raises(HubError) as refused:
@@ -237,3 +249,60 @@ def test_valid_vector_log_is_accepted_and_rebuilds_identically(vector_hub: HubHa
     with vector_hub.pool.connection() as connection, connection.transaction():
         assert rebuild_orgs(connection, vector_hub.config) == 1
     assert _tables(vector_hub) == incremental
+
+
+def _wrap_for(author: str, scope: str, scope_id: str, epoch: int, recipient: str) -> Json:
+    """A wrap of a vector scope key for `recipient` (a label), addressed to its user ID (`vectors.uid`)."""
+    recipient_id = vectors.uid(recipient)
+    sealed = wrap_format.wrap_key(
+        vectors.identity(recipient).kem_public(),
+        scope=scope,
+        scope_id=scope_id,
+        epoch=epoch,
+        recipient=recipient_id,
+        key=vectors.scope_key(scope, scope_id, epoch),
+    )
+    signature = wrap_format.sign_wrap(
+        vectors.identity(author).sig, scope=scope, scope_id=scope_id, epoch=epoch, recipient=recipient_id, wrap=sealed
+    )
+    return {
+        "scope": scope,
+        "scope_id": scope_id,
+        "epoch": epoch,
+        "recipient_id": recipient_id,
+        "wrap": sealed,
+        "sig": signature,
+    }
+
+
+def test_valid_admissions_of_the_vectors_are_accepted(vector_hub: HubHarness) -> None:
+    valid = VECTORS["admit_valid"]
+    _platform(vector_hub, valid["platform"])
+    _seed(vector_hub, vectors.ADMIT_COUNT - 4, private=True, log="admit")
+    entries = VECTORS["logs"]["admit"]
+    state = verify_platform_log(VECTORS["logs"]["platform"], vectors.sig_pk("root")).state
+    states = verify_log(entries, vectors.sig_pk("alice"), platform=state).states
+    for seq, subject in ((27, "dave"), (28, "erin")):
+        before = states[seq - 1]
+        wraps = [
+            _wrap_for("alice", "org", vectors.ORG, before.epoch("org", vectors.ORG), subject),
+            _wrap_for("alice", "wg", vectors.W0, before.epoch("wg", vectors.W0), subject),
+        ]
+        _append(vector_hub, [entries[seq]], wraps, vector_hub.clock())
+    tables = _tables(vector_hub)
+    assert tables["org"][0][4:6] == (str(valid["heads"][1]["seq"]), valid["heads"][1]["hash"])
+    expected = valid["projections"][1]["members"]
+    members = {row[1]: (row[3], row[5]) for row in tables["org_member"]}
+    assert members == {item["principal_id"]: (item["role"], str(item["removed_seq"])) for item in expected}
+    with vector_hub.pool.connection() as connection:
+        notified = connection.execute(
+            "SELECT recipient_id::text, ref FROM hub.notification WHERE kind = 'org.admitted' ORDER BY recipient_id"
+        ).fetchall()
+    assert sorted(notified) == sorted(
+        [(vectors.pid("dave"), vectors.pid("alice")), (vectors.uid("erin"), vectors.pid("alice"))]
+    )
+    bob = [_wrap_for("erin", "org", vectors.ORG, states[28].epoch("org", vectors.ORG), "bob")]
+    bob.append(_wrap_for("erin", "wg", vectors.W0, states[28].epoch("wg", vectors.W0), "bob"))
+    with pytest.raises(HubError) as refused:
+        _append(vector_hub, [entries[29]], bob, vector_hub.clock())
+    assert refused.value.code == "log_admit"

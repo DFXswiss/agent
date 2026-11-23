@@ -11,7 +11,9 @@
 //    (`rotation_required`);
 // 3. W3 for every wrap of the batch, created by `wrappedBy`, which must be active after the batch;
 // 4. distribution of every epoch the batch creates and that is current at its end (`genesis`, `wg_create`,
-//    `rotate`): a wrap for every entitled recipient (`rotation_required`).
+//    `rotate`): a wrap for every entitled recipient (`rotation_required`);
+// 5. `admit` (ADR-060): wraps for the admitted user of the current org epoch and of the current epoch of the default
+//    workgroup (`log_admit`); further workgroups may follow by catch-up.
 //
 // `buildBatch` produces exactly such a batch from the verified log: the requested entries, one `rotate` per element
 // of R with a fresh key, wraps of every new epoch for all remaining recipients and wraps of the current epochs for
@@ -137,6 +139,19 @@ export async function checkBatch(
     if (recipients.some((recipient) => !slots.has(slotKey({ scope, scope_id: scopeId, epoch, recipient })))) {
       fail('rotation_required');
     }
+  }
+  for (const body of bodies) {
+    const subject = body.subject as string;
+    if (body.type !== 'admit' || state.member(subject) === null) continue;
+    const needed: Scope[] = [
+      [ORG, state.org],
+      [WG, state.defaultWg],
+    ];
+    const missing = needed.some(
+      ([scope, scopeId]) =>
+        !slots.has(slotKey({ scope, scope_id: scopeId, epoch: state.epoch(scope, scopeId), recipient: subject })),
+    );
+    if (missing) fail('log_admit');
   }
   return { log: after, required, wraps: stored };
 }

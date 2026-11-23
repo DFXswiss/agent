@@ -3,8 +3,9 @@
 // Entitlement (who may receive a scope key) is the current read right of the verified log: members of the org
 // scope, users with access to a workgroup (explicit, or inherited as admin, ADR-058) and devices assigned to it, and
 // for the `cred` scope of a user the owner plus devices assigned to any workgroup in which the owner has **explicit**
-// access (in any org; section 2, ADR-007, ADR-058 section 1: the inherited read of an admin does not spread
-// credentials). Decertified platform devices are passed as `excluded`.
+// access, in any org in which the owner joined by its own entry, not by `admit` (section 2, ADR-007, ADR-058 section
+// 1: the inherited read of an admin does not spread credentials; ADR-060: an admission without consent does not
+// either). Decertified platform devices are passed as `excluded`.
 // - W1: a principal may wrap a scope epoch for itself if it holds the key (it is entitled now).
 // - W2: a holder may wrap for any principal that is entitled now. A holder of `(scope, scope_id, e)` is the creator
 //   of epoch e, a principal that could read the scope while e was current, or a principal entitled now.
@@ -65,11 +66,16 @@ export function slotOf(value: { scope: string; scope_id: string; epoch: number; 
   return { scope: value.scope, scope_id: value.scope_id, epoch: value.epoch, recipient: value.recipient_id };
 }
 
-/** The owner and every active device assigned to a workgroup in which the owner has explicit access, over all orgs. */
+/**
+ * The owner and every active device assigned to a workgroup in which the owner has explicit access, over all orgs in
+ * which the owner joined by its own entry (an org that admitted the owner without its consent gets no credential key,
+ * ADR-060).
+ */
 export function credReaders(states: Iterable<OrgState>, owner: string, excluded: Iterable<string> = []): Set<string> {
   const skip = new Set(excluded);
   const found = new Set([owner]);
   for (const state of states) {
+    if (state.member(owner)?.consented !== true) continue;
     for (const device of state.principals.values()) {
       const eligible = state.deviceWgs(device.id).some((wg) => state.explicitAccess(owner, wg) !== null);
       if (device.kind === DEVICE && !skip.has(device.id) && eligible) found.add(device.id);

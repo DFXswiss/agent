@@ -491,6 +491,14 @@
       "source": "04-crypto \u00a78"
     },
     {
+      "code": "log_admit",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "04-crypto \u00a78"
+    },
+    {
       "code": "log_signature",
       "statuses": [
         400
@@ -613,6 +621,30 @@
       "statuses": [],
       "origin": "client",
       "source": "11-agent-access \u00a75"
+    },
+    {
+      "code": "identity_unproven",
+      "statuses": [
+        404
+      ],
+      "origin": "hub",
+      "source": "ADR-060"
+    },
+    {
+      "code": "peer_outdated",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "ADR-060"
+    },
+    {
+      "code": "account_code_invalid",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "ADR-060"
     }
   ]
 }

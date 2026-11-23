@@ -126,6 +126,10 @@
       "group": "log"
     },
     {
+      "action": "log.admit",
+      "group": "log"
+    },
+    {
       "action": "event.append",
       "group": "event"
     },
@@ -350,6 +354,14 @@
       "group": "platform"
     },
     {
+      "action": "platform.user_certify",
+      "group": "platform"
+    },
+    {
+      "action": "platform.user_decertify",
+      "group": "platform"
+    },
+    {
       "action": "read.device.credential",
       "group": "read"
     },
@@ -415,6 +427,22 @@
     },
     {
       "action": "read.me.agents",
+      "group": "read"
+    },
+    {
+      "action": "read.user.identity",
+      "group": "read"
+    },
+    {
+      "action": "read.user.lookup",
+      "group": "read"
+    },
+    {
+      "action": "read.me.invitees",
+      "group": "read"
+    },
+    {
+      "action": "read.platform.user",
       "group": "read"
     },
     {

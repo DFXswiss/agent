@@ -690,7 +690,8 @@
             "task.failed",
             "invite.accepted",
             "rotation.required",
-            "agent.account_change"
+            "agent.account_change",
+            "org.admitted"
           ]
         },
         "org_id": {
@@ -1166,6 +1167,44 @@
         "authenticatorSelection",
         "extensions",
         "timeout"
+      ],
+      "additionalProperties": false
+    },
+    "user_identity": {
+      "type": "object",
+      "description": "public identity of an account and its anchor in the platform log (ADR-060): user_certify at platform_seq (id_sig empty) or the user's platform invitation at platform_seq with the identity proof id_sig; clients verify it against the platform log, never trust it",
+      "properties": {
+        "user_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "pub": {
+          "$ref": "../common.json#/$defs/pub_keys"
+        },
+        "platform_seq": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "id_sig": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/b64u_64"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "account_code": {
+          "type": "string",
+          "pattern": "^[A-Z2-7]{12}$"
+        }
+      },
+      "required": [
+        "user_id",
+        "pub",
+        "platform_seq",
+        "id_sig",
+        "account_code"
       ],
       "additionalProperties": false
     }

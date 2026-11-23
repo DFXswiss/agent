@@ -39,6 +39,9 @@ LABEL_DEDUPE = b"dedupe\x00"
 LABEL_RECOVERY_PROOF = b"recovery-proof\x00"
 LABEL_ENROLL = b"enroll\x00"
 LABEL_INVITE_REGISTER = b"invite-register\x00"
+LABEL_INVITE_IDENTITY = b"invite-identity\x00"
+LABEL_ACCOUNT_CODE = b"account-code\x00"
+LABEL_USER_ID = b"user-id\x00"
 
 KEY_BYTES = 32
 CODE_BYTES = 16

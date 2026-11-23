@@ -63,6 +63,19 @@ describe('notificationMessage', () => {
     });
     expect(message('later.kind')).toEqual({ key: 'notifications.text.unknown', params: { org: 'Acme' } });
   });
+
+  it('names the admitting admin of org.admitted, or falls back (ADR-060)', () => {
+    const row = notification('n1', { kind: 'org.admitted', org_id: ORG, ref: USER });
+    expect(notificationMessage(row, NAMES, FALLBACK)).toEqual({
+      key: 'notifications.text.org.admitted',
+      params: { subject: 'Bob', org: 'Acme' },
+    });
+    expect(notificationMessage(row, NONE, FALLBACK)).toEqual({
+      key: 'notifications.text.org.admitted',
+      params: { subject: 'Someone', org: 'an organization' },
+    });
+    expect(notificationTarget(row)).toBe(`/o/${ORG}`);
+  });
 });
 
 describe('notificationTarget', () => {
@@ -144,6 +157,23 @@ describe('notificationNames', () => {
     ]);
     expect(notificationNames(store.getState(), accepted).subject).toBe('Studio');
     expect(notificationNames(store.getState(), { ...accepted, ref: null }).subject).toBeNull();
+  });
+});
+
+describe('notificationNames of org.admitted', () => {
+  it('names the admitting admin from the org directory, never a device, and no subject for other kinds', () => {
+    const store = createStore();
+    putEvents(store, ORG, [
+      verified(ORG, { kind: 'member.profile', ref: USER, author: USER }, { display_name: 'Ada' }),
+      verified(ORG, { kind: 'device.profile', ref: DEVICE }, { label: 'Studio' }),
+    ]);
+    const state = store.getState();
+    const admitted = (ref: string | null) => notification('n1', { kind: 'org.admitted', org_id: ORG, ref });
+    expect(notificationNames(state, admitted(USER)).subject).toBe('Ada');
+    expect(notificationNames(state, admitted(DEVICE)).subject).toBeNull();
+    expect(notificationNames(state, admitted(null)).subject).toBeNull();
+    const other = notification('n2', { kind: 'task.idle', org_id: ORG, ref: USER });
+    expect(notificationNames(state, other).subject).toBeNull();
   });
 });
 

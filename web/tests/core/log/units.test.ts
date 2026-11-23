@@ -10,13 +10,17 @@ import {
   checkLogEntry,
   logBody,
   refusalCode,
+  signLogEntry,
   succeeds,
 } from '../../../src/core/log/entries';
-import { appendPlatform, UNKNOWN } from '../../../src/core/log/platform';
-import { buildBatch } from '../../../src/core/log/rotation';
+import { appendPlatform, UNKNOWN, verifyPlatformLog } from '../../../src/core/log/platform';
+import { buildBatch, checkBatch } from '../../../src/core/log/rotation';
 import { compareScopes, compareText } from '../../../src/core/log/state';
-import { appendEntries, verifyLog } from '../../../src/core/log/verify';
-import { checkWrap, compareSlots, slotJson, slotOf } from '../../../src/core/log/wraps';
+import { appendEntries, apply, verifyLog } from '../../../src/core/log/verify';
+import { checkWrap, compareSlots, credReaders, slotJson, slotOf } from '../../../src/core/log/wraps';
+import { identityValid, parseAccountCode } from '../../../src/core/crypto/identity';
+import { b64uDecode, b64uEncode } from '../../../src/core/encoding/b64u';
+import { VECTOR_FILES } from '../crypto/vector-suite';
 import { ed25519KeyPair } from '../../../src/core/crypto/keys';
 import { actors, type Actor, idOf, inviteFor, keySource, platformWith, seed, T0, TS, World } from './world';
 
@@ -180,5 +184,89 @@ describe('error plumbing', () => {
     await expect(succeeds(() => Promise.reject(new RangeError('defect')))).rejects.toThrow(RangeError);
     expect(await succeeds(() => Promise.reject(new CryptoError('log_chain')))).toBe(false);
     expect(await succeeds(() => Promise.resolve())).toBe(true);
+  });
+});
+
+describe('direct admission (ADR-060)', () => {
+  const data = VECTOR_FILES.log;
+  const admitLog = (count: number) => data.logs.admit.slice(0, count) as unknown[];
+
+  it('refuses an admit without the verified platform state (log_admit)', async () => {
+    const platform = await verifyPlatformLog(data.logs.platform, data.platform_root);
+    const before = (await verifyLog(admitLog(27), data.founder, platform.state)).state;
+    expect(await apply(before, data.logs.admit[27], data.founder, { platform: platform.state })).toBeDefined();
+    expect(await code(apply(before, data.logs.admit[27], data.founder))).toBe('log_admit');
+  });
+
+  it('gives the credential key of an admitted user to no device of that org until it consents', async () => {
+    const platform = await verifyPlatformLog(data.logs.platform, data.platform_root);
+    const state = (await verifyLog(admitLog(31), data.founder, platform.state)).state;
+    const bob = data.logs.admit[29].body.subject as string;
+    expect(state.member(bob)!.consented).toBe(false);
+    expect([...credReaders([state], bob)]).toEqual([bob]);
+    const consented = state.with({
+      principals: new Map(state.principals).set(bob, { ...state.member(bob)!, consented: true }),
+    });
+    expect(credReaders([consented], bob).size).toBe(3);
+  });
+
+  it('owes no wraps for an admitted user that leaves in the same batch', async () => {
+    const platform = (await verifyPlatformLog(data.logs.platform, data.platform_root)).state;
+    const log = await verifyLog(admitLog(27), data.founder, platform);
+    const dave = data.identities.dave;
+    const admitted = await appendEntries(log, [data.logs.admit[27]], data.founder, { platform });
+    const leave = await signLogEntry(
+      logBody({ org: log.state.org, head: admitted.head }, dave.id, { type: 'remove', subject: dave.id }, TS),
+      (await ed25519KeyPair(b64uDecode(dave.sig_sk))).privateKey,
+    );
+    const batch = await checkBatch(log, [data.logs.admit[27], leave], [], data.identities.alice.id, { platform });
+    expect(batch.log.state.member(dave.id)).toBeNull();
+    expect(await code(checkBatch(log, [data.logs.admit[27]], [], data.identities.alice.id, { platform }))).toBe(
+      'log_admit',
+    );
+  });
+
+  it('builds an admit batch with the wraps the admitted user needs (org and default workgroup)', async () => {
+    const root = await ed25519KeyPair(await seed('platform root'));
+    const entries = await buildPlatformEntries(null, root.privateKey, [
+      { type: 'root', pub: b64uEncode(root.publicKey) },
+      { type: 'user_certify', user: alice.id, pub: alice.identity.public() },
+      { type: 'user_certify', user: bob.id, pub: bob.identity.public() },
+    ]);
+    const world = await World.create(alice);
+    world.platform = (await verifyPlatformLog(entries, b64uEncode(root.publicKey))).state;
+    world.add(bob);
+    const built = await world.batch(alice, [
+      {
+        type: 'admit',
+        subject: bob.id,
+        pub: bob.identity.public(),
+        platform_seq: 2,
+        id_sig: '',
+        by_platform_seq: 1,
+        by_id_sig: '',
+        role: 'member',
+        wgs: {},
+      },
+    ]);
+    expect(built.body.wraps.map((wrap) => [wrap.scope, wrap.recipient_id])).toEqual([
+      ['org', bob.id],
+      ['wg', bob.id],
+    ]);
+    expect(world.state.member(bob.id)).toMatchObject({ consented: false, role: 'member' });
+  });
+
+  it('refuses an account code that is not text', () => {
+    expect(() => parseAccountCode(42)).toThrow(new CryptoError('account_code_invalid'));
+  });
+
+  it('passes errors of an identity proof check that are not refusals on', async () => {
+    const pub = {
+      get kem(): string {
+        throw new TypeError('defect');
+      },
+      sig: '',
+    };
+    await expect(identityValid(data.platform_root, data.ids.org, pub, '')).rejects.toThrow(TypeError);
   });
 });

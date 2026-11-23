@@ -15,6 +15,7 @@
   "text.task.failed": "Task “{task}” failed",
   "text.invite.accepted": "{subject} accepted the invitation to “{org}”",
   "text.rotation.required": "Access in “{org}” is being updated.",
+  "text.org.admitted": "{subject} admitted you to “{org}”",
   "text.unknown": "New notification in “{org}”",
   "unnamed.org": "…",
   "unnamed.wg": "…",

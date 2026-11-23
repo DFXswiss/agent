@@ -1,0 +1,12 @@
+{
+  "body": {
+    "by": "platform-root",
+    "prev": "0HNwgoIPXvij3Du1TB7IkAlnzcOS5zyz-shAyQ4zcFU",
+    "seq": 15,
+    "ts": "2026-11-21T12:15:00.000Z",
+    "type": "user_decertify",
+    "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72",
+    "v": 1
+  },
+  "sig": "h3Q7yS69TPjdJaeRV80fSSzNNDgEebqL0J_XUsqyMTddBuHNuc1Fkmthn04lwNHNkFWWZoHD0XlRa1CwiTm0Ag"
+}

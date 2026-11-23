@@ -1,0 +1,13 @@
+{
+  "body": {
+    "by": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c",
+    "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+    "prev": "VmtC2dm9Ld9gIq7KFWxS4L5E50rN9_vr5edt-xkiLrA",
+    "seq": 30,
+    "subject": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c",
+    "ts": "2026-11-21T12:30:00.000Z",
+    "type": "remove",
+    "v": 1
+  },
+  "sig": "PJYja2x8I5O18yjNjCtipqkgJ42PHQEgoEoxHsFYCo2uIwOFzLX8YFFFmC6gVMJJ8nbTjquzXp1QpieW2BKLAw"
+}

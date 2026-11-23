@@ -15,6 +15,7 @@
   "text.task.failed": "Task „{task}“ ist fehlgeschlagen",
   "text.invite.accepted": "{subject} hat die Einladung zu „{org}“ angenommen",
   "text.rotation.required": "Der Zugriff in „{org}“ wird aktualisiert.",
+  "text.org.admitted": "{subject} hat dich in „{org}“ aufgenommen",
   "text.unknown": "Neue Benachrichtigung in „{org}“",
   "unnamed.org": "…",
   "unnamed.wg": "…",

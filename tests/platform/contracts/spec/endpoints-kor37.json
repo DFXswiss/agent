@@ -1,0 +1,45 @@
+{
+  "description": "Endpoints of the direct admission of existing accounts (ADR-060, KOR-37): the admissible identity of an account by ID or account code, the caller's invitees and the operator's view of a registered identity.",
+  "rights": [
+    "user",
+    "root"
+  ],
+  "auth": [
+    "browser",
+    "root"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/users/lookup",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/users/{user}/identity",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/invitees",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/users/{user}",
+      "rights": [
+        "root"
+      ],
+      "section": "4.3"
+    }
+  ]
+}

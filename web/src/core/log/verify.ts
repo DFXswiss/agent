@@ -13,7 +13,13 @@
 // 5. every other type: L4 `by` known and `sig` valid under its key as known before the entry (`log_signature`);
 //    L8 `by` not removed (`log_rights`);
 // 6. L5 the type rule of section 4.7 (`log_rights`; `last_admin`; `invite_*` for `invite_revoke`);
-//    L6 `rotate.epoch == current + 1` and `wg_create.epoch == 1` (`log_epoch`).
+//    L6 `rotate.epoch == current + 1` and `wg_create.epoch == 1` (`log_epoch`). `admit` (ADR-060): by an admin,
+//    every workgroup writable and not the default one (`log_rights`), then the subject not an active principal (a
+//    former user with the same identity keys may be admitted again), the subject's identity anchored at
+//    `platform_seq` with `id_sig` and the admitting admin's identity (its keys in the state before the entry) at
+//    `by_platform_seq` with `by_id_sig` (`PlatformState.identityAnchored`; without platform state refused)
+//    (`log_admit`). The admitted user has not consented (`Principal.consented`): devices of this org are no
+//    recipients of its credential key.
 // `now` (hub receipt time, unix ms) switches on the checks only the hub can make at append time (invitation expiry,
 // platform access and a still valid certification for `device_assign` of a platform device). A reader replaying
 // the log checks neither. L9 is `checkExtends` (stored heads, `refreshLog`), L10 `needsRefresh`/`requireLh`.
@@ -82,6 +88,7 @@ async function genesis(body: Body, entry: Body, founder: string): Promise<OrgSta
     joinedSeq: 0,
     removedSeq: null,
     platformSeq: null,
+    consented: true,
   };
   return new OrgState({
     org,
@@ -139,6 +146,7 @@ async function accept(state: OrgState, body: Body, entry: Body, seq: number, now
     joinedSeq: seq,
     removedSeq: null,
     platformSeq: null,
+    consented: true,
   };
   const access = new Map(state.access);
   const assignments = new Map(state.assignments);
@@ -260,6 +268,7 @@ function platformDevice(state: OrgState, body: Body, seq: number, ctx: Context):
     joinedSeq: seq,
     removedSeq: null,
     platformSeq: cert.seq,
+    consented: true,
   };
 }
 
@@ -288,6 +297,46 @@ function deviceUnassign(state: OrgState, body: Body): OrgState {
   const assignments = new Map(state.assignments);
   assignments.delete(pairKey(device, wg));
   return state.with({ assignments });
+}
+
+async function admit(state: OrgState, body: Body, seq: number, ctx: Context): Promise<OrgState> {
+  const subject = body.subject as string;
+  const by = body.by as string;
+  const pub = body.pub as { kem: string; sig: string };
+  const wgs = body.wgs as Record<string, string>;
+  rights(Object.keys(wgs).every((wg) => state.writable(wg) && wg !== state.defaultWg));
+  const former = state.principals.get(subject);
+  const rejoinValid =
+    former === undefined ||
+    (former.removedSeq !== null && former.kind === USER && former.kem === pub.kem && former.sig === pub.sig);
+  const author = state.principals.get(by)!;
+  const { platform } = ctx;
+  const current = ctx.now !== null;
+  const anchored =
+    platform !== null &&
+    (await platform.identityAnchored(body.platform_seq as number, subject, pub, body.id_sig, current)) &&
+    (await platform.identityAnchored(
+      body.by_platform_seq as number,
+      by,
+      { kem: author.kem, sig: author.sig },
+      body.by_id_sig,
+      current,
+    ));
+  if (!(rejoinValid && anchored)) fail('log_admit');
+  const principal: Principal = {
+    id: subject,
+    kind: USER,
+    role: body.role as string,
+    kem: pub.kem,
+    sig: pub.sig,
+    joinedSeq: seq,
+    removedSeq: null,
+    platformSeq: null,
+    consented: false,
+  };
+  const access = new Map(state.access);
+  for (const [wg, level] of Object.entries(wgs)) access.set(pairKey(subject, wg), level);
+  return state.with({ principals: new Map(state.principals).set(subject, principal), access });
 }
 
 function without<T>(map: ReadonlyMap<string, T>, principal: string): Map<string, T> {
@@ -329,7 +378,7 @@ function rotate(state: OrgState, body: Body): OrgState {
   });
 }
 
-type Transition = (state: OrgState, body: Body, seq: number, ctx: Context) => OrgState;
+type Transition = (state: OrgState, body: Body, seq: number, ctx: Context) => OrgState | Promise<OrgState>;
 const ADMIN_ONLY: Record<string, Transition> = {
   invite: (state, body, seq) => inviteEntry(state, body, seq),
   invite_revoke: (state, body, seq) => inviteRevoke(state, body, seq),
@@ -340,13 +389,14 @@ const ADMIN_ONLY: Record<string, Transition> = {
   ungrant: (state, body) => ungrant(state, body),
   device_assign: deviceAssign,
   device_unassign: (state, body) => deviceUnassign(state, body),
+  admit,
 };
 const OTHERS: Record<string, Transition> = {
   remove: (state, body, seq) => remove(state, body, seq),
   rotate: (state, body) => rotate(state, body),
 };
 
-function applyType(state: OrgState, body: Body, seq: number, ctx: Context): OrgState {
+function applyType(state: OrgState, body: Body, seq: number, ctx: Context): OrgState | Promise<OrgState> {
   const type = body.type as string;
   const adminOnly = Object.hasOwn(ADMIN_ONLY, type);
   rights(!adminOnly || state.isAdmin(body.by as string));
@@ -385,7 +435,7 @@ export async function apply(
       now: options.now ?? null,
       platformAccess: !!options.platformAccess,
     };
-    after = applyType(state, body, seq, ctx);
+    after = await applyType(state, body, seq, ctx);
   }
   return after.with({ seq, head: await entryHash(data) });
 }

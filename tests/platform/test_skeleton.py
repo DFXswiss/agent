@@ -42,6 +42,7 @@ AREAS = [
     "stream",
     "tasks",
     "usage",
+    "users",
     "whiteboards",
     "workgroups",
     "wraps",

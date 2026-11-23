@@ -73,7 +73,7 @@ credential_notice: credentials | device_id:uuid owner_id:uuid kind:code changed_
 dedupe_slot: operations | wg_id:uuid epoch:number tag:code operation_id:uuid expires_at:time
 device: logs | id:uuid@ids kind:code kem_pub:bytes sig_pub:bytes owner_org:uuid state:code enrolled_at:time
   certified_seq:number agent_version:code@metrics os:code@metrics arch:code@metrics capacity:json@metrics
-  updated_at:time
+  updated_at:time features:codes@metrics
 device_enrollment: logs | invite_id:code device_id:uuid request:json created_at:time certified_at:time
 device_presence: metrics | device_id:uuid hub_instance:code connected_at:time last_heartbeat_at:time
 device_request: operations | id:uuid user_id:uuid device_id:uuid kind:code state:code envelope:json@ciphertext
@@ -111,6 +111,7 @@ operation_transition: operations | operation_id:uuid seq:number state:code error
 org: logs | id:uuid@ids private:flag platform_access:flag default_wg:uuid created_by:uuid created_at:time
   log_head_seq:number log_head_hash:code rotation_pending:json
 org_member: logs | org_id:uuid principal_id:uuid kind:code role:code joined_seq:number removed_seq:number
+  consented:flag
 outbox_receipt: events | device_id:uuid origin_seq:number item_kind:code item_sha256:bytes status:code error:code
   received_at:time
 passkey: auth | credential_id:bytes user_id:uuid@ids public_key:bytes sign_count:number transports:codes
@@ -140,6 +141,7 @@ usage_counter: metrics | session_id:uuid requests:number input_tokens:number out
   context_used_tokens:number context_window_tokens:number last_provider:code updated_at:time
 usage_daily: metrics | org_id:uuid day:time device_id:uuid cost_micro_usd:number
 user_identity: auth | user_id:uuid@ids kem_pub:bytes@logs sig_pub:bytes@logs recovery_id:code created_at:time
+  id_sig:bytes@logs id_invite_seq:number@logs
 user_settings: settings | user_id:uuid model_access:code model_id:code locale:code updated_at:time
 vm: tasks | id:code device_id:uuid wg_id:uuid state:code golden_version:code cpus:number@metrics
   memory_mib:number@metrics disk_gib:number@metrics created_at:time state_at:time

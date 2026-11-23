@@ -1,0 +1,12 @@
+{
+  "user_id": "01a1fe1a-4495-70ca-90ff-34dadbdf67b4",
+  "pub": {
+    "kem": "MReWzGKvoyV2wQwJ6Kqqq7uY-TOGR-DPx3ZKdteKj3g",
+    "sig": "1NjE3kynoUZvbJ0JvH4hUE2BN4QgNET-3PEzx9oFTXI"
+  },
+  "account_code": "XUODQBH7HBXI",
+  "created_at": "2026-11-21T12:40:00.000Z",
+  "platform_invite_id": null,
+  "registered_at": null,
+  "certified_seq": 12
+}

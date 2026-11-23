@@ -65,5 +65,9 @@
   "prf-required.delete": "Delete the passkey you just created in your password manager – it cannot be used here.",
   "prf-required.later": "Your registration could not be removed yet; your invitation can be used again in 24 hours at the latest.",
   "prf-required.retry": "Try again with another passkey",
-  "prf-required.not-removed": "The passkey could not be removed from your account; remove it under Settings → Passkeys and recovery."
+  "prf-required.not-removed": "The passkey could not be removed from your account; remove it under Settings → Passkeys and recovery.",
+  "account-code.title": "Your account code",
+  "account-code.explain": "With this code an admin can add you to their organization directly – you do not have to confirm anything. Only give it to people who should add you.",
+  "account-code.copy": "Copy code",
+  "account-code.copied": "Copied"
 }

@@ -211,6 +211,7 @@
         "log_chain",
         "log_genesis",
         "log_accept",
+        "log_admit",
         "log_signature",
         "log_rights",
         "log_epoch",
@@ -221,7 +222,10 @@
         "author_not_writer",
         "pairing_unknown",
         "pairing_gesture_required",
-        "claim_invalid"
+        "claim_invalid",
+        "identity_unproven",
+        "peer_outdated",
+        "account_code_invalid"
       ],
       "description": "codes the hub sends (enums/error-codes.json)"
     },
@@ -566,6 +570,15 @@
             },
             "candidates_available": {
               "type": "boolean"
+            },
+            "devices": {
+              "type": "array",
+              "description": "peer_outdated: the active devices of the org that have not announced the needed feature (ADR-060)",
+              "items": {
+                "$ref": "#/$defs/uuid"
+              },
+              "minItems": 1,
+              "maxItems": 64
             }
           },
           "additionalProperties": false
@@ -1895,6 +1908,105 @@
       ],
       "additionalProperties": false
     },
+    "log_body_admit": {
+      "type": "object",
+      "description": "body of a admit entry (ADR-060): an admin admits an existing account; identity anchors in the platform log",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "admit"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        },
+        "pub": {
+          "$ref": "#/$defs/pub_keys"
+        },
+        "platform_seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "id_sig": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_64"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "by_platform_seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "by_id_sig": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_64"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "role": {
+          "$ref": "#/$defs/org_role"
+        },
+        "wgs": {
+          "type": "object",
+          "description": "map wg ID -> read|write",
+          "additionalProperties": {
+            "$ref": "#/$defs/wg_access"
+          }
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "subject",
+        "pub",
+        "platform_seq",
+        "id_sig",
+        "by_platform_seq",
+        "by_id_sig",
+        "role",
+        "wgs"
+      ],
+      "additionalProperties": false
+    },
     "log_entry_body": {
       "description": "membership-log entry body: common fields org, seq, prev, type, by, ts, v plus exactly the fields of its type (04-crypto.md section 4.7)",
       "anyOf": [
@@ -1936,6 +2048,9 @@
         },
         {
           "$ref": "#/$defs/log_body_rotate"
+        },
+        {
+          "$ref": "#/$defs/log_body_admit"
         }
       ]
     },
@@ -2428,6 +2543,106 @@
       ],
       "additionalProperties": false
     },
+    "platform_body_user_certify": {
+      "type": "object",
+      "description": "body of a user_certify entry (ADR-060): the root attests the identity keys of a user",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "user_certify"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "user": {
+          "$ref": "#/$defs/uuid"
+        },
+        "pub": {
+          "$ref": "#/$defs/pub_keys"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "user",
+        "pub"
+      ],
+      "additionalProperties": false
+    },
+    "platform_body_user_decertify": {
+      "type": "object",
+      "description": "body of a user_decertify entry (ADR-060): ends the valid certification of a user",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "user_decertify"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "user": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "user"
+      ],
+      "additionalProperties": false
+    },
     "platform_entry_body": {
       "description": "platform-log entry body: common fields seq, prev, type, by, ts, v plus exactly the fields of its type (04-crypto.md section 4.8)",
       "anyOf": [
@@ -2454,6 +2669,12 @@
         },
         {
           "$ref": "#/$defs/platform_body_org_platform_access"
+        },
+        {
+          "$ref": "#/$defs/platform_body_user_certify"
+        },
+        {
+          "$ref": "#/$defs/platform_body_user_decertify"
         }
       ]
     },

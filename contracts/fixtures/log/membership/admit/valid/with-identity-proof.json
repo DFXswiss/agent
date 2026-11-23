@@ -1,0 +1,23 @@
+{
+  "body": {
+    "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+    "by_id_sig": "",
+    "by_platform_seq": 12,
+    "id_sig": "ONRauw_w0ZtJK3MdVtpdq1UGfPTEWUZ0NrAbT8-V5njTcQILaOa5kAaMmhikFUDETQ_CmpTCNcjwe1qPMx_YCA",
+    "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+    "platform_seq": 11,
+    "prev": "iqzS7HJN_BPC8xm6IIqO8o43UHgh-KAkF-v9gxpolZs",
+    "pub": {
+      "kem": "nF7IxPXgtxeyVCef81j1lAtOjHw_NNcu4nWS_RPYkWE",
+      "sig": "vElSw3m-DIWBsFyyzwmy-3qlKQj4bjih7WnVQ4DNULI"
+    },
+    "role": "admin",
+    "seq": 28,
+    "subject": "01a1fe04-5820-776d-b71a-3b4bb8a4f65c",
+    "ts": "2026-11-21T12:28:00.000Z",
+    "type": "admit",
+    "v": 1,
+    "wgs": {}
+  },
+  "sig": "4SOO7MqkGZLtJICK_WsSFr0keptL028R5OQyygAQjbAW4yBqdpV4OK-W-3a23WkLw21kYW-hWB35uH9c0229BA"
+}

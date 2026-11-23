@@ -8,6 +8,7 @@
 // | `task.failed` | "Task Y failed" | the task |
 // | `invite.accepted` | "Z accepted the invitation to X" | the org's members |
 // | `rotation.required` | "Access in X is being updated" (neutral; the hub no longer creates it, ADR-058) | the org's members |
+// | `org.admitted` | "Z admitted you to X" (`ref` = the admitting admin, ADR-060) | the org |
 // | `agent.account_change` | "Agent A removed a passkey" (replaced the recovery code, disconnected an agent, …;
 //   `ref` = `<action>:<acting agent id>:<target>`, no org) | the settings |
 //
@@ -27,7 +28,8 @@ export interface Names {
   readonly org: string | null;
   readonly wg: string | null;
   readonly task: string | null;
-  /** The subject of `invite.accepted` (a member's display name or a device's label). */
+  /** The subject of `invite.accepted` (a member's display name or a device's label) or the admitting admin of
+   *  `org.admitted`. */
   readonly subject: string | null;
   /** The name of the agent of an `agent.account_change`. */
   readonly agent: string | null;
@@ -83,6 +85,8 @@ export function notificationMessage(row: NotificationRow, names: Names, fallback
       return { key: 'notifications.text.invite.accepted', params: { subject, org } };
     case 'rotation.required':
       return { key: 'notifications.text.rotation.required', params: { org } };
+    case 'org.admitted':
+      return { key: 'notifications.text.org.admitted', params: { subject, org } };
     default:
       return { key: 'notifications.text.unknown', params: { org } };
   }
@@ -151,9 +155,13 @@ function readNames(state: StoreState, row: NotificationRow): Names {
   const directory = selectDirectory(row.org_id)(state);
   const title = row.task_id === null || row.wg_id === null ? null : selectTitle(row.wg_id, row.task_id, null)(state);
   const subject =
-    row.kind === 'invite.accepted' && row.ref !== null
-      ? (directory.members.get(row.ref) ?? deviceLabel(state, row.org_id, row.ref))
-      : null;
+    row.ref === null
+      ? null
+      : row.kind === 'invite.accepted'
+        ? (directory.members.get(row.ref) ?? deviceLabel(state, row.org_id, row.ref))
+        : row.kind === 'org.admitted'
+          ? (directory.members.get(row.ref) ?? null)
+          : null;
   return {
     org: directory.orgName,
     wg: row.wg_id === null ? null : (directory.workgroups.get(row.wg_id) ?? null),

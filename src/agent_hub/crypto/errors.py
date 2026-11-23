@@ -27,6 +27,7 @@ CRYPTO_CODES = frozenset(
         "size_exceeded",
         "wrap_unauthorized",
         "platform_root_mismatch",
+        "account_code_invalid",
     }
 )
 
@@ -38,6 +39,7 @@ LOG_CODES = frozenset(
         "log_chain",
         "log_genesis",
         "log_accept",
+        "log_admit",
         "log_signature",
         "log_rights",
         "log_epoch",

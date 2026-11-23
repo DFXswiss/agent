@@ -171,6 +171,22 @@ describe('layout', () => {
     );
   });
 
+  it('asks to reload instead of showing evidence for an org written by a newer version (ADR-060)', async () => {
+    let org = '';
+    const harness = await renderApp('/settings', {}, async (made) => {
+      org = (await onboard(made)).org!;
+    });
+    await screen.findByTestId('settings.page');
+    await act(async () => harness.router.navigate(`/o/${org}/x`));
+    act(() =>
+      blockOrg(harness.app.store, org, { code: 'log_type', stored: { seq: 1, hash: 'h' }, served: null, lh: null }),
+    );
+    expect(screen.getByTestId('shell.blocked.outdated')).toHaveTextContent('Reload the page to continue.');
+    expect(screen.getByTestId('shell.blocked.title')).toHaveTextContent('A newer version is available');
+    expect(screen.getByTestId('shell.blocked.code')).toHaveTextContent('log_type');
+    expect(screen.queryByTestId('shell.blocked.evidence')).toBeNull();
+  });
+
   it('follows the browser connectivity and shows the channel state', async () => {
     const harness = await renderApp('/settings', {}, async (made) => {
       await onboard(made);

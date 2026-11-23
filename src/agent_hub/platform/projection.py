@@ -12,7 +12,8 @@ rebuilt state agree:
 - `device_decertify`: device state `decertified` (the gate refuses the device with `key_revoked`, HUB-08);
 - `role_grant` / `role_revoke`: `platform_role` (`granted_seq`, `revoked_seq`);
 - `org_platform_access`: `org.platform_access` (a private org keeps `true`, ADR-026);
-- `root`: nothing.
+- `root`, `user_certify`, `user_decertify`: nothing (the certifications of users are read from the verified platform
+  log, ADR-060).
 
 `mark_rotation_pending` is an effect of a new decertification, not a projection (rebuild leaves `rotation_pending`
 alone): every org in which the device is assigned to a workgroup or a member gets the scopes the device could read
@@ -124,6 +125,8 @@ PROJECTORS: dict[str, Projector] = {
     "role_grant": _role,
     "role_revoke": _role,
     "org_platform_access": _org_access,
+    "user_certify": _nothing,
+    "user_decertify": _nothing,
 }
 
 

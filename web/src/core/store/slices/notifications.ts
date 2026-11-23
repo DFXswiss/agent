@@ -17,6 +17,7 @@ export const NOTIFICATION_KINDS = [
   'invite.accepted',
   'rotation.required',
   'agent.account_change',
+  'org.admitted',
 ] as const;
 
 /** The account-level kind (no org): an account-changing action of one of the user's agents (11-agent-access.md

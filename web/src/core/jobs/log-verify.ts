@@ -8,7 +8,11 @@
 // Founder pinning without a stored pin (first sign-in on this browser): the founder key is taken from `genesis`, and
 // the verified log must contain the unlocked identity of the user as a principal with the same signing key. The hub
 // cannot forge the user's own signed `genesis`/`accept` entry, and every later entry is chained to it (L2), so a log
-// the hub invented is refused (`log_genesis`) – see docs/platform/decisions/WEB-02.md.
+// the hub invented is refused (`log_genesis`) – see docs/platform/decisions/WEB-02.md. A user who entered by `admit`
+// (ADR-060) has no own entry, but needs no extra step here: its principal carries its own keys (the check above
+// holds), and rule L5 of `admit` already proves the admitting admin's identity through the root-signed platform log
+// (`by_platform_seq`, `by_id_sig`), so a hub cannot invent an `admit` in the name of a real, proven account.
+// A refusal for an unknown entry type (`log_type`) blocks the org as `outdated` (a newer version wrote it).
 import { b64uEncode } from '../encoding/b64u';
 import { CryptoError, fail } from '../crypto/errors';
 import { checkExtends, type Head } from '../log/entries';

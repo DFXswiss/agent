@@ -53,6 +53,8 @@ const key: Check = (value) => F.b64uBytes(value, RAW_KEY_BYTES);
 const bodySig: Check = (value) => F.b64uBytes(value, SIGNATURE_BYTES); // inside a body (device_certify)
 const inviteId: Check = (value) => F.b64uBytes(value, INVITE_ID_BYTES);
 const version: Check = (value) => F.literal(value, VERSION);
+/** Identity proofs of `admit` (ADR-060): `""` when not used. */
+const sigOrEmpty: Check = (value) => (value === '' ? value : bodySig(value));
 
 function pub(value: unknown): unknown {
   const keys = F.requireKeys(value, ['kem', 'sig']);
@@ -122,6 +124,16 @@ const LOG_TYPE_FIELDS: Record<string, Record<string, Check>> = {
   device_unassign: { device: F.uuid, wg: F.uuid },
   remove: { subject: F.uuid },
   rotate: { scope: oneOf('org', 'wg'), scope_id: F.uuid, epoch },
+  admit: {
+    subject: F.uuid,
+    pub,
+    platform_seq: seq,
+    id_sig: sigOrEmpty,
+    by_platform_seq: seq,
+    by_id_sig: sigOrEmpty,
+    role: oneOf('admin', 'member'),
+    wgs: wgs(WG_ACCESS),
+  },
 };
 const INVITE_COMMON: Record<string, Check> = { invite_id: inviteId, pk_inv: key, kind: oneOf('user', 'device') };
 const INVITE_USER: Record<string, Check> = {
@@ -160,6 +172,8 @@ const PLATFORM_TYPE_FIELDS: Record<string, Record<string, Check>> = {
   role_revoke: { subject: F.uuid, role: oneOf('inviter') },
   user_invite: { invite_id: inviteId, pk_inv: key, expires: F.time },
   org_platform_access: { org: F.uuid, granted: bool },
+  user_certify: { user: F.uuid, pub },
+  user_decertify: { user: F.uuid },
 };
 
 export const LOG_TYPES: readonly string[] = Object.keys(LOG_TYPE_FIELDS);
@@ -298,7 +312,18 @@ export type LogFields =
   | { type: 'device_assign'; device: string; wg: string; platform_seq?: number }
   | { type: 'device_unassign'; device: string; wg: string }
   | { type: 'remove'; subject: string }
-  | { type: 'rotate'; scope: 'org' | 'wg'; scope_id: string; epoch: number };
+  | { type: 'rotate'; scope: 'org' | 'wg'; scope_id: string; epoch: number }
+  | {
+      type: 'admit';
+      subject: string;
+      pub: { kem: string; sig: string };
+      platform_seq: number;
+      id_sig: string;
+      by_platform_seq: number;
+      by_id_sig: string;
+      role: 'admin' | 'member';
+      wgs: Record<string, 'read' | 'write'>;
+    };
 
 /** Where the next entry goes: the org and the head it extends (`null` before genesis). */
 export interface Position {

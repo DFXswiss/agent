@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/platform-user.response.json",
+  "title": "GET /v1/platform/users/{user} response",
+  "description": "the registered identity of an active user for the operator's user_certify (ADR-060): public keys, account code, the platform invitation the user registered through (null for a registration through an org invitation) and the valid certification, if any",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "pub": {
+      "$ref": "../common.json#/$defs/pub_keys"
+    },
+    "account_code": {
+      "type": "string",
+      "pattern": "^[A-Z2-7]{12}$"
+    },
+    "created_at": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "platform_invite_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/invite_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "registered_at": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "certified_seq": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "user_id",
+    "pub",
+    "account_code",
+    "created_at",
+    "platform_invite_id",
+    "registered_at",
+    "certified_seq"
+  ],
+  "additionalProperties": false
+}

@@ -63,5 +63,6 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [057](057-workspace-imports-are-the-scanner-baseline.md) | Platform imports (`files/import`: checkout, work-VM results) are the workspace scanner's baseline; dependency and build directories are not scanned; bulk passes and changes beyond a per-session window become one `session.file` summary | §10 | no |
 | [058](058-admins-read-every-workgroup.md) | Organization admins read every workgroup by inheritance (right and keys, history included; delivered by catch-up, revoked by rotation; credentials and platform sessions keep explicit access); key handling stays out of the user interface | §8, §15 idea 30 | no |
 | [059](059-work-vm-on-request.md) | Work VM on request: the session asks for its own isolated Ubuntu VM and may do anything inside it; internet only through the device's Cloudflare client, fail-closed (client's decision) | §3, §9, §10, §11, ideas 27, 28, 44, 46 | no |
+| [060](060-direct-admission-of-existing-accounts.md) | Admins admit existing accounts directly (`admit`); identities anchored in the platform log (`user_certify`, invitation identity proof), no credential key without consent, runner capability gate | §1, §5, §8 | no |
 
 New decisions get the next free number; a superseded ADR keeps its file and is marked `Superseded by ADR-NNN`.

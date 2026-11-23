@@ -11,7 +11,9 @@
 //   credential scope uses the explicit access only (`explicitAccess`, ADR-058 section 1);
 // - devices read the workgroups they are assigned to and the org scope while they have at least one assignment
 //   (ADR-007);
-// - an archived workgroup stays readable but is no longer writable (decision CRY-02).
+// - an archived workgroup stays readable but is no longer writable (decision CRY-02);
+// - `admit` (ADR-060) makes a user a member like `accept` of a user invitation with its role and workgroups, but
+//   without the user's consent (`Principal.consented` false until it leaves and joins again by an own `accept`).
 // `remove` deletes every access and assignment of the subject; a former member who accepts a new invitation starts
 // again from that invitation (rejoin).
 
@@ -53,6 +55,11 @@ export interface Principal {
   readonly removedSeq: number | null;
   /** Platform devices: the platform-log `seq` of their `device_certify` (keys come from there). */
   readonly platformSeq: number | null;
+  /**
+   * A user that joined by its own signed entry (`genesis`, `accept`); false after `admit` (ADR-060): the devices of
+   * this org are then no recipients of the user's credential key.
+   */
+  readonly consented: boolean;
 }
 
 /** An `invite` entry and what happened to it. */
@@ -259,6 +266,7 @@ export class OrgState implements OrgStateFields {
         joined_seq: p.joinedSeq,
         removed_seq: p.removedSeq,
         platform_seq: p.platformSeq,
+        consented: p.consented,
       })),
       workgroups: byId(this.workgroups.values(), (wg) => wg.id).map((wg) => ({
         wg_id: wg.id,

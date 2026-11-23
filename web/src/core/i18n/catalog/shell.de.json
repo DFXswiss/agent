@@ -17,6 +17,8 @@
   "blocked.body": "Der Server hat eine widersprüchliche Mitgliederhistorie geliefert. Bis zur Klärung wird in dieser Organisation nichts gelesen oder geschrieben.",
   "blocked.evidence": "Nachweis für den Support: gespeicherter Stand {stored}, gelieferter Stand {served}, Stand des Ereignisses {lh}.",
   "blocked.none": "keiner",
+  "blocked.outdated.title": "Eine neuere Version ist verfügbar",
+  "blocked.outdated.body": "Diese Organisation verwendet eine Funktion einer neueren Version der App. Laden Sie die Seite neu, um fortzufahren.",
   "unsupported.title": "Dieser Browser wird nicht unterstützt",
   "unsupported.body": "agent.dfx.swiss braucht Passkeys (WebAuthn), X25519 und Ed25519 in WebCrypto sowie Streaming-Fetch.",
   "skip": "Zum Inhalt springen",

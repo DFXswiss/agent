@@ -3,7 +3,8 @@
 `project_entry` writes the difference between the rights state before and after one entry into the projection tables:
 
 - `org_member`: a principal that becomes active (join, rejoin, a platform device at its first `device_assign`) gets
-  `joined_seq` and no `removed_seq`; `remove` sets `removed_seq`; `role` changes the role;
+  `joined_seq`, no `removed_seq` and `consented` (False after `admit`, ADR-060); `remove` sets `removed_seq`; `role`
+  changes the role;
 - `wg`: `created_seq` at genesis/`wg_create`, `archived_seq` at `wg_archive`;
 - `wg_access`: the **effective** access of every active user (explicit access plus `write` on the default workgroup for
   every member, ADR-024 addendum: not reducible, plus `read` on every other workgroup for every admin without explicit
@@ -63,10 +64,11 @@ def _members(connection: Connection, org: UUID, before: OrgState | None, after: 
         old = None if before is None else before.principals.get(principal.id)
         if principal.active and (old is None or not old.active):
             connection.execute(
-                "INSERT INTO hub.org_member (org_id, principal_id, kind, role, joined_seq, removed_seq)"
-                " VALUES (%s, %s, %s, %s, %s, NULL) ON CONFLICT (org_id, principal_id) DO UPDATE"
-                " SET kind = EXCLUDED.kind, role = EXCLUDED.role, joined_seq = EXCLUDED.joined_seq, removed_seq = NULL",
-                (org, principal.id, principal.kind, principal.role, seq),
+                "INSERT INTO hub.org_member (org_id, principal_id, kind, role, joined_seq, removed_seq, consented)"
+                " VALUES (%s, %s, %s, %s, %s, NULL, %s) ON CONFLICT (org_id, principal_id) DO UPDATE"
+                " SET kind = EXCLUDED.kind, role = EXCLUDED.role, joined_seq = EXCLUDED.joined_seq, removed_seq = NULL,"
+                " consented = EXCLUDED.consented",
+                (org, principal.id, principal.kind, principal.role, seq, principal.consented),
             )
         elif old is not None and old.active and not principal.active:
             connection.execute(

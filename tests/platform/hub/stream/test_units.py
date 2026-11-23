@@ -315,9 +315,9 @@ def test_a_shutdown_during_the_opening_refuses_the_stream(
 ) -> None:
     original = live.service._rights
 
-    def closing_meanwhile(*args: Any) -> Any:
+    def closing_meanwhile(*args: Any, **kwargs: Any) -> Any:
         live.service.closing = True
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(live.service, "_rights", closing_meanwhile)
     with pytest.raises(Refused) as refused:
@@ -331,9 +331,9 @@ def test_a_shutdown_during_the_connect_refuses_the_socket(
 ) -> None:
     original = presence.connect
 
-    def closing_meanwhile(*args: Any) -> Any:
+    def closing_meanwhile(*args: Any, **kwargs: Any) -> Any:
         live.service.closing = True
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(presence, "connect", closing_meanwhile)
     key = hub.keys.device()
@@ -352,7 +352,7 @@ def test_a_shutdown_during_the_connect_refuses_the_socket(
 def test_a_device_that_became_unusable_after_the_gate_is_refused(
     hub: HubHarness, live: LiveHub, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(presence, "connect", lambda *_args: None)
+    monkeypatch.setattr(presence, "connect", lambda *_args, **_kwargs: None)
     with pytest.raises(InvalidStatus):
         live.device(hub.keys.device())
     assert live.service.devices == {}

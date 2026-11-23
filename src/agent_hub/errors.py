@@ -16,6 +16,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "request_invalid": (400,),
     "header_invalid": (400,),
     "params_invalid": (400,),
+    "account_code_invalid": (400,),
     "non_ascii": (400,),
     "kind_not_allowed": (400,),
     "epoch_stale": (400,),
@@ -49,6 +50,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "platform_invite_required": (403,),
     "platform_access_denied": (403,),
     "not_found": (404,),
+    "identity_unproven": (404,),
     "invite_unknown": (404,),
     "id_conflict": (409,),
     "event_conflict": (409,),
@@ -61,6 +63,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "rotation_required": (409,),
     "no_device_available": (409,),
     "invite_registered": (409,),
+    "peer_outdated": (409,),
     "invite_expired": (410,),
     "rate_limited": (429,),
     "unavailable": (503,),
@@ -74,6 +77,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "log_chain": (400,),
     "log_genesis": (400,),
     "log_accept": (400,),
+    "log_admit": (400,),
     "log_signature": (400,),
     "log_rights": (400,),
     "log_epoch": (400,),
@@ -88,7 +92,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
 }
 
 # The detail keys of `contracts/common.json#/$defs/error` (closed).
-DETAIL_KEYS = frozenset({"pointers", "expected_seq", "expected", "candidates_available"})
+DETAIL_KEYS = frozenset({"pointers", "expected_seq", "expected", "candidates_available", "devices"})
 INTERNAL_ERROR = "unavailable"
 
 

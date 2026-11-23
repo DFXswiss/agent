@@ -139,7 +139,20 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       data.valid.projections,
       'projections',
     );
-    same(new Set(log.entries.map((entry) => entry.body.type)).size, LOG_TYPES.length, 'every entry type');
+    const admitted = await ctx.log({ ...data.admit_valid, founder: data.founder });
+    const from = data.valid.heads.length;
+    same(
+      admitted.states.slice(from).map((s) => ({ seq: s.seq, hash: s.head })),
+      data.admit_valid.heads,
+      'admit heads',
+    );
+    same(
+      admitted.states.slice(from).map((s) => s.projection()),
+      data.admit_valid.projections,
+      'admit projections',
+    );
+    const types = new Set([...log.entries, ...admitted.entries].map((entry) => entry.body.type));
+    same([...types].sort(), [...LOG_TYPES].sort(), 'every entry type');
     for (const item of data.extends) await checkExtends(item.head, ctx.entries(item));
     for (const item of data.excluded) {
       const state = (await ctx.platform(item))!;

@@ -42,7 +42,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 | R-1.10 | [§1 b5](../KONZEPT.md#k-1-b5) (proposal) | One-time codes. | **Adopted**: every code is single use (L7, hub marks used). ADR-005. | HUB, WEB, RUN | 04 §4.7, §5.7 | E2E-03 |
 | R-1.11 | [§1 b5](../KONZEPT.md#k-1-b5) (proposal) | Expiry times. | **Adopted**: users 72 h, devices 24 h default, max 30 d. ADR-005. | HUB, WEB | 03 §12 | E2E-03 |
 | R-1.12 | [§1 b5](../KONZEPT.md#k-1-b5) (proposal) | Revocation / unpairing. | **Adopted**: `invite_revoke`; device unpairing via `remove`/`device_unassign` with atomic rotation; platform `device_decertify` (hub refuses the device, `rotation_pending`, admin browser performs `device_unassign` + rotate batch). ADR-005. | HUB, WEB, RUN | 04 §5.10 | E2E-03, E2E-04, E2E-05 (decertification steps) |
-| R-1.13 | [§1 b3](../KONZEPT.md#k-1-b3), [§2 b2](../KONZEPT.md#k-2-b2), [§8 b1](../KONZEPT.md#k-8-b1) | An existing user can accept an invitation to a further organization without a new identity. | Decided: invitation screen offers "I already have an account"; `accept` with the registered identity (04 §5.2a). | WEB, HUB | 04 §5.2a, 06 §3.1 | E2E-39 |
+| R-1.13 | [§1 b3](../KONZEPT.md#k-1-b3), [§2 b2](../KONZEPT.md#k-2-b2), [§8 b1](../KONZEPT.md#k-8-b1) | An existing user can accept an invitation to a further organization without a new identity. | Decided: invitation screen offers "I already have an account"; `accept` with the registered identity (04 §5.2a); since ADR-060 an admin may also admit an existing account directly (`admit`, 04 §5.13). | WEB, HUB | 04 §5.2a, §5.13, 06 §3.1 | E2E-39, E2E-41 |
 
 ## R-2 Onboarding and first task
 

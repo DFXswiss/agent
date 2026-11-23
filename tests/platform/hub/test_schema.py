@@ -33,7 +33,15 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     "schema_version": [("version", INT), ("name", T), ("checksum", T), ("applied_at", TS)],
     # 2.1
     "principal": [("id", U), ("kind", T), ("created_at", TS), ("disabled_at", TS)],
-    "user_identity": [("user_id", U), ("kem_pub", B), ("sig_pub", B), ("recovery_id", T), ("created_at", TS)],
+    "user_identity": [
+        ("user_id", U),
+        ("kem_pub", B),
+        ("sig_pub", B),
+        ("recovery_id", T),
+        ("created_at", TS),
+        ("id_sig", B),
+        ("id_invite_seq", INT),
+    ],
     "user_settings": [("user_id", U), ("model_access", T), ("model_id", T), ("locale", T), ("updated_at", TS)],
     "identity_bundle": [("user_id", U), ("slot", T), ("ct", B), ("updated_at", TS)],
     "passkey": [
@@ -106,6 +114,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("arch", T),
         ("capacity", J),
         ("updated_at", TS),
+        ("features", A),
     ],
     "device_presence": [("device_id", U), ("hub_instance", T), ("connected_at", TS), ("last_heartbeat_at", TS)],
     "device_enrollment": [("invite_id", T), ("device_id", U), ("request", J), ("created_at", TS), ("certified_at", TS)],
@@ -163,6 +172,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("role", T),
         ("joined_seq", INT),
         ("removed_seq", INT),
+        ("consented", BOOL),
     ],
     "wg": [("id", U), ("org_id", U), ("is_default", BOOL), ("created_seq", INT), ("archived_seq", INT)],
     "wg_access": [
@@ -685,6 +695,7 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
                 "invite.accepted",
                 "rotation.required",
                 "agent.account_change",
+                "org.admitted",
             ],
         ),
         ("device_request", "kind", ["github.connect", "claude.login", "credential.check", "mailbox.check"]),

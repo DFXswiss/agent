@@ -10,7 +10,14 @@ Every entry is signed by the platform root (label `platform-log\\0`); the root p
 5. type rules (`log_rights` unless stated): invitation IDs unique; `device_certify` names an open `device_invite`
    (`invite_not_in_log`, used once: `invite_consumed`) and carries valid `enroll_sig`/`inv_sig` over the
    enrollment text rebuilt from the entry (`log_accept`), and the device is not currently certified;
-   `device_decertify` names a certified device; `role_grant`/`role_revoke` change the role.
+   `device_decertify` names a certified device; `role_grant`/`role_revoke` change the role; `user_certify` binds a
+   user to its identity keys (ADR-060): the user has no valid certification and its ID was never certified as a
+   device (and a device ID never as a user); `user_decertify` ends the user's valid certification.
+
+Identity anchors of users (ADR-060, `identity_anchored`): the entry `seq` is a `user_certify` of `(user, pub)` and
+the identity proof is `""`, or a `user_invite` for which `user` is the ID derived from the invitation
+(`identity.invited_user_id`) and whose `pk_inv` verifies the identity proof of `(user, pub)`. At the hub (`current`)
+a certification must still be valid.
 
 A certification is valid until a later `device_decertify` of the device (section 6.2). Validity is per certification
 (`valid(seq)`): a device that is decertified and certified again with new keys does not make its old certification,
@@ -26,6 +33,7 @@ from typing import cast
 from agent_hub.crypto import enroll
 from agent_hub.crypto.encoding import b64u_decode
 from agent_hub.crypto.errors import CryptoError, fail
+from agent_hub.crypto.identity import identity_valid, invited_user_id
 from agent_hub.log.entries import Head, check_platform_entry, entry_hash, platform_text, signature_valid
 from agent_hub.log.state import OrgState
 
@@ -47,6 +55,17 @@ class Certification:
 
 
 @dataclass(frozen=True)
+class UserCertification:
+    """A `user_certify` entry (`seq`): the identity keys of a user, attested by the root (ADR-060)."""
+
+    user: str
+    kem: str
+    sig: str
+    seq: int
+    decertified_seq: int | None = None
+
+
+@dataclass(frozen=True)
 class PlatformInvite:
     """A `device_invite` or `user_invite` (both carry `pk_inv`; ADR-043 added it to `user_invite`)."""
 
@@ -56,6 +75,8 @@ class PlatformInvite:
     expires: str
     seq: int
     certified_seq: int | None = None
+    ts: str = ""
+    """The time of the entry (the derived user ID of a `user_invite`, ADR-060)."""
 
 
 @dataclass(frozen=True)
@@ -71,6 +92,32 @@ class PlatformState:
     """`device -> seq` of its latest certification."""
     roles: Mapping[tuple[str, str], int] = field(default_factory=dict)
     org_access: Mapping[str, bool] = field(default_factory=dict)
+    user_certifications: Mapping[int, UserCertification] = field(default_factory=dict)
+    users: Mapping[str, int] = field(default_factory=dict)
+    """`user -> seq` of its latest `user_certify`."""
+    user_invites: Mapping[int, str] = field(default_factory=dict)
+    """`seq -> invite_id` of every `user_invite`."""
+
+    def identity_anchored(
+        self, seq: int, user: str, pub: Mapping[str, str], id_sig: object, *, current: bool = False
+    ) -> bool:
+        """ADR-060: the entry `seq` anchors the identity `pub = {kem, sig}` of `user` (module docstring)."""
+        cert = self.user_certifications.get(seq)
+        if cert is not None:
+            same = (cert.user, cert.kem, cert.sig) == (user, pub["kem"], pub["sig"])
+            return id_sig == "" and same and not (current and cert.decertified_seq is not None)
+        invite = self.invites.get(self.user_invites.get(seq, ""))
+        return (
+            invite is not None
+            and id_sig != ""
+            and user == invited_user_id(invite.invite_id, invite.ts)
+            and identity_valid(invite.pk_inv, user, pub, id_sig)
+        )
+
+    def user_certified(self, user: str) -> bool:
+        """The user has a valid `user_certify`."""
+        latest = self.user_certifications.get(self.users.get(user, -1))
+        return latest is not None and latest.decertified_seq is None
 
     def certification(self, seq: int) -> Certification | None:
         """The certification made by the entry `seq` (None if that entry is not a `device_certify`)."""
@@ -121,6 +168,10 @@ class PlatformState:
             ],
             "roles": [{"user": user, "role": role} for user, role in sorted(self.roles)],
             "org_access": dict(sorted(self.org_access.items())),
+            "users": [
+                {"user": user, "certify_seq": seq, "certified": self.user_certified(user)}
+                for user, seq in sorted(self.users.items())
+            ],
         }
 
 
@@ -162,8 +213,11 @@ def _invite(state: PlatformState, body: dict[str, object], seq: int) -> Platform
     if invite_id in state.invites:
         fail("log_rights")
     kind = "device" if body["type"] == "device_invite" else "user"
-    invite = PlatformInvite(invite_id, kind, cast(str, body["pk_inv"]), cast(str, body["expires"]), seq)
-    return replace(state, invites={**state.invites, invite_id: invite})
+    invite = PlatformInvite(
+        invite_id, kind, cast(str, body["pk_inv"]), cast(str, body["expires"]), seq, ts=cast(str, body["ts"])
+    )
+    user_invites = {**state.user_invites, seq: invite_id} if kind == "user" else state.user_invites
+    return replace(state, invites={**state.invites, invite_id: invite}, user_invites=user_invites)
 
 
 def _certify(state: PlatformState, body: dict[str, object], seq: int) -> PlatformState:
@@ -175,7 +229,7 @@ def _certify(state: PlatformState, body: dict[str, object], seq: int) -> Platfor
     if not _enrollment_valid(body, found.pk_inv):
         fail("log_accept")
     device = cast(str, body["device"])
-    if state.status(device) == CERTIFIED:
+    if state.status(device) == CERTIFIED or device in state.users:
         fail("log_rights")
     pub = cast(dict[str, str], body["pub"])
     cert = Certification(device, pub["kem"], pub["sig"], seq, found.invite_id)
@@ -209,6 +263,27 @@ def _org_access(state: PlatformState, body: dict[str, object], _seq: int) -> Pla
     return replace(state, org_access={**state.org_access, cast(str, body["org"]): cast(bool, body["granted"])})
 
 
+def _user_certify(state: PlatformState, body: dict[str, object], seq: int) -> PlatformState:
+    user, pub = cast(str, body["user"]), cast(dict[str, str], body["pub"])
+    if state.user_certified(user) or user in state.devices:
+        fail("log_rights")
+    cert = UserCertification(user, pub["kem"], pub["sig"], seq)
+    return replace(
+        state,
+        user_certifications={**state.user_certifications, seq: cert},
+        users={**state.users, user: seq},
+    )
+
+
+def _user_decertify(state: PlatformState, body: dict[str, object], seq: int) -> PlatformState:
+    user = cast(str, body["user"])
+    if not state.user_certified(user):
+        fail("log_rights")
+    latest = state.users[user]
+    ended = replace(state.user_certifications[latest], decertified_seq=seq)
+    return replace(state, user_certifications={**state.user_certifications, latest: ended})
+
+
 _TRANSITIONS: dict[str, Callable[[PlatformState, dict[str, object], int], PlatformState]] = {
     "device_invite": _invite,
     "user_invite": _invite,
@@ -217,6 +292,8 @@ _TRANSITIONS: dict[str, Callable[[PlatformState, dict[str, object], int], Platfo
     "role_grant": _role,
     "role_revoke": _role,
     "org_platform_access": _org_access,
+    "user_certify": _user_certify,
+    "user_decertify": _user_decertify,
 }
 
 

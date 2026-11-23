@@ -27,8 +27,14 @@ LOG: list[dict[str, Any]] = VECTORS["logs"]["platform"]
 
 @pytest.fixture
 def vector_hub(
-    migrated_db: HubDatabase, hub_pool: ConnectionPool[psycopg.Connection[Any]], clock: FixedClock
+    migrated_db: HubDatabase,
+    hub_pool: ConnectionPool[psycopg.Connection[Any]],
+    clock: FixedClock,
+    owner: psycopg.Connection[Any],
 ) -> Iterator[HubHarness]:
+    # the vector devices run a current runner: every device the log certifies has announced `log.admit`, so the user
+    # certifications of the vector log are not held back (ADR-060, `peer_outdated`)
+    owner.execute("ALTER TABLE hub.device ALTER COLUMN features SET DEFAULT '{log.admit}'")
     config = load_config(hub_environ(migrated_db, AGENT_HUB_PLATFORM_ROOT_KEY=VECTORS["root"]))
     for harness in start_hub(config, hub_pool, clock):
         org = VECTORS["valid"]["platform_access"][0]["org"]

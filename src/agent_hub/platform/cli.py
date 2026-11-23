@@ -23,7 +23,14 @@ Commands (entries they append):
 - `certify-pending [--device ID ...]`: one `device_certify` per verified pending enrollment (or the named devices);
 - `grant-org-access --org ID [--revoke]`: `org_platform_access` (ADR-026);
 - `grant-role inviter --user ID`, `revoke-role inviter --user ID`: `role_grant`, `role_revoke`;
-- `decertify --device ID`: `device_decertify`.
+- `decertify --device ID`: `device_decertify`;
+- `certify-user --user ID [--code XXXX-XXXX-XXXX] …` (ADR-060): one `user_certify` per named user with the identity
+  keys the hub registered for it (`GET /v1/platform/users/{user}`). The command prints each user's account code and
+  the platform invitation it registered through; with `--code` (the code the person reads from its own settings, which
+  its browser computes from its unlocked identity) a different code is refused (`account_code_mismatch`), so the
+  certification then does not rest on the hub's word. A user that is already certified is skipped. There is no "all"
+  form: the operator names every account;
+- `decertify-user --user ID`: `user_decertify`.
 
 Output never contains the root key or a hub secret; the invitation code is printed because the operator hands it on.
 Exit codes: 0 done, 1 refused (by the hub or by a local check; the line names the code), 2 usage or key-file error.
@@ -57,6 +64,7 @@ from agent_core.signing import (
 )
 from agent_hub.clock import Clock, epoch_seconds, system_clock
 from agent_hub.config import LIMITS
+from agent_hub.crypto import identity as identity_codes
 from agent_hub.crypto import invite as invite_codes
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode
 from agent_hub.crypto.encoding import format_time as entry_time
@@ -373,6 +381,48 @@ def certify_pending(operator: Operator, devices: Sequence[str], out: TextIO) -> 
         print(f"certified {body['device']} (seq {seq})", file=out)
 
 
+def _code_of(user: str, pub: object) -> str:
+    try:
+        return identity_codes.account_code(user, cast(dict[str, str], pub))
+    except CryptoError as error:
+        raise Refused(error.code) from None
+
+
+def _typed_code(text: str) -> str:
+    try:
+        return identity_codes.parse_account_code(text)
+    except CryptoError as error:
+        raise Refused(error.code) from None
+
+
+def certify_users(operator: Operator, users: Sequence[str], codes: Sequence[str], out: TextIO) -> None:
+    """`user_certify` for the named users (module docstring); `codes` are optional, matched to `users` by position."""
+    if len(codes) > len(users):
+        raise UsageError("more --code than --user")
+    bodies: list[dict[str, Any]] = []
+    for index, user in enumerate(users):
+        found = operator.request("GET", f"/v1/platform/users/{user}")
+        if found["user_id"] != user:
+            raise Refused("response_invalid")
+        # the code of exactly the keys that will be signed, never the hub's `account_code` (a hub could pair a
+        # correct code with keys of its own)
+        code = _code_of(user, found["pub"])
+        shown = identity_codes.format_account_code(code)
+        if index < len(codes) and _typed_code(codes[index]) != code:
+            raise Refused("account_code_mismatch")
+        through = found["platform_invite_id"] or "an org invitation"
+        print(f"user {user} account code {shown} registered through {through}", file=out)
+        if found["certified_seq"] is not None:
+            print(f"user {user} is certified already (seq {found['certified_seq']})", file=out)
+            continue
+        bodies.append({"type": "user_certify", "user": user, "pub": found["pub"]})
+    if not bodies:
+        return
+    done = operator.append(lambda _log, _pending: list(bodies))
+    for body, seq in zip(bodies, done.seqs, strict=True):
+        print(f"certified user {body['user']} (seq {seq})", file=out)
+
+
 def simple(operator: Operator, body: dict[str, Any], out: TextIO) -> None:
     """Append one entry and print its type and `seq`."""
     done = operator.append(lambda _log, _pending: [body])
@@ -417,6 +467,10 @@ def dispatch(args: argparse.Namespace, http: httpx.Client | None, clock: Clock, 
         certify_pending(operator, args.device or [], out)
     elif command == "grant-org-access":
         simple(operator, {"type": "org_platform_access", "org": args.org, "granted": not args.revoke}, out)
+    elif command == "certify-user":
+        certify_users(operator, args.user, args.code or [], out)
+    elif command == "decertify-user":
+        simple(operator, {"type": "user_decertify", "user": args.user}, out)
     elif command in ("grant-role", "revoke-role"):
         kind = "role_grant" if command == "grant-role" else "role_revoke"
         simple(operator, {"type": kind, "subject": args.user, "role": args.role}, out)
@@ -479,4 +533,9 @@ def register(subparsers: argparse._SubParsersAction[Any]) -> None:
         role.add_argument("--user", type=uuid_text, required=True)
     decertify = command("decertify", "decertify a platform device")
     decertify.add_argument("--device", type=uuid_text, required=True)
+    users = command("certify-user", "certify the identity keys of existing accounts (direct admission, ADR-060)")
+    users.add_argument("--user", type=uuid_text, action="append", required=True, help="the account (repeatable)")
+    users.add_argument("--code", action="append", help="the account code the person read out (by position)")
+    undo = command("decertify-user", "end the identity certification of an account")
+    undo.add_argument("--user", type=uuid_text, required=True)
     parser.set_defaults(handler=run)

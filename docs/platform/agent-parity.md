@@ -47,6 +47,9 @@ alone cannot do). Alternatives in a command are written `a\|b` (an escaped bar, 
 | org-join | screens/invite (existing user) | `org join` | done |
 | members-list | screens/members | `member list` | api |
 | members-invite | screens/members | `org invite --role admin\|member` | done |
+| members-admit | screens/members | `org admit --user <id\|account code> --role admin\|member --wg` | done |
+| members-invitees | screens/members | `api GET /v1/me/invitees` | api |
+| account-code | settings/passkeys | `status` (prints the account code) | done |
 | members-invite-revoke | screens/members | `org invite-revoke` | api |
 | members-role | screens/members | `member role` | api |
 | members-remove | screens/members | `member remove` (with rotation) | api |

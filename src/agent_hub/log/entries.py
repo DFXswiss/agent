@@ -111,6 +111,10 @@ def _capacity(value: object) -> object:
     return capacity
 
 
+def _sig_or_empty(value: object) -> object:  # identity proofs of `admit` (ADR-060): `""` when not used
+    return value if value == "" else _sig(value)
+
+
 def _wgs(access: Check) -> Check:
     def check(value: object) -> object:
         if not isinstance(value, dict):
@@ -149,6 +153,16 @@ _LOG_TYPES: dict[str, dict[str, Check]] = {
     "device_unassign": {"device": fields.uuid, "wg": fields.uuid},
     "remove": {"subject": fields.uuid},
     "rotate": {"scope": _one_of("org", "wg"), "scope_id": fields.uuid, "epoch": _epoch},
+    "admit": {
+        "subject": fields.uuid,
+        "pub": _pub,
+        "platform_seq": _seq,
+        "id_sig": _sig_or_empty,
+        "by_platform_seq": _seq,
+        "by_id_sig": _sig_or_empty,
+        "role": _one_of("admin", "member"),
+        "wgs": _wgs(_WG_ACCESS),
+    },
 }
 _INVITE_COMMON: dict[str, Check] = {"invite_id": _invite_id, "pk_inv": _key, "kind": _one_of("user", "device")}
 _INVITE_USER: dict[str, Check] = {
@@ -187,6 +201,8 @@ _PLATFORM_TYPES: dict[str, dict[str, Check]] = {
     "role_revoke": {"subject": fields.uuid, "role": _one_of("inviter")},
     "user_invite": {"invite_id": _invite_id, "pk_inv": _key, "expires": fields.time},
     "org_platform_access": {"org": fields.uuid, "granted": _bool},
+    "user_certify": {"user": fields.uuid, "pub": _pub},
+    "user_decertify": {"user": fields.uuid},
 }
 
 LOG_TYPES = frozenset(_LOG_TYPES)

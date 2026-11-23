@@ -26,7 +26,7 @@ devices (they reconcile on connect).
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -37,6 +37,7 @@ from psycopg.types.json import Jsonb
 
 from agent_hub import signals
 from agent_hub.audit.chain import AuditRow, append_audit
+from agent_hub.device.features import record_features
 
 Connection = psycopg.Connection[Any]
 PRESENCE_SIGNAL = "device.presence"
@@ -88,11 +89,21 @@ def _fresh(last_heartbeat_at: datetime | None, now: datetime, window: int) -> bo
     return last_heartbeat_at is not None and last_heartbeat_at > now - timedelta(seconds=window)
 
 
-def connect(connection: Connection, device_id: UUID, instance: str, now: datetime, window: int) -> bool | None:
-    """Record a new connection; None when the device is not active, else whether it was online before."""
+def connect(
+    connection: Connection,
+    device_id: UUID,
+    instance: str,
+    now: datetime,
+    window: int,
+    *,
+    features: Sequence[str] = (),
+) -> bool | None:
+    """Record a new connection and the features the device announced with it (`agent_hub.device.features`); None
+    when the device is not active, else whether it was online before."""
     device = _device(connection, device_id, "SHARE")
     if device is None or not device[0]:
         return None
+    record_features(connection, device_id, features)
     previous = connection.execute(
         "SELECT last_heartbeat_at FROM hub.device_presence WHERE device_id = %s FOR UPDATE", (device_id,)
     ).fetchone()

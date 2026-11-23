@@ -12,13 +12,16 @@ import pytest
 from agent_hub.crypto.encoding import P, b64u_encode, canonical
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.log import entries
-from agent_hub.log.vectors import LogBuilder, PlatformBuilder, identity
+from agent_hub.log.vectors import ADMIT_COUNT, LogBuilder, PlatformBuilder, admit_builder, identity
 
 Json = dict[str, Any]
 
 
 def test_every_entry_of_the_vector_logs_is_well_formed(main: LogBuilder, plat: PlatformBuilder) -> None:
-    assert {entries.check_log_entry(e)["type"] for e in main.entries} == entries.LOG_TYPES
+    admitted = admit_builder().entries
+    assert len(admitted) == ADMIT_COUNT
+    assert {entries.check_log_entry(e)["type"] for e in admitted} == entries.LOG_TYPES
+    assert {entries.check_log_entry(e)["type"] for e in main.entries} == entries.LOG_TYPES - {"admit"}
     assert {entries.check_platform_entry(e)["type"] for e in plat.entries} == entries.PLATFORM_TYPES
 
 
@@ -78,6 +81,34 @@ LOG_FORMAT_CASES = [
 ]
 
 
+# (seq of the admit log, change, code)
+ADMIT_FORMAT_CASES = [
+    (27, _set(("body", "id_sig"), "AAAA"), "header_invalid"),
+    (27, _set(("body", "id_sig"), None), "header_invalid"),
+    (28, _set(("body", "by_id_sig"), "AAAA"), "header_invalid"),
+    (27, _set(("body", "role"), "owner"), "header_invalid"),
+    (27, _set(("body", "platform_seq"), -1), "header_invalid"),
+    (27, _drop(("body", "by_platform_seq")), "header_invalid"),
+    (27, _set(("body", "pub"), {"kem": "x"}), "header_invalid"),
+]
+
+
+def test_admit_entries_carry_an_identity_proof_or_an_empty_text() -> None:
+    admitted = admit_builder().entries
+    assert entries.check_log_entry(admitted[27])["id_sig"] == ""
+    assert entries.check_log_entry(admitted[28])["id_sig"] != ""
+    assert entries.check_log_entry(admitted[29])["by_id_sig"] != ""
+
+
+@pytest.mark.parametrize(("seq", "change", "code"), ADMIT_FORMAT_CASES)
+def test_admit_entry_format_refusals(seq: int, change: Callable[[Json], None], code: str) -> None:
+    entry = copy.deepcopy(admit_builder().entries[seq])
+    change(entry)
+    with pytest.raises(CryptoError) as refused:
+        entries.check_log_entry(entry)
+    assert refused.value.code == code
+
+
 @pytest.mark.parametrize(("seq", "change", "code"), LOG_FORMAT_CASES)
 def test_log_entry_format_refusals(main: LogBuilder, seq: int, change: Callable[[Json], None], code: str) -> None:
     entry = copy.deepcopy(main.entries[seq])
@@ -111,6 +142,10 @@ PLATFORM_FORMAT_CASES = [
     (2, _set(("body", "enroll_sig"), "AAAA"), "header_invalid"),
     (4, _set(("body", "role"), "admin"), "header_invalid"),
     (5, _set(("body", "granted"), "yes"), "header_invalid"),
+    (12, _set(("body", "user"), "not-a-uuid"), "header_invalid"),
+    (12, _set(("body", "pub"), {"kem": "x"}), "header_invalid"),
+    (12, _set(("body", "extra"), 1), "header_invalid"),
+    (15, _drop(("body", "user")), "header_invalid"),
 ]
 
 

@@ -21,10 +21,12 @@ from psycopg_pool import ConnectionPool
 from agent_core.signing import format_time, response_text, sha256_hex
 from agent_hub import cli as main_cli
 from agent_hub.config import HubConfig, load_config
+from agent_hub.crypto import identity as identity_codes
 from agent_hub.crypto import invite as invite_codes
 from agent_hub.crypto.encoding import b64u_encode
-from agent_hub.crypto.keys import ed25519_public_raw, ed25519_seed
+from agent_hub.crypto.keys import Identity, ed25519_public_raw, ed25519_seed
 from agent_hub.platform import cli
+from agent_hub.users import identity as users_identity
 from tests.platform.hub.conftest import (
     FixedClock,
     HubDatabase,
@@ -34,6 +36,7 @@ from tests.platform.hub.conftest import (
     start_hub,
     uuid7,
 )
+from tests.platform.hub.orgs.support import insert_device, insert_identity
 from tests.platform.hub.platform.conftest import Platform, new_org, new_user
 
 
@@ -413,3 +416,115 @@ def test_a_malformed_answer_is_reported_without_a_traceback(run: Callable[..., t
     code, _, err = run("decertify", "--device", uuid_v7(), http=html)
     assert code == cli.EXIT_REFUSED
     assert err.startswith("agent-hub platform: refused: unavailable")
+
+
+def _account(hub: HubHarness) -> tuple[str, dict[str, str]]:
+    """A registered user (identity only) and its public keys."""
+    user, keys = str(uuid7(hub.clock())), Identity.generate()
+    insert_identity(hub.pool, user, keys, hub.clock())
+    return user, keys.public()
+
+
+def test_certify_user_prints_the_account_code_and_appends(
+    run: Callable[..., tuple[int, str, str]], plat: Platform, hub: HubHarness
+) -> None:
+    invite_id = plat.invite_user()
+    first, first_pub = _account(hub)
+    second, second_pub = _account(hub)
+    with hub.pool.connection() as connection, connection.transaction():
+        connection.execute(
+            "UPDATE hub.invite SET registered_user = %s, registered_at = %s WHERE id = %s",
+            (first, hub.clock(), invite_id),
+        )
+    first_code = identity_codes.format_account_code(identity_codes.account_code(first, first_pub))
+    second_code = identity_codes.format_account_code(identity_codes.account_code(second, second_pub))
+    code, out, err = run("certify-user", "--user", first, "--user", second, "--code", first_code.lower())
+    assert (code, err) == (0, "")
+    assert out.splitlines() == [
+        f"user {first} account code {first_code} registered through {invite_id}",
+        f"user {second} account code {second_code} registered through an org invitation",
+        f"certified user {first} (seq 2)",
+        f"certified user {second} (seq 3)",
+    ]
+    assert plat.query("SELECT type FROM hub.platform_entry WHERE seq >= 2 ORDER BY seq") == [
+        ("user_certify",),
+        ("user_certify",),
+    ]
+    code, out, _ = run("certify-user", "--user", second)
+    assert (code, out.splitlines()[1:]) == (0, [f"user {second} is certified already (seq 3)"])
+    assert run("decertify-user", "--user", second) == (0, "appended user_decertify (seq 4)\n", "")
+    code, out, _ = run("certify-user", "--user", second, "--code", second_code.replace("-", " "))
+    assert (code, out.splitlines()[-1]) == (0, f"certified user {second} (seq 5)")
+
+
+def test_certify_user_refusals(run: Callable[..., tuple[int, str, str]], plat: Platform, hub: HubHarness) -> None:
+    plat.init()
+    user, _ = _account(hub)
+    assert run("certify-user", "--user", user, "--code", "AAAA-AAAA-AAAA") == (
+        1,
+        "",
+        "agent-hub platform: refused: account_code_mismatch\n",
+    )
+    assert run("certify-user", "--user", user, "--code", "AAAA-AAAA-AAA9") == (
+        1,
+        "",
+        "agent-hub platform: refused: account_code_invalid\n",
+    )
+    assert run("certify-user", "--user", user, "--code", "A", "--code", "B") == (
+        2,
+        "",
+        "agent-hub platform: more --code than --user\n",
+    )
+    assert run("certify-user", "--user", uuid_v7())[0:3:2] == (1, "agent-hub platform: refused: not_found\n")
+    assert run("decertify-user", "--user", user) == (1, "", "agent-hub platform: refused: log_rights\n")
+    assert plat.query("SELECT count(*) FROM hub.platform_entry") == [(1,)]
+
+
+def test_certify_user_checks_the_code_against_the_keys_it_signs(
+    run: Callable[..., tuple[int, str, str]], plat: Platform, hub: HubHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hub that pairs the account's correct code with keys of its own is refused; so is an answer for another
+    user (review finding H1 of KOR-37)."""
+    plat.init()
+    user, pub = _account(hub)
+    real = identity_codes.format_account_code(identity_codes.account_code(user, pub))
+    swapped = Identity.generate().public()
+    honest = users_identity.registered_identity
+
+    def lying(connection: Any, platform: Any, target: Any) -> dict[str, Any] | None:
+        found = honest(connection, platform, target)
+        return None if found is None else {**found, "pub": swapped}
+
+    monkeypatch.setattr(users_identity, "registered_identity", lying)
+    assert run("certify-user", "--user", user, "--code", real) == (
+        1,
+        "",
+        "agent-hub platform: refused: account_code_mismatch\n",
+    )
+
+    def other(connection: Any, platform: Any, target: Any) -> dict[str, Any] | None:
+        found = honest(connection, platform, target)
+        return None if found is None else {**found, "user_id": uuid_v7()}
+
+    monkeypatch.setattr(users_identity, "registered_identity", other)
+    assert run("certify-user", "--user", user) == (1, "", "agent-hub platform: refused: response_invalid\n")
+    with pytest.raises(cli.Refused) as refused:
+        cli._code_of(user, {})  # keys that are no keys (the contract keeps them out of a valid answer)
+    assert refused.value.code == "header_invalid"
+    assert plat.query("SELECT count(*) FROM hub.platform_entry") == [(1,)]
+
+
+def test_user_certifications_wait_for_every_active_platform_device(
+    run: Callable[..., tuple[int, str, str]], plat: Platform, hub: HubHarness
+) -> None:
+    """ADR-060: an older runner would stop at an unknown platform-log type, so the hub refuses `user_certify` while
+    an active platform device has not announced `log.admit` (`409 peer_outdated` with the devices)."""
+    plat.init()
+    user, _ = _account(hub)
+    device = str(uuid7(hub.clock()))
+    insert_device(hub.pool, device, Identity.generate(), hub.clock(), "platform")
+    code, _, err = run("certify-user", "--user", user)
+    assert (code, err) == (1, "agent-hub platform: refused: peer_outdated\n")
+    with hub.pool.connection() as connection, connection.transaction():
+        connection.execute("UPDATE hub.device SET features = '{log.admit}' WHERE id = %s", (device,))
+    assert run("certify-user", "--user", user)[0] == 0

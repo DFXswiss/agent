@@ -266,3 +266,22 @@ def test_an_org_device_removed_from_its_org_is_closed_at_its_heartbeat(
     assert wait_for(lambda: len(_rows(hub, presence, device)) == 2)
     orgs = _rows(hub, presence + " ORDER BY seq", device)
     assert orgs == [("device.connect", scene.org), ("device.disconnect", scene.org)]
+
+
+def _features(hub: HubHarness, device: uuid.UUID) -> list[str]:
+    return list(_rows(hub, "SELECT features FROM hub.device WHERE id = %s", device)[0][0])
+
+
+def test_announced_features_are_recorded_and_replaced_on_every_connection(hub: HubHarness, live: LiveHub) -> None:
+    key = hub.keys.device()
+    device = key.principal.principal_id
+    assert device is not None
+    headers = signed_headers(key, live.clock, "/v1/device/ws")
+    first = live.device(key, headers=headers | {"Agent-Features": "log.admit, Bad Token,,x" + "y" * 40 + ",beta-2"})
+    assert first.hint() == HELLO
+    assert _features(hub, device) == ["beta-2", "log.admit"]
+    first.close()
+    assert wait_for(lambda: _presence(hub, device) == [])
+    again = live.device(key, headers=signed_headers(key, live.clock, "/v1/device/ws"))  # downgraded: no header
+    assert again.hint() == HELLO
+    assert _features(hub, device) == []

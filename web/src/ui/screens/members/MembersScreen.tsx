@@ -26,6 +26,7 @@ import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 import { ActionDialog, BUTTON } from './ActionDialog';
+import { AdmitSection } from './AdmitSection';
 import { InviteSection } from './InviteSection';
 
 /** The dialog that is open, with what it acts on. */
@@ -227,6 +228,7 @@ export function MembersScreen() {
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" data-testid="members.screen">
       <h1 className="text-xl font-semibold">{t('members.title')}</h1>
+      {admin && <AdmitSection org={org} state={state} directory={directory} />}
       {admin && <InviteSection org={org} state={state} directory={directory} />}
       <ul data-testid="members.list">
         {rows.map((row) => (

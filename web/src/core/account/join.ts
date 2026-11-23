@@ -79,14 +79,15 @@ export interface OrgInvitation {
 const isSeq = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const isHead = (value: unknown): value is Head => isRecord(value) && isSeq(value.seq) && typeof value.hash === 'string';
 
-/** Whether verifying `entries` needs the platform log (an assignment of a platform device). */
+/** Whether verifying `entries` needs the platform log (an assignment of a platform device, or an `admit` whose
+ * identities are anchored there, ADR-060). */
 export function needsPlatform(entries: readonly unknown[]): boolean {
   return entries.some(
     (entry) =>
       isRecord(entry) &&
       isRecord(entry.body) &&
-      entry.body.type === 'device_assign' &&
-      Object.hasOwn(entry.body, 'platform_seq'),
+      ((entry.body.type === 'device_assign' && Object.hasOwn(entry.body, 'platform_seq')) ||
+        entry.body.type === 'admit'),
   );
 }
 

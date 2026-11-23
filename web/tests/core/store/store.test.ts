@@ -190,6 +190,15 @@ describe('base slices', () => {
       lh: 5,
     });
     expect(selectOrgBlock('o2')(store.getState())).toBeNull();
+    expect(selectOrgBlock('o1')(store.getState())).not.toHaveProperty('reason');
+    blockOrg(store, 'o3', { code: 'log_type', stored: null, served: null, lh: null });
+    expect(selectOrgBlock('o3')(store.getState())).toEqual({
+      code: 'log_type',
+      stored: null,
+      served: null,
+      lh: null,
+      reason: 'outdated',
+    });
     const key = Secret.of(new Uint8Array(32));
     const beforeKeys = store.getState().orgs;
     addKeys(store, 'o1', new Map());

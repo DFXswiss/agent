@@ -11,13 +11,20 @@
 // 5. type rules (`log_rights` unless stated): invitation IDs unique; `device_certify` names an open `device_invite`
 //    (`invite_not_in_log`, used once: `invite_consumed`) and carries valid `enroll_sig`/`inv_sig` over the
 //    enrollment text rebuilt from the entry (`log_accept`), and the device is not currently certified;
-//    `device_decertify` names a certified device; `role_grant`/`role_revoke` change the role.
+//    `device_decertify` names a certified device; `role_grant`/`role_revoke` change the role; `user_certify` binds
+//    a user to its identity keys (ADR-060): the user has no valid certification and its ID was never certified as a
+//    device (and a device ID never as a user); `user_decertify` ends the user's valid certification.
+// Identity anchors of users (ADR-060, `identityAnchored`): the entry `seq` is a `user_certify` of `(user, pub)` and
+// the identity proof is `""`, or a `user_invite` for which `user` is the ID derived from the invitation
+// (`invitedUserId`) and whose `pk_inv` verifies the identity proof of `(user, pub)`. At the hub (`current`) a
+// certification must still be valid.
 // A certification is valid until a later `device_decertify` of the device (section 6.2). Validity is per
 // certification (`valid(seq)`): a device decertified and certified again with new keys does not make its old
 // certification, and the old keys an org learnt from it, valid again (`excluded`).
 import { b64uDecode } from '../encoding/b64u';
 import { fail } from '../crypto/errors';
 import { verifyEnrollment } from '../crypto/enroll';
+import { identityValid, invitedUserId } from '../crypto/identity';
 import {
   type Body,
   checkExtends,
@@ -45,6 +52,15 @@ export interface Certification {
   readonly decertifiedSeq: number | null;
 }
 
+/** A `user_certify` entry (`seq`): the identity keys of a user, attested by the root (ADR-060), and its end. */
+export interface UserCertification {
+  readonly user: string;
+  readonly kem: string;
+  readonly sig: string;
+  readonly seq: number;
+  readonly decertifiedSeq: number | null;
+}
+
 /** A `device_invite` or `user_invite` (both carry `pk_inv`; ADR-043 added it to `user_invite`). */
 export interface PlatformInvite {
   readonly inviteId: string;
@@ -53,6 +69,8 @@ export interface PlatformInvite {
   readonly expires: string;
   readonly seq: number;
   readonly certifiedSeq: number | null;
+  /** The time of the entry (the derived user ID of a `user_invite`, ADR-060). */
+  readonly ts: string;
 }
 
 export interface PlatformStateFields {
@@ -66,6 +84,11 @@ export interface PlatformStateFields {
   /** `pairKey(user, role) -> seq` of the grant. */
   readonly roles: ReadonlyMap<string, number>;
   readonly orgAccess: ReadonlyMap<string, boolean>;
+  readonly userCertifications: ReadonlyMap<number, UserCertification>;
+  /** `user -> seq` of its latest `user_certify`. */
+  readonly users: ReadonlyMap<string, number>;
+  /** `seq -> invite_id` of every `user_invite`. */
+  readonly userInvites: ReadonlyMap<number, string>;
 }
 
 /** The state after the platform-log entry `seq`. */
@@ -78,6 +101,9 @@ export class PlatformState implements PlatformStateFields {
   declare readonly devices: ReadonlyMap<string, number>;
   declare readonly roles: ReadonlyMap<string, number>;
   declare readonly orgAccess: ReadonlyMap<string, boolean>;
+  declare readonly userCertifications: ReadonlyMap<number, UserCertification>;
+  declare readonly users: ReadonlyMap<string, number>;
+  declare readonly userInvites: ReadonlyMap<number, string>;
 
   constructor(fields: PlatformStateFields) {
     Object.assign(this, fields);
@@ -87,6 +113,34 @@ export class PlatformState implements PlatformStateFields {
   /** A copy with some fields replaced. */
   with(changes: Partial<PlatformStateFields>): PlatformState {
     return new PlatformState({ ...this, ...changes });
+  }
+
+  /** ADR-060: the entry `seq` anchors the identity `pub = {kem, sig}` of `user` (module comment). */
+  async identityAnchored(
+    seq: number,
+    user: string,
+    pub: { kem: string; sig: string },
+    idSig: unknown,
+    current = false,
+  ): Promise<boolean> {
+    const cert = this.userCertifications.get(seq);
+    if (cert !== undefined) {
+      const same = cert.user === user && cert.kem === pub.kem && cert.sig === pub.sig;
+      return idSig === '' && same && !(current && cert.decertifiedSeq !== null);
+    }
+    const found = this.invites.get(this.userInvites.get(seq) ?? '');
+    return (
+      found !== undefined &&
+      idSig !== '' &&
+      user === (await invitedUserId(found.inviteId, found.ts)) &&
+      (await identityValid(found.pkInv, user, pub, idSig))
+    );
+  }
+
+  /** The user has a valid `user_certify`. */
+  userCertified(user: string): boolean {
+    const latest = this.userCertifications.get(this.users.get(user) ?? -1);
+    return latest !== undefined && latest.decertifiedSeq === null;
   }
 
   /** The certification made by the entry `seq` (null if that entry is not a `device_certify`). */
@@ -148,6 +202,9 @@ export class PlatformState implements PlatformStateFields {
         return { user, role };
       }),
       org_access: Object.fromEntries([...this.orgAccess.entries()].sort(([a], [b]) => compareText(a, b))),
+      users: [...this.users.entries()]
+        .sort(([a], [b]) => compareText(a, b))
+        .map(([user, seq]) => ({ user, certify_seq: seq, certified: this.userCertified(user) })),
     };
   }
 }
@@ -186,8 +243,10 @@ function invite(state: PlatformState, body: Body, seq: number): PlatformState {
   if (state.invites.has(inviteId)) fail('log_rights');
   const kind = body.type === 'device_invite' ? 'device' : 'user';
   const pkInv = body.pk_inv as string;
-  const found: PlatformInvite = { inviteId, kind, pkInv, expires: body.expires as string, seq, certifiedSeq: null };
-  return state.with({ invites: new Map(state.invites).set(inviteId, found) });
+  const expires = body.expires as string;
+  const found: PlatformInvite = { inviteId, kind, pkInv, expires, seq, certifiedSeq: null, ts: body.ts as string };
+  const userInvites = kind === 'user' ? new Map(state.userInvites).set(seq, inviteId) : state.userInvites;
+  return state.with({ invites: new Map(state.invites).set(inviteId, found), userInvites });
 }
 
 async function certify(state: PlatformState, body: Body, seq: number): Promise<PlatformState> {
@@ -196,7 +255,7 @@ async function certify(state: PlatformState, body: Body, seq: number): Promise<P
   if (found.certifiedSeq !== null) fail('invite_consumed');
   if (!(await enrollmentValid(body, found.pkInv))) fail('log_accept');
   const device = body.device as string;
-  if (state.status(device) === CERTIFIED) fail('log_rights');
+  if (state.status(device) === CERTIFIED || state.users.has(device)) fail('log_rights');
   const pub = body.pub as { kem: string; sig: string };
   const cert: Certification = {
     device,
@@ -235,6 +294,25 @@ function orgAccess(state: PlatformState, body: Body): PlatformState {
   return state.with({ orgAccess: new Map(state.orgAccess).set(body.org as string, body.granted as boolean) });
 }
 
+function userCertify(state: PlatformState, body: Body, seq: number): PlatformState {
+  const user = body.user as string;
+  const pub = body.pub as { kem: string; sig: string };
+  if (state.userCertified(user) || state.devices.has(user)) fail('log_rights');
+  const cert: UserCertification = { user, kem: pub.kem, sig: pub.sig, seq, decertifiedSeq: null };
+  return state.with({
+    userCertifications: new Map(state.userCertifications).set(seq, cert),
+    users: new Map(state.users).set(user, seq),
+  });
+}
+
+function userDecertify(state: PlatformState, body: Body, seq: number): PlatformState {
+  const user = body.user as string;
+  if (!state.userCertified(user)) fail('log_rights');
+  const latest = state.users.get(user)!;
+  const ended = { ...state.userCertifications.get(latest)!, decertifiedSeq: seq };
+  return state.with({ userCertifications: new Map(state.userCertifications).set(latest, ended) });
+}
+
 type Transition = (state: PlatformState, body: Body, seq: number) => PlatformState | Promise<PlatformState>;
 const TRANSITIONS: Record<string, Transition> = {
   device_invite: invite,
@@ -244,6 +322,8 @@ const TRANSITIONS: Record<string, Transition> = {
   role_grant: role,
   role_revoke: role,
   org_platform_access: orgAccess,
+  user_certify: userCertify,
+  user_decertify: userDecertify,
 };
 
 /** The state after one more entry, or a refusal (P1-P4 and the type rules). */
@@ -271,6 +351,9 @@ export async function applyPlatform(
       devices: new Map(),
       roles: new Map(),
       orgAccess: new Map(),
+      userCertifications: new Map(),
+      users: new Map(),
+      userInvites: new Map(),
     });
   }
   return (await TRANSITIONS[body.type as string]!(state, body, seq)).with({ seq, head });

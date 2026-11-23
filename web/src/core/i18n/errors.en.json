@@ -1,4 +1,9 @@
 {
+  "account_code_invalid": {
+    "title": "Code not valid",
+    "body": "An account code has 12 characters (letters and the digits 2–7).",
+    "action": "Check the code and enter it again."
+  },
   "agent_exited": {
     "title": "Agent stopped",
     "body": "Claude Code ended unexpectedly.",
@@ -154,6 +159,11 @@
     "body": "An item with this ID already exists with different content.",
     "action": "Reload the page and try again."
   },
+  "identity_unproven": {
+    "title": "Account not found",
+    "body": "There is no account with this code or ID that can be admitted directly.",
+    "action": "Check the code, or send an invitation link instead."
+  },
   "invite_code_invalid": {
     "title": "Invalid invitation code",
     "body": "The invitation code is not valid.",
@@ -228,6 +238,11 @@
     "title": "Invalid acceptance",
     "body": "An invitation acceptance in the membership history is invalid.",
     "action": "If it happens again, contact support with the error code."
+  },
+  "log_admit": {
+    "title": "Admission refused",
+    "body": "The account could not be admitted: its identity could not be confirmed.",
+    "action": "Check the account and try again, or send an invitation link."
   },
   "log_chain": {
     "title": "Membership history broken",
@@ -368,6 +383,11 @@
     "title": "Invalid path",
     "body": "A file path is not allowed.",
     "action": "Use a path inside the repository."
+  },
+  "peer_outdated": {
+    "title": "A device needs an update",
+    "body": "A device of this organization runs an older version and would not understand the change.",
+    "action": "Update the device, then try again."
   },
   "platform_access_denied": {
     "title": "No platform devices",

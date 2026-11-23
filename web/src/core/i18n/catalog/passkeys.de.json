@@ -65,5 +65,9 @@
   "prf-required.delete": "Löschen Sie den eben angelegten Passkey in Ihrem Passwortmanager – er ist hier nicht nutzbar.",
   "prf-required.later": "Ihre Registrierung konnte noch nicht entfernt werden; Ihre Einladung ist spätestens in 24 Stunden wieder nutzbar.",
   "prf-required.retry": "Mit anderem Passkey erneut versuchen",
-  "prf-required.not-removed": "Der Passkey konnte nicht aus Ihrem Konto entfernt werden; entfernen Sie ihn unter Einstellungen → Passkeys und Wiederherstellung."
+  "prf-required.not-removed": "Der Passkey konnte nicht aus Ihrem Konto entfernt werden; entfernen Sie ihn unter Einstellungen → Passkeys und Wiederherstellung.",
+  "account-code.title": "Ihre Kontokennung",
+  "account-code.explain": "Mit dieser Kennung kann Sie ein Administrator direkt in seine Organisation aufnehmen – ohne dass Sie etwas bestätigen müssen. Geben Sie sie nur Personen, von denen Sie aufgenommen werden möchten.",
+  "account-code.copy": "Kennung kopieren",
+  "account-code.copied": "Kopiert"
 }

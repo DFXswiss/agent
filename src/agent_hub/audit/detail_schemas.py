@@ -117,6 +117,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "log_chain",
                         "log_genesis",
                         "log_accept",
+                        "log_admit",
                         "log_signature",
                         "log_rights",
                         "log_epoch",
@@ -128,6 +129,9 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "pairing_unknown",
                         "pairing_gesture_required",
                         "claim_invalid",
+                        "identity_unproven",
+                        "peer_outdated",
+                        "account_code_invalid",
                     ],
                 }
             ],
@@ -321,6 +325,10 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["invite_id", "kind"],
     },
     "log.accept": {
+        "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "required": ["seq"],
+    },
+    "log.admit": {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
     },
@@ -839,6 +847,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "log_chain",
                         "log_genesis",
                         "log_accept",
+                        "log_admit",
                         "log_signature",
                         "log_rights",
                         "log_epoch",
@@ -850,6 +859,9 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "pairing_unknown",
                         "pairing_gesture_required",
                         "claim_invalid",
+                        "identity_unproven",
+                        "peer_outdated",
+                        "account_code_invalid",
                     ],
                 }
             ],
@@ -894,6 +906,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
     },
+    "platform.user_certify": {
+        "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "required": ["seq"],
+    },
+    "platform.user_decertify": {
+        "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "required": ["seq"],
+    },
     "platform.user_invite": {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
@@ -915,6 +935,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.me.credential": {"properties": {}, "required": []},
     "read.me.credentials": {"properties": {}, "required": []},
     "read.me.devices": {"properties": {}, "required": []},
+    "read.me.invitees": {"properties": {}, "required": []},
     "read.me": {"properties": {}, "required": []},
     "read.me.quotas": {"properties": {}, "required": []},
     "read.monitoring.overview": {"properties": {}, "required": []},
@@ -931,6 +952,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.platform.enrollments": {"properties": {}, "required": []},
     "read.platform.invites": {"properties": {}, "required": []},
     "read.platform.log": {"properties": {}, "required": []},
+    "read.platform.user": {"properties": {}, "required": []},
     "read.scope.events": {"properties": {}, "required": []},
     "read.session.get_context": {
         "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
@@ -979,6 +1001,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "read.task": {"properties": {}, "required": []},
     "read.task.operations": {"properties": {}, "required": []},
+    "read.user.identity": {"properties": {}, "required": []},
+    "read.user.lookup": {"properties": {}, "required": []},
     "read.whiteboard.history": {"properties": {}, "required": []},
     "read.whiteboards": {"properties": {}, "required": []},
     "read.workgroup.device_candidates": {"properties": {}, "required": []},

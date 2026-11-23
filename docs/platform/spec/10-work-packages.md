@@ -231,7 +231,7 @@ least one E2E test or gate; ACC-FINAL re-checks the matrix with `e2e/platform/te
 | R-1.10 | HUB-04, HUB-05, HUB-11, CRY-02 | E2E-03 | SCN-03 |
 | R-1.11 | HUB-04, HUB-11, WEB-06 | E2E-03 | SCN-03 |
 | R-1.12 | HUB-04, HUB-05, HUB-11, RUN-06, WEB-06, WEB-07 | E2E-03, E2E-04, E2E-05 (decertification steps) | SCN-03 |
-| R-1.13 | HUB-11, WEB-08 | E2E-39 | SCN-03 |
+| R-1.13 | HUB-11, WEB-08, KOR-37 | E2E-39, E2E-41 | SCN-03 |
 | R-2.1 | WEB-04 | E2E-01, E2E-06 | SCN-01 |
 | R-2.2 | WEB-08, HUB-11 | E2E-02 | SCN-03 |
 | R-2.3 | WEB-03, HUB-05 | E2E-01 | SCN-01 |
