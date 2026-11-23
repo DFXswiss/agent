@@ -7,6 +7,8 @@ import { errorCode } from '../../shell/errors';
 
 export type Step =
   | { readonly step: 'parsing' }
+  /** No code in this tab (the address had none, or the page was reloaded after the code left it, KOR-36). */
+  | { readonly step: 'missing' }
   | { readonly step: 'lookup' }
   /** Unknown, used, revoked or expired invitation; `invite_expired` separately; a broken or expired agent pairing. */
   | { readonly step: 'invalid'; readonly code: string }

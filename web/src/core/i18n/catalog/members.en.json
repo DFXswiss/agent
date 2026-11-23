@@ -29,7 +29,7 @@
   "invite.copy-code": "Copy code",
   "invite.copied": "Copied",
   "invite.done": "Done",
-  "invites.title": "Open invitations",
+  "invites.title": "Invitations",
   "invites.empty": "No open invitations.",
   "invites.expires": "Expires {time}",
   "invites.revoke": "Revoke",
@@ -56,5 +56,10 @@
   "progress.rotate": "Rotating keys {done}/{total}",
   "progress.wrap": "Wrapping for {recipients} recipients",
   "progress.send": "Sending…",
-  "progress.attempt": "The membership changed meanwhile – attempt {attempt} of {max}"
+  "progress.attempt": "The membership changed meanwhile – attempt {attempt} of {max}",
+  "invites.status.open": "Not opened yet",
+  "invites.status.opened": "Link opened – not joined yet",
+  "invites.status.registered": "Account created – not joined yet",
+  "invites.status.accepted": "Accepted – {name} is a member",
+  "invites.someone": "the invited person"
 }

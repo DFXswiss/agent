@@ -432,8 +432,9 @@ export interface JoinDeps {
 }
 
 /**
- * Builds and sends the `accept`; after `seq_conflict` a stored `accept` (lost answer) counts as joined, otherwise the
- * log is re-read through a new lookup and the batch rebuilt (at most `ACCEPT_ATTEMPTS` builds).
+ * Builds and sends the `accept`; after any failure a stored `accept` (lost answer, also of an earlier attempt) counts as
+ * joined once the verified log shows it; otherwise after `seq_conflict` the log is re-read through a new lookup and the
+ * batch rebuilt (at most `ACCEPT_ATTEMPTS` builds).
  */
 export async function joinOrg(
   deps: JoinDeps,
@@ -446,11 +447,12 @@ export async function joinOrg(
       await sendAccept(deps.request, prepared);
       return { prepared, invitation };
     } catch (error) {
-      if (!(error instanceof HubError) || error.code !== 'seq_conflict') throw error;
-      if (await deps.isMember(prepared.org)) {
+      // a stored `accept` whose answer got lost (hub restarted, KOR-36) or that won a race: the membership says so and
+      // the verified log must hold this invitation accepted by the user
+      if (await deps.isMember(prepared.org).catch(() => false)) {
         return { prepared: await joinedLog(deps.request, prepared, invitation, input), invitation };
       }
-      if (attempt === ACCEPT_ATTEMPTS) throw error;
+      if (!(error instanceof HubError) || error.code !== 'seq_conflict' || attempt === ACCEPT_ATTEMPTS) throw error;
       invitation = await refreshInvitation(deps.anon, invitation, input.code, input.platform);
     }
   }

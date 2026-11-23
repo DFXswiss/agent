@@ -29,7 +29,7 @@
   "invite.copy-code": "Code kopieren",
   "invite.copied": "Kopiert",
   "invite.done": "Fertig",
-  "invites.title": "Offene Einladungen",
+  "invites.title": "Einladungen",
   "invites.empty": "Keine offenen Einladungen.",
   "invites.expires": "Läuft ab {time}",
   "invites.revoke": "Widerrufen",
@@ -56,5 +56,10 @@
   "progress.rotate": "Schlüssel werden rotiert {done}/{total}",
   "progress.wrap": "Verpacken für {recipients} Empfänger",
   "progress.send": "Wird gesendet…",
-  "progress.attempt": "Die Mitgliedschaft hat sich inzwischen geändert – Versuch {attempt} von {max}"
+  "progress.attempt": "Die Mitgliedschaft hat sich inzwischen geändert – Versuch {attempt} von {max}",
+  "invites.status.open": "Noch nicht geöffnet",
+  "invites.status.opened": "Link geöffnet – noch nicht beigetreten",
+  "invites.status.registered": "Konto angelegt – noch nicht beigetreten",
+  "invites.status.accepted": "Angenommen – {name} ist Mitglied",
+  "invites.someone": "die eingeladene Person"
 }

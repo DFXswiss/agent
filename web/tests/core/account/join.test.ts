@@ -731,11 +731,13 @@ describe('prepareAccept and joinOrg', () => {
       }
       return answer;
     };
-    const deps = { anon: async () => lookup().raw, request: lossy, isMember: async () => true };
-    await expect(joinOrg(deps, input)).rejects.toMatchObject({ code: 'unavailable' });
-    // the retry builds a new batch (other time): the hub refuses it with seq_conflict, the stored one counts
-    const joined = await joinOrg(deps, { ...input, now: () => T0 + 1000 });
-    expect(joined.prepared.log.head).toEqual(w.world.log!.head);
+    // the membership check fails as well (the hub is still restarting): the failure stands
+    const down = { anon: async () => lookup().raw, request: lossy, isMember: () => Promise.reject(new Error('down')) };
+    await expect(joinOrg(down, input)).rejects.toMatchObject({ code: 'unavailable' });
+    // the stored accept counts once the membership and the member log show it (KOR-36: any failure, not only
+    // seq_conflict); a retry with a new batch (other time) is refused with seq_conflict and the stored one counts too
+    const deps = { ...down, isMember: async () => true };
+    expect((await joinOrg(deps, { ...input, now: () => T0 + 1000 })).prepared.log.head).toEqual(w.world.log!.head);
   });
 
   it('refuses a member log without the accept or with a wrong head', async () => {

@@ -3,7 +3,10 @@
 // the passkey and joins. Asserted: no second identity (the `accept` carries the registered user ID and identity, the
 // hub knows one user), the org switcher lists both orgs, the joined org is open. A second user cannot use an
 // invitation that is bound to another user: a new person registers a passkey with a further invitation and stops
-// before joining; the existing user then gets `invite_registered` on the screen and from the hub. Runs on T1 and T2.
+// before joining; the existing user then gets `invite_registered` on the screen and from the hub. KOR-36: the existing
+// user with an open session opens a further invitation (stored session, locked keys) and joins with one action (one passkey gesture),
+// a hub restart in the middle of the join is repeated with "Try again" in the same tab, and the inviter sees the
+// invitation's state (open → link opened → accepted). Runs on T1 (T2 is not available, INF-05).
 import { expect, test } from '../fixtures/test.ts';
 import {
   anonymousBudget,
@@ -56,10 +59,7 @@ test('@E2E-39 @R-1.13 @R-P.5 an existing user joins a further org without a seco
   // (a reload locks the session: the screen offers the existing account and asks for the passkey)
   await openInvite(bob.page, bound);
   await expect(bob.page.getByTestId('invite.existing')).toHaveAttribute('data-mode', 'sign_in');
-  await signIn(bob.page, 'invite.sign-in');
-  await expect(bob.page.getByTestId('invite.existing')).toHaveAttribute('data-mode', 'ready');
-  await bob.page.getByTestId('invite.display-name').fill('Bob B.');
-  await bob.page.getByTestId('invite.join').click();
+  await signIn(bob.page, 'invite.join');
   await expect(bob.page.getByTestId('invite.invalid')).toHaveAttribute('data-code', 'invite_registered');
   await anonymousBudget(COST.page);
   await bob.page.goto('/');
@@ -68,19 +68,47 @@ test('@E2E-39 @R-1.13 @R-P.5 an existing user joins a further org without a seco
   await anonymousBudget(COST.lookup);
   await expect(joinWithCode(bob.user, e2e.hubOrigin, bound, 'Bob')).rejects.toThrow(/409 .*invite_registered/);
 
-  // A fresh invitation: Bob signs out, opens it, chooses "I already have an account", signs in and joins.
+  // KOR-36: a fresh invitation opened anew in Bob's open session (stored session, locked keys – as in a new tab): one
+  // action – the passkey gesture of "Join … with my account" – makes him a member under his account's name; until then
+  // the page says he has not joined.
+  // The hub is unreachable for the accept and restarts: "Try again" in the same tab succeeds, the link is not needed
+  // again. The inviter sees the state of the invitation before and after.
   const code = await inviteMember(page, org);
-  await bob.page.getByTestId('shell.settings').click();
-  await bob.page.getByTestId('settings.sign-out').click();
-  await expect(bob.page).toHaveURL(/\/login$/);
-  await openInvite(bob.page, code);
-  await expect(bob.page.getByTestId('invite.org-intro')).toBeVisible();
-  await bob.page.getByTestId('invite.existing-account').click();
-  await signIn(bob.page, 'invite.sign-in');
-  await expect(bob.page.getByTestId('invite.existing')).toHaveAttribute('data-mode', 'ready');
-  await bob.page.getByTestId('invite.display-name').fill('Bob B.');
-  await bob.page.getByTestId('invite.join').click();
-  await expect(bob.page).toHaveURL(new RegExp(`/o/${org}$`), { timeout: 30_000 });
+  await anonymousBudget(COST.page);
+  await page.goto(`/o/${org}/members`);
+  await signIn(page);
+  await expect(page.locator('[data-testid="members.invites.item"][data-status="open"]')).toHaveCount(1);
+  // the link opened anew in Bob's browser profile: the session is stored, the keys are locked – the state of a new
+  // tab (a passkey copied into a second tab's virtual authenticator gives no PRF output, so the original page is used)
+  const tab = bob.page;
+  await openInvite(tab, code);
+  await expect(tab.getByTestId('invite.existing')).toHaveAttribute('data-mode', 'sign_in');
+  await expect(tab.getByTestId('invite.not-joined')).toBeVisible();
+  await expect(tab.getByTestId('invite.create-passkey')).toHaveCount(0);
+  // the inviter sees "link opened"
+  await anonymousBudget(COST.page);
+  await page.reload();
+  await signIn(page);
+  await expect(page.locator('[data-testid="members.invites.item"][data-status="opened"]')).toHaveCount(1, {
+    timeout: 30_000,
+  });
+  // the hub is unreachable for the join's accept and restarts: nothing is joined, the tab offers "Try again"
+  await tab.route('**/v1/orgs/*/log', (route) =>
+    route.request().method() === 'POST' ? route.abort() : route.continue(),
+  );
+  await signIn(tab, 'invite.join');
+  await expect(tab.getByTestId('invite.accept-failed')).toBeVisible({ timeout: 30_000 });
+  await expect(tab.getByTestId('invite.not-joined')).toBeVisible();
+  await orchestrator.call('POST', '/hub/restart', {});
+  await tab.unroute('**/v1/orgs/*/log');
+  await tab.getByTestId('invite.accept-retry').click();
+  await expect(tab).toHaveURL(new RegExp(`/o/${org}$`), { timeout: 30_000 });
+  await expect(tab.getByTestId('shell.joined')).toBeVisible();
+  await anonymousBudget(COST.page);
+  await page.reload();
+  await signIn(page);
+  await expect(page.locator('[data-testid="members.invites.item"]')).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('[data-testid="members.invites.accepted"]', { hasText: 'Bob Builder' })).toHaveCount(1);
 
   // No second identity: the accept names Bob's registered user and identity; the hub has one user for him.
   const log = await ada.user.log(org);
@@ -102,15 +130,15 @@ test('@E2E-39 @R-1.13 @R-P.5 an existing user joins a further org without a seco
   expect(log.state.member(bob.user.userId)).toMatchObject({ role: 'member' });
 
   // The org switcher lists both orgs (the joined one is open).
-  await bob.page.getByTestId('org-switcher.current').click();
-  await expect(bob.page.getByTestId('org-switcher.item')).toHaveCount(2);
+  await tab.getByTestId('org-switcher.current').click();
+  await expect(tab.getByTestId('org-switcher.item')).toHaveCount(2);
   for (const id of [org, bob.onboarded.org])
-    await expect(bob.page.locator(`[data-testid="org-switcher.item"][data-org="${uuid(id)}"]`)).toBeVisible();
-  await expect(bob.page.locator(`[data-testid="org-switcher.item"][data-org="${uuid(org)}"]`)).toHaveAttribute(
+    await expect(tab.locator(`[data-testid="org-switcher.item"][data-org="${uuid(id)}"]`)).toBeVisible();
+  await expect(tab.locator(`[data-testid="org-switcher.item"][data-org="${uuid(org)}"]`)).toHaveAttribute(
     'aria-current',
     'true',
   );
-  await bob.page.keyboard.press('Escape');
+  await tab.keyboard.press('Escape');
 
   // The used invitation is gone for everybody else.
   const dave = await newBrowser(browser, e2e);

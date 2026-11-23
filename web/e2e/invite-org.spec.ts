@@ -1,7 +1,7 @@
 // Org invitations on the invitation screen (06-web.md section 3.1, 04-crypto.md sections 5.1, 5.2, 5.2a) against the
 // real hub with the virtual authenticator: a new user registers and joins (role, workgroups, `accept` with `inv_sig`,
-// self-wraps, `member.profile`), an existing user joins with the existing account (locked session and from the intro
-// after signing out), used and expired invitations are invalid, cancelled gestures return with "try again", and a
+// self-wraps, `member.profile`), an existing user joins with the existing account in one action (locked session and
+// from the intro after signing out, KOR-36), used and expired invitations are invalid, cancelled gestures return with "try again", and a
 // manipulated lookup answer blocks the screen before anything is sent.
 import type { Browser, Page } from '@playwright/test';
 import { b64uDecode, b64uEncode } from '../src/core/encoding/b64u';
@@ -158,11 +158,12 @@ test('an existing user joins with the existing account and the used code is inva
   await bob.page.goto(`/invite#${code}`);
   await expect(bob.page.getByTestId('invite.existing')).toHaveAttribute('data-mode', 'sign_in');
   await expect(bob.page.getByTestId('invite.org-name')).toHaveText('Join Ada Labs with your existing account');
-  await bob.page.getByTestId('invite.sign-in').click();
-  await expect(bob.page.getByTestId('invite.existing')).toHaveAttribute('data-mode', 'ready');
-  await bob.page.getByTestId('invite.display-name').fill('Bob B.');
+  await expect(bob.page.getByTestId('invite.not-joined')).toHaveText('You have not joined Ada Labs yet.');
+  // one action: the passkey gesture signs in, unlocks and joins under the account's name (KOR-36)
+  await expect(bob.page.getByTestId('invite.join')).toHaveText('Join Ada Labs with my account');
   await bob.page.getByTestId('invite.join').click();
   await expect(bob.page).toHaveURL(new RegExp(`/o/${org}$`));
+  await expect(bob.page.getByTestId('shell.joined')).toContainText('You are now a member of Ada Labs.');
   const log = await ada.user.log(org);
   const accept = log.entries[log.entries.length - 1]!;
   // no second identity: the accept carries bob's registered identity
@@ -190,15 +191,15 @@ test('a signed-out user chooses "I already have an account" and a cancelled sign
   await cancelNext(bob.page, 'get');
   await bob.page.goto(`/invite#${code}`);
   await expect(bob.page.getByTestId('invite.org-intro')).toBeVisible();
+  await expect(bob.page.getByTestId('invite.one-account')).toBeVisible();
+  // "I already have an account – sign in and join": the gesture is cancelled, the screen says nothing was joined
   await bob.page.getByTestId('invite.existing-account').click();
-  await bob.page.getByTestId('invite.back').click();
+  await expect(bob.page.getByTestId('invite.notice')).toContainText('Sign-in was cancelled – try again.');
+  await expect(bob.page.getByTestId('invite.not-joined')).toBeVisible();
+  await bob.page.getByTestId('invite.new-account').click();
   await bob.page.getByTestId('invite.existing-account').click();
-  await bob.page.getByTestId('invite.sign-in').click();
-  await expect(bob.page.getByTestId('invite.notice')).toHaveText('Sign-in was cancelled – try again.');
-  await bob.page.getByTestId('invite.sign-in').click();
-  await bob.page.getByTestId('invite.display-name').fill('Bob');
-  await bob.page.getByTestId('invite.join').click();
   await expect(bob.page).toHaveURL(new RegExp(`/o/${ada.onboarded.org}$`));
+  await expect(bob.page.getByTestId('shell.joined')).toBeVisible();
 });
 
 test('a cancelled passkey creation returns to the intro and an expired invitation is invalid', async ({
@@ -212,7 +213,9 @@ test('a cancelled passkey creation returns to the intro and an expired invitatio
   await page.goto(`/invite#${code}`);
   await page.getByTestId('invite.display-name').fill('Grace');
   await page.getByTestId('invite.create-passkey').click();
-  await expect(page.getByTestId('invite.notice')).toHaveText('Passkey creation was cancelled – try again.');
+  await expect(page.getByTestId('invite.notice')).toHaveText(
+    'Passkey creation was cancelled – try again. You have not joined yet.',
+  );
   await expect(page.getByTestId('invite.display-name')).toHaveValue('Grace');
   const expiring = await invite(ada, { expiresInMs: 3000 });
   await page.waitForTimeout(4000);

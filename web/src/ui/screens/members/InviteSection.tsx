@@ -10,8 +10,8 @@ import {
   createInvite,
   EXPIRY_HOURS,
   invitable,
-  type InviteRow,
-  openInvites,
+  inviteStatuses,
+  type InviteStatusRow,
   revokeInvite,
   USER_EXPIRY_HOURS,
 } from '../../../core/org/invites';
@@ -202,17 +202,25 @@ function InviteResult({ created, onDone }: { readonly created: CreatedInvite; re
   );
 }
 
-function OpenInvites({ org, version }: { readonly org: string; readonly version: number }) {
+function OpenInvites({
+  org,
+  version,
+  directory,
+}: {
+  readonly org: string;
+  readonly version: number;
+  readonly directory: Directory;
+}) {
   const { app } = useAppEnv();
   const { t, error, locale } = useI18n();
-  const [rows, setRows] = useState<InviteRow[] | null>(null);
+  const [rows, setRows] = useState<InviteStatusRow[] | null>(null);
   const [code, setCode] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const now = useNow(false);
   useEffect(() => {
     // a late answer after unmounting sets nothing (React ignores it); the list is reloaded on every change anyway
-    openInvites(app.tasks, org, 'user').then(
+    inviteStatuses(app.tasks, org).then(
       (found) => {
         setRows(found);
         setCode(null);
@@ -240,24 +248,40 @@ function OpenInvites({ org, version }: { readonly org: string; readonly version:
           {error(code).title}
         </p>
       )}
-      {rows !== null && rows.length === 0 && (
+      {rows !== null && rows.every((row) => row.status === 'accepted') && (
         <p className="text-gray-600" data-testid="members.invites.empty">
           {t('members.invites.empty')}
         </p>
       )}
       <ul className="flex flex-col gap-2">
         {(rows ?? []).map((row) => (
-          <li key={row.invite_id} className="flex flex-wrap items-center gap-3" data-testid="members.invites.item">
-            <span>{t('members.invites.expires', { time: time(row.expires_at) })}</span>
-            <button
-              type="button"
-              className={BUTTON}
-              disabled={revoking !== null}
-              onClick={() => void revoke(row.invite_id)}
-              data-testid="members.invites.revoke"
-            >
-              {t('members.invites.revoke')}
-            </button>
+          <li
+            key={row.inviteId}
+            className="flex flex-wrap items-center gap-3"
+            data-testid={row.status === 'accepted' ? 'members.invites.accepted' : 'members.invites.item'}
+            data-status={row.status}
+          >
+            <span className="rounded bg-gray-100 px-2 py-1 font-medium" data-testid="members.invites.status">
+              {row.status === 'accepted'
+                ? t('members.invites.status.accepted', {
+                    name: (row.acceptedBy && directory.members.get(row.acceptedBy)) || t('members.invites.someone'),
+                  })
+                : t(`members.invites.status.${row.status}`)}
+            </span>
+            {row.status !== 'accepted' && (
+              <>
+                <span>{t('members.invites.expires', { time: time(row.expires) })}</span>
+                <button
+                  type="button"
+                  className={BUTTON}
+                  disabled={revoking !== null}
+                  onClick={() => void revoke(row.inviteId)}
+                  data-testid="members.invites.revoke"
+                >
+                  {t('members.invites.revoke')}
+                </button>
+              </>
+            )}
           </li>
         ))}
       </ul>
@@ -312,7 +336,7 @@ export function InviteSection({
           onCancel={() => setMode('closed')}
         />
       )}
-      <OpenInvites org={org} version={version} />
+      <OpenInvites org={org} version={version} directory={directory} />
     </div>
   );
 }

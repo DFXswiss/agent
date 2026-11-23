@@ -11,8 +11,11 @@
 // the invalid state), the page names the agent and warns as `/connect` does, `u` replaces the name field, and the sign-in
 // after the new passkey is the pairing-tagged ceremony. When the account is ready, `/connect` takes over with the
 // pairing (route state `resume`) and confirms with that session – the user creates the passkey and nothing else.
+// Without a code in this tab (reloaded after the code left the address) the screen says so and that nothing was
+// joined. A browser with a stored session is told before the intro that this link creates a second, separate
+// account; it goes to its account or, deliberately, creates the new one (KOR-36).
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { CeremonyCancelled } from '../../../core/account/ceremony';
 import { createOrg, displayName, preparePrivateOrg } from '../../../core/account/genesis';
 import { signIn } from '../../../core/account/login';
@@ -21,6 +24,7 @@ import { parseInviteFragment } from '../../../core/agents/link';
 import { lookupPairing } from '../../../core/agents/pairing';
 import { formatEventTime } from '../../../core/i18n';
 import { HubError } from '../../../core/net/signedFetch';
+import { useStore } from '../../hooks/useStore';
 import { parseTime } from '../../../core/encoding/time';
 import { useI18n } from '../../i18n';
 import { withdrawRegistration } from '../../prf-missing/device';
@@ -46,6 +50,9 @@ export function InviteScreen() {
   const [name, setName] = useState(invite.displayName ?? '');
   const [nameInvalid, setNameInvalid] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const phase = useStore((state) => state.session.phase, app.store);
+  /** A signed-in browser chose to create a further account anyway. */
+  const [anyway, setAnyway] = useState(false);
 
   // the code is in this screen's state now; the remembered copy of the first read is not needed any more
   useEffect(forgetFragment, []);
@@ -53,6 +60,10 @@ export function InviteScreen() {
   useEffect(() => {
     let live = true;
     const run = async () => {
+      if (code === '') {
+        setStep({ step: 'missing' });
+        return;
+      }
       setStep({ step: 'parsing' });
       try {
         if (!invite.valid) throw new HubError('pairing_mismatch', 0);
@@ -160,6 +171,12 @@ export function InviteScreen() {
           <p>{error(step.code).action}</p>
         </section>
       )}
+      {step.step === 'missing' && (
+        <section role="alert" data-testid="invite.missing">
+          <h2 className="text-xl font-semibold">{t('invite.missing.title')}</h2>
+          <p>{t('invite.missing.body')}</p>
+        </section>
+      )}
       {step.step === 'malformed' && (
         <section role="alert" data-testid="invite.malformed" data-code={step.code}>
           <h2 className="text-xl font-semibold">{t('invite.check-code')}</h2>
@@ -178,13 +195,37 @@ export function InviteScreen() {
       {step.step === 'org' && (
         <OrgInvite code={code} lookup={step.lookup} pairing={pairing} proposedName={invite.displayName} />
       )}
-      {(step.step === 'intro' || step.step === 'create_passkey') && (
+      {step.step === 'intro' && phase === 'starting' && <p data-testid="invite.lookup">{t('invite.lookup')}</p>}
+      {step.step === 'intro' && (phase === 'locked' || phase === 'unlocked') && !anyway && (
+        <section className="flex flex-col gap-3" data-testid="invite.has-account">
+          <h2 className="text-xl font-semibold">{t('invite.has-account.title')}</h2>
+          <p>{t('invite.has-account.body')}</p>
+          <Link className={`${PRIMARY} flex items-center justify-center`} to="/" data-testid="invite.to-account">
+            {t('invite.has-account.open')}
+          </Link>
+          <button
+            type="button"
+            className="min-h-11 self-start underline"
+            onClick={() => setAnyway(true)}
+            data-testid="invite.new-anyway"
+          >
+            {t('invite.has-account.anyway')}
+          </button>
+        </section>
+      )}
+      {(step.step === 'create_passkey' || (step.step === 'intro' && (phase === 'anonymous' || anyway))) && (
         <form
           className="flex flex-col gap-3"
           onSubmit={(event) => step.step === 'intro' && void createPasskey(event, step)}
         >
           <h2 className="text-xl font-semibold">{t('invite.intro.title')}</h2>
           <p>{t('invite.intro.platform')}</p>
+          <p data-testid="invite.one-account">
+            {t('invite.intro.one-account')}{' '}
+            <Link className="underline" to="/login" data-testid="invite.sign-in-instead">
+              {t('invite.intro.sign-in')}
+            </Link>
+          </p>
           <p className="text-sm text-gray-700" data-testid="invite.expires">
             {t('invite.intro.expires', {
               time: formatEventTime(parseTime(step.lookup.expiresAt), {
