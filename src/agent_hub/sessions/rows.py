@@ -114,10 +114,10 @@ def task_json(connection: Connection, task_id: UUID | str) -> dict[str, Any] | N
     return None if row is None else _zip(TASK_FIELDS, row)
 
 
-def task_rows(connection: Connection, where: str, params: list[Any]) -> list[tuple[Any, ...]]:
-    """Raw task rows (`TASK_COLUMNS`) of a filtered list, newest first."""
+def task_rows(connection: Connection, where: str, params: list[Any], column: str) -> list[tuple[Any, ...]]:
+    """Raw task rows (`TASK_COLUMNS`) of a filtered list, newest first by `column` (a fixed column name), then ID."""
     return connection.execute(
-        f"SELECT {TASK_COLUMNS} FROM hub.task t WHERE {where} ORDER BY t.created_at DESC, t.id DESC LIMIT %s", params
+        f"SELECT {TASK_COLUMNS} FROM hub.task t WHERE {where} ORDER BY {column} DESC, t.id DESC LIMIT %s", params
     ).fetchall()
 
 

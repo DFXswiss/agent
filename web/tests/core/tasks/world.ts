@@ -156,7 +156,8 @@ export function taskRow(t: { org: string; wg: string; me: Actor }, overrides: Re
     state_reason: null,
     created_at: '2026-11-21T12:00:00.000Z',
     state_at: '2026-11-21T12:00:00.000Z',
-    last_activity_at: '2026-11-21T12:00:00.000Z',
+    // the activity follows the creation time unless a test sets it (lists are ordered by activity, KOR-32)
+    last_activity_at: (overrides.created_at as string | undefined) ?? '2026-11-21T12:00:00.000Z',
     closed_at: null,
     main_session_id: '0190f000-0000-7000-8000-0000000000a1',
     title_event_id: null,

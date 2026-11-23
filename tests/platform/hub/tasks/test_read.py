@@ -34,6 +34,30 @@ def test_tasks_are_listed_newest_first_with_a_cursor(desk: Desk) -> None:
     assert whole["next_before"] is None
 
 
+def test_tasks_are_listed_by_latest_activity_with_a_cursor(desk: Desk) -> None:
+    created = []
+    for _ in range(4):
+        created.append(desk.started()[0])
+        desk.hub.clock.advance(0.001)
+    # the oldest task has the newest activity; two tasks share an activity time (the ID breaks the tie)
+    desk.prompt(desk.scene.writer, created[0])
+    desk.execute(
+        "UPDATE hub.task SET last_activity_at = %s WHERE id = %s", desk.task(created[2])["last_activity_at"], created[1]
+    )
+    client = desk.scene.reader.browser
+    target = f"/v1/workgroups/{desk.wg}/tasks"
+    expected = sorted(created, key=lambda task: (desk.task(task)["last_activity_at"], task), reverse=True)
+    assert expected[0] == created[0]
+    first = client.get(target, params={"order": "activity", "limit": "2"}).json()
+    assert [item["task_id"] for item in first["tasks"]] == expected[:2]
+    rest = client.get(target, params={"order": "activity", "before": first["next_before"]}).json()
+    assert [item["task_id"] for item in rest["tasks"]] == expected[2:]
+    assert rest["next_before"] is None
+    # the default order stays the creation time
+    default = client.get(target, params={"order": "created"}).json()
+    assert [item["task_id"] for item in default["tasks"]] == created[::-1]
+
+
 def test_tasks_are_filtered_by_state(desk: Desk) -> None:
     open_task, _ = desk.started()
     closed_task, _ = desk.started()
@@ -43,6 +67,9 @@ def test_tasks_are_filtered_by_state(desk: Desk) -> None:
     assert [item["task_id"] for item in closed["tasks"]] == [closed_task]
     starting = client.get(f"/v1/workgroups/{desk.wg}/tasks", params={"state": "starting"}).json()
     assert [item["task_id"] for item in starting["tasks"]] == [open_task]
+    # the state filter holds in the activity order too (the order the web lists use)
+    by_activity = client.get(f"/v1/workgroups/{desk.wg}/tasks", params={"state": "closed", "order": "activity"}).json()
+    assert [item["task_id"] for item in by_activity["tasks"]] == [closed_task]
 
 
 @pytest.mark.parametrize(
@@ -52,6 +79,7 @@ def test_tasks_are_filtered_by_state(desk: Desk) -> None:
         ({"before": "AAAA"}, "/before"),
         ({"limit": "0"}, None),
         ({"limit": "201"}, None),
+        ({"order": "title"}, "/order"),
     ],
 )
 def test_list_query_is_checked(desk: Desk, query: dict[str, str], pointer: str | None) -> None:
@@ -79,6 +107,27 @@ def test_reads_do_not_reveal_foreign_objects(desk: Desk) -> None:
         assert reader.get(path).status_code == 404
     assert reader.get(f"/v1/tasks/{task}").status_code == 200
     assert reader.get(f"/v1/sessions/{session}").status_code == 200
+
+
+def test_a_member_never_lists_the_tasks_of_a_workgroup_they_cannot_read(desk: Desk) -> None:
+    # the task overview (KOR-32) asks each workgroup's list: a second workgroup of the same org that the reader has no
+    # right on answers not_found in every order, and its task never appears in the list the reader may read
+    scene = desk.scene
+    hidden = new_id()
+    scene.draft.add("wg_create", scene.admin, wg=hidden, epoch=1)
+    response = scene.draft.post(scene.admin, scene.draft.wraps(scene.admin, "wg", hidden, 1, [scene.admin]))
+    assert response.status_code == 200, response.text
+    visible, _ = desk.started()
+    secret, _ = desk.started()
+    desk.execute("UPDATE hub.task SET wg_id = %s WHERE id = %s", hidden, secret)
+    for order in ("created", "activity"):
+        denied = scene.reader.browser.get(f"/v1/workgroups/{hidden}/tasks", params={"order": order})
+        assert (denied.status_code, denied.json()) == (404, {"error": "not_found"})
+        listed = scene.reader.browser.get(f"/v1/workgroups/{desk.wg}/tasks", params={"order": order}).json()
+        assert [item["task_id"] for item in listed["tasks"]] == [visible]
+        admin = scene.admin.browser.get(f"/v1/workgroups/{hidden}/tasks", params={"order": order}).json()
+        assert [item["task_id"] for item in admin["tasks"]] == [secret]
+    assert scene.reader.browser.get(f"/v1/tasks/{secret}").status_code == 404
 
 
 def test_task_detail_has_the_session_tree_usage_and_transitions(desk: Desk) -> None:

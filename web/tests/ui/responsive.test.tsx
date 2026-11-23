@@ -14,7 +14,7 @@ import { createI18n } from '../../src/core/i18n';
 import { createStore } from '../../src/core/store';
 import { setLiveState } from '../../src/core/store/slices/connection';
 import { I18nProvider } from '../../src/ui/i18n';
-import { BottomNav, tasksWorkgroup } from '../../src/ui/responsive/BottomNav';
+import { BottomNav } from '../../src/ui/responsive/BottomNav';
 import { KEYBOARD_MIN, keyboardInset, useAboveKeyboard, useKeyboardInset } from '../../src/ui/responsive/keyboard';
 import { LoadError } from '../../src/ui/screens/errors/pages';
 import { PositionTime } from '../../src/ui/terminal/TerminalView';
@@ -151,16 +151,6 @@ describe('terminal position time', () => {
 });
 
 describe('bottom navigation', () => {
-  it('opens the tasks of the workgroup in view, else of the default workgroup', () => {
-    const profile = { orgs: [{ org_id: 'o1', role: 'admin', private: true, default_wg: 'w0' }] };
-    expect(tasksWorkgroup('/o/o1/w/w7/settings', 'o1', profile)).toBe('w7');
-    expect(tasksWorkgroup('/o/o1/w/w7', 'o1', profile)).toBe('w7');
-    expect(tasksWorkgroup('/o/o2/w/w7', 'o1', profile)).toBe('w0');
-    expect(tasksWorkgroup('/o/o1/members', 'o1', profile)).toBe('w0');
-    expect(tasksWorkgroup('/o/o9', 'o9', profile)).toBeNull();
-    expect(tasksWorkgroup('/o/o1', 'o1', null)).toBeNull();
-  });
-
   it('shows Home, Tasks, Notifications, Monitoring and More with the other entries', async () => {
     let ids = { org: '', wg: '' };
     const harness = await renderApp('/settings', {}, async (made) => {
@@ -169,13 +159,14 @@ describe('bottom navigation', () => {
     await screen.findByTestId('settings.page');
     await act(async () => harness.router.navigate(`/o/${ids.org}/members`));
     const bar = await screen.findByTestId('shell.bottom');
-    expect(within(bar).getByTestId('shell.bottom.tasks')).toHaveAttribute('href', `/o/${ids.org}/w/${ids.wg}`);
+    expect(within(bar).getByTestId('shell.bottom.tasks')).toHaveAttribute('href', `/o/${ids.org}/tasks`);
     expect(within(bar).getByTestId('shell.bottom.home')).toHaveAttribute('href', `/o/${ids.org}`);
     fireEvent.click(within(bar).getByTestId('shell.bottom.more'));
     const sheet = screen.getByTestId('shell.more');
     expect(sheet).toHaveAttribute('role', 'dialog');
     expect(within(sheet).getByTestId('shell.more.members')).toHaveAttribute('aria-current', 'page');
     expect(within(sheet).queryByTestId('shell.more.home')).toBeNull();
+    expect(within(sheet).queryByTestId('shell.more.tasks')).toBeNull();
     expect(within(sheet).getByTestId('shell.more.security')).toHaveAttribute('href', '/security');
     fireEvent.click(within(sheet).getByTestId('shell.more.settings'));
     expect(harness.router.state.location.pathname).toBe('/settings');

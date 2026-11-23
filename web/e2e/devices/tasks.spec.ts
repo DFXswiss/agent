@@ -22,16 +22,21 @@ test('lists the tasks newest first with title, state, owner and activity, filter
   await expect(page.getByTestId('tasks.title')).toHaveText('Default');
   await expect(page.getByTestId('composer')).toBeVisible();
   const rows = page.getByTestId('tasks.row');
-  await expect(rows.getByTestId('tasks.row.title')).toHaveText(['Second question', 'First question']);
-  await expect(rows.getByTestId('tasks.row.state')).toHaveText(['Starting', 'Working']);
+  // newest activity first (KOR-32): the working session of the first task may still report activity after the second
+  // task was created, so the rows are checked by their title, not by their place (the order has its own tests)
+  await expect(rows).toHaveCount(2);
+  const firstRow = rows.filter({ hasText: 'First question' });
+  const secondRow = rows.filter({ hasText: 'Second question' });
+  await expect(secondRow.getByTestId('tasks.row.state')).toHaveText('Starting');
+  await expect(firstRow.getByTestId('tasks.row.state')).toHaveText('Working');
   await expect(rows.getByTestId('tasks.row.owner')).toHaveText(['Ada Lovelace', 'Ada Lovelace']);
-  await expect(rows.first().getByTestId('tasks.row.activity')).toHaveText(/^\d{2}:\d{2}:\d{2}\.\d{3}$/);
+  await expect(secondRow.getByTestId('tasks.row.activity')).toHaveText(/^\d{2}:\d{2}:\d{2}\.\d{3}$/);
   await page.getByTestId('tasks.filter').selectOption('working');
   await expect(rows.getByTestId('tasks.row.title')).toHaveText(['First question']);
   await page.getByTestId('tasks.filter').selectOption('closed');
   await expect(page.getByTestId('tasks.empty')).toBeVisible();
   await page.getByTestId('tasks.filter').selectOption('');
-  await rows.first().click();
+  await secondRow.click();
   await expect(page.getByTestId('task.title')).toHaveText('Second question');
 });
 

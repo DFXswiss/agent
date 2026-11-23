@@ -51,13 +51,16 @@ describe('validation', () => {
 });
 
 describe('lists', () => {
-  it('keeps the newest first with the task ID as tie-breaker', () => {
+  it('keeps the newest activity first with the task ID as tie-breaker', () => {
     const tasks = {
       a: row('a', '2026-11-21T12:00:00.000Z'),
       b: row('b', '2026-11-21T12:00:01.000Z'),
       c: row('c', '2026-11-21T12:00:00.000Z'),
     };
     expect(newestFirst(tasks, ['a', 'b', 'c', 'a'])).toEqual(['b', 'c', 'a']);
+    // the latest activity counts, not the creation time (KOR-32)
+    const active = row('d', '2026-11-20T00:00:00.000Z', { last_activity_at: '2026-11-21T12:00:02.000Z' });
+    expect(newestFirst({ ...tasks, d: active }, ['a', 'b', 'c', 'd'])).toEqual(['d', 'b', 'c', 'a']);
   });
 
   it('returns the same idle list object until a list is loaded', () => {

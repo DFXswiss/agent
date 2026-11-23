@@ -9,11 +9,9 @@ import { b64uDecode } from '../../src/core/encoding/b64u';
 import { inviteSecrets, openPackage, parseCode } from '../../src/core/crypto/invite';
 import { newHeader, sealEvent } from '../../src/core/crypto/event';
 import { Secret } from '../../src/core/crypto/secret';
-import { verifyPlatformLog } from '../../src/core/log/platform';
 import { buildBatch } from '../../src/core/log/rotation';
 import { epochKey, ORG } from '../../src/core/log/state';
 import { verifyLog } from '../../src/core/log/verify';
-import { compiledRootKey } from '../../build/manifest.ts';
 import type { PageUser } from './user';
 
 interface Lookup {
@@ -36,11 +34,8 @@ export async function joinWithCode(user: PageUser, origin: string, code: string,
     founder: string;
     keys: { scope: string; scope_id: string; epoch: number; key: string }[];
   };
-  const platformBody = (await user.request('GET', '/v1/platform/log')) as { entries: { entry: unknown }[] };
-  const platform = await verifyPlatformLog(
-    platformBody.entries.map((item) => item.entry),
-    compiledRootKey(),
-  );
+  // every page of the platform log (a long suite run has more than one): the founder's devices may be certified late
+  const platform = { state: await user.platform() };
   const log = await verifyLog(lookup.log, pkg.founder, platform.state);
   const keys = new Map(pkg.keys.map((k) => [epochKey(k.scope, k.scope_id, k.epoch), Secret.of(b64uDecode(k.key))]));
   const ts = formatTime(Date.now());

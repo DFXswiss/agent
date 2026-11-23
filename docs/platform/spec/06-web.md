@@ -85,6 +85,7 @@ via selectors.
 | `/login` | login and unlock (§3.4) | anon |
 | `/recover` | recovery (§3.5) | anon |
 | `/o/:org` | home: first-task composer (§4) and recent tasks of the default workgroup | org:member |
+| `/o/:org/tasks` | task overview: all tasks of the readable workgroups (§5.1a, KOR-32) | org:member |
 | `/o/:org/w/:wg` | task list + composer of a workgroup (§5.1) | wg:read |
 | `/o/:org/t/:task` | chat (§5.2), tabs: Chat, Sessions, Operations, Whiteboard, Audit | task:read |
 | `/o/:org/s/:session` | session detail: terminal (§5.5), chat of that session, children | task:read |
@@ -272,9 +273,17 @@ with `task.set_title` (shown as "renamed by session").
 
 ### 5.1 Task list (`/o/:org/w/:wg`)
 
-Newest first (`GET /v1/workgroups/{wg}/tasks`), with decrypted title, state badge, owner display name, last
-activity; filter by state; infinite scroll (`next_before`). Composer at the top (same as §4.1) for users with
+Newest activity first (`GET /v1/workgroups/{wg}/tasks?order=activity`, KOR-32), with decrypted title, state badge,
+owner display name, last activity; filter by state; infinite scroll (`next_before`). Composer at the top (same as §4.1) for users with
 `wg:write`. Task creation is possible in any workgroup with write access.
+
+### 5.1a Task overview (`/o/:org/tasks`, KOR-32)
+
+Navigation entry "Tasks" directly below Home (sidebar, navigation row, phone bottom bar). All tasks of the workgroups
+the user can read (from the verified log; others are never requested), newest activity first: the lists of §5.1 per
+workgroup merged with per-workgroup cursors (a row is shown only when no unloaded row can precede it). Columns as
+§5.1 plus the workgroup. Filters: state, workgroup, "only mine" (signed owner), title search (in the browser). Empty
+state explains how to create a task. Details: `decisions/KOR-32.md`.
 
 ### 5.2 Chat (`/o/:org/t/:task`, tab Chat)
 
@@ -542,7 +551,7 @@ Run while signed in and unlocked; serialized per org; status visible in a small 
 
 ### 12.1 Layout
 
-- Mobile-first Tailwind; breakpoints `sm` 640, `md` 768, `lg` 1024 px. Below `md`: bottom navigation (Home, Tasks,
+- Mobile-first Tailwind; breakpoints `sm` 640, `md` 768, `lg` 1024 px. Below `md`: bottom navigation (Home, Tasks (the overview of §5.1a),
   Notifications, Monitoring, More), full-width screens, drawers as full-screen sheets; from `lg`: left sidebar
   (orgs, workgroups) + content.
 - Touch targets ≥ 44 × 44 px; no hover-only functions; composer stays above the on-screen keyboard

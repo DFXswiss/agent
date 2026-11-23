@@ -15,5 +15,19 @@
   "state.working": "Arbeitet",
   "state.idle": "Bereit",
   "state.failed": "Fehlgeschlagen",
-  "state.closed": "Geschlossen"
+  "state.closed": "Geschlossen",
+  "nav": "Tasks",
+  "overview.title": "Tasks",
+  "overview.intro": "Alle Aufgaben der Workgroups, die du sehen darfst – die neueste Aktivität zuerst.",
+  "overview.empty": "Es gibt noch keine Tasks.",
+  "overview.how": "So legst du einen Task an: Öffne „Start“, beschreibe, was der Agent tun soll, und klicke auf „Senden“. Jede Anfrage wird ein Task.",
+  "overview.create": "Task auf der Startseite anlegen",
+  "overview.no-match": "Kein Task passt zu den Filtern.",
+  "overview.archived": "{name} (archiviert)",
+  "search.label": "Titel durchsuchen",
+  "search.placeholder": "Wörter aus dem Titel",
+  "filter.wg": "Workgroup",
+  "filter.wg.all": "Alle Workgroups",
+  "filter.mine": "Nur meine Tasks",
+  "filter.reset": "Filter zurücksetzen"
 }

@@ -131,7 +131,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | Endpoint | Right | Request → Response |
 |---|---|---|
 | `POST /v1/tasks` | wg:write | `{task_id,wg_id,events:[task.meta,prompt]}` → `{task,session:{session_id,state,device_id,estimate_ms},events:[…]}`; `409 no_device` with `detail.candidates_available` when the workgroup has no active assigned device |
-| `GET /v1/workgroups/{wg}/tasks` | wg:read | `?state=&before=` → tasks newest first `{task_id,owner_id,state,created_at,last_activity_at,main_session_id,title_event_id}` |
+| `GET /v1/workgroups/{wg}/tasks` | wg:read | `?state=&before=&order=` → tasks newest first (`order=created`, default) or by latest activity (`order=activity`, KOR-32) `{task_id,owner_id,state,created_at,last_activity_at,main_session_id,title_event_id}` |
 | `GET /v1/tasks/{task}` | task:read | → task + sessions (tree) + usage per session + latest transitions |
 | `POST /v1/tasks/{task}/prompts` | task:write | `{event}` (kind `prompt`) → `{scope_seq,session_id}` (resumes or restarts the main session, §4.6.3) |
 | `POST /v1/tasks/{task}/close` | task:write | `{}` → task (`closed`; all sessions `stopping`) |

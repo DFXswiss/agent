@@ -1,5 +1,5 @@
 // The task list of a workgroup (06-web.md section 5.1, 03-api.md section 4.6): `GET /v1/workgroups/{wg}/tasks`
-// newest first with an optional state filter, page by page (`before` = the previous page's `next_before`, infinite
+// newest first by latest activity (`order=activity`, KOR-32) with an optional state filter, page by page (`before` = the previous page's `next_before`, infinite
 // scroll). Rows enter the `tasks` slice; later changes arrive as `task` frames and move rows between the loaded lists.
 // Titles are encrypted: `titles` pulls the `task.meta` events of tasks whose title is not in the store yet.
 import { HubError } from '../net/signedFetch';
@@ -45,6 +45,7 @@ export function listTarget(wg: string, filter: string | null, before: string | n
   if (filter !== null) params.set('state', filter);
   if (before !== null) params.set('before', before);
   params.set('limit', String(PAGE_SIZE));
+  params.set('order', 'activity');
   return `/v1/workgroups/${encodeURIComponent(wg)}/tasks?${params.toString()}`;
 }
 

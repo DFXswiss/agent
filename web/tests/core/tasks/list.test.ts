@@ -44,7 +44,7 @@ describe('loadTasks', () => {
     expect(await loadTasks(t.context, t.wg, null)).toHaveLength(1);
     expect(t.client.calls[0]!.target).toBe(listTarget(t.wg, null, null));
     expect(listTarget('w', 'working', 'c/1')).toBe(
-      `/v1/workgroups/w/tasks?state=working&before=c%2F1&limit=${PAGE_SIZE}`,
+      `/v1/workgroups/w/tasks?state=working&before=c%2F1&limit=${PAGE_SIZE}&order=activity`,
     );
     await loadTasks(t.context, t.wg, null, true);
     expect(t.client.calls[1]!.target).toContain('before=cursor+1');

@@ -13,7 +13,8 @@ import type { Identity } from '../../src/core/crypto/keys';
 import type { Secret } from '../../src/core/crypto/secret';
 import { unwrapKey } from '../../src/core/crypto/wrap';
 import { buildBatch } from '../../src/core/log/rotation';
-import { epochKey, ORG, WG } from '../../src/core/log/state';
+import { DEVICE, epochKey, ORG, WG } from '../../src/core/log/state';
+import type { LogFields } from '../../src/core/log/entries';
 import { type PlatformState, verifyPlatformLog } from '../../src/core/log/platform';
 import { verifyLog, type VerifiedLog } from '../../src/core/log/verify';
 import { compiledRootKey } from '../../build/manifest.ts';
@@ -137,9 +138,15 @@ export class PageUser {
 
   /**
    * A new workgroup (`wg_create` + its `wg.profile` event): the creating admin has `write`; with `access: 'read'` the
-   * admin grants itself read access only (a visible `grant`), which makes it a reader of the workgroup.
+   * admin grants itself read access only (a visible `grant`), which makes it a reader of the workgroup. `readers` get
+   * a read `grant`; `assignDevices` assigns every active device of the org (so tasks can be created there).
    */
-  async createWorkgroup(org: string, name: string, access: 'write' | 'read' = 'write'): Promise<string> {
+  async createWorkgroup(
+    org: string,
+    name: string,
+    access: 'write' | 'read' = 'write',
+    options: { readonly readers?: readonly string[]; readonly assignDevices?: boolean } = {},
+  ): Promise<string> {
     const log = await this.log(org);
     const keys = await this.keys(org, log);
     const wg = uuid7();
@@ -163,13 +170,19 @@ export class PageUser {
       bodyJson({ name }),
       this.identity.sig.privateKey,
     );
-    const entries =
-      access === 'write'
-        ? [{ type: 'wg_create' as const, wg, epoch: 1 as const }]
-        : [
-            { type: 'wg_create' as const, wg, epoch: 1 as const },
-            { type: 'grant' as const, subject: this.userId, wg, access: 'read' as const },
-          ];
+    const devices = options.assignDevices
+      ? [...log.state.principals.values()].filter((p) => p.kind === DEVICE && p.removedSeq === null)
+      : [];
+    const entries: LogFields[] = [
+      { type: 'wg_create', wg, epoch: 1 },
+      ...(access === 'read' ? [{ type: 'grant' as const, subject: this.userId, wg, access: 'read' as const }] : []),
+      ...(options.readers ?? []).map((subject) => ({ type: 'grant' as const, subject, wg, access: 'read' as const })),
+      ...devices.map((device) =>
+        device.platformSeq === null
+          ? { type: 'device_assign' as const, device: device.id, wg }
+          : { type: 'device_assign' as const, device: device.id, wg, platform_seq: device.platformSeq },
+      ),
+    ];
     const built = await buildBatch({
       log,
       author: { id: this.userId, identity: this.identity },
