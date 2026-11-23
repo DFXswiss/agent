@@ -26,6 +26,8 @@ export const CHAT_KINDS = [
   'session.status',
   'operation.params',
   'operation.result',
+  'workvm.run',
+  'workvm.state',
 ] as const;
 
 /** Failures after which the same sealed prompt is sent again (the composer of the home screen uses the same set). */

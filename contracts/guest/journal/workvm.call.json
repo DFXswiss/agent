@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/journal/workvm.call.json",
+  "title": "journal body workvm.call",
+  "description": "Body of the journal record kind workvm.call (13-work-vm.md section 3).",
+  "$ref": "record.json#/$defs/body_workvm_call"
+}

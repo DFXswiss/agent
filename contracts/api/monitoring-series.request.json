@@ -10,7 +10,8 @@
       "enum": [
         "device",
         "vm",
-        "session"
+        "session",
+        "workvm"
       ]
     },
     "entity_id": {
@@ -20,6 +21,9 @@
         },
         {
           "$ref": "../common.json#/$defs/vm_id"
+        },
+        {
+          "$ref": "../common.json#/$defs/workvm_id"
         }
       ]
     },

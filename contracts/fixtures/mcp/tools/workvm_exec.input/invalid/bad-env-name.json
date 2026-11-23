@@ -1,0 +1,9 @@
+{
+  "command": "ls",
+  "env": [
+    {
+      "name": "1A",
+      "value": "x"
+    }
+  ]
+}

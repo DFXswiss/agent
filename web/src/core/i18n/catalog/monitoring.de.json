@@ -31,6 +31,7 @@
   "vms": "VMs ({count})",
   "vms.none": "Keine VMs Ihrer Workgroups auf diesem Gerät.",
   "sessions": "Sessions ({count})",
+  "workvm": "Arbeits-VM {id}",
   "sessions.none": "Keine Sessions in dieser VM.",
   "session.task": "Task …{id}",
   "wg.unnamed": "Workgroup",

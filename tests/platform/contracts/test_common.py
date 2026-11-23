@@ -110,6 +110,8 @@ CASES: list[tuple[str, object, bool]] = [
     ("bundle_slot", "other", False),
     ("vm_id", "vm-0a1b2c3d", True),
     ("vm_id", "vm-0A1B2C3D", False),
+    ("workvm_id", "wvm-0a1b2c3d", True),
+    ("workvm_id", "vm-0a1b2c3d", False),
     ("error_code", "not_found", True),
     ("error_code", "Not_found", False),
     ("error_code", "", False),

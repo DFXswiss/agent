@@ -320,3 +320,49 @@ describe('chart panel', () => {
     expect(within(disk).getByTestId('monitoring.chart.sparkline')).toHaveTextContent('Used: 3.0 GiB');
   });
 });
+
+describe('work VMs (KOR-29)', () => {
+  it('shows the work VMs of a session below it, with resources, runtime, freshness and charts', async () => {
+    const t = await setup({
+      body: (w) => {
+        const body = overview(w, Date.now());
+        const of = (id: string, extra: Record<string, unknown>) => ({
+          workvm_id: id,
+          device_id: DEV,
+          session_id: S1,
+          task_id: TASK,
+          wg_id: w.world.defaultWg,
+          state: 'running',
+          latest: sample(Date.now(), { uptime_seconds: 90 }),
+          stale: false,
+          ...extra,
+        });
+        return {
+          ...body,
+          workvms: [of('wvm-0000000a', {}), of('wvm-0000000b', { latest: null, stale: true, state: 'deleted' })],
+        };
+      },
+    });
+    const kinds: (string | null)[] = [];
+    t.w.client.on('GET /v1/monitoring/series', (_body, target) => {
+      kinds.push(new URL(target, 'https://hub.example').searchParams.get('entity_kind'));
+      return { points: [] };
+    });
+    await screen.findAllByTestId('monitoring.device');
+    fireEvent.click(within(device(DEV)).getByTestId('monitoring.device.vms-toggle'));
+    await waitFor(() => expect(t.w.store.getState().monitoring.links).toMatchObject({ [S1]: 'vm-00000001' }));
+    fireEvent.click(within(vm('vm-00000001')).getByTestId('monitoring.vm.sessions-toggle'));
+    const items = within(session(S1)).getAllByTestId('monitoring.workvm');
+    expect(items.map((node) => node.dataset.workvm)).toEqual(['wvm-0000000a', 'wvm-0000000b']);
+    const first = within(items[0]!);
+    expect(first.getByTestId('monitoring.workvm.name')).toHaveTextContent('Work VM wvm-0000000a');
+    expect(first.getByTestId('monitoring.workvm.state')).toHaveTextContent('running');
+    expect(first.getByTestId('monitoring.workvm.uptime')).toHaveTextContent('1 min');
+    expect(first.getByTestId('monitoring.workvm.memory')).toHaveTextContent('2.0 GiB / 8.0 GiB (25%)');
+    expect(items[1]).toHaveAttribute('data-stale', 'true');
+    expect(within(items[1]!).getByTestId('monitoring.workvm.age')).toHaveTextContent('No data');
+    fireEvent.click(first.getByTestId('monitoring.workvm.charts-toggle'));
+    await waitFor(() => expect(kinds).toContain('workvm'));
+    expect(within(session(S2)).queryByTestId('monitoring.session.workvms')).toBeNull();
+  });
+});

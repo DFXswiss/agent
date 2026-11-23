@@ -21,6 +21,7 @@
     "timeout",
     "model_not_allowed",
     "tree_mismatch",
-    "no_changes"
+    "no_changes",
+    "workvm_unavailable"
   ]
 }

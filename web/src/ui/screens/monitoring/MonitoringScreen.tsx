@@ -1,7 +1,8 @@
 // Monitoring of an organization (06-web.md section 9.1, route `/o/:org/monitoring`, right org:member; 08-monitoring.md
 // section 6): the org's devices with CPU, RAM, disk, network, uptime, reachability, state, free capacity and the
 // `capacity_low` badge; a drill-down to the VMs of the workgroups the user reads, then to their sessions (CPU, memory,
-// task, workspace, state, tokens, cost, context share). Every level opens its charts. The hub decides what is visible
+// task, workspace, state, tokens, cost, context share) and below a session its work VMs (KOR-29: CPU, memory, disk,
+// network, runtime). Every level opens its charts. The hub decides what is visible
 // (a shared platform device shows only its device totals, never another org's VMs or sessions).
 //
 // Live: while the screen is open the org's channel carries `metrics` frames (`AppSession.watchMonitoring`); values
@@ -17,10 +18,13 @@ import {
   type MonitoredDevice,
   type MonitoredSession,
   type MonitoredVm,
+  type MonitoredWorkvm,
   netRates,
   type Sampled,
   type Tree,
   type VmNode,
+  workvmsOf,
+  type Overview,
 } from '../../../core/monitoring/overview';
 import { share } from '../../../core/monitoring/units';
 import { DEVICE_PROFILE, selectDeviceLabels } from '../../../core/org/devices';
@@ -92,7 +96,12 @@ function Header(props: {
   );
 }
 
-function Charts(props: { readonly kind: 'device' | 'vm' | 'session'; readonly id: string; open: Open; flip: Flip }) {
+function Charts(props: {
+  readonly kind: 'device' | 'vm' | 'session' | 'workvm';
+  readonly id: string;
+  open: Open;
+  flip: Flip;
+}) {
   const { t } = useI18n();
   const panel = useId();
   const key = `charts ${props.kind} ${props.id}`;
@@ -113,9 +122,48 @@ function Charts(props: { readonly kind: 'device' | 'vm' | 'session'; readonly id
   );
 }
 
+/** A work VM of a session (KOR-29): its own resources and runtime, no workgroup VM involved. */
+function WorkvmItem(props: { readonly item: MonitoredWorkvm; readonly now: number; open: Open; flip: Flip }) {
+  const { t } = useI18n();
+  const units = useUnits();
+  const { item } = props;
+  const fresh = freshness(item, props.now);
+  return (
+    <li
+      className={`flex flex-col gap-2 border-l-2 border-amber-200 py-2 pl-3 ${fresh.stale ? 'text-gray-600' : ''}`}
+      data-testid="monitoring.workvm"
+      data-workvm={item.workvm_id}
+      data-stale={String(fresh.stale)}
+    >
+      <Header item={item} now={props.now} prefix="monitoring.workvm">
+        <span className="font-medium" data-testid="monitoring.workvm.name">
+          {t('monitoring.workvm', { id: item.workvm_id })}
+        </span>
+        <span
+          className="rounded bg-gray-100 px-2 text-sm"
+          data-testid="monitoring.workvm.state"
+          data-state={item.state}
+        >
+          {item.state}
+        </span>
+      </Header>
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Resources item={item} prefix="monitoring.workvm" />
+        <Metric label={t('monitoring.uptime')} testId="monitoring.workvm.uptime">
+          {orNone(item.latest?.uptime_seconds ?? null, units.duration)}
+        </Metric>
+      </dl>
+      <div className="flex flex-wrap gap-2">
+        <Charts kind="workvm" id={item.workvm_id} open={props.open} flip={props.flip} />
+      </div>
+    </li>
+  );
+}
+
 function SessionItem(props: {
   readonly org: string;
   readonly item: MonitoredSession;
+  readonly overview: Overview;
   readonly now: number;
   open: Open;
   flip: Flip;
@@ -128,6 +176,7 @@ function SessionItem(props: {
   const fresh = freshness(item, props.now);
   const usage = item.usage;
   const context = usage === null ? null : contextShare(usage);
+  const workvms = workvmsOf(props.overview, item.session_id);
   return (
     <li
       className={`flex flex-col gap-2 border-l-2 border-gray-200 py-2 pl-3 ${fresh.stale ? 'text-gray-600' : ''}`}
@@ -171,11 +220,25 @@ function SessionItem(props: {
       <div className="flex flex-wrap gap-2">
         <Charts kind="session" id={item.session_id} open={props.open} flip={props.flip} />
       </div>
+      {workvms.length > 0 && (
+        <ul className="flex flex-col gap-2" data-testid="monitoring.session.workvms">
+          {workvms.map((workvm) => (
+            <WorkvmItem key={workvm.workvm_id} item={workvm} now={props.now} open={props.open} flip={props.flip} />
+          ))}
+        </ul>
+      )}
     </li>
   );
 }
 
-function VmItem(props: { readonly org: string; readonly node: VmNode; readonly now: number; open: Open; flip: Flip }) {
+function VmItem(props: {
+  readonly org: string;
+  readonly node: VmNode;
+  readonly overview: Overview;
+  readonly now: number;
+  open: Open;
+  flip: Flip;
+}) {
   const { t } = useI18n();
   const units = useUnits();
   const directory = useDirectory(props.org, false);
@@ -234,6 +297,7 @@ function VmItem(props: { readonly org: string; readonly node: VmNode; readonly n
                 key={item.session_id}
                 org={props.org}
                 item={item}
+                overview={props.overview}
                 now={props.now}
                 open={props.open}
                 flip={props.flip}
@@ -260,6 +324,7 @@ function DeviceItem(props: {
   readonly org: string;
   readonly device: MonitoredDevice;
   readonly vms: readonly VmNode[];
+  readonly overview: Overview;
   readonly label: string | null;
   readonly now: number;
   open: Open;
@@ -340,6 +405,7 @@ function DeviceItem(props: {
                 key={node.vm.vm_id}
                 org={props.org}
                 node={node}
+                overview={props.overview}
                 now={props.now}
                 open={props.open}
                 flip={props.flip}
@@ -352,7 +418,14 @@ function DeviceItem(props: {
 }
 
 /** VMs whose device is not listed and sessions without a listed VM. */
-function Others(props: { readonly org: string; readonly tree: Tree; readonly now: number; open: Open; flip: Flip }) {
+function Others(props: {
+  readonly org: string;
+  readonly tree: Tree;
+  readonly overview: Overview;
+  readonly now: number;
+  open: Open;
+  flip: Flip;
+}) {
   const { t } = useI18n();
   const { tree } = props;
   if (tree.vms.length + tree.sessions.length === 0) return null;
@@ -361,13 +434,22 @@ function Others(props: { readonly org: string; readonly tree: Tree; readonly now
       <h2 className="font-medium">{t('monitoring.other')}</h2>
       <ul className="flex flex-col gap-2">
         {tree.vms.map((node) => (
-          <VmItem key={node.vm.vm_id} org={props.org} node={node} now={props.now} open={props.open} flip={props.flip} />
+          <VmItem
+            key={node.vm.vm_id}
+            org={props.org}
+            node={node}
+            overview={props.overview}
+            now={props.now}
+            open={props.open}
+            flip={props.flip}
+          />
         ))}
         {tree.sessions.map((item) => (
           <SessionItem
             key={item.session_id}
             org={props.org}
             item={item}
+            overview={props.overview}
             now={props.now}
             open={props.open}
             flip={props.flip}
@@ -468,6 +550,7 @@ export function MonitoringScreen() {
                 org={org}
                 device={node.device}
                 vms={node.vms}
+                overview={overview!}
                 label={labels.get(node.device.device_id) ?? null}
                 now={now}
                 open={open}
@@ -475,7 +558,7 @@ export function MonitoringScreen() {
               />
             ))}
           </ul>
-          <Others org={org} tree={tree} now={now} open={open} flip={flip} />
+          <Others org={org} tree={tree} overview={overview!} now={now} open={open} flip={flip} />
         </>
       )}
     </section>

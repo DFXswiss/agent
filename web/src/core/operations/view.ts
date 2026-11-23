@@ -121,6 +121,8 @@ function readResult(body: Record<string, unknown>): ResultBody | null {
 export function subjectOf(type: string, params: Readonly<Record<string, unknown>>): string | null {
   if (type === 'subagent.request') return text(params.purpose);
   if (type === 'task.set_title') return text(params.title);
+  if (type === 'workvm.request') return text(params.size) ?? 'standard';
+  if (type === 'workvm.release') return text(params.scope) ?? 'task';
   const repo = text(params.repo);
   if (repo === null) return null;
   if (typeof params.number === 'number') return `${repo}#${params.number}`;
@@ -158,6 +160,9 @@ export function factsOf(type: string, result: Readonly<Record<string, unknown>>,
         : [];
     case 'task.set_title':
       return params.status === 'verified' ? link('title', params.value.params.title, null) : [];
+    case 'workvm.request':
+    case 'workvm.release':
+      return link('workvm', result.workvm_id, null);
     default:
       return [];
   }

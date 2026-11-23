@@ -854,7 +854,13 @@
                     "request_operation",
                     "get_operation",
                     "list_operations",
-                    "get_subagent_result"
+                    "get_subagent_result",
+                    "workvm_exec",
+                    "workvm_output",
+                    "workvm_kill",
+                    "workvm_status",
+                    "workvm_sync",
+                    "workvm_browse"
                   ]
                 },
                 {
@@ -1248,6 +1254,35 @@
             },
             "kind": {
               "type": "string",
+              "const": "workvm.call"
+            },
+            "body": {
+              "$ref": "#/$defs/body_workvm_call"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
               "const": "ping.delivered"
             },
             "body": {
@@ -1395,6 +1430,137 @@
         }
       ],
       "description": "journal record {seq, ts, session_id, kind, body}; session_id null only for VM-level kinds (metrics, guest.error)"
+    },
+    "body_workvm_call": {
+      "description": "a call of a work VM tool, answered by the runner (13-work-vm.md section 3)",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "workvm_exec"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_workvm_exec"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "workvm_output"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_workvm_output"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "workvm_kill"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_workvm_kill"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "workvm_status"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_workvm_status"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "workvm_sync"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_workvm_sync"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "workvm_browse"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_workvm_browse"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        }
+      ]
     }
   }
 }

@@ -255,6 +255,132 @@
         "arguments"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "workvm_exec"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_workvm_exec"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "workvm_output"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_workvm_output"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "workvm_kill"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_workvm_kill"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "workvm_status"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_workvm_status"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "workvm_sync"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_workvm_sync"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "workvm_browse"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_workvm_browse"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
     }
   ]
 }

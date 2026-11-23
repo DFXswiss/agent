@@ -138,6 +138,11 @@
       "type": "string",
       "pattern": "^vm-[0-9a-f]{8}$"
     },
+    "workvm_id": {
+      "type": "string",
+      "description": "ID of a work VM (13-work-vm.md section 1, KOR-29)",
+      "pattern": "^wvm-[0-9a-f]{8}$"
+    },
     "error_code": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]{0,63}$"
@@ -243,7 +248,8 @@
         "timeout",
         "model_not_allowed",
         "tree_mismatch",
-        "no_changes"
+        "no_changes",
+        "workvm_unavailable"
       ],
       "description": "enums/operation-error-codes.json"
     },
@@ -463,7 +469,9 @@
         "session.status",
         "operation.params",
         "operation.result",
-        "platform.read"
+        "platform.read",
+        "workvm.run",
+        "workvm.state"
       ]
     },
     "credential_kind": {
@@ -862,7 +870,9 @@
             "session.status",
             "operation.params",
             "operation.result",
-            "platform.read"
+            "platform.read",
+            "workvm.run",
+            "workvm.state"
           ]
         },
         "ref": {

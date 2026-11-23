@@ -1,0 +1,22 @@
+{
+  "samples": [
+    {
+      "entity_kind": "workvm",
+      "entity_id": "wvm-0a1b2c3d",
+      "session_id": "01930004-0000-7000-8000-000000000004",
+      "ts": "2026-11-21T12:00:00.000Z",
+      "cpu_ratio": 0.75,
+      "mem_used_bytes": 1073741824,
+      "mem_limit_bytes": 8589934592,
+      "disk_used_bytes": null,
+      "disk_limit_bytes": null,
+      "net_rx_bytes": 1000,
+      "net_tx_bytes": 2000,
+      "uptime_seconds": 120,
+      "reachable": true,
+      "state": "running",
+      "free_vm_slots": null,
+      "free_mem_bytes": null
+    }
+  ]
+}

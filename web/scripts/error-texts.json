@@ -1247,6 +1247,18 @@
       "action": "Starte den Task noch einmal."
     }
   },
+  "workvm_unavailable": {
+    "en": {
+      "title": "Work VM unavailable",
+      "body": "This device cannot start a work VM right now (no slot configured, no work image, or the network boundary check failed).",
+      "action": "Try again later or ask the operator to check the device."
+    },
+    "de": {
+      "title": "Arbeits-VM nicht verfügbar",
+      "body": "Dieses Gerät kann gerade keine Arbeits-VM starten (kein Platz eingerichtet, kein Arbeits-Image oder die Prüfung der Netzgrenze ist fehlgeschlagen).",
+      "action": "Versuche es später noch einmal oder bitte den Betreiber, das Gerät zu prüfen."
+    }
+  },
   "wrap_unauthorized": {
     "en": {
       "title": "Unauthorized share",

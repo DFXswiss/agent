@@ -190,6 +190,34 @@ describe('timeline', () => {
     expect(buildTimeline({ task: task(), sessions: {}, scope: undefined })).toEqual([]);
   });
 
+  it('keeps only the latest workvm.run item of a job, in the task and in the session chat', () => {
+    const job = (state: string) => ({
+      workvm_id: 'wvm-0123abcd',
+      job_id: 'j-0123456789ab',
+      kind: 'exec',
+      command: 'ls',
+      state,
+      exit_code: state === 'running' ? null : 0,
+      started_at: '2026-11-21T12:00:01.000Z',
+      ended_at: state === 'running' ? null : '2026-11-21T12:00:02.000Z',
+      duration_ms: 1000,
+      output: '',
+      output_bytes: 0,
+    });
+    const events = scope(
+      event(1, 'workvm.run', { session: MAIN, body: job('running') }),
+      event(2, 'workvm.state', { session: MAIN, body: {} }),
+      event(3, 'workvm.run', { session: MAIN, body: job('exited') }),
+    );
+    const input = { task: task(), sessions: sessions({ row: session(MAIN) }), scope: events };
+    expect(buildTimeline({ ...input, session: MAIN }).map((item) => item.key)).toEqual(['e2', 'e3']);
+    expect(
+      buildTimeline(input)
+        .filter((item) => item.kind.startsWith('workvm'))
+        .map((item) => item.key),
+    ).toEqual(['e2', 'e3']);
+  });
+
   it('selects and memoizes the timeline of a task in the store', () => {
     const store = createStore();
     const select = selectTimeline(WG, TASK);

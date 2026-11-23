@@ -8,7 +8,8 @@ workgroup filter. The rights are those of the overview (`agent_hub.monitoring.re
 - device samples go to every org the device is an active member of, in frames without a workgroup (a shared
   platform device thus reaches each of its orgs, but only with the device sample);
 - VM and session samples go to the org of their workgroup in frames published with `wg_id=` that workgroup, so only
-  readers of the workgroup receive them (a frame with VM or session samples and no `wg_id=` would reach nobody).
+  readers of the workgroup receive them (a frame with VM or session samples and no `wg_id=` would reach nobody);
+- work VM samples (KOR-29) go like the samples of the session their newest sample names.
 
 A frame holds `{samples:[{entity_kind, entity_id, sample}]}` (`contracts/ws/sse/metrics.json`) and is split so that
 its JSON stays within `FRAME_BYTES`: the bus between hub processes carries a frame in one PostgreSQL notification
@@ -98,6 +99,13 @@ def targets(connection: Connection, found: list[tuple[str, str, Item]]) -> dict[
         "SELECT id, org_id, wg_id FROM hub.session WHERE id = ANY(%s::uuid[])", (_ids(found, "session"),)
     ):
         scoped[("session", str(session_id))] = (org, wg)
+    for workvm_id, org, wg in connection.execute(
+        "SELECT DISTINCT ON (m.entity_id) m.entity_id, s.org_id, s.wg_id FROM hub.metric_sample m"
+        " JOIN hub.session s ON s.id = m.session_id WHERE m.entity_kind = 'workvm' AND m.entity_id = ANY(%s::text[])"
+        " ORDER BY m.entity_id, m.ts DESC",
+        (_ids(found, "workvm"),),
+    ):
+        scoped[("workvm", str(workvm_id))] = (org, wg)
     out: dict[Target, list[Item]] = defaultdict(list)
     for kind, entity_id, item in found:
         if kind == "device":

@@ -1,0 +1,7 @@
+{
+  "pending_id": "0193000a-0000-7000-8000-00000000000a",
+  "tool": "workvm_exec",
+  "arguments": {
+    "command": "ls"
+  }
+}

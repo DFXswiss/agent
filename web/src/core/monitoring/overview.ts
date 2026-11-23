@@ -9,6 +9,8 @@
 // - **network rates** from two consecutive samples of the counters (a counter that went back is a restart: no rate);
 // - **the tree** device → VM → session: a session belongs to the VM its session row names (`vm_id`, read once per
 //   session), or – while that is not known – to the only VM of its workgroup; anything else is listed separately.
+//   Work VMs (KOR-29; agent docs/platform/spec/13-work-vm.md section 10) hang below the session they belong to
+//   (device → VM → session → work VM); an older hub sends no `workvms` list (none).
 import { HubError } from '../net/signedFetch';
 import { isCapacity, type Capacity } from '../org/devices';
 import { isRecord } from '../registry';
@@ -100,13 +102,23 @@ export interface MonitoredSession extends Sampled {
   readonly usage: Usage | null;
 }
 
+export interface MonitoredWorkvm extends Sampled {
+  readonly workvm_id: string;
+  readonly device_id: string;
+  readonly session_id: string;
+  readonly task_id: string;
+  readonly wg_id: string;
+  readonly state: string;
+}
+
 export interface Overview {
   readonly devices: readonly MonitoredDevice[];
   readonly vms: readonly MonitoredVm[];
   readonly sessions: readonly MonitoredSession[];
+  readonly workvms: readonly MonitoredWorkvm[];
 }
 
-export type EntityKind = 'device' | 'vm' | 'session';
+export type EntityKind = 'device' | 'vm' | 'session' | 'workvm';
 
 const isText = (value: unknown): value is string => typeof value === 'string';
 const isCount = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
@@ -175,6 +187,15 @@ function session(item: unknown): MonitoredSession | null {
   return { session_id, task_id, wg_id, state, usage, ...part };
 }
 
+function workvm(item: unknown): MonitoredWorkvm | null {
+  if (!isRecord(item) || !isText(item.workvm_id) || !isText(item.device_id) || !isText(item.session_id)) return null;
+  if (!isText(item.task_id) || !isText(item.wg_id) || !isText(item.state)) return null;
+  const part = sampled(item);
+  if (part === null) return null;
+  const { workvm_id, device_id, session_id, task_id, wg_id, state } = item;
+  return { workvm_id, device_id, session_id, task_id, wg_id, state, ...part };
+}
+
 function items<T>(value: unknown, parse: (item: unknown) => T | null): T[] {
   if (!Array.isArray(value)) throw new HubError('unavailable', 200);
   return value.map(parse).filter((item): item is T => item !== null);
@@ -183,7 +204,12 @@ function items<T>(value: unknown, parse: (item: unknown) => T | null): T[] {
 /** The body of `GET /v1/monitoring/overview`; malformed items are left out, a malformed body is `unavailable`. */
 export function parseOverview(body: unknown): Overview {
   if (!isRecord(body)) throw new HubError('unavailable', 200);
-  return { devices: items(body.devices, device), vms: items(body.vms, vm), sessions: items(body.sessions, session) };
+  return {
+    devices: items(body.devices, device),
+    vms: items(body.vms, vm),
+    sessions: items(body.sessions, session),
+    workvms: body.workvms === undefined ? [] : items(body.workvms, workvm),
+  };
 }
 
 // --- live samples ---
@@ -194,7 +220,7 @@ export interface LiveSample {
   readonly sample: MetricSample;
 }
 
-const KINDS: readonly string[] = ['device', 'vm', 'session'];
+const KINDS: readonly string[] = ['device', 'vm', 'session', 'workvm'];
 
 /** The samples of a `metrics` frame (`{samples:[{entity_kind, entity_id, sample}]}`); malformed ones are left out. */
 export function frameSamples(data: unknown): LiveSample[] {
@@ -205,12 +231,25 @@ export function frameSamples(data: unknown): LiveSample[] {
   );
 }
 
-const idOf = (kind: EntityKind, item: MonitoredDevice | MonitoredVm | MonitoredSession): string =>
+type Monitored = MonitoredDevice | MonitoredVm | MonitoredSession | MonitoredWorkvm;
+
+const idOf = (kind: EntityKind, item: Monitored): string =>
   kind === 'device'
     ? (item as MonitoredDevice).device_id
     : kind === 'vm'
       ? (item as MonitoredVm).vm_id
-      : (item as MonitoredSession).session_id;
+      : kind === 'session'
+        ? (item as MonitoredSession).session_id
+        : (item as MonitoredWorkvm).workvm_id;
+
+const listOf = (overview: Overview, kind: EntityKind): readonly Monitored[] =>
+  kind === 'device'
+    ? overview.devices
+    : kind === 'vm'
+      ? overview.vms
+      : kind === 'session'
+        ? overview.sessions
+        : overview.workvms;
 
 /** `item` with `sample` as its newest sample, if it is newer than the current one (else `item` itself). */
 function withSample<T extends Sampled>(item: T, sample: MetricSample): T {
@@ -224,9 +263,7 @@ export const entityKey = (kind: EntityKind, id: string): string => `${kind} ${id
 /** Whether the overview lists the entity of `key`. */
 export function lists(overview: Overview, key: string): boolean {
   const [kind, id] = key.split(' ') as [EntityKind, string];
-  const items: readonly (MonitoredDevice | MonitoredVm | MonitoredSession)[] =
-    kind === 'device' ? overview.devices : kind === 'vm' ? overview.vms : overview.sessions;
-  return items.some((item) => idOf(kind, item) === id);
+  return listOf(overview, kind).some((item) => idOf(kind, item) === id);
 }
 
 /**
@@ -237,11 +274,16 @@ export function applySamples(
   overview: Overview,
   samples: readonly LiveSample[],
 ): { overview: Overview; unknown: string[] } {
-  const all = { device: [...overview.devices], vm: [...overview.vms], session: [...overview.sessions] };
+  const all = {
+    device: [...overview.devices],
+    vm: [...overview.vms],
+    session: [...overview.sessions],
+    workvm: [...overview.workvms],
+  };
   const unknown: string[] = [];
   let changed = false;
   for (const { entity_kind: kind, entity_id: id, sample } of samples) {
-    const list = all[kind] as (MonitoredDevice | MonitoredVm | MonitoredSession)[];
+    const list = all[kind] as Monitored[];
     const index = list.findIndex((item) => idOf(kind, item) === id);
     if (index < 0) {
       unknown.push(entityKey(kind, id));
@@ -254,7 +296,10 @@ export function applySamples(
     }
   }
   if (!changed) return { overview, unknown };
-  return { overview: { devices: all.device, vms: all.vm, sessions: all.session }, unknown };
+  return {
+    overview: { devices: all.device, vms: all.vm, sessions: all.session, workvms: all.workvm },
+    unknown,
+  };
 }
 
 const tsOf = (sample: MetricSample): number => Date.parse(sample.ts);
@@ -277,10 +322,12 @@ export function carryOver(previous: Overview | null, next: Overview): Overview {
   const devices = new Map(previous.devices.map((item) => [item.device_id, item]));
   const vms = new Map(previous.vms.map((item) => [item.vm_id, item]));
   const sessions = new Map(previous.sessions.map((item) => [item.session_id, item]));
+  const workvms = new Map(previous.workvms.map((item) => [item.workvm_id, item]));
   return {
     devices: next.devices.map((item) => carry(devices.get(item.device_id), item)),
     vms: next.vms.map((item) => carry(vms.get(item.vm_id), item)),
     sessions: next.sessions.map((item) => carry(sessions.get(item.session_id), item)),
+    workvms: next.workvms.map((item) => carry(workvms.get(item.workvm_id), item)),
   };
 }
 
@@ -375,4 +422,9 @@ export function buildTree(overview: Overview, links: Readonly<Record<string, str
     vms: overview.vms.filter((item) => !deviceIds.has(item.device_id)).map(node),
     sessions: loose,
   };
+}
+
+/** The work VMs of a session (KOR-29), in the order of the overview (newest sample first). */
+export function workvmsOf(overview: Overview, session: string): readonly MonitoredWorkvm[] {
+  return overview.workvms.filter((item) => item.session_id === session);
 }

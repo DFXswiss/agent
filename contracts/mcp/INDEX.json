@@ -1,5 +1,5 @@
 {
-  "description": "Session platform API (03-api.md section 8): JSON-RPC methods, tools (section 8.1) and hook events (section 8.2, 05-runner.md section 5.2). via: how the guest answers (local, platform.query or operation.request journal record answered by the runner).",
+  "description": "Session platform API (03-api.md section 8): JSON-RPC methods, tools (section 8.1) and hook events (section 8.2, 05-runner.md section 5.2). via: how the guest answers (local, platform.query, operation.request or workvm.call journal record answered by the runner).",
   "server": {
     "name": "platform",
     "server_info_name": "agent-dfx-swiss-platform",
@@ -136,6 +136,54 @@
       "output": "mcp/tools/get_subagent_result.output.json",
       "read_audit": "read.session.get_subagent_result",
       "via": "platform.query"
+    },
+    {
+      "tool": "workvm_exec",
+      "name": "mcp__platform__workvm_exec",
+      "input": "mcp/tools/workvm_exec.input.json",
+      "output": "mcp/tools/workvm_exec.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "workvm_output",
+      "name": "mcp__platform__workvm_output",
+      "input": "mcp/tools/workvm_output.input.json",
+      "output": "mcp/tools/workvm_output.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "workvm_kill",
+      "name": "mcp__platform__workvm_kill",
+      "input": "mcp/tools/workvm_kill.input.json",
+      "output": "mcp/tools/workvm_kill.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "workvm_status",
+      "name": "mcp__platform__workvm_status",
+      "input": "mcp/tools/workvm_status.input.json",
+      "output": "mcp/tools/workvm_status.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "workvm_sync",
+      "name": "mcp__platform__workvm_sync",
+      "input": "mcp/tools/workvm_sync.input.json",
+      "output": "mcp/tools/workvm_sync.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "workvm_browse",
+      "name": "mcp__platform__workvm_browse",
+      "input": "mcp/tools/workvm_browse.input.json",
+      "output": "mcp/tools/workvm_browse.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
     }
   ],
   "hooks": [

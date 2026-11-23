@@ -47,6 +47,11 @@
       "vm_level": false
     },
     {
+      "kind": "workvm.call",
+      "body": "guest/journal/workvm.call.json",
+      "vm_level": false
+    },
+    {
       "kind": "ping.delivered",
       "body": "guest/journal/ping.delivered.json",
       "vm_level": false

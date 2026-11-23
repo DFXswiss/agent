@@ -232,6 +232,30 @@
       ],
       "max_ct_bytes": 262144,
       "device_pull": true
+    },
+    {
+      "kind": "workvm.run",
+      "body": "events/workvm.run.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "workvm.state",
+      "body": "events/workvm.state.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
     }
   ]
 }

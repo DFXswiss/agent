@@ -2,7 +2,8 @@
 // task, ordered by `(ts, scope_seq)` (chat is ascending, section 12.4), plus system rows from the session rows:
 //
 // - every verified event of the task except `task.meta` (the title) and `session.hook` other than `deny`; the UI
-//   renders the kinds it has a chat-item renderer for (`prompt`, `session.*`, later `operation.*` of WEB-09);
+//   renders the kinds it has a chat-item renderer for (`prompt`, `session.*`, `operation.*`, `workvm.*`); of the
+//   `workvm.run` items of one job only the latest is kept (the final one replaces the running one, `workvm.ts`);
 // - unverifiable events whose (unchecked) header names the task, as neutral rows with the code – never as content,
 //   never dropped; pending and locked events appear once the reader settled them;
 // - `session.status` system rows for the session transitions `suspended`, `stopped` and `failed` and a row when the
@@ -11,13 +12,14 @@
 //   earlier ones, section 4.4); its body names the task.
 //
 // Output of a subagent session carries the node of the session tree (indent and label "Subagent 1.2"). The session
-// chat (`/o/:org/s/:session`, tab Chat) is the same timeline restricted to the session's own `session.*` events.
+// chat (`/o/:org/s/:session`, tab Chat) is the same timeline restricted to the session's own events.
 import { parseTime } from '../encoding/time';
 import { isRecord } from '../registry';
 import type { EventEntry, ScopeEvents } from '../store/slices/events';
 import type { SessionEntry, TaskRow, TasksState } from '../store/slices/tasks';
 import type { StoreState } from '../store/store';
 import { flatten, type SessionNode, sessionTree } from '../sessions/tree';
+import { latestRuns } from './workvm';
 
 export const SYSTEM_STATES: ReadonlySet<string> = new Set(['suspended', 'stopped', 'failed']);
 export const HIDDEN_KINDS: ReadonlySet<string> = new Set(['task.meta', 'session.terminal']);
@@ -143,7 +145,7 @@ export function buildTimeline(input: TimelineInput): TimelineItem[] {
   }
   if (input.session !== undefined) {
     const session = input.session;
-    return items.filter((item) => item.sessionId === session).sort(compare);
+    return latestRuns(items.filter((item) => item.sessionId === session).sort(compare));
   }
   for (const node of flatten(tree)) items.push(...systemItems(node.entry));
   for (const node of tree) {
@@ -174,7 +176,7 @@ export function buildTimeline(input: TimelineInput): TimelineItem[] {
       subagent: null,
     });
   }
-  return items.sort(compare);
+  return latestRuns(items.sort(compare));
 }
 
 /**

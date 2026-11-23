@@ -1,0 +1,14 @@
+{
+  "workvm_id": "wvm-0123abcd",
+  "state": "deleted",
+  "scope": "task",
+  "size": "standard",
+  "cpus": 4,
+  "memory_mib": 8192,
+  "disk_gib": 50,
+  "implicit": true,
+  "reason": "idle",
+  "started_at": "2026-11-23T10:00:00.000Z",
+  "ended_at": "2026-11-23T10:30:00.000Z",
+  "runtime_ms": 1800000
+}

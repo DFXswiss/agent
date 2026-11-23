@@ -57,6 +57,7 @@ SPEC_OPERATION_ERRORS = (
     "unknown_type params_invalid repo_not_allowed repo_not_accessible branch_protected branch_exists non_fast_forward"
     " path_invalid secret_detected size_exceeded github_not_connected not_found limit_exceeded budget_exceeded"
     " rights_denied hub_unreachable upstream_error timeout model_not_allowed tree_mismatch no_changes"
+    " workvm_unavailable"  # 13-work-vm.md section 2 (contracts/changes/KOR-29.md)
 )
 SPEC_SESSION_FAILURES = (
     "model_access_unavailable vm_start_failed guest_unreachable sandbox_failed agent_start_failed agent_exited"
@@ -129,12 +130,15 @@ SPEC_EVENT_MATRIX = [
     ("operation.params", "wg", "device", "device_assigned_wg"),
     ("operation.result", "wg", "device", "device_assigned_wg"),
     ("platform.read", "wg", "device", "device_assigned_wg"),
+    # 13-work-vm.md section 8 (contracts/changes/KOR-29.md)
+    ("workvm.run", "wg", "device", "device_assigned_wg_session"),
+    ("workvm.state", "wg", "device", "device_assigned_wg_session"),
 ]
 # 03-api.md section 10 (event bodies): every kind.
 SPEC_EVENT_KINDS = (
     "org.profile wg.profile member.profile device.profile task.meta prompt whiteboard.entry whiteboard.edit"
     " whiteboard.delete settings.workgroup session.output session.tool session.hook session.file session.terminal"
-    " session.status operation.params operation.result platform.read"
+    " session.status operation.params operation.result platform.read workvm.run workvm.state"
 )
 
 

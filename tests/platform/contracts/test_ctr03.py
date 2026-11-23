@@ -208,7 +208,9 @@ def test_operation_bodies_cover_every_type_and_read_tool(contracts: Contracts) -
         name = variant["properties"]["type"]["const"].replace(".", "_")
         assert variant["properties"]["params"] == {"$ref": f"../ops/objects.json#/$defs/params_{name}"}
     tools = [
-        t["tool"] for t in load_json(CONTRACTS / "mcp" / "INDEX.json")["tools"] if t["tool"] != "request_operation"
+        t["tool"]
+        for t in load_json(CONTRACTS / "mcp" / "INDEX.json")["tools"]
+        if t["via"] == "platform.query" or t["via"] == "local"
     ]
     reads = events["body_platform_read"]["oneOf"]
     assert [v["properties"]["tool"]["const"] for v in reads] == tools
@@ -296,7 +298,8 @@ def test_closed_lists_are_not_copied_with_drift(contracts: Contracts) -> None:
 def test_outbox_metric_samples_extend_the_row(contracts: Contracts) -> None:
     sample = defs(contracts, "outbox/objects.json")["metric_sample"]
     row = defs(contracts, "api/objects.json")["metric_sample"]
-    assert set(sample["properties"]) == set(row["properties"]) | {"entity_kind", "entity_id"}
+    # `session_id`: work VM samples only (KOR-29), optional in the schema
+    assert set(sample["properties"]) == set(row["properties"]) | {"entity_kind", "entity_id", "session_id"}
     assert sample["required"] == ["entity_kind", "entity_id", *row["required"]]
 
 

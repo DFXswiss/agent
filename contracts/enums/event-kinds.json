@@ -309,6 +309,32 @@
         "wg": "scope_id",
         "ref": "read_target"
       }
+    },
+    {
+      "kind": "workvm.run",
+      "scope": "wg",
+      "authors": [
+        "device"
+      ],
+      "right": "device_assigned_wg_session",
+      "header": {
+        "wg": "scope_id",
+        "task": "set",
+        "session": "set"
+      }
+    },
+    {
+      "kind": "workvm.state",
+      "scope": "wg",
+      "authors": [
+        "device"
+      ],
+      "right": "device_assigned_wg_session",
+      "header": {
+        "wg": "scope_id",
+        "task": "set",
+        "session": "set"
+      }
     }
   ]
 }

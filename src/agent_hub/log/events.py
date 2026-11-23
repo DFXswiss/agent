@@ -101,6 +101,9 @@ KIND_RULES: tuple[KindRule, ...] = (
     KindRule("operation.params", "wg", (DEVICE,), DEVICE_ASSIGNED_WG, {"wg": "scope_id", "ref": "operation"}),
     KindRule("operation.result", "wg", (DEVICE,), DEVICE_ASSIGNED_WG, {"wg": "scope_id", "ref": "operation"}),
     KindRule("platform.read", "wg", (DEVICE,), DEVICE_ASSIGNED_WG, {"wg": "scope_id", "ref": "read_target"}),
+    # Work VMs (ADR-059, 13-work-vm.md section 8): runs and lifecycle of a session's work VM
+    KindRule("workvm.run", "wg", (DEVICE,), DEVICE_ASSIGNED_WG_SESSION, _SESSION),
+    KindRule("workvm.state", "wg", (DEVICE,), DEVICE_ASSIGNED_WG_SESSION, _SESSION),
 )
 _BY_KEY = {(rule.kind, rule.scope, author): rule for rule in KIND_RULES for author in rule.authors}
 

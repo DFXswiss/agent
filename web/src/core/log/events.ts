@@ -94,6 +94,8 @@ export const KIND_RULES: readonly KindRule[] = [
   rule('operation.params', 'wg', [DEVICE], DEVICE_ASSIGNED_WG, { wg: 'scope_id', ref: 'operation' }),
   rule('operation.result', 'wg', [DEVICE], DEVICE_ASSIGNED_WG, { wg: 'scope_id', ref: 'operation' }),
   rule('platform.read', 'wg', [DEVICE], DEVICE_ASSIGNED_WG, { wg: 'scope_id', ref: 'read_target' }),
+  rule('workvm.run', 'wg', [DEVICE], DEVICE_ASSIGNED_WG_SESSION, SESSION),
+  rule('workvm.state', 'wg', [DEVICE], DEVICE_ASSIGNED_WG_SESSION, SESSION),
 ];
 const BY_KEY = new Map(KIND_RULES.flatMap((r) => r.authors.map((author) => [`${r.kind} ${r.scope} ${author}`, r])));
 

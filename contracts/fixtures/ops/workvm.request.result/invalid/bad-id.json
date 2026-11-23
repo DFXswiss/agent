@@ -1,0 +1,11 @@
+{
+  "workvm_id": "vm-0123abcd",
+  "state": "running",
+  "scope": "task",
+  "size": "standard",
+  "cpus": 4,
+  "memory_mib": 8192,
+  "disk_gib": 50,
+  "created": true,
+  "ready_ms": 840
+}

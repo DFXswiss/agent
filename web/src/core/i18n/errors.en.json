@@ -544,6 +544,11 @@
     "body": "The virtual machine for this workgroup could not be started.",
     "action": "Retry the task."
   },
+  "workvm_unavailable": {
+    "title": "Work VM unavailable",
+    "body": "This device cannot start a work VM right now (no slot configured, no work image, or the network boundary check failed).",
+    "action": "Try again later or ask the operator to check the device."
+  },
   "wrap_unauthorized": {
     "title": "Unauthorized share",
     "body": "Something was shared by a person without the right to do so and was ignored.",

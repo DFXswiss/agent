@@ -1,0 +1,15 @@
+{
+  "job_id": "j-0123456789ab",
+  "command": "npm test",
+  "state": "running",
+  "exit_code": null,
+  "output": "ok\n",
+  "output_start": 0,
+  "output_bytes": 3,
+  "duration_ms": 1200,
+  "synced": {
+    "files": 3,
+    "bytes": 120,
+    "deleted": 0
+  }
+}

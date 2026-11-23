@@ -7,7 +7,9 @@ between orgs, but only the device sample is shown for it - VMs and sessions are 
 member reads (`wg:read`), so another org's VMs and sessions on a shared device never appear. VMs: every VM row of a
 readable workgroup except `deleted` ones (a pool VM has no workgroup and is not shown). Sessions: the sessions of
 readable workgroups that have not ended or ended less than `SESSION_GRACE` ago (the 15 minutes the Prometheus series
-of an ended session stay, 08-monitoring.md section 3), newest first.
+of an ended session stay, 08-monitoring.md section 3), newest first. Work VMs (KOR-29): the work VMs of those sessions
+with a sample within `SESSION_GRACE` (the hub keeps no row per work VM; a work VM that was torn down disappears 15
+minutes after its last sample), under the device that sampled them, with the session's task and workgroup.
 
 **Overview.** Every entity carries its newest raw sample (`latest`, null without one within the raw retention) and
 `stale`: true when there is no sample or the newest one is more than `STALE_SECONDS` (60 s) older than the hub clock
@@ -20,7 +22,8 @@ with null for a bucket without data. A range that starts within the raw retentio
 (`step` >= 15 s), an older one from the 5-minute rollups (`step` >= 300 s). Gauges are averaged over a bucket (rollups
 weighted by their sample count); counters (`net_rx_bytes`, `net_tx_bytes`), `uptime_seconds` and `reachable` (1/0)
 take the newest value in the bucket. The rights are those of the overview for the entity: a device of an org the
-caller is a member of, a VM or session of a workgroup the caller reads; anything else is `404 not_found`.
+caller is a member of, a VM or session of a workgroup the caller reads, a work VM whose session (of its newest sample)
+is of a workgroup the caller reads; anything else is `404 not_found`.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -78,8 +81,9 @@ USAGE_COLUMNS = (
     "updated_at",
 )
 METRICS = frozenset(name for name in SAMPLE_COLUMNS if name != "state")
-ENTITY_KINDS = ("device", "vm", "session")
+ENTITY_KINDS = ("device", "vm", "session", "workvm")
 _VM_ID_RE = re.compile(r"vm-[0-9a-f]{8}")
+_WORKVM_ID_RE = re.compile(r"wvm-[0-9a-f]{8}")
 _STEP_RE = re.compile(r"[1-9][0-9]{1,6}")
 
 
@@ -127,6 +131,8 @@ class OrgView:
     """`(vm_id, device_id, wg_id, state)`, newest first."""
     sessions: list[tuple[str, str, str, str]]
     """`(session_id, task_id, wg_id, state)`, newest first."""
+    workvms: list[tuple[str, str, str]] = field(default_factory=list)
+    """`(workvm_id, device_id, session_id)` of the visible sessions' work VMs (KOR-29), newest sample first."""
 
 
 def readable_wgs(connection: Connection, org: UUID, user: UUID) -> list[str]:
@@ -151,10 +157,17 @@ def org_view(connection: Connection, org: UUID, user: UUID, now: datetime, onlin
         " AND (ended_at IS NULL OR ended_at > %s) ORDER BY created_at DESC, id DESC",
         (org, wgs, now - SESSION_GRACE),
     ).fetchall()
+    workvms = connection.execute(
+        "SELECT entity_id, device_id, session_id FROM (SELECT DISTINCT ON (entity_id) entity_id, device_id, session_id,"
+        " ts FROM hub.metric_sample WHERE entity_kind = 'workvm' AND session_id = ANY(%s::uuid[]) AND ts > %s"
+        " ORDER BY entity_id, ts DESC) w ORDER BY ts DESC, entity_id",
+        ([str(row[0]) for row in sessions], now - SESSION_GRACE),
+    ).fetchall()
     return OrgView(
         devices=devices,
         vms=[(str(row[0]), str(row[1]), str(row[2]), str(row[3])) for row in vms],
         sessions=[(str(row[0]), str(row[1]), str(row[2]), str(row[3])) for row in sessions],
+        workvms=[(str(row[0]), str(row[1]), str(row[2])) for row in workvms],
     )
 
 
@@ -181,6 +194,7 @@ def overview(connection: Connection, org: UUID, user: UUID, now: datetime, onlin
     device_latest = latest_samples(connection, "device", (item["device_id"] for item in view.devices))
     vm_latest = latest_samples(connection, "vm", (vm[0] for vm in view.vms))
     session_latest = latest_samples(connection, "session", (session[0] for session in view.sessions))
+    workvm_latest = latest_samples(connection, "workvm", (workvm[0] for workvm in view.workvms))
     usage = usage_rows(connection, (session[0] for session in view.sessions))
     devices = []
     for item in view.devices:
@@ -222,7 +236,24 @@ def overview(connection: Connection, org: UUID, user: UUID, now: datetime, onlin
                 "stale": is_stale(latest, now),
             }
         )
-    return {"devices": devices, "vms": vms, "sessions": sessions}
+    of_session = {session_id: (task_id, wg_id) for session_id, task_id, wg_id, _ in view.sessions}
+    workvms = []
+    for workvm_id, device_id, session_id in view.workvms:
+        latest = workvm_latest[workvm_id]  # the work VM was found by a sample within the grace
+        task_id, wg_id = of_session[session_id]
+        workvms.append(
+            {
+                "workvm_id": workvm_id,
+                "device_id": device_id,
+                "session_id": session_id,
+                "task_id": task_id,
+                "wg_id": wg_id,
+                "state": latest["state"],
+                "latest": latest,
+                "stale": is_stale(latest, now),
+            }
+        )
+    return {"devices": devices, "vms": vms, "sessions": sessions, "workvms": workvms}
 
 
 # --- series ---
@@ -259,7 +290,9 @@ def _entity_id(kind: str, text: str | None) -> str:
     if text is not None:
         if kind == "vm" and _VM_ID_RE.fullmatch(text):
             return text
-        if kind != "vm":
+        if kind == "workvm" and _WORKVM_ID_RE.fullmatch(text):
+            return text
+        if kind not in ("vm", "workvm"):
             try:
                 if str(UUID(text)) == text:
                     return text
@@ -302,8 +335,15 @@ def entity_visible(connection: Connection, user: UUID, kind: str, entity_id: str
             (user, entity_id),
         ).fetchone()
         return row is not None
-    table = "hub.vm" if kind == "vm" else "hub.session"
-    found = connection.execute(f"SELECT wg_id FROM {table} WHERE id = %s", (entity_id,)).fetchone()
+    if kind == "workvm":
+        found = connection.execute(
+            "SELECT s.wg_id FROM hub.session s WHERE s.id = (SELECT session_id FROM hub.metric_sample"
+            " WHERE entity_kind = 'workvm' AND entity_id = %s ORDER BY ts DESC LIMIT 1)",
+            (entity_id,),
+        ).fetchone()
+    else:
+        table = "hub.vm" if kind == "vm" else "hub.session"
+        found = connection.execute(f"SELECT wg_id FROM {table} WHERE id = %s", (entity_id,)).fetchone()
     return found is not None and found[0] is not None and wg_access(connection, found[0], user) is not None
 
 

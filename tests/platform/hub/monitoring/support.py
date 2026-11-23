@@ -63,15 +63,19 @@ def insert_sample(
     device_id: str,
     *,
     received_at: datetime | None = None,
+    session_id: str | None = None,
     **overrides: Any,
 ) -> None:
-    """One raw sample (with `received_at` when given, else the column default)."""
+    """One raw sample (with `received_at` when given, else the column default; `session_id` for a work VM)."""
     row = values(**overrides)
     columns = ["entity_kind", "entity_id", "ts", "device_id", *SAMPLE_COLUMNS]
     params: list[Any] = [kind, entity_id, ts, device_id, *(row[name] for name in SAMPLE_COLUMNS)]
     if received_at is not None:
         columns.append("received_at")
         params.append(received_at)
+    if session_id is not None:
+        columns.append("session_id")
+        params.append(session_id)
     with hub.pool.connection() as connection, connection.transaction():
         connection.execute(
             f"INSERT INTO hub.metric_sample ({', '.join(columns)}) VALUES ({', '.join(['%s'] * len(columns))})",
@@ -130,10 +134,12 @@ class Watch:
             self.desk.execute("UPDATE hub.vm SET wg_id = NULL WHERE id = %s", vm_id)
         return vm_id
 
-    def sample(self, kind: str, entity_id: str, device: Actor, *, age: float = 5, **overrides: Any) -> datetime:
-        """A sample `age` seconds old by the hub clock; its time."""
+    def sample(
+        self, kind: str, entity_id: str, device: Actor, *, age: float = 5, session: str | None = None, **overrides: Any
+    ) -> datetime:
+        """A sample `age` seconds old by the hub clock (of the work VM's `session`); its time."""
         ts = self.now() - timedelta(seconds=age)
-        insert_sample(self.hub, kind, entity_id, ts, device.id, **overrides)
+        insert_sample(self.hub, kind, entity_id, ts, device.id, session_id=session, **overrides)
         return ts
 
     def session(

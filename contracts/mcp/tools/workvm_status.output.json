@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/tools/workvm_status.output.json",
+  "title": "platform tool workvm_status output",
+  "description": "Result of the platform tool workvm_status (13-work-vm.md section 3).",
+  "$ref": "../objects.json#/$defs/output_workvm_status"
+}

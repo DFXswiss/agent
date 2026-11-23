@@ -25,6 +25,8 @@ OPERATION_TYPES = frozenset(
         "github.comment",
         "subagent.request",
         "task.set_title",
+        "workvm.request",
+        "workvm.release",
     }
 )
 SUBAGENT_REQUEST = "subagent.request"

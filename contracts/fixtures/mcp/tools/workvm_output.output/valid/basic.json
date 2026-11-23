@@ -1,0 +1,10 @@
+{
+  "job_id": "j-0123456789ab",
+  "command": "npm test",
+  "state": "exited",
+  "exit_code": 0,
+  "output": "ok\n",
+  "output_start": 0,
+  "output_bytes": 3,
+  "duration_ms": 1200
+}

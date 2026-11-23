@@ -156,6 +156,8 @@ SPEC_JOURNAL = {
     " thinking_tokens cost_usd context_window_tokens request_bytes response_bytes status",
     "operation.request": "pending_id operation_id type params idempotency_key requested_at",
     "platform.query": "pending_id tool arguments",
+    # contracts/changes/KOR-29.md (13-work-vm.md section 3): a call of a work VM tool, answered by the runner
+    "workvm.call": "pending_id tool arguments",
     "ping.delivered": "ping_id via",
     # contracts/changes/KOR-07.md: a read answered by the guest itself and an MCP request refused before forwarding
     "platform.read": "tool result_count",
@@ -232,7 +234,26 @@ SPEC_TOOLS = {
     "get_operation": ("operation_id wait_seconds", "operation_id status result error duplicate_of"),
     "list_operations": ("limit", "operations=operation_id,type,state,error_code,created_at"),
     "get_subagent_result": ("session_id wait_seconds", "session_id state final_text finished_at"),
+    # 13-work-vm.md section 3 (contracts/changes/KOR-29.md): the work VM tools, answered through workvm.call
+    "workvm_exec": (
+        "command cwd env stdin timeout_seconds wait_seconds sync",
+        "job_id command state exit_code output output_start output_bytes duration_ms synced",
+    ),
+    "workvm_output": (
+        "job_id offset limit wait_seconds",
+        "job_id command state exit_code output output_start output_bytes duration_ms synced",
+    ),
+    "workvm_kill": (
+        "job_id signal",
+        "job_id command state exit_code output output_start output_bytes duration_ms synced",
+    ),
+    "workvm_status": ("", "workvm jobs=job_id,command,state,exit_code,started_at,duration_ms"),
+    "workvm_sync": ("direction path", "direction path files bytes deleted skipped"),
+    "workvm_browse": ("url action selector text wait_ms path", "url final_url status title text screenshot job_id"),
 }
+WORKVM_TOOLS = frozenset(
+    {"workvm_exec", "workvm_output", "workvm_kill", "workvm_status", "workvm_sync", "workvm_browse"}
+)
 SPEC_TOOL_STATUS = "succeeded failed rejected duplicate denied pending"
 # 03-api.md section 8.1 and 12: upper limits of integer arguments (and the idempotency key length).
 SPEC_TOOL_LIMITS = [
@@ -241,12 +262,20 @@ SPEC_TOOL_LIMITS = [
     ("list_operations", "limit", 100),
     ("get_operation", "wait_seconds", 30),
     ("get_subagent_result", "wait_seconds", 30),
+    ("workvm_exec", "wait_seconds", 30),
+    ("workvm_exec", "timeout_seconds", 604800),
+    ("workvm_output", "wait_seconds", 30),
+    ("workvm_output", "limit", 32768),
+    ("workvm_browse", "wait_ms", 30000),
 ]
 TASK = "01a1ee56-5e00-7004-8f1b-340691d99f04"
 REQUIRED_ARGS: dict[str, dict[str, object]] = {
     "get_task_messages": {"task_id": TASK},
     "get_operation": {"operation_id": TASK},
     "get_subagent_result": {"session_id": TASK},
+    "workvm_exec": {"command": "true"},
+    "workvm_output": {"job_id": "j-0123456789ab"},
+    "workvm_browse": {"url": "https://example.com/"},
 }
 
 
@@ -278,7 +307,9 @@ def test_tools_match_the_specification(mcp_index: dict[str, Any], contracts: Con
         assert fields(contracts, row["output"]) == top, tool
         for name, inner in nested.items():
             assert fields(contracts, "mcp/objects.json", f"/$defs/output_{tool}/properties/{name}/items") == inner
-        assert row["read_audit"] == (None if tool == "request_operation" else f"read.session.{tool}")
+        unaudited = tool == "request_operation" or tool in WORKVM_TOOLS
+        assert row["read_audit"] == (None if unaudited else f"read.session.{tool}")
+        assert row["via"] == ("workvm.call" if tool in WORKVM_TOOLS else row["via"])
     audit = {row["action"] for row in load_json(CONTRACTS / "enums/audit-actions.json")["actions"]}
     assert {row["read_audit"] for row in mcp_index["tools"] if row["read_audit"]} <= audit
     status: set[str] = set()
@@ -549,6 +580,14 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
     "github.comment": ("repo number body", "comment_id url", "repo number body", 86400),
     "subagent.request": ("purpose prompt model_id", "session_id", "session prompt", 600),
     "task.set_title": ("title", "", "", None),
+    # 13-work-vm.md section 2 (contracts/changes/KOR-29.md)
+    "workvm.request": (
+        "size scope",
+        "workvm_id state scope size cpus memory_mib disk_gib created ready_ms",
+        "",
+        None,
+    ),
+    "workvm.release": ("scope", "released workvm_id", "", None),
 }
 SPEC_REPO = "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
 # 03-api.md section 9: (type, field, longest valid value length).

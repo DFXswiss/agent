@@ -544,6 +544,11 @@
     "body": "Die virtuelle Maschine dieser Workgroup konnte nicht gestartet werden.",
     "action": "Starte den Task noch einmal."
   },
+  "workvm_unavailable": {
+    "title": "Arbeits-VM nicht verfügbar",
+    "body": "Dieses Gerät kann gerade keine Arbeits-VM starten (kein Platz eingerichtet, kein Arbeits-Image oder die Prüfung der Netzgrenze ist fehlgeschlagen).",
+    "action": "Versuche es später noch einmal oder bitte den Betreiber, das Gerät zu prüfen."
+  },
   "wrap_unauthorized": {
     "title": "Unberechtigte Freigabe",
     "body": "Etwas wurde von einer Person ohne Berechtigung freigegeben und ignoriert.",

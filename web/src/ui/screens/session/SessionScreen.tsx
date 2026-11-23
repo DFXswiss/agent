@@ -1,5 +1,5 @@
 // The session detail (06-web.md section 5.5): tabs **Terminal** (default, the read-only terminal, loaded lazily),
-// **Chat** (the outputs of this session only) and **Children** (its subagent sessions, `children/ChildrenTab.tsx`). The session row comes from
+// **Chat** (the outputs of this session only, with its work VM jobs; the header adds the work VM runtime) and **Children** (its subagent sessions, `children/ChildrenTab.tsx`). The session row comes from
 // `GET /v1/sessions/{id}`, the task (title, sibling and child rows) from `GET /v1/tasks/{task}`; the chat events of the
 // task are pulled like on the task page.
 import { lazy, Suspense, useEffect, useMemo } from 'react';
@@ -18,6 +18,8 @@ import { useAppEnv } from '../../shell/context';
 import { LoadError } from '../errors/pages';
 import { SessionFacts, SessionState } from '../../task-tabs/sessions/SessionsTab';
 import { ChildrenTab } from './children/ChildrenTab';
+import { WorkvmPanel } from './WorkvmPanel';
+import { WorkvmRuntime } from './WorkvmRuntime';
 import { Timeline } from '../../task-tabs/chat/Timeline';
 import { activeTab, Tabs } from '../task/Tabs';
 
@@ -28,12 +30,9 @@ const TAB_IDS = ['terminal', 'chat', 'children'] as const;
 function SessionChat({ entry }: { readonly entry: SessionEntry }) {
   const { app } = useAppEnv();
   const { t } = useI18n();
-  const { wg_id: wg, task_id: task, session_id: session, org_id: org } = entry.row;
+  const { wg_id: wg, task_id: task, session_id: session } = entry.row;
   const select = useMemo(() => selectTimeline(wg, task, session), [wg, task, session]);
   const items = useStore(select, app.store);
-  useEffect(() => {
-    pullOnce(app.tasks, org, wg, { kinds: CHAT_KINDS, task }).catch(() => 0);
-  }, [app, org, wg, task]);
   return <Timeline items={items} empty={t('session.chat.empty')} />;
 }
 
@@ -46,6 +45,10 @@ function SessionView({ entry }: { readonly entry: SessionEntry }) {
   const tabs = TAB_IDS.map((id) => ({ id, label: t(`session.tab.${id}`) }));
   const active = activeTab(location.search, tabs);
   const { org_id: org, wg_id: wg, task_id: task, session_id: session } = entry.row;
+  // the chat events of the task (also the `workvm.state` events of the header), whichever tab is open
+  useEffect(() => {
+    pullOnce(app.tasks, org, wg, { kinds: CHAT_KINDS, task }).catch(() => 0);
+  }, [app, org, wg, task]);
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-4" data-testid="session.screen">
       <header className="flex flex-col gap-1">
@@ -63,7 +66,9 @@ function SessionView({ entry }: { readonly entry: SessionEntry }) {
           <SessionState state={entry.row.state} />
         </h1>
         <SessionFacts node={{ entry }} />
+        <WorkvmRuntime wg={wg} task={task} session={session} />
       </header>
+      <WorkvmPanel wg={wg} task={task} session={session} />
       <Tabs tabs={tabs} label={t('session.tabs.label')} testId="session.tabs" />
       {active === 'terminal' && (
         <ChunkBoundary

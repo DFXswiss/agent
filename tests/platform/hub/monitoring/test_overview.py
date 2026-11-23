@@ -139,7 +139,7 @@ def test_stale_and_capacity_low(watch: Watch) -> None:
 
 def test_an_org_without_entities(watch: Watch) -> None:
     lonely = watch.world.private_org()
-    assert overview(watch, lonely.founder, lonely.id) == {"devices": [], "vms": [], "sessions": []}
+    assert overview(watch, lonely.founder, lonely.id) == {"devices": [], "vms": [], "sessions": [], "workvms": []}
 
 
 def test_overview_refusals(watch: Watch) -> None:

@@ -433,6 +433,10 @@ describe('subjectOf and factsOf', () => {
     expect(subjectOf('github.checkout', { repo: 'a/b' })).toBe('a/b');
     expect(subjectOf('github.create_branch', { repo: 'a/b', branch: 'x', from: 'main' })).toBe('a/b x');
     expect(subjectOf('github.get_pull_request', { repo: 'a/b', number: 2 })).toBe('a/b#2');
+    expect(subjectOf('workvm.request', {})).toBe('standard');
+    expect(subjectOf('workvm.request', { size: 'large' })).toBe('large');
+    expect(subjectOf('workvm.release', {})).toBe('task');
+    expect(subjectOf('workvm.release', { scope: 'session' })).toBe('session');
   });
 
   it('lists the result links and values of each type', () => {
@@ -463,6 +467,10 @@ describe('subjectOf and factsOf', () => {
     expect(factsOf('task.set_title', {}, none)).toEqual([]);
     const titled = { status: 'verified', at: '', value: { type: 'task.set_title', params: { title: 'New' } } } as const;
     expect(factsOf('task.set_title', {}, titled)).toEqual([{ label: 'title', text: 'New' }]);
+    expect(factsOf('workvm.request', { workvm_id: 'wvm-0123abcd' }, none)).toEqual([
+      { label: 'workvm', text: 'wvm-0123abcd' },
+    ]);
+    expect(factsOf('workvm.release', { released: false }, none)).toEqual([]);
     expect(factsOf('custom.type', {}, none)).toEqual([]);
   });
 });

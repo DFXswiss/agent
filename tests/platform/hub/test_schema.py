@@ -394,6 +394,8 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("free_mem_bytes", BI),
         # when the hub stored the sample (HUB-16, migration 0005)
         ("received_at", TS),
+        # the session of a work VM sample (KOR-29, migration 0012)
+        ("session_id", U),
     ],
     # what the rollup job has seen (HUB-16, migration 0005)
     "metric_rollup_cursor": [("id", SI), ("received_through", TS)],
@@ -687,7 +689,7 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
         ),
         ("device_request", "kind", ["github.connect", "claude.login", "credential.check", "mailbox.check"]),
         ("device_request", "state", ["pending", "delivered", "answered", "failed", "expired"]),
-        ("metric_sample", "entity_kind", ["device", "vm", "session"]),
+        ("metric_sample", "entity_kind", ["device", "vm", "session", "workvm"]),
         ("usage_counter", "cost_basis", ["provider", "list_price", "subscription_equivalent"]),
         ("audit", "actor_kind", ["user", "device", "session", "hub", "operator", "anonymous"]),
         ("audit", "result", ["ok", "denied", "rejected", "duplicate", "failed"]),

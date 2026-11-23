@@ -172,6 +172,117 @@ describe('chat timeline and items', () => {
     expect(row).toHaveAttribute('data-code', 'signature_invalid');
   });
 
+  it('shows work VM jobs (latest per job) and lifecycle rows, with neutral rows for invalid bodies', async () => {
+    const { t } = await taskPage({ session: { state: 'working' } });
+    const job = (overrides: Record<string, unknown> = {}) => ({
+      workvm_id: 'wvm-0123abcd',
+      job_id: 'j-0123456789ab',
+      kind: 'exec',
+      command: 'make test',
+      state: 'running',
+      exit_code: null,
+      started_at: '2026-11-21T12:00:01.000Z',
+      ended_at: null,
+      duration_ms: 0,
+      output: 'line 1\n',
+      output_bytes: 7,
+      ...overrides,
+    });
+    const vm = (overrides: Record<string, unknown> = {}) => ({
+      workvm_id: 'wvm-0123abcd',
+      state: 'created',
+      scope: 'task',
+      size: 'standard',
+      cpus: 4,
+      memory_mib: 8192,
+      disk_gib: 50,
+      implicit: true,
+      reason: null,
+      started_at: '2026-11-21T12:00:00.000Z',
+      ended_at: null,
+      runtime_ms: 0,
+      ...overrides,
+    });
+    const ended = { ended_at: '2026-11-21T12:00:04.000Z', duration_ms: 2500 };
+    put(
+      t,
+      verified(t, 'workvm.state', vm(), { session: MAIN, ts: '2026-11-21T12:00:01.000Z' }),
+      verified(t, 'workvm.run', job(), { session: MAIN, ts: '2026-11-21T12:00:02.000Z' }),
+      verified(t, 'workvm.run', job({ job_id: 'j-bbbbbbbbbbbb', kind: 'browse', command: 'https://example.com' }), {
+        session: MAIN,
+        ts: '2026-11-21T12:00:03.000Z',
+      }),
+      verified(
+        t,
+        'workvm.run',
+        job({ job_id: 'j-cccccccccccc', state: 'exited', exit_code: 2, output: '', ...ended }),
+        {
+          session: MAIN,
+          ts: '2026-11-21T12:00:04.000Z',
+        },
+      ),
+      verified(
+        t,
+        'workvm.run',
+        job({ job_id: 'j-dddddddddddd', state: 'timed_out', output: 'tail', output_bytes: 123456, ...ended }),
+        { session: MAIN, ts: '2026-11-21T12:00:04.500Z' },
+      ),
+      verified(t, 'workvm.run', job({ state: 'exited', exit_code: 0, output: 'line 1\nok\n', ...ended }), {
+        session: MAIN,
+        ts: '2026-11-21T12:00:05.000Z',
+      }),
+      verified(t, 'workvm.run', { job_id: 'j-0123456789ab' }, { session: MAIN, ts: '2026-11-21T12:00:06.000Z' }),
+      verified(
+        t,
+        'workvm.state',
+        vm({ state: 'deleted', reason: 'idle', size: 'large', memory_mib: 1536, runtime_ms: 7_503_400 }),
+        { session: MAIN, ts: '2026-11-21T12:00:07.000Z' },
+      ),
+      verified(t, 'workvm.state', vm({ state: 'deleted', workvm_id: 'wvm-0000000b' }), {
+        session: MAIN,
+        ts: '2026-11-21T12:00:08.000Z',
+      }),
+      verified(t, 'workvm.state', 'odd', { session: MAIN, ts: '2026-11-21T12:00:09.000Z' }),
+    );
+    const runs = screen.getAllByTestId('chat.workvm.run');
+    // the running item of the first job is replaced by its final one (after the browse job)
+    expect(runs.map((item) => item.getAttribute('data-job'))).toEqual([
+      'j-bbbbbbbbbbbb',
+      'j-cccccccccccc',
+      'j-dddddddddddd',
+      'j-0123456789ab',
+    ]);
+    const [browse, failed, timedOut, done] = runs as [HTMLElement, HTMLElement, HTMLElement, HTMLElement];
+    expect(browse).toHaveTextContent('Browser');
+    expect(within(browse).getByTestId('chat.workvm.run.state')).toHaveTextContent('Running');
+    expect(within(browse).queryByTestId('chat.workvm.run.exit')).toBeNull();
+    expect(within(browse).queryByTestId('chat.workvm.run.duration')).toBeNull();
+    expect(within(browse).getByTestId('chat.workvm.run.command')).toHaveTextContent('https://example.com');
+    expect(within(failed).getByTestId('chat.workvm.run.state')).toHaveAttribute('data-failed', 'true');
+    expect(within(failed).getByTestId('chat.workvm.run.exit')).toHaveTextContent('Exit code 2');
+    expect(within(failed).getByTestId('chat.workvm.run.no-output')).toHaveTextContent('No output.');
+    expect(within(timedOut).getByTestId('chat.workvm.run.state')).toHaveTextContent('Timed out');
+    expect(within(timedOut).getByTestId('chat.workvm.run.tail')).toHaveTextContent('Last part of 123,456 bytes');
+    expect(within(done).getByTestId('chat.workvm.run.state')).toHaveAttribute('data-failed', 'false');
+    expect(within(done).getByTestId('chat.workvm.run.state')).toHaveTextContent('Exited');
+    expect(within(done).getByTestId('chat.workvm.run.duration')).toHaveTextContent('2.5 s');
+    expect(within(done).queryByTestId('chat.workvm.run.tail')).toBeNull();
+    expect(within(done).getByTestId('chat.workvm.run.text').textContent).toBe('line 1\nok\n');
+    const states = screen.getAllByTestId('chat.workvm.state');
+    expect(states.map((item) => item.getAttribute('data-state'))).toEqual(['created', 'deleted', 'deleted']);
+    expect(states[0]).toHaveTextContent('Work VM created');
+    expect(states[0]).toHaveTextContent('Standard: 4 CPU, 8 GiB RAM, 50 GiB disk');
+    expect(within(states[0]!).queryByTestId('chat.workvm.state.runtime')).toBeNull();
+    expect(states[1]).toHaveTextContent('Work VM deleted (idle)');
+    expect(states[1]).toHaveTextContent('Large: 4 CPU, 1.5 GiB RAM');
+    expect(within(states[1]!).getByTestId('chat.workvm.state.runtime')).toHaveTextContent('Runtime 2 h 5 min 3 s');
+    expect(within(states[2]!).getByTestId('chat.workvm.state.title')).toHaveTextContent(/^Work VM deleted$/);
+    expect(screen.getAllByTestId('chat.workvm.invalid').map((item) => item.textContent)).toEqual([
+      'Unverifiable item (body_invalid)',
+      'Unverifiable item (body_invalid)',
+    ]);
+  });
+
   it('names members from their verified profile and shows no time for an item without one', async () => {
     const { t } = await taskPage();
     put(t, verified(t, 'prompt', { text: 'no time' }, { author: 'u-x', ts: 'garbage' }));

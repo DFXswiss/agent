@@ -80,6 +80,7 @@ OPERATION_ERROR_CODES = (
     "model_not_allowed",
     "tree_mismatch",
     "no_changes",
+    "workvm_unavailable",
 )
 """A copy of `contracts/enums/operation-error-codes.json` (a test compares them)."""
 
@@ -132,6 +133,7 @@ OperationErrorCode = Literal[
     "model_not_allowed",
     "tree_mismatch",
     "no_changes",
+    "workvm_unavailable",
 ]
 
 
@@ -299,13 +301,15 @@ class QuotaBody(Strict):
 class MetricSample(Strict):
     """One raw metric sample (02-data-model.md section 2.8)."""
 
-    entity_kind: Literal["device", "vm", "session"]
+    entity_kind: Literal["device", "vm", "session", "workvm"]
     entity_id: Annotated[
         str,
         StringConstraints(
-            pattern=r"^(vm-[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+            pattern=r"^(w?vm-[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
         ),
     ]
+    session_id: Uuid7 | None = None
+    """Work VMs only (KOR-29): the session the work VM belongs to."""
     ts: Time
     cpu_ratio: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None
     mem_used_bytes: Count | None
@@ -324,6 +328,10 @@ class MetricSample(Strict):
     def _id_of_the_kind(self) -> MetricSample:
         if (self.entity_kind == "vm") != self.entity_id.startswith("vm-"):
             raise ValueError("the entity ID does not fit the entity kind")
+        if (self.entity_kind == "workvm") != self.entity_id.startswith("wvm-"):
+            raise ValueError("the entity ID does not fit the entity kind")
+        if (self.entity_kind == "workvm") != (self.session_id is not None):
+            raise ValueError("a work VM sample names its session, no other sample does")
         return self
 
 

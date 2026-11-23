@@ -61,6 +61,18 @@
       "params": "ops/task.set_title.params.json",
       "result": "ops/task.set_title.result.json",
       "dedupe": false
+    },
+    {
+      "type": "workvm.request",
+      "params": "ops/workvm.request.params.json",
+      "result": "ops/workvm.request.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "workvm.release",
+      "params": "ops/workvm.release.params.json",
+      "result": "ops/workvm.release.result.json",
+      "dedupe": false
     }
   ]
 }

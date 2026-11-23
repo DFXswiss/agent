@@ -100,7 +100,7 @@ metric_rollup_cursor: metrics | id:number received_through:time
 metric_sample: metrics | entity_kind:code entity_id:code ts:time device_id:uuid cpu_ratio:number
   mem_used_bytes:number mem_limit_bytes:number disk_used_bytes:number disk_limit_bytes:number net_rx_bytes:number
   net_tx_bytes:number uptime_seconds:number reachable:flag state:code free_vm_slots:number free_mem_bytes:number
-  received_at:time
+  received_at:time session_id:uuid
 notification: notifications | id:uuid recipient_id:uuid kind:code org_id:uuid wg_id:uuid task_id:uuid ref:code
   created_at:time read_at:time
 operation: operations | id:uuid org_id:uuid wg_id:uuid task_id:uuid session_id:uuid device_id:uuid actor_id:uuid
