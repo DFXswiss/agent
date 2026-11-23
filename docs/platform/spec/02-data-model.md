@@ -76,6 +76,7 @@ Retention: events are kept for the lifetime of the organization (no deletion in 
 | `task` | `id` PK, `org_id`, `wg_id`, `owner_id`, `state` CHECK in (`scheduling`,`starting`,`working`,`idle`,`failed`,`closed`), `state_reason` NULL, `created_at`, `state_at`, `last_activity_at`, `closed_at` NULL | title only in `task.meta` events |
 | `task_transition` [AO] | (`task_id`,`seq`) PK, `state`, `reason`, `at`, `by_id` | |
 | `session` | `id` PK, `task_id`, `org_id`, `wg_id`, `owner_id` (task owner), `device_id` NULL, `vm_id` NULL, `parent_session_id` NULL, `origin_operation_id` NULL, `depth` int (0 = main), `state` (§2.4.1), `state_reason` NULL, `model_access` CHECK in (`subscription`,`api_key`,`platform`) NULL, `model_id` NULL, `agent_kind` default `claude-code`, `agent_version` NULL, `estimate_ms` int NULL, `created_at`, `ready_at` NULL, `first_working_at` NULL, `ended_at` NULL | |
+| `task_attention` [P] | `task_id` PK, `org_id`, `wg_id`, `owner_id`, `category` CHECK in (`needs_decision`,`blocked`,`working`,`done`), `reason` (code), `ref_kind` CHECK in (`operation`,`session`) NULL, `ref_id` NULL, `since`, `seq` ≥ 1, `subagents_total`, `subagents_active`, `updated_at`; index (`org_id`,`category`,`since` DESC,`task_id` DESC) | projection, ADR-064 (KOR-39); derived from task, session and operation metadata |
 | `session_transition` [AO] | (`session_id`,`seq`) PK, `state`, `reason`, `at` (device clock), `received_at`, `reported_by` | drives the countdown status list |
 | `vm` | `id` text PK (`vm-<8 hex>`), `device_id`, `wg_id` NULL, `state` CHECK in (`pool`,`assigning`,`running`,`stopping`,`stopped`,`deleted`), `golden_version`, `cpus`, `memory_mib`, `disk_gib`, `created_at`, `state_at` | reported by runner |
 
@@ -102,7 +103,7 @@ main session failed and no retry is pending; `closed` only by user action.
 |---|---|---|
 | `whiteboard_entry` [P] | `id` PK (= `ref`), `org_id`, `level` CHECK in (`org`,`workgroup`,`task`), `wg_id` NULL, `task_id` NULL, `author_id`, `created_event_id`, `latest_event_id`, `created_at`, `updated_at`, `deleted` bool, `notify` bool | projection of whiteboard events (history = the events) |
 | `session_ping` | `id` PK, `session_id`, `kind` CHECK in (`whiteboard.entry`,`subagent.finished`,`operation.finished`), `level` NULL, `ref`, `created_at`, `delivered_at` NULL | durable content-free pings; undelivered rows are returned in `GET /v1/device/state`; set delivered by the outbox audit item `ping.delivered`; the hub writes only `whiteboard.entry` rows (runner pings live in the runner's `ping` table, KOR-07) |
-| `notification` | `id` PK, `recipient_id`, `kind` CHECK in (`whiteboard.entry`,`task.idle`,`task.failed`,`invite.accepted`,`rotation.required`), `org_id`, `wg_id` NULL, `task_id` NULL, `ref` NULL, `created_at`, `read_at` NULL | content-free |
+| `notification` | `id` PK, `recipient_id`, `kind` CHECK in (`whiteboard.entry`,`task.idle`,`task.failed`,`task.attention`,`invite.accepted`,`rotation.required`), `org_id`, `wg_id` NULL, `task_id` NULL, `ref` NULL, `created_at`, `read_at` NULL | content-free |
 
 ### 2.7 Credentials and device requests
 

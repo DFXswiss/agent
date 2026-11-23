@@ -61,5 +61,6 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [055](055-registration-without-recovery-code-step.md) | Passkeys must deliver PRF (refused at registration, when added and in a recovery, the registration withdrawn); the registration has no recovery-code step (unset recovery slot) | §5, §14.1 | no |
 | [056](056-delegated-agent-access.md) | Delegated agent access: the user's own AI agent pairs with one passkey gesture (loopback handover secret, sealed identity, scoped allow-list) and sets the account up, incl. the transfer of the local Claude Code login | §1, §4, §5, §8 | no |
 | [057](057-workspace-imports-are-the-scanner-baseline.md) | Platform imports (`files/import`: checkout, work-VM results) are the workspace scanner's baseline; dependency and build directories are not scanned; bulk passes and changes beyond a per-session window become one `session.file` summary | §10 | no |
+| [064](064-situation-view-and-attention-categories.md) | The situation view: every task has one attention record (needs decision, stuck, running, finished) that the hub derives from metadata it already holds; agents ask with `human.question` / `human.approval`; one notification per occasion | §6, §12, Ideen 31, 32 | no |
 
 New decisions get the next free number; a superseded ADR keeps its file and is marked `Superseded by ADR-NNN`.

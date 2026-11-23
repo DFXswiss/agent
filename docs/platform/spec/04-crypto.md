@@ -456,6 +456,7 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | Operation type, state, decision, error code, dedupe tag, timestamps, actor | duplicate protection, audit, limits |
 | Resource metrics, token counters, cost, context-window percentage, subscription quota percentages | monitoring, limits, display (KONZEPT §6, §7) |
 | Notification records (recipient, kind, target IDs) | notifications |
+| Attention record of a task (category, reason code, ref ID, times, subagent counters), derived from the task, session and operation metadata above; the operation types `human.question` / `human.approval` (the question itself is sealed in `operation.params`) | situation view, notifications (ADR-064, KOR-39) |
 | Audit and read-log rows (actor, action, target IDs, result) | KONZEPT §6, §8 |
 | Credential metadata (owner, kind, version) | lifecycle |
 | User settings (model access preference, model choice, locale) | session start |

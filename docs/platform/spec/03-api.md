@@ -137,6 +137,18 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `POST /v1/tasks/{task}/close` | task:write | `{}` → task (`closed`; all sessions `stopping`) |
 | `POST /v1/sessions/{session}/control` | task:write | `{action:"interrupt"|"stop"}` → `{}` |
 | `GET /v1/sessions/{session}` | task:read | → session incl. transitions, usage, device, vm, parent, children |
+| `GET /v1/orgs/{org}/attention` | org:member (rows of readable workgroups only) | `?category=needs_decision\|blocked\|working\|done&mine=1&since=&before=&limit=` (KOR-39, ADR-064) → `{items:[{task:task_row,attention:attention_row}],next_before}`; `category` required; order `since ASC, task_id ASC` for `needs_decision` (longest waiting first), else `since DESC, task_id DESC`; `limit` default 50, max 100; `mine=1`: tasks the caller owns; `since` (RFC 3339): only records that entered their category at or after it |
+| `GET /v1/orgs/{org}/attention/summary` | org:member | `?since=` → `{needs_decision,needs_decision_mine,blocked,working,done_since}` (counts over the readable workgroups; `done_since` counts `done` records with `since` ≥ the parameter, default the last 24 h) |
+
+#### 4.6.0 Attention record (KOR-39, ADR-064)
+
+Every task has one attention record (`hub.task_attention`, 02-data-model.md §2.4), derived by the hub from metadata
+it already holds and refreshed at the end of every transaction that changes an input (task and session transitions,
+prompts, operation states). `attention_row` = `{task_id,category,reason,ref_kind,ref_id,since,seq,subagents_total,
+subagents_active,updated_at}`; categories and reasons: `contracts/enums/attention.json`; derivation: ADR-064 §2
+(normative). Every change is sent to the org's browsers as the stream frame `attention` (the `attention_row`) for
+users who read the task's workgroup. A task without a record (older than the migration) gets one from the job
+`attention.backfill` within a minute; until then it appears in no group.
 
 #### 4.6.1 First-task flow (normative sequence)
 
@@ -217,7 +229,7 @@ level (org level: org members; wg/task level: wg readers) except the author; eac
 an SSE frame. Active sessions in scope (org level: all non-stopped sessions of the org; wg level: of the wg;
 task level: of the task) get a content-free ping through their device (`ping` hint, §6.2).
 
-Other notification rules: `task.idle` to the task owner when the main session goes `working → idle` after at least 10 s of `working`; `task.failed` to the owner when the task becomes `failed`; `invite.accepted` to the inviting admin; `rotation.required` to all admins of an org with `rotation_pending`.
+Other notification rules: `task.idle` to the task owner when the main session goes `working → idle` after at least 10 s of `working`, unless the task's attention record is `needs_decision` or `blocked`; `task.failed` to the owner when the task becomes `failed`; `task.attention` (KOR-39) to the task owner when the task's attention record enters `needs_decision` or `blocked` (not for a `blocked` record of a failed task, which `task.failed` covers), once per occasion (`ref` = `<category>:<reason>:<seq>`; workgroup-wide causes `device_missing`, `device_unreachable`, `no_capacity` once per owner, workgroup and reason while the previous one is unread, `ref` = `<category>:<reason>:wg`), while the owner reads the workgroup; `invite.accepted` to the inviting admin; `rotation.required` to all admins of an org with `rotation_pending`.
 
 ### 4.10 Device requests
 
@@ -469,6 +481,8 @@ original released its slot (`failed`, `expired`), or with other content (e.g. an
 | `github.comment` | `{repo,number,body}` | allow-list (when set); body 1–65536 | repo, number, sha256(body) | 24 h | `{comment_id,url}` |
 | `subagent.request` | `{purpose,prompt,model_id?}` | purpose 1–200, prompt 1–32768 chars; `model_id` from the allowed list of the parent session's access kind (checked by the runner against the model catalog ⇒ `model_not_allowed`) | parent session, sha256(purpose‖prompt) | 10 min | `{session_id}` (hub creates the child session, H4 limits: depth ≤ 2, ≤ 3 running children per task, ≤ 10 children per task) |
 | `task.set_title` | `{title}` | 1–120 chars, single line | – | – | `{}` (runner writes a device-authored `task.meta` event) |
+| `human.question` | `{question}` | 1–4000 chars; main sessions only (a subagent ⇒ `denied`, `rights_denied`) (KOR-39, ADR-064 §3) | – | – | `{}` – succeeds at once; the task waits for a person (`needs_decision/question`) until the next prompt answers it |
+| `human.approval` | `{question}` | as `human.question` | – | – | `{}` – as `human.question`, the view offers approve / decline (`needs_decision/approval`); the answer prompt starts with `Approved.` or `Declined.` |
 
 Result delivery: the runner writes `operation.result` (encrypted) via the outbox, then the
 `operation_transition`, then answers the pending MCP call. For `duplicate` the runner returns the original

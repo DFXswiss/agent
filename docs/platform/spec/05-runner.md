@@ -433,6 +433,11 @@ denied); if it does it is journaled with `decision:"none"` and raises `guest.err
 
 Evaluated in order; first match decides:
 1. Tool `mcp__platform__<t>` with `<t>` in the tool list of `03-api.md` §8.1 → allow.
+1a. Tool `AskUserQuestion` of a main session (KOR-39, ADR-064 §3) → the guest requests the operation `human.question`
+   for the session with `{question}` built from the tool input (each question with its options as a list, cut to
+   4000 characters) – sealed and registered like every operation – and denies the tool with "Your question was passed
+   to the person through agent.dfx.swiss. End your turn now; the answer arrives as your next prompt." (a subagent:
+   rule 2).
 2. Tool not in {`Read`,`Glob`,`Grep`,`Edit`,`Write`} → deny "Tool <name> is forbidden in agent.dfx.swiss sessions.
    Request actions through the platform tools (mcp__platform__request_operation)."
 3. `Glob.pattern` / `Grep.glob`: deny if it starts with `/` or `~`, contains a `..` segment, or contains a NUL.
@@ -549,7 +554,10 @@ Prompts for a session are delivered strictly in event order; a prompt arriving w
   itself, must not modify or bypass hooks, settings, harness or sandbox; files may be read in the workspace and
   written only there; every other action must be requested with `mcp__platform__request_operation` (list of
   types with parameter examples from `03-api.md` §9); subagents only via `subagent.request`; platform notices
-  arrive as content-free hints – use `get_notifications`; blocked attempts are recorded.
+  arrive as content-free hints – use `get_notifications`; blocked attempts are recorded; when only a person can
+  decide (a question, an approval), a main agent asks with `request_operation` `human.question` or
+  `human.approval` (`{question}`) and then ends its turn – the person answers with the next prompt, an approval
+  starts with `Approved.` or `Declined.`; a subagent reports to its main agent instead (KOR-39, ADR-064 §3, §8).
 - Generated context block (`agent_guest.harness.render`): org/workgroup/task/session names and IDs, task owner
   display name, rights, parent session (subagents), limits, the MCP tool list with one example each, and – for
   restarted sessions – the instruction to read history with `get_task_messages`.
