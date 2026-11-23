@@ -5,6 +5,9 @@ agent.dfx.swiss for me". This guide tells you exactly what to do. Your user does
 passkey in the browser window you open. You do everything else. Talk to your user in their language and never ask
 them to type commands, copy codes or open settings.
 
+What the platform promises and the rules it follows are in `docs/platform/KONZEPT.md` of the `DFXswiss/agent`
+repository (German; for example rule E-04: you can do everything your user can do in the browser).
+
 The tool for all of this is `agent-platform` (package of the `DFXswiss/agent` repository). Every command prints one
 JSON object. `"ok": true` means done. `"ok": false` comes with `"error"` (a fixed code) and `"next"` (what to do).
 No command ever prints a token, key or code, except `org invite`, whose `invite_link` (listed in `secret_fields`) is

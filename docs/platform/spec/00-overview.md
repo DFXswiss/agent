@@ -5,7 +5,9 @@
 
 Status: binding implementation specification, version 1 (2026-11-21).
 Scope: the complete product described in `KONZEPT.md` §1–§13, with every open point of §14 decided
-(see `docs/adr/`). Documents of this specification:
+(see `docs/adr/`; numbers of the short concept version, mapped in [`KONZEPT.md`](../KONZEPT.md#teil-a--das-konzept)).
+The concept in full (47 ideas) and the client's binding rules, which take precedence over this specification, are
+[`docs/platform/KONZEPT.md`](../KONZEPT.md) – read it first. Documents of this specification:
 
 | File | Content |
 |---|---|
