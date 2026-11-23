@@ -54,5 +54,6 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [048](048-outbox-push-pacing-start-to-start.md) | Outbox pushes are paced start to start (100 ms); the hub paces each device with a token bucket | §6, §14.6 | no |
 | [049](049-capacity-refusal-attempts.md) | A session the device refuses for lack of capacity gets a new attempt of the task, placed away from the refusing device until it reports a free slot | §3, §14.3 | no |
 | [050](050-hedged-outbox-push.md) | An outbox push whose answer is late is sent once more on another connection; the first answer counts | §6, §14.6 | no |
+| [051](051-login-reads-the-terminal-screen.md) | The subscription login reads the terminal screen of `claude setup-token` (cursor positioning, input field, error while running) | §4 | no |
 
 New decisions get the next free number; a superseded ADR keeps its file and is marked `Superseded by ADR-NNN`.

@@ -657,10 +657,36 @@ equivalent (`subscription_equivalent`). Claude Code's own cost fields are never 
 3. Response 1: `{step:"authorize", url}`. The user opens it in their own browser, authorizes, copies the code.
 4. Follow-up request (new request ID, same kind `claude.login`, header `follows` = original request ID, `04-crypto.md` §4.5): `{code}` → typed
    into the PTY.
-5. Read the token from the PTY output (the setup-token line), validate format, build the `claude_subscription`
+5. Read the token from the program's **screen** (below), validate format, build the `claude_subscription`
    credential record (CK), `PUT /v1/device/credentials/{owner}/claude_subscription`, response 2
    `{step:"done", email?}` (`email` only when the CLI reports it; optional); responses carry `final:true` on the last
    message; wipe the temp dir. Timeouts → `{step:"failed", code}`.
+
+**Screen, not raw text (ADR-051, KOR-21).** `claude setup-token` draws a terminal UI: it places words with cursor
+positioning instead of spaces, erases lines and overwrites single cells. The runner therefore replays the PTY output
+on a terminal screen of the PTY's window size (`login/screen.py`: printable and wide characters, wrap at the right
+margin, CR, LF with scrolling, BS, HT, ESC 7/8, CSI `A B C D E F G H f d J K`; every other sequence without effect)
+and reads only its rows. The labels of the program are constants in one place (`login/setup_token.py`), checked against the
+golden's Claude Code pin; a pin change re-checks them (`runbooks/claude-code-upgrade-gate.md`).
+
+- **Wait for the input field.** The program shows "Paste code here if prompted" a few seconds after the URL and drops
+  what is typed before. Step 4 types the code only once that label is on the screen (and 0.3 s later, the program may
+  enable its input just after drawing it); not within `prompt_wait` (30 s, counted from the code) → `timeout`, the
+  program ended or showed an error before → `login_cli_failed`.
+- **Errors while the program runs.** A wrong code leaves the program open ("✘ OAuth error: … Press Enter to retry").
+  As soon as "OAuth error" is on the screen the login ends with `code_invalid`; otherwise the program must end within
+  `token_wait` (60 s; on success it ends by itself 500 ms after showing the token) → else `timeout`. An exit status
+  ≠ 0 is `code_invalid` with the error on the screen, otherwise `login_cli_failed`.
+- **Token.** From the screen after the program ended: the rows after the row with "OAuth token", from the first
+  non-empty row to the next empty row, stripped and joined (a narrow window wraps the token), must be a whole token
+  (`sk-ant-oatNN-…`). Without that row (a later version may word it differently): exactly one run of non-empty rows
+  on the whole screen that is, joined, a token and nothing else. In both ways that run must be the only run of rows
+  that looks like a token or a piece of one (token characters only, with the prefix or ≥ 16 long; a token split by an
+  empty row leaves a piece on its own run). Anything else →
+  `token_invalid`.
+- **Diagnosis without secrets.** A failure after the start logs only the form of the screen
+  (`runner.login screen rows=<n> marker=yes|no token_blocks=<n> prompt=yes|no error=yes|no`), never its text, the URL,
+  the code or the token.
 
 ### 11.3 `claude.login` – mailbox automation (`LOGIN_AUTOMATION=on`; default on platform devices, off on org devices)
 
