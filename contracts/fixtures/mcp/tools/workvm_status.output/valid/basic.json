@@ -1,0 +1,23 @@
+{
+  "workvm": {
+    "workvm_id": "wvm-0123abcd",
+    "state": "running",
+    "scope": "task",
+    "size": "standard",
+    "cpus": 4,
+    "memory_mib": 8192,
+    "disk_gib": 50,
+    "created_at": "2026-11-23T10:00:00.000Z",
+    "last_used_at": "2026-11-23T10:05:00.000Z"
+  },
+  "jobs": [
+    {
+      "job_id": "j-0123456789ab",
+      "command": "npm test",
+      "state": "exited",
+      "exit_code": 0,
+      "started_at": "2026-11-23T10:01:00.000Z",
+      "duration_ms": 1200
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/errors.py at 0346281bb510.
+"""Copied from agent-core src/agent_hub/crypto/errors.py at 99578e6bf451.
 
 Error codes of the crypto layer (docs/platform/spec/04-crypto.md section 8, 03-api.md section 11).
 

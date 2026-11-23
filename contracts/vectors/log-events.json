@@ -2227,6 +2227,32 @@
         "kind": "platform.read",
         "right": "device_assigned_wg",
         "scope": "wg"
+      },
+      {
+        "authors": [
+          "device"
+        ],
+        "header": {
+          "session": "set",
+          "task": "set",
+          "wg": "scope_id"
+        },
+        "kind": "workvm.run",
+        "right": "device_assigned_wg_session",
+        "scope": "wg"
+      },
+      {
+        "authors": [
+          "device"
+        ],
+        "header": {
+          "session": "set",
+          "task": "set",
+          "wg": "scope_id"
+        },
+        "kind": "workvm.state",
+        "right": "device_assigned_wg_session",
+        "scope": "wg"
       }
     ],
     "notify_allowed": [

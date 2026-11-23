@@ -34,6 +34,8 @@ Import (``import_tar``), body ``application/x-tar`` of at most ``MAX_IMPORT_BYTE
 
 Export (``export_tar``), ``{dir, paths?}`` with ``paths`` relative to ``dir``:
 
+* ``dir`` exactly ``.`` (``WHOLE_WORKSPACE``) exports the whole workspace (the work VM's ``workvm_sync``, 13-work-vm.md
+  section 3, KOR-29); every other ``dir`` follows the path rules of the import, and the import still refuses ``.``
 * ``dir`` missing is ``not_found``, a link or a file ``path_invalid``; a listed path that does not exist is left out
   (for ``github.commit`` it is a deletion)
 * directories are walked in name order (``.git`` directories are left out, at most ``MAX_DEPTH`` levels); regular
@@ -86,6 +88,7 @@ READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | _CLOEXEC
 CREATE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC
 _LINK_ERRORS = frozenset({errno.ELOOP, errno.ENOTDIR, errno.EMLINK})
 _FORBIDDEN_SEGMENTS = frozenset({"", ".", ".."})
+WHOLE_WORKSPACE = "."
 PROTECTED = policy.PROTECTED_DIRS | policy.PROTECTED_FILES
 MAX_HEADER = 64 * 1024
 HEADER_TYPES = frozenset(
@@ -551,8 +554,9 @@ class Exported:
 
 
 def export_tar(session: Session, directory: str, paths: Sequence[str] | None = None) -> Exported:
-    """Export ``directory`` of the session's workspace, or the listed ``paths`` below it (see the module docstring)."""
-    parts = segments(directory)
+    """Export ``directory`` of the session's workspace (``.``: the whole workspace), or the listed ``paths`` below it
+    (see the module docstring)."""
+    parts = [] if directory == WHOLE_WORKSPACE else segments(directory)
     for path in paths or ():
         segments(path)
     workspace = open_workspace(session)

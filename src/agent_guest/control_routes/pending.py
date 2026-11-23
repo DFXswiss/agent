@@ -1,16 +1,17 @@
 """Pending MCP calls (02-data-model.md section 5 ``pending``, 03-api.md section 7.1): answer route and api.sock ops.
 
 Library for GST-04/GST-07: the API process creates a pending call (``pending.create``), which journals an
-``operation.request`` or ``platform.query`` record carrying the new ``pending_id``; the runner answers with
-``POST /v1/pending/{id}/answer``; the API process waits for the answer with a time limit (``pending.wait``).
+``operation.request``, ``platform.query`` or ``workvm.call`` record carrying the new ``pending_id``; the runner
+answers with ``POST /v1/pending/{id}/answer``; the API process waits for the answer with a time limit
+(``pending.wait``).
 
 * ``POST /v1/pending/{id}/answer {status, result | error}`` - ``{}``; unknown ID ``404 not_found``; a second, different
   answer ``409 state_conflict`` (an identical repeat is accepted)
-* op ``pending.create {session_id, kind: "operation" | "query", body} -> {pending_id}`` - ``body`` is the journal
-  body without ``pending_id``; it is validated with the ID added (``request_invalid`` with pointers)
+* op ``pending.create {session_id, kind: "operation" | "query" | "workvm", body} -> {pending_id}`` - ``body`` is the
+  journal body without ``pending_id``; it is validated with the ID added (``request_invalid`` with pointers)
 * op ``pending.wait {pending_id, session_id, timeout <= 33} -> {state: "answered", answer} | {state: "waiting"}``;
   33 s is the longest MCP wait (``get_operation``/``get_subagent_result``: ``wait_seconds`` ≤ 30 plus the read margin,
-  GST-07), below the 35 s limit of the ``/mcp`` route
+  GST-07; the work VM tools: ``wait_seconds`` ≤ 30 plus 5 s, KOR-29), below the 35 s limit of the ``/mcp`` route
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from typing import Any
 from agent_guest.control import ControlContext
 from agent_guest.journal import JournalError
 from agent_guest.routing import HttpError, Request, Response, Route, json_response
-from agent_guest.state import StateError
+from agent_guest.state import PENDING_KINDS, StateError
 
 MAX_WAIT_SECONDS = 33
 
@@ -38,7 +39,7 @@ def create(context: ControlContext, args: dict[str, Any]) -> dict[str, Any]:
     if (
         set(args) != {"session_id", "kind", "body"}
         or not isinstance(session_id, str)
-        or kind not in ("operation", "query")
+        or kind not in PENDING_KINDS
         or not isinstance(body, dict)
         or "pending_id" in body
     ):

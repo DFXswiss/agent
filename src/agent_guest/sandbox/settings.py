@@ -40,6 +40,12 @@ MCP_TOOLS: tuple[str, ...] = (
     "get_operation",
     "list_operations",
     "get_subagent_result",
+    "workvm_exec",
+    "workvm_output",
+    "workvm_kill",
+    "workvm_status",
+    "workvm_sync",
+    "workvm_browse",
 )
 FILE_TOOLS: tuple[str, ...] = ("Read", "Glob", "Grep", "Edit", "Write")
 DENIED_TOOLS: tuple[str, ...] = (

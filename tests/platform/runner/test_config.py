@@ -82,7 +82,7 @@ def test_default_home_expands_user(base: dict[str, str]) -> None:
 
 
 def test_every_name_is_listed_once() -> None:
-    assert len(NAMES) == len(set(NAMES)) == 28
+    assert len(NAMES) == len(set(NAMES)) == 39
     assert "VM_PREFIX" in NAMES
     assert "TEST_MODE" in NAMES
     assert frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"}) == HUB_NAMES
@@ -629,3 +629,47 @@ def test_operator_directory_checks(base: dict[str, str], operator_dir: Path, tmp
     operator_dir.chmod(0o750)
     base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = str(operator_dir)
     refused(base, "OPERATOR_SUBSCRIPTION_DIR")
+
+
+# -- work VMs (KOR-29, ADR-059, spec 11) ---------------------------------------------------------------------------
+
+
+def test_workvm_defaults_offer_no_work_vm(base: dict[str, str]) -> None:
+    cfg = load(base)
+    assert (cfg.workvm_slots, cfg.workvm_slots_self, cfg.workvm_max_size) == (0, False, "large")
+    assert (cfg.workvm_idle_seconds, cfg.workvm_queue_seconds, cfg.workvm_pool_size) == (1800, 900, 1)
+    assert (cfg.workvm_max_per_task, cfg.workvm_max_per_org, cfg.workvm_max_per_owner) == (4, 16, 8)
+    assert (cfg.workvm_ssh_port_base, cfg.workvm_template) == (47200, None)
+    assert not any(name.startswith("AGENT_RUNNER_WORKVM_") for name in environment(cfg))
+
+
+def test_workvm_settings_round_trip(base: dict[str, str], tmp_path: Path) -> None:
+    template = tmp_path / "workvm.yaml"
+    template.write_text("vmType: vz\n", encoding="utf-8")
+    base.update(
+        {
+            "AGENT_RUNNER_TEST_MODE": "1",
+            "AGENT_RUNNER_WORKVM_SLOTS": "3",
+            "AGENT_RUNNER_WORKVM_SLOTS_SELF": "1",
+            "AGENT_RUNNER_WORKVM_MAX_SIZE": "xlarge",
+            "AGENT_RUNNER_WORKVM_IDLE_SECONDS": "600",
+            "AGENT_RUNNER_WORKVM_POOL_SIZE": "0",
+            "AGENT_RUNNER_WORKVM_TEMPLATE": str(template),
+        }
+    )
+    cfg = load(base)
+    assert (cfg.workvm_slots, cfg.workvm_slots_self, cfg.workvm_max_size) == (3, True, "xlarge")
+    assert (cfg.workvm_idle_seconds, cfg.workvm_template, cfg.workvm_pool_size) == (600, template, 0)
+    env = environment(cfg)
+    assert env["AGENT_RUNNER_WORKVM_SLOTS_SELF"] == "1"
+    assert env["AGENT_RUNNER_WORKVM_SLOTS"] == "3"
+    assert load(env) == cfg
+
+
+def test_workvm_settings_are_checked(base: dict[str, str]) -> None:
+    production = {key: value for key, value in base.items() if key != "AGENT_RUNNER_TEST_MODE"}
+    production["AGENT_RUNNER_HUB_URL"] = "https://hub.example"
+    refused({**production, "AGENT_RUNNER_WORKVM_SLOTS_SELF": "1"}, "WORKVM_SLOTS_SELF")
+    refused({**base, "AGENT_RUNNER_WORKVM_MAX_SIZE": "huge"}, "WORKVM_MAX_SIZE")
+    refused({**base, "AGENT_RUNNER_WORKVM_SLOTS": "101"}, "WORKVM_SLOTS")
+    refused({**base, "AGENT_RUNNER_WORKVM_POOL_SIZE": "17"}, "WORKVM_POOL_SIZE")

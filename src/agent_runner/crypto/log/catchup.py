@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/catchup.py at 0346281bb510.
+"""Copied from agent-core src/agent_hub/log/catchup.py at 99578e6bf451.
 
 Catch-up wrapping (04-crypto.md section 5.11, `GET /v1/orgs/{org}/catch-up`).
 

@@ -1,5 +1,6 @@
 """The static harness text images/harness/RULES.md (docs/platform/spec/05-runner.md section 8, 03-api.md
-sections 8.1 and 9): every mandatory statement and every operation type with a parameter example."""
+sections 8.1 and 9, 13-work-vm.md section 9): every mandatory statement and every operation type with a parameter
+example."""
 
 from __future__ import annotations
 
@@ -28,6 +29,8 @@ SPEC_OPERATIONS: dict[str, tuple[set[str], set[str]]] = {
     "github.comment": ({"repo", "number", "body"}, set()),
     "subagent.request": ({"purpose", "prompt"}, {"model_id"}),
     "task.set_title": ({"title"}, set()),
+    "workvm.request": (set(), {"size", "scope"}),
+    "workvm.release": (set(), {"scope"}),
 }
 MANDATORY = [
     "agent.dfx.swiss",
@@ -42,7 +45,29 @@ MANDATORY = [
     "Use `mcp__platform__get_notifications`",
     "Every blocked attempt",
     "is recorded",
+    # 13-work-vm.md section 9
+    "You have your own work VM for everything that needs execution",
+    "Never say that you cannot execute",
+    "You run nothing in your own sandbox.",
+    "this is the platform's controlled interface",
+    "`workvm_exec` and `workvm_browse` obtain a work VM automatically when you have none.",
+    "type `workvm.request` only for a larger `size`",
+    "with `scope` `session` when you are a subagent that needs its own VM",
+    "The work VM is temporary",
+    "after 30 minutes without use and when the session ends",
+    "Request a new one any time",
+    "Files that must survive belong in your workspace",
+    "Run tests (lint, prettier, unit and integration tests) with `mcp__platform__workvm_exec`.",
+    "result, its log and its exit code are kept and visible to the user.",
+    "Use the browser with `mcp__platform__workvm_browse`",
+    "Root, internet access, installing packages and starting services and containers are allowed there",
+    "allowed there without asking.",
+    "`mcp__platform__workvm_sync` direction `from_vm`",
+    "only through the GitHub operations",
+    "The work VM holds no platform credentials. Credentials you choose to use there are your own responsibility.",
+    "type `workvm.release`",
 ]
+FORBIDDEN = ["say so in your answer", "Request it once", "deleted with the task anyway"]
 
 
 @pytest.fixture(scope="module")
@@ -58,11 +83,22 @@ def examples(text: str) -> list[dict[str, Any]]:
 
 @pytest.mark.parametrize("statement", MANDATORY)
 def test_mandatory_statement(text: str, statement: str) -> None:
-    assert statement in text
+    # line breaks of the Markdown source are ordinary spaces
+    assert statement in " ".join(text.split())
+
+
+@pytest.mark.parametrize("statement", FORBIDDEN)
+def test_no_statement_tells_the_session_to_give_up(text: str, statement: str) -> None:
+    assert statement not in text
 
 
 def test_every_operation_type_has_exactly_one_example(text: str) -> None:
     assert [example["type"] for example in examples(text)] == list(SPEC_OPERATIONS)
+
+
+def test_the_operation_list_is_the_contract_index() -> None:
+    index = json.loads((REPO_ROOT / "contracts" / "ops" / "INDEX.json").read_text(encoding="utf-8"))
+    assert [entry["type"] for entry in index["types"]] == list(SPEC_OPERATIONS)
 
 
 @pytest.mark.parametrize("operation", list(SPEC_OPERATIONS))
@@ -89,7 +125,7 @@ def test_examples_validate_against_the_operation_contracts(text: str) -> None:
         jsonschema.Draft202012Validator(schema, registry=registry).validate(example["params"])
 
 
-def test_names_every_read_tool_of_the_platform_api(text: str) -> None:
+def test_names_every_tool_of_the_platform_api(text: str) -> None:
     for tool in (
         "get_context",
         "list_workgroups",
@@ -102,6 +138,12 @@ def test_names_every_read_tool_of_the_platform_api(text: str) -> None:
         "get_operation",
         "list_operations",
         "get_subagent_result",
+        "workvm_exec",
+        "workvm_output",
+        "workvm_kill",
+        "workvm_status",
+        "workvm_sync",
+        "workvm_browse",
     ):
         assert f"`{tool}`" in text or f"`mcp__platform__{tool}`" in text, tool
 

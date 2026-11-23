@@ -1,0 +1,43 @@
+# Work image of agent.dfx.swiss (docs/platform/spec/13-work-vm.md section 4, ADR-059).
+#
+# A work VM is a whole Ubuntu machine for one task: the session runs anything inside it as root. The template keeps
+# everything that could connect the VM to the host away: no mounts, no port forwards, no SSH agent, no parameters
+# (so no credential can ever be handed over at boot). SSH runs over vsock (sshd listens on vsock port 22, installed
+# by images/workvm/provision.sh); the slot account's only loopback target is its own pinned Lima SSH port, everything
+# else on the host's loopback is refused by the host packet filter (spec 11 section 6). The image URL and digest are those of
+# images/versions.json (kept identical by tests/platform/images/).
+minimumLimaVersion: 2.2.0
+vmType: vz
+arch: aarch64
+images:
+- location: "https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-arm64.img"
+  arch: aarch64
+  digest: "sha256:50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e"
+# Size of the `standard` work VM; the runner sets cpus/memory/disk per request.
+cpus: 4
+memory: 8GiB
+disk: 50GiB
+mounts: []
+containerd:
+  system: false
+  user: false
+# Never copy the host's proxy variables into the VM (they may carry credentials).
+propagateProxyEnv: false
+# DNS goes to Cloudflare's public resolvers through the device's Cloudflare client; the runner sets `.dns` per clone.
+# Never the host's resolver: it would ask the site's resolver while the client is down.
+hostResolver:
+  enabled: false
+ssh:
+  overVsock: true
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+  forwardX11: false
+  forwardX11Trusted: false
+portForwards:
+- guestIPMustBeZero: false
+  guestIP: "0.0.0.0"
+  proto: any
+  ignore: true
+- guestIP: "127.0.0.1"
+  proto: any
+  ignore: true

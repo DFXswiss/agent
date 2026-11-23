@@ -1,0 +1,13 @@
+{
+  "workvm_id": "wvm-0123abcd",
+  "job_id": "j-0123456789ab",
+  "kind": "exec",
+  "command": "npm test",
+  "state": "running",
+  "exit_code": null,
+  "started_at": "2026-11-23T10:00:00.000Z",
+  "ended_at": null,
+  "duration_ms": 5000,
+  "output": "1 failing\n",
+  "output_bytes": 10
+}

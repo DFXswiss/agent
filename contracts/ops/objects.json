@@ -631,6 +631,118 @@
     "result_task_set_title": {
       "$ref": "../common.json#/$defs/empty"
     },
+    "workvm_id": {
+      "type": "string",
+      "description": "ID of a work VM (13-work-vm.md section 1)",
+      "pattern": "^wvm-[0-9a-f]{8}$"
+    },
+    "workvm_size": {
+      "type": "string",
+      "enum": [
+        "standard",
+        "large",
+        "xlarge"
+      ],
+      "description": "standard 4 CPU/8 GiB/50 GiB, large 8/16/100, xlarge 16/32/200 (13-work-vm.md section 2)"
+    },
+    "workvm_scope": {
+      "type": "string",
+      "enum": [
+        "task",
+        "session"
+      ],
+      "description": "task: the VM of the task, shared by its sessions; session: a VM of the requesting session only"
+    },
+    "params_workvm_request": {
+      "type": "object",
+      "properties": {
+        "size": {
+          "$ref": "#/$defs/workvm_size"
+        },
+        "scope": {
+          "$ref": "#/$defs/workvm_scope"
+        }
+      },
+      "additionalProperties": false
+    },
+    "params_workvm_release": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/workvm_scope"
+        }
+      },
+      "additionalProperties": false
+    },
+    "result_workvm_request": {
+      "type": "object",
+      "properties": {
+        "workvm_id": {
+          "$ref": "#/$defs/workvm_id"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "running"
+          ]
+        },
+        "scope": {
+          "$ref": "#/$defs/workvm_scope"
+        },
+        "size": {
+          "$ref": "#/$defs/workvm_size"
+        },
+        "cpus": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "memory_mib": {
+          "type": "integer",
+          "minimum": 512,
+          "maximum": 262144
+        },
+        "disk_gib": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "created": {
+          "type": "boolean",
+          "description": "false: the existing VM of the scope was returned"
+        },
+        "ready_ms": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "workvm_id",
+        "state",
+        "scope",
+        "size",
+        "cpus",
+        "memory_mib",
+        "disk_gib",
+        "created",
+        "ready_ms"
+      ],
+      "additionalProperties": false
+    },
+    "result_workvm_release": {
+      "type": "object",
+      "properties": {
+        "released": {
+          "type": "boolean"
+        },
+        "workvm_id": {
+          "$ref": "#/$defs/workvm_id"
+        }
+      },
+      "required": [
+        "released"
+      ],
+      "additionalProperties": false
+    },
     "result": {
       "anyOf": [
         {
@@ -662,6 +774,12 @@
         },
         {
           "$ref": "#/$defs/result_task_set_title"
+        },
+        {
+          "$ref": "#/$defs/result_workvm_request"
+        },
+        {
+          "$ref": "#/$defs/result_workvm_release"
         }
       ],
       "description": "result of any operation type"

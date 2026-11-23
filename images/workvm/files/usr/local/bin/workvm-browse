@@ -1,0 +1,47 @@
+#!/usr/bin/env node
+// Browser helper of the work VM (docs/platform/spec/13-work-vm.md section 3, tool workvm_browse; KONZEPT idea 28).
+//
+// Reads the request from the environment variable WORKVM_BROWSE (JSON: url, action read|screenshot|click|fill,
+// selector, text, wait_ms), drives the preinstalled Chromium through Playwright and prints one JSON line as its last
+// output: {final_url, status, title, text, screenshot}. A screenshot is written to /var/lib/workvm/screenshots/ and
+// brought into the session's workspace by the runner. Nothing here restricts what the page does; it is the VM's own
+// browser. For anything beyond these actions the session runs its own Playwright script.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const { chromium } = require('playwright');
+
+const TEXT_LIMIT = 24000;
+
+async function main() {
+  const request = JSON.parse(process.env.WORKVM_BROWSE || '{}');
+  const action = request.action || 'read';
+  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  const result = { final_url: '', status: null, title: '', text: '', screenshot: null };
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const response = await page.goto(request.url, { waitUntil: 'load', timeout: 60000 });
+    result.status = response ? response.status() : null;
+    if (action === 'click') await page.click(request.selector, { timeout: 15000 });
+    if (action === 'fill') await page.fill(request.selector, request.text || '', { timeout: 15000 });
+    if (request.wait_ms) await page.waitForTimeout(request.wait_ms);
+    if (action === 'screenshot') {
+      const dir = '/var/lib/workvm/screenshots';
+      fs.mkdirSync(dir, { recursive: true });
+      result.screenshot = path.join(dir, `${Date.now()}-${process.pid}.png`);
+      await page.screenshot({ path: result.screenshot, fullPage: true });
+    }
+    result.final_url = page.url();
+    result.title = await page.title();
+    const text = await page.evaluate(() => (document.body ? document.body.innerText : ''));
+    result.text = text.length > TEXT_LIMIT ? text.slice(0, TEXT_LIMIT) : text;
+  } finally {
+    await browser.close();
+  }
+  process.stdout.write(JSON.stringify(result) + '\n');
+}
+
+main().catch((error) => {
+  process.stdout.write(JSON.stringify({ error: String(error && error.message ? error.message : error).slice(0, 2000) }) + '\n');
+  process.exit(1);
+});

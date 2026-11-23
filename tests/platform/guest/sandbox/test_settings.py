@@ -22,7 +22,7 @@ FIXTURE = Path(__file__).resolve().parent / "fixtures" / "managed-settings.json"
 REPO_ROOT = Path(__file__).resolve().parents[4]
 HOOK_BASE = "http://127.0.0.1:7700/hooks/"
 
-# 03-api.md section 8.1, in table order.
+# 03-api.md section 8.1, in table order, then the work VM tools of 13-work-vm.md section 3.
 SPEC_MCP_TOOLS = [
     "get_context",
     "list_workgroups",
@@ -36,6 +36,12 @@ SPEC_MCP_TOOLS = [
     "get_operation",
     "list_operations",
     "get_subagent_result",
+    "workvm_exec",
+    "workvm_output",
+    "workvm_kill",
+    "workvm_status",
+    "workvm_sync",
+    "workvm_browse",
 ]
 # 05-runner.md section 5.2.
 SPEC_EVENTS = [

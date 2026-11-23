@@ -17,7 +17,7 @@ Interface:
 * ``State.broken``, ``State.mark_broken()``
 * ``Pending(journal, state)`` - MCP calls waiting for the runner (02 section 5 ``pending``):
   ``create(session_id, kind, body) -> pending_id`` writes the pending row and its journal record
-  (``operation.request`` or ``platform.query`` with ``pending_id`` added) in one transaction;
+  (``operation.request``, ``platform.query`` or ``workvm.call`` with ``pending_id`` added) in one transaction;
   ``answer(pending_id, answer)`` stores the runner's answer once (an identical repeat is accepted, a different one is
   ``state_conflict``); ``wait(pending_id, timeout, session_id) -> answer | None`` blocks until answered, the time
   limit or ``close()``
@@ -37,7 +37,7 @@ from agent_guest.clock import iso_ms, uuid7
 from agent_guest.journal import Journal, canonical
 
 INACTIVE_STATES = frozenset({"stopped", "failed"})
-PENDING_KINDS = {"operation": "operation.request", "query": "platform.query"}
+PENDING_KINDS = {"operation": "operation.request", "query": "platform.query", "workvm": "workvm.call"}
 
 
 class StateError(Exception):
@@ -160,7 +160,7 @@ class Pending:
         self._cond = threading.Condition()
         self._closed = False
 
-    def create(self, session_id: str, kind: Literal["operation", "query"], body: dict[str, Any]) -> str:
+    def create(self, session_id: str, kind: Literal["operation", "query", "workvm"], body: dict[str, Any]) -> str:
         session = self.state.session(session_id)
         if session is None or session.state in INACTIVE_STATES:
             raise StateError("not_found")

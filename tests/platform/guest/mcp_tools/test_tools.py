@@ -49,7 +49,8 @@ READ_TOOLS = (
 )
 WAITING_TOOLS = ("get_operation", "get_subagent_result")
 QUERY_TOOLS = READ_TOOLS + WAITING_TOOLS
-PACKAGE_TOOLS = (*QUERY_TOOLS, "request_operation")
+WORKVM_TOOLS = ("workvm_exec", "workvm_output", "workvm_kill", "workvm_status", "workvm_sync", "workvm_browse")
+PACKAGE_TOOLS = (*QUERY_TOOLS, "request_operation", *WORKVM_TOOLS)
 IDENTITY = {"get_task": ("task_id", "id"), "get_operation": ("operation_id",), "get_subagent_result": ("session_id",)}
 CHILD_ID = "01a1ee56-5e00-7028-8f1b-340691d99f28"
 TASK_ID = "01a1ee56-5e00-7003-8f1b-340691d99f12"

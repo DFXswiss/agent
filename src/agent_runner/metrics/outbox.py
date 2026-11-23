@@ -9,6 +9,8 @@
   free VM memory budget from the capacity.
 - vm: CPU (guest delta or VZ `%cpu`), host RSS / configured memory, disk file blocks / disk size, hostagent bytes,
   VZ elapsed time; `reachable` = the guest answered; `state` = the VM state.
+- workvm (KOR-29): like a VM, plus `session_id` (the session the work VM belongs to); `uptime_seconds` is the runtime
+  since the work VM was created; `reachable` true, `state` the work VM state.
 - session: cgroup CPU delta, `memory.current` / `memory.max`, workspace bytes (no limit), model response / request
   bytes as received / sent, seconds since created; `reachable` = the guest reported it; `state` = the session state.
 
@@ -123,6 +125,24 @@ def samples_of(snapshot: Snapshot, device_id: str, sessions: Iterable[SessionEnt
                 uptime_seconds=vm.uptime_seconds,
                 reachable=vm.probe_ok is True,
                 state=vm.state,
+            )
+        )
+    for entry in snapshot.workvms:
+        found.append(
+            _sample(
+                "workvm",
+                entry.workvm_id,
+                ts,
+                session_id=entry.session_id,
+                cpu_ratio=entry.cpu_ratio,
+                mem_used_bytes=entry.memory_bytes,
+                mem_limit_bytes=entry.memory_limit_bytes,
+                disk_used_bytes=entry.disk_used_bytes,
+                disk_limit_bytes=entry.disk_limit_bytes,
+                net_rx_bytes=entry.net_rx_bytes,
+                net_tx_bytes=entry.net_tx_bytes,
+                uptime_seconds=entry.uptime_seconds,
+                state=entry.state,
             )
         )
     found.extend(_session(entry, ts) for entry in sessions)

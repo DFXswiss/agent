@@ -122,7 +122,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 
 | Endpoint | Right | Request → Response |
 |---|---|---|
-| `GET /v1/workgroups/{wg}` | wg:read | → `{wg_id,org_id,is_default,epoch,devices:[{device_id,kind,online,capacity}],members:[{user_id,access}]}` |
+| `GET /v1/workgroups/{wg}` | wg:read | → `{wg_id,org_id,is_default,epoch,devices:[{device_id,kind,online,capacity}],members:[{user_id,access}]}` – `members` and `my_access` (of `GET /v1/orgs/{org}`) carry the effective access, so every admin appears with `read` unless it has explicit access (ADR-058); no marker, a client derives the source from the verified log |
 | `GET /v1/workgroups/{wg}/device-candidates` | wg:write | → platform devices `{device_id,platform_seq,pub,online,capacity}` ordered by free capacity (§4.6.2) |
 | `GET /v1/orgs/{org}/devices` | org:member | → devices of the org and platform devices assigned to its workgroups: `{device_id,kind,state,online,last_seen_at,agent_version,capacity,assigned_wgs}` |
 
@@ -217,7 +217,7 @@ level (org level: org members; wg/task level: wg readers) except the author; eac
 an SSE frame. Active sessions in scope (org level: all non-stopped sessions of the org; wg level: of the wg;
 task level: of the task) get a content-free ping through their device (`ping` hint, §6.2).
 
-Other notification rules: `task.idle` to the task owner when the main session goes `working → idle` after at least 10 s of `working`; `task.failed` to the owner when the task becomes `failed`; `invite.accepted` to the inviting admin; `rotation.required` to all admins of an org with `rotation_pending`.
+Other notification rules: `task.idle` to the task owner when the main session goes `working → idle` after at least 10 s of `working`; `task.failed` to the owner when the task becomes `failed`; `invite.accepted` to the inviting admin. `rotation.required` is no longer created (KOR-34, ADR-058: owed rotations run silently in the admins' browsers); existing rows stay valid and render neutrally.
 
 ### 4.10 Device requests
 

@@ -1,0 +1,13 @@
+{
+  "command": "make",
+  "cwd": "/workspace/repos/o/r",
+  "env": [
+    {
+      "name": "CI",
+      "value": "1"
+    }
+  ],
+  "timeout_seconds": 600,
+  "wait_seconds": 0,
+  "sync": "none"
+}

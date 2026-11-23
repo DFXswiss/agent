@@ -13,6 +13,12 @@ A sub-package, so the tool registry (``registry.modules`` lists plain modules on
 * ``ask(call, kind, body, wait)`` - create the pending call and wait for the answer (``None``: none in time)
 * ``outcome(call, answer, **identity)`` - the checked result of an answer: an error answer is passed on, a result
   that does not match ``mcp/tools/<tool>.output.json`` or names another object than asked for is ``unavailable``
+* ``workvm_tool(name, description)`` - a work VM tool (13-work-vm.md §3, KOR-29): the call becomes the pending kind
+  ``workvm`` (journal ``workvm.call {pending_id, tool, arguments}``, no read audit); the guest waits the call's
+  ``wait_seconds`` (default ``WORKVM_WAIT_SECONDS``, 30) plus ``WORKVM_MARGIN_SECONDS`` (5 s), at most
+  ``MAX_WAIT_SECONDS``; the tools without ``wait_seconds`` (``workvm_kill``, ``workvm_status``, ``workvm_sync``,
+  ``workvm_browse``) so wait ``MAX_WAIT_SECONDS``. No answer in time is the tool error ``timeout``
+  (``WorkvmNoAnswer``, which points the session to ``workvm_status``: the command or sync may still be running)
 * ``storable(value)`` - no NUL character or lone surrogate in any string (keys included) and at most ``MAX_DEPTH``
   levels of nesting: the runner's rule for journal records (``agent_runner.operations.journal.storable``, PostgreSQL
   ``jsonb``), which skips any other record without an answer. ``read`` and ``forward`` (so ``ask`` and every read)
@@ -33,6 +39,8 @@ from agent_guest.mcp import Tool, ToolCall, ToolError, ToolRefused, forward_quer
 
 READ_WAIT_SECONDS = 10.0
 MAX_WAIT_SECONDS = 33.0
+WORKVM_WAIT_SECONDS = 30
+WORKVM_MARGIN_SECONDS = 5.0
 MAX_DEPTH = 64
 _UNSTORABLE_RE = re.compile("[\\x00\\ud800-\\udfff]")
 
@@ -111,3 +119,26 @@ def checked_read(call: ToolCall, wait: float, **identity: str) -> Any:
 def waiting_read(call: ToolCall, **identity: str) -> Any:
     wait = min(READ_WAIT_SECONDS + call.arguments.get("wait_seconds", 0), MAX_WAIT_SECONDS)
     return checked_read(call, wait, **identity)
+
+
+class WorkvmNoAnswer(ToolError):
+    """The runner did not answer a work VM call in time (tool error ``timeout``); the work may still go on."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "timeout",
+            "The work VM did not answer in time; the command or sync may still be running. Check workvm_status, "
+            "then continue with workvm_output for a running job.",
+        )
+
+
+def workvm(call: ToolCall) -> Any:
+    wait = min(WORKVM_MARGIN_SECONDS + call.arguments.get("wait_seconds", WORKVM_WAIT_SECONDS), MAX_WAIT_SECONDS)
+    answer = ask(call, "workvm", {"tool": call.tool, "arguments": call.arguments}, wait)
+    if answer is None:
+        raise WorkvmNoAnswer
+    return outcome(call, answer)
+
+
+def workvm_tool(name: str, description: str) -> Tool:
+    return Tool(name=name, description=description, handler=workvm)

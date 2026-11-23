@@ -1,0 +1,8 @@
+{
+  "url": "http://127.0.0.1:8080/login",
+  "action": "fill",
+  "selector": "#name",
+  "text": "x",
+  "wait_ms": 500,
+  "path": "shots/login.png"
+}

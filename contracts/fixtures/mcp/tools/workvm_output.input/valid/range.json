@@ -1,0 +1,6 @@
+{
+  "job_id": "j-0123456789ab",
+  "offset": 100,
+  "limit": 4096,
+  "wait_seconds": 10
+}

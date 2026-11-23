@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/event.py at 0346281bb510.
+"""Copied from agent-core src/agent_hub/crypto/event.py at 99578e6bf451.
 
 Events (04-crypto.md section 4.3, checks E1, E2, E4 and E8 of section 6.4).
 

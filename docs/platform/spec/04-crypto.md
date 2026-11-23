@@ -43,8 +43,8 @@ in `agent-core` (uses `agent_hub.crypto`); `contracts/` is owned by `agent-core`
 | Hub response key | Ed25519 seed | operator | hub env `AGENT_HUB_SIGNING_KEY` | yes (it is the hub's own key) |
 | Agent key **(new, ADR-056)** | X25519 `kem` + Ed25519 `sig` | agent tool on the user's computer | `$AGENT_PLATFORM_HOME/agent.key` (0600) | public keys; the user's identity sealed to it (needs the handover secret, `11-agent-access.md` §3) |
 | Org key `OK_e` | 32 B, epoch e | admin browser (genesis/rotate) | org members (users), devices assigned to any wg of the org **(changed: devices receive OK, ADR-007)** | wraps only |
-| Workgroup key `WK_e` | 32 B, epoch e | admin/writer browser | wg members, devices assigned to the wg | wraps only |
-| Credential key `CK_e` (per user) | 32 B, epoch e | user browser | the user, devices assigned to any wg in which the user is a member | wraps only |
+| Workgroup key `WK_e` | 32 B, epoch e | admin/writer browser | wg members, **every org admin** (inherited read, ADR-058), devices assigned to the wg | wraps only |
+| Credential key `CK_e` (per user) | 32 B, epoch e | user browser | the user, devices assigned to any wg in which the user is an explicit member (not through the inherited read of an admin, ADR-058) | wraps only |
 | Invitation code | 16 B | inviting browser / operator CLI | invitee (out of band) | only `invite_id`, `pk_inv`, sealed package |
 | Per-event key `k_event` | 32 B | HKDF per event | transient | never |
 | Dedupe key `dk_e` | 32 B | HKDF from `WK_e` | runner | never; tags only |
@@ -189,8 +189,8 @@ Entry hash = `b64u(SHA-256(canonical(entry)))` (whole entry including signatures
 | `invite` | `invite_id`, `pk_inv`, `kind` user\|device, `role` admin\|member (user), `wgs{wg: read\|write}` (user) or `wgs{wg:"device"}` (device), `expires` | admin |
 | `invite_revoke` | `invite_id` | admin |
 | `accept` | `invite_id`, `subject`, `kind`, `pub{kem,sig}` | invitee; invite present, not revoked, not expired at hub receipt, not yet accepted; `inv_sig` valid under `pk_inv`; `sig` valid under `pub.sig`; subject not currently a member (former members may rejoin); for user invitations `subject` equals the invitation's `registered_user` at the hub, or – for an existing user (§5.2a) – the signed-in user, and `pub` equals that user's registered identity |
-| `role` | `subject`, `role` | admin; at least one admin must remain |
-| `wg_create` | `wg`, `epoch` (=1) | admin; the creating admin implicitly gets `write` on the new workgroup; the batch MUST contain `wg_create`, the `grant` entries for the chosen members and the wraps of `WK_1` for all recipients |
+| `role` | `subject`, `role` | admin; at least one admin must remain; an admin that demotes itself owes its R like a leaver (`pending`, ADR-058) |
+| `wg_create` | `wg`, `epoch` (=1) | admin; the creating admin implicitly gets `write` on the new workgroup; the batch MUST contain `wg_create`, the `grant` entries for the chosen members and the wraps of `WK_1` for all recipients (every admin among them) |
 | `wg_archive` | `wg` | admin; not the default workgroup |
 | `grant` | `subject` (user), `wg`, `access` read\|write | admin |
 | `ungrant` | `subject`, `wg` | admin; not for the default workgroup (leave org instead) |
@@ -200,18 +200,25 @@ Entry hash = `b64u(SHA-256(canonical(entry)))` (whole entry including signatures
 | `rotate` | `scope` org\|wg, `scope_id`, `epoch` (= current + 1) | org: admin; wg: admin or wg writer |
 
 Derived rights: org member ⇒ read on org scope and **write on the default workgroup** (not reducible in v1);
-admin ⇒ org write (management, org whiteboard, profiles). Being admin does **not** imply access to other
-workgroups; an admin grants itself access with a visible `grant` entry. Workgroup access from `genesis` (founder: write on default wg),
-`invite.wgs` (applied at `accept`), `grant`/`ungrant`. Devices: assigned workgroups from `invite.wgs`
-(at `accept`) and `device_assign`/`device_unassign`.
+admin ⇒ org write (management, org whiteboard, profiles) **and read on every workgroup of the org** (inherited read,
+concept idea 30, ADR-058; archived workgroups included). Explicit workgroup access from `genesis` (founder: write on
+default wg), `invite.wgs` (applied at `accept`), `grant`/`ungrant`. The effective access of a user is the explicit
+access if there is one, else `read` for an active admin; writing a workgroup always needs explicit `write` (an admin
+grants itself `write` with a visible `grant` entry). The `cred` scope uses the explicit access only. Devices: assigned
+workgroups from `invite.wgs` (at `accept`) and `device_assign`/`device_unassign`.
 
 **Rotation obligation (new):** the required rotate set is the function
-`R(state_before, state_after, subject)` = { (`wg`, w) | subject could read workgroup w before and cannot after }
+`R(state_before, state_after, subject)` = { (`wg`, w) | subject could read workgroup w before and cannot after,
+including the inherited read of an admin, so a demotion `role` → member owes the workgroups the subject read only as
+admin }
 ∪ { (`org`, org) | subject could read the org scope before and cannot after (a removed user; a device left without
 any assigned workgroup in the org) }. The `cred` scope is never in R: when a device loses eligibility for a user's
-`CK`, that user's browser rotates `CK` (§5.10). After `remove`, `ungrant` or `device_unassign` the appending client
+`CK`, that user's browser rotates `CK` (§5.10). After `remove`, `ungrant`, `device_unassign` or a demotion the appending client
 MUST send the triggering entries, exactly one `rotate` entry per element of R and all new wraps in **one atomic
-batch** (`03-api.md` §4.3); the hub computes R itself and refuses any other batch with `rotation_required`.
+batch** (`03-api.md` §4.3); the hub computes R itself and refuses any other batch with `rotation_required`. Exception:
+a member that leaves (`remove` with `subject == by`) or an admin that demotes itself (`role` with `subject == by`)
+cannot rotate what it no longer reads; its R becomes `pending` and the remaining admins or writers rotate in the
+background (`06-web.md` §11 job 4).
 Platform decertification: the hub marks the org `rotation_pending`; the next admin browser performs the batch
 `device_unassign` for every workgroup of that device in the org + R; until then the hub refuses the decertified
 device anyway. Vectors for R (every entry type, edge cases) are part of `contracts/vectors/`.
@@ -379,7 +386,13 @@ device then stores OK/WK from the package and requests wraps for later epochs vi
 
 ### 5.10 Grant, remove, unpair, rotate
 
-- Grant: `grant` + wraps of the current `WK` (and on request older epochs) for the subject.
+- Grant: `grant` + wraps of the current `WK` (and on request older epochs) for the subject; a granting admin that does
+  not hold the key yet sends the `grant` alone and the key holders deliver by catch-up (§5.11).
+- Admin appointment (`role` → admin): the appointing browser wraps every epoch it holds of every workgroup the new
+  admin reads by inheritance in the same batch. An admin invitation's package is unchanged (default workgroup and the
+  invited workgroups only, so an intercepted code reveals no more keys); the other keys follow after `accept`.
+  Everything else arrives by catch-up (§5.11); until then the workgroup shows "being unlocked"
+  (`06-web.md` §7.2, ADR-058).
 - Remove/ungrant/unassign: atomic batch `remove|ungrant|device_unassign` + one `rotate` per element of R (§4.7) +
   wraps of the new epochs for every remaining recipient. The hub refuses the removed principal immediately.
   Already read content stays with the removed principal (documented).
@@ -390,7 +403,9 @@ device then stores OK/WK from the package and requests wraps for later epochs vi
 
 Any key holder (admin/member browser or device) periodically (on every sync) computes, from the verified log,
 recipients that are entitled to a scope epoch but have no wrap, and uploads wraps it is allowed to create (§6.3).
-This is what gives new members later epochs and new devices the keys without the inviter being online.
+This is what gives new members later epochs and new devices the keys without the inviter being online, and every
+admin the keys of the workgroups it reads by inheritance – for existing workgroups and existing admins too, without
+anybody doing anything (ADR-058). The hub sees only the HPKE ciphertext.
 
 ### 5.12 Writing and reading events
 
@@ -429,8 +444,10 @@ P1–P4 analogous to L1–L4 with the compiled root key; certifications are vali
 ### 6.3 Wrap rules
 
 W1 a principal may wrap a scope epoch for itself if it holds the key. W2 a holder may wrap for any principal
-that the verified log entitles to that scope at that epoch (members of the scope; devices assigned; for `cred`
-scope: the owner and devices assigned to any workgroup in which the owner is a member). W3 the hub stores a
+that the verified log entitles to that scope at that epoch (members of the scope, every org admin for a `wg` scope;
+devices assigned; for `cred` scope: the owner and devices assigned to any workgroup in which the owner is an explicit
+member). Holders are the creator of the epoch and every principal that could read the scope while the epoch was
+current (so an admin holds what it read by inheritance). W3 the hub stores a
 wrap only if W1/W2 hold for `wrapped_by` according to its own log state; recipients re-check W1/W2 and ignore
 wraps that violate them (`wrap_unauthorized`).
 
@@ -481,7 +498,7 @@ Log: `seq_conflict`, `log_empty`, `log_chain`, `log_genesis`, `log_accept`, `log
 | Active hub: inject member, swap keys, forge wraps, forge events | Clients verify log against founder key; `inv_sig` binds invitee keys to the code; wrap info binds recipient/epoch/scope; wraps and events signed | Withholding data; serving an old log (L9 detects rollback per client; cross-client fork detection via `lh`); serving another recovery slot makes the settings show "a code exists" (ADR-055) |
 | Hub serves malicious JavaScript | strict CSP without inline script, SRI for all assets including lazily loaded chunks (`06-web.md` §10.2), reproducible build with published hashes (`06-web.md` §10), root key compiled into the build | Not fully solvable for web E2EE; documented in the UI's "Security" page |
 | Intercepted invitation code | single use, expiry, revocation, accept visible in the log and the member list | First user of the code wins; channel must be confidential |
-| Removed member / unpaired device | atomic rotation batch, immediate refusal at the hub | Content already read |
+| Removed member / unpaired device / demoted admin | atomic rotation batch (self-demotion and leaving: background rotation by the remaining admins), immediate refusal at the hub | Content already read |
 | Stolen phone or laptop | UV required on every ceremony; session key non-extractable; 12 h certificates; passkey removal | Unlocked open session until expiry or sign-out |
 | XSS | CSP, no inline script, keys non-extractable after import | XSS can use keys while the page is open |
 | Compromised Claude Code session | Two sandbox layers (`05-runner.md` §4); no credentials, keys or network in the sandbox | Session can corrupt its own workspace and produce misleading output |

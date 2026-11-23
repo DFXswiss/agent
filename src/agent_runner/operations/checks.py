@@ -68,6 +68,10 @@ BOOL: Rule = lambda value: isinstance(value, bool)  # noqa: E731
 MODEL: Rule = lambda value: isinstance(value, str) and _MODEL_ID_RE.fullmatch(value) is not None  # noqa: E731
 
 
+def _one_of(*values: str) -> Rule:
+    return lambda value: isinstance(value, str) and value in values
+
+
 @dataclass(frozen=True)
 class TypeRules:
     fields: Mapping[str, Rule]
@@ -113,6 +117,11 @@ TYPES: Mapping[str, TypeRules] = {
         ("purpose", "prompt"),
     ),
     "task.set_title": TypeRules({"title": rules.title_valid}, ("title",)),
+    # docs/platform/spec/13-work-vm.md section 2 (ADR-059)
+    "workvm.request": TypeRules(
+        {"size": _one_of("standard", "large", "xlarge"), "scope": _one_of("task", "session")}, ()
+    ),
+    "workvm.release": TypeRules({"scope": _one_of("task", "session")}, ()),
 }
 """Parameter rules per type (`contracts/ops/<type>.params.json`; a test compares the key sets with the contracts)."""
 

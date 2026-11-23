@@ -135,11 +135,11 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 
 | ID | Ref | Requirement | Decision / interpretation | Comp | Spec | Tests |
 |---|---|---|---|---|---|---|
-| R-8.1 | [§8 b1](../KONZEPT.md#k-8-b1) | Persons can be added at organization level. | Org invitation with role. | WEB, HUB | 04 §5.7 | E2E-02, E2E-18 |
+| R-8.1 | [§8 b1](../KONZEPT.md#k-8-b1) | Persons can be added at organization level. | Org invitation with role. | WEB, HUB | 04 §5.7 | E2E-02, E2E-18, E2E-45 |
 | R-8.2 | [§8 b1](../KONZEPT.md#k-8-b1) | Persons can be added at workgroup level. | `grant` for existing members; invitation with `wgs` for new persons. | WEB, HUB | 04 §4.7 | E2E-18  (step: `grant` of an existing member at workgroup level) |
 | R-8.3 | [§8 b2](../KONZEPT.md#k-8-b2) | Organization: member = read, admin = write; default for new members: read. | | HUB, WEB | 04 §4.7 | E2E-02 (default role member = read), E2E-18 |
 | R-8.4 | [§8 b3](../KONZEPT.md#k-8-b3) | Workgroup: read or write; in the default workgroup all members have write by default. | Decided: the default-workgroup write right is not reducible in v1 (ADR-024 addendum). | HUB, WEB | 04 §4.7 | E2E-18, E2E-02 |
-| R-8.5 | [§8 b4](../KONZEPT.md#k-8-b4) | Access rights enforced technically in the backend. | Hub checks every request; direct API calls in tests. | HUB | 03 §3 | E2E-18, U-HUB-rights |
+| R-8.5 | [§8 b4](../KONZEPT.md#k-8-b4) | Access rights enforced technically in the backend. | Hub checks every request; direct API calls in tests. | HUB | 03 §3 | E2E-18, U-HUB-rights, E2E-45 |
 | R-8.6 | [§8 b4](../KONZEPT.md#k-8-b4) | … and in the user interface. | Controls hidden/disabled; readers verify author rights. | WEB | 06 | E2E-18 |
 | R-8.7 | [§8 b5](../KONZEPT.md#k-8-b5) | Sessions may read and discover via platform APIs everything they are authorised for: members, workgroups, tasks, status, whiteboards. | MCP read tools; rights of the task owner. ADR-024. | GST, RUN | 03 §8.1 | E2E-19 |
 | R-8.8 | [§8 b5](../KONZEPT.md#k-8-b5) | No blanket insight into foreign workgroups. | Other workgroups: names only. | GST, RUN | 03 §8.1 | E2E-19 |

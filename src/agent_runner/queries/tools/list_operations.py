@@ -38,6 +38,7 @@ ERROR_CODES = frozenset(
         "model_not_allowed",
         "tree_mismatch",
         "no_changes",
+        "workvm_unavailable",
     }
 )
 """`contracts/enums/operation-error-codes.json` (a test compares them)."""

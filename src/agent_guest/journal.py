@@ -58,6 +58,7 @@ KINDS = (
     "usage",
     "operation.request",
     "platform.query",
+    "workvm.call",
     "ping.delivered",
     "platform.read",
     "platform.refused",

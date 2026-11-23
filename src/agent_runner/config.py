@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 from urllib.parse import urlsplit
 
 from agent_runner.encoding import b64u_decode
@@ -60,6 +60,18 @@ NAMES = (
     "OPERATOR_SUBSCRIPTION_ORGS",
     "OPERATOR_GITHUB_TOKEN_FILE",
     "OPERATOR_GITHUB_USERS",
+    # Work VMs (docs/platform/spec/13-work-vm.md, ADR-059)
+    "WORKVM_SLOTS",
+    "WORKVM_SLOTS_SELF",
+    "WORKVM_MAX_SIZE",
+    "WORKVM_IDLE_SECONDS",
+    "WORKVM_POOL_SIZE",
+    "WORKVM_QUEUE_SECONDS",
+    "WORKVM_MAX_PER_TASK",
+    "WORKVM_MAX_PER_ORG",
+    "WORKVM_MAX_PER_OWNER",
+    "WORKVM_SSH_PORT_BASE",
+    "WORKVM_TEMPLATE",
 )
 # Required for the daemon (`run`, `service install`); commands that never talk to the hub load without them.
 HUB_NAMES = frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"})
@@ -73,7 +85,16 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "MEMORY_RESERVE_MIB": (32768, 0, 4_194_304),
     "SESSION_IDLE_SECONDS": (1800, 60, 604_800),
     "VM_IDLE_SECONDS": (1800, 60, 604_800),
+    "WORKVM_SLOTS": (0, 0, 100),
+    "WORKVM_IDLE_SECONDS": (1800, 60, 604_800),
+    "WORKVM_POOL_SIZE": (1, 0, 16),
+    "WORKVM_QUEUE_SECONDS": (900, 0, 86_400),
+    "WORKVM_MAX_PER_TASK": (4, 1, 100),
+    "WORKVM_MAX_PER_ORG": (16, 1, 100),
+    "WORKVM_MAX_PER_OWNER": (8, 1, 100),
+    "WORKVM_SSH_PORT_BASE": (47200, 1024, 65_435),
 }
+WORKVM_SIZES = ("standard", "large", "xlarge")
 _URL_DEFAULTS = {
     "GITHUB_API_URL": "https://api.github.com",
     "GITHUB_WEB_URL": "https://github.com",
@@ -141,6 +162,18 @@ class Config:
     @property
     def tmp_dir(self) -> Path:
         return self.home / "tmp"
+
+    workvm_slots: int = 0
+    workvm_slots_self: bool = False
+    workvm_max_size: str = "large"
+    workvm_idle_seconds: int = 1800
+    workvm_pool_size: int = 1
+    workvm_queue_seconds: int = 900
+    workvm_max_per_task: int = 4
+    workvm_max_per_org: int = 16
+    workvm_max_per_owner: int = 8
+    workvm_ssh_port_base: int = 47200
+    workvm_template: Path | None = None
 
 
 def check_platform(platform: str) -> None:
@@ -216,7 +249,50 @@ def load_config(
         operator_subscription_orgs=operator_orgs,
         operator_github_token_file=github_file,
         operator_github_users=github_users,
+        **_workvm(raw, require, integers, test_mode),
     )
+
+
+class _WorkVmSettings(TypedDict):
+    workvm_slots: int
+    workvm_slots_self: bool
+    workvm_max_size: str
+    workvm_idle_seconds: int
+    workvm_pool_size: int
+    workvm_queue_seconds: int
+    workvm_max_per_task: int
+    workvm_max_per_org: int
+    workvm_max_per_owner: int
+    workvm_ssh_port_base: int
+    workvm_template: Path | None
+
+
+def _workvm(
+    raw: Callable[[str], str], require: frozenset[str], integers: Mapping[str, int], test_mode: bool
+) -> _WorkVmSettings:
+    """The work VM settings (spec 11 sections 6 and 7). `WORKVM_SLOTS_SELF` (every slot is the runner's own account,
+    no host filter) exists only in `TEST_MODE`;
+    egress goes through the device's own Cloudflare client (section 6.3), so there is no egress setting."""
+    slots_self = _flag(raw("WORKVM_SLOTS_SELF"), "WORKVM_SLOTS_SELF")
+    if slots_self and not test_mode:
+        raise RunnerError("config_invalid", "WORKVM_SLOTS_SELF")
+    max_size = raw("WORKVM_MAX_SIZE") or "large"
+    if max_size not in WORKVM_SIZES:
+        raise RunnerError("config_invalid", "WORKVM_MAX_SIZE")
+    template = _optional(raw("WORKVM_TEMPLATE"), "WORKVM_TEMPLATE", require, lambda v: _file(v, "WORKVM_TEMPLATE"))
+    return {
+        "workvm_slots": integers["WORKVM_SLOTS"],
+        "workvm_slots_self": slots_self,
+        "workvm_max_size": max_size,
+        "workvm_idle_seconds": integers["WORKVM_IDLE_SECONDS"],
+        "workvm_pool_size": integers["WORKVM_POOL_SIZE"],
+        "workvm_queue_seconds": integers["WORKVM_QUEUE_SECONDS"],
+        "workvm_max_per_task": integers["WORKVM_MAX_PER_TASK"],
+        "workvm_max_per_org": integers["WORKVM_MAX_PER_ORG"],
+        "workvm_max_per_owner": integers["WORKVM_MAX_PER_OWNER"],
+        "workvm_ssh_port_base": integers["WORKVM_SSH_PORT_BASE"],
+        "workvm_template": template,
+    }
 
 
 def environment(config: Config) -> dict[str, str]:
@@ -239,6 +315,8 @@ def environment(config: Config) -> dict[str, str]:
         "OPERATOR_SUBSCRIPTION_ORGS": ",".join(sorted(config.operator_subscription_orgs)) or None,
         "OPERATOR_GITHUB_TOKEN_FILE": config.operator_github_token_file,
         "OPERATOR_GITHUB_USERS": ",".join(sorted(config.operator_github_users)) or None,
+        "WORKVM_MAX_SIZE": None if config.workvm_max_size == "large" else config.workvm_max_size,
+        "WORKVM_TEMPLATE": config.workvm_template,
     }
     for name, value in optional_text.items():
         if value is not None:
@@ -257,6 +335,8 @@ def environment(config: Config) -> dict[str, str]:
         out[PREFIX + "LOGIN_AUTOMATION"] = "on" if config.login_automation else "off"
     if config.test_mode:
         out[PREFIX + "TEST_MODE"] = "1"
+    if config.workvm_slots_self:
+        out[PREFIX + "WORKVM_SLOTS_SELF"] = "1"
     return out
 
 

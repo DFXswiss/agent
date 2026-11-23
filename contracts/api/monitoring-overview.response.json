@@ -162,6 +162,62 @@
       },
       "minItems": 0,
       "maxItems": 10000
+    },
+    "workvms": {
+      "type": "array",
+      "description": "work VMs of the readable sessions sampled within the last 15 minutes (13-work-vm.md section 10, KOR-29); an older hub omits the list",
+      "items": {
+        "type": "object",
+        "properties": {
+          "workvm_id": {
+            "$ref": "../common.json#/$defs/workvm_id"
+          },
+          "device_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "session_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "task_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "wg_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "state": {
+            "type": "string",
+            "pattern": "^[a-z_]{1,32}$",
+            "description": "state of the newest sample"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "objects.json#/$defs/metric_sample"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "true when latest is null or more than 60 s older than the hub clock (08-monitoring.md section 6; added by HUB-16)"
+          }
+        },
+        "required": [
+          "workvm_id",
+          "device_id",
+          "session_id",
+          "task_id",
+          "wg_id",
+          "state",
+          "latest",
+          "stale"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 10000
     }
   },
   "required": [

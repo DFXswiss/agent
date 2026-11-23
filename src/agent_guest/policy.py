@@ -58,6 +58,12 @@ PLATFORM_TOOLS = frozenset(
         "get_operation",
         "list_operations",
         "get_subagent_result",
+        "workvm_exec",
+        "workvm_output",
+        "workvm_kill",
+        "workvm_status",
+        "workvm_sync",
+        "workvm_browse",
     }
 )
 FILE_TOOLS = frozenset({"Read", "Glob", "Grep", "Edit", "Write"})

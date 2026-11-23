@@ -353,7 +353,13 @@
       "mcp__platform__request_operation",
       "mcp__platform__get_operation",
       "mcp__platform__list_operations",
-      "mcp__platform__get_subagent_result"
+      "mcp__platform__get_subagent_result",
+      "mcp__platform__workvm_exec",
+      "mcp__platform__workvm_output",
+      "mcp__platform__workvm_kill",
+      "mcp__platform__workvm_status",
+      "mcp__platform__workvm_sync",
+      "mcp__platform__workvm_browse"
     ],
     "defaultMode": "dontAsk",
     "deny": [

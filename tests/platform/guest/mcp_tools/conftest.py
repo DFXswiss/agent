@@ -1,6 +1,6 @@
 """Fixtures of the platform tool suite (GST-07): contract fixtures of every tool, the MCP client of GST-04's suite, a
-second session and a fake runner that answers ``platform.query`` and ``operation.request`` records through the control
-socket as RUN-07/RUN-08/RUN-11 will (``POST /v1/pending/{id}/answer``).
+second session and a fake runner that answers ``platform.query``, ``operation.request`` and ``workvm.call`` records
+through the control socket as RUN-07/RUN-08/RUN-11 will (``POST /v1/pending/{id}/answer``).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from tests.platform.guest.mcp.conftest import McpClient
 
 OTHER_SESSION_ID = "01a1ee56-5e00-7003-8f1b-340691d99f04"
 OTHER_SESSION_TOKEN = "b3RoZXItc2Vzc2lvbi10b2tlbi1mb3ItdGVzdHMtMDAx"
-FORWARDED_KINDS = ("platform.query", "operation.request")
+FORWARDED_KINDS = ("platform.query", "operation.request", "workvm.call")
 
 Answer = Callable[[str, dict[str, Any], str], dict[str, Any] | None]
 
@@ -47,7 +47,7 @@ def other_session(context: ControlContext) -> Session:
 
 
 def forwarded(context: ControlContext) -> list[dict[str, Any]]:
-    """Every ``platform.query``/``operation.request`` record of the journal (``kind``, ``session_id``, ``body``)."""
+    """Every forwarded record of the journal (``FORWARDED_KINDS``: ``kind``, ``session_id``, ``body``)."""
     records, _ = context.journal.read(0, 1000)
     return [
         {"kind": record["kind"], "session_id": record["session_id"], "body": record["body"]}

@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/ids.py at 0346281bb510.
+"""Copied from agent-core src/agent_hub/crypto/ids.py at 99578e6bf451.
 
 UUIDv7 identifiers (04-crypto.md section 1, RFC 9562): lowercase text with dashes, made by the object creator."""
 

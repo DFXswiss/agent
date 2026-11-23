@@ -4,7 +4,8 @@
 
 1. collects device values, `limactl list --json`, the host side of every running instance and the guest's
    `GET /v1/metrics` of every VM in `pool`/`assigning`/`running` (concurrently, each probe bounded by its timeout),
-   the capacity (05 section 3.4), the local sessions and the sync state (WebSocket open, `sync_fatal`, backlog);
+   the capacity (05 section 3.4), the local sessions, the sync state (WebSocket open, `sync_fatal`, backlog) and the
+   work VMs (KOR-29, `agent_runner.metrics.workvm`);
 2. builds one entry per entity (`Snapshot`);
 3. writes sink A (textfile, only with `AGENT_RUNNER_TEXTFILE_DIR`) and sink B (outbox, only when enrolled).
 
@@ -23,7 +24,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from agent_runner.metrics import counters, device, outbox, textfile, vm
+from agent_runner.metrics import counters, device, outbox, textfile, vm, workvm
 from agent_runner.metrics.parsers import GuestMetrics
 from agent_runner.metrics.probes import Tools
 from agent_runner.metrics.session import SessionEntry, SessionTracker, session_rows
@@ -160,7 +161,8 @@ class Sampler:
             held=int(held[0]),
             held_scopes=int(held[1]),
         )
-        return Snapshot(wall=wall, at=at, device=summary, vms=vms, sessions=tuple(entries))
+        workvms = await workvm.entries(context, self.tools, at, self.line)
+        return Snapshot(wall=wall, at=at, device=summary, vms=vms, sessions=tuple(entries), workvms=workvms)
 
     def hub_sessions(self, entries: tuple[SessionEntry, ...]) -> list[SessionEntry]:
         """Sessions for the hub: running ones every round, an ended one once (its final values)."""

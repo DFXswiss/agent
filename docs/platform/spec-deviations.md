@@ -6,6 +6,12 @@ State: integration branches of 2026-11-22 (agent `a8ffee50`, agent-core `524c716
 
 Repository prefixes: `agent:` (runner, guest, doubles, images) and `agent-core:` (hub, web, contracts, E2E) precede paths. Decision references read `agent: decisions/RUN-01.md #20`, meaning item 20 of `docs/platform/decisions/RUN-01.md` in that repository. ADRs exist in both repositories and are cited by number only.
 
+## KONZEPT – decisions of the client
+
+| § | As built | Source | Handling |
+|---|---|---|---|
+| KONZEPT §10 (no execution by the session), §14.2 | Decision of the client of 2026-11-23 ("maximale Produktivität"): a session requests its own isolated Ubuntu work VM through `workvm.request` and may do anything inside it (root, internet, services, browser); inside the session sandbox nothing runs, as before. The VM is tight towards the device, other VMs and the internal network and holds no credential (spec `13-work-vm.md`, threat model `security/work-vm-threat-model.md`). | ADR-059; decisions/KOR-29.md | deviation |
+
 ## 00 Overview
 
 | § | As built | Source | Handling |

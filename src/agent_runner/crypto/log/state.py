@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/state.py at 0346281bb510.
+"""Copied from agent-core src/agent_hub/log/state.py at 99578e6bf451.
 
 The rights state of one organization as derived from its verified membership log (04-crypto.md section 4.7).
 

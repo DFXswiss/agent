@@ -1270,6 +1270,24 @@
         },
         {
           "$ref": "#/$defs/output_get_subagent_result"
+        },
+        {
+          "$ref": "#/$defs/output_workvm_exec"
+        },
+        {
+          "$ref": "#/$defs/output_workvm_output"
+        },
+        {
+          "$ref": "#/$defs/output_workvm_kill"
+        },
+        {
+          "$ref": "#/$defs/output_workvm_status"
+        },
+        {
+          "$ref": "#/$defs/output_workvm_sync"
+        },
+        {
+          "$ref": "#/$defs/output_workvm_browse"
         }
       ],
       "description": "output of any platform tool"
@@ -1368,6 +1386,619 @@
         }
       ],
       "description": "JSON-RPC id"
+    },
+    "workvm_job_id": {
+      "type": "string",
+      "pattern": "^j-[0-9a-f]{12}$",
+      "description": "ID of a job in the work VM"
+    },
+    "input_workvm_exec": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536,
+          "description": "run as /bin/bash -lc COMMAND as root in the work VM"
+        },
+        "cwd": {
+          "type": "string",
+          "pattern": "^/[^\u0000-\u001f]*$",
+          "maxLength": 4096,
+          "description": "absolute working directory in the VM (default /workspace, the mirror of the workspace)"
+        },
+        "env": {
+          "type": "array",
+          "maxItems": 64,
+          "description": "extra environment variables of the command",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 32768
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "stdin": {
+          "type": "string",
+          "maxLength": 1048576,
+          "description": "text given to the command on stdin (absent: empty)"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800,
+          "description": "end the job after this many seconds (absent: no limit)"
+        },
+        "wait_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30,
+          "description": "seconds to wait for output or the end (at most 30)"
+        },
+        "sync": {
+          "type": "string",
+          "enum": [
+            "to_vm",
+            "none"
+          ],
+          "description": "to_vm (default): mirror the changed files of the workspace into /workspace first"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "input_workvm_output": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/workvm_job_id"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "byte offset to read from (absent: the tail)"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "wait_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30,
+          "description": "seconds to wait for output or the end (at most 30)"
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "additionalProperties": false
+    },
+    "input_workvm_kill": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/workvm_job_id"
+        },
+        "signal": {
+          "type": "string",
+          "enum": [
+            "TERM",
+            "INT",
+            "HUP",
+            "KILL"
+          ]
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "additionalProperties": false
+    },
+    "input_workvm_status": {
+      "$ref": "../common.json#/$defs/empty"
+    },
+    "input_workvm_sync": {
+      "type": "object",
+      "properties": {
+        "direction": {
+          "type": "string",
+          "enum": [
+            "to_vm",
+            "from_vm"
+          ]
+        },
+        "path": {
+          "$ref": "../guest/objects.json#/$defs/rel_path"
+        }
+      },
+      "required": [
+        "direction"
+      ],
+      "additionalProperties": false
+    },
+    "workvm_synced": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "deleted": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "files",
+        "bytes",
+        "deleted"
+      ],
+      "additionalProperties": false
+    },
+    "output_workvm_exec": {
+      "type": "object",
+      "description": "a job of the work VM (13-work-vm.md section 3)",
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/workvm_job_id"
+        },
+        "command": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "exited",
+            "killed",
+            "timed_out"
+          ]
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output": {
+          "type": "string",
+          "maxLength": 32768
+        },
+        "output_start": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "output_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "duration_ms": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "synced": {
+          "$ref": "#/$defs/workvm_synced"
+        }
+      },
+      "required": [
+        "job_id",
+        "command",
+        "state",
+        "exit_code",
+        "output",
+        "output_start",
+        "output_bytes",
+        "duration_ms"
+      ],
+      "additionalProperties": false
+    },
+    "output_workvm_output": {
+      "type": "object",
+      "description": "a job of the work VM (13-work-vm.md section 3)",
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/workvm_job_id"
+        },
+        "command": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "exited",
+            "killed",
+            "timed_out"
+          ]
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output": {
+          "type": "string",
+          "maxLength": 32768
+        },
+        "output_start": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "output_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "duration_ms": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "synced": {
+          "$ref": "#/$defs/workvm_synced"
+        }
+      },
+      "required": [
+        "job_id",
+        "command",
+        "state",
+        "exit_code",
+        "output",
+        "output_start",
+        "output_bytes",
+        "duration_ms"
+      ],
+      "additionalProperties": false
+    },
+    "output_workvm_kill": {
+      "type": "object",
+      "description": "a job of the work VM (13-work-vm.md section 3)",
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/workvm_job_id"
+        },
+        "command": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "exited",
+            "killed",
+            "timed_out"
+          ]
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output": {
+          "type": "string",
+          "maxLength": 32768
+        },
+        "output_start": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "output_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "duration_ms": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "synced": {
+          "$ref": "#/$defs/workvm_synced"
+        }
+      },
+      "required": [
+        "job_id",
+        "command",
+        "state",
+        "exit_code",
+        "output",
+        "output_start",
+        "output_bytes",
+        "duration_ms"
+      ],
+      "additionalProperties": false
+    },
+    "output_workvm_status": {
+      "type": "object",
+      "properties": {
+        "workvm": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "workvm_id": {
+                  "$ref": "../ops/objects.json#/$defs/workvm_id"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "starting",
+                    "running",
+                    "stopping",
+                    "stopped"
+                  ]
+                },
+                "scope": {
+                  "$ref": "../ops/objects.json#/$defs/workvm_scope"
+                },
+                "size": {
+                  "$ref": "../ops/objects.json#/$defs/workvm_size"
+                },
+                "cpus": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 64
+                },
+                "memory_mib": {
+                  "type": "integer",
+                  "minimum": 512,
+                  "maximum": 262144
+                },
+                "disk_gib": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4096
+                },
+                "created_at": {
+                  "$ref": "../common.json#/$defs/time"
+                },
+                "last_used_at": {
+                  "$ref": "../common.json#/$defs/time"
+                }
+              },
+              "required": [
+                "workvm_id",
+                "state",
+                "scope",
+                "size",
+                "cpus",
+                "memory_mib",
+                "disk_gib",
+                "created_at",
+                "last_used_at"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "jobs": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "properties": {
+              "job_id": {
+                "$ref": "#/$defs/workvm_job_id"
+              },
+              "command": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "exited",
+                  "killed",
+                  "timed_out"
+                ]
+              },
+              "exit_code": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "started_at": {
+                "$ref": "../common.json#/$defs/time"
+              },
+              "duration_ms": {
+                "$ref": "../common.json#/$defs/count"
+              }
+            },
+            "required": [
+              "job_id",
+              "command",
+              "state",
+              "exit_code",
+              "started_at",
+              "duration_ms"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "workvm",
+        "jobs"
+      ],
+      "additionalProperties": false
+    },
+    "output_workvm_sync": {
+      "type": "object",
+      "properties": {
+        "direction": {
+          "type": "string",
+          "enum": [
+            "to_vm",
+            "from_vm"
+          ]
+        },
+        "path": {
+          "anyOf": [
+            {
+              "$ref": "../guest/objects.json#/$defs/rel_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "bytes": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "deleted": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "skipped": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "direction",
+        "path",
+        "files",
+        "bytes",
+        "deleted",
+        "skipped"
+      ],
+      "additionalProperties": false
+    },
+    "input_workvm_browse": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https?://[^\u0000- ]+$",
+          "maxLength": 4096
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "read",
+            "screenshot",
+            "click",
+            "fill"
+          ]
+        },
+        "selector": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "wait_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30000
+        },
+        "path": {
+          "$ref": "../guest/objects.json#/$defs/rel_path"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "output_workvm_browse": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "final_url": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 999
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 32768
+        },
+        "screenshot": {
+          "anyOf": [
+            {
+              "$ref": "../guest/objects.json#/$defs/rel_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "job_id": {
+          "$ref": "#/$defs/workvm_job_id"
+        }
+      },
+      "required": [
+        "url",
+        "final_url",
+        "status",
+        "title",
+        "text",
+        "screenshot",
+        "job_id"
+      ],
+      "additionalProperties": false
     }
   }
 }

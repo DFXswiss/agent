@@ -460,14 +460,15 @@
     },
     "metric_sample": {
       "type": "object",
-      "description": "one raw metric sample (02-data-model.md section 2.8); entity_id is the device or session UUID or the vm ID",
+      "description": "one raw metric sample (02-data-model.md section 2.8); entity_id is the device or session UUID or the vm ID or the work VM ID",
       "properties": {
         "entity_kind": {
           "type": "string",
           "enum": [
             "device",
             "vm",
-            "session"
+            "session",
+            "workvm"
           ]
         },
         "entity_id": {
@@ -477,8 +478,15 @@
             },
             {
               "$ref": "../common.json#/$defs/vm_id"
+            },
+            {
+              "$ref": "../common.json#/$defs/workvm_id"
             }
           ]
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "entity_kind workvm only, and there required (the hub refuses a workvm sample without it): the session the work VM belongs to (its own session, else the session that requested the task VM); 13-work-vm.md section 10, KOR-29"
         },
         "ts": {
           "$ref": "../common.json#/$defs/time"

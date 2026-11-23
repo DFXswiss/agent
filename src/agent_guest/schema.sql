@@ -7,14 +7,16 @@
 -- hook notice is attached once per batch (03-api.md sections 7.1, 8.1 and 8.2).
 -- journal kinds platform.read and platform.refused (decisions/KOR-07.md, contracts/changes/KOR-07.md): the read get_notifications and MCP requests
 -- refused before forwarding are journaled too (03-api.md section 8).
+-- journal kind workvm.call and pending kind workvm (contracts/changes/KOR-29.md, 13-work-vm.md section 3): the calls of
+-- the work VM tools, answered by the runner like a platform.query.
 
 CREATE TABLE journal (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
     session_id TEXT,
     kind TEXT NOT NULL CHECK (kind IN ('session.state', 'session.output', 'session.tool', 'session.hook',
-        'session.file', 'session.terminal', 'usage', 'operation.request', 'platform.query', 'ping.delivered',
-        'platform.read', 'platform.refused', 'metrics', 'guest.error')),
+        'session.file', 'session.terminal', 'usage', 'operation.request', 'platform.query', 'workvm.call',
+        'ping.delivered', 'platform.read', 'platform.refused', 'metrics', 'guest.error')),
     body TEXT NOT NULL,
     acked_at REAL
 );
@@ -43,7 +45,7 @@ CREATE INDEX prompt_registry_hash ON prompt_registry (session_id, sha256, used_a
 CREATE TABLE pending (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('operation', 'query')),
+    kind TEXT NOT NULL CHECK (kind IN ('operation', 'query', 'workvm')),
     request TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('waiting', 'answered')),
     answer TEXT,

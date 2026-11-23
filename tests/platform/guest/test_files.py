@@ -320,6 +320,49 @@ def test_export_of_listed_paths(ws: Session, control_client: ControlClient, tmp_
         assert do_export(control_client, {"dir": "repo", "paths": bad}).json() == {"error": "path_invalid"}
 
 
+def test_export_of_the_whole_workspace(ws: Session, control_client: ControlClient, tmp_path: Path) -> None:
+    """``dir`` exactly ``.`` exports the whole workspace (the work VM sync, KOR-29); ``.git`` directories, protected
+    names, links and special files are still left out, and the import still refuses ``.``."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret").write_text("never")
+    populate(work(ws), outside)
+    (work(ws) / "repos" / "o" / "r").mkdir(parents=True)
+    (work(ws) / "repos" / "o" / "r" / "main.c").write_bytes(b"int main;\n")
+    (work(ws) / "repos" / "o" / "r" / ".git").mkdir()
+    (work(ws) / "repos" / "o" / "r" / ".git" / "HEAD").write_text("ref: refs/heads/main")
+    (work(ws) / "repos" / "o" / "r" / "AGENTS.md").write_text("protected")
+    manifest, contents, _ = unpack(do_export(control_client, {"dir": "."}).body)
+    assert contents == {
+        "README.md": b"hi\n",
+        "empty": b"",
+        "repos/o/r/main.c": b"int main;\n",
+        "src/app.py": b"x = 1\n",
+    }
+    assert [item["path"] for item in manifest["files"]] == sorted(contents)
+    assert manifest["skipped"] == [
+        {"path": "dirlink", "reason": "symlink"},
+        {"path": "fifo", "reason": "special"},
+        {"path": "link", "reason": "symlink"},
+    ]
+    listed = do_export(control_client, {"dir": ".", "paths": ["README.md", "repos/o/r/main.c", ".git/config"]})
+    assert listed.json() == {"error": "path_invalid"}
+    manifest, contents, _ = unpack(do_export(control_client, {"dir": ".", "paths": ["README.md", "src"]}).body)
+    assert set(contents) == {"README.md", "src/app.py"}
+    for bad in ("./", "./.", "./src", "src/."):
+        assert do_export(control_client, {"dir": bad}).json() == {"error": "path_invalid"}, bad
+    before = sorted(path.name for path in work(ws).iterdir())
+    for replace in ("true", "false"):
+        assert do_import(control_client, tar_bytes(f("README.md", b"new")), ".", replace).json() == {
+            "error": "path_invalid"
+        }
+    assert sorted(path.name for path in work(ws).iterdir()) == before
+    assert (work(ws) / "README.md").read_bytes() == b"hi\n"
+    with pytest.raises(files.FilesError) as error:
+        files.import_tar(ws, ".", io.BytesIO(tar_bytes(f("a"))), replace=True)
+    assert error.value.code == "path_invalid"
+
+
 def test_export_directory_errors(ws: Session, control_client: ControlClient, tmp_path: Path) -> None:
     assert do_export(control_client, {"dir": "nothing"}).json() == {"error": "not_found"}
     (work(ws) / "file").write_text("x")

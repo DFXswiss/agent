@@ -58,6 +58,20 @@ TOOLS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ("get_operation", "the state of an operation", {"operation_id": "<operation id>", "wait_seconds": 10}),
     ("list_operations", "the operations of this task", {"limit": 20}),
     ("get_subagent_result", "the result of a subagent session you requested", {"session_id": "<session id>"}),
+    (
+        "workvm_exec",
+        "run a command as root in your work VM (workspace mirrored to /workspace first)",
+        {"command": "npm ci && npm test", "wait_seconds": 30},
+    ),
+    ("workvm_output", "follow the output of a running job", {"job_id": "j-0123456789ab", "wait_seconds": 30}),
+    ("workvm_kill", "stop a job of your work VM", {"job_id": "j-0123456789ab"}),
+    ("workvm_status", "your work VM and its last jobs", {}),
+    ("workvm_sync", "bring files of the work VM back into your workspace", {"direction": "from_vm", "path": "out"}),
+    (
+        "workvm_browse",
+        "open a web page in the Chromium of your work VM (read, screenshot, click, fill)",
+        {"url": "https://example.com/", "action": "screenshot"},
+    ),
 )
 
 

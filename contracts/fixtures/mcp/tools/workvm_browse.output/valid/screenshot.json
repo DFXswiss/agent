@@ -1,0 +1,9 @@
+{
+  "url": "https://example.com/",
+  "final_url": "https://example.com/",
+  "status": null,
+  "title": "Example Domain",
+  "text": "Example Domain",
+  "screenshot": ".workvm/screenshots/a.png",
+  "job_id": "j-0123456789ab"
+}

@@ -57,6 +57,7 @@ OPERATION = {
     "requested_at": "2026-11-21T10:00:00.000Z",
 }
 QUERY = {"tool": "get_context", "arguments": {}}
+WORKVM = {"tool": "workvm_exec", "arguments": {"command": "npm test", "wait_seconds": 5}}
 ANSWER_ERROR = {"status": "error", "error": {"error": "unavailable", "message": "The hub is unreachable."}}
 
 
@@ -435,6 +436,27 @@ def test_pending_operation_round_trip(
     reply = control_client.request("POST", f"/v1/pending/{pending_id}/answer", ANSWER_ERROR)
     assert (reply.status, reply.json()) == (409, {"error": "state_conflict"})
     assert api_client.pending_wait(pending_id, SESSION_ID, 1) == answer
+
+
+def test_pending_workvm_call_round_trip(
+    control_client: ControlClient, api_client: ApiClient, session: Session, schemas: SchemaSet
+) -> None:
+    """A work VM tool call is the pending kind ``workvm``, journaled as ``workvm.call`` (KOR-29)."""
+    pending_id = api_client.pending_create(SESSION_ID, "workvm", WORKVM)
+    [record] = control_client.request("GET", "/v1/journal").json()["records"]
+    assert (record["kind"], record["session_id"]) == ("workvm.call", SESSION_ID)
+    assert record["body"] == {**WORKVM, "pending_id": pending_id}
+    assert schemas.errors("guest/journal/workvm.call.json", record["body"]) == []
+    answer = {"status": "error", "error": {"error": "not_found", "message": "No work VM."}}
+    assert control_client.request("POST", f"/v1/pending/{pending_id}/answer", answer).status == 200
+    assert api_client.pending_wait(pending_id, SESSION_ID, 1) == answer
+
+
+def test_pending_workvm_call_body_is_validated(api_client: ApiClient, session: Session) -> None:
+    for body in (QUERY, {"tool": "workvm_exec", "arguments": {}}, {"tool": "workvm_status", "arguments": {"x": 1}}):
+        with pytest.raises(ApiSockError) as error:
+            api_client.pending_create(SESSION_ID, "workvm", body)
+        assert error.value.code == "request_invalid"
 
 
 def test_pending_query_and_wait_limit(api_client: ApiClient, context: ControlContext, session: Session) -> None:

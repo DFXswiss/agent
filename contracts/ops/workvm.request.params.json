@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/workvm.request.params.json",
+  "title": "operation workvm.request params",
+  "description": "Parameters of the operation type workvm.request (03-api.md section 9, 13-work-vm.md section 2); additionalProperties false.",
+  "$ref": "objects.json#/$defs/params_workvm_request"
+}

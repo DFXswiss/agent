@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenSSH per-connection server over vsock
+After=ssh-keygen.target
+
+[Service]
+ExecStartPre=/bin/mkdir -p /run/sshd
+ExecStart=-/usr/sbin/sshd -i
+StandardInput=socket
+StandardError=journal

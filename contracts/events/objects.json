@@ -69,7 +69,9 @@
             "session.status",
             "operation.params",
             "operation.result",
-            "platform.read"
+            "platform.read",
+            "workvm.run",
+            "workvm.state"
           ]
         },
         "ref": {
@@ -838,6 +840,54 @@
             "params"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "workvm.request"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_workvm_request"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "workvm.release"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_workvm_release"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -1128,6 +1178,177 @@
           "additionalProperties": false
         }
       ]
+    },
+    "body_workvm_run": {
+      "type": "object",
+      "description": "a job of a work VM, written when it starts and when it ends (13-work-vm.md section 8)",
+      "properties": {
+        "workvm_id": {
+          "$ref": "../ops/objects.json#/$defs/workvm_id"
+        },
+        "job_id": {
+          "$ref": "../mcp/objects.json#/$defs/workvm_job_id"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "exec",
+            "browse"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "exited",
+            "killed",
+            "timed_out",
+            "lost"
+          ]
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_ms": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "output": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "output_bytes": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "workvm_id",
+        "job_id",
+        "kind",
+        "command",
+        "state",
+        "exit_code",
+        "started_at",
+        "ended_at",
+        "duration_ms",
+        "output",
+        "output_bytes"
+      ],
+      "additionalProperties": false
+    },
+    "body_workvm_state": {
+      "type": "object",
+      "description": "a work VM was created or deleted, with its runtime (13-work-vm.md section 8, KONZEPT idea 46)",
+      "properties": {
+        "workvm_id": {
+          "$ref": "../ops/objects.json#/$defs/workvm_id"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "created",
+            "deleted"
+          ]
+        },
+        "scope": {
+          "$ref": "../ops/objects.json#/$defs/workvm_scope"
+        },
+        "size": {
+          "$ref": "../ops/objects.json#/$defs/workvm_size"
+        },
+        "cpus": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "memory_mib": {
+          "type": "integer",
+          "minimum": 512,
+          "maximum": 262144
+        },
+        "disk_gib": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "implicit": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "released",
+                "idle",
+                "session_ended",
+                "task_closed",
+                "failed",
+                "restart"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime_ms": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "workvm_id",
+        "state",
+        "scope",
+        "size",
+        "cpus",
+        "memory_mib",
+        "disk_gib",
+        "implicit",
+        "reason",
+        "started_at",
+        "ended_at",
+        "runtime_ms"
+      ],
+      "additionalProperties": false
     }
   }
 }

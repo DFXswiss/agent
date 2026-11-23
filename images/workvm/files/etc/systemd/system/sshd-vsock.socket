@@ -1,0 +1,12 @@
+# SSH over vsock for Lima (ssh.overVsock): the host reaches the work VM without any network path
+# (docs/platform/spec/13-work-vm.md section 4).
+[Unit]
+Description=OpenSSH server on vsock port 22
+Before=sockets.target
+
+[Socket]
+ListenStream=vsock::22
+Accept=yes
+
+[Install]
+WantedBy=sockets.target

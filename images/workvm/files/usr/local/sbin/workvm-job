@@ -1,0 +1,743 @@
+#!/usr/bin/python3 -I
+"""Job helper of the work VM (docs/platform/spec/13-work-vm.md section 5, ADR-059).
+
+The runner runs every command of a session through this helper as root over Lima's SSH:
+
+  workvm-job start ID CWD TIMEOUT     stdin: {"command": str, "env": {name: value}}; TIMEOUT 0 = no limit
+  workvm-job wait ID OFFSET LIMIT WAIT  one JSON header line, then the output bytes (OFFSET -1 = the tail)
+  workvm-job kill ID SIGNAL           TERM, INT, HUP or KILL to the job's process group
+  workvm-job list                     the last 50 jobs as one JSON line
+  workvm-job selftest                 start, wait and kill a job; prints "ok"
+  workvm-job apply ROOT               stdin: a push tar; applied below /workspace/ROOT; prints {files, bytes, deleted}
+  workvm-job pack ROOT                stdout: a pack tar of /workspace/ROOT (`workvm_sync from_vm`)
+  workvm-job _run ID                  internal: the job's supervisor, started by systemd-run
+
+A job runs `/bin/bash -lc COMMAND` as root in its own process group inside the transient unit `workvm-job-ID`
+(`KillMode=process`, so processes the command leaves in the background keep running after the job ended). stdout
+and stderr go into one output file. Nothing here restricts what the command does: the VM belongs to the session.
+The runner treats every answer of this helper as untrusted (it is a file in a VM whose root is the session).
+
+Mirror (`workvm_sync`, section 3; formats in `agent_runner.workvm.sync`). ROOT is `.` or a relative path below
+`/workspace` (no empty, `.` or `..` segment, no `.git` segment). Nothing here follows a link: every directory is opened
+relative to its parent with `O_NOFOLLOW | O_DIRECTORY`, files with `O_NOFOLLOW`.
+
+* `apply ROOT`: the first member of the push tar is `.workvm-deletions.json` (JSON list of paths relative to ROOT);
+  those files (or links) are removed first, and directories left empty by that up to ROOT; then directories are
+  created (`0755`) and files written (mode and modification time of the member) through a temporary name and one
+  `rename`. A link, file or directory in the way of a member is replaced (the workspace wins). Members must be
+  regular files or directories with valid relative names, else the helper stops with exit code 2 (what was applied
+  until then stays; the next sync repeats it).
+* `pack ROOT`: the files of `/workspace/ROOT` in name order, without `.git` directories, links, special files,
+  protected names (`PROTECTED`, case-insensitive; the guest's write policy) and git-ignored entries: `git ls-files -o
+  -i --exclude-standard --directory` in ROOT when ROOT is inside a work tree, else with a temporary `GIT_DIR` and
+  ROOT as work tree (so `.gitignore` rules apply without a repository), and again in every nested repository; without
+  git no ignore rules. The answer starts with `.workvm-pack.json` = `{files:[path], excluded:[path]}` (an excluded
+  directory ends with `/`), then the files (`0644`). More than `MAX_ENTRIES` entries or `MAX_BYTES` of content stop
+  the helper with exit code 2.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import os
+import re
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+
+ROOT = "/var/lib/workvm/jobs"
+ID_RE = re.compile(r"^j-[0-9a-f]{12}$")
+SIGNALS = {"TERM": signal.SIGTERM, "INT": signal.SIGINT, "HUP": signal.SIGHUP, "KILL": signal.SIGKILL}
+FINAL = ("exited", "killed", "timed_out")
+BASE_ENV = {
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin",
+    "HOME": "/root",
+    "USER": "root",
+    "LOGNAME": "root",
+    "SHELL": "/bin/bash",
+    "LANG": "C.UTF-8",
+    "TERM": "dumb",
+    "DEBIAN_FRONTEND": "noninteractive",
+}
+KILL_GRACE = 10.0
+WORKSPACE = "/workspace"
+DELETIONS = ".workvm-deletions.json"
+PACK_MANIFEST = ".workvm-pack.json"
+# agent_guest.policy.PROTECTED_DIRS | PROTECTED_FILES without ".git" (05 section 5.3, ADR-045), lower case.
+PROTECTED = frozenset({".claude", ".claude.json", ".mcp.json", "claude.md", "claude.local.md", "agents.md", ".gitconfig"})
+MAX_ENTRIES = 100_000
+MAX_BYTES = 512 * 1024 * 1024
+MAX_LIST_BYTES = 64 * 1024 * 1024
+MAX_HEADER = 64 * 1024
+MAX_PATH = 4096
+MAX_DEPTH = 128
+CHUNK = 1024 * 1024
+GIT_TIMEOUT = 300
+_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC
+READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | _CLOEXEC
+CREATE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC
+HEADER_TYPES = (tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.SOLARIS_XHDTYPE, tarfile.GNUTYPE_LONGNAME,
+                tarfile.GNUTYPE_LONGLINK)
+
+
+def die(message: str) -> None:
+    sys.stderr.write(f"workvm-job: {message}\n")
+    sys.exit(2)
+
+
+def job_dir(job_id: str) -> str:
+    if not ID_RE.match(job_id):
+        die("invalid job id")
+    return os.path.join(ROOT, job_id)
+
+
+def read_json(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def write_json(path: str, value: dict) -> None:
+    temporary = f"{path}.tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(value, handle)
+    os.replace(temporary, path)
+
+
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def state_of(directory: str) -> dict:
+    state = read_json(os.path.join(directory, "state.json"))
+    if not state:
+        spec = read_json(os.path.join(directory, "spec.json"))
+        return {"state": "running", "exit_code": None, "started_at": spec.get("created_at", now_ms())}
+    if state.get("state") == "running" and not unit_active(os.path.basename(directory)):
+        # The supervisor is gone without a final state (VM reboot, unit killed from inside the VM).
+        state = {**state, "state": "killed", "exit_code": None, "ended_at": state.get("ended_at") or now_ms()}
+    return state
+
+
+def unit_active(job_id: str) -> bool:
+    result = subprocess.run(
+        ["systemctl", "is-active", "--quiet", f"workvm-job-{job_id}.service"], check=False
+    )
+    return result.returncode == 0
+
+
+def cmd_start(job_id: str, cwd: str, timeout: str) -> None:
+    directory = job_dir(job_id)
+    spec = json.load(sys.stdin)
+    if not isinstance(spec, dict) or not isinstance(spec.get("command"), str):
+        die("invalid job spec")
+    spec_stdin = spec.get("stdin")
+    os.makedirs(ROOT, mode=0o700, exist_ok=True)
+    os.mkdir(directory, 0o700)
+    spec = {
+        "command": spec["command"],
+        "env": {str(k): str(v) for k, v in (spec.get("env") or {}).items()},
+        "cwd": cwd,
+        "timeout": int(timeout),
+        "created_at": now_ms(),
+    }
+    stdin = spec_stdin
+    write_json(os.path.join(directory, "spec.json"), spec)
+    open(os.path.join(directory, "output"), "wb").close()
+    if isinstance(stdin, str):
+        with open(os.path.join(directory, "stdin"), "w", encoding="utf-8") as handle:
+            handle.write(stdin)
+    subprocess.run(
+        [
+            "systemd-run",
+            "--quiet",
+            "--collect",
+            f"--unit=workvm-job-{job_id}",
+            "--property=KillMode=process",
+            "--property=Type=exec",
+            "/usr/bin/python3",
+            "-I",
+            os.path.abspath(__file__),
+            "_run",
+            job_id,
+        ],
+        check=True,
+    )
+    print(json.dumps({"job_id": job_id, "state": "running"}))
+
+
+def stdin_of(directory: str):
+    """The job's stdin: the text the session gave (file `stdin`), else nothing."""
+    path = os.path.join(directory, "stdin")
+    if os.path.exists(path):
+        return open(path, "rb")  # noqa: SIM115 - inherited by the child, closed with this process
+    return subprocess.DEVNULL
+
+
+def cmd_run(job_id: str) -> None:
+    directory = job_dir(job_id)
+    spec = read_json(os.path.join(directory, "spec.json"))
+    started = now_ms()
+    env = {**BASE_ENV, **spec.get("env", {})}
+    cwd = spec.get("cwd") or "/workspace"
+    with open(os.path.join(directory, "output"), "ab", buffering=0) as output:
+        try:
+            child = subprocess.Popen(
+                ["/bin/bash", "-lc", spec["command"]],
+                cwd=cwd,
+                env=env,
+                stdin=stdin_of(directory),
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        except OSError as error:
+            output.write(f"workvm-job: cannot start the command: {error}\n".encode())
+            write_json(
+                os.path.join(directory, "state.json"),
+                {"state": "exited", "exit_code": 127, "started_at": started, "ended_at": now_ms()},
+            )
+            return
+    write_json(
+        os.path.join(directory, "state.json"),
+        {"state": "running", "exit_code": None, "pgid": child.pid, "started_at": started},
+    )
+    killed = {"value": False}
+
+    def forward(signum: int, _frame: object) -> None:
+        killed["value"] = True
+        try:
+            os.killpg(child.pid, signum)
+        except ProcessLookupError:
+            pass
+
+    signal.signal(signal.SIGTERM, forward)
+    timeout = spec.get("timeout") or 0
+    timed_out = False
+    try:
+        code = child.wait(timeout=timeout if timeout > 0 else None)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        os.killpg(child.pid, signal.SIGTERM)
+        try:
+            code = child.wait(timeout=KILL_GRACE)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            code = child.wait()
+    if timed_out:
+        state = "timed_out"
+    elif code < 0 or killed["value"] or os.path.exists(os.path.join(directory, "kill")):
+        state = "killed" if code != 0 else "exited"
+    else:
+        state = "exited"
+    write_json(
+        os.path.join(directory, "state.json"),
+        {
+            "state": state,
+            "exit_code": code if code >= 0 else 128 - code,
+            "started_at": started,
+            "ended_at": now_ms(),
+        },
+    )
+
+
+def cmd_wait(job_id: str, offset: str, limit: str, wait: str) -> None:
+    directory = job_dir(job_id)
+    if not os.path.isdir(directory):
+        print(json.dumps({"error": "not_found"}))
+        return
+    start, size_limit, deadline = int(offset), max(0, int(limit)), time.monotonic() + max(0.0, float(wait))
+    path = os.path.join(directory, "output")
+    while True:
+        state = state_of(directory)
+        size = os.path.getsize(path)
+        if state["state"] in FINAL or (start >= 0 and size > start) or time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
+    if start < 0 or start > size:
+        start = max(0, size - size_limit)
+    with open(path, "rb") as handle:
+        handle.seek(start)
+        body = handle.read(size_limit)
+    ended = state.get("ended_at") or now_ms()
+    header = {
+        "state": state["state"],
+        "exit_code": state.get("exit_code"),
+        "output_bytes": size,
+        "output_start": start,
+        "body_bytes": len(body),
+        "duration_ms": max(0, int(ended) - int(state.get("started_at", ended))),
+    }
+    sys.stdout.write(json.dumps(header) + "\n")
+    sys.stdout.flush()
+    sys.stdout.buffer.write(body)
+    sys.stdout.buffer.flush()
+
+
+def cmd_kill(job_id: str, name: str) -> None:
+    directory = job_dir(job_id)
+    if name not in SIGNALS:
+        die("invalid signal")
+    state = state_of(directory)
+    if state["state"] == "running" and state.get("pgid"):
+        open(os.path.join(directory, "kill"), "w").close()
+        try:
+            os.killpg(int(state["pgid"]), SIGNALS[name])
+        except ProcessLookupError:
+            pass
+    print(json.dumps({"job_id": job_id, "state": state["state"]}))
+
+
+def cmd_list() -> None:
+    jobs = []
+    if os.path.isdir(ROOT):
+        names = [name for name in os.listdir(ROOT) if ID_RE.match(name)]
+        names.sort(key=lambda name: os.path.getmtime(os.path.join(ROOT, name)), reverse=True)
+        for name in names[:50]:
+            directory = os.path.join(ROOT, name)
+            spec, state = read_json(os.path.join(directory, "spec.json")), state_of(directory)
+            ended = state.get("ended_at") or now_ms()
+            jobs.append(
+                {
+                    "job_id": name,
+                    "command": str(spec.get("command", ""))[:256],
+                    "state": state["state"],
+                    "exit_code": state.get("exit_code"),
+                    "started_at": state.get("started_at"),
+                    "duration_ms": max(0, int(ended) - int(state.get("started_at", ended))),
+                }
+            )
+    print(json.dumps(jobs))
+
+
+def cmd_selftest() -> None:
+    probe = "j-" + os.urandom(6).hex()
+    sys.stdin = __import__("io").StringIO(json.dumps({"command": "echo selftest-$((6*7)); sleep 30"}))
+    cmd_start(probe, "/", "0")
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        with open(os.path.join(job_dir(probe), "output"), "rb") as handle:
+            if b"selftest-42" in handle.read():
+                break
+        time.sleep(0.1)
+    else:
+        die("selftest: no output")
+    cmd_kill(probe, "KILL")
+    print("ok")
+
+
+# -- mirror (workvm_sync) ---------------------------------------------------------------------------------------------
+
+
+class SyncError(Exception):
+    """A refused apply or pack: the helper stops with exit code 2."""
+
+
+class CappedInfo(tarfile.TarInfo):
+    """Refuses an extended header larger than `MAX_HEADER` before `tarfile` reads it into memory."""
+
+    def _proc_member(self, archive):
+        if self.type in HEADER_TYPES and self.size > MAX_HEADER:
+            raise SyncError("extended header too large")
+        return super()._proc_member(archive)
+
+
+def name_ok(name: str) -> bool:
+    """One path segment the guest accepts: not empty, `.` or `..`, no control character, slash or backslash, UTF-8."""
+    if name in ("", ".", "..") or any(ord(char) < 0x20 or char in "\x7f\\/" for char in name):
+        return False
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def path_ok(path: str) -> bool:
+    """A relative path of valid segments, at most `MAX_PATH` characters, without a `.git` segment."""
+    if not 1 <= len(path) <= MAX_PATH:
+        return False
+    return all(name_ok(part) and part.casefold() != ".git" for part in path.split("/"))
+
+
+def root_parts(root: str) -> list[str]:
+    if root == ".":
+        return []
+    if not path_ok(root):
+        raise SyncError("invalid root")
+    return root.split("/")
+
+
+def step(parent: int, name: str, create: bool) -> int:
+    """The directory `name` in `parent` (a new descriptor); with `create` made, or replacing a link or file."""
+    try:
+        return os.open(name, DIR_FLAGS, dir_fd=parent)
+    except FileNotFoundError:
+        if not create:
+            raise SyncError("root not found") from None
+    except OSError:
+        if not create:
+            raise SyncError("root not a directory") from None
+        os.unlink(name, dir_fd=parent)  # a link or a file in the way (a directory would have opened)
+    os.mkdir(name, 0o755, dir_fd=parent)
+    return os.open(name, DIR_FLAGS, dir_fd=parent)
+
+
+def walk_dirs(start: int, parts: list[str], create: bool) -> int:
+    """The directory `parts` below the descriptor `start` (a new descriptor; `start` stays open)."""
+    current = os.dup(start)
+    for part in parts:
+        try:
+            following = step(current, part, create)
+        finally:
+            os.close(current)
+        current = following
+    return current
+
+
+def open_root(root: str, create: bool) -> int:
+    workspace = os.open(WORKSPACE, DIR_FLAGS)
+    try:
+        return walk_dirs(workspace, root_parts(root), create)
+    finally:
+        os.close(workspace)
+
+
+def copy_exact(reader, size: int, write) -> None:
+    left = size
+    while left:
+        data = reader.read(min(CHUNK, left))
+        if not data:
+            raise SyncError("member ends early")
+        write(data)
+        left -= len(data)
+
+
+def delete_file(root: int, path: str) -> int:
+    """Remove the file or link `path` below `root` and the directories that became empty; 1 if it was removed."""
+    parts = path.split("/")
+    opened: list[int] = []
+    try:
+        current = root
+        for part in parts[:-1]:
+            try:
+                current = os.open(part, DIR_FLAGS, dir_fd=current)
+            except OSError:
+                return 0
+            opened.append(current)
+        try:
+            info = os.stat(parts[-1], dir_fd=current, follow_symlinks=False)
+        except FileNotFoundError:
+            return 0
+        if stat.S_ISDIR(info.st_mode):
+            return 0
+        os.unlink(parts[-1], dir_fd=current)
+        for index in range(len(opened) - 1, -1, -1):
+            try:
+                os.rmdir(parts[index], dir_fd=opened[index - 1] if index else root)
+            except OSError:
+                break
+        return 1
+    finally:
+        for descriptor in opened:
+            os.close(descriptor)
+
+
+def write_file(root: int, path: str, member: tarfile.TarInfo, reader) -> None:
+    """Write one member below `root` through a temporary name and one `rename` (replacing what is in the way)."""
+    parts = path.split("/")
+    parent = walk_dirs(root, parts[:-1], True)
+    try:
+        temporary = f".workvm-{os.urandom(6).hex()}.tmp"
+        descriptor = os.open(temporary, CREATE_FLAGS, 0o600, dir_fd=parent)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                copy_exact(reader, member.size, handle.write)
+                handle.flush()
+                os.fchmod(handle.fileno(), member.mode & 0o777)
+                os.utime(handle.fileno(), (member.mtime, member.mtime))
+            with contextlib.suppress(FileNotFoundError):
+                if stat.S_ISDIR(os.stat(parts[-1], dir_fd=parent, follow_symlinks=False).st_mode):
+                    shutil.rmtree(parts[-1], dir_fd=parent)
+            os.rename(temporary, parts[-1], src_dir_fd=parent, dst_dir_fd=parent)
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary, dir_fd=parent)
+            raise
+    finally:
+        os.close(parent)
+
+
+def member_path(name: str) -> str | None:
+    if name in (".", "./"):
+        return None
+    path = name.removeprefix("./").removesuffix("/")
+    if not path_ok(path):
+        raise SyncError("invalid member name")
+    return path
+
+
+def read_deletions(archive: tarfile.TarFile) -> list[str]:
+    first = archive.next()
+    if first is None or first.name != DELETIONS or not first.isreg() or first.size > MAX_LIST_BYTES:
+        raise SyncError("the push tar does not start with the deletions")
+    data = bytearray()
+    copy_exact(archive.extractfile(first), first.size, data.extend)
+    try:
+        deletions = json.loads(bytes(data).decode("utf-8"))
+    except ValueError:
+        raise SyncError("invalid deletions") from None
+    if not isinstance(deletions, list) or not all(isinstance(item, str) and path_ok(item) for item in deletions):
+        raise SyncError("invalid deletions")
+    return deletions
+
+
+def apply(root: str, source, out) -> dict:
+    """Apply a push tar read from `source` below `/workspace/ROOT` (see the module docstring); the counts."""
+    base = open_root(root, True)
+    files = size = count = 0
+    try:
+        archive = tarfile.open(fileobj=source, mode="r|", tarinfo=CappedInfo)
+        deleted = sum(delete_file(base, path) for path in read_deletions(archive))
+        while (member := archive.next()) is not None:
+            count += 1
+            if count > MAX_ENTRIES:
+                raise SyncError("too many members")
+            path = member_path(member.name)
+            if path is None:
+                continue
+            if member.isdir():
+                os.close(walk_dirs(base, path.split("/"), True))
+            elif member.isreg() and not member.issparse():
+                write_file(base, path, member, archive.extractfile(member))
+                files, size = files + 1, size + member.size
+            else:
+                raise SyncError("only files and directories")
+    except (tarfile.TarError, EOFError):
+        raise SyncError("invalid push tar") from None
+    finally:
+        os.close(base)
+    result = {"files": files, "bytes": size, "deleted": deleted}
+    out.write(json.dumps(result) + "\n")
+    return result
+
+
+def run_git(args: list[str]) -> bytes | None:
+    """stdout of one git command, or None when git is missing or fails (no ignore rules then)."""
+    try:
+        result = subprocess.run(
+            [GIT, "-c", "core.fsmonitor=false", "-c", "safe.directory=*", *args],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+GIT = "git"
+IGNORED_ARGS = ["ls-files", "-o", "-i", "--exclude-standard", "--directory", "-z"]
+
+
+def git_ignored(directory: str, nested: bool) -> set[str]:
+    """The git-ignored entries of `directory`, relative to it (directories end with `/`)."""
+    inside = nested or (run_git(["-C", directory, "rev-parse", "--is-inside-work-tree"]) or b"").strip() == b"true"
+    if inside:
+        output = run_git(["-C", directory, *IGNORED_ARGS])
+    else:
+        with tempfile.TemporaryDirectory() as temporary:
+            git_dir = os.path.join(temporary, "git")
+            tree = ["--git-dir", git_dir, "--work-tree", directory]
+            output = None
+            if run_git([*tree, "init", "-q"]) is not None:
+                output = run_git(["-C", directory, *tree, *IGNORED_ARGS])
+    if output is None:
+        return set()
+    return {os.fsdecode(item) for item in output.split(b"\0") if item}
+
+
+class Packing:
+    def __init__(self, archive: tarfile.TarFile) -> None:
+        self.archive = archive
+        self.files: list[str] = []
+        self.excluded: list[str] = []
+        self.bytes = 0
+
+    def counted(self) -> None:
+        if len(self.files) + len(self.excluded) > MAX_ENTRIES:
+            raise SyncError("too many entries")
+
+    def exclude(self, path: str) -> None:
+        self.excluded.append(path)
+        self.counted()
+
+    def add(self, parent: int, name: str, path: str) -> None:
+        try:
+            descriptor = os.open(name, READ_FLAGS, dir_fd=parent)
+        except OSError:
+            self.exclude(path)
+            return
+        with os.fdopen(descriptor, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                self.exclude(path)
+                return
+            with tempfile.SpooledTemporaryFile(max_size=CHUNK) as spool:
+                budget = MAX_BYTES - self.bytes
+                while chunk := handle.read(min(CHUNK, budget + 1 - spool.tell())):
+                    spool.write(chunk)
+                    if spool.tell() > budget:
+                        raise SyncError("too large")
+                member = tarfile.TarInfo(path)
+                member.size = spool.tell()
+                member.mode = 0o644
+                member.mtime = int(info.st_mtime)
+                member.uid = member.gid = 0
+                member.uname = member.gname = ""
+                spool.seek(0)
+                self.archive.addfile(member, spool)
+        self.files.append(path)
+        self.bytes += member.size
+        self.counted()
+
+    def walk(self, descriptor: int, rel: str, directory: str, ignored: set[str], depth: int) -> None:
+        names = sorted(os.listdir(descriptor))
+        if rel and ".git" in names:
+            ignored = ignored | {rel + item for item in git_ignored(directory, True)}
+        for name in names:
+            if not name_ok(name):
+                continue
+            path = rel + name
+            try:
+                mode = os.stat(name, dir_fd=descriptor, follow_symlinks=False).st_mode
+            except FileNotFoundError:
+                continue
+            is_dir = stat.S_ISDIR(mode)
+            if name.casefold() == ".git" or name.casefold() in PROTECTED:
+                self.exclude(path + "/" if is_dir else path)
+            elif not (is_dir or stat.S_ISREG(mode)):
+                self.exclude(path)
+            elif is_dir:
+                if path + "/" in ignored or depth >= MAX_DEPTH:
+                    self.exclude(path + "/")
+                    continue
+                try:
+                    child = os.open(name, DIR_FLAGS, dir_fd=descriptor)
+                except OSError:
+                    self.exclude(path + "/")
+                    continue
+                try:
+                    self.walk(child, path + "/", os.path.join(directory, name), ignored, depth + 1)
+                finally:
+                    os.close(child)
+            elif path in ignored:
+                self.exclude(path)
+            else:
+                self.add(descriptor, name, path)
+
+
+def pack(root: str, out) -> dict:
+    """Write the pack tar of `/workspace/ROOT` to the binary stream `out` (see the module docstring); its listing."""
+    base = open_root(root, False)
+    directory = os.path.join(WORKSPACE, *root_parts(root))
+    with tempfile.TemporaryFile() as body:
+        try:
+            with tarfile.open(fileobj=body, mode="w", format=tarfile.PAX_FORMAT) as archive:
+                packing = Packing(archive)
+                packing.walk(base, "", directory, git_ignored(directory, False), 0)
+        finally:
+            os.close(base)
+        listing = {"files": packing.files, "excluded": packing.excluded}
+        data = json.dumps(listing, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        head = tarfile.TarInfo(PACK_MANIFEST)
+        head.size, head.mode, head.mtime = len(data), 0o644, 0
+        head.uid = head.gid = 0
+        head.uname = head.gname = ""
+        out.write(head.tobuf(tarfile.PAX_FORMAT, "utf-8", "surrogateescape"))
+        out.write(data + b"\0" * (-len(data) % tarfile.BLOCKSIZE))
+        body.seek(0)
+        shutil.copyfileobj(body, out, CHUNK)
+    out.flush()
+    return listing
+
+
+def packfile(path: str, name: str, out) -> dict:
+    """Write a pack tar holding the one regular file `path` of the VM as `name` (a screenshot of `workvm_browse`)."""
+    if not name_ok(name) or not os.path.isabs(path):
+        raise SyncError("invalid file")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise SyncError("not a regular file")
+        listing = {"files": [name], "excluded": []}
+        data = json.dumps(listing, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        with tarfile.open(fileobj=out, mode="w|", format=tarfile.PAX_FORMAT) as archive:
+            head = tarfile.TarInfo(PACK_MANIFEST)
+            head.size = len(data)
+            archive.addfile(head, io.BytesIO(data))
+            member = tarfile.TarInfo(name)
+            member.size, member.mode = info.st_size, 0o600
+            with os.fdopen(os.dup(fd), "rb") as source:
+                archive.addfile(member, source)
+    finally:
+        os.close(fd)
+    out.flush()
+    return listing
+
+
+def cmd_packfile(path: str, name: str) -> None:
+    try:
+        packfile(path, name, sys.stdout.buffer)
+    except (SyncError, OSError) as error:
+        die(f"packfile: {error}")
+
+
+def cmd_apply(root: str) -> None:
+    try:
+        apply(root, sys.stdin.buffer, sys.stdout)
+    except (SyncError, OSError) as error:
+        die(f"apply: {error}")
+
+
+def cmd_pack(root: str) -> None:
+    try:
+        pack(root, sys.stdout.buffer)
+    except (SyncError, OSError) as error:
+        die(f"pack: {error}")
+
+
+def main(argv: list[str]) -> None:
+    commands = {
+        "start": (cmd_start, 3),
+        "_run": (cmd_run, 1),
+        "wait": (cmd_wait, 4),
+        "kill": (cmd_kill, 2),
+        "list": (cmd_list, 0),
+        "selftest": (cmd_selftest, 0),
+        "apply": (cmd_apply, 1),
+        "pack": (cmd_pack, 1),
+        "packfile": (cmd_packfile, 2),
+    }
+    if not argv or argv[0] not in commands or len(argv) - 1 != commands[argv[0]][1]:
+        die("usage: workvm-job start|wait|kill|list|selftest|apply|pack|packfile ...")
+    function, _count = commands[argv[0]]
+    function(*argv[1:])
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

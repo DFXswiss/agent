@@ -91,7 +91,7 @@ def test_the_rule_table_covers_every_type_with_the_contract_keys() -> None:
             assert rule.required == ()
             continue
         assert set(rule.fields) == set(schema["properties"]), op_type
-        assert set(rule.required) == set(schema["required"]), op_type
+        assert set(rule.required) == set(schema.get("required", [])), op_type
 
 
 @pytest.mark.parametrize("op_type", sorted(VALID))

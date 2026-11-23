@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/request.py at 0346281bb510.
+"""Copied from agent-core src/agent_hub/crypto/request.py at 99578e6bf451.
 
 Device requests and responses (04-crypto.md section 4.5, new).
 

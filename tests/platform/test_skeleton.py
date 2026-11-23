@@ -48,6 +48,7 @@ AREAS: dict[ModuleType, list[str]] = {
         "subagents",
         "sync",
         "vm",
+        "workvm",
     ],
     agent_guest: ["api_routes", "control_routes", "hook_addons", "mcp_tools", "sandbox"],
     agent_doubles: ["atk", "common", "github", "login_cli", "mail", "model"],
