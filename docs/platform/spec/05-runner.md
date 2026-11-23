@@ -754,7 +754,8 @@ Pipeline for every `request_operation`:
    `rejected` returned.
 2. Control journals `operation.request`; runner receives it, assigns state `received`.
 3. Runner formal checks (`03-api.md` §9) on plaintext: settings from the latest verified `settings.workgroup`
-   event, GitHub credential present, sizes, secret patterns. For `github.commit` the runner takes **one** workspace export
+   event (no event: the defaults, no repository list; a stored event that no longer opens: no repository allowed;
+   ADR-054), repository list when set, GitHub credential present, sizes, secret patterns. For `github.commit` the runner takes **one** workspace export
    snapshot into the scratch directory `tmp/op-<id>` here, before registration; scan, local tree SHA and the later
    commit all use exactly this snapshot (`03-api.md` §9).
 4. Dedupe tag (`04-crypto.md` §4.10) with the current WK epoch.
@@ -770,7 +771,7 @@ Pipeline for every `request_operation`:
 
 | Type | Steps |
 |---|---|
-| `github.list_repositories` | `GET /user/installations` → `GET /user/installations/{id}/repositories` (paginated); a token without the GitHub App (`403` on `/user/installations`, ADR-053) lists `GET /user/repos` (paginated, same limits) instead; mark `allowed` from settings |
+| `github.list_repositories` | `GET /user/installations` → `GET /user/installations/{id}/repositories` (paginated); a token without the GitHub App (`403` on `/user/installations`, ADR-053) lists `GET /user/repos` (paginated, same limits) instead; mark `allowed` from settings (every entry when the workgroup sets no list, ADR-054) |
 | `github.checkout` | resolve ref (`GET /repos/{r}/commits/{ref}`) → `GET /repos/{r}/tarball/{sha}` streamed to scratch → safe extraction (regular files/dirs only; reject absolute, `..`, links, devices; strip the top directory; size limits) → re-tar → `files/import?dir=repos/<owner>/<name>&replace=true` (`<owner>/<name>` in lower case: GitHub names, the allow-list and the dedupe are case-insensitive; the result's `dir` names the path, KOR-10); remember base sha per (session, repo) |
 | `github.get_pull_request` | `GET /repos/{r}/pulls/{n}`, `/files` (paginated), `/issues/{n}/comments` |
 | `github.create_branch` | `GET /repos/{r}/git/ref/heads/{from}` (or commit sha) → `POST /repos/{r}/git/refs` |

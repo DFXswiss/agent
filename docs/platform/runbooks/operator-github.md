@@ -15,8 +15,8 @@ pull requests and issues read/write, metadata read on the selected repositories)
 `.github/workflows/` can only be pushed with the scope `workflow` (fine-grained: "Workflows" read/write); without it
 such a push fails at GitHub. Granting it lets agents change CI: decide per account. A fine-grained token reaches only
 repositories of the account's owner or its organizations, not repositories where the account is only a collaborator
-(use a classic token for those). The workgroup's allowed repositories remain the boundary of every operation; they
-are set by the workgroup's admins.
+(use a classic token for those). Without a list in the workgroup settings every repository the account reaches
+is allowed (ADR-054); a list set by the workgroup's admins limits every operation to exactly its repositories.
 
 ## 1. Set up
 
@@ -72,7 +72,7 @@ only the operator revokes it.
 | "Connect GitHub" fails with "The service refused the request"; log `github_connect failed … source=operator step=user kind=unauthorized status=401` | GitHub refuses the token (revoked, expired or wrong): place a valid token (step 2) |
 | The repository list is empty or misses a repository | the account has no access to it at GitHub; give the account access, then list again |
 | A push of a commit that changes `.github/workflows/` fails | the token lacks the scope `workflow` (see above) |
-| An operation ends `repo_not_allowed` | the repository is not in the workgroup's allowed repositories: add it in the workgroup settings |
+| An operation ends `repo_not_allowed` | the workgroup limits its repositories and this one is not on the list: add it, or clear the list to allow every repository of the connection |
 
 Counters (08-monitoring.md §3): `agent_runner_operator_github_connects_total` and
 `agent_runner_operator_github_connect_failures_total`.

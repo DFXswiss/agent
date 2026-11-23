@@ -12,7 +12,7 @@ import pytest
 
 from agent_runner.crypto.ids import uuid7
 from agent_runner.operations import journal, records, results, settings
-from agent_runner.operations.settings import DEFAULTS, SettingsInvalid, WorkgroupSettings
+from agent_runner.operations.settings import DEFAULTS, UNREADABLE, SettingsInvalid, WorkgroupSettings
 from agent_runner.operations.stored import open_stored
 from agent_runner.sessions.journal import JournalRecordInvalid
 
@@ -132,7 +132,12 @@ def test_settings_parse_only_the_contract_shape() -> None:
     found = settings.parse({"repositories": [REPO], "protected_branches": ["main", "hot/*"], "pr_draft_default": False})
     assert found == WorkgroupSettings(frozenset({REPO}), ("main", "hot/*"), False)
     assert found.allows("Example-Org/Example-Repo")
-    assert not DEFAULTS.allows(REPO)
+    assert not found.allows("other/repo")
+    # KOR-30: without a list every repository is allowed; unreadable stored settings allow none (fail closed)
+    assert DEFAULTS.allows(REPO)
+    assert not DEFAULTS.restricted
+    assert UNREADABLE.restricted
+    assert not UNREADABLE.allows(REPO)
     for bad in (
         {},
         {"repositories": [REPO], "protected_branches": [], "pr_draft_default": "yes"},
@@ -184,13 +189,13 @@ def test_invalid_settings_events_are_refused_and_audited(rig: Rig) -> None:
     run(rig, body)
 
 
-def test_stored_settings_that_no_longer_open_or_parse_give_the_defaults(rig: Rig) -> None:
+def test_stored_settings_that_no_longer_open_or_parse_allow_no_repository(rig: Rig) -> None:
     async def body(env: Any) -> None:
         kit_ = await setup(env)
         await kit_.settings([REPO])
         async with env.pool.connection() as conn:
             await conn.execute("UPDATE runner.workgroup_settings SET author_sig = %s", ("A" * 43,))
-            assert await settings.load(conn, env.sync.storage_key, WG) == DEFAULTS
+            assert await settings.load(conn, env.sync.storage_key, WG) == UNREADABLE
         # a stored body of the wrong shape (only possible by tampering with the store)
         org = env.world.orgs[ORG]
         sealed = seal(org, "alice", "settings.workgroup", label="odd", body={"repositories": "x"})
@@ -201,7 +206,7 @@ def test_stored_settings_that_no_longer_open_or_parse_give_the_defaults(rig: Rig
             await settings.keep(
                 conn, org_id=ORG, wg_id=WG, event_id=uuid7(), scope_seq=9, author_sig=v.sig_pk("alice"), sealed=sealed
             )
-            assert await settings.load(conn, env.sync.storage_key, WG) == DEFAULTS
+            assert await settings.load(conn, env.sync.storage_key, WG) == UNREADABLE
 
     run(rig, body)
 

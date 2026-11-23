@@ -7,8 +7,14 @@ shapes, else the event is refused (`settings_invalid`). The latest event per wor
 (`scope_seq`); it is kept as received with the author's verified signing key (`runner.workgroup_settings`) and opened
 again only into memory (`load`).
 
-Without any verified event a workgroup has the defaults: no repository allowed, protected branches `main`, `master`,
+Without any verified event a workgroup has the defaults: no repository list, protected branches `main`, `master`,
 `develop`, `release/*`, pull requests as drafts.
+
+The repository list is an optional restriction (KOR-30, ADR-054): an empty list (no event, or an event with
+`repositories: []`) allows every repository the task owner's GitHub connection reaches - GitHub itself is the boundary
+(`repo_not_accessible` in the pre-checks); a non-empty list allows exactly its repositories. A stored event that no
+longer opens or parses may have held a list, so it fails closed: `UNREADABLE` allows no repository until a new event
+is saved.
 """
 
 from __future__ import annotations
@@ -39,15 +45,25 @@ class SettingsInvalid(ValueError):
 @dataclass(frozen=True)
 class WorkgroupSettings:
     repositories: frozenset[str]
-    """Allowed repositories, lower case."""
+    """Allowed repositories, lower case; empty means no restriction."""
     protected_branches: tuple[str, ...]
     pr_draft_default: bool
+    unreadable: bool = False
+    """The stored event no longer opens or parses: no repository is allowed (fail closed)."""
+
+    @property
+    def restricted(self) -> bool:
+        """True when the workgroup limits its agents to the listed repositories (none when unreadable)."""
+        return bool(self.repositories) or self.unreadable
 
     def allows(self, repo: str) -> bool:
-        return repo.lower() in self.repositories
+        return not self.restricted or repo.lower() in self.repositories
 
 
 DEFAULTS = WorkgroupSettings(repositories=frozenset(), protected_branches=DEFAULT_PROTECTED, pr_draft_default=True)
+UNREADABLE = WorkgroupSettings(
+    repositories=frozenset(), protected_branches=DEFAULT_PROTECTED, pr_draft_default=True, unreadable=True
+)
 
 
 def _strings(value: object, pattern: re.Pattern[str], limit: int) -> list[str]:
@@ -92,16 +108,17 @@ async def keep(
 
 
 async def load(conn: AsyncConnection[Any], storage_key: bytes, wg_id: str) -> WorkgroupSettings:
-    """The settings of the latest verified event of the workgroup, else `DEFAULTS`.
+    """The settings of the latest verified event of the workgroup, else `DEFAULTS` (no list: every repository the
+    owner's GitHub connection reaches, KOR-30).
 
-    A stored event that no longer opens or parses (it was checked when it was stored) gives `DEFAULTS`, never a
-    wider allow-list."""
+    A stored event that no longer opens or parses (it was checked when it was stored) gives `UNREADABLE`, never a
+    wider allow-list than the one it may have held."""
     cur = await conn.execute("SELECT author_sig, sealed FROM runner.workgroup_settings WHERE wg_id = %s", (wg_id,))
     row = await cur.fetchone()
     if row is None:
         return DEFAULTS
     body = await open_stored(conn, storage_key, wg_id, row[1], str(row[0]))
     try:
-        return DEFAULTS if body is None else parse(body)
+        return UNREADABLE if body is None else parse(body)
     except SettingsInvalid:
-        return DEFAULTS
+        return UNREADABLE

@@ -2,13 +2,14 @@
 
 `GET /user/installations` -> for each installation `GET /user/installations/{id}/repositories` (both paginated):
 every repository the task owner reaches through the GitHub App, once, sorted by name, with `allowed` from the
-workgroup's allow-list (pre-check data). A repository entry that does not fit the result contract is left out and
-logged; a malformed list is `upstream_error`.
+workgroup's allow-list (pre-check data); without a list (`restricted` false) every listed repository is `allowed`
+(KOR-30; data of an older runner without `restricted`: restricted when its list is not empty). A
+repository entry that does not fit the result contract is left out and logged; a malformed list is `upstream_error`.
 
 A token that is not a GitHub App user token (the operator's account, KOR-27, ADR-053) cannot list installations:
 GitHub refuses `GET /user/installations` with `403`. Then the list is `GET /user/repos` (paginated, the same page
-and result limits): every repository the account reaches. The workgroup's allow-list stays the boundary - only an
-`allowed` repository passes the pre-checks of the other operations.
+and result limits): every repository the account reaches. A workgroup allow-list, when set, stays the boundary -
+only an `allowed` repository passes the pre-checks of the other operations.
 """
 
 from __future__ import annotations
@@ -23,7 +24,8 @@ from agent_runner.operations.rules import branch_valid
 MAX_REPOSITORIES = 10000
 
 
-def _entry(item: object, allowed: frozenset[str]) -> dict[str, Any] | None:
+def _entry(item: object, allowed: frozenset[str] | None) -> dict[str, Any] | None:
+    """One result entry; `allowed` None means every repository is allowed."""
     try:
         data = ops.obj(item)
         repo = ops.text(data.get("full_name"), ops.REPO_RE)
@@ -33,7 +35,8 @@ def _entry(item: object, allowed: frozenset[str]) -> dict[str, Any] | None:
     branch = data.get("default_branch")
     if not branch_valid(branch):
         return None
-    return {"repo": repo, "default_branch": branch, "private": private, "allowed": repo.lower() in allowed}
+    permitted = allowed is None or repo.lower() in allowed
+    return {"repo": repo, "default_branch": branch, "private": private, "allowed": permitted}
 
 
 async def _lists(client: GitHubClient) -> list[list[Any]]:
@@ -52,7 +55,8 @@ async def _lists(client: GitHubClient) -> list[list[Any]]:
 
 
 async def list_repositories(ctx: OperationContext, client: GitHubClient) -> dict[str, Any]:
-    allowed = frozenset(str(name) for name in ctx.data.get("allowed", []))
+    listed = frozenset(str(name) for name in ctx.data.get("allowed", []))
+    allowed = listed if ctx.data.get("restricted") is True or listed else None
     found: dict[str, dict[str, Any]] = {}
     skipped = 0
     for items in await _lists(client):

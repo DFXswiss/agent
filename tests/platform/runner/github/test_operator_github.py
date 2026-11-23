@@ -18,7 +18,7 @@ import pytest
 
 from agent_guest.schema import SchemaSet
 from agent_runner.credentials import cache
-from agent_runner.github import operator
+from agent_runner.github import access, operator
 from agent_runner.github.executors import EXECUTORS
 from agent_runner.github.op_prechecks import PRECHECKS
 from agent_runner.operations.extensions import CheckFailed, OperationFailed
@@ -513,3 +513,60 @@ def test_checkout_commit_and_push_with_the_operators_token(
         assert r.journal()[start:] == []
 
     run10(store_dsn, github, tmp_path, body, token=OPERATOR_TOKEN)
+
+
+@pytest.mark.parametrize("allowed", [None, ()], ids=["no-settings", "empty-list"])
+def test_without_an_allow_list_every_repository_of_the_account_works(
+    store_dsn: str, start_github: Callable[..., GitHub], tmp_path: Path, allowed: tuple[str, ...] | None
+) -> None:
+    """KOR-30: no list in the workgroup settings allows every repository the connection reaches - listed `allowed`,
+    then checkout, commit, push, pull request and comment on the account's own repository, each registered at the hub
+    with its type; a repository the account cannot reach is refused by GitHub (`repo_not_accessible`)."""
+    data = run10_world()
+    data["users"] += [user for user in operator_world()["users"] if user["login"].startswith("op-")]
+    data["repositories"] += [{"full_name": "op-account/tools", "branches": [{"name": "main", "commits": [{}]}]}]
+    github = start_github(world=data)
+    tools = "op-account/tools"
+
+    async def body(r: R10) -> None:
+        sid = await r.session()
+        listed = await r.run(sid, "github.list_repositories", {})
+        assert listed.result is not None, listed.answer
+        entries = {entry["repo"]: entry["allowed"] for entry in listed.result["repositories"]}
+        assert entries[tools] is True
+        assert all(entries.values())
+        assert (await r.run(sid, "github.checkout", {"repo": tools})).state == "succeeded"
+        root = r.guest.work(sid) / "repos" / "op-account" / "tools"
+        (root / "NOTES.md").write_text("no allow-list\n")
+        made = await r.run(sid, "github.commit", {"repo": tools, "branch": "work", "message": "M."})
+        assert made.result is not None, made.answer
+        sha = made.result["commit_sha"]
+        pushed = await r.run(sid, "github.push", {"repo": tools, "branch": "work", "commit_sha": sha})
+        assert pushed.state == "succeeded", pushed.answer
+        params = {"repo": tools, "head": "work", "base": "main", "title": "Notes", "body": ""}
+        created = await r.run(sid, "github.create_pull_request", params)
+        assert created.result is not None, created.answer
+        number = created.result["number"]
+        commented = await r.run(sid, "github.comment", {"repo": tools, "number": number, "body": "Ready."})
+        assert commented.state == "succeeded", commented.answer
+        registered = [request["type"] for request in r.ok.hub.requests]
+        assert registered == [
+            "github.list_repositories",
+            "github.checkout",
+            "github.commit",
+            "github.push",
+            "github.create_pull_request",
+            "github.comment",
+        ]
+        # each registration (the audit of the operation) names its repository
+        assert [r.ok.hub.params_event(index)[1]["params"]["repo"] for index in range(1, 6)] == [tools] * 5
+        # not reachable for the account: GitHub refuses it in the pre-check, the session gets a clear code
+        outside = await r.run(sid, "github.checkout", {"repo": "octo-org/second"})
+        assert refused(outside) == "repo_not_accessible"
+        assert outside.answer is not None
+        assert outside.answer["error"]["message"] == access.NOT_ACCESSIBLE
+        rejected = r.ok.hub.requests[-1]
+        assert (len(r.ok.hub.requests), rejected["type"], rejected["local_check"]) == (7, "github.checkout", "rejected")
+        assert r.ok.hub.params_event()[1]["params"]["repo"] == "octo-org/second"
+
+    run10(store_dsn, github, tmp_path, body, token=OPERATOR_TOKEN, allowed=allowed)

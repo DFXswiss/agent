@@ -193,7 +193,7 @@ def run10(
     root: Path,
     body: Callable[[R10], Awaitable[None]],
     *,
-    allowed: Sequence[str] = (REPO,),
+    allowed: Sequence[str] | None = (REPO,),
     guest: FilesGuest | None = None,
     token: str = TOKEN,
 ) -> None:
@@ -209,7 +209,8 @@ def run10(
             env.context.github_options = GitHubOptions(wall=github.clock, transport=PublicHost(github.url))
             found = await setup(env, executors=EXECUTORS, prechecks=PRECHECKS, guest=guest)
             install(env.context, found.pipeline)
-            await found.settings(list(allowed))
+            if allowed is not None:  # None: no settings event at all (the defaults)
+                await found.settings(list(allowed))
             async with session(env.pool) as conn:
                 await _store(conn, ALICE, "github", 1, make_record(github_body(token=token)))
                 await store_scope_key(conn, env.sync.storage_key, ("cred", ALICE, 1), ck(), source="wrap")

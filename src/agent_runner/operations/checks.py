@@ -8,7 +8,8 @@ booleans; the guest's `local_check:"passed"` is only a hint) and adds the rules 
    unknown keys, types, lengths in code points, `repo`, branch rules (`refs/heads/` removed first), `ref` (branch or
    tag name or 7-40 hex SHA), full SHAs, PR numbers, single-line title, model ID syntax;
 2. commit paths (`path_invalid`, with pointers): relative, no empty, `.`, `..` or `.git` segment;
-3. repository allow-list of the workgroup settings (`repo_not_allowed`; not for `github.list_repositories`);
+3. repository allow-list of the workgroup settings when it is set (`repo_not_allowed`; not for
+   `github.list_repositories`; without a list every repository passes, KOR-30);
 4. protected branches (`branch_protected`): the branch of `create_branch`, `commit`, `push` and the head of a pull
    request;
 5. the owner's GitHub connection (`github_not_connected`, every `github.*` type);

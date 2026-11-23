@@ -172,7 +172,18 @@ def test_commit_paths_are_path_invalid(path: str) -> None:
 @pytest.mark.parametrize("op_type", [t for t in VALID if t.startswith("github.") and t != "github.list_repositories"])
 def test_repositories_outside_the_allow_list_are_refused(op_type: str) -> None:
     assert refused(op_type, with_(op_type, repo="other/repo")).code == "repo_not_allowed"
-    assert refused(op_type, VALID[op_type], settings=DEFAULTS).code == "repo_not_allowed"
+
+
+@pytest.mark.parametrize("op_type", [t for t in VALID if t.startswith("github.") and t != "github.list_repositories"])
+def test_without_an_allow_list_every_repository_passes(op_type: str) -> None:
+    # KOR-30: no settings event, or an event with an empty list, restricts nothing (GitHub is the boundary)
+    empty = replace(SETTINGS, repositories=frozenset())
+    for settings in (DEFAULTS, empty):
+        assert not settings.restricted
+        assert checks.check(request(op_type, with_(op_type, repo="other/repo"), settings=settings))["repo"] == (
+            "other/repo"
+        )
+    assert SETTINGS.restricted
 
 
 def test_the_allow_list_is_compared_lower_case() -> None:
@@ -180,6 +191,7 @@ def test_the_allow_list_is_compared_lower_case() -> None:
 
 
 def test_listing_repositories_needs_no_allow_list() -> None:
+    assert checks.check(request("github.list_repositories", {})) == {}
     assert checks.check(request("github.list_repositories", {}, settings=DEFAULTS)) == {}
 
 

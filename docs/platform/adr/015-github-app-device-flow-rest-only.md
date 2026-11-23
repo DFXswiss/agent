@@ -11,7 +11,7 @@ Status: Accepted (2026-11-21)
 - A **GitHub App** with repository permissions contents (read/write), pull requests (read/write), issues (read/write), metadata (read); **device flow enabled**; **user-to-server token expiration disabled** in the App settings (refresh would require the client secret on every device).
 - Connect = device request `github.connect` to an eligible device; the runner runs the device flow with the public client ID, relays `user_code`/`verification_uri` to the user, polls, stores the token as `github` credential under the user's CK. Disconnect = hard delete of the record + cache purge + link to revoke the grant at GitHub.
 - Execution on the runner host via **REST and Git Data API only**: tarball download for checkout, blobs/trees/commits for commit, ref update (fast-forward) for push. No `git` binary, so no hooks/filters of untrusted repositories run.
-- Released repositories = intersection of App installation selection and the workgroup `repositories` allow-list; protected-branch patterns; PRs draft by default; formal rules in `03-api.md` §9.
+- Released repositories = intersection of App installation selection and the workgroup `repositories` allow-list (an empty list restricts nothing: ADR-054); protected-branch patterns; PRs draft by default; formal rules in `03-api.md` §9.
 - Operations use the credential of the **task owner**.
 
 ## Consequences

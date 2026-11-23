@@ -90,6 +90,18 @@ def test_list_repositories_lists_every_installation_repository_once_with_allowed
     with_env(store_dsn, github, body)
 
 
+def test_list_repositories_of_unreadable_settings_allow_nothing(store_dsn: str, github: GitHub) -> None:
+    async def body(env: Env) -> None:
+        # restricted without a list (stored settings that no longer open): fail closed, every entry not allowed
+        result = await execute(env, "github.list_repositories", {}, data={"allowed": [], "restricted": True})
+        assert [entry["allowed"] for entry in result["repositories"]] == [False, False]
+        # no restriction: every entry allowed
+        result = await execute(env, "github.list_repositories", {}, data={"allowed": [], "restricted": False})
+        assert [entry["allowed"] for entry in result["repositories"]] == [True, True]
+
+    with_env(store_dsn, github, body)
+
+
 def test_list_repositories_leaves_out_entries_outside_the_contract(store_dsn: str) -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/user/installations":
@@ -119,8 +131,9 @@ def test_list_repositories_leaves_out_entries_outside_the_contract(store_dsn: st
             await env.add_ck()
             ctx = context_for(env, {})
             result = await EXECUTORS["github.list_repositories"](ctx)
+            # no allow-list in the pre-check data: every listed repository is allowed (KOR-30)
             assert result == {
-                "repositories": [{"repo": "o/a", "default_branch": "main", "private": False, "allowed": False}]
+                "repositories": [{"repo": "o/a", "default_branch": "main", "private": False, "allowed": True}]
             }
             assert f"runner.github repositories_skipped operation_id={ctx.operation.id} count=4" in env.log()
 
@@ -477,7 +490,7 @@ def test_prechecks_check_connection_and_repository_access(store_dsn: str, github
     async def body(env: Env) -> None:
         assert set(PRECHECKS) == set(EXECUTORS)
         listed = await PRECHECKS["github.list_repositories"](precheck_request(env, "github.list_repositories", {}))
-        assert listed.data == {"allowed": ["octo-org/hello", "octo-org/hidden"]}
+        assert listed.data == {"allowed": ["octo-org/hello", "octo-org/hidden"], "restricted": True}
         assert github.journal() == []
         for op_type in (
             "github.get_pull_request",
