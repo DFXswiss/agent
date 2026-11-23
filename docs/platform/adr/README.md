@@ -56,5 +56,6 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [050](050-hedged-outbox-push.md) | An outbox push whose answer is late is sent once more on another connection; the first answer counts | §6, §14.6 | no |
 | [051](051-login-reads-the-terminal-screen.md) | The subscription login reads the terminal screen of `claude setup-token` (cursor positioning, input field, error while running) | §4 | no |
 | [052](052-operator-subscriptions.md) | Operator subscriptions: sessions of approved organizations use the operator's Claude subscriptions on a platform device (runner only, bound to token files) | §4 | no |
+| [053](053-operator-github-account.md) | Approved users connect GitHub at once with the operator's token on a platform device; second way beside ADR-015 | §9 | yes (as ADR-015) |
 
 New decisions get the next free number; a superseded ADR keeps its file and is marked `Superseded by ADR-NNN`.

@@ -109,6 +109,7 @@ One line per check, in fixed order, result `ok`, `warn` or `fail` with a closed 
 | `textfile` | textfile directory writable or sink off | `textfile_unwritable` |
 | `operator_subscriptions` | off, or every token file of the operator's subscriptions usable (value: the count) | warn `files_ignored`, `none_usable`, `dir_unusable` – [operator-subscriptions.md](operator-subscriptions.md) §3 |
 | `test_mode` | `TEST_MODE=0` | warn `test_mode_on` – never in production |
+| `operator_github` | ok `off` (not set) or `usable`: the operator's GitHub token file passes the checks of every connect ([operator-github.md](operator-github.md)) | `missing`, `not_regular`, `owner`, `mode`, `unreadable`, `format` – fix the file as in the runbook |
 | `sync` | no operator marker | `device_revoked`, `sync_fatal`, `platform_stopped`, `org_stopped` (below) |
 
 ## 5. Faults that need an operator

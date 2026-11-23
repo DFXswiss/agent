@@ -36,7 +36,7 @@ document differ, this document wins; §4.6 lists the spike defects that MUST NOT
 | `agent-runner enroll --hub URL --code CODE [--platform]` | §2.1 |
 | `agent-runner run` | foreground daemon (development, tests, launchd target) |
 | `agent-runner status [--json]` | identity, hub connection, outbox backlog, VMs, sessions, pool, capacity |
-| `agent-runner doctor` | checks: Lima ≥ 2.3, vz available, golden ready, Landlock ABI in golden (from build record), PostgreSQL, login command on the host (`login_cli`: `LOGIN_ARGV[0]` resolved like §11.2; for the default command its `--version`, with a time limit and the login's allow-list env, equals the golden's Claude Code pin, else warn `version_mismatch`; missing or not executable: fail `login_cli_missing`; details in `runbooks/runner-installation.md` §4), hub reachability and pinned key, textfile dir writable, the operator's subscriptions (`operator_subscriptions`: ok `off`/`usable` with the count of usable token files, warn `files_ignored`/`none_usable`/`dir_unusable`; no file name or organization; ADR-052), clock skew < 5 s against hub time |
+| `agent-runner doctor` | checks: Lima ≥ 2.3, vz available, golden ready, Landlock ABI in golden (from build record), PostgreSQL, login command on the host (`login_cli`: `LOGIN_ARGV[0]` resolved like §11.2; for the default command its `--version`, with a time limit and the login's allow-list env, equals the golden's Claude Code pin, else warn `version_mismatch`; missing or not executable: fail `login_cli_missing`; details in `runbooks/runner-installation.md` §4), hub reachability and pinned key, textfile dir writable, the operator's subscriptions (`operator_subscriptions`: ok `off`/`usable` with the count of usable token files, warn `files_ignored`/`none_usable`/`dir_unusable`; no file name or organization; ADR-052), clock skew < 5 s against hub time, the operator's GitHub token file (`operator_github`: ok `off`/`usable`, warn with the reason; §11.4) |
 | `agent-runner image build [--claude-version V]` / `image list` / `image retire VERSION` | §3.1 |
 | `agent-runner pool status` | pool VMs and refill state |
 | `agent-runner service install` / `service uninstall` | §1.1 |
@@ -63,7 +63,8 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `OPENROUTER_KEY_FILE` | empty | platform devices only; file 0600; refused on org devices (`config_invalid`) |
 | `OPERATOR_SUBSCRIPTION_DIR` | empty | platform devices only (refused on org devices); directory 0700 of the runner account, not a symlink, holding the operator's subscription token files `<name>.token` (§10.1, ADR-052); only together with `OPERATOR_SUBSCRIPTION_ORGS` |
 | `OPERATOR_SUBSCRIPTION_ORGS` | empty = nobody | comma-separated organization IDs whose sessions may use the operator's subscriptions; only together with `OPERATOR_SUBSCRIPTION_DIR` (one without the other: `config_invalid`) |
-| `GITHUB_CLIENT_ID` | required for GitHub features | public client ID of the GitHub App |
+| `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` | empty / empty | the operator's GitHub token (absolute path) and the approved user IDs (comma-separated UUIDs); both or neither, platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
+| `GITHUB_CLIENT_ID` | required for the device flow | public client ID of the GitHub App; users approved for the operator's GitHub account (§11.4) connect without it |
 | `GITHUB_API_URL` / `GITHUB_WEB_URL` | `https://api.github.com` / `https://github.com` | doubles in tests |
 | `MODEL_UPSTREAM_ANTHROPIC` / `MODEL_UPSTREAM_OPENROUTER` | `https://api.anthropic.com` / `https://openrouter.ai/api` | doubles in tests |
 | `ANTHROPIC_USAGE_URL` | `https://api.anthropic.com/api/oauth/usage` | quota polling |
@@ -732,6 +733,17 @@ the same applies to the `claude_subscription` credential of §11.2)
 deletion (`DELETE /v1/me/credentials/github`), runners purge caches; the UI links to the GitHub App settings for
 revocation at GitHub.
 
+**Operator's GitHub account (KOR-27, ADR-053).** For a user listed in `OPERATOR_GITHUB_USERS` (the user of the
+verified request header) the runner skips the device flow: it reads `OPERATOR_GITHUB_TOKEN_FILE` anew (regular file,
+not a symlink, owned by the runner's account, 0600 or stricter, one line with the token, in a directory of the
+runner's account that nobody else may write; anything else is not read,
+`credential_missing`, the reason logged once), checks the token with `GET <GITHUB_API_URL>/user` (scopes from
+`X-OAuth-Scopes` as far as GitHub names them), stores the credential as above and sends the only response
+`{step:"done", login}` (final). A refused token ends `{step:"failed", code:"upstream_error"}`. Log lines carry
+`source=operator`; doctor `operator_github` and the counters `agent_runner_operator_github_connects_total` /
+`_connect_failures_total` (08 §3) watch the file and the connects. Every other user keeps the device flow. The stored credential is
+sealed under the user's `CK` like every `github` credential, so the approved user can open it (ADR-053).
+
 ## 12. Operations (ADR-012)
 
 Pipeline for every `request_operation`:
@@ -758,7 +770,7 @@ Pipeline for every `request_operation`:
 
 | Type | Steps |
 |---|---|
-| `github.list_repositories` | `GET /user/installations` → `GET /user/installations/{id}/repositories` (paginated); mark `allowed` from settings |
+| `github.list_repositories` | `GET /user/installations` → `GET /user/installations/{id}/repositories` (paginated); a token without the GitHub App (`403` on `/user/installations`, ADR-053) lists `GET /user/repos` (paginated, same limits) instead; mark `allowed` from settings |
 | `github.checkout` | resolve ref (`GET /repos/{r}/commits/{ref}`) → `GET /repos/{r}/tarball/{sha}` streamed to scratch → safe extraction (regular files/dirs only; reject absolute, `..`, links, devices; strip the top directory; size limits) → re-tar → `files/import?dir=repos/<owner>/<name>&replace=true` (`<owner>/<name>` in lower case: GitHub names, the allow-list and the dedupe are case-insensitive; the result's `dir` names the path, KOR-10); remember base sha per (session, repo) |
 | `github.get_pull_request` | `GET /repos/{r}/pulls/{n}`, `/files` (paginated), `/issues/{n}/comments` |
 | `github.create_branch` | `GET /repos/{r}/git/ref/heads/{from}` (or commit sha) → `POST /repos/{r}/git/refs` |
