@@ -2,30 +2,31 @@
 
     python -m agent_doubles.login_cli setup-token --auth-url https://127.0.0.1:PORT --ca-file ca.pem [--seed S]
 
-Like the real command it builds an OAuth authorize URL with PKCE (S256) and a state, starts ``$BROWSER <url>`` when
-``BROWSER`` is set (the runner's capture helper), prints the URL, then prompts ``Paste code here if prompted > `` and
-reads one line ``CODE#STATE`` from standard input (a PTY in the runner). It exchanges the code at the auth-page
-double's token endpoint and prints the token block::
+Like the real command (Claude Code 2.1.330, recorded in KOR-21) it builds an OAuth authorize URL with PKCE (S256) and
+a state, starts ``$BROWSER <url>`` when ``BROWSER`` is set (the runner's capture helper) and then draws its terminal
+UI the way the real program does (`Painter`): words are placed with cursor positioning (``ESC[<n>G``) instead of
+spaces, a new frame moves the cursor up over the previous one and overwrites only the cells that changed (a space
+only where another character stood, ``ESC[K``/``ESC[2K`` for what is left), a spinner cell changes in place.
 
-    ✓ Long-lived authentication token created
+1. "· Opening browser to sign in…" with a spinner for ``--prompt-delay`` seconds (the real program shows its input
+   field about 4 s after the URL); whatever is typed until then is dropped, as the real program drops it.
+2. "Browser didn't open? Use the URL below to sign in (c to copy)", the URL, "Paste code here if prompted" and an
+   input box; it reads one line ``CODE#STATE`` from standard input (a PTY in the runner).
+3. "· Finishing sign-in…", the code exchange at the auth-page double's token endpoint, then either
+   - the token screen ("✓ Long-lived authentication token created", "Your OAuth token (valid for 1 year):", the
+     token on its own rows, "Store this token securely. …", "Use this token by setting: export
+     CLAUDE_CODE_OAUTH_TOKEN=<token>"), and exit 0 by itself after ``SUCCESS_EXIT`` seconds, or
+   - "✘ OAuth error: <message>" and "Press Enter to retry": like the real program the double does **not** end; it
+     ignores further input and exits 1 only after ``--code-timeout`` seconds or when the terminal closes.
 
-    Your OAuth token (valid for 1 year):
+Exit 2 for invalid arguments. The state and verifier derive from ``--seed``, so a run is reproducible. When
+``CLAUDE_CONFIG_DIR`` is set, the double writes a small ``.claude.json`` there at start (as the real CLI creates its
+configuration), so callers can check that a temporary configuration directory is cleaned up.
 
-    <token>
-
-    Store this token securely. You won't be able to see it again.
-
-    Use this token by setting: export CLAUDE_CODE_OAUTH_TOKEN=<token>
-
-Exit 0 after the token, 1 on ``OAuth error: …`` (a wrong code or state, an end of input, a refused exchange,
-a timeout), 2 for invalid arguments. The state and verifier derive from ``--seed``, so a run is reproducible.
-When ``CLAUDE_CONFIG_DIR`` is set, the double writes a small ``.claude.json`` there at start (as the real CLI creates
-its configuration), so callers can check that a temporary configuration directory is cleaned up.
-
-Variants (``--variant``): ``ok`` (default); ``no-url`` never opens a browser nor prints a URL and gives up after
-``--code-timeout`` seconds; ``timeout`` prints the URL but ignores every input and fails after ``--code-timeout``.
-``--columns N`` hard-wraps the URL and the token at N characters, as the real terminal UI does in a narrow terminal,
-so a caller can prove that it does not depend on unwrapped output (the URL comes reliably through ``BROWSER``).
+Variants (``--variant``): ``ok`` (default); ``no-url`` never opens a browser nor shows a URL and gives up after
+``--code-timeout`` seconds; ``timeout`` shows the URL and the input field but ignores every input and fails after
+``--code-timeout``. The layout follows the terminal's width (``--columns`` overrides it): longer rows, the URL and the
+token are hard-wrapped, as the real UI does in a narrow window.
 """
 
 from __future__ import annotations
@@ -38,10 +39,12 @@ import select
 import ssl
 import subprocess
 import sys
+import termios
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 from urllib.parse import urlencode, urlsplit
@@ -53,7 +56,16 @@ EXIT_FAILED = 1
 EXIT_USAGE = 2
 CODE_TIMEOUT = 600.0
 BROWSER_TIMEOUT = 10.0
-PROMPT = "Paste code here if prompted > "
+PROMPT_DELAY = 1.5
+SUCCESS_EXIT = 0.5
+"""Seconds the token screen stays before the command ends by itself (the real program: 500 ms)."""
+SPIN = 0.12
+SPINNER = "·✢✳✶✻✽"
+DEFAULT_COLUMNS = 1000
+"""The width when standard output is no terminal (in-process tests)."""
+PROMPT = "Paste code here if prompted"
+ERROR_HINT = "Press Enter to retry"
+TOKEN_MARKER = "Your OAuth token (valid for 1 year):"
 VARIANTS = ("ok", "no-url", "timeout")
 
 
@@ -176,8 +188,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--variant", choices=VARIANTS, default="ok")
     parser.add_argument("--code-timeout", type=float, default=CODE_TIMEOUT, help="seconds to wait for the code")
     parser.add_argument(
-        "--columns", type=int, default=0, help="hard-wrap the URL and the token at this width (0: no wrapping)"
+        "--prompt-delay", type=float, default=PROMPT_DELAY, help="seconds from the URL until the input field shows"
     )
+    parser.add_argument("--columns", type=int, default=0, help="lay out for this width (0: the terminal's width)")
     return parser
 
 
@@ -186,6 +199,113 @@ def _valid_auth_url(value: str) -> str:
     if parts.scheme not in ("http", "https") or not parts.netloc or parts.path not in ("", "/") or parts.query:
         raise ValueError("--auth-url must be a base URL (scheme://host:port)")
     return value.rstrip("/")
+
+
+def terminal_columns(stream: TextIO) -> int:
+    """The width of the terminal behind `stream`, `DEFAULT_COLUMNS` when it is none or reports no width."""
+    try:
+        return os.get_terminal_size(stream.fileno()).columns or DEFAULT_COLUMNS
+    except (OSError, ValueError, AttributeError):
+        return DEFAULT_COLUMNS
+
+
+def wrap(text: str, columns: int) -> list[str]:
+    """`text` cut into pieces of `columns` characters (a terminal UI hard-wraps long words); whole when 0."""
+    if columns <= 0:
+        return [text]
+    return [text[i : i + columns] for i in range(0, len(text), columns)] or [""]
+
+
+def _same(old: str, new: str, i: int) -> bool:
+    """Cell `i` needs no write: it holds the same character, or a blank stays blank."""
+    return old[i] == new[i] if i < len(old) else new[i] == " "
+
+
+def redraw(old: str, new: str) -> str:
+    """The output that turns the row `old` into `new` from column 1 on, as the real program draws: runs of changed
+    cells, each placed with ``ESC[<n>G``; a space only where another character stood; ``ESC[K`` for a tail left."""
+    out: list[str] = []
+    col, i = 0, 0
+    while i < len(new):
+        if _same(old, new, i):
+            i += 1
+            continue
+        j = i
+        while j < len(new) and not _same(old, new, j):
+            j += 1
+        if col != i:
+            out.append(f"\x1b[{i + 1}G")
+        out.append(new[i:j])
+        col = i = j
+    if old[len(new) :].strip():
+        if col != len(new):
+            out.append(f"\x1b[{len(new) + 1}G")
+        out.append("\x1b[K")
+    return "".join(out)
+
+
+class Painter:
+    """Draws rows like the real program: static rows once, then frames that replace each other in place."""
+
+    def __init__(self, stream: TextIO, columns: int) -> None:
+        self.stream = stream
+        self.columns = columns
+        self.frame: list[str] = []
+
+    def fit(self, rows: Sequence[str]) -> list[str]:
+        return [piece.rstrip() for row in rows for piece in wrap(row, self.columns)]
+
+    def emit(self, text: str) -> None:
+        self.stream.write(text)
+        self.stream.flush()
+
+    def static(self, rows: Sequence[str]) -> None:
+        self.emit("".join(redraw("", row) + "\r\n" for row in self.fit(rows)))
+
+    def show(self, rows: Sequence[str]) -> None:
+        """Replace the current frame: up over it, rewrite the changed cells row by row, erase the rows left over."""
+        new, old = self.fit(rows), self.frame
+        out = [f"\r\x1b[{len(old)}A"] if old else []
+        out += [redraw(old[i] if i < len(old) else "", row) + "\r\n" for i, row in enumerate(new)]
+        if len(old) > len(new):
+            out.append("\x1b[J")  # the rows left over below the new frame
+        self.emit("".join(out))
+        self.frame = new
+
+
+@contextlib.contextmanager
+def raw_input(fd: int) -> Iterator[None]:
+    """Read keys as the real program does (Node's raw mode): no echo, no line editing, CR stays CR; output processing
+    (LF -> CR LF) stays on. Without this, the terminal would echo the code into the drawn screen. No terminal: as is."""
+    if not os.isatty(fd):
+        yield
+        return
+    saved = termios.tcgetattr(fd)
+    attrs = termios.tcgetattr(fd)
+    attrs[0] &= ~(termios.ICRNL | termios.IXON | termios.BRKINT | termios.INPCK | termios.ISTRIP)
+    attrs[3] &= ~(termios.ECHO | termios.ICANON | termios.ISIG | termios.IEXTEN)
+    attrs[6][termios.VMIN], attrs[6][termios.VTIME] = 1, 0
+    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    try:
+        yield
+    finally:
+        with contextlib.suppress(termios.error):
+            termios.tcsetattr(fd, termios.TCSANOW, saved)
+
+
+def drop_input(fd: int, wait: Callable[..., Any] = select.select) -> None:
+    """Read and drop what was typed so far (the real program has no input field yet); stops at end of input."""
+    while wait([fd], [], [], 0)[0]:
+        if not os.read(fd, 4096):
+            return
+
+
+def linger(fd: int, seconds: float, *, clock: Callable[[], float], wait: Callable[..., Any]) -> None:
+    """Stay open after an error like the real program: drop input until `seconds` pass or the input ends."""
+    deadline = clock() + seconds
+    with contextlib.suppress(EOFError):
+        while clock() < deadline:
+            read_line(fd, deadline - clock(), clock=clock, wait=wait)
 
 
 def main(
@@ -203,98 +323,94 @@ def main(
     """Run the double; the exit code."""
     stream = out if out is not None else sys.stdout
     env = os.environ if environ is None else environ
-
-    def say(text: str = "", end: str = "\n") -> None:
-        stream.write(text + end)
-        stream.flush()
-
     try:
         args = build_parser().parse_args(argv)
         auth_url = _valid_auth_url(args.auth_url)
-        args.stdin_fd = stdin_fd
         context = ssl.create_default_context(cafile=str(args.ca_file)) if args.ca_file is not None else None
     except SystemExit as exc:
         return EXIT_USAGE if exc.code else EXIT_OK
     except (ValueError, OSError, ssl.SSLError) as exc:
         print(f"login double: {exc}", file=sys.stderr)
         return EXIT_USAGE
+    args.stdin_fd = stdin_fd
     config_dir = env.get("CLAUDE_CONFIG_DIR")
     if config_dir:
         Path(config_dir).mkdir(parents=True, exist_ok=True)
         (Path(config_dir) / ".claude.json").write_text(json.dumps({"double": "login_cli"}) + "\n", encoding="utf-8")
-    say("Welcome to Claude Code (login double)")
-    say()
-    try:
-        token = _login(
-            args, auth_url, context, say, env=env, run=run, urlopen=urlopen, clock=clock, sleep=sleep, wait=wait
-        )
-    except LoginError as exc:
-        say()
-        say(f"OAuth error: {exc}")
-        return EXIT_FAILED
-    for line in TOKEN_BLOCK:
-        if line == "{token}":
-            for part in wrap(token, args.columns):
-                say(part)
-        else:
-            say(line)
+    painter = Painter(stream, args.columns or terminal_columns(stream))
+    painter.emit("\x1b[?25l\x1b[?2004h\x1b]0;Claude Code (login double)\x07")
+    painter.static(["Welcome to Claude Code (login double)", "", HEADER, ""])
+    flow = Flow(args, auth_url, context, painter, env, run, urlopen, clock, sleep, wait)
+    with raw_input(stdin_fd):
+        try:
+            token = flow.login()
+        except LoginError as exc:
+            painter.show([f" ✘ OAuth error: {exc}", "", f" {ERROR_HINT}"])
+            linger(stdin_fd, args.code_timeout, clock=clock, wait=wait)
+            painter.emit("\x1b[?25h")
+            return EXIT_FAILED
+    rows = [" ✓ Long-lived authentication token created", "", f" {TOKEN_MARKER}", ""]
+    rows += [" " + part for part in wrap(token, max(painter.columns - 1, 1))]
+    rows += ["", " Store this token securely. You won't be able to see it again.", ""]
+    rows += [" Use this token by setting: export CLAUDE_CODE_OAUTH_TOKEN=<token>"]
+    painter.show(rows)
+    sleep(SUCCESS_EXIT)
+    painter.emit("\x1b[?25h")
     return EXIT_OK
 
 
-def wrap(text: str, columns: int) -> list[str]:
-    """`text` cut into pieces of `columns` characters (a terminal UI hard-wraps long words); whole when 0."""
-    if columns <= 0:
-        return [text]
-    return [text[i : i + columns] for i in range(0, len(text), columns)]
+HEADER = " This will guide you through long-lived (1-year) auth token setup for your Claude account."
 
 
-TOKEN_BLOCK = (
-    "✓ Long-lived authentication token created",
-    "",
-    "Your OAuth token (valid for 1 year):",
-    "",
-    "{token}",
-    "",
-    "Store this token securely. You won't be able to see it again.",
-    "",
-    "Use this token by setting: export CLAUDE_CODE_OAUTH_TOKEN=<token>",
-)
+@dataclass
+class Flow:
+    """The interactive part: URL, input field, code, exchange; the token or LoginError."""
 
+    args: argparse.Namespace
+    auth_url: str
+    context: ssl.SSLContext | None
+    painter: Painter
+    env: Mapping[str, str]
+    run: Callable[..., Any]
+    urlopen: Callable[..., Any]
+    clock: Callable[[], float]
+    sleep: Callable[[float], None]
+    wait: Callable[..., Any]
 
-def _login(
-    args: argparse.Namespace,
-    auth_url: str,
-    context: ssl.SSLContext | None,
-    say: Callable[..., None],
-    *,
-    env: Mapping[str, str],
-    run: Callable[..., Any],
-    urlopen: Callable[..., Any],
-    clock: Callable[[], float],
-    sleep: Callable[[float], None],
-    wait: Callable[..., Any],
-) -> str:
-    """The interactive part: URL, prompt, code, exchange; the token or LoginError."""
-    if args.variant == "no-url":
-        sleep(args.code_timeout)
-        raise LoginError("timed out waiting for the browser")
-    url = authorize_url(auth_url, args.seed)
-    say("Opening browser to sign in…")
-    open_browser(env, url, run)
-    say("Browser didn't open? Use the URL below to sign in")
-    say()
-    for part in wrap(url, args.columns):
-        say(part)
-    say()
-    say(PROMPT, end="")
-    if args.variant == "timeout":
-        sleep(args.code_timeout)
-        raise LoginError("timed out waiting for the authorization code")
-    try:
-        pasted = read_line(args.stdin_fd, args.code_timeout, clock=clock, wait=wait)
-    except EOFError:
-        raise LoginError("no code was entered") from None
-    if pasted is None:
-        raise LoginError("timed out waiting for the authorization code")
-    say()
-    return exchange(auth_url, args.seed, pasted, context, urlopen)
+    def spin(self, text: str, seconds: float) -> None:
+        """A status row whose first cell turns for `seconds` (at least one frame)."""
+        end = self.clock() + seconds
+        step = 0
+        while True:
+            self.painter.show([f" {SPINNER[step % len(SPINNER)]} {text}"])
+            step += 1
+            if self.clock() >= end:
+                return
+            self.sleep(SPIN)
+
+    def login(self) -> str:
+        args = self.args
+        if args.variant == "no-url":
+            self.spin("Opening browser to sign in…", 0)
+            self.sleep(args.code_timeout)
+            raise LoginError("timed out waiting for the browser")
+        url = authorize_url(self.auth_url, args.seed)
+        self.spin("Opening browser to sign in…", 0)
+        open_browser(self.env, url, self.run)
+        self.spin("Opening browser to sign in…", args.prompt_delay)
+        drop_input(args.stdin_fd, self.wait)
+        width = max(self.painter.columns - 4, 1)
+        rows = [" Browser didn't open? Use the URL below to sign in (c to copy)", "", *wrap(url, self.painter.columns)]
+        rows += ["", f" {PROMPT}", " ╭" + "─" * width + "╮", " │" + " " * width + "│", " ╰" + "─" * width + "╯"]
+        self.painter.show(rows)
+        if args.variant == "timeout":
+            self.sleep(args.code_timeout)
+            raise LoginError("timed out waiting for the authorization code")
+        try:
+            pasted = read_line(args.stdin_fd, args.code_timeout, clock=self.clock, wait=self.wait)
+        except EOFError:
+            raise LoginError("no code was entered") from None
+        if pasted is None:
+            raise LoginError("timed out waiting for the authorization code")
+        self.spin("Finishing sign-in…", SPIN)
+        return exchange(self.auth_url, args.seed, pasted, self.context, self.urlopen)

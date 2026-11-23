@@ -14,6 +14,14 @@ automatically: the auto-updater is off in the golden (`DISABLE_AUTOUPDATER`, man
    managed-settings keys, permission rules, environment variables, TUI start and input box, MCP behaviour, new
    network endpoints. Note each finding in the change's decision file.
 3. Run `make platform-ci` (unit tests of `agent_guest.sandbox.settings`, policy and hook handling).
+4. Re-check the subscription login against the new version (ADR-051): the runner reads the screen of
+   `claude setup-token`, and its labels ("Paste code here if prompted", "OAuth error", "OAuth token") and drawing are
+   pinned to the version in `CHECKED_VERSION` of `src/agent_runner/login/setup_token.py`; a test fails until that
+   constant equals the new pin. Run the login session against the new program on a runner-like host with a
+   deliberately wrong code and no account (the KOR-21 probe: URL through `BROWSER`, input field recognised, `code_invalid`
+   within seconds, the program still running), record a fresh raw PTY recording if the drawing changed, adapt the
+   labels, the screen and the login-CLI double in the same change, then set `CHECKED_VERSION`. Never sign in with a
+   real account for this.
 
 ## 2. Gate (all on the runner device, all must pass)
 

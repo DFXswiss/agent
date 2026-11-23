@@ -1,6 +1,6 @@
 # ADR-011: Claude subscription login
 
-Status: Accepted (2026-11-21)
+Status: Accepted (2026-11-21); the relay reads the program's screen (ADR-051, 2026-11-23)
 
 ## Context
 - KONZEPT §4: reuse the existing "SMTP e-mail login automation" of the `agent` repository for Claude authentication.

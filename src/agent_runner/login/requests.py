@@ -20,7 +20,9 @@ the responses. The handlers here never log or answer a secret: no token, code, U
 
 Failures end with `{step:"failed", code}`: `timeout`, `login_cli_failed`, `code_invalid`, `token_invalid`,
 `credential_missing`, `upstream_error`, `upstream_unreachable` (`contracts/requests/objects.json`); a malformed root or
-follow-up body is `upstream_error` resp. `code_invalid`. The temporary directory is removed on every path.
+follow-up body is `upstream_error` resp. `code_invalid`. The temporary directory is removed on every path. A failure
+of the login program logs the form of its screen before the code (`runner.login screen rows=… marker=yes|no
+token_blocks=… prompt=yes|no error=yes|no`, KOR-21), never its text.
 
 `credential.check` (`{kind: "anthropic_api_key"|"claude_subscription"}`): `POST <MODEL_UPSTREAM_ANTHROPIC>/v1/messages/
 count_tokens` with the credential (`x-api-key`, resp. `authorization: Bearer` with `anthropic-beta: oauth-2025-04-20`)
@@ -76,7 +78,9 @@ def _line(flow: Flow, text: str) -> None:
     flow.context.log.flush()
 
 
-async def _fail(flow: Flow, code: str, to: FollowUp | None = None) -> None:
+async def _fail(flow: Flow, code: str, to: FollowUp | None = None, *, shape: str | None = None) -> None:
+    if shape is not None:
+        _line(flow, f"screen {shape}")  # the form of the login program's screen only (KOR-21), never its text
     _line(flow, f"failed code={code}")
     await flow.respond({"step": "failed", "code": code}, final=True, to=to)
 
@@ -180,7 +184,10 @@ async def _login(flow: Flow, session: LoginSession, opts: LoginOptions) -> None:
     try:
         token = await session.finish(code, opts)
         await _store(flow, token, email)
-    except (LoginFailed, Failed) as failed:
+    except LoginFailed as failed:
+        await _fail(flow, failed.code, target, shape=failed.shape)
+        return
+    except Failed as failed:
         await _fail(flow, failed.code, target)
         return
     _line(flow, "done")
@@ -193,7 +200,9 @@ async def claude_login(flow: Flow) -> None:
     session = LoginSession(config.tmp_dir, flow.id, config.login_argv, flow.context.host.env.get("PATH", ""))
     try:
         await _login(flow, session, options(flow.context))
-    except (LoginFailed, Failed) as failed:
+    except LoginFailed as failed:
+        await _fail(flow, failed.code, shape=failed.shape)
+    except Failed as failed:
         await _fail(flow, failed.code)
     finally:
         session.close()

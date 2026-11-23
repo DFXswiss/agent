@@ -190,7 +190,7 @@ def code_for(login: Login, url: str) -> str:
     return page.forms.code
 
 
-FAST = LoginOptions(url_wait=20.0, token_wait=20.0, page_timeout=10.0, mail_poll=0.2, mail_wait=20.0)
+FAST = LoginOptions(url_wait=20.0, prompt_wait=20.0, token_wait=20.0, page_timeout=10.0, mail_poll=0.2, mail_wait=20.0)
 
 
 @dataclass

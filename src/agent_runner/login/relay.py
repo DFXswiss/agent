@@ -1,4 +1,4 @@
-"""Setup-token relay of the Claude subscription login (05-runner.md section 11.2, ADR-011).
+"""Setup-token relay of the Claude subscription login (05-runner.md section 11.2, ADR-011, ADR-051).
 
 `LoginSession` runs `LOGIN_ARGV` (default `claude setup-token`) for one `claude.login` request:
 
@@ -7,23 +7,27 @@
    with an allow-list environment built from scratch (`login_env`): nothing of the runner's environment is inherited,
    so existing subscription profiles (`~/.claude`, `~/.local/share/agent/providers/…`, keychain names) are never
    read or written. It returns the authorize URL the command handed to `BROWSER` within `url_wait` seconds.
-2. `finish(code)` types the authorization code, reads the terminal until the command ends (`token_wait`), and
-   returns the long-lived token of the token block (`parse_token`: ANSI sequences removed, a hard-wrapped token
-   joined, format checked).
+2. `finish(code)` waits until the input field is on the screen (`prompt_wait`; the program shows it a few seconds
+   after the URL and drops what is typed before), types the authorization code and watches the screen: the error
+   message ends the login at once with `code_invalid` (the program stays open with "Press Enter to retry"); otherwise
+   the command must end within `token_wait`, and the token is read from its last screen (`setup_token.parse_token`).
 3. `close` kills the command's process group and removes the temporary directory; it is idempotent and runs on every
    path (success, failure, cancellation by the request service).
 
-Failures raise `LoginFailed(code)` with a code of `contracts/requests/objects.json`: `timeout` (no URL or no end of the
-command in time), `login_cli_failed` (cannot start, exits early, an unusable URL), `code_invalid` (the command
-refused the code: `OAuth error`), `token_invalid` (no token of the expected format). The URL, the code and the token
-are never logged.
+The login reads the reconstructed screen of the PTY (`screen.Screen`), never the raw output: the program places words
+with cursor positioning instead of spaces (KOR-21). Failures raise `LoginFailed(code)` with a code of
+`contracts/requests/objects.json`: `timeout` (no URL, no input field or no end of the command in time),
+`login_cli_failed` (cannot start, exits early, an unusable URL), `code_invalid` (the command refused the code:
+`OAuth error`), `token_invalid` (no token of the expected format). A failure after the start carries the `shape` of the
+screen (counts and flags, `setup_token.shape`) for the runner log. The URL, the code, the token and the screen text are
+never logged.
 """
 
 from __future__ import annotations
 
+import asyncio
 import imaplib
 import os
-import re
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,23 +35,21 @@ from pathlib import Path
 from typing import Any
 
 from agent_runner.identity import ensure_private_dir
-from agent_runner.login import capture
+from agent_runner.login import capture, pty, setup_token
 from agent_runner.login.pty import PtyProcess, SpawnFailed
 
 URL_POLL = 0.1
+PROMPT_SETTLE = 0.3
+"""Seconds between the input field showing and typing: the program may enable its input just after drawing it."""
 SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
-TOKEN_MARKER = "OAuth token"
-CLI_ERROR = "OAuth error"
-TOKEN_PREFIX = "sk-" + "ant-oat"
-TOKEN_RE = re.compile(re.escape(TOKEN_PREFIX) + r"[0-9]{2}-[A-Za-z0-9_-]{16,4000}")
-"""A long-lived setup token (`sk-ant-oatNN-…`, at most 4096 characters as the credential contract allows)."""
-ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
 
 
 class LoginFailed(Exception):
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, shape: str | None = None) -> None:
         super().__init__(code)
         self.code = code
+        self.shape = shape
+        """The form of the screen at the failure (`setup_token.shape`), None before the command ran."""
 
 
 @dataclass(frozen=True)
@@ -56,8 +58,10 @@ class LoginOptions:
 
     url_wait: float = 30.0
     """Seconds until the command must have opened the authorize URL (section 11.2 step 2)."""
+    prompt_wait: float = 30.0
+    """Seconds (from typing the code on) until the input field must be on the screen."""
     token_wait: float = 60.0
-    """Seconds after the code until the command must have ended."""
+    """Seconds after the code until the command must have ended or shown its error."""
     code_margin: float = 5.0
     """Seconds before the request's expiry at which waiting for the user's code ends."""
     page_timeout: float = 30.0
@@ -96,33 +100,9 @@ def login_env(workdir: Path, program: str) -> dict[str, str]:
         "BROWSER": str(workdir / capture.HELPER),
         "TERM": "xterm-256color",
         "LANG": "en_US.UTF-8",
-        "COLUMNS": str(1000),
+        "COLUMNS": str(pty.COLUMNS),
         "NO_COLOR": "1",
     }
-
-
-def clean(text: str) -> str:
-    """Terminal output without ANSI sequences and with plain line ends."""
-    return ANSI_RE.sub("", text).replace("\r\n", "\n").replace("\r", "\n")
-
-
-def parse_token(text: str) -> str | None:
-    """The token of the token block: the non-empty lines after the marker line up to the next empty line, joined (a
-    narrow terminal hard-wraps the token); None when there is no block or it does not hold a token."""
-    lines = [line.strip() for line in clean(text).split("\n")]
-    marker = next((i for i, line in enumerate(lines) if TOKEN_MARKER in line), None)
-    if marker is None:
-        return None
-    rest = lines[marker + 1 :]
-    while rest and not rest[0]:
-        rest.pop(0)
-    parts: list[str] = []
-    for line in rest:
-        if not line:
-            break
-        parts.append(line)
-    token = "".join(parts)
-    return token if TOKEN_RE.fullmatch(token) else None
 
 
 class LoginSession:
@@ -165,26 +145,35 @@ class LoginSession:
                 raise LoginFailed("login_cli_failed")
             remaining = deadline - process.loop.time()
             if remaining <= 0:
-                raise LoginFailed("timeout")
+                raise LoginFailed("timeout", _shape(process))
             await process.wait_change(min(remaining, URL_POLL))
 
     async def finish(self, code: str, opts: LoginOptions) -> str:
-        """Type the code; the token."""
+        """Type the code once the input field is shown; the token."""
         process = self.process
         assert process is not None
+        await _until(process, opts.prompt_wait, lambda p: _prompt_shown(p) or _error_shown(p))
+        if not _prompt_shown(process):
+            # ended, or an error before the code (the program gave up by itself): not the code's fault
+            failed = "login_cli_failed" if process.eof or _error_shown(process) else "timeout"
+            raise LoginFailed(failed, _shape(process))
+        await asyncio.sleep(PROMPT_SETTLE)
         try:
             process.write(code + "\r")
         except OSError:
-            raise LoginFailed("login_cli_failed") from None
-        if not await process.wait_eof(opts.token_wait):
-            raise LoginFailed("timeout")
+            raise LoginFailed("login_cli_failed", _shape(process)) from None
+        if not await _until(process, opts.token_wait, _error_shown):
+            raise LoginFailed("timeout", _shape(process))
+        if not process.eof:
+            raise LoginFailed("code_invalid", _shape(process))
         status = await process.reap()
-        text = process.text()
+        lines = process.screen.lines()
         if status != 0:
-            raise LoginFailed("code_invalid" if CLI_ERROR in clean(text) else "login_cli_failed")
-        token = parse_token(text)
+            failed = "code_invalid" if setup_token.shown(lines, setup_token.ERROR_LABEL) else "login_cli_failed"
+            raise LoginFailed(failed, _shape(process))
+        token = setup_token.parse_token(lines)
         if token is None:
-            raise LoginFailed("token_invalid")
+            raise LoginFailed("token_invalid", _shape(process))
         return token
 
     def close(self) -> None:
@@ -195,3 +184,26 @@ class LoginSession:
         shutil.rmtree(self.workdir, ignore_errors=True)
         if self.workdir.exists():
             self.left = True
+
+
+def _shape(process: PtyProcess) -> str:
+    return setup_token.shape(process.screen.lines())
+
+
+def _prompt_shown(process: PtyProcess) -> bool:
+    return setup_token.shown(process.screen.lines(), setup_token.PROMPT_LABEL)
+
+
+def _error_shown(process: PtyProcess) -> bool:
+    return setup_token.shown(process.screen.lines(), setup_token.ERROR_LABEL)
+
+
+async def _until(process: PtyProcess, seconds: float, condition: Callable[[PtyProcess], bool]) -> bool:
+    """Wait until `condition` holds or the command closed the terminal (True), False after `seconds`."""
+    deadline = process.loop.time() + seconds
+    while not condition(process) and not process.eof:
+        remaining = deadline - process.loop.time()
+        if remaining <= 0:
+            return False
+        await process.wait_change(min(remaining, URL_POLL))
+    return True

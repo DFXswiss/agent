@@ -457,7 +457,13 @@ fetched while the link was down failed the whole screen (medium, decision 11). R
   authenticator.
 - **Never exercised live** (AUD-02, B-13): the GitHub device flow against GitHub, the keychain isolation of
   `claude setup-token`, a setup token at the usage endpoint; the mailbox automation against the real authorize pages
-  (falls back to the relay, decision 8).
+  (falls back to the relay, decision 8). **Since KOR-21** the relay has run against the real `claude setup-token`
+  (Claude Code 2.1.330, no account, a deliberately wrong code): the authorize URL arrives through `BROWSER`, the input
+  field is recognised on the reconstructed screen and the code is typed only then, the refusal ends the login with
+  `code_invalid` about 0.2 s after typing while the program is still open (ADR-051; a raw recording of the program is
+  a test fixture). **Still never live:** the success path (the token screen of the real program, the stored
+  credential, its use) – it needs an account and is covered by screens drawn the way 2.1.330 draws; the keychain
+  isolation of a completed login; the mailbox automation against the real pages.
 - **Re-keying after the loss of the platform root key** never rehearsed (NB-12; runbook `platform-root-key.md`).
 - **Static Landlock launcher** (B-10) deliberately not built (ATS-03 decision 10).
 - **E2E only against the TEST_MODE golden** (B-11): the production golden is built and checked by ATS-03, the suite
