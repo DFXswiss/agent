@@ -1,0 +1,8 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-000000000050",
+  "type": "github.list_issues",
+  "params": {
+    "repo": "example-org/example-repo",
+    "query": "x"
+  }
+}

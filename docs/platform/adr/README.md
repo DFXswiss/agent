@@ -62,5 +62,7 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [056](056-delegated-agent-access.md) | Delegated agent access: the user's own AI agent pairs with one passkey gesture (loopback handover secret, sealed identity, scoped allow-list) and sets the account up, incl. the transfer of the local Claude Code login | §1, §4, §5, §8 | no |
 | [057](057-workspace-imports-are-the-scanner-baseline.md) | Platform imports (`files/import`: checkout, work-VM results) are the workspace scanner's baseline; dependency and build directories are not scanned; bulk passes and changes beyond a per-session window become one `session.file` summary | §10 | no |
 | [058](058-admins-read-every-workgroup.md) | Organization admins read every workgroup by inheritance (right and keys, history included; delivered by catch-up, revoked by rotation; credentials and platform sessions keep explicit access); key handling stays out of the user interface | §8, §15 idea 30 | no |
+| [059](059-github-existing-token.md) | Connect GitHub with an existing token (GitHub CLI login, personal access token) checked by the execution device; second way beside ADR-015 | §9 | yes (as ADR-015) |
+| [060](060-held-github-operations.md) | A `github.*` operation without a connection is held up to 15 min and the connection is requested in the task's chat | §9, §10 | no |
 
 New decisions get the next free number; a superseded ADR keeps its file and is marked `Superseded by ADR-NNN`.

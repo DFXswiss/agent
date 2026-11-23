@@ -1,16 +1,20 @@
 // Chat item `session.status` (06-web.md section 5.2): system rows – session errors (`session.status` events with the
-// failure reason from the catalog), the transitions `suspended`/`stopped`/`failed` and the close of the task.
+// failure reason from the catalog), the transitions `suspended`/`stopped`/`failed` and the close of the task. A valid
+// `waiting` event (KOR-25) is the waiting card (`waiting/WaitingCard.tsx`); a `waiting` body the contract does not allow
+// stays a neutral row that shows nothing of it.
 import { isRecord } from '../../core/registry';
 import type { TimelineItem } from '../../core/chat/timeline';
 import type { ChatItem, ChatItemProps } from '../registries/chat-items';
 import { useI18n } from '../i18n';
 import { EventTime } from '../task-tabs/chat/EventTime';
+import { WaitingCard } from './waiting/WaitingCard';
 
 const PLAIN = new Set(['suspended', 'stopped', 'closed']);
 
 function Status({ item }: ChatItemProps) {
-  const { at, body, source } = item as TimelineItem;
+  const { at, body, source, waiting } = item as TimelineItem;
   const { t, error } = useI18n();
+  if (waiting !== undefined) return <WaitingCard item={item as TimelineItem} card={waiting} />;
   const state = isRecord(body) && typeof body.state === 'string' ? body.state : '';
   const reason = isRecord(body) && typeof body.reason === 'string' ? body.reason : null;
   let text: string;

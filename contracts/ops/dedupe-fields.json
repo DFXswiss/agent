@@ -130,6 +130,23 @@
         }
       ],
       "window_seconds": 600
+    },
+    "github.create_issue": {
+      "fields": [
+        {
+          "name": "repo",
+          "source": "params.repo, lowercased"
+        },
+        {
+          "name": "title",
+          "source": "sha256_hex(UTF-8 params.title)"
+        },
+        {
+          "name": "body",
+          "source": "sha256_hex(UTF-8 params.body, empty text when left out)"
+        }
+      ],
+      "window_seconds": 86400
     }
   }
 }

@@ -98,6 +98,19 @@
     },
     {
       "fields": {
+        "body": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "repo": "example-org/example-repo",
+        "title": "b99d225cd6c0936960dd855142aa9eea1f7c117e650f7a671a638fa1416a93be"
+      },
+      "params": {
+        "repo": "Example-Org/Example-Repo",
+        "title": "Anmeldung schlägt fehl"
+      },
+      "tag": "t4-0LDe4inzMYKx2Zzi73cRKjdpBk6o0smQdjXmVZTQ",
+      "type": "github.create_issue"
+    },
+    {
+      "fields": {
         "base": "develop",
         "head": "feature/x",
         "repo": "example-org/example-repo"

@@ -1,0 +1,19 @@
+{
+  "pull_requests": [
+    {
+      "number": 7,
+      "title": "Fix login",
+      "state": "open",
+      "draft": false,
+      "author": "octocat",
+      "head": "fix-login",
+      "base": "main",
+      "created_at": "2026-11-23T09:30:00Z",
+      "updated_at": "2026-11-23T09:30:00Z",
+      "url": "https://github.com/example-org/example-repo/pull/7"
+    }
+  ],
+  "next_page": null,
+  "truncated": false,
+  "extra": 1
+}

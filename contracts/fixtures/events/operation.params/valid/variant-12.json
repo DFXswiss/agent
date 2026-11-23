@@ -1,0 +1,10 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-000000000041",
+  "type": "github.get_issue",
+  "params": {
+    "repo": "example-org/example-repo",
+    "number": 42,
+    "comments_page": 2,
+    "comments_per_page": 50
+  }
+}

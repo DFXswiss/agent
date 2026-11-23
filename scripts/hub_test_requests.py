@@ -7,7 +7,7 @@ The runner (RUN-09: request service, GitHub device flow, credential cache) is no
   (`pending`/`delivered`) is fetched (`GET /v1/device/requests/{id}`), its envelope verified and opened with the
   device's X25519 key (so the browser's sealing is proven), then every step is answered in order
   (`POST /v1/device/requests/{id}/responses`, sealed to the user's identity, signed by the device, `seq` from 1).
-  A step with `"store": {"login"}` first writes the `github` credential as this device
+  A step with `"store": {"login", "source"?, "scopes"?}` first writes the `github` credential as this device
   (`PUT /v1/device/credentials/{owner}/github`, CK-encrypted with the user's `CK` the browser wrapped for the device,
   token not real) - what RUN-09 does before answering `done`; `"store": {"kind": "claude_subscription", "email"}`
   writes the subscription credential of a Claude login the same way (RUN-12/13, WEB-10). Answers
@@ -77,13 +77,16 @@ def _body(store: Json) -> tuple[str, Json]:
             "email": store.get("email"),
             "kind": "setup_token",
         }
-    return "github", {
+    body: Json = {
         "token": "gho_not_a_real_token",
         "login": str(store["login"]),
         "user_id": 4242,
-        "scopes": [],
+        "scopes": [str(scope) for scope in store.get("scopes", [])],
         "created_at": format_time(now()),
     }
+    if "source" in store:
+        body["source"] = str(store["source"])
+    return "github", body
 
 
 def _store_credential(

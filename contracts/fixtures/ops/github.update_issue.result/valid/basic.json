@@ -1,0 +1,10 @@
+{
+  "number": 42,
+  "url": "https://github.com/example-org/example-repo/issues/42",
+  "state": "closed",
+  "state_reason": "completed",
+  "title": "Login fails on Safari",
+  "labels": [
+    "bug"
+  ]
+}

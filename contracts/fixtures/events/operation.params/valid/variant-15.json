@@ -1,0 +1,13 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-000000000044",
+  "type": "github.list_pull_requests",
+  "params": {
+    "repo": "example-org/example-repo",
+    "state": "all",
+    "base": "main",
+    "sort": "updated",
+    "direction": "asc",
+    "per_page": 10,
+    "page": 3
+  }
+}

@@ -8,5 +8,8 @@
   "failure.upstream_error": "Der Dienst hat die Anfrage abgelehnt.",
   "failure.upstream_unreachable": "Der Dienst war nicht erreichbar.",
   "failure.device_shutdown": "Das Gerät wurde heruntergefahren.",
-  "failure.request_failed": "Das Gerät konnte die Anfrage nicht übernehmen: Es ist nicht mehr berechtigt, oder eine neuere Anfrage derselben Art hat sie ersetzt."
+  "failure.request_failed": "Das Gerät konnte die Anfrage nicht übernehmen: Es ist nicht mehr berechtigt, oder eine neuere Anfrage derselben Art hat sie ersetzt.",
+  "failure.token_refused": "GitHub hat das Token abgelehnt: Es wurde widerrufen oder existiert nicht.",
+  "failure.scope_missing": "Dem Token fehlt der für Repositories nötige Scope.",
+  "failure.sso_required": "Eine Organisation verlangt die SSO-Freigabe des Tokens."
 }

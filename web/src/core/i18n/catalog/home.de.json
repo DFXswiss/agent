@@ -18,8 +18,6 @@
   "chip.explain.text": "Erkläre dieses Repository: ",
   "chip.plan": "Plan schreiben",
   "chip.plan.text": "Schreibe einen kurzen Plan für ",
-  "github.hint": "Pull Requests brauchen ein verbundenes GitHub-Konto.",
-  "github.connect": "GitHub verbinden",
   "prompt.label": "Prompt",
   "prompt.placeholder": "Beschreibe die Aufgabe oder stelle eine Frage – jede Anfrage wird eine Aufgabe.",
   "send": "Senden",

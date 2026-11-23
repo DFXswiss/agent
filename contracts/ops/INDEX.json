@@ -61,6 +61,42 @@
       "params": "ops/task.set_title.params.json",
       "result": "ops/task.set_title.result.json",
       "dedupe": false
+    },
+    {
+      "type": "github.list_issues",
+      "params": "ops/github.list_issues.params.json",
+      "result": "ops/github.list_issues.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "github.get_issue",
+      "params": "ops/github.get_issue.params.json",
+      "result": "ops/github.get_issue.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "github.create_issue",
+      "params": "ops/github.create_issue.params.json",
+      "result": "ops/github.create_issue.result.json",
+      "dedupe": true
+    },
+    {
+      "type": "github.update_issue",
+      "params": "ops/github.update_issue.params.json",
+      "result": "ops/github.update_issue.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "github.list_pull_requests",
+      "params": "ops/github.list_pull_requests.params.json",
+      "result": "ops/github.list_pull_requests.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "github.request_connection",
+      "params": "ops/github.request_connection.params.json",
+      "result": "ops/github.request_connection.result.json",
+      "dedupe": false
     }
   ]
 }

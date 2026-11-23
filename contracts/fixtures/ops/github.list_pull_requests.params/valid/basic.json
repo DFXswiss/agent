@@ -1,0 +1,9 @@
+{
+  "repo": "example-org/example-repo",
+  "state": "all",
+  "base": "main",
+  "sort": "updated",
+  "direction": "asc",
+  "per_page": 10,
+  "page": 3
+}

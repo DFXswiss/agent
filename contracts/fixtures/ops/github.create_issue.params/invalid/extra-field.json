@@ -1,0 +1,9 @@
+{
+  "repo": "example-org/example-repo",
+  "title": "Login fails on Safari",
+  "body": "Steps to reproduce: ...",
+  "labels": [
+    "bug"
+  ],
+  "extra": 1
+}

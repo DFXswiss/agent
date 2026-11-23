@@ -8,7 +8,9 @@
 // - `session.status` system rows for the session transitions `suspended`, `stopped` and `failed` and a row when the
 //   task was closed;
 // - a `countdown` item per main session at its creation (the live countdown of the current start, the summary of the
-//   earlier ones, section 4.4); its body names the task.
+//   earlier ones, section 4.4); its body names the task;
+// - `session.status` events of the `waiting` state (an operation the platform holds until the task owner acts,
+//   KOR-25) folded into one card per kind (`core/github/waiting.ts`); they are no session transition.
 //
 // Output of a subagent session carries the node of the session tree (indent and label "Subagent 1.2"). The session
 // chat (`/o/:org/s/:session`, tab Chat) is the same timeline restricted to the session's own `session.*` events.
@@ -18,6 +20,7 @@ import type { EventEntry, ScopeEvents } from '../store/slices/events';
 import type { SessionEntry, TaskRow, TasksState } from '../store/slices/tasks';
 import type { StoreState } from '../store/store';
 import { flatten, type SessionNode, sessionTree } from '../sessions/tree';
+import { foldWaiting, type WaitingCard } from '../github/waiting';
 
 export const SYSTEM_STATES: ReadonlySet<string> = new Set(['suspended', 'stopped', 'failed']);
 export const HIDDEN_KINDS: ReadonlySet<string> = new Set(['task.meta', 'session.terminal']);
@@ -43,6 +46,8 @@ export interface TimelineItem {
   readonly code: string | null;
   /** The session-tree node of a subagent session's item, else null. */
   readonly subagent: SessionNode | null;
+  /** The folded card of a valid `waiting` status event (only the newest item of its kind carries it). */
+  readonly waiting?: WaitingCard;
 }
 
 const rawHeader = (entry: EventEntry): Readonly<Record<string, unknown>> =>
@@ -143,7 +148,7 @@ export function buildTimeline(input: TimelineInput): TimelineItem[] {
   }
   if (input.session !== undefined) {
     const session = input.session;
-    return items.filter((item) => item.sessionId === session).sort(compare);
+    return foldWaiting(items.filter((item) => item.sessionId === session).sort(compare));
   }
   for (const node of flatten(tree)) items.push(...systemItems(node.entry));
   for (const node of tree) {
@@ -174,7 +179,7 @@ export function buildTimeline(input: TimelineInput): TimelineItem[] {
       subagent: null,
     });
   }
-  return items.sort(compare);
+  return foldWaiting(items.sort(compare));
 }
 
 /**

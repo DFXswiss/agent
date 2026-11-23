@@ -190,6 +190,33 @@ describe('timeline', () => {
     expect(buildTimeline({ task: task(), sessions: {}, scope: undefined })).toEqual([]);
   });
 
+  it('folds held-operation status events into one card per kind, also in the session chat (KOR-25)', () => {
+    const waiting = (seq: number, id: string) =>
+      event(seq, 'session.status', {
+        session: MAIN,
+        body: {
+          state: 'waiting',
+          waiting_for: 'github_connection',
+          operation_id: `0193002d-0000-7000-8000-00000000000${id}`,
+          operation_type: 'github.list_issues',
+          until: '2026-11-21T12:15:00.000Z',
+        },
+      });
+    const input = {
+      task: task(),
+      sessions: sessions({ row: session(MAIN) }),
+      scope: scope(
+        waiting(1, '1'),
+        event(2, 'session.status', { session: MAIN, body: { state: 'failed' } }),
+        waiting(3, '2'),
+      ),
+    };
+    const items = buildTimeline(input);
+    expect(items.filter((item) => item.kind === 'session.status').map((item) => item.key)).toEqual(['e2', 'e3']);
+    expect(items.find((item) => item.key === 'e3')!.waiting!.operations).toHaveLength(2);
+    expect(buildTimeline({ ...input, session: MAIN }).map((item) => item.key)).toEqual(['e2', 'e3']);
+  });
+
   it('selects and memoizes the timeline of a task in the store', () => {
     const store = createStore();
     const select = selectTimeline(WG, TASK);

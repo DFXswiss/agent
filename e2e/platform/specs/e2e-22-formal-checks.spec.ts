@@ -7,9 +7,13 @@
 // protected branch, a repository the owner's GitHub connection cannot reach, a branch whose ref creation first meets a
 // 502 (retried inside the same operation), the push of an older commit after a newer one (`non_fast_forward`), a commit
 // with a token-shaped secret and a pull request that is already open at GitHub (`existing:true`, MCP `duplicate`).
-// Every outcome has its hub record and audit row. Runs on T1.
+// Every outcome has its hub record and audit row. Issues (KOR-25): an issue filed twice and a comment on it repeated are
+// published once each (`duplicate` with the original's result); the issues of a repository outside the workgroup's
+// repository list are refused with `repo_not_allowed` before any GitHub call, shown on the operation card of the
+// Operations tab and in the audit screen. Runs on T1.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures/test.ts';
+import type { Page } from '@playwright/test';
 import { expectNoPlaintext } from '../fixtures/guest.ts';
 import {
   allowRepositories,
@@ -21,11 +25,13 @@ import {
   githubRepo,
   githubRoutes,
   hubOperations,
+  openOperationsTab,
   operationAudit,
   repository,
   seedGitHub,
   worldOf,
 } from '../fixtures/github.ts';
+import { navTo } from '../fixtures/nav.ts';
 import {
   expectAnswerInChat,
   home,
@@ -217,4 +223,112 @@ test('@E2E-22 @R-9.4 @R-10.9 @R-10.10 @R-11.1 @R-11.2 @R-11.3 @R-11.4 @R-11.5 @R
 
   await expectGitHubOk(orchestrator);
   await expectNoPlaintext(orchestrator, CANARIES);
+});
+
+// -- KOR-25: issues written once, a repository outside the list ------------------------------------------------------
+
+const issuesScenario: unknown = JSON.parse(
+  readFileSync(new URL('../scenarios/e2e-22-issues.json', import.meta.url), 'utf8'),
+);
+const CREATE_ISSUE = 'POST /repos/{owner}/{repo}/issues';
+const SECRET = 'octo-org/secret';
+
+/** The audit screen filtered to `action` of `task` (the filter form; client-side navigation keeps the unlock). */
+async function auditOf(page: Page, task: string, action: string) {
+  await navTo(page, 'audit');
+  await page.getByTestId('audit.filter.reset').click();
+  await page.getByTestId('audit.filter.action').fill(action);
+  await page.getByTestId('audit.filter.task').fill(task);
+  await page.getByTestId('audit.filter.apply').click();
+  await expect(page.getByTestId('audit.loading')).toHaveCount(0, { timeout: 30_000 });
+  return page.locator(`[data-testid="audit.row"][data-action="${action}"]`);
+}
+
+test('@E2E-22 @R-9.4 @R-11.1 @R-11.4 @R-11.5 @R-11.7 @R-P.5 @needs-vm issues and their comments are published once and a repository outside the list is refused', async ({
+  page,
+  orchestrator,
+  authenticator,
+  e2e,
+}) => {
+  test.skip(e2e.topology !== 't1', 'E2E-22 is a T1 test (07-testing.md section 2.1)');
+  test.setTimeout(600_000);
+  const LOGIN = 'kz22-octo-issues-r8m2';
+  const TITLE = 'Track the notes kz22-issue-title-h3m8';
+  const COMMENT = 'On it kz22-issue-comment-f2t9';
+  await orchestrator.loadScenario('model', issuesScenario);
+  await seedGitHub(orchestrator, worldOf(LOGIN, 'octo-org', [repository(HELLO), repository(SECRET)]));
+  await platformDevice(orchestrator);
+  await poolReady(orchestrator);
+  await authenticator('platform');
+  const onboarded = await onboard(page, orchestrator, 'Ada kz22-name-issues-d3k6');
+  await connectGitHub(page, orchestrator, LOGIN);
+  const [org] = await orchestrator.hubQuery<{ default_wg: string }>(
+    `SELECT default_wg FROM hub.org WHERE id = '${uuid(onboarded.org)}'`,
+  );
+  await allowRepositories(page, onboarded.org, org!.default_wg, [HELLO]);
+  // one POST each: a second issue or comment is a failure of the double
+  await expectCalls(orchestrator, [
+    { route: CREATE_ISSUE, repo: HELLO, count: 1 },
+    { route: COMMENTS, repo: HELLO, count: 1 },
+  ]);
+  const connectCalls = (await githubRoutes(orchestrator)).length;
+
+  await home(page);
+  const task = await sendPrompt(page, 'E2E22-ISSUES kz22-prompt-issues-c7v2: file the notes issue and comment on it');
+  await expectAnswerInChat(page, 'Issue #1 is filed and commented kz22-issues-answer-n5c3.');
+  await expect.poll(async () => (await orchestrator.doubleState('model')).ok, { timeout: 60_000 }).toBe(true);
+  const [session] = await mainSessions(orchestrator, task);
+
+  // The hub records: each repeat a duplicate of its original, the foreign repository refused.
+  const operations = await hubOperations(orchestrator, task);
+  expect(operations.map((op) => [op.type, op.state, op.error_code])).toEqual([
+    ['github.create_issue', 'succeeded', null],
+    ['github.create_issue', 'duplicate', null],
+    ['github.comment', 'succeeded', null],
+    ['github.comment', 'duplicate', null],
+    ['github.list_issues', 'rejected', 'repo_not_allowed'],
+  ]);
+  expect(operations.every((op) => op.session_id === session!.id && op.params_event === 'operation.params')).toBe(true);
+  expect([operations[1]!.duplicate_of, operations[3]!.duplicate_of]).toEqual([operations[0]!.id, operations[2]!.id]);
+  const finals = ['operation.succeeded', 'operation.duplicate', 'operation.succeeded', 'operation.duplicate'];
+  for (const [index, action] of finals.entries())
+    expect(await operationAudit(orchestrator, operations[index]!.id)).toContain(action);
+  expect(await operationAudit(orchestrator, operations[4]!.id)).toContain('operation.rejected');
+
+  // GitHub: one issue, one comment; nothing about the foreign repository was asked.
+  const routes = await githubRoutes(orchestrator, connectCalls);
+  expect(routes.filter((route) => route === CREATE_ISSUE)).toHaveLength(1);
+  expect(routes.filter((route) => route === COMMENTS)).toHaveLength(1);
+  expect(routes.filter((route) => route.startsWith('GET /repos/{owner}/{repo}/issues'))).toEqual([]);
+  const calls = (await githubJournal(orchestrator)).slice(connectCalls);
+  expect(calls.filter((call) => call.path.includes(`/${SECRET}`))).toEqual([]);
+  const repo = await githubRepo(orchestrator, HELLO);
+  expect(repo.issues.map((issue) => [issue.number, issue.title, issue.labels])).toEqual([[1, TITLE, ['notes']]]);
+  expect(repo.comments.map((comment) => [comment.number, comment.body])).toEqual([[1, COMMENT]]);
+
+  // The Operations tab: the duplicates point at their originals, the refused list names its code.
+  const cards = await openOperationsTab(page);
+  await expect(cards).toHaveCount(5, { timeout: 30_000 });
+  await expect(page.locator('[data-testid="operation.card"][data-state="duplicate"]')).toHaveCount(2);
+  for (const card of await page.locator('[data-testid="operation.card"][data-state="duplicate"]').all())
+    await expect(card.getByTestId('operation.duplicate-of')).toBeVisible();
+  const refused = page.locator('[data-testid="operation.card"][data-type="github.list_issues"]');
+  await expect(refused).toHaveAttribute('data-state', 'rejected');
+  await expect(refused.getByTestId('operation.error')).toHaveAttribute('data-code', 'repo_not_allowed');
+
+  // The audit screen shows the refusal with its code.
+  const rows = await auditOf(page, task, 'operation.rejected');
+  await expect(rows).toHaveCount(1, { timeout: 30_000 });
+  await expect(rows.getByTestId('audit.row.detail')).toContainText('error_code=repo_not_allowed');
+
+  await expectGitHubOk(orchestrator);
+  await expectNoPlaintext(orchestrator, [
+    LOGIN,
+    'kz22-prompt-issues-c7v2',
+    'kz22-issue-title-h3m8',
+    'kz22-issue-body-w6q1',
+    'kz22-issue-comment-f2t9',
+    'kz22-issues-answer-n5c3',
+    'kz22-name-issues-d3k6',
+  ]);
 });

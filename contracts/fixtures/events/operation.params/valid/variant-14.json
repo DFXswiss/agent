@@ -1,0 +1,10 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-000000000043",
+  "type": "github.update_issue",
+  "params": {
+    "repo": "example-org/example-repo",
+    "number": 42,
+    "state": "closed",
+    "state_reason": "completed"
+  }
+}

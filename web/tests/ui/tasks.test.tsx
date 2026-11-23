@@ -1,7 +1,7 @@
 // U-WEB-ui-tasks (screens): composer, countdown panel, task list, home and task page in jsdom against the core test
 // world (verified org, keys, platform log, scriptable client). The Playwright specs run the same screens against the
 // real hub; these tests cover the states that are slow or impossible to produce there.
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -57,7 +57,7 @@ describe('composer', () => {
     const prompt = screen.getByTestId('composer.prompt');
     fireEvent.click(screen.getByTestId('composer.chip.github'));
     expect(prompt).toHaveValue('Open a pull request that ');
-    expect(screen.getByTestId('composer.github-connect')).toHaveAttribute('href', '/settings');
+    expect(within(screen.getByTestId('composer.github-hint')).getByTestId('github.connect')).toBeVisible();
     fireEvent.change(prompt, { target: { value: 'What is 2+2?' } });
     fireEvent.keyDown(prompt, { key: 'Enter' });
     fireEvent.keyDown(prompt, { key: 'a', ctrlKey: true });

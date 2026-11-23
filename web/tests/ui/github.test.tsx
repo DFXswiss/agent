@@ -35,7 +35,7 @@ async function world(): Promise<World> {
   return { ...t, device };
 }
 
-async function record(t: World) {
+async function record(t: World, extra: Record<string, unknown> = {}) {
   const header = newHeader({
     id: '0190f000-0000-7000-8000-0000000000c1',
     owner: t.me.id,
@@ -45,7 +45,14 @@ async function record(t: World) {
     author: t.device.id,
     ts: '2026-11-21T12:00:00.000Z',
   });
-  const body = { token: 'gho_x', login: 'octo-cat', user_id: 1, scopes: [], created_at: '2026-11-21T12:00:00.000Z' };
+  const body = {
+    token: 'gho_x',
+    login: 'octo-cat',
+    user_id: 1,
+    scopes: [],
+    created_at: '2026-11-21T12:00:00.000Z',
+    ...extra,
+  };
   return sealCredential(t.credKey, header, bodyJson(body), t.device.identity.sig.privateKey);
 }
 
@@ -60,6 +67,8 @@ function connected(t: World, found: unknown) {
 function deviceAnswers(t: World) {
   const state = { id: '', bodies: [] as { body: unknown; final: boolean }[], hubState: 'delivered' };
   t.client.on('POST /v1/device-requests', (body) => {
+    // a later request starts without the answers of the earlier one
+    if (state.id !== '') state.bodies = [];
     state.id = (body as { envelope: { header: { id: string } } }).envelope.header.id;
     t.client.on(`GET /v1/device-requests/${state.id}`, view);
     return { request_id: state.id, state: 'pending' };
@@ -335,21 +344,55 @@ describe('closing the flow early', () => {
   });
 });
 
-describe('composer GitHub chip', () => {
-  it('offers Connect GitHub while not connected and loads the state once', async () => {
+describe('composer GitHub offer', () => {
+  it('offers connecting right below the composer while not connected and loads the state once', async () => {
     const t = await world();
     mount(t, [{ path: '/', element: <Composer org={t.org} wg={t.wg} suggestions /> }], '/');
     fireEvent.click(screen.getByTestId('composer.chip.github'));
-    expect(screen.getByTestId('composer.github-hint')).toBeVisible();
+    const hint = screen.getByTestId('composer.github-hint');
+    expect(hint).toHaveTextContent('This task looks like it needs GitHub');
+    expect(within(hint).getByTestId('github.connect')).toBeVisible();
+    expect(within(hint).getByTestId('github.token')).toBeVisible();
+    // the offer is no part of the form: its token field never sends the task
+    expect(screen.getByTestId('composer').contains(hint)).toBe(false);
     await waitFor(() => expect(t.store.getState().github.status).toBe('disconnected'));
     expect(screen.getByTestId('composer.github-hint')).toBeVisible();
     fireEvent.click(screen.getByTestId('composer.chip.github'));
     expect(t.client.of('GET /v1/me/credentials')).toHaveLength(1);
-    act(() => setGithub(t.store, { status: 'connected', login: 'octo', createdAt: 'x', version: 1 }));
+    act(() =>
+      setGithub(t.store, {
+        status: 'connected',
+        login: 'octo',
+        scopes: [],
+        source: 'device_flow',
+        createdAt: 'x',
+        version: 1,
+      }),
+    );
     expect(screen.queryByTestId('composer.github-hint')).toBeNull();
   });
 
-  it('keeps the hint when the state cannot be loaded', async () => {
+  it('offers connecting for a typed GitHub reference once the state is known', async () => {
+    const t = await world();
+    mount(t, [{ path: '/', element: <Composer org={t.org} wg={t.wg} /> }], '/');
+    const prompt = screen.getByTestId('composer.prompt');
+    fireEvent.change(prompt, { target: { value: 'Explain quantum computing' } });
+    expect(screen.queryByTestId('composer.github-hint')).toBeNull();
+    expect(t.client.of('GET /v1/me/credentials')).toHaveLength(0);
+    fireEvent.change(prompt, { target: { value: 'schau dir das neuste issue in example-org/example-repo repo an' } });
+    // nothing flashes while the state is unknown
+    expect(screen.queryByTestId('composer.github-hint')).toBeNull();
+    expect(await screen.findByTestId('composer.github-hint')).toBeVisible();
+    expect(t.client.of('GET /v1/me/credentials')).toHaveLength(1);
+    fireEvent.change(prompt, { target: { value: 'Plain text again' } });
+    expect(screen.queryByTestId('composer.github-hint')).toBeNull();
+    // the send button stays usable with the offer shown
+    fireEvent.change(prompt, { target: { value: 'Review the Pull Request https://github.com/dfx/agent/pull/7' } });
+    expect(screen.getByTestId('composer.github-hint')).toBeVisible();
+    expect(screen.getByTestId('composer.send')).toBeEnabled();
+  });
+
+  it('keeps the hint when the state cannot be loaded and does not load again', async () => {
     const t = await world();
     t.client.on('GET /v1/me/credentials', () => {
       throw new HubError('unavailable', 503);
@@ -358,5 +401,84 @@ describe('composer GitHub chip', () => {
     fireEvent.click(screen.getByTestId('composer.chip.github'));
     await waitFor(() => expect(t.client.of('GET /v1/me/credentials')).toHaveLength(1));
     expect(screen.getByTestId('composer.github-hint')).toBeVisible();
+    fireEvent.click(screen.getByTestId('composer.chip.research'));
+    expect(screen.queryByTestId('composer.github-hint')).toBeNull();
+    fireEvent.click(screen.getByTestId('composer.chip.github'));
+    expect(screen.getByTestId('composer.github-hint')).toBeVisible();
+    expect(t.client.of('GET /v1/me/credentials')).toHaveLength(1);
+  });
+
+  it('stores an existing token right below the composer: sealed to the device, its failures, then connected', async () => {
+    const t = await world();
+    const answers = deviceAnswers(t);
+    mount(t, [{ path: '/', element: <Composer org={t.org} wg={t.wg} suggestions /> }], '/');
+    fireEvent.click(screen.getByTestId('composer.chip.github'));
+    fireEvent.click(await screen.findByTestId('github.token'));
+    expect(screen.getByTestId('github.token.recommend')).toHaveTextContent('fine-grained personal access token');
+    await screen.findByTestId('github.devices.select');
+    const input = screen.getByTestId('github.token.input') as HTMLInputElement;
+    expect(input).toHaveAttribute('type', 'password');
+    expect(input).toHaveAttribute('autocomplete', 'off');
+    // nothing pasted: no request
+    fireEvent.click(screen.getByTestId('github.start'));
+    expect(screen.getByTestId('github.token.empty')).toBeVisible();
+    expect(t.client.of('POST /v1/device-requests')).toHaveLength(0);
+    const send = async (token: string) => {
+      fireEvent.change(screen.getByTestId('github.token.input'), { target: { value: token } });
+      fireEvent.click(screen.getByTestId('github.start'));
+      expect(await screen.findByTestId('github.waiting')).toHaveTextContent(
+        'The execution device is checking the token at GitHub…',
+      );
+    };
+    await send('ghp_not_a_real_token_1\n');
+    // the token leaves the browser only sealed to the device
+    const posted = JSON.stringify(t.client.of('POST /v1/device-requests')[0]!.body);
+    expect(posted).not.toContain('ghp_not_a_real_token_1');
+    await answers.respond({ step: 'failed', code: 'scope_missing' }, true);
+    expect(await screen.findByTestId('github.failed')).toHaveTextContent('The token lacks the scope "repo"');
+    fireEvent.click(screen.getByTestId('github.retry'));
+    await screen.findByTestId('github.devices.select');
+    await send('ghp_not_a_real_token_2');
+    // a failure without a token text of its own names the catalog error
+    await answers.respond({ step: 'failed', code: 'timeout' }, true);
+    expect(await screen.findByTestId('github.failed')).toHaveTextContent('The request timed out.');
+    fireEvent.click(screen.getByTestId('github.retry'));
+    await screen.findByTestId('github.devices.select');
+    await send('ghp_not_a_real_token_3');
+    connected(t, await record(t, { source: 'token', scopes: ['repo'] }));
+    await answers.respond({ step: 'done', login: 'octo-cat', scopes: ['repo'], source: 'token' }, true);
+    await waitFor(() => expect(t.store.getState().github).toMatchObject({ status: 'connected', source: 'token' }));
+    expect(screen.queryByTestId('composer.github-hint')).toBeNull();
+  });
+
+  it('keeps the composer usable when loading the connection after a stored token fails', async () => {
+    const t = await world();
+    const answers = deviceAnswers(t);
+    mount(t, [{ path: '/', element: <Composer org={t.org} wg={t.wg} suggestions /> }], '/');
+    fireEvent.click(screen.getByTestId('composer.chip.github'));
+    fireEvent.click(await screen.findByTestId('github.token'));
+    await screen.findByTestId('github.devices.select');
+    fireEvent.change(screen.getByTestId('github.token.input'), { target: { value: 'not-a-real-token' } });
+    fireEvent.click(screen.getByTestId('github.start'));
+    await screen.findByTestId('github.waiting');
+    const loads = t.client.of('GET /v1/me/credentials').length;
+    t.client.on('GET /v1/me/credentials', () => {
+      throw new HubError('unavailable', 503);
+    });
+    await answers.respond({ step: 'done', login: 'octo-cat', scopes: ['repo'], source: 'token' }, true);
+    await waitFor(() => expect(t.client.of('GET /v1/me/credentials')).toHaveLength(loads + 1));
+    expect(t.store.getState().github.status).not.toBe('connected');
+    expect(screen.getByTestId('github.ways')).toBeVisible();
+  });
+
+  it('shows the source and the scopes of a stored token in the settings', async () => {
+    const t = await world();
+    connected(t, await record(t, { source: 'token', scopes: ['repo', 'read:org'] }));
+    page(t);
+    expect(await screen.findByTestId('github.connected')).toHaveTextContent('Connected as octo-cat');
+    expect(screen.getByTestId('github.source')).toHaveTextContent('Connected through: Stored token');
+    expect(screen.getByTestId('github.scopes')).toHaveTextContent('Scopes: repo, read:org');
+    expect(screen.getByTestId('github.scopes.classic')).toHaveTextContent('A fine-grained token is recommended.');
+    expect(screen.queryByTestId('github.ways')).toBeNull();
   });
 });

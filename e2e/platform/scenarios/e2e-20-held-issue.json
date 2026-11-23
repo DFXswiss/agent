@@ -1,0 +1,121 @@
+{
+  "name": "e2e-20-held-issue",
+  "description": "E2E-20 (KOR-25): the owner's task without a GitHub connection. The session requests the issue list at once (no text, no explanation); the runner holds the operation and the chat shows the waiting card. The MCP call answers pending after 20 s (or the result, if the owner connected faster); the session waits for the operation with get_operation (three waits of 30 s, after a pause of 10 s) and goes on with the result once the owner connected from the card - without a new prompt. Then it reads the issue and answers.",
+  "steps": [
+    {
+      "id": "list",
+      "expect": {
+        "user_text_contains": "schau dir das neuste issue in octo-org/intern an",
+        "has_tool_result": false,
+        "tools_include": ["mcp__platform__request_operation", "mcp__platform__get_operation"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_issues",
+              "params": {
+                "repo": "octo-org/intern",
+                "per_page": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "wait",
+      "expect": {
+        "tool_result_contains": "\"operation_id\":\""
+      },
+      "capture": {
+        "op": {
+          "regex": "\"operation_id\":\"([0-9a-f-]{36})\"",
+          "source": "messages"
+        }
+      },
+      "delay_ms": 10000,
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op}",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "read",
+      "expect": {
+        "tool_result_contains": "Newest issue kz20-title-r2v7k4"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.get_issue",
+              "params": {
+                "repo": "octo-org/intern",
+                "number": 2
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": {
+        "tool_result_contains": "Second comment kz20-comment-b-x5n1"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Das neueste Issue ist #2 mit zwei Kommentaren kz20-held-answer-p6d2m9."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Newest issue"
+          }
+        ]
+      }
+    }
+  ]
+}

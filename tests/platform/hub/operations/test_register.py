@@ -95,7 +95,18 @@ def test_accepted_operation_rows_transitions_audit_and_frame(ops: Ops, published
 
 def test_types_without_dedupe_are_accepted_without_slot(ops: Ops) -> None:
     _task, session = ops.session()
-    for op_type in ("github.list_repositories", "github.get_pull_request", "task.set_title", "github.comment"):
+    for op_type in (
+        "github.list_repositories",
+        "github.get_pull_request",
+        "task.set_title",
+        "github.comment",
+        "github.list_issues",
+        "github.get_issue",
+        "github.update_issue",
+        "github.list_pull_requests",
+        "github.request_connection",
+        "github.create_issue",
+    ):
         operation, answer = ops.decide(session, op_type)
         assert answer == {"state": "accepted"}
         assert ops.operation(operation)[3:] == (None, None)
@@ -236,8 +247,11 @@ def test_h6_after_the_window_takes_the_slot_over(ops: Ops) -> None:
         ("github.push", 86400),
         ("github.create_pull_request", 604800),
         ("github.comment", 86400),
+        ("github.create_issue", 86400),
         ("subagent.request", 600),
         ("github.list_repositories", 86400),
+        ("github.list_issues", 86400),
+        ("github.update_issue", 86400),
     ],
 )
 def test_window_per_type(ops: Ops, op_type: str, seconds: int) -> None:

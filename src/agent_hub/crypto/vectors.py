@@ -1148,6 +1148,7 @@ def build_dedupe() -> Json:
         "github.push": {"repo": "example-org/example-repo", "branch": "feature/x", "commit_sha": "c" * 40},
         "github.create_pull_request": {"repo": "example-org/example-repo", "head": "feature/x", "base": "develop"},
         "github.comment": {"repo": "example-org/example-repo", "number": 12, "body": "Looks good \u2013 danke!"},
+        "github.create_issue": {"repo": "Example-Org/Example-Repo", "title": "Anmeldung schlägt fehl"},
         "subagent.request": {"session": SESSION, "purpose": "review", "prompt": "Prüfe den Diff."},
     }
     tags = []

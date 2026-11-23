@@ -20,8 +20,12 @@ const MOBILE_SPECS = [
   'errors.spec.ts',
   'performance.spec.ts',
 ].map((name) => `**/e2e/${name}`);
-/** Device specs that also run on the phones. */
-const MOBILE_DEVICE_SPECS = ['**/devices/responsive.spec.ts', '**/devices/task-overview.spec.ts'];
+/** Device specs that also run on the phones (the waiting card of KOR-25 must work on a phone). */
+const MOBILE_DEVICE_SPECS = [
+  '**/devices/responsive.spec.ts',
+  '**/devices/task-overview.spec.ts',
+  '**/devices/waiting.spec.ts',
+];
 
 export default defineConfig({
   testDir: './e2e',

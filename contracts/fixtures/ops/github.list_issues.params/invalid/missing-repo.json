@@ -1,0 +1,10 @@
+{
+  "state": "open",
+  "labels": [
+    "bug"
+  ],
+  "sort": "created",
+  "direction": "desc",
+  "per_page": 30,
+  "page": 1
+}

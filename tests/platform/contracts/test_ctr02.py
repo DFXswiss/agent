@@ -549,6 +549,28 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
     "github.comment": ("repo number body", "comment_id url", "repo number body", 86400),
     "subagent.request": ("purpose prompt model_id", "session_id", "session prompt", 600),
     "task.set_title": ("title", "", "", None),
+    "github.list_issues": ("repo state labels sort direction per_page page", "issues next_page truncated", "", None),
+    "github.get_issue": (
+        "repo number comments_page comments_per_page",
+        "number title body state state_reason author labels assignees created_at updated_at closed_at url"
+        " pull_request comments_total comments comments_next_page truncated",
+        "",
+        None,
+    ),
+    "github.create_issue": ("repo title body labels", "number url id", "repo title body", 86400),
+    "github.update_issue": (
+        "repo number state state_reason title body labels",
+        "number url state state_reason title labels",
+        "",
+        None,
+    ),
+    "github.list_pull_requests": (
+        "repo state base sort direction per_page page",
+        "pull_requests next_page truncated",
+        "",
+        None,
+    ),
+    "github.request_connection": ("", "login", "", None),
 }
 SPEC_REPO = "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
 # 03-api.md section 9: (type, field, longest valid value length).

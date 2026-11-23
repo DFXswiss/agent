@@ -8,7 +8,16 @@ import {
   loadOperations,
   pullOperationEvents,
 } from '../../../src/core/operations/load';
-import { factsOf, operationView, purposeOf, selectOperation, subjectOf } from '../../../src/core/operations/view';
+import {
+  factsOf,
+  httpsUrl,
+  issueOf,
+  listingOf,
+  operationView,
+  purposeOf,
+  selectOperation,
+  subjectOf,
+} from '../../../src/core/operations/view';
 import { HubError } from '../../../src/core/net/signedFetch';
 import type { EventEntry } from '../../../src/core/store/slices/events';
 import { putEvents } from '../../../src/core/store/slices/events';
@@ -433,6 +442,11 @@ describe('subjectOf and factsOf', () => {
     expect(subjectOf('github.checkout', { repo: 'a/b' })).toBe('a/b');
     expect(subjectOf('github.create_branch', { repo: 'a/b', branch: 'x', from: 'main' })).toBe('a/b x');
     expect(subjectOf('github.get_pull_request', { repo: 'a/b', number: 2 })).toBe('a/b#2');
+    expect(subjectOf('github.get_issue', { repo: 'a/b', number: 3 })).toBe('a/b#3');
+    expect(subjectOf('github.list_issues', { repo: 'a/b', state: 'all' })).toBe('a/b');
+    expect(subjectOf('github.create_issue', { repo: 'a/b', title: 'Bug' })).toBe('a/b: Bug');
+    expect(subjectOf('github.create_issue', { repo: 'a/b' })).toBe('a/b');
+    expect(subjectOf('github.request_connection', {})).toBeNull();
   });
 
   it('lists the result links and values of each type', () => {
@@ -464,5 +478,180 @@ describe('subjectOf and factsOf', () => {
     const titled = { status: 'verified', at: '', value: { type: 'task.set_title', params: { title: 'New' } } } as const;
     expect(factsOf('task.set_title', {}, titled)).toEqual([{ label: 'title', text: 'New' }]);
     expect(factsOf('custom.type', {}, none)).toEqual([]);
+  });
+
+  it('lists the facts of the issue types and the connection request', () => {
+    const none = { status: 'missing' } as const;
+    const url = 'https://github.com/a/b/issues/4';
+    expect(factsOf('github.list_issues', { issues: [{}, {}, {}] }, none)).toEqual([{ label: 'issues', text: '3' }]);
+    expect(factsOf('github.list_issues', {}, none)).toEqual([]);
+    expect(factsOf('github.list_pull_requests', { pull_requests: [] }, none)).toEqual([
+      { label: 'pull_requests', text: '0' },
+    ]);
+    expect(factsOf('github.list_pull_requests', {}, none)).toEqual([]);
+    expect(factsOf('github.get_issue', { number: 4, url }, none)).toEqual([{ label: 'issue', text: '#4', href: url }]);
+    expect(factsOf('github.create_issue', { number: 4, url: 'http://github.com/x', id: 1 }, none)).toEqual([
+      { label: 'issue', text: '#4' },
+    ]);
+    expect(factsOf('github.create_issue', { url }, none)).toEqual([]);
+    expect(
+      factsOf('github.update_issue', { number: 4, url, state: 'closed', state_reason: 'not_planned' }, none),
+    ).toEqual([
+      { label: 'issue', text: '#4', href: url },
+      { label: 'state', text: 'closed' },
+      { label: 'state_reason', text: 'not_planned' },
+    ]);
+    expect(factsOf('github.update_issue', { number: 4, state: 'weird', state_reason: null }, none)).toEqual([
+      { label: 'issue', text: '#4' },
+    ]);
+    expect(factsOf('github.request_connection', { login: 'octo' }, none)).toEqual([{ label: 'login', text: 'octo' }]);
+  });
+});
+
+describe('httpsUrl, listingOf and issueOf', () => {
+  it('keeps https links only', () => {
+    expect(httpsUrl('https://github.com/a')).toBe('https://github.com/a');
+    expect(httpsUrl('HTTPS://github.com/a')).toBe('HTTPS://github.com/a');
+    expect(httpsUrl('http://github.com/a')).toBeNull();
+    expect(httpsUrl('javascript:alert(1)')).toBeNull();
+    expect(httpsUrl('mailto:a@b.c')).toBeNull();
+    expect(httpsUrl('/relative')).toBeNull();
+    expect(httpsUrl(7)).toBeNull();
+  });
+
+  it('reads the listed issues and pull requests entry by entry', () => {
+    const issue = {
+      number: 4,
+      title: '<b>Bug</b>',
+      state: 'open',
+      state_reason: null,
+      author: 'octo',
+      labels: ['bug', 3, 'p1'],
+      url: 'https://github.com/a/b/issues/4',
+    };
+    expect(listingOf('github.list_issues', { issues: [issue], next_page: 2, truncated: true })).toEqual({
+      kind: 'issues',
+      entries: [
+        {
+          number: 4,
+          title: '<b>Bug</b>',
+          state: 'open',
+          draft: false,
+          author: 'octo',
+          labels: ['bug', 'p1'],
+          href: 'https://github.com/a/b/issues/4',
+        },
+      ],
+      nextPage: 2,
+      truncated: true,
+    });
+    const bad = [
+      null,
+      { title: 'no number' },
+      { number: 0, title: 'zero' },
+      { number: 1.5, title: 'fraction' },
+      { number: 2 },
+    ];
+    const pr = { number: 9, title: 'PR', state: 'closed', draft: true, url: 'javascript:x', labels: 'x' };
+    expect(listingOf('github.list_pull_requests', { pull_requests: [...bad, pr], next_page: null })).toEqual({
+      kind: 'pull_requests',
+      entries: [{ number: 9, title: 'PR', state: 'closed', draft: true, author: null, labels: [] }],
+      nextPage: null,
+      truncated: false,
+    });
+    expect(listingOf('github.list_issues', { next_page: -1 })).toEqual({
+      kind: 'issues',
+      entries: [],
+      nextPage: null,
+      truncated: false,
+    });
+    expect(listingOf('github.get_issue', {})).toBeNull();
+    expect(listingOf('toString', {})).toBeNull();
+  });
+
+  it('reads an issue with its page of comments', () => {
+    const result = {
+      number: 4,
+      title: 'Bug',
+      body: 'Steps',
+      state: 'closed',
+      state_reason: 'completed',
+      author: 'octo',
+      labels: ['bug'],
+      assignees: [],
+      url: 'https://github.com/a/b/issues/4',
+      pull_request: false,
+      comments_total: 3,
+      comments: [
+        { id: 1, author: 'a', body: 'first', created_at: '2026-11-20T10:00:00Z' },
+        { id: 'x2', body: 'no author' },
+        { id: true, body: 'bad id' },
+        { id: 3, body: 5 },
+        'junk',
+      ],
+      comments_next_page: 2,
+      truncated: true,
+    };
+    expect(issueOf('github.get_issue', result)).toEqual({
+      number: 4,
+      title: 'Bug',
+      state: 'closed',
+      draft: false,
+      author: 'octo',
+      labels: ['bug'],
+      href: 'https://github.com/a/b/issues/4',
+      stateReason: 'completed',
+      body: 'Steps',
+      pullRequest: false,
+      comments: [
+        { id: '1', author: 'a', body: 'first', createdAt: '2026-11-20T10:00:00Z' },
+        { id: 'x2', author: null, body: 'no author', createdAt: null },
+      ],
+      commentsTotal: 3,
+      commentsNextPage: 2,
+      truncated: true,
+    });
+    expect(issueOf('github.get_issue', { number: 5, title: 'PR', body: null, pull_request: true })).toMatchObject({
+      body: null,
+      pullRequest: true,
+      comments: [],
+      commentsTotal: null,
+      commentsNextPage: null,
+      stateReason: null,
+      truncated: false,
+    });
+    expect(issueOf('github.get_issue', { title: 'no number' })).toBeNull();
+    expect(issueOf('github.list_issues', result)).toBeNull();
+  });
+
+  it('carries the listing and the issue in the view of a succeeded operation', async () => {
+    const t = await taskWorld();
+    const list = operationView(
+      [
+        event(t, 'operation.params', params('github.list_issues', { repo: 'a/b' })),
+        event(t, 'operation.result', succeeded({ issues: [], next_page: null, truncated: false })),
+      ],
+      OP,
+      null,
+    );
+    expect(list.listing).toEqual({ kind: 'issues', entries: [], nextPage: null, truncated: false });
+    expect(list.issue).toBeNull();
+    const issue = operationView(
+      [
+        event(t, 'operation.params', params('github.get_issue', { repo: 'a/b', number: 4 })),
+        event(t, 'operation.result', succeeded({ number: 4, title: 'Bug' })),
+      ],
+      OP,
+      null,
+    );
+    expect(issue.issue).toMatchObject({ number: 4, title: 'Bug' });
+    expect(issue.listing).toBeNull();
+    const pending = operationView(
+      [event(t, 'operation.params', params('github.get_issue', { repo: 'a/b' }))],
+      OP,
+      null,
+    );
+    expect(pending.issue).toBeNull();
+    expect(pending.listing).toBeNull();
   });
 });

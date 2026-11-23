@@ -1,0 +1,6 @@
+{
+  "repo": "example-org/example-repo",
+  "number": 42,
+  "state": "closed",
+  "state_reason": "completed"
+}

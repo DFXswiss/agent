@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/github.list_issues.params.json",
+  "title": "operation github.list_issues params",
+  "description": "Parameters of the operation type github.list_issues (03-api.md section 9); additionalProperties false, integers without booleans.",
+  "$ref": "objects.json#/$defs/params_github_list_issues"
+}

@@ -4,17 +4,21 @@
 //   (`GET /v1/me/credentials/github`) is verified and opened in the browser: its owner is the user, its author the
 //   user or a device entitled to the user's `CK` by the verified logs (the device that ran the device flow,
 //   04-crypto.md section 4.4), its signature checks with that author's key, and it opens with the user's `CK` of the
-//   record's epoch (the user's own self-wrap). Only the GitHub login and the creation time leave this module – the
-//   token is never kept or shown. The result goes to the `github` slice (settings section, composer chip).
+//   record's epoch (the user's own self-wrap). Only the GitHub login, the scopes, the source (device flow or a stored
+//   token; records without it came from the device flow) and the creation time leave this module – the token is never
+//   kept or shown. The result goes to the `github` slice (settings section, composer chip).
 // - `disconnectGithub`: `DELETE /v1/me/credentials/github` (a missing record, `404`, counts as done); the user then
 //   revokes the app authorization at GitHub (the UI links the settings page).
 // - `connectDevices`: the devices a `github.connect` request may go to. If `GET /v1/me/devices` is empty (a fresh
 //   private org), the device auto-assignment of the first task (`ensureDevice`, 03-api.md section 4.6.1 step 1) runs
 //   for the default workgroup of the active org first. Devices the verified logs do not confirm are left out; online
 //   devices of the default workgroup come first and the first online one is preselected.
-// - `startConnect`: the sealed `github.connect` request (`core/requests`); `connectProgress` reads the flow's state
-//   from the opened responses: waiting → device code (user code, verification link, expiry from the response's time
-//   and `expires_in`) → done (login) or failed (code), or expired when the hub ended the request without an answer.
+// - `startConnect`: the sealed `github.connect` request (`core/requests`); with a token (the second way of KOR-25,
+//   ADR-059) the body is `{token}`, sealed with HPKE to the device that checks it – the token is not kept anywhere
+//   else in the browser. `connectProgress` reads the flow's state from the opened responses: waiting → device code
+//   (user code, verification link, expiry from the response's time and `expires_in`) → done (login, scopes, source)
+//   or failed (code), or expired when the hub ended the request without an answer.
+// - `tokenInput`: the pasted token trimmed (a copied line ends in a newline), or null when its form cannot be one.
 import { b64uDecode } from '../encoding/b64u';
 import { parseJson } from '../encoding/json';
 import { parseTime } from '../encoding/time';
@@ -30,7 +34,7 @@ import { setGithub } from '../store/slices/github';
 import type { Store } from '../store/store';
 import { ensureDevice } from '../tasks/send';
 import type { TasksContext } from '../tasks/pull';
-import { LOGIN_RE, REQUEST_FAILED } from '../requests/bodies';
+import { isScopes, LOGIN_RE, REQUEST_FAILED, type Source, SOURCES, TOKEN_RE } from '../requests/bodies';
 import {
   deviceKeys,
   eligibleDevices,
@@ -47,7 +51,14 @@ export const KIND = 'github';
 export const GITHUB_SETTINGS_URL = 'https://github.com/settings/applications';
 
 export type GithubConnection =
-  | { readonly status: 'connected'; readonly login: string; readonly createdAt: string; readonly version: number }
+  | {
+      readonly status: 'connected';
+      readonly login: string;
+      readonly scopes: readonly string[];
+      readonly source: Source;
+      readonly createdAt: string;
+      readonly version: number;
+    }
   | { readonly status: 'disconnected' }
   | { readonly status: 'unverifiable'; readonly code: string };
 
@@ -92,22 +103,28 @@ export function authorKey(store: Store, userId: string, identity: Identity, auth
   return device === null ? null : b64uDecode(device.sig);
 }
 
-const TOKEN_RE = /^[!-~]{1,4096}$/;
-const SCOPE_RE = /^[a-z0-9:_-]{1,64}$/;
+interface GithubBody {
+  readonly login: string;
+  readonly scopes: string[];
+  readonly source?: Source;
+  readonly created_at: string;
+}
 
-/** The body exactly as `contracts/credentials/github.json` allows it. */
-export const isGithubBody = (value: unknown): value is { login: string; created_at: string } =>
+/** The body exactly as `contracts/credentials/github.json` allows it (`source` optional). */
+export const isGithubBody = (value: unknown): value is GithubBody =>
   isRecord(value) &&
-  Object.keys(value).sort().join(',') === 'created_at,login,scopes,token,user_id' &&
+  Object.keys(value)
+    .filter((key) => key !== 'source')
+    .sort()
+    .join(',') === 'created_at,login,scopes,token,user_id' &&
   typeof value.token === 'string' &&
   TOKEN_RE.test(value.token) &&
   typeof value.login === 'string' &&
   LOGIN_RE.test(value.login) &&
   Number.isSafeInteger(value.user_id) &&
   (value.user_id as number) >= 1 &&
-  Array.isArray(value.scopes) &&
-  value.scopes.length <= 64 &&
-  value.scopes.every((scope) => typeof scope === 'string' && SCOPE_RE.test(scope)) &&
+  isScopes(value.scopes) &&
+  (value.source === undefined || (SOURCES as readonly unknown[]).includes(value.source)) &&
   typeof value.created_at === 'string';
 
 /** Verifies and opens a `github` record (module comment). */
@@ -122,7 +139,14 @@ export async function openGithubRecord(context: RequestsContext, record: unknown
   const body = parseJson(await openCredential(ck, record, key));
   if (!isGithubBody(body)) refuse('params_invalid');
   parseTime(body.created_at);
-  return { status: 'connected', login: body.login, createdAt: body.created_at, version: checked.version as number };
+  return {
+    status: 'connected',
+    login: body.login,
+    scopes: [...body.scopes],
+    source: body.source ?? 'device_flow',
+    createdAt: body.created_at,
+    version: checked.version as number,
+  };
 }
 
 const listed = (body: unknown): boolean =>
@@ -213,9 +237,16 @@ export async function connectDevices(
   return { devices, preselected: devices.find((item) => item.online)?.device ?? null };
 }
 
-/** Seals and posts the `github.connect` request to `device`. */
-export async function startConnect(context: RequestsContext, device: string): Promise<PreparedRequest> {
-  const prepared = await prepareRequest(context, { device, kind: 'github.connect', body: {} });
+/** The pasted token without surrounding white space, or null when it cannot be a token (module comment). */
+export function tokenInput(text: string): string | null {
+  const token = text.trim();
+  return TOKEN_RE.test(token) ? token : null;
+}
+
+/** Seals and posts the `github.connect` request to `device` (with `token`: store that token, module comment). */
+export async function startConnect(context: RequestsContext, device: string, token?: string): Promise<PreparedRequest> {
+  const body = token === undefined ? {} : { token };
+  const prepared = await prepareRequest(context, { device, kind: 'github.connect', body });
   await submitRequest(context, prepared);
   return prepared;
 }
@@ -229,7 +260,12 @@ export type ConnectProgress =
       /** Unix ms at which the code expires (device time of the response + `expires_in`). */
       readonly expiresAt: number;
     }
-  | { readonly step: 'done'; readonly login: string }
+  | {
+      readonly step: 'done';
+      readonly login: string;
+      readonly scopes: readonly string[] | null;
+      readonly source: Source | null;
+    }
   | { readonly step: 'failed'; readonly code: string };
 
 /** The state of a connect flow from its request view (module comment). */
@@ -237,7 +273,8 @@ export function connectProgress(view: RequestView): ConnectProgress {
   const verified = view.responses.filter((item) => item.status === 'verified');
   const last = verified.at(-1);
   const body = last?.body;
-  if (body?.step === 'done') return { step: 'done', login: body.login! };
+  if (body?.step === 'done')
+    return { step: 'done', login: body.login!, scopes: body.scopes ?? null, source: body.source ?? null };
   if (body?.step === 'failed') return { step: 'failed', code: body.code };
   if (view.state === 'expired') return { step: 'failed', code: 'timeout' };
   // the hub fails a request whose device lost its eligibility or that a newer one of the same kind replaced

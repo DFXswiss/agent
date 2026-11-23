@@ -1,5 +1,6 @@
-// Settings section "GitHub" (06-web.md section 8.1, ADR-015): the connection state from the verified, decrypted
-// `github` credential (login only), "Connect GitHub" (device request `github.connect`, `ConnectFlow.tsx`) and
+// Settings section "GitHub" (06-web.md section 8.1, ADR-015, ADR-059): the connection state from the verified,
+// decrypted `github` credential (login, how it was made, its scopes – never the token), "Connect GitHub" and "Use an
+// existing token" (device request `github.connect`, `Connect.tsx`/`ConnectFlow.tsx`) and
 // "Disconnect" (confirmation, `DELETE /v1/me/credentials/github`, then a link to the GitHub settings page where the
 // user revokes the app authorization).
 import { useCallback, useEffect, useState } from 'react';
@@ -10,7 +11,7 @@ import { useStore } from '../../../hooks/useStore';
 import { useI18n } from '../../../i18n';
 import { Dialog } from '../../../screens/members/Dialog';
 import { useAppEnv } from '../../../shell/context';
-import { ConnectFlow } from './ConnectFlow';
+import { GithubConnect } from './Connect';
 import { useReason } from './reason';
 
 const BUTTON = 'min-h-11 self-start rounded border border-gray-400 px-4';
@@ -21,7 +22,6 @@ export function GithubSection() {
   const reason = useReason();
   const connection = useStore((state) => state.github, app.store);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [connecting, setConnecting] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
@@ -36,7 +36,6 @@ export function GithubSection() {
   };
   const connected = useCallback(() => {
     setDisconnected(false);
-    setConnecting(false);
     load();
   }, [load]);
   const disconnect = async () => {
@@ -68,7 +67,22 @@ export function GithubSection() {
   return (
     <div className="flex flex-col gap-3" data-testid="github.state" data-status={connection.status}>
       {connection.status === 'connected' && (
-        <p data-testid="github.connected">{t('github.connected', { login: connection.login })}</p>
+        <div className="flex flex-col gap-1">
+          <p data-testid="github.connected">{t('github.connected', { login: connection.login })}</p>
+          <p className="text-sm" data-testid="github.source" data-source={connection.source}>
+            {t('github.source', { source: t(`github.source.${connection.source}`) })}
+          </p>
+          <p className="text-sm" data-testid="github.scopes">
+            {connection.scopes.length > 0
+              ? t('github.scopes', { scopes: connection.scopes.join(', ') })
+              : t(`github.scopes.none.${connection.source}`)}
+          </p>
+          {connection.source === 'token' && connection.scopes.length > 0 && (
+            <p className="text-sm text-gray-700" data-testid="github.scopes.classic">
+              {t('github.scopes.classic')}
+            </p>
+          )}
+        </div>
       )}
       {connection.status === 'disconnected' && <p data-testid="github.disconnected">{t('github.disconnected')}</p>}
       {connection.status === 'unverifiable' && (
@@ -90,24 +104,12 @@ export function GithubSection() {
           </a>
         </p>
       )}
-      <div className="flex flex-wrap gap-2">
-        {canConnect && !connecting && (
-          <button
-            type="button"
-            className="min-h-11 rounded bg-blue-700 px-4 text-white"
-            onClick={() => setConnecting(true)}
-            data-testid="github.connect"
-          >
-            {t('github.connect')}
-          </button>
-        )}
-        {connection.status !== 'disconnected' && (
-          <button type="button" className={BUTTON} onClick={() => setConfirming(true)} data-testid="github.disconnect">
-            {t('github.disconnect')}
-          </button>
-        )}
-      </div>
-      {connecting && <ConnectFlow onConnected={connected} onClose={() => setConnecting(false)} />}
+      {canConnect && <GithubConnect onConnected={connected} />}
+      {connection.status !== 'disconnected' && (
+        <button type="button" className={BUTTON} onClick={() => setConfirming(true)} data-testid="github.disconnect">
+          {t('github.disconnect')}
+        </button>
+      )}
       {confirming && (
         <Dialog
           title={t('github.disconnect.title')}

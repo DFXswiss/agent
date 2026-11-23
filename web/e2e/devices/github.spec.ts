@@ -7,14 +7,14 @@ import { expect, test } from '../fixtures/test.ts';
 import { answerRequest } from '../helpers/operations.ts';
 import { freshUser } from '../helpers/tasks.ts';
 import { PageUser } from '../helpers/user.ts';
+import { navigateInApp } from '../helpers/whiteboard.ts';
 
 test('connects GitHub through the device flow and disconnects again', async ({ page, baseURL }) => {
   const user = await freshUser(page, baseURL!);
   const api = await PageUser.open(page, user.recoveryCode);
   await page.getByTestId('composer.chip.github').click();
   await expect(page.getByTestId('composer.github-hint')).toBeVisible();
-  await page.getByTestId('composer.github-connect').click();
-  await expect(page).toHaveURL(/\/settings$/);
+  await navigateInApp(page, '/settings');
   await expect(page.getByTestId('github.disconnected')).toHaveText('No GitHub account is connected.');
   expect(((await api.request('GET', '/v1/me/devices')) as { devices: unknown[] }).devices).toHaveLength(0);
   await page.getByTestId('github.connect').click();

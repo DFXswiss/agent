@@ -1,0 +1,80 @@
+{
+  "name": "e2e-20-newest-issue",
+  "description": "E2E-20 (KOR-25): after GitHub was connected with an existing token, the owner's first real task verbatim. The session asks for the newest issue (one per page); the newest entries are pull requests, so the runner follows the pages until it finds the issue. Then it reads the issue with its comments and answers from them. No explanation, no detour.",
+  "steps": [
+    {
+      "id": "list",
+      "expect": {
+        "user_text_contains": "schau dir das neuste issue in octo-org/intern an",
+        "has_tool_result": false,
+        "tools_include": ["mcp__platform__request_operation"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_issues",
+              "params": {
+                "repo": "octo-org/intern",
+                "per_page": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "read",
+      "expect": {
+        "tool_result_contains": "Newest issue kz20-title-r2v7k4"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.get_issue",
+              "params": {
+                "repo": "octo-org/intern",
+                "number": 2
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": {
+        "tool_result_contains": "Second comment kz20-comment-b-x5n1"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Das neueste Issue ist #2 mit zwei Kommentaren kz20-answer-t8c3w6."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Newest issue"
+          }
+        ]
+      }
+    }
+  ]
+}
