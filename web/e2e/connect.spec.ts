@@ -11,7 +11,7 @@ import { uuid7 } from '../src/core/encoding/ids';
 import { TEST_ROOT_KEY } from './fixtures/env.ts';
 import { expect, test } from './fixtures/test.ts';
 import { catchHandover, TestAgent } from './helpers/agent.ts';
-import { addAuthenticator } from './helpers/authenticator.ts';
+import { addAuthenticator, withoutPrf } from './helpers/authenticator.ts';
 import { cancelNext } from './helpers/cancel.ts';
 import { onboard } from './helpers/onboard.ts';
 import { PageUser } from './helpers/user.ts';
@@ -207,8 +207,10 @@ test('offers the gesture again after pairing_gesture_required and a cancelled ge
 
 test('without PRF the recovery code unlocks before the confirmation', async ({ page, baseURL }) => {
   const origin = baseURL!;
-  await addAuthenticator(page, { hasPrf: false });
+  // a new account needs PRF (KOR-22): an existing account whose passkey signs in without PRF output
+  const first = await addAuthenticator(page);
   const ada = await onboard(page, { origin });
+  await withoutPrf(page, first);
   const agent = await TestAgent.pair(origin);
   const handover = catchHandover(page, origin);
   await page.goto(`/connect#${await agent.fragment()}`);
