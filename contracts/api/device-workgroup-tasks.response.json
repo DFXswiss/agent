@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-workgroup-tasks.response.json",
+  "title": "GET /v1/device/workgroups/{wg}/tasks response",
+  "description": "Body of a successful response to GET /v1/device/workgroups/{wg}/tasks (03-api.md section 6.1).",
+  "type": "object",
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/task_row"
+      },
+      "minItems": 0,
+      "maxItems": 200
+    },
+    "next_before": {
+      "$ref": "../common.json#/$defs/next_before"
+    }
+  },
+  "required": [
+    "tasks",
+    "next_before"
+  ],
+  "additionalProperties": false
+}

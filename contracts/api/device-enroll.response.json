@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-enroll.response.json",
+  "title": "POST /v1/device/enroll response",
+  "description": "Body of a successful response to POST /v1/device/enroll (03-api.md section 6.1).",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "const": "active"
+        },
+        "org_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "state",
+        "org_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "const": "pending_certification"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

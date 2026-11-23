@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-workgroup-tasks.request.json",
+  "title": "GET /v1/device/workgroups/{wg}/tasks request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "state": {
+      "$ref": "../common.json#/$defs/task_state"
+    },
+    "before": {
+      "$ref": "../common.json#/$defs/q_before"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_list"
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

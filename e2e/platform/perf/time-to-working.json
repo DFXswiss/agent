@@ -1,0 +1,19 @@
+{
+  "name": "perf-time-to-working",
+  "description": "PERF-01/PERF-02: every measured run asks \"What is 2+2?\" in a new task; the spec sets `repeat` to its number of runs. Background requests without tools get a short title.",
+  "steps": [
+    {
+      "id": "answer",
+      "repeat": 1,
+      "expect": { "user_text_contains": "What is 2+2?", "has_tools": true, "stream": true },
+      "reply": { "content": [{ "type": "text", "text": "4" }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Arithmetic" }] }
+    }
+  ]
+}

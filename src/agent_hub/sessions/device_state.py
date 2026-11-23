@@ -1,0 +1,89 @@
+"""The sections `sessions`, `pending_prompts` and `delivered_prompt_event_ids` of `GET /v1/device/state`
+(03-api.md section 6.1, ADR-027 section 4: `<area>/device_state.py:SECTION`).
+
+- `sessions`: every session placed on the device that has not ended (`stopped`/`failed` are left out: the runner
+  stops local sessions that are not desired) in a workgroup the device is still assigned to, oldest first, with the
+  owner's model preference (`user_settings`, default `auto`) and, for a main session that replaces an earlier main
+  session of the task on the same device that had ended when the new one was created (`stopped`/`failed`; a
+  session still `stopping` is never resumed from), `resume_from` = that session (03-api.md section 4.6.3); a session
+  the device refused for lack of capacity before it ever worked ran no agent and is skipped: the session before it
+  counts (KOR-14).
+- `pending_prompts` / `delivered_prompt_event_ids`: the prompt routing of `agent_hub.sessions.prompts` for the main
+  sessions in `sessions` (pending only while the session is not `stopping`).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from agent_hub.device.state import Section, StateRequest
+from agent_hub.sessions import prompts
+from agent_hub.sessions.derive import STOPPING
+
+
+def _resume_from(request: StateRequest, task_id: str, session_id: str) -> str | None:
+    row = request.connection.execute(
+        "SELECT p.id, p.device_id = %s AND p.ended_at IS NOT NULL AND p.ended_at <= s.created_at"
+        " FROM hub.session s JOIN hub.session p ON p.task_id = s.task_id AND p.depth = 0"
+        " AND (p.created_at, p.id) < (s.created_at, s.id) WHERE s.id = %s AND s.task_id = %s"
+        " AND (p.first_working_at IS NOT NULL OR p.state <> 'failed' OR p.state_reason <> 'capacity_exhausted')"
+        " ORDER BY p.created_at DESC, p.id DESC LIMIT 1",
+        (request.device_id, session_id, task_id),
+    ).fetchone()
+    return str(row[0]) if row is not None and row[1] else None
+
+
+def provide(request: StateRequest) -> Mapping[str, Any]:
+    """The three fields for the device of `request` (module docstring)."""
+    rows = request.connection.execute(
+        "SELECT s.id, s.task_id, s.org_id, s.wg_id, s.state, s.parent_session_id, s.depth, s.owner_id,"
+        " COALESCE(u.model_access, 'auto'), u.model_id FROM hub.session s"
+        " LEFT JOIN hub.user_settings u ON u.user_id = s.owner_id"
+        " WHERE s.device_id = %s AND s.state NOT IN ('stopped', 'failed') ORDER BY s.created_at, s.id",
+        (request.device_id,),
+    ).fetchall()
+    sessions: list[dict[str, Any]] = []
+    for row in rows:
+        if not request.view.reads_wg(row[3]):
+            continue
+        item: dict[str, Any] = {
+            "session_id": str(row[0]),
+            "task_id": str(row[1]),
+            "org_id": str(row[2]),
+            "wg_id": str(row[3]),
+            "state": row[4],
+            "parent_session_id": None if row[5] is None else str(row[5]),
+            "depth": row[6],
+            "owner_id": str(row[7]),
+            "model_access_pref": row[8],
+            "model_id_pref": row[9],
+        }
+        if row[6] == 0:
+            previous = _resume_from(request, item["task_id"], item["session_id"])
+            if previous is not None:
+                item["resume_from"] = previous
+        sessions.append(item)
+    mains = [item for item in sessions if item["depth"] == 0]
+    routed = prompts.routing(request.connection, sorted({item["task_id"] for item in mains}))
+    pending: list[dict[str, Any]] = []
+    delivered: dict[str, list[str]] = {}
+    for item in mains:
+        found = routed[item["session_id"]]
+        delivered[item["session_id"]] = [p.event_id for p in found.delivered[-prompts.DELIVERED_KEEP :]]
+        if item["state"] == STOPPING:
+            continue
+        pending.extend(
+            {
+                "task_id": item["task_id"],
+                "session_id": item["session_id"],
+                "scope_id": p.scope_id,
+                "scope_seq": p.scope_seq,
+                "event_id": p.event_id,
+            }
+            for p in found.pending
+        )
+    return {"sessions": sessions, "pending_prompts": pending, "delivered_prompt_event_ids": delivered}
+
+
+SECTION = Section(fields=("sessions", "pending_prompts", "delivered_prompt_event_ids"), provide=provide)

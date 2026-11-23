@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-bundles-recovery.response.json",
+  "title": "GET /v1/me/bundles/recovery response",
+  "description": "Body of a successful response to GET /v1/me/bundles/recovery (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "bundle_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct"
+    }
+  },
+  "required": [
+    "bundle_ct"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,12 @@
+{
+  "failure.timeout": "The request timed out.",
+  "failure.busy": "The device is busy with another request of this kind.",
+  "failure.credential_missing": "A credential the device needs is missing.",
+  "failure.code_invalid": "The code was not accepted.",
+  "failure.login_cli_failed": "The login program on the device failed.",
+  "failure.token_invalid": "The service returned a token in an unexpected format.",
+  "failure.upstream_error": "The service refused the request.",
+  "failure.upstream_unreachable": "The service could not be reached.",
+  "failure.device_shutdown": "The device shut down.",
+  "failure.request_failed": "The device could not take the request: it is no longer eligible, or a newer request of the same kind replaced it."
+}

@@ -1,0 +1,32 @@
+{
+  "founder": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+  "head": {
+    "hash": "JgOT9clVoJz8wesW9-tnHkfAjC31dTuLiqw9S6Jibhs",
+    "seq": 4
+  },
+  "hub_key": {
+    "id": "hub-1",
+    "public_key": "5FSRiY-2FrgUdVSNTzC3dnzIW9EBZOxYgrT_DLlIL-I"
+  },
+  "keys": [
+    {
+      "epoch": 1,
+      "key": "uRoFY2lF3XqYPmAVbYe_GgJm5RwwiOEfvA1x5n_QXrE",
+      "scope": "org",
+      "scope_id": "01a1ee56-5e00-709e-89f1-23840ae4c726"
+    },
+    {
+      "epoch": 3,
+      "key": "-jx7nbFaDSrHGz_jQKhEuGp50nwhtK4GxbHxZ8ZmHlI",
+      "scope": "wg",
+      "scope_id": "01a1ee56-5e00-7dc3-902a-8d9c4386d111"
+    }
+  ],
+  "org": "01a1ee56-5e00-709e-89f1-23840ae4c726",
+  "org_name": "Gemüsekooperative Zürich",
+  "v": 1,
+  "wg_names": {
+    "01a1ee56-5e00-7dc3-902a-8d9c4386d111": "Allgemein ✓"
+  },
+  "unexpected": 1
+}

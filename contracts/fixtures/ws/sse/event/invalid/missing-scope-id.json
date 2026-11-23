@@ -1,0 +1,26 @@
+{
+  "scope_seq": 13,
+  "event": {
+    "header": {
+      "v": 1,
+      "alg": "A256GCM-HKDF",
+      "id": "01930032-0000-7000-8000-000000000032",
+      "org": "01930001-0000-7000-8000-000000000001",
+      "scope": "wg",
+      "scope_id": "01930002-0000-7000-8000-000000000002",
+      "epoch": 2,
+      "wg": "01930002-0000-7000-8000-000000000002",
+      "task": "0193001e-0000-7000-8000-00000000001e",
+      "session": "01930028-0000-7000-8000-000000000028",
+      "author": "01930014-0000-7000-8000-000000000014",
+      "kind": "session.output",
+      "ref": "",
+      "ts": "2026-11-21T12:00:00.000Z",
+      "lh": 7,
+      "salt": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      "nonce": "AgICAgICAgICAgIC"
+    },
+    "ct": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD",
+    "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+  }
+}

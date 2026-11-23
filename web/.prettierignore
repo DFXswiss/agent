@@ -1,0 +1,6 @@
+node_modules/
+test-results/
+playwright-report/
+e2e/.probe/
+src/core/i18n/errors.*.json
+package-lock.json

@@ -1,0 +1,25 @@
+{
+  "records": [
+    {
+      "seq": 18,
+      "ts": "2026-11-21T10:00:00.000Z",
+      "session_id": "01a1ee56-5e00-7003-8f1b-340691d99f03",
+      "kind": "session.state",
+      "body": {
+        "state": "working",
+        "at": "2026-11-21T10:00:00.000Z"
+      }
+    },
+    {
+      "seq": 19,
+      "ts": "2026-11-21T10:00:01.250Z",
+      "session_id": null,
+      "kind": "guest.error",
+      "body": {
+        "code": "gateway_route"
+      }
+    }
+  ],
+  "head": 19,
+  "zz_unexpected": "x"
+}

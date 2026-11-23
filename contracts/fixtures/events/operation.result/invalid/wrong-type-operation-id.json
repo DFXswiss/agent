@@ -1,0 +1,14 @@
+{
+  "operation_id": 12345,
+  "status": "succeeded",
+  "result": {
+    "repositories": [
+      {
+        "repo": "example-org/example-repo",
+        "default_branch": "main",
+        "private": true,
+        "allowed": true
+      }
+    ]
+  }
+}

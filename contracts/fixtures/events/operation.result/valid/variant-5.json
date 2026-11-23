@@ -1,0 +1,9 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-00000000002d",
+  "status": "succeeded",
+  "result": {
+    "branch": "feature/x",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "url": "https://github.example/example-org/example-repo/tree/feature/x"
+  }
+}

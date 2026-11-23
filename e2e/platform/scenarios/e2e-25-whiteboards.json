@@ -1,0 +1,18 @@
+{
+  "name": "e2e-25-whiteboards",
+  "description": "E2E-25: the writer's task in the second workgroup is answered at once; the task only carries the task-level whiteboard. Canary texts for the plaintext scan.",
+  "steps": [
+    {
+      "id": "task",
+      "expect": { "user_text_contains": "E2E25-TASK", "has_tool_result": false },
+      "reply": { "content": [{ "type": "text", "text": "Release checklist ready kz25-answer-m2v7q4c9." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Release checklist" }] }
+    }
+  ]
+}

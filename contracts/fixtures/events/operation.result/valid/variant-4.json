@@ -1,0 +1,10 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-00000000002d",
+  "status": "succeeded",
+  "result": {
+    "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "parent_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tree_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "files_changed": 1
+  }
+}

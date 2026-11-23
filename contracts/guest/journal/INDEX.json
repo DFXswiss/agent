@@ -1,0 +1,75 @@
+{
+  "description": "Journal record kinds (02-data-model.md section 5, bodies 03-api.md section 7.2) with their body schemas; vm_level kinds may have session_id null.",
+  "kinds": [
+    {
+      "kind": "session.state",
+      "body": "guest/journal/session.state.json",
+      "vm_level": false
+    },
+    {
+      "kind": "session.output",
+      "body": "guest/journal/session.output.json",
+      "vm_level": false
+    },
+    {
+      "kind": "session.tool",
+      "body": "guest/journal/session.tool.json",
+      "vm_level": false
+    },
+    {
+      "kind": "session.hook",
+      "body": "guest/journal/session.hook.json",
+      "vm_level": false
+    },
+    {
+      "kind": "session.file",
+      "body": "guest/journal/session.file.json",
+      "vm_level": false
+    },
+    {
+      "kind": "session.terminal",
+      "body": "guest/journal/session.terminal.json",
+      "vm_level": false
+    },
+    {
+      "kind": "usage",
+      "body": "guest/journal/usage.json",
+      "vm_level": false
+    },
+    {
+      "kind": "operation.request",
+      "body": "guest/journal/operation.request.json",
+      "vm_level": false
+    },
+    {
+      "kind": "platform.query",
+      "body": "guest/journal/platform.query.json",
+      "vm_level": false
+    },
+    {
+      "kind": "ping.delivered",
+      "body": "guest/journal/ping.delivered.json",
+      "vm_level": false
+    },
+    {
+      "kind": "platform.read",
+      "body": "guest/journal/platform.read.json",
+      "vm_level": false
+    },
+    {
+      "kind": "platform.refused",
+      "body": "guest/journal/platform.refused.json",
+      "vm_level": false
+    },
+    {
+      "kind": "metrics",
+      "body": "guest/journal/metrics.json",
+      "vm_level": true
+    },
+    {
+      "kind": "guest.error",
+      "body": "guest/journal/guest.error.json",
+      "vm_level": true
+    }
+  ]
+}

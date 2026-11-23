@@ -1,0 +1,290 @@
+{
+  "name": "e2e-24-subagents",
+  "description": "E2E-24: controlled subagents. The parent requests a reviewer through subagent.request and waits with get_subagent_result; the child requests a grandchild the same way; the grandchild's own request exceeds the depth limit (limit_exceeded). Then the parent requests four children at once: three run, the fourth exceeds the limit of running children per task. The parallel children answer through a side step (their order is not fixed). The parallel children answer after 8 s, so all three are still running when the fourth request is checked.",
+  "steps": [
+    {
+      "id": "parent-request",
+      "expect": {
+        "user_text_contains": "E2E24-SUB",
+        "has_tool_result": false,
+        "tools_exclude": ["Agent", "Task"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Asking the platform for a reviewer."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Review the notes kz24-purpose-c",
+                "prompt": "E2E24-CHILD review the notes"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "parent-wait",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "capture": {
+        "child": {
+          "regex": "\"result\":\\{\"session_id\":\"([0-9a-f-]{36})\"\\}",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${child}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${child}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${child}",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "child-request",
+      "expect": {
+        "user_text_contains": "E2E24-CHILD",
+        "has_tool_result": false,
+        "tools_exclude": ["Agent", "Task"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Asking for a second opinion."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Check the wording kz24-purpose-g",
+                "prompt": "E2E24-GRANDCHILD check the wording"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "child-wait",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "capture": {
+        "grandchild": {
+          "regex": "\"result\":\\{\"session_id\":\"([0-9a-f-]{36})\"\\}",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${grandchild}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${grandchild}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${grandchild}",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "grandchild-request",
+      "expect": {
+        "user_text_contains": "E2E24-GRANDCHILD",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Go one level deeper",
+                "prompt": "E2E24-TOO-DEEP"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "grandchild-done",
+      "expect": {
+        "tool_result_contains": "\"limit_exceeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Wording checked kz24-grandchild-w5e8r2."
+          }
+        ]
+      }
+    },
+    {
+      "id": "child-done",
+      "expect": {
+        "tool_result_contains": "Wording checked kz24-grandchild-w5e8r2."
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Review done kz24-child-t9y3u6."
+          }
+        ]
+      }
+    },
+    {
+      "id": "parent-parallel",
+      "expect": {
+        "tool_result_contains": "Review done kz24-child-t9y3u6."
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Parallel review 1",
+                "prompt": "E2E24-PAR 1 look at the notes"
+              }
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Parallel review 2",
+                "prompt": "E2E24-PAR 2 look at the notes"
+              }
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Parallel review 3",
+                "prompt": "E2E24-PAR 3 look at the notes"
+              }
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Parallel review 4",
+                "prompt": "E2E24-PAR 4 look at the notes"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "parent-done",
+      "expect": {
+        "tool_result_contains": "\"limit_exceeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Subagents finished kz24-answer-o4i8p1."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Review"
+          }
+        ]
+      }
+    },
+    {
+      "id": "parallel-child",
+      "expect": {
+        "user_text_contains": "E2E24-PAR",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Parallel review done kz24-par-a7s1d4."
+          }
+        ]
+      },
+      "delay_ms": 8000
+    }
+  ]
+}

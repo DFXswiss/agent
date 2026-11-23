@@ -1,0 +1,13 @@
+{
+  "request_id": "gw_01",
+  "model": "m",
+  "input_tokens": 1,
+  "output_tokens": 1,
+  "cache_read_tokens": 0,
+  "cache_write_tokens": 0,
+  "thinking_tokens": 0,
+  "context_window_tokens": 1,
+  "request_bytes": 1,
+  "response_bytes": 1,
+  "status": 1000
+}

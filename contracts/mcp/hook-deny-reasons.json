@@ -1,0 +1,72 @@
+{
+  "description": "Fixed English deny sentences of the PreToolUse policy (05-runner.md section 5.3; rule = step number there) and the UserPromptSubmit block reason (03-api.md section 8.2). The guest uses exactly these texts; tool_forbidden inserts the tool name when it matches name_pattern, else tool_forbidden_unnamed is used.",
+  "pre_tool_use": [
+    {
+      "id": "tool_forbidden",
+      "rule": 2,
+      "template": "Tool {name} is forbidden in agent.dfx.swiss sessions. Request actions through the platform tools (mcp__platform__request_operation).",
+      "name_pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+      "when": "tool not in Read, Glob, Grep, Edit, Write and not a platform tool; {name} = tool name"
+    },
+    {
+      "id": "tool_forbidden_unnamed",
+      "rule": 2,
+      "text": "This tool is forbidden in agent.dfx.swiss sessions. Request actions through the platform tools (mcp__platform__request_operation).",
+      "when": "as tool_forbidden, for a tool name that does not match name_pattern (never echoed)"
+    },
+    {
+      "id": "pattern_outside_workspace",
+      "rule": 3,
+      "text": "Glob and Grep patterns must stay inside the workspace: no leading / or ~, no .. segment and no NUL character.",
+      "when": "Glob.pattern or Grep.glob starts with / or ~, contains a .. segment or a NUL"
+    },
+    {
+      "id": "path_unresolvable",
+      "rule": 4,
+      "text": "The path could not be resolved inside the session workspace.",
+      "when": "file_path/path is not a string, contains a NUL or cannot be resolved"
+    },
+    {
+      "id": "input_invalid",
+      "rule": 4,
+      "text": "The tool call could not be checked and is denied.",
+      "when": "the PreToolUse body does not match mcp/hooks/PreToolUse.request.json (fail closed)"
+    },
+    {
+      "id": "write_outside_workspace",
+      "rule": 5,
+      "text": "Write and Edit are allowed only inside the session workspace.",
+      "when": "Write/Edit path resolves outside the workspace"
+    },
+    {
+      "id": "write_protected",
+      "rule": 5,
+      "text": "This path is protected in agent.dfx.swiss sessions and cannot be written.",
+      "when": "Write/Edit path matches */.claude/*, */.claude.json, */.mcp.json, */CLAUDE.md, */.git/*, */.gitconfig"
+    },
+    {
+      "id": "read_outside_workspace",
+      "rule": 6,
+      "text": "Read, Glob and Grep are allowed only inside the session workspace and the session harness file.",
+      "when": "Read/Glob/Grep path resolves outside the workspace and is not the own harness file"
+    }
+  ],
+  "user_prompt_submit": {
+    "id": "prompt_not_registered",
+    "text": "Prompts are accepted only from agent.dfx.swiss."
+  },
+  "notice": {
+    "template": "agent.dfx.swiss notice: {n} new item(s) available ({kinds}). Use mcp__platform__get_notifications to see them.",
+    "kinds_order": [
+      "whiteboard.entry",
+      "subagent.finished",
+      "operation.finished"
+    ],
+    "kinds_separator": ", ",
+    "events": [
+      "PreToolUse",
+      "PostToolUse",
+      "UserPromptSubmit"
+    ]
+  }
+}

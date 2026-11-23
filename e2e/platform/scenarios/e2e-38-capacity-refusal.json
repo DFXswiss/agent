@@ -1,0 +1,57 @@
+{
+  "name": "e2e-38-capacity-refusal",
+  "description": "E2E-38 (KOR-14): a device with one VM slot refuses a task of a workgroup whose VM is stopped while another workgroup's VM runs; the hub re-schedules and the task starts once the slot is free.",
+  "steps": [
+    {
+      "id": "first-a",
+      "expect": {
+        "user_text_contains": "E2E38-CAP-A1",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Workgroup A ready kz38-answer-c1a2p3."
+          }
+        ]
+      }
+    },
+    {
+      "id": "only-b",
+      "expect": {
+        "user_text_contains": "E2E38-CAP-B",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Workgroup B holds the slot kz38-answer-c4b5s6."
+          }
+        ]
+      }
+    },
+    {
+      "id": "refused-a",
+      "expect": {
+        "user_text_contains": "E2E38-CAP-A2",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Started after the refusal kz38-answer-c7r8f9."
+          }
+        ]
+      }
+    }
+  ]
+}

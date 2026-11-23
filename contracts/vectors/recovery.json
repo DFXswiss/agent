@@ -1,0 +1,65 @@
+{
+  "about": "Recovery code of 04-crypto.md sections 3 and 5.5 (same text form as invitation codes).",
+  "code": "I7F_A-GQZDjZGm-Quk7k5w",
+  "invalid": [
+    {
+      "args": {
+        "text": "EOYX6-A7BSB-SDRWI-2N6IL-UTXE4"
+      },
+      "error": "recovery_code_length",
+      "name": "text_25_chars",
+      "op": "parse_recovery_code"
+    },
+    {
+      "args": {
+        "text": "0OYX6-A7BSB-SDRWI-2N6IL-UTXE44"
+      },
+      "error": "invite_code_invalid",
+      "name": "text_bad_char",
+      "op": "parse_recovery_code"
+    },
+    {
+      "args": {
+        "challenge": "rsebmzjO67va26ekVLDQ81mLxn39JeymTrseHIe1j6Y",
+        "identity_sig_pk": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "proof": "9qcUxnNAQxiUDU6QqevGvZNYPcycyAoTqO2gFKVakxPsXZ2su0XtWPnXCJbobUN25tG1am6NK4IUM83EOJmZCg",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "signature_invalid",
+      "name": "proof_other_challenge",
+      "op": "verify_proof"
+    },
+    {
+      "args": {
+        "challenge": "yrLMKqeq6gNrfZAYHgVng872ijSNh49bxD_kLWSDT1I",
+        "identity_sig_pk": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "proof": "9qcUxnNAQxiUDU6QqevGvZNYPcycyAoTqO2gFKVakxPsXZ2su0XtWPnXCJbobUN25tG1am6NK4IUM83EOJmZCg",
+        "user_id": "01a1ee56-5e00-7476-87e0-4918c293c341"
+      },
+      "error": "signature_invalid",
+      "name": "proof_other_user",
+      "op": "verify_proof"
+    },
+    {
+      "args": {
+        "challenge": "yrLMKqeq6gNrfZAYHgVngw",
+        "identity_sig_pk": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "proof": "9qcUxnNAQxiUDU6QqevGvZNYPcycyAoTqO2gFKVakxPsXZ2su0XtWPnXCJbobUN25tG1am6NK4IUM83EOJmZCg",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "header_invalid",
+      "name": "proof_short_challenge",
+      "op": "verify_proof"
+    }
+  ],
+  "kek": "5oPHCKNEY8eUoxLzLXjzQNF1kb8_Tm83ZsYZU5wP_l8",
+  "proof": {
+    "challenge": "yrLMKqeq6gNrfZAYHgVng872ijSNh49bxD_kLWSDT1I",
+    "identity_sig_pk": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+    "proof": "9qcUxnNAQxiUDU6QqevGvZNYPcycyAoTqO2gFKVakxPsXZ2su0XtWPnXCJbobUN25tG1am6NK4IUM83EOJmZCg",
+    "text": "YWdlbnQuZGZ4LnN3aXNzL3YxL3JlY292ZXJ5LXByb29mADAxYTFlZTU2LTVlMDAtNzdiZS04Y2YzLTFmMjdiYjBlOTJhMgDKsswqp6rqA2t9kBgeBWeDzvaKNI2Hj1vEP-QtZINPUg",
+    "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+  },
+  "recovery_id": "Lkr0tgFRNQ5NNnW7bU4Qmg",
+  "text": "EOYX6-A7BSB-SDRWI-2N6IL-UTXE44"
+}

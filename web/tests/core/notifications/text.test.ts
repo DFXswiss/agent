@@ -1,0 +1,150 @@
+// Notification texts (06-web.md section 6.2): built client-side from the kind and decrypted names (fallbacks when not
+// read yet), the click targets, and the names read from verified events (org, workgroup, task title, member or device
+// as the subject of an accepted invitation).
+import { describe, expect, it } from 'vitest';
+import type { EventEntry } from '../../../src/core/store/slices/events';
+import { putEvents } from '../../../src/core/store/slices/events';
+import { createStore } from '../../../src/core/store';
+import {
+  type Names,
+  notificationMessage,
+  notificationNames,
+  notificationTarget,
+} from '../../../src/core/notifications/text';
+import { notification } from './rows';
+
+const ORG = '0190f000-0000-7000-8000-00000000000a';
+const WG = '0190f000-0000-7000-8000-00000000000b';
+const TASK = '0190f000-0000-7000-8000-00000000000c';
+const USER = '0190f000-0000-7000-8000-00000000000d';
+const DEVICE = '0190f000-0000-7000-8000-00000000000e';
+
+const NAMES = { org: 'Acme', wg: 'Research', task: 'Fix the build', subject: 'Bob' };
+const FALLBACK = { org: 'an organization', wg: 'a workgroup', task: 'a task', subject: 'Someone' };
+const NONE = { org: null, wg: null, task: null, subject: null };
+
+describe('notificationMessage', () => {
+  it('names the level of a whiteboard entry', () => {
+    expect(notificationMessage(notification('n1'), NAMES, FALLBACK)).toEqual({
+      key: 'notifications.text.whiteboard.org',
+      params: { org: 'Acme' },
+    });
+    expect(notificationMessage(notification('n1', { wg_id: WG }), NAMES, FALLBACK)).toEqual({
+      key: 'notifications.text.whiteboard.workgroup',
+      params: { wg: 'Research', org: 'Acme' },
+    });
+    expect(notificationMessage(notification('n1', { wg_id: WG, task_id: TASK }), NAMES, FALLBACK)).toEqual({
+      key: 'notifications.text.whiteboard.task',
+      params: { task: 'Fix the build', org: 'Acme' },
+    });
+  });
+
+  it('builds the other kinds and falls back for missing names', () => {
+    const message = (kind: string, names: Names = NAMES) =>
+      notificationMessage(notification('n1', { kind, task_id: TASK, wg_id: WG }), names, FALLBACK);
+    expect(message('task.idle')).toEqual({
+      key: 'notifications.text.task.idle',
+      params: { task: 'Fix the build', org: 'Acme' },
+    });
+    expect(message('task.failed', NONE)).toEqual({
+      key: 'notifications.text.task.failed',
+      params: { task: 'a task', org: 'an organization' },
+    });
+    expect(message('invite.accepted', NONE)).toEqual({
+      key: 'notifications.text.invite.accepted',
+      params: { subject: 'Someone', org: 'an organization' },
+    });
+    expect(message('rotation.required')).toEqual({
+      key: 'notifications.text.rotation.required',
+      params: { org: 'Acme' },
+    });
+    expect(message('later.kind')).toEqual({ key: 'notifications.text.unknown', params: { org: 'Acme' } });
+  });
+});
+
+describe('notificationTarget', () => {
+  it('leads to the board, the task or the members', () => {
+    expect(notificationTarget(notification('n1', { org_id: ORG }))).toBe(`/o/${ORG}/whiteboard`);
+    expect(notificationTarget(notification('n1', { org_id: ORG, wg_id: WG }))).toBe(`/o/${ORG}/w/${WG}/whiteboard`);
+    expect(notificationTarget(notification('n1', { org_id: ORG, wg_id: WG, task_id: TASK }))).toBe(
+      `/o/${ORG}/t/${TASK}?tab=whiteboard`,
+    );
+    expect(notificationTarget(notification('n1', { org_id: ORG, kind: 'task.idle', task_id: TASK }))).toBe(
+      `/o/${ORG}/t/${TASK}`,
+    );
+    expect(notificationTarget(notification('n1', { org_id: ORG, kind: 'task.failed' }))).toBe(`/o/${ORG}`);
+    expect(notificationTarget(notification('n1', { org_id: ORG, kind: 'invite.accepted' }))).toBe(`/o/${ORG}/members`);
+    expect(notificationTarget(notification('n1', { org_id: ORG, kind: 'rotation.required' }))).toBe(
+      `/o/${ORG}/members`,
+    );
+    expect(notificationTarget(notification('n1', { org_id: ORG, kind: 'later.kind' }))).toBe(`/o/${ORG}`);
+  });
+});
+
+let seq = 0;
+function verified(scopeId: string, header: Record<string, unknown>, body: unknown, status = 'verified'): EventEntry {
+  seq += 1;
+  return {
+    org: ORG,
+    scopeId,
+    scopeSeq: seq,
+    receivedAt: null,
+    event: { header },
+    status: status as EventEntry['status'],
+    code: null,
+    header: status === 'verified' ? header : null,
+    body,
+  };
+}
+
+describe('notificationNames', () => {
+  it('reads org, workgroup, task title and the accepted member from verified events', () => {
+    const store = createStore();
+    putEvents(store, ORG, [
+      verified(ORG, { kind: 'org.profile', author: USER }, { name: 'Acme' }),
+      verified(ORG, { kind: 'wg.profile', wg: WG, author: USER }, { name: 'Research' }),
+      verified(ORG, { kind: 'member.profile', ref: USER, author: USER }, { display_name: 'Bob' }),
+    ]);
+    putEvents(store, WG, [verified(WG, { kind: 'task.meta', task: TASK, id: 't1' }, { title: 'Fix the build' })]);
+    const state = store.getState();
+    const accepted = notification('n1', { kind: 'invite.accepted', org_id: ORG, ref: USER });
+    expect(notificationNames(state, accepted)).toEqual({ org: 'Acme', wg: null, task: null, subject: 'Bob' });
+    const task = notification('n2', { kind: 'task.idle', org_id: ORG, wg_id: WG, task_id: TASK });
+    expect(notificationNames(state, task)).toEqual({
+      org: 'Acme',
+      wg: 'Research',
+      task: 'Fix the build',
+      subject: null,
+    });
+    const unknown = notification('n3', { kind: 'task.idle', org_id: ORG, wg_id: 'other', task_id: TASK });
+    expect(notificationNames(state, unknown)).toMatchObject({ wg: null, task: null });
+  });
+
+  it('names a device by its newest verified label and nothing without events', () => {
+    const store = createStore();
+    const accepted = notification('n1', { kind: 'invite.accepted', org_id: ORG, ref: DEVICE });
+    expect(notificationNames(store.getState(), accepted).subject).toBeNull();
+    putEvents(store, ORG, [
+      verified(ORG, { kind: 'device.profile', ref: DEVICE }, { label: 'Old' }),
+      verified(ORG, { kind: 'device.profile', ref: DEVICE }, { label: 'Studio' }),
+      verified(ORG, { kind: 'device.profile', ref: 'other' }, { label: 'Other' }),
+      verified(ORG, { kind: 'device.profile', ref: DEVICE }, { nolabel: true }),
+      verified(ORG, { kind: 'device.profile', ref: DEVICE }, { label: 'Forged' }, 'unverifiable'),
+      verified(ORG, { kind: 'org.profile' }, { name: 'Acme' }),
+    ]);
+    expect(notificationNames(store.getState(), accepted).subject).toBe('Studio');
+    expect(notificationNames(store.getState(), { ...accepted, ref: null }).subject).toBeNull();
+  });
+});
+
+describe('notificationNames caching', () => {
+  it('returns the same object while events and row are unchanged', () => {
+    const store = createStore();
+    const row = notification('n1', { org_id: ORG });
+    const first = notificationNames(store.getState(), row);
+    expect(notificationNames(store.getState(), row)).toBe(first);
+    putEvents(store, ORG, [verified(ORG, { kind: 'org.profile' }, { name: 'Acme' })]);
+    expect(notificationNames(store.getState(), row)).not.toBe(first);
+    expect(notificationNames(store.getState(), row).org).toBe('Acme');
+  });
+});

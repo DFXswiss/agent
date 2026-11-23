@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/session.failed.json",
+  "title": "audit detail session.failed",
+  "description": "detail of audit rows with action session.failed: session failed. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "$ref": "../common.json#/$defs/session_failure_reason"
+    },
+    "model_access": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/model_access"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "reason",
+    "model_access"
+  ],
+  "additionalProperties": false
+}

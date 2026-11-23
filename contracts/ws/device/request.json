@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ws/device/request.json",
+  "title": "device hint request",
+  "description": "Hint frame request from the hub to the device (03-api.md section 6.2); no content.",
+  "$ref": "objects.json#/$defs/hint_request"
+}

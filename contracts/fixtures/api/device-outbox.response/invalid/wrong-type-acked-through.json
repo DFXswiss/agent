@@ -1,0 +1,18 @@
+{
+  "acked_through": "not-a-container",
+  "results": [
+    {
+      "origin_seq": 42,
+      "status": "ok"
+    },
+    {
+      "origin_seq": 43,
+      "status": "rejected",
+      "error": "kind_not_allowed"
+    },
+    {
+      "origin_seq": 44,
+      "status": "reseal"
+    }
+  ]
+}

@@ -1,0 +1,541 @@
+{
+  "description": "Closed list of audit actions (02-data-model.md section 2.9). Patterns of the specification are expanded: log.<type> (04-crypto.md section 4.7), session.<state> (section 2.4.1), operation.<state> (section 2.5), device_request.<state> (section 2.7), platform.<entry type> (04-crypto.md section 4.8), read.<resource> (read_resource of api/INDEX.json), read.session.<tool> (MCP read tools, 03-api.md section 8.1). Detail schemas per action: contracts/audit/ (CTR-02).",
+  "actions": [
+    {
+      "action": "auth.register",
+      "group": "auth"
+    },
+    {
+      "action": "auth.login",
+      "group": "auth"
+    },
+    {
+      "action": "auth.recovery",
+      "group": "auth"
+    },
+    {
+      "action": "auth.passkey_add",
+      "group": "auth"
+    },
+    {
+      "action": "auth.passkey_remove",
+      "group": "auth"
+    },
+    {
+      "action": "auth.session_end",
+      "group": "auth"
+    },
+    {
+      "action": "auth.refused",
+      "group": "auth"
+    },
+    {
+      "action": "invite.lookup",
+      "group": "invite"
+    },
+    {
+      "action": "invite.create",
+      "group": "invite"
+    },
+    {
+      "action": "invite.revoke",
+      "group": "invite"
+    },
+    {
+      "action": "invite.register",
+      "group": "invite"
+    },
+    {
+      "action": "invite.release",
+      "group": "invite"
+    },
+    {
+      "action": "invite.use",
+      "group": "invite"
+    },
+    {
+      "action": "invite.expire",
+      "group": "invite"
+    },
+    {
+      "action": "log.genesis",
+      "group": "log"
+    },
+    {
+      "action": "log.invite",
+      "group": "log"
+    },
+    {
+      "action": "log.invite_revoke",
+      "group": "log"
+    },
+    {
+      "action": "log.accept",
+      "group": "log"
+    },
+    {
+      "action": "log.role",
+      "group": "log"
+    },
+    {
+      "action": "log.wg_create",
+      "group": "log"
+    },
+    {
+      "action": "log.wg_archive",
+      "group": "log"
+    },
+    {
+      "action": "log.grant",
+      "group": "log"
+    },
+    {
+      "action": "log.ungrant",
+      "group": "log"
+    },
+    {
+      "action": "log.device_assign",
+      "group": "log"
+    },
+    {
+      "action": "log.device_unassign",
+      "group": "log"
+    },
+    {
+      "action": "log.remove",
+      "group": "log"
+    },
+    {
+      "action": "log.rotate",
+      "group": "log"
+    },
+    {
+      "action": "event.append",
+      "group": "event"
+    },
+    {
+      "action": "task.create",
+      "group": "task"
+    },
+    {
+      "action": "task.close",
+      "group": "task"
+    },
+    {
+      "action": "session.requested",
+      "group": "session"
+    },
+    {
+      "action": "session.vm_assigning",
+      "group": "session"
+    },
+    {
+      "action": "session.vm_ready",
+      "group": "session"
+    },
+    {
+      "action": "session.sandbox_ready",
+      "group": "session"
+    },
+    {
+      "action": "session.agent_starting",
+      "group": "session"
+    },
+    {
+      "action": "session.prompt_delivering",
+      "group": "session"
+    },
+    {
+      "action": "session.working",
+      "group": "session"
+    },
+    {
+      "action": "session.idle",
+      "group": "session"
+    },
+    {
+      "action": "session.suspended",
+      "group": "session"
+    },
+    {
+      "action": "session.resuming",
+      "group": "session"
+    },
+    {
+      "action": "session.stopping",
+      "group": "session"
+    },
+    {
+      "action": "session.stopped",
+      "group": "session"
+    },
+    {
+      "action": "session.failed",
+      "group": "session"
+    },
+    {
+      "action": "session.control",
+      "group": "session"
+    },
+    {
+      "action": "operation.received",
+      "group": "operation"
+    },
+    {
+      "action": "operation.rejected",
+      "group": "operation"
+    },
+    {
+      "action": "operation.accepted",
+      "group": "operation"
+    },
+    {
+      "action": "operation.duplicate",
+      "group": "operation"
+    },
+    {
+      "action": "operation.denied",
+      "group": "operation"
+    },
+    {
+      "action": "operation.executing",
+      "group": "operation"
+    },
+    {
+      "action": "operation.succeeded",
+      "group": "operation"
+    },
+    {
+      "action": "operation.failed",
+      "group": "operation"
+    },
+    {
+      "action": "operation.expired",
+      "group": "operation"
+    },
+    {
+      "action": "credential.put",
+      "group": "credential"
+    },
+    {
+      "action": "credential.delete",
+      "group": "credential"
+    },
+    {
+      "action": "credential.rotate",
+      "group": "credential"
+    },
+    {
+      "action": "device_request.pending",
+      "group": "device_request"
+    },
+    {
+      "action": "device_request.delivered",
+      "group": "device_request"
+    },
+    {
+      "action": "device_request.answered",
+      "group": "device_request"
+    },
+    {
+      "action": "device_request.failed",
+      "group": "device_request"
+    },
+    {
+      "action": "device_request.expired",
+      "group": "device_request"
+    },
+    {
+      "action": "device.enroll",
+      "group": "device"
+    },
+    {
+      "action": "device.certify",
+      "group": "device"
+    },
+    {
+      "action": "device.connect",
+      "group": "device"
+    },
+    {
+      "action": "device.disconnect",
+      "group": "device"
+    },
+    {
+      "action": "whiteboard.notify",
+      "group": "whiteboard"
+    },
+    {
+      "action": "ping.delivered",
+      "group": "runner"
+    },
+    {
+      "action": "hook.denied",
+      "group": "runner"
+    },
+    {
+      "action": "session.prompt_refused",
+      "group": "runner"
+    },
+    {
+      "action": "model.provider_outside_allowlist",
+      "group": "runner"
+    },
+    {
+      "action": "runner.inbound_rejected",
+      "group": "runner"
+    },
+    {
+      "action": "runner.log_rollback",
+      "group": "runner"
+    },
+    {
+      "action": "runner.log_fork",
+      "group": "runner"
+    },
+    {
+      "action": "runner.alert",
+      "group": "runner"
+    },
+    {
+      "action": "outbox.rejected",
+      "group": "outbox"
+    },
+    {
+      "action": "platform.root",
+      "group": "platform"
+    },
+    {
+      "action": "platform.device_invite",
+      "group": "platform"
+    },
+    {
+      "action": "platform.device_certify",
+      "group": "platform"
+    },
+    {
+      "action": "platform.device_decertify",
+      "group": "platform"
+    },
+    {
+      "action": "platform.role_grant",
+      "group": "platform"
+    },
+    {
+      "action": "platform.role_revoke",
+      "group": "platform"
+    },
+    {
+      "action": "platform.user_invite",
+      "group": "platform"
+    },
+    {
+      "action": "platform.org_platform_access",
+      "group": "platform"
+    },
+    {
+      "action": "read.device.credential",
+      "group": "read"
+    },
+    {
+      "action": "read.device.logs",
+      "group": "read"
+    },
+    {
+      "action": "read.device.platform_log",
+      "group": "read"
+    },
+    {
+      "action": "read.device.pull",
+      "group": "read"
+    },
+    {
+      "action": "read.device.request",
+      "group": "read"
+    },
+    {
+      "action": "read.device.state",
+      "group": "read"
+    },
+    {
+      "action": "read.device.task",
+      "group": "read"
+    },
+    {
+      "action": "read.device.workgroup.tasks",
+      "group": "read"
+    },
+    {
+      "action": "read.device.wraps",
+      "group": "read"
+    },
+    {
+      "action": "read.device_request",
+      "group": "read"
+    },
+    {
+      "action": "read.me",
+      "group": "read"
+    },
+    {
+      "action": "read.me.bundles.recovery",
+      "group": "read"
+    },
+    {
+      "action": "read.me.credential",
+      "group": "read"
+    },
+    {
+      "action": "read.me.credentials",
+      "group": "read"
+    },
+    {
+      "action": "read.me.devices",
+      "group": "read"
+    },
+    {
+      "action": "read.me.quotas",
+      "group": "read"
+    },
+    {
+      "action": "read.monitoring.overview",
+      "group": "read"
+    },
+    {
+      "action": "read.monitoring.series",
+      "group": "read"
+    },
+    {
+      "action": "read.notifications",
+      "group": "read"
+    },
+    {
+      "action": "read.operation",
+      "group": "read"
+    },
+    {
+      "action": "read.org",
+      "group": "read"
+    },
+    {
+      "action": "read.org.audit",
+      "group": "read"
+    },
+    {
+      "action": "read.org.audit.verify",
+      "group": "read"
+    },
+    {
+      "action": "read.org.catch_up",
+      "group": "read"
+    },
+    {
+      "action": "read.org.devices",
+      "group": "read"
+    },
+    {
+      "action": "read.org.invites",
+      "group": "read"
+    },
+    {
+      "action": "read.org.log",
+      "group": "read"
+    },
+    {
+      "action": "read.platform.enrollments",
+      "group": "read"
+    },
+    {
+      "action": "read.platform.invites",
+      "group": "read"
+    },
+    {
+      "action": "read.platform.log",
+      "group": "read"
+    },
+    {
+      "action": "read.scope.events",
+      "group": "read"
+    },
+    {
+      "action": "read.session",
+      "group": "read"
+    },
+    {
+      "action": "read.task",
+      "group": "read"
+    },
+    {
+      "action": "read.task.operations",
+      "group": "read"
+    },
+    {
+      "action": "read.whiteboard.history",
+      "group": "read"
+    },
+    {
+      "action": "read.whiteboards",
+      "group": "read"
+    },
+    {
+      "action": "read.workgroup",
+      "group": "read"
+    },
+    {
+      "action": "read.workgroup.device_candidates",
+      "group": "read"
+    },
+    {
+      "action": "read.workgroup.tasks",
+      "group": "read"
+    },
+    {
+      "action": "read.wraps",
+      "group": "read"
+    },
+    {
+      "action": "read.session.get_context",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.list_workgroups",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.list_members",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.list_tasks",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.get_task",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.get_task_messages",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.get_whiteboard",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.get_notifications",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.get_operation",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.list_operations",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.get_subagent_result",
+      "group": "read_session"
+    }
+  ]
+}

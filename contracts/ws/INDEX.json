@@ -1,0 +1,122 @@
+{
+  "description": "Live channels (03-api.md sections 5 and 6.2): query schema and frame schemas per direction. Frames carry hints or data that is itself signed; streams are not response-signed.",
+  "channels": [
+    {
+      "path": "/v1/stream",
+      "query": "ws/sse/query.json",
+      "frames": "ws/sse/frame.json",
+      "from_hub": [
+        {
+          "type": "hello",
+          "data": "ws/sse/hello.json"
+        },
+        {
+          "type": "event",
+          "data": "ws/sse/event.json"
+        },
+        {
+          "type": "terminal",
+          "data": "ws/sse/terminal.json"
+        },
+        {
+          "type": "task",
+          "data": "ws/sse/task.json"
+        },
+        {
+          "type": "session",
+          "data": "ws/sse/session.json"
+        },
+        {
+          "type": "operation",
+          "data": "ws/sse/operation.json"
+        },
+        {
+          "type": "log",
+          "data": "ws/sse/log.json"
+        },
+        {
+          "type": "wraps",
+          "data": "ws/sse/wraps.json"
+        },
+        {
+          "type": "notification",
+          "data": "ws/sse/notification.json"
+        },
+        {
+          "type": "device_response",
+          "data": "ws/sse/device_response.json"
+        },
+        {
+          "type": "metrics",
+          "data": "ws/sse/metrics.json"
+        },
+        {
+          "type": "resync",
+          "data": "ws/sse/resync.json"
+        }
+      ],
+      "from_client": []
+    },
+    {
+      "path": "/v1/device/ws",
+      "query": "ws/device/query.json",
+      "frames": "ws/device/hint.json",
+      "from_hub": [
+        {
+          "type": "hello",
+          "data": "ws/device/hello.json"
+        },
+        {
+          "type": "reconcile",
+          "data": "ws/device/reconcile.json"
+        },
+        {
+          "type": "session.start",
+          "data": "ws/device/session.start.json"
+        },
+        {
+          "type": "session.control",
+          "data": "ws/device/session.control.json"
+        },
+        {
+          "type": "prompt",
+          "data": "ws/device/prompt.json"
+        },
+        {
+          "type": "events",
+          "data": "ws/device/events.json"
+        },
+        {
+          "type": "log",
+          "data": "ws/device/log.json"
+        },
+        {
+          "type": "wraps",
+          "data": "ws/device/wraps.json"
+        },
+        {
+          "type": "credentials",
+          "data": "ws/device/credentials.json"
+        },
+        {
+          "type": "request",
+          "data": "ws/device/request.json"
+        },
+        {
+          "type": "ping",
+          "data": "ws/device/ping.json"
+        },
+        {
+          "type": "decertified",
+          "data": "ws/device/decertified.json"
+        }
+      ],
+      "from_client": [
+        {
+          "type": "heartbeat",
+          "data": "ws/device/heartbeat.json"
+        }
+      ]
+    }
+  ]
+}

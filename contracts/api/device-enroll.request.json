@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-enroll.request.json",
+  "title": "POST /v1/device/enroll request",
+  "description": "org device: accept entry (sig + inv_sig); platform device: enroll_sig and inv_sig over the enrollment text P||'enroll\\0'||canonical(body without enroll_sig and inv_sig) (04-crypto.md section 3)",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "kind": {
+          "type": "string",
+          "const": "org"
+        },
+        "invite_id": {
+          "$ref": "../common.json#/$defs/invite_id"
+        },
+        "pub": {
+          "$ref": "../common.json#/$defs/pub_keys"
+        },
+        "agent_version": {
+          "$ref": "../common.json#/$defs/version_text"
+        },
+        "os": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,32}$"
+        },
+        "arch": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,32}$"
+        },
+        "capacity": {
+          "$ref": "../common.json#/$defs/capacity"
+        },
+        "entry": {
+          "type": "object",
+          "description": "accept entry of the membership log with sig and inv_sig (04-crypto.md section 4.7)",
+          "properties": {
+            "body": {
+              "$ref": "../common.json#/$defs/log_body_accept"
+            },
+            "sig": {
+              "$ref": "../common.json#/$defs/b64u_64"
+            },
+            "inv_sig": {
+              "$ref": "../common.json#/$defs/b64u_64"
+            }
+          },
+          "required": [
+            "body",
+            "sig",
+            "inv_sig"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "device_id",
+        "kind",
+        "invite_id",
+        "pub",
+        "agent_version",
+        "os",
+        "arch",
+        "capacity",
+        "entry"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "kind": {
+          "type": "string",
+          "const": "platform"
+        },
+        "invite_id": {
+          "$ref": "../common.json#/$defs/invite_id"
+        },
+        "pub": {
+          "$ref": "../common.json#/$defs/pub_keys"
+        },
+        "agent_version": {
+          "$ref": "../common.json#/$defs/version_text"
+        },
+        "os": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,32}$"
+        },
+        "arch": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,32}$"
+        },
+        "capacity": {
+          "$ref": "../common.json#/$defs/capacity"
+        },
+        "enroll_sig": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        },
+        "inv_sig": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "device_id",
+        "kind",
+        "invite_id",
+        "pub",
+        "agent_version",
+        "os",
+        "arch",
+        "capacity",
+        "enroll_sig",
+        "inv_sig"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

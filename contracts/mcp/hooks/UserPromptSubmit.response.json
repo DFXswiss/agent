@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/hooks/UserPromptSubmit.response.json",
+  "title": "hook UserPromptSubmit response",
+  "description": "Response of POST /hooks/UserPromptSubmit (03-api.md section 8.2; never a notice on Stop or other events).",
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "{} or, with pending pings, the notice",
+      "properties": {
+        "hookSpecificOutput": {
+          "type": "object",
+          "properties": {
+            "hookEventName": {
+              "type": "string",
+              "const": "UserPromptSubmit"
+            },
+            "additionalContext": {
+              "$ref": "../objects.json#/$defs/notice"
+            }
+          },
+          "required": [
+            "hookEventName",
+            "additionalContext"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "type": "string",
+          "const": "block"
+        },
+        "reason": {
+          "type": "string",
+          "const": "Prompts are accepted only from agent.dfx.swiss."
+        }
+      },
+      "required": [
+        "decision",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

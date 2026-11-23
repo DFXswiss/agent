@@ -1,0 +1,30 @@
+{
+  "events": [
+    {
+      "event": {
+        "header": {
+          "v": 1,
+          "alg": "A256GCM-HKDF",
+          "id": "01930028-0000-7000-8000-000000000028",
+          "org": "01930001-0000-7000-8000-000000000001",
+          "scope": "wg",
+          "scope_id": "01930002-0000-7000-8000-000000000002",
+          "epoch": 1,
+          "wg": "01930002-0000-7000-8000-000000000002",
+          "task": "",
+          "session": "",
+          "author": "0193000a-0000-7000-8000-00000000000a",
+          "kind": "whiteboard.entry",
+          "ref": "01930032-0000-7000-8000-000000000032",
+          "ts": "2026-11-21T12:00:00Z",
+          "lh": 4,
+          "salt": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+          "nonce": "AgICAgICAgICAgIC"
+        },
+        "ct": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+        "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+      },
+      "notify": true
+    }
+  ]
+}

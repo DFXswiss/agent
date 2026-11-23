@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/monitoring-series.request.json",
+  "title": "GET /v1/monitoring/series request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "entity_kind": {
+      "type": "string",
+      "enum": [
+        "device",
+        "vm",
+        "session"
+      ]
+    },
+    "entity_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "$ref": "../common.json#/$defs/vm_id"
+        }
+      ]
+    },
+    "metric": {
+      "type": "string",
+      "enum": [
+        "cpu_ratio",
+        "mem_used_bytes",
+        "mem_limit_bytes",
+        "disk_used_bytes",
+        "disk_limit_bytes",
+        "net_rx_bytes",
+        "net_tx_bytes",
+        "uptime_seconds",
+        "reachable",
+        "free_vm_slots",
+        "free_mem_bytes"
+      ]
+    },
+    "from": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "to": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "step": {
+      "type": "string",
+      "pattern": "^(1[5-9]|[2-9][0-9]|[1-9][0-9]{2,6})$"
+    }
+  },
+  "required": [
+    "entity_kind",
+    "entity_id",
+    "metric",
+    "from",
+    "to",
+    "step"
+  ],
+  "additionalProperties": false
+}

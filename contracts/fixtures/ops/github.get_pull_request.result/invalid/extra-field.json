@@ -1,0 +1,35 @@
+{
+  "number": 7,
+  "title": "Fix",
+  "body": null,
+  "state": "open",
+  "draft": false,
+  "head": {
+    "ref": "fix",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "base": {
+    "ref": "main",
+    "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "url": "https://github.example/example-org/example-repo/pull/7",
+  "files": [
+    {
+      "path": "a.py",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "patch": "@@"
+    }
+  ],
+  "comments": [
+    {
+      "id": 5,
+      "author": "dependabot[bot]",
+      "body": "Bump",
+      "created_at": "2026-11-21T10:00:00Z"
+    }
+  ],
+  "truncated": false,
+  "zz_unexpected": "x"
+}

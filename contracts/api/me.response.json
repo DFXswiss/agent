@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me.response.json",
+  "title": "GET /v1/me response",
+  "description": "Body of a successful response to GET /v1/me (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "kem_pub": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        },
+        "sig_pub": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "kem_pub",
+        "sig_pub"
+      ],
+      "additionalProperties": false
+    },
+    "settings": {
+      "$ref": "objects.json#/$defs/settings"
+    },
+    "orgs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "org_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "role": {
+            "$ref": "../common.json#/$defs/org_role"
+          },
+          "private": {
+            "type": "boolean"
+          },
+          "default_wg": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "log_head": {
+            "$ref": "../common.json#/$defs/log_head"
+          }
+        },
+        "required": [
+          "org_id",
+          "role",
+          "private",
+          "default_wg",
+          "log_head"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    },
+    "platform_roles": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/platform_role"
+      },
+      "minItems": 0,
+      "maxItems": 1
+    },
+    "unread_notifications": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "passkeys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "credential_id": {
+            "$ref": "../common.json#/$defs/credential_id"
+          },
+          "created_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prf_seen": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "credential_id",
+          "created_at",
+          "last_used_at",
+          "prf_seen"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "cred_holders": {
+      "description": "The user's current credential-key epoch (null before the first) and the devices holding a wrap of it, without the user's own self-wrap (KOR-04).",
+      "type": "object",
+      "properties": {
+        "epoch": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/epoch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "epoch",
+        "devices"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "user_id",
+    "identity",
+    "settings",
+    "orgs",
+    "platform_roles",
+    "unread_notifications",
+    "passkeys"
+  ],
+  "additionalProperties": false
+}

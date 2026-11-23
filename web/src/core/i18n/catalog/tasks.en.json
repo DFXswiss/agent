@@ -1,0 +1,19 @@
+{
+  "filter.label": "State",
+  "filter.all": "All",
+  "reload": "Try again",
+  "empty": "No tasks yet.",
+  "more": "Load more",
+  "loading": "Loading…",
+  "not-found": "This workgroup was not found.",
+  "wg.unnamed": "Workgroup",
+  "title.loading": "Title is being decrypted…",
+  "title.unverifiable": "Unverifiable title ({code})",
+  "owner.unknown": "Member",
+  "state.scheduling": "Waiting",
+  "state.starting": "Starting",
+  "state.working": "Working",
+  "state.idle": "Idle",
+  "state.failed": "Failed",
+  "state.closed": "Closed"
+}

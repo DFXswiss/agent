@@ -1,0 +1,18 @@
+{
+  "label": "Read-only view – prompts are entered in the chat",
+  "viewport": "Terminal output (read-only)",
+  "loading": "Loading the terminal history…",
+  "empty": "No terminal output yet.",
+  "failed": "The terminal could not be loaded: {reason}",
+  "chunk-unavailable": "The terminal view could not be loaded (the connection was interrupted or the code was refused). Reload the page.",
+  "unverifiable": "{count} unverifiable terminal chunks were left out ({code}).",
+  "mode.label": "Terminal mode",
+  "mode.follow": "Follow",
+  "mode.history": "History",
+  "slider": "Position in the recording",
+  "position": "{position} of {end}",
+  "play": "Play",
+  "pause": "Pause",
+  "speed.label": "Playback speed",
+  "speed": "{speed}×"
+}

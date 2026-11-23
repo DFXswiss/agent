@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ws/device/wraps.json",
+  "title": "device hint wraps",
+  "description": "Hint frame wraps from the hub to the device (03-api.md section 6.2); no content.",
+  "$ref": "objects.json#/$defs/hint_wraps"
+}

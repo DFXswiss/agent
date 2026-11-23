@@ -1,0 +1,17 @@
+{
+  "offset_ms_start": "not-a-container",
+  "frames": [
+    [
+      0,
+      "o",
+      "$ "
+    ],
+    [
+      40,
+      "o",
+      "ok\r\n"
+    ]
+  ],
+  "cols": 120,
+  "rows": 40
+}

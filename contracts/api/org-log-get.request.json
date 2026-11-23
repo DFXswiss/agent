@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-log-get.request.json",
+  "title": "GET /v1/orgs/{org}/log request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "after": {
+      "$ref": "../common.json#/$defs/q_seq"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_log"
+    }
+  },
+  "additionalProperties": false
+}

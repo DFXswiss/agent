@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/hooks/InstructionsLoaded.response.json",
+  "title": "hook InstructionsLoaded response",
+  "description": "Response of POST /hooks/InstructionsLoaded (03-api.md section 8.2; never a notice on Stop or other events).",
+  "$ref": "../../common.json#/$defs/empty"
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/session.agent_starting.json",
+  "title": "audit detail session.agent_starting",
+  "description": "detail of audit rows with action session.agent_starting: session transition to agent_starting. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/error_code"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "model_access": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/model_access"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "model_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/model_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "reason",
+    "model_access",
+    "model_id"
+  ],
+  "additionalProperties": false
+}

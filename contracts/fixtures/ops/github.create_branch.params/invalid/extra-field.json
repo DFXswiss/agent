@@ -1,0 +1,6 @@
+{
+  "repo": "example-org/example-repo",
+  "branch": "feature/x",
+  "from": "main",
+  "zz_unexpected": "x"
+}

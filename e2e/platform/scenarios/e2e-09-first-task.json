@@ -1,0 +1,68 @@
+{
+  "name": "e2e-09-first-task",
+  "description": "E2E-09: the first task of the run's private org (flow of E2E-06). The prompt, the session's new task title (task.set_title, an operation parameter) and the answer carry the run's canaries (placeholders between double at signs, replaced by the spec); background requests without tools get a canary title too.",
+  "steps": [
+    {
+      "id": "rename",
+      "expect": {
+        "user_text_contains": "E2E09-FIRST",
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Naming the task first."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "task.set_title",
+              "params": {
+                "title": "@@TITLE@@"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "@@ANSWER@@"
+          }
+        ],
+        "usage": {
+          "input_tokens": 900,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 8
+        }
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "@@SIDE@@"
+          }
+        ]
+      }
+    }
+  ]
+}

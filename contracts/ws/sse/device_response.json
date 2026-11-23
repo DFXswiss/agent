@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ws/sse/device_response.json",
+  "title": "stream frame device_response",
+  "description": "Data of the stream frame device_response of GET /v1/stream (03-api.md section 5).",
+  "$ref": "objects.json#/$defs/data_device_response"
+}

@@ -1,0 +1,21 @@
+{
+  "verifying": "Checking the organization…",
+  "blocked.title": "This invitation cannot be trusted",
+  "blocked.body": "The server presented an organization history that does not match the invitation. The invitation was not accepted. Ask the person who invited you for a new invitation.",
+  "org-unnamed": "an organization",
+  "intro.title": "You are invited to {org}",
+  "intro.role": "Your role: {role}",
+  "intro.workgroups": "You get access to these workgroups:",
+  "role.admin": "Admin",
+  "role.member": "Member",
+  "access.read": "read",
+  "access.write": "read and write",
+  "workgroup.unnamed": "Unnamed workgroup",
+  "existing": "I already have an account",
+  "existing.title": "Join {org} with your existing account",
+  "existing.explain": "Sign in with your passkey. Your existing account joins the organization; no new account is created.",
+  "existing.cancelled": "Sign-in was cancelled – try again.",
+  "join": "Join {org}",
+  "back": "Back",
+  "accept.working": "Joining {org}…"
+}

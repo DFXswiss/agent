@@ -1,0 +1,1353 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/journal/record.json",
+  "title": "journal record",
+  "description": "Journal record envelope with the body schema of its kind (03-api.md section 7.1 GET /v1/journal, section 7.2).",
+  "$ref": "#/$defs/record",
+  "$defs": {
+    "body_session_state": {
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "state change of the session",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "requested",
+                "vm_assigning",
+                "vm_ready",
+                "sandbox_ready",
+                "agent_starting",
+                "prompt_delivering",
+                "working",
+                "idle",
+                "suspended",
+                "resuming",
+                "stopping",
+                "stopped"
+              ]
+            },
+            "reason": {
+              "$ref": "../../common.json#/$defs/error_code"
+            },
+            "claude_session_id": {
+              "$ref": "../objects.json#/$defs/claude_session_id"
+            },
+            "harness_version": {
+              "$ref": "../../common.json#/$defs/sha256_hex"
+            },
+            "at": {
+              "$ref": "../../common.json#/$defs/time"
+            }
+          },
+          "required": [
+            "state",
+            "at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "failure with a reason of enums/session-failure-reasons.json",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "failed"
+            },
+            "reason": {
+              "$ref": "../../common.json#/$defs/session_failure_reason"
+            },
+            "claude_session_id": {
+              "$ref": "../objects.json#/$defs/claude_session_id"
+            },
+            "at": {
+              "$ref": "../../common.json#/$defs/time"
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "prompt_accepted"
+            },
+            "prompt_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "at": {
+              "$ref": "../../common.json#/$defs/time"
+            }
+          },
+          "required": [
+            "state",
+            "prompt_id",
+            "at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "prompt_refused"
+            },
+            "prompt_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "unregistered",
+                "delivery_failed"
+              ]
+            },
+            "at": {
+              "$ref": "../../common.json#/$defs/time"
+            }
+          },
+          "required": [
+            "state",
+            "prompt_id",
+            "reason",
+            "at"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "body_session_output": {
+      "type": "object",
+      "description": "one assistant message from the transcript; text longer than 64 Ki characters is cut and truncated is true",
+      "properties": {
+        "message_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "role": {
+          "type": "string",
+          "const": "assistant"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "turn": {
+          "$ref": "../../common.json#/$defs/positive"
+        },
+        "stop_reason": {
+          "$ref": "../../common.json#/$defs/error_code"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "message_id",
+        "role",
+        "text",
+        "turn"
+      ],
+      "additionalProperties": false
+    },
+    "body_session_tool": {
+      "type": "object",
+      "properties": {
+        "tool_use_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "input_summary": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "input": {
+          "type": "string",
+          "description": "JSON text of the tool input, cut at 64 Ki characters",
+          "maxLength": 65536
+        },
+        "result_summary": {
+          "type": "string",
+          "description": "tool result text, cut at 64 Ki characters",
+          "maxLength": 65536
+        },
+        "is_error": {
+          "type": "boolean"
+        },
+        "duration_ms": {
+          "$ref": "../../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "tool_use_id",
+        "name",
+        "input_summary",
+        "input",
+        "result_summary",
+        "is_error",
+        "duration_ms"
+      ],
+      "additionalProperties": false
+    },
+    "body_session_hook": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": [
+            "SessionStart",
+            "SessionEnd",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "PermissionRequest",
+            "PermissionDenied",
+            "Notification",
+            "Stop",
+            "StopFailure",
+            "SubagentStart",
+            "SubagentStop",
+            "PreCompact",
+            "PostCompact",
+            "ConfigChange",
+            "InstructionsLoaded",
+            "CwdChanged"
+          ]
+        },
+        "tool": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny",
+            "block",
+            "none"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "rule": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7,
+          "description": "rule number of 05-runner.md section 5.3 that decided (PreToolUse)"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "event",
+        "decision"
+      ],
+      "additionalProperties": false
+    },
+    "body_session_file": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "../objects.json#/$defs/rel_path"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "write",
+                "edit"
+              ]
+            },
+            "sha256": {
+              "$ref": "../../common.json#/$defs/sha256_hex"
+            },
+            "size": {
+              "$ref": "../../common.json#/$defs/count"
+            },
+            "patch": {
+              "type": "string",
+              "maxLength": 65536
+            }
+          },
+          "required": [
+            "path",
+            "op",
+            "sha256",
+            "size"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "../objects.json#/$defs/rel_path"
+            },
+            "op": {
+              "type": "string",
+              "const": "delete"
+            },
+            "sha256": {
+              "type": "null"
+            },
+            "size": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "path",
+            "op",
+            "sha256",
+            "size"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "body_session_terminal": {
+      "type": "object",
+      "description": "terminal chunk; at most 16 KiB of data per record (sum checked by the producer)",
+      "properties": {
+        "offset_ms_start": {
+          "$ref": "../../common.json#/$defs/count"
+        },
+        "frames": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "o",
+                    "m"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "maxLength": 16384
+                }
+              ]
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "[t_ms, code, data]: asciicast v2 event (code 'o' output, 'm' marker after a recorder restart)"
+          },
+          "minItems": 1,
+          "maxItems": 4096
+        },
+        "cols": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "required": [
+        "offset_ms_start",
+        "frames",
+        "cols",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "body_usage": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "model": {
+          "$ref": "../../common.json#/$defs/model_id"
+        },
+        "provider": {
+          "$ref": "../../common.json#/$defs/label_text"
+        },
+        "provider_outside_allowlist": {
+          "type": "boolean",
+          "const": true,
+          "description": "present only when the provider is outside the provisioned provider_allowlist (05-runner.md section 10.2); the runner records the audit model.provider_outside_allowlist"
+        },
+        "input_tokens": {
+          "$ref": "../../common.json#/$defs/count"
+        },
+        "output_tokens": {
+          "$ref": "../../common.json#/$defs/count"
+        },
+        "cache_read_tokens": {
+          "$ref": "../../common.json#/$defs/count"
+        },
+        "cache_write_tokens": {
+          "$ref": "../../common.json#/$defs/count"
+        },
+        "thinking_tokens": {
+          "$ref": "../../common.json#/$defs/count"
+        },
+        "cost_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "context_window_tokens": {
+          "$ref": "../../common.json#/$defs/count"
+        },
+        "request_bytes": {
+          "$ref": "../../common.json#/$defs/count"
+        },
+        "response_bytes": {
+          "$ref": "../../common.json#/$defs/count"
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        }
+      },
+      "required": [
+        "request_id",
+        "model",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "thinking_tokens",
+        "context_window_tokens",
+        "request_bytes",
+        "response_bytes",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "body_operation_request": {
+      "type": "object",
+      "properties": {
+        "pending_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "operation_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "params": {
+          "type": "object",
+          "description": "parameters as sent by the session; checked again by the runner against ops/<type>.params.json",
+          "additionalProperties": {}
+        },
+        "idempotency_key": {
+          "$ref": "../../mcp/objects.json#/$defs/idempotency_key"
+        },
+        "requested_at": {
+          "$ref": "../../common.json#/$defs/time"
+        },
+        "local_check": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "rejected"
+          ],
+          "description": "result of the guest's schema check of type and params (05-runner.md section 12 step 1); rejected is binding for the runner (it registers the operation with local_check rejected and never executes it), passed is not (the runner repeats the check)"
+        },
+        "local_error": {
+          "$ref": "../../ops/objects.json#/$defs/error",
+          "description": "the operation error the guest returned to the session (unknown_type or params_invalid); exactly with local_check rejected"
+        }
+      },
+      "required": [
+        "pending_id",
+        "operation_id",
+        "type",
+        "params",
+        "requested_at"
+      ],
+      "additionalProperties": false
+    },
+    "body_platform_query": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "get_context"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_get_context"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "list_workgroups"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_list_workgroups"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "list_members"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_list_members"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "list_tasks"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_list_tasks"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "get_task"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_get_task"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "get_task_messages"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_get_task_messages"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "get_whiteboard"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_get_whiteboard"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "get_operation"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_get_operation"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "list_operations"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_list_operations"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "get_subagent_result"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_get_subagent_result"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "read call of a platform tool, answered by the runner"
+    },
+    "body_ping_delivered": {
+      "type": "object",
+      "properties": {
+        "ping_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "via": {
+          "type": "string",
+          "enum": [
+            "hook",
+            "tool"
+          ]
+        }
+      },
+      "required": [
+        "ping_id",
+        "via"
+      ],
+      "additionalProperties": false
+    },
+    "body_platform_read": {
+      "type": "object",
+      "description": "a session platform read answered by the guest itself (get_notifications, 03-api.md section 8.1): the runner records the platform.read event and the audit read.session.<tool> as for a forwarded read (contracts/changes/KOR-07.md)",
+      "properties": {
+        "tool": {
+          "type": "string",
+          "const": "get_notifications"
+        },
+        "result_count": {
+          "$ref": "../../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "tool",
+        "result_count"
+      ],
+      "additionalProperties": false
+    },
+    "body_platform_refused": {
+      "description": "an MCP request of the session refused before it was forwarded or answered (03-api.md section 8: every call is journaled); metadata only, never arguments (contracts/changes/KOR-07.md, KOR-10.md); a protocol-level refusal never names a tool",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "parse_error",
+                "invalid_request",
+                "method_not_found",
+                "unknown_tool",
+                "size_exceeded"
+              ]
+            },
+            "tool": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "code",
+            "tool"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "params_invalid"
+            },
+            "tool": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "get_context",
+                    "list_workgroups",
+                    "list_members",
+                    "list_tasks",
+                    "get_task",
+                    "get_task_messages",
+                    "get_whiteboard",
+                    "get_notifications",
+                    "request_operation",
+                    "get_operation",
+                    "list_operations",
+                    "get_subagent_result"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "code",
+            "tool"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "not_found"
+            },
+            "tool": {
+              "type": "string",
+              "const": "get_subagent_result"
+            }
+          },
+          "required": [
+            "code",
+            "tool"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "rate_limited"
+            },
+            "tool": {
+              "type": "string",
+              "enum": [
+                "get_context",
+                "list_workgroups",
+                "list_members",
+                "list_tasks",
+                "get_task",
+                "get_task_messages",
+                "get_whiteboard",
+                "get_notifications",
+                "get_operation",
+                "list_operations",
+                "get_subagent_result"
+              ]
+            }
+          },
+          "required": [
+            "code",
+            "tool"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "body_metrics": {
+      "type": "object",
+      "description": "periodic sample (02-data-model.md section 5 lists the kind; same fields as GET /v1/metrics)",
+      "properties": {
+        "at": {
+          "$ref": "../../common.json#/$defs/time"
+        },
+        "vm": {
+          "$ref": "../objects.json#/$defs/vm_metrics"
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "../objects.json#/$defs/session_metrics"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "at",
+        "vm",
+        "sessions"
+      ],
+      "additionalProperties": false
+    },
+    "body_guest_error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "subagent_hook_seen",
+            "gateway_route",
+            "hook_handler_failed",
+            "transcript_unreadable",
+            "recorder_failed",
+            "scanner_failed",
+            "journal_write_failed",
+            "pending_expired",
+            "session_unit_failed",
+            "credential_missing",
+            "auth_failed",
+            "auth_rate_limited"
+          ]
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "additionalProperties": false
+    },
+    "record": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "session.state"
+            },
+            "body": {
+              "$ref": "#/$defs/body_session_state"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "session.output"
+            },
+            "body": {
+              "$ref": "#/$defs/body_session_output"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "session.tool"
+            },
+            "body": {
+              "$ref": "#/$defs/body_session_tool"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "session.hook"
+            },
+            "body": {
+              "$ref": "#/$defs/body_session_hook"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "session.file"
+            },
+            "body": {
+              "$ref": "#/$defs/body_session_file"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "session.terminal"
+            },
+            "body": {
+              "$ref": "#/$defs/body_session_terminal"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "usage"
+            },
+            "body": {
+              "$ref": "#/$defs/body_usage"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "operation.request"
+            },
+            "body": {
+              "$ref": "#/$defs/body_operation_request"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "platform.query"
+            },
+            "body": {
+              "$ref": "#/$defs/body_platform_query"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "ping.delivered"
+            },
+            "body": {
+              "$ref": "#/$defs/body_ping_delivered"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "platform.read"
+            },
+            "body": {
+              "$ref": "#/$defs/body_platform_read"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "platform.refused"
+            },
+            "body": {
+              "$ref": "#/$defs/body_platform_refused"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "anyOf": [
+                {
+                  "$ref": "../../common.json#/$defs/uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "metrics"
+            },
+            "body": {
+              "$ref": "#/$defs/body_metrics"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "anyOf": [
+                {
+                  "$ref": "../../common.json#/$defs/uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "guest.error"
+            },
+            "body": {
+              "$ref": "#/$defs/body_guest_error"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "journal record {seq, ts, session_id, kind, body}; session_id null only for VM-level kinds (metrics, guest.error)"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "code": "upstream_error",
+  "message": "GitHub answered 502.",
+  "retryable": true
+}

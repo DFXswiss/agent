@@ -1,0 +1,23 @@
+{
+  "title": "Benachrichtigungen",
+  "bell": "Benachrichtigungen",
+  "bell.unread": "Benachrichtigungen, {count} ungelesen",
+  "empty": "Keine Benachrichtigungen.",
+  "unread": "Ungelesen",
+  "mark-all": "Alle als gelesen markieren",
+  "more": "Mehr laden",
+  "reload": "Erneut versuchen",
+  "toast.close": "Benachrichtigung schliessen",
+  "text.whiteboard.org": "Neuer Whiteboard-Eintrag in der Organisation „{org}“",
+  "text.whiteboard.workgroup": "Neuer Whiteboard-Eintrag in der Workgroup „{wg}“",
+  "text.whiteboard.task": "Neuer Whiteboard-Eintrag im Task „{task}“",
+  "text.task.idle": "Task „{task}“ wartet auf dich",
+  "text.task.failed": "Task „{task}“ ist fehlgeschlagen",
+  "text.invite.accepted": "{subject} hat die Einladung zu „{org}“ angenommen",
+  "text.rotation.required": "Schlüsselrotation in der Organisation „{org}“ erforderlich",
+  "text.unknown": "Neue Benachrichtigung in „{org}“",
+  "unnamed.org": "…",
+  "unnamed.wg": "…",
+  "unnamed.task": "…",
+  "unnamed.subject": "Jemand"
+}

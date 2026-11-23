@@ -1,0 +1,18 @@
+{
+  "offset_ms_start": 1500,
+  "frames": [
+    [
+      0,
+      "o",
+      "$ "
+    ],
+    [
+      40,
+      "o",
+      "ok\r\n"
+    ]
+  ],
+  "cols": 120,
+  "rows": 40,
+  "zz_unexpected": "x"
+}

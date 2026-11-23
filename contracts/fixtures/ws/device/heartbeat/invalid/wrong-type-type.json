@@ -1,0 +1,22 @@
+{
+  "type": 12345,
+  "capacity": {
+    "vm_memory_budget_mib": 65536,
+    "vm_memory_used_mib": 8192,
+    "vm_slots_total": 8,
+    "vm_slots_free": 6,
+    "pool_ready": 2
+  },
+  "sessions": [
+    {
+      "session_id": "01930028-0000-7000-8000-000000000028",
+      "state": "working"
+    }
+  ],
+  "vms": [
+    {
+      "vm_id": "vm-0a1b2c3d",
+      "state": "running"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-device-candidates.response.json",
+  "title": "GET /v1/workgroups/{wg}/device-candidates response",
+  "description": "Body of a successful response to GET /v1/workgroups/{wg}/device-candidates (03-api.md section 4.5).",
+  "type": "object",
+  "properties": {
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "platform_seq": {
+            "$ref": "../common.json#/$defs/seq"
+          },
+          "pub": {
+            "$ref": "../common.json#/$defs/pub_keys"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "capacity": {
+            "$ref": "../common.json#/$defs/capacity"
+          },
+          "capacity_low": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "device_id",
+          "platform_seq",
+          "pub",
+          "online",
+          "capacity",
+          "capacity_low"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    }
+  },
+  "required": [
+    "candidates"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,13 @@
+{
+  "head": {
+    "seq": 120,
+    "hash": "abababababababababababababababababababababababababababababababab"
+  },
+  "checkpoint": {
+    "hub_key_id": "hub-1",
+    "seq": 100,
+    "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "published_at": "2026-11-21T12:00:00.000Z",
+    "signature": "TU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTQ"
+  }
+}

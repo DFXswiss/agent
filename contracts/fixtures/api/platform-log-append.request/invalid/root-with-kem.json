@@ -1,0 +1,20 @@
+{
+  "expected_seq": 3,
+  "entries": [
+    {
+      "body": {
+        "seq": 0,
+        "prev": "",
+        "type": "root",
+        "by": "platform-root",
+        "ts": "2026-11-21T12:00:00.000Z",
+        "v": 1,
+        "pub": {
+          "kem": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+          "sig": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk"
+        }
+      },
+      "sig": "EREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREQ"
+    }
+  ]
+}

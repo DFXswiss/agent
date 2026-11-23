@@ -1,0 +1,7 @@
+{
+  "title": "Sign in",
+  "explain": "Sign in with your passkey. The same confirmation unlocks your encryption keys on this device.",
+  "submit": "Sign in with passkey",
+  "working": "Waiting for your passkey…",
+  "cancelled": "Sign-in was cancelled – try again."
+}

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/initialize.result.json",
+  "title": "initialize result",
+  "description": "Result of initialize: the protocol version is echoed (default 2025-06-18), tools only (03-api.md section 8).",
+  "type": "object",
+  "properties": {
+    "protocolVersion": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "tools": {
+          "type": "object",
+          "properties": {
+            "listChanged": {
+              "type": "boolean",
+              "const": false
+            }
+          },
+          "required": [
+            "listChanged"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "tools"
+      ],
+      "additionalProperties": false
+    },
+    "serverInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "agent-dfx-swiss-platform"
+        },
+        "version": {
+          "$ref": "../common.json#/$defs/version_text"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "capabilities",
+    "serverInfo"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,8 @@
+{
+  "error": "params_invalid",
+  "detail": {
+    "pointers": [
+      "/params/repo"
+    ]
+  }
+}

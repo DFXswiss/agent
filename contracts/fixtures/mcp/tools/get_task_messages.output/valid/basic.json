@@ -1,0 +1,12 @@
+{
+  "messages": [
+    {
+      "seq": 4,
+      "kind": "prompt",
+      "author_id": "01a1ee56-5e00-7014-8f1b-340691d99f14",
+      "ts": "2026-11-21T10:00:00.000Z",
+      "text": "Hi"
+    }
+  ],
+  "next_after": null
+}

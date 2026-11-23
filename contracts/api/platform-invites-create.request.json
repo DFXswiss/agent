@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/platform-invites-create.request.json",
+  "title": "POST /v1/platform/invites request",
+  "description": "Body of POST /v1/platform/invites (03-api.md section 4.2).",
+  "type": "object",
+  "properties": {
+    "invite_id": {
+      "$ref": "../common.json#/$defs/invite_id"
+    },
+    "pk_inv": {
+      "$ref": "../common.json#/$defs/b64u_32",
+      "description": "public key of sk_inv of the code (ADR-043)"
+    },
+    "kind": {
+      "type": "string",
+      "const": "user"
+    },
+    "expires_at": {
+      "$ref": "../common.json#/$defs/time"
+    }
+  },
+  "required": [
+    "invite_id",
+    "pk_inv",
+    "kind",
+    "expires_at"
+  ],
+  "additionalProperties": false
+}

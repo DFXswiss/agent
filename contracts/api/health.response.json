@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/health.response.json",
+  "title": "GET /v1/health response",
+  "description": "Body of a successful response to GET /v1/health (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "const": true
+    },
+    "version": {
+      "$ref": "../common.json#/$defs/version_text"
+    }
+  },
+  "required": [
+    "ok",
+    "version"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,66 @@
+{
+  "description": "Operation types of 03-api.md section 9 with their parameter and result schemas; the error object is ops/error.json, dedupe fields and windows ops/dedupe-fields.json, formal rules ops/rules.json.",
+  "error": "ops/error.json",
+  "types": [
+    {
+      "type": "github.list_repositories",
+      "params": "ops/github.list_repositories.params.json",
+      "result": "ops/github.list_repositories.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "github.checkout",
+      "params": "ops/github.checkout.params.json",
+      "result": "ops/github.checkout.result.json",
+      "dedupe": true
+    },
+    {
+      "type": "github.get_pull_request",
+      "params": "ops/github.get_pull_request.params.json",
+      "result": "ops/github.get_pull_request.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "github.create_branch",
+      "params": "ops/github.create_branch.params.json",
+      "result": "ops/github.create_branch.result.json",
+      "dedupe": true
+    },
+    {
+      "type": "github.commit",
+      "params": "ops/github.commit.params.json",
+      "result": "ops/github.commit.result.json",
+      "dedupe": true
+    },
+    {
+      "type": "github.push",
+      "params": "ops/github.push.params.json",
+      "result": "ops/github.push.result.json",
+      "dedupe": true
+    },
+    {
+      "type": "github.create_pull_request",
+      "params": "ops/github.create_pull_request.params.json",
+      "result": "ops/github.create_pull_request.result.json",
+      "dedupe": true
+    },
+    {
+      "type": "github.comment",
+      "params": "ops/github.comment.params.json",
+      "result": "ops/github.comment.result.json",
+      "dedupe": true
+    },
+    {
+      "type": "subagent.request",
+      "params": "ops/subagent.request.params.json",
+      "result": "ops/subagent.request.result.json",
+      "dedupe": true
+    },
+    {
+      "type": "task.set_title",
+      "params": "ops/task.set_title.params.json",
+      "result": "ops/task.set_title.result.json",
+      "dedupe": false
+    }
+  ]
+}

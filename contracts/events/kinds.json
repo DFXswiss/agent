@@ -1,0 +1,237 @@
+{
+  "description": "Every event kind of 03-api.md section 10 with its body schema, the scopes and author kinds of enums/event-kinds.json (04-crypto.md section 4.3) and the ciphertext limit (E8). device_pull: delivered by GET /v1/device/pull (every kind except session.terminal, 03-api.md section 6.1).",
+  "kinds": [
+    {
+      "kind": "org.profile",
+      "body": "events/org.profile.json",
+      "scopes": [
+        "org"
+      ],
+      "authors": [
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "wg.profile",
+      "body": "events/wg.profile.json",
+      "scopes": [
+        "org"
+      ],
+      "authors": [
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "member.profile",
+      "body": "events/member.profile.json",
+      "scopes": [
+        "org"
+      ],
+      "authors": [
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "device.profile",
+      "body": "events/device.profile.json",
+      "scopes": [
+        "org"
+      ],
+      "authors": [
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "whiteboard.entry",
+      "body": "events/whiteboard.entry.json",
+      "scopes": [
+        "org",
+        "wg"
+      ],
+      "authors": [
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "whiteboard.edit",
+      "body": "events/whiteboard.edit.json",
+      "scopes": [
+        "org",
+        "wg"
+      ],
+      "authors": [
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "whiteboard.delete",
+      "body": "events/whiteboard.delete.json",
+      "scopes": [
+        "org",
+        "wg"
+      ],
+      "authors": [
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "settings.workgroup",
+      "body": "events/settings.workgroup.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "task.meta",
+      "body": "events/task.meta.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device",
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "prompt",
+      "body": "events/prompt.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "session.output",
+      "body": "events/session.output.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "session.tool",
+      "body": "events/session.tool.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "session.hook",
+      "body": "events/session.hook.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "session.file",
+      "body": "events/session.file.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "session.terminal",
+      "body": "events/session.terminal.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 65536,
+      "device_pull": false
+    },
+    {
+      "kind": "session.status",
+      "body": "events/session.status.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "operation.params",
+      "body": "events/operation.params.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "operation.result",
+      "body": "events/operation.result.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "platform.read",
+      "body": "events/platform.read.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    }
+  ]
+}

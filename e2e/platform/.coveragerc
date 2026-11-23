@@ -1,0 +1,15 @@
+# Coverage of the orchestrator (07-testing.md section 3: 100 % lines and branches for all new code). Processes the
+# tests start with the orchestrator's own modules (remote node, golden cache) are measured too (`patch = subprocess`).
+[run]
+source_pkgs = orchestrator, perf, checks, live
+branch = true
+parallel = true
+patch = subprocess
+data_file = .coverage
+
+[report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+exclude_also =
+    if __name__ == "__main__":

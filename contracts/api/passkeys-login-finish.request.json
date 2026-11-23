@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/passkeys-login-finish.request.json",
+  "title": "POST /v1/passkeys/login/finish request",
+  "description": "Body of POST /v1/passkeys/login/finish (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "ceremony_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "certificate": {
+      "type": "object",
+      "description": "session certificate of agent_core.passkey.certificate (04-crypto.md section 4.9)",
+      "properties": {
+        "statement": {
+          "$ref": "../common.json#/$defs/b64u",
+          "type": "string",
+          "maxLength": 1024
+        },
+        "credential_id": {
+          "$ref": "../common.json#/$defs/credential_id"
+        },
+        "authenticator_data": {
+          "$ref": "../common.json#/$defs/b64u",
+          "type": "string",
+          "maxLength": 8192
+        },
+        "client_data_json": {
+          "$ref": "../common.json#/$defs/b64u",
+          "type": "string",
+          "maxLength": 8192
+        },
+        "signature": {
+          "$ref": "../common.json#/$defs/b64u",
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "statement",
+        "credential_id",
+        "authenticator_data",
+        "client_data_json",
+        "signature"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "ceremony_id",
+    "certificate"
+  ],
+  "additionalProperties": false
+}

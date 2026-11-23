@@ -1,0 +1,152 @@
+{
+  "about": "Dedupe tags of 04-crypto.md section 4.10 with the normalised field sets of agent_hub.crypto.dedupe.",
+  "dedupe_key": "6wJAVLSL4vNiJhHuc1dsZOqI7c_jmYGyYwbotP0jxOs",
+  "invalid": [
+    {
+      "args": {
+        "params": {
+          "title": "x"
+        },
+        "type": "task.set_title"
+      },
+      "error": "header_invalid",
+      "name": "type_without_dedupe",
+      "op": "dedupe_fields"
+    },
+    {
+      "args": {
+        "params": {
+          "branch": "x",
+          "commit_sha": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        "type": "github.push"
+      },
+      "error": "header_invalid",
+      "name": "repo_missing",
+      "op": "dedupe_fields"
+    },
+    {
+      "args": {
+        "params": {
+          "body": "x",
+          "number": 0,
+          "repo": "a/b"
+        },
+        "type": "github.comment"
+      },
+      "error": "header_invalid",
+      "name": "number_zero",
+      "op": "dedupe_fields"
+    }
+  ],
+  "tags": [
+    {
+      "fields": {
+        "ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "repo": "example-org/example-repo",
+        "session": "01a1ee56-5e00-7d1f-8f1b-340691d99f09"
+      },
+      "params": {
+        "ref": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "repo": "Example-Org/Example-Repo",
+        "session": "01a1ee56-5e00-7d1f-8f1b-340691d99f09"
+      },
+      "tag": "L69m0G3gUBg9gbrI5yX9F758TVMMs_KvzNmlj383RxI",
+      "type": "github.checkout"
+    },
+    {
+      "fields": {
+        "body": "5789407347bd4ec7797859bd9efb62a63f25d319f2b7f589d52bb5418dcfe6fb",
+        "number": 12,
+        "repo": "example-org/example-repo"
+      },
+      "params": {
+        "body": "Looks good – danke!",
+        "number": 12,
+        "repo": "example-org/example-repo"
+      },
+      "tag": "cjQW4htC9xGRDNs-K9hZn61dKoy7ANkJdsygQzGvYmA",
+      "type": "github.comment"
+    },
+    {
+      "fields": {
+        "branch": "feature/x",
+        "parent_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "repo": "example-org/example-repo",
+        "tree_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "params": {
+        "branch": "feature/x",
+        "parent_sha": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "repo": "example-org/example-repo",
+        "tree_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "tag": "xFXhALhW3P2eaKHWxKwWZuK-MXqP6n7rMcjqpX06NEE",
+      "type": "github.commit"
+    },
+    {
+      "fields": {
+        "branch": "sha256:37dd36f0236f24abb588058224aa65c9aea1d786c1e4f40b73e9bfd3705bf8e0",
+        "repo": "example-org/example-repo"
+      },
+      "params": {
+        "branch": "refs/heads/feature/ä-umlaut",
+        "repo": "example-org/example-repo"
+      },
+      "tag": "MRap3RWZAx2UAUrPVrsbHhILrbYa1K5f0kqUteVRHag",
+      "type": "github.create_branch"
+    },
+    {
+      "fields": {
+        "base": "develop",
+        "head": "feature/x",
+        "repo": "example-org/example-repo"
+      },
+      "params": {
+        "base": "develop",
+        "head": "feature/x",
+        "repo": "example-org/example-repo"
+      },
+      "tag": "4AxSzmQXjKoIlYZUIe-xkTwx5PE6yqizozkNsrdQd7g",
+      "type": "github.create_pull_request"
+    },
+    {
+      "fields": {
+        "branch": "feature/x",
+        "commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+        "repo": "example-org/example-repo"
+      },
+      "params": {
+        "branch": "feature/x",
+        "commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+        "repo": "example-org/example-repo"
+      },
+      "tag": "FAZaypsFwXuDAotpU1LkdavbkUCaqLCK2lnbVmUX4f8",
+      "type": "github.push"
+    },
+    {
+      "fields": {
+        "prompt": "8a7aa4bb76cae97a1229156114ca71d2ca30349f8e1c022e26b803c20a8d0e63",
+        "session": "01a1ee56-5e00-7d1f-8f1b-340691d99f09"
+      },
+      "params": {
+        "prompt": "Prüfe den Diff.",
+        "purpose": "review",
+        "session": "01a1ee56-5e00-7d1f-8f1b-340691d99f09"
+      },
+      "tag": "yOTHJ9B7sTK9aLeq4GTTla9KEWK9qCg7MHoc3dAea6k",
+      "type": "subagent.request"
+    },
+    {
+      "fields": {
+        "idempotency_key": "client-key-1",
+        "task": "01a1ee56-5e00-722d-bfb1-cfffc027a0c7"
+      },
+      "idempotency_key": "client-key-1",
+      "tag": "3TQ-hXqHvyAVZemsfdEasjMX9Fmriz5JF2Uk7HOnJOA",
+      "task": "01a1ee56-5e00-722d-bfb1-cfffc027a0c7",
+      "type": "github.push"
+    }
+  ],
+  "workgroup_key": "-jx7nbFaDSrHGz_jQKhEuGp50nwhtK4GxbHxZ8ZmHlI"
+}

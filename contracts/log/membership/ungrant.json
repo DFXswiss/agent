@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/log/membership/ungrant.json",
+  "title": "membership-log entry ungrant",
+  "description": "Membership-log entry of type ungrant (04-crypto.md section 4.7): body signed with P||'log\\0' by `by`.",
+  "type": "object",
+  "properties": {
+    "body": {
+      "$ref": "../../common.json#/$defs/log_body_ungrant"
+    },
+    "sig": {
+      "$ref": "../../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "body",
+    "sig"
+  ],
+  "additionalProperties": false
+}

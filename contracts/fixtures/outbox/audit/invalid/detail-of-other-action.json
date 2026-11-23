@@ -1,0 +1,12 @@
+{
+  "action": "hook.denied",
+  "result": "denied",
+  "task_id": "0193001e-0000-7000-8000-00000000001e",
+  "session_id": "01930028-0000-7000-8000-000000000028",
+  "target_kind": "session",
+  "target_id": "01930028-0000-7000-8000-000000000028",
+  "detail": {
+    "alert": "vm_budget_exceeded",
+    "value": 2
+  }
+}

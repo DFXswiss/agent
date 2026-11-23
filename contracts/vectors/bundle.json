@@ -1,0 +1,100 @@
+{
+  "about": "Identity bundle of 04-crypto.md section 4.1.",
+  "invalid": [
+    {
+      "args": {
+        "kek": "ynrXNe5Gb4LMEx6PYRmH8BYUKEOmvsYZ4Bju3FIqGuw",
+        "sealed": "r_8qiwcWuVLsvmni5X6eCAjN8r9Nod8FbCUO70yEroKiY0lhygfc2J8zS8Szh6UP-Hnk9y7NkiTBDgfyYbzX4NKOB4aGA9gei0pgq0gbrKeCRUK42vfc5p5FVHg9m-cDJtlOCwfH9AnDimQyFBHIuRs06QfKNwuHz8ntIArPCIKXMfx2pHn_JQiX0w",
+        "slot": "recovery",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "decrypt_failed",
+      "name": "other_slot",
+      "op": "open_bundle"
+    },
+    {
+      "args": {
+        "kek": "ynrXNe5Gb4LMEx6PYRmH8BYUKEOmvsYZ4Bju3FIqGuw",
+        "sealed": "r_8qiwcWuVLsvmni5X6eCAjN8r9Nod8FbCUO70yEroKiY0lhygfc2J8zS8Szh6UP-Hnk9y7NkiTBDgfyYbzX4NKOB4aGA9gei0pgq0gbrKeCRUK42vfc5p5FVHg9m-cDJtlOCwfH9AnDimQyFBHIuRs06QfKNwuHz8ntIArPCIKXMfx2pHn_JQiX0w",
+        "slot": "passkey:YzKB8GUbzlxt8wNZjwHH2Q",
+        "user_id": "01a1ee56-5e00-7476-87e0-4918c293c341"
+      },
+      "error": "decrypt_failed",
+      "name": "other_user",
+      "op": "open_bundle"
+    },
+    {
+      "args": {
+        "kek": "5oPHCKNEY8eUoxLzLXjzQNF1kb8_Tm83ZsYZU5wP_l8",
+        "sealed": "r_8qiwcWuVLsvmni5X6eCAjN8r9Nod8FbCUO70yEroKiY0lhygfc2J8zS8Szh6UP-Hnk9y7NkiTBDgfyYbzX4NKOB4aGA9gei0pgq0gbrKeCRUK42vfc5p5FVHg9m-cDJtlOCwfH9AnDimQyFBHIuRs06QfKNwuHz8ntIArPCIKXMfx2pHn_JQiX0w",
+        "slot": "passkey:YzKB8GUbzlxt8wNZjwHH2Q",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "decrypt_failed",
+      "name": "other_kek",
+      "op": "open_bundle"
+    },
+    {
+      "args": {
+        "kek": "ynrXNe5Gb4LMEx6PYRmH8BYUKEOmvsYZ4Bju3FIqGuw",
+        "sealed": "r_8qiwcWuVLsvmni5X6eCAjN8r9Nod8F",
+        "slot": "passkey:YzKB8GUbzlxt8wNZjwHH2Q",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "decrypt_failed",
+      "name": "truncated",
+      "op": "open_bundle"
+    },
+    {
+      "args": {
+        "kek": "ynrXNe5Gb4LMEx6PYRmH8BYUKEOmvsYZ4Bju3FIqGuw",
+        "sealed": "r_8qiwcWuVLsvmni5X6eCAjN8r9Nod8FbCUO70yEroKiY0lhygfc2J8zS8Szh6UP-Hnk9y7NkiTBDgfyYbzX4NKOB4aGA9gei0pgq0gbrKeCRUK42vfc5p5FVHg9m-cDJtlOCwfH9AnDimQyFBHIuRs06QfKNwuHz8ntIArPCIKXMfx2pHn_JQiX0w",
+        "slot": "passkey:",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "header_invalid",
+      "name": "bad_slot_name",
+      "op": "open_bundle"
+    },
+    {
+      "args": {
+        "kek": "ynrXNe5Gb4LMEx6PYRmH8BYUKEOmvsYZ4Bju3FIqGuw",
+        "sealed": "r_8qiwcWuVLsvmni5X6eCAjN8r9Nod8FbCUO70yEroKiY0lhygfc2J8zS8Szh6UP-Hnk9y7NkiTBDgfyYbzX4NKOB4aGA9gei0pgq0gbrKeCRUK42vfc5p5FVHg9m-cDJtlOCwfH9AnDimQyFBHIuRs06QfKNwuHz8ntIArPCIKXMfx2pHn_JQiX0w",
+        "slot": "passkey:YzKB8GUbzlxt8wNZjwHH2Q",
+        "user_id": "usér"
+      },
+      "error": "non_ascii",
+      "name": "non_ascii_user",
+      "op": "open_bundle"
+    },
+    {
+      "args": {
+        "kek": "ynrXNe5Gb4LMEx6PYRmH8BYUKEOmvsYZ4Bju3FIqGuw",
+        "sealed": "mrS0gTruIVnPfH5CdVfG7KGfTNVejcfv-JPirXSmmRqM4sxY-h8nMFqzSbLrciTkrn9emmLqGKRd0JmNutNZl0Nm4W7VNy7rTYrtNJOLk95_CPJFzVeJMruXLZxgycrfg82SI0ExRT4ZCcfxjJJFV5tqC1mqtdHf6ESsOc8vNEzm1Rv8ybYMYBmXqA",
+        "slot": "passkey:YzKB8GUbzlxt8wNZjwHH2Q",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "header_invalid",
+      "name": "plaintext_version_2",
+      "op": "open_bundle"
+    }
+  ],
+  "passkey": {
+    "aad": "YWdlbnQuZGZ4LnN3aXNzL3YxL2J1bmRsZQAwMWExZWU1Ni01ZTAwLTc3YmUtOGNmMy0xZjI3YmIwZTkyYTIAcGFzc2tleTpZektCOEdVYnpseHQ4d05aandISDJR",
+    "credential_id": "YzKB8GUbzlxt8wNZjwHH2Q",
+    "kek": "ynrXNe5Gb4LMEx6PYRmH8BYUKEOmvsYZ4Bju3FIqGuw",
+    "nonce": "r_8qiwcWuVLsvmni",
+    "prf_output": "stkUf-ny2r5dH0_gAs0NNfMaY3ctNHmd7S42OxxZorQ",
+    "sealed": "r_8qiwcWuVLsvmni5X6eCAjN8r9Nod8FbCUO70yEroKiY0lhygfc2J8zS8Szh6UP-Hnk9y7NkiTBDgfyYbzX4NKOB4aGA9gei0pgq0gbrKeCRUK42vfc5p5FVHg9m-cDJtlOCwfH9AnDimQyFBHIuRs06QfKNwuHz8ntIArPCIKXMfx2pHn_JQiX0w",
+    "slot": "passkey:YzKB8GUbzlxt8wNZjwHH2Q"
+  },
+  "plaintext": "{\"kem\":\"bLITtKxqd65POjEt99JGl4yLMa8bFiAnIjsGo-r07VM\",\"sig\":\"shNulxzFT3EckRSkNpSnMAZnlJFjRM-6lVcn-iRhgic\",\"v\":1}",
+  "recovery": {
+    "code": "I7F_A-GQZDjZGm-Quk7k5w",
+    "kek": "5oPHCKNEY8eUoxLzLXjzQNF1kb8_Tm83ZsYZU5wP_l8",
+    "nonce": "9uiLDqZUsQ6VMv88",
+    "sealed": "9uiLDqZUsQ6VMv88U0nmFPmHKvwJPtgReU3zaZ-eiPeJZO9AWJTE3Y7xI4sCcKAEgvjdD4BXTFbRyadUJjgtZcnNO8MYn52EMHNjEazilHbKnD4PgDJFYcsFjlvNnnOXYzsYzldcuqOG98N4Bd7uglfyvoOcp7Wod5WB3t6OkX0MlWl8frNLEyhImg",
+    "slot": "recovery"
+  },
+  "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+}

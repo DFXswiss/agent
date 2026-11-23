@@ -1,0 +1,278 @@
+{
+  "about": "Encodings of 04-crypto.md section 1. Byte strings as hex in this file only.",
+  "b64u": [
+    {
+      "b64u": "",
+      "hex": ""
+    },
+    {
+      "b64u": "Zg",
+      "hex": "66"
+    },
+    {
+      "b64u": "Zm8",
+      "hex": "666f"
+    },
+    {
+      "b64u": "Zm9v",
+      "hex": "666f6f"
+    },
+    {
+      "b64u": "-_8",
+      "hex": "fbff"
+    },
+    {
+      "b64u": "AAECAwQFBgcICQoLDA0ODw",
+      "hex": "000102030405060708090a0b0c0d0e0f"
+    }
+  ],
+  "body_json": [
+    {
+      "body_json": "{\"a\":1,\"text\":\"Grüsse – Alice 👋\"}",
+      "value": {
+        "a": 1,
+        "text": "Grüsse – Alice 👋"
+      }
+    },
+    {
+      "body_json": "{\"ctl\":\"\\u0001\\n\\t\",\"sep\":\"  \",\"slash\":\"/\"}",
+      "value": {
+        "ctl": "\u0001\n\t",
+        "sep": "  ",
+        "slash": "/"
+      }
+    },
+    {
+      "body_json": "{\"z\":\"ascii key\",\"é\":\"latin key\",\"￿\":\"last BMP key\",\"😀\":\"astral key\"}",
+      "value": {
+        "z": "ascii key",
+        "é": "latin key",
+        "￿": "last BMP key",
+        "😀": "astral key"
+      }
+    }
+  ],
+  "canonical": [
+    {
+      "canonical": "{\"B\":\"x\",\"a\":[true,false,null],\"b\":1,\"~\":\"~\"}",
+      "value": {
+        "B": "x",
+        "a": [
+          true,
+          false,
+          null
+        ],
+        "b": 1,
+        "~": "~"
+      }
+    },
+    {
+      "canonical": "{\"m\":9007199254740991,\"n\":-9007199254740991,\"nested\":{\"a\":\"\",\"z\":{\"x\":{},\"y\":[]}}}",
+      "value": {
+        "m": 9007199254740991,
+        "n": -9007199254740991,
+        "nested": {
+          "a": "",
+          "z": {
+            "x": {},
+            "y": []
+          }
+        }
+      }
+    },
+    {
+      "canonical": "{\"text\":\"quote \\\" backslash \\\\ and \\\\u0041 literally\"}",
+      "value": {
+        "text": "quote \" backslash \\ and \\u0041 literally"
+      }
+    },
+    {
+      "canonical": "[]",
+      "value": []
+    },
+    {
+      "canonical": "\"plain\"",
+      "value": "plain"
+    }
+  ],
+  "invalid": [
+    {
+      "args": {
+        "text": "Zg=="
+      },
+      "error": "header_invalid",
+      "name": "b64u_padding",
+      "op": "b64u_decode"
+    },
+    {
+      "args": {
+        "text": "Zh"
+      },
+      "error": "header_invalid",
+      "name": "b64u_trailing_bits",
+      "op": "b64u_decode"
+    },
+    {
+      "args": {
+        "text": "Zm9vY"
+      },
+      "error": "header_invalid",
+      "name": "b64u_length_mod_4_is_1",
+      "op": "b64u_decode"
+    },
+    {
+      "args": {
+        "text": "-_+/"
+      },
+      "error": "header_invalid",
+      "name": "b64u_standard_alphabet",
+      "op": "b64u_decode"
+    },
+    {
+      "args": {
+        "text": "Zm9v "
+      },
+      "error": "header_invalid",
+      "name": "b64u_whitespace",
+      "op": "b64u_decode"
+    },
+    {
+      "args": {
+        "length": 4,
+        "text": "Zm9v"
+      },
+      "error": "header_invalid",
+      "name": "b64u_wrong_length",
+      "op": "b64u_decode"
+    },
+    {
+      "args": {
+        "value": {
+          "name": "Zoë"
+        }
+      },
+      "error": "non_ascii",
+      "name": "canonical_non_ascii_value",
+      "op": "canonical"
+    },
+    {
+      "args": {
+        "value": {
+          "é": 1
+        }
+      },
+      "error": "non_ascii",
+      "name": "canonical_non_ascii_key",
+      "op": "canonical"
+    },
+    {
+      "args": {
+        "value": {
+          "a": "line\nbreak"
+        }
+      },
+      "error": "non_ascii",
+      "name": "canonical_control_char",
+      "op": "canonical"
+    },
+    {
+      "args": {
+        "value": [
+          ""
+        ]
+      },
+      "error": "non_ascii",
+      "name": "canonical_delete_char",
+      "op": "canonical"
+    },
+    {
+      "args": {
+        "value": {
+          "a": 1.5
+        }
+      },
+      "error": "header_invalid",
+      "name": "canonical_float",
+      "op": "canonical"
+    },
+    {
+      "args": {
+        "value": {
+          "a": 9007199254740992
+        }
+      },
+      "error": "header_invalid",
+      "name": "canonical_unsafe_integer",
+      "op": "canonical"
+    },
+    {
+      "args": {
+        "value": {
+          "a": 1.5,
+          "b": "é"
+        }
+      },
+      "error": "non_ascii",
+      "name": "canonical_non_ascii_before_float",
+      "op": "canonical"
+    },
+    {
+      "args": {
+        "text": "2026-11-21T12:00:00Z"
+      },
+      "error": "header_invalid",
+      "name": "time_without_millis",
+      "op": "parse_time"
+    },
+    {
+      "args": {
+        "text": "2026-11-21T12:00:00.000+00:00"
+      },
+      "error": "header_invalid",
+      "name": "time_offset",
+      "op": "parse_time"
+    },
+    {
+      "args": {
+        "text": "2026-02-30T12:00:00.000Z"
+      },
+      "error": "header_invalid",
+      "name": "time_impossible_date",
+      "op": "parse_time"
+    },
+    {
+      "args": {
+        "text": "２026-11-21T12:00:00.000Z"
+      },
+      "error": "header_invalid",
+      "name": "time_non_ascii_digits",
+      "op": "parse_time"
+    }
+  ],
+  "time": [
+    {
+      "text": "1970-01-01T00:00:00.000Z",
+      "unix_ms": 0
+    },
+    {
+      "text": "2026-11-18T12:00:00.123Z",
+      "unix_ms": 1795003200123
+    },
+    {
+      "text": "2026-11-18T12:00:00.999Z",
+      "unix_ms": 1795003200999
+    }
+  ],
+  "uuid7": [
+    {
+      "random_hex": "51e773e9e2874add52fc",
+      "unix_ms": 1795000000000,
+      "uuid": "01a1ee56-5e00-71e7-b3e9-e2874add52fc"
+    },
+    {
+      "random_hex": "ffffffffffffffffffff",
+      "unix_ms": 0,
+      "uuid": "00000000-0000-7fff-bfff-ffffffffffff"
+    }
+  ]
+}

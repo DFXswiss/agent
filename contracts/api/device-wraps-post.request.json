@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-wraps-post.request.json",
+  "title": "POST /v1/device/wraps request",
+  "description": "Body of POST /v1/device/wraps (03-api.md section 6.1).",
+  "type": "object",
+  "properties": {
+    "wraps": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/wrap"
+      },
+      "minItems": 1,
+      "maxItems": 1000
+    }
+  },
+  "required": [
+    "wraps"
+  ],
+  "additionalProperties": false
+}

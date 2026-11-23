@@ -1,0 +1,18 @@
+{
+  "name": "e2e-05-platform-device",
+  "description": "E2E-05: the first task of a private org on a freshly certified platform device (auto-assigned by the browser).",
+  "steps": [
+    {
+      "id": "platform-device",
+      "expect": { "user_text_contains": "E2E05-PLATFORM", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": { "content": [{ "type": "text", "text": "Platform device kz05-answer-r7t9y2." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Platform device" }] }
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "operation_id": 12345,
+  "status": "succeeded",
+  "result": {
+    "comment_id": 991,
+    "url": "https://github.example/c/991"
+  }
+}

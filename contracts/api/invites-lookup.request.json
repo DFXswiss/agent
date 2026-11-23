@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/invites-lookup.request.json",
+  "title": "POST /v1/invites/lookup request",
+  "description": "Body of POST /v1/invites/lookup (03-api.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "invite_id": {
+      "$ref": "../common.json#/$defs/invite_id"
+    }
+  },
+  "required": [
+    "invite_id"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,238 @@
+{
+  "name": "e2e-09-github",
+  "description": "E2E-09: the operation chain of E2E-21 with the run's canaries in the repository name, branch, file, commit message, pull-request title and body, comment and answer (placeholders between double at signs, replaced by the spec). The repository and the branch are ASCII canaries (GitHub names); the free texts carry an ASCII and a non-ASCII canary.",
+  "steps": [
+    {
+      "id": "list",
+      "expect": {
+        "user_text_contains": "E2E09-GITHUB",
+        "has_tool_result": false,
+        "tools_include": ["Write"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Looking at the repositories first."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_repositories",
+              "params": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "checkout",
+      "expect": {
+        "tool_result_contains": "\"repo\":\"@@REPO@@\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "@@REPO@@"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "branch",
+      "expect": {
+        "tool_result_contains": "\"dir\":\"repos/@@REPO@@\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_branch",
+              "params": {
+                "repo": "@@REPO@@",
+                "branch": "@@BRANCH@@",
+                "from": "main"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "write",
+      "expect": {
+        "tool_result_contains": "\"branch\":\"@@BRANCH@@\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/@@REPO@@/NOTES.md",
+              "content": "@@FILE@@\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "commit",
+      "expect": {
+        "tool_result_is_error": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "@@REPO@@",
+                "branch": "@@BRANCH@@",
+                "message": "@@COMMIT@@"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push",
+      "expect": {
+        "tool_result_contains": "\"files_changed\":1"
+      },
+      "capture": {
+        "commit": {
+          "regex": "\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": {
+                "repo": "@@REPO@@",
+                "branch": "@@BRANCH@@",
+                "commit_sha": "${commit}"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "pull-request",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/@@REPO@@/tree/@@BRANCH@@\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_pull_request",
+              "params": {
+                "repo": "@@REPO@@",
+                "head": "@@BRANCH@@",
+                "base": "main",
+                "title": "@@PR_TITLE@@",
+                "body": "@@PR_BODY@@",
+                "draft": true
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "comment",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/@@REPO@@/pull/1\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "@@REPO@@",
+                "number": 1,
+                "body": "@@COMMENT@@"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "get-pull-request",
+      "expect": {
+        "tool_result_contains": "issuecomment-"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.get_pull_request",
+              "params": {
+                "repo": "@@REPO@@",
+                "number": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "done",
+      "expect": {
+        "tool_result_contains": "@@COMMENT_MARK@@"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Draft pull request #1 is open: https://github.example/@@REPO@@/pull/1 @@ANSWER@@"
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "@@SIDE@@"
+          }
+        ]
+      }
+    }
+  ]
+}

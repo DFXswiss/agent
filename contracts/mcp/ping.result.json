@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/ping.result.json",
+  "title": "ping result",
+  "description": "Result of ping: {}.",
+  "$ref": "../common.json#/$defs/empty"
+}

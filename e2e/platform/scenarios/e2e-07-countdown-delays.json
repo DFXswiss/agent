@@ -1,0 +1,27 @@
+{
+  "name": "e2e-07-countdown-delays",
+  "description": "E2E-07: (a) the first task of a new org starts on the clone path (empty pool) and is answered; (b)/(c) a second task waits while the runner is stopped and is answered once the runner is back. Background requests without tools get a short title.",
+  "steps": [
+    {
+      "id": "clone-path",
+      "expect": {
+        "user_text_contains": "Summarize the current state of fusion research",
+        "has_tools": true,
+        "stream": true
+      },
+      "reply": { "content": [{ "type": "text", "text": "Fusion research summary." }] }
+    },
+    {
+      "id": "after-reconnect",
+      "expect": { "user_text_contains": "Write a short plan for the migration", "has_tools": true, "stream": true },
+      "reply": { "content": [{ "type": "text", "text": "Migration plan." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Countdown" }] }
+    }
+  ]
+}

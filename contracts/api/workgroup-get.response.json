@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-get.response.json",
+  "title": "GET /v1/workgroups/{wg} response",
+  "description": "Body of a successful response to GET /v1/workgroups/{wg} (03-api.md section 4.5).",
+  "type": "object",
+  "properties": {
+    "wg_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "org_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "is_default": {
+      "type": "boolean"
+    },
+    "epoch": {
+      "$ref": "../common.json#/$defs/epoch"
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/device_ref"
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    },
+    "members": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "access": {
+            "$ref": "../common.json#/$defs/wg_access"
+          }
+        },
+        "required": [
+          "user_id",
+          "access"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100000
+    }
+  },
+  "required": [
+    "wg_id",
+    "org_id",
+    "is_default",
+    "epoch",
+    "devices",
+    "members"
+  ],
+  "additionalProperties": false
+}

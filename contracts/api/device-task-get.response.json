@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-task-get.response.json",
+  "title": "GET /v1/device/tasks/{task} response",
+  "description": "Body of a successful response to GET /v1/device/tasks/{task} (03-api.md section 6.1).",
+  "type": "object",
+  "properties": {
+    "task": {
+      "$ref": "objects.json#/$defs/task_row"
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/session_row"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "type": {
+            "$ref": "../common.json#/$defs/operation_type"
+          },
+          "state": {
+            "$ref": "../common.json#/$defs/operation_state"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/operation_error_code"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result_event_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "state",
+          "error_code",
+          "result_event_id"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    }
+  },
+  "required": [
+    "task",
+    "sessions",
+    "operations"
+  ],
+  "additionalProperties": false
+}

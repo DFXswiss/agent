@@ -1,0 +1,26 @@
+{
+  "description": "Closed list of operation error codes (03-api.md section 11).",
+  "codes": [
+    "unknown_type",
+    "params_invalid",
+    "repo_not_allowed",
+    "repo_not_accessible",
+    "branch_protected",
+    "branch_exists",
+    "non_fast_forward",
+    "path_invalid",
+    "secret_detected",
+    "size_exceeded",
+    "github_not_connected",
+    "not_found",
+    "limit_exceeded",
+    "budget_exceeded",
+    "rights_denied",
+    "hub_unreachable",
+    "upstream_error",
+    "timeout",
+    "model_not_allowed",
+    "tree_mismatch",
+    "no_changes"
+  ]
+}

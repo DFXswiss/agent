@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-prompts-post.response.json",
+  "title": "POST /v1/tasks/{task}/prompts response",
+  "description": "Body of a successful response to POST /v1/tasks/{task}/prompts (03-api.md section 4.6).",
+  "type": "object",
+  "properties": {
+    "scope_seq": {
+      "$ref": "../common.json#/$defs/positive"
+    },
+    "session_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "scope_seq",
+    "session_id"
+  ],
+  "additionalProperties": false
+}

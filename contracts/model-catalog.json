@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/model-catalog.json",
+  "title": "model catalog",
+  "description": "Model catalog of the runner and the hub (05-runner.md section 10.5, 03-api.md section 2 MODEL_CATALOG): default and allowed models per access kind, OpenRouter provider allow-list and per-model limits and list prices. Rules a schema cannot state (every default and allowed model is listed under models; the platform default is allowed) are checked by the catalog tests.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "access": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "object",
+          "properties": {
+            "default": {
+              "$ref": "common.json#/$defs/model_id"
+            },
+            "allowed": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/model_id"
+              },
+              "minItems": 0,
+              "maxItems": 64
+            },
+            "providers_allowed": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/label_text"
+              },
+              "minItems": 0,
+              "maxItems": 64,
+              "description": "empty = any provider"
+            }
+          },
+          "required": [
+            "default",
+            "allowed",
+            "providers_allowed"
+          ],
+          "additionalProperties": false
+        },
+        "api_key": {
+          "type": "object",
+          "description": "default null: Claude Code default, no --model",
+          "properties": {
+            "default": {
+              "anyOf": [
+                {
+                  "$ref": "common.json#/$defs/model_id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "allowed": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/model_id"
+              },
+              "minItems": 0,
+              "maxItems": 64
+            }
+          },
+          "required": [
+            "default",
+            "allowed"
+          ],
+          "additionalProperties": false
+        },
+        "subscription": {
+          "type": "object",
+          "properties": {
+            "default": {
+              "anyOf": [
+                {
+                  "$ref": "common.json#/$defs/model_id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "allowed": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/model_id"
+              },
+              "minItems": 0,
+              "maxItems": 64
+            }
+          },
+          "required": [
+            "default",
+            "allowed"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "platform",
+        "api_key",
+        "subscription"
+      ],
+      "additionalProperties": false
+    },
+    "models": {
+      "type": "object",
+      "description": "keyed by model ID (common.json#/$defs/model_id)",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "context_window": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000000
+          },
+          "max_output": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000000
+          },
+          "price_per_mtok": {
+            "type": "object",
+            "description": "list prices in USD per million tokens",
+            "properties": {
+              "input": {
+                "type": "number",
+                "minimum": 0
+              },
+              "output": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cache_read": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cache_write": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "input",
+              "output",
+              "cache_read",
+              "cache_write"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "context_window",
+          "max_output",
+          "price_per_mtok"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "version",
+    "access",
+    "models"
+  ],
+  "additionalProperties": false
+}

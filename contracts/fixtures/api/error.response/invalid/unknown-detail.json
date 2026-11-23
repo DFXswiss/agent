@@ -1,0 +1,6 @@
+{
+  "error": "not_found",
+  "detail": {
+    "sql": "select 1"
+  }
+}

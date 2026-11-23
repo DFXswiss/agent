@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ws/device/query.json",
+  "title": "GET /v1/device/ws query",
+  "description": "The signed upgrade request has no query parameters.",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

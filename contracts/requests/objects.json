@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/requests/objects.json",
+  "title": "device request definitions",
+  "description": "Shared definitions of the device request and response bodies (05-runner.md section 11).",
+  "$defs": {
+    "failure_code": {
+      "type": "string",
+      "description": "closed list of failure codes of device responses: timeout (flow or poll expired), busy (another request of this kind is active), credential_missing (e.g. no mailbox credential), code_invalid (authorization code refused), login_cli_failed, token_invalid (unexpected token format), upstream_error (GitHub/Anthropic/IMAP refused), upstream_unreachable, device_shutdown",
+      "enum": [
+        "timeout",
+        "busy",
+        "credential_missing",
+        "code_invalid",
+        "login_cli_failed",
+        "token_invalid",
+        "upstream_error",
+        "upstream_unreachable",
+        "device_shutdown"
+      ]
+    }
+  }
+}

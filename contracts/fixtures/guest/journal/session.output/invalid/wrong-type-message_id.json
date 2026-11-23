@@ -1,0 +1,7 @@
+{
+  "message_id": 12345,
+  "role": "assistant",
+  "text": "Done.",
+  "turn": 1,
+  "stop_reason": "end_turn"
+}

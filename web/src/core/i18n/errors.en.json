@@ -1,0 +1,532 @@
+{
+  "agent_exited": {
+    "title": "Agent stopped",
+    "body": "Claude Code ended unexpectedly.",
+    "action": "Retry the task."
+  },
+  "agent_start_failed": {
+    "title": "Agent did not start",
+    "body": "Claude Code could not be started.",
+    "action": "Retry the task."
+  },
+  "already_assigned": {
+    "title": "Already assigned",
+    "body": "The device is already assigned.",
+    "action": "No action needed."
+  },
+  "attestation_invalid": {
+    "title": "Passkey not accepted",
+    "body": "The new passkey could not be verified.",
+    "action": "Try again, or use another authenticator."
+  },
+  "authenticator_data_invalid": {
+    "title": "Passkey response invalid",
+    "body": "The authenticator returned invalid data.",
+    "action": "Try again, or use another authenticator."
+  },
+  "author_not_writer": {
+    "title": "Author without write access",
+    "body": "The entry was written by someone without write access and was not shown.",
+    "action": "No action needed."
+  },
+  "branch_exists": {
+    "title": "Branch exists",
+    "body": "A branch with this name already exists.",
+    "action": "Use another branch name."
+  },
+  "branch_protected": {
+    "title": "Protected branch",
+    "body": "The branch is protected and cannot be written by the platform.",
+    "action": "Use another branch."
+  },
+  "budget_exceeded": {
+    "title": "Budget used up",
+    "body": "The configured budget is used up.",
+    "action": "Raise the budget or wait for the next period."
+  },
+  "capacity_exhausted": {
+    "title": "All slots busy",
+    "body": "All execution slots are busy – the task starts as soon as one is free.",
+    "action": "No action needed."
+  },
+  "ceremony_invalid": {
+    "title": "Passkey step expired",
+    "body": "The passkey step is no longer valid.",
+    "action": "Start the passkey step again."
+  },
+  "certificate_expiry_invalid": {
+    "title": "Invalid session duration",
+    "body": "The requested session duration is not allowed.",
+    "action": "Start the sign-in again."
+  },
+  "challenge_mismatch": {
+    "title": "Passkey step mismatch",
+    "body": "The passkey response does not belong to this sign-in step.",
+    "action": "Start the passkey step again."
+  },
+  "client_data_invalid": {
+    "title": "Passkey response invalid",
+    "body": "The browser returned an invalid passkey response.",
+    "action": "Try again, or use another browser."
+  },
+  "counter_regressed": {
+    "title": "Passkey possibly cloned",
+    "body": "The passkey's signature counter went backwards, which can indicate a cloned authenticator.",
+    "action": "Use another passkey and contact support."
+  },
+  "credential_invalid": {
+    "title": "Passkey not accepted",
+    "body": "This passkey is not registered for your account.",
+    "action": "Use another passkey or the recovery code."
+  },
+  "decrypt_failed": {
+    "title": "Cannot decrypt",
+    "body": "The data could not be decrypted with your keys.",
+    "action": "Unlock with another passkey or your recovery code."
+  },
+  "delivery_failed": {
+    "title": "Prompt not delivered",
+    "body": "The prompt could not be delivered to the session.",
+    "action": "Send the prompt again."
+  },
+  "device_not_assigned": {
+    "title": "Device not assigned",
+    "body": "The execution device is not assigned to this workgroup.",
+    "action": "Assign the device to the workgroup."
+  },
+  "device_offline": {
+    "title": "Execution device offline",
+    "body": "The execution device is offline – the task starts as soon as it is back.",
+    "action": "No action needed."
+  },
+  "device_shutdown": {
+    "title": "Execution device shut down",
+    "body": "The execution device was shut down while the session was running.",
+    "action": "Retry the task."
+  },
+  "epoch_stale": {
+    "title": "Outdated key",
+    "body": "The data was encrypted with an outdated key.",
+    "action": "Reload the page and try again."
+  },
+  "event_conflict": {
+    "title": "Conflicting entry",
+    "body": "An entry with this ID already exists with different content.",
+    "action": "Reload the page and try again."
+  },
+  "forbidden": {
+    "title": "No access",
+    "body": "You do not have the rights for this.",
+    "action": "Ask an administrator for access."
+  },
+  "github_not_connected": {
+    "title": "GitHub not connected",
+    "body": "Your GitHub account is not connected.",
+    "action": "Connect GitHub in the settings."
+  },
+  "guest_unreachable": {
+    "title": "VM unreachable",
+    "body": "The virtual machine stopped responding.",
+    "action": "Retry the task."
+  },
+  "header_invalid": {
+    "title": "Invalid header",
+    "body": "A request or record header is malformed.",
+    "action": "Reload the page and try again."
+  },
+  "hpke_short": {
+    "title": "Damaged key data",
+    "body": "Encrypted key data is too short.",
+    "action": "If it happens again, contact support with the error code."
+  },
+  "hub_unreachable": {
+    "title": "Platform unreachable",
+    "body": "The execution device could not reach the platform.",
+    "action": "The device retries automatically."
+  },
+  "id_conflict": {
+    "title": "Already exists",
+    "body": "An item with this ID already exists with different content.",
+    "action": "Reload the page and try again."
+  },
+  "invite_code_invalid": {
+    "title": "Invalid invitation code",
+    "body": "The invitation code is not valid.",
+    "action": "Check the code and try again."
+  },
+  "invite_code_length": {
+    "title": "Invitation code incomplete",
+    "body": "The invitation code has the wrong length.",
+    "action": "Check the code and try again."
+  },
+  "invite_consumed": {
+    "title": "Invitation already used",
+    "body": "This invitation was already accepted.",
+    "action": "Ask for a new invitation."
+  },
+  "invite_expired": {
+    "title": "Invitation expired",
+    "body": "This invitation has expired.",
+    "action": "Ask for a new invitation."
+  },
+  "invite_not_in_log": {
+    "title": "Invitation not confirmed",
+    "body": "The invitation is not part of the organization's membership history.",
+    "action": "Ask for a new invitation."
+  },
+  "invite_registered": {
+    "title": "Invitation already used",
+    "body": "This invitation already belongs to another account.",
+    "action": "Ask for a new invitation."
+  },
+  "invite_revoked": {
+    "title": "Invitation revoked",
+    "body": "This invitation was revoked.",
+    "action": "Ask for a new invitation."
+  },
+  "invite_unknown": {
+    "title": "Invitation not valid",
+    "body": "This invitation does not exist, was already used or revoked, or has expired.",
+    "action": "Ask for a new invitation."
+  },
+  "key_revoked": {
+    "title": "Key revoked",
+    "body": "The key of this session or device was revoked.",
+    "action": "Sign in again."
+  },
+  "key_unknown": {
+    "title": "Unknown key",
+    "body": "The server does not know the key of this session or device.",
+    "action": "Sign in again."
+  },
+  "kind_not_allowed": {
+    "title": "Action not allowed here",
+    "body": "This kind of entry is not allowed for this author or place.",
+    "action": "If it happens again, contact support with the error code."
+  },
+  "last_admin": {
+    "title": "Last administrator",
+    "body": "The organization needs at least one administrator.",
+    "action": "Make another member administrator first."
+  },
+  "last_passkey": {
+    "title": "Last passkey",
+    "body": "Your last passkey cannot be removed.",
+    "action": "Add another passkey first."
+  },
+  "limit_exceeded": {
+    "title": "Limit reached",
+    "body": "A platform limit was reached.",
+    "action": "Wait until running work finishes, then try again."
+  },
+  "log_accept": {
+    "title": "Invalid acceptance",
+    "body": "An invitation acceptance in the membership history is invalid.",
+    "action": "If it happens again, contact support with the error code."
+  },
+  "log_chain": {
+    "title": "Membership history broken",
+    "body": "The membership history is not a continuous chain.",
+    "action": "If it happens again, contact support with the error code."
+  },
+  "log_empty": {
+    "title": "Membership history missing",
+    "body": "The membership history of this organization is empty.",
+    "action": "If it happens again, contact support with the error code."
+  },
+  "log_epoch": {
+    "title": "Invalid key change",
+    "body": "A key change in the membership history is invalid.",
+    "action": "If it happens again, contact support with the error code."
+  },
+  "log_fork": {
+    "title": "Inconsistent history",
+    "body": "The server presented an inconsistent membership history.",
+    "action": "Do not continue in this organization and contact support with the error code."
+  },
+  "log_genesis": {
+    "title": "Invalid organization start",
+    "body": "The first entry of the membership history is invalid.",
+    "action": "If it happens again, contact support with the error code."
+  },
+  "log_rights": {
+    "title": "Change without rights",
+    "body": "An entry of the membership history was made without the required rights.",
+    "action": "If it happens again, contact support with the error code."
+  },
+  "log_rollback": {
+    "title": "Inconsistent history",
+    "body": "The server presented an older membership history than before.",
+    "action": "Do not continue in this organization and contact support with the error code."
+  },
+  "log_signature": {
+    "title": "Invalid membership signature",
+    "body": "An entry of the membership history has an invalid signature.",
+    "action": "If it happens again, contact support with the error code."
+  },
+  "log_type": {
+    "title": "Unknown membership entry",
+    "body": "The membership history contains an unknown entry type.",
+    "action": "If it happens again, contact support with the error code."
+  },
+  "login_automation_failed": {
+    "title": "Automatic login failed",
+    "body": "The automatic Claude login via your mailbox did not succeed.",
+    "action": "Use the manual login instead."
+  },
+  "model_access_unavailable": {
+    "title": "No model access",
+    "body": "No usable model access is configured for this task.",
+    "action": "Add model access in the settings."
+  },
+  "model_not_allowed": {
+    "title": "Model not allowed",
+    "body": "The chosen model is not allowed for this access kind.",
+    "action": "Choose another model in the settings."
+  },
+  "no_changes": {
+    "title": "Nothing to commit",
+    "body": "The workspace has no changes against the branch.",
+    "action": "Change files first, then commit."
+  },
+  "no_device": {
+    "title": "No execution device",
+    "body": "No execution device is available for this workgroup.",
+    "action": "Assign a device in the device settings."
+  },
+  "no_device_available": {
+    "title": "No execution device available",
+    "body": "No execution device can be assigned to this workgroup.",
+    "action": "Open the device settings to add or assign a device."
+  },
+  "non_ascii": {
+    "title": "Unsupported characters",
+    "body": "A field that must contain plain ASCII contains other characters.",
+    "action": "Remove special characters and try again."
+  },
+  "non_fast_forward": {
+    "title": "Branch moved",
+    "body": "The branch changed meanwhile, so the update would overwrite commits.",
+    "action": "Update from the latest state and try again."
+  },
+  "nonce_replayed": {
+    "title": "Request repeated",
+    "body": "The same signed request was sent twice.",
+    "action": "Reload the page and try again."
+  },
+  "not_found": {
+    "title": "Not found",
+    "body": "The requested item does not exist or you cannot see it.",
+    "action": "Go back to the start page."
+  },
+  "oom": {
+    "title": "Out of memory",
+    "body": "The session ran out of memory.",
+    "action": "Retry the task with a smaller job."
+  },
+  "origin_mismatch": {
+    "title": "Wrong address",
+    "body": "This page was opened under an address the platform does not accept.",
+    "action": "Open the platform under its official address."
+  },
+  "origin_seq_conflict": {
+    "title": "Sync conflict",
+    "body": "The device sent a different entry for an existing position.",
+    "action": "If it happens again, contact support with the error code."
+  },
+  "origin_seq_gap": {
+    "title": "Sync gap",
+    "body": "The device sent entries with a gap.",
+    "action": "The device resends them automatically."
+  },
+  "params_invalid": {
+    "title": "Invalid parameters",
+    "body": "Some parameters are missing or not allowed.",
+    "action": "Check your input and try again."
+  },
+  "path_invalid": {
+    "title": "Invalid path",
+    "body": "A file path is not allowed.",
+    "action": "Use a path inside the repository."
+  },
+  "platform_access_denied": {
+    "title": "No platform devices",
+    "body": "This organization may not use platform execution devices.",
+    "action": "Add your own device or ask the operator for platform access."
+  },
+  "platform_invite_required": {
+    "title": "Invitation required",
+    "body": "Creating a private organization requires a platform invitation.",
+    "action": "Use the link of your invitation."
+  },
+  "platform_root_mismatch": {
+    "title": "Untrusted server",
+    "body": "The server does not present the platform key built into this app. Your data stays protected, but you cannot continue.",
+    "action": "Open the platform under its official address and contact support."
+  },
+  "prf_length": {
+    "title": "Passkey key invalid",
+    "body": "The passkey returned a key of the wrong length.",
+    "action": "Use another passkey or your recovery code."
+  },
+  "prf_missing": {
+    "title": "Passkey cannot unlock",
+    "body": "This passkey cannot unlock your encryption keys on this device.",
+    "action": "Use your recovery code, remember this browser or add another passkey."
+  },
+  "prompt_refused": {
+    "title": "Prompt refused",
+    "body": "The prompt could not be verified and was not delivered.",
+    "action": "Send the prompt again."
+  },
+  "rate_limited": {
+    "title": "Too many attempts",
+    "body": "Too many requests in a short time.",
+    "action": "Wait a moment and try again."
+  },
+  "recovery_code_length": {
+    "title": "Recovery code incomplete",
+    "body": "The recovery code has the wrong length.",
+    "action": "Check the code and try again."
+  },
+  "repo_not_accessible": {
+    "title": "Repository not accessible",
+    "body": "Your GitHub connection cannot access this repository.",
+    "action": "Grant the GitHub App access to the repository."
+  },
+  "repo_not_allowed": {
+    "title": "Repository not allowed",
+    "body": "The repository is not on the allow-list of this workgroup.",
+    "action": "Add it in the workgroup settings."
+  },
+  "request_invalid": {
+    "title": "Invalid request",
+    "body": "The server refused a request that does not match the expected format.",
+    "action": "Reload the page and try again."
+  },
+  "rights_denied": {
+    "title": "Not permitted",
+    "body": "The requesting person does not have the required rights.",
+    "action": "Ask an administrator for write access."
+  },
+  "rotation_required": {
+    "title": "Key rotation required",
+    "body": "A key must be rotated before this change.",
+    "action": "Wait for the automatic rotation, then try again."
+  },
+  "rp_id_mismatch": {
+    "title": "Passkey for another site",
+    "body": "The passkey belongs to another site.",
+    "action": "Use a passkey created for this platform."
+  },
+  "runtime_exceeded": {
+    "title": "Time limit reached",
+    "body": "The session reached its maximum run time.",
+    "action": "Start a follow-up task if needed."
+  },
+  "sandbox_failed": {
+    "title": "Sandbox failed",
+    "body": "The isolated environment of the session could not be prepared.",
+    "action": "Retry the task."
+  },
+  "secret_detected": {
+    "title": "Secret detected",
+    "body": "The content looks like it contains a secret and was not published.",
+    "action": "Remove the secret and try again."
+  },
+  "seq_conflict": {
+    "title": "Changed meanwhile",
+    "body": "Someone else changed the membership meanwhile.",
+    "action": "Try again; the latest state will be loaded."
+  },
+  "session_expired": {
+    "title": "Session expired",
+    "body": "Your session has expired.",
+    "action": "Sign in again."
+  },
+  "signature_invalid": {
+    "title": "Invalid signature",
+    "body": "A signature could not be verified.",
+    "action": "Reload the page and try again."
+  },
+  "signature_missing": {
+    "title": "Not signed in",
+    "body": "The request was not signed.",
+    "action": "Sign in again."
+  },
+  "size_exceeded": {
+    "title": "Too large",
+    "body": "The content is larger than allowed.",
+    "action": "Shorten the content and try again."
+  },
+  "statement_invalid": {
+    "title": "Sign-in statement invalid",
+    "body": "The sign-in statement could not be verified.",
+    "action": "Start the sign-in again."
+  },
+  "time_skew": {
+    "title": "Clock out of sync",
+    "body": "The clock of this device differs too much from the server.",
+    "action": "Set your device clock to automatic and try again."
+  },
+  "timeout": {
+    "title": "Timed out",
+    "body": "The action did not finish in time.",
+    "action": "Try again."
+  },
+  "tree_mismatch": {
+    "title": "Files changed meanwhile",
+    "body": "The repository files changed meanwhile.",
+    "action": "Update from the latest state and try again."
+  },
+  "unassigned": {
+    "title": "Device removed",
+    "body": "The execution device was removed from this workgroup.",
+    "action": "Assign a device and retry the task."
+  },
+  "unauthorized": {
+    "title": "Not signed in",
+    "body": "You need to sign in for this.",
+    "action": "Sign in again."
+  },
+  "unavailable": {
+    "title": "Service unavailable",
+    "body": "The platform cannot be reached right now.",
+    "action": "Try again in a few minutes."
+  },
+  "unknown_type": {
+    "title": "Unknown operation",
+    "body": "The session requested an operation type that does not exist.",
+    "action": "No action needed."
+  },
+  "upstream_error": {
+    "title": "External service error",
+    "body": "An external service such as GitHub returned an error.",
+    "action": "Try again later."
+  },
+  "user_presence_missing": {
+    "title": "Confirmation missing",
+    "body": "The authenticator did not confirm that you are present.",
+    "action": "Try again and confirm on your device."
+  },
+  "user_verification_missing": {
+    "title": "Verification missing",
+    "body": "The authenticator did not verify you (PIN, fingerprint or face).",
+    "action": "Try again and unlock your authenticator."
+  },
+  "version_conflict": {
+    "title": "Changed meanwhile",
+    "body": "This item was changed meanwhile.",
+    "action": "Reload and apply your change again."
+  },
+  "vm_start_failed": {
+    "title": "VM did not start",
+    "body": "The virtual machine for this workgroup could not be started.",
+    "action": "Retry the task."
+  },
+  "wrap_unauthorized": {
+    "title": "Unauthorized key share",
+    "body": "A key share was not created by an authorized person and was ignored.",
+    "action": "No action needed."
+  }
+}

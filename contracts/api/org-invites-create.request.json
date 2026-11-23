@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-invites-create.request.json",
+  "title": "POST /v1/orgs/{org}/invites request",
+  "description": "Body of POST /v1/orgs/{org}/invites (03-api.md section 4.2).",
+  "type": "object",
+  "properties": {
+    "entry": {
+      "$ref": "../common.json#/$defs/log_entry"
+    },
+    "package_ct": {
+      "$ref": "../common.json#/$defs/package_ct"
+    }
+  },
+  "required": [
+    "entry",
+    "package_ct"
+  ],
+  "additionalProperties": false
+}

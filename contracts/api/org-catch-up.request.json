@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-catch-up.request.json",
+  "title": "GET /v1/orgs/{org}/catch-up request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

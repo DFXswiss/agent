@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-devices.response.json",
+  "title": "GET /v1/orgs/{org}/devices response",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/devices (03-api.md section 4.5).",
+  "type": "object",
+  "properties": {
+    "devices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "kind": {
+            "$ref": "../common.json#/$defs/device_kind"
+          },
+          "state": {
+            "$ref": "../common.json#/$defs/device_state"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "agent_version": {
+            "$ref": "../common.json#/$defs/version_text"
+          },
+          "capacity": {
+            "$ref": "../common.json#/$defs/capacity"
+          },
+          "capacity_low": {
+            "type": "boolean"
+          },
+          "assigned_wgs": {
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "minItems": 0,
+            "maxItems": 10000
+          }
+        },
+        "required": [
+          "device_id",
+          "kind",
+          "state",
+          "online",
+          "last_seen_at",
+          "agent_version",
+          "capacity",
+          "capacity_low",
+          "assigned_wgs"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    }
+  },
+  "required": [
+    "devices"
+  ],
+  "additionalProperties": false
+}

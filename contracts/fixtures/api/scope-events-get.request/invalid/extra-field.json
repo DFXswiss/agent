@@ -1,0 +1,7 @@
+{
+  "after": "16",
+  "limit": "1000",
+  "kinds": "prompt,session.output",
+  "task": "01930003-0000-7000-8000-000000000003",
+  "unexpected_field": 1
+}

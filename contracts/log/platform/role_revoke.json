@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/log/platform/role_revoke.json",
+  "title": "platform-log entry role_revoke",
+  "description": "Platform-log entry of type role_revoke (04-crypto.md section 4.8), signed by the platform root with P||'platform-log\\0' (by = \"platform-root\").",
+  "type": "object",
+  "properties": {
+    "body": {
+      "$ref": "../../common.json#/$defs/platform_body_role_revoke"
+    },
+    "sig": {
+      "$ref": "../../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "body",
+    "sig"
+  ],
+  "additionalProperties": false
+}

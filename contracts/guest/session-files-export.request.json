@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/session-files-export.request.json",
+  "title": "guest POST /v1/sessions/{id}/files/export request",
+  "description": "Request of POST /v1/sessions/{id}/files/export (03-api.md section 7.1).",
+  "type": "object",
+  "properties": {
+    "dir": {
+      "$ref": "objects.json#/$defs/rel_path"
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/rel_path"
+      },
+      "minItems": 1,
+      "maxItems": 500
+    }
+  },
+  "required": [
+    "dir"
+  ],
+  "additionalProperties": false
+}

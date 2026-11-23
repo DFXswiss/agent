@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/error.json",
+  "title": "operation error",
+  "description": "Error object of an operation result (operation.result event, MCP request_operation/get_operation).",
+  "$ref": "objects.json#/$defs/error"
+}

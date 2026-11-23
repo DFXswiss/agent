@@ -1,0 +1,11 @@
+{
+  "status": "ok",
+  "result": {
+    "operation_id": "01a1ee56-5e00-700a-8f1b-340691d99f0a",
+    "status": "succeeded",
+    "result": {
+      "comment_id": 991,
+      "url": "https://github.example/c/991"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-audit.request.json",
+  "title": "GET /v1/orgs/{org}/audit request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "before": {
+      "$ref": "../common.json#/$defs/q_before"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_list"
+    },
+    "action": {
+      "type": "string",
+      "pattern": "^[a-z_]+(\\.[a-z_]+)*$",
+      "maxLength": 96
+    },
+    "actor": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "task": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "session": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "wg": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "additionalProperties": false
+}

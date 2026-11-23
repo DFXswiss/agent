@@ -1,0 +1,5 @@
+{
+  "purpose": "Review PR 7",
+  "prompt": "Review the diff of PR 7 for bugs.",
+  "zz_unexpected": "x"
+}

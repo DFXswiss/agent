@@ -1,0 +1,1158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/objects.json",
+  "title": "Shared API objects",
+  "description": "Rows and nested objects shared by several browser endpoints and the live channels.",
+  "$defs": {
+    "settings": {
+      "type": "object",
+      "description": "plaintext user preferences (02-data-model.md section 2.1)",
+      "properties": {
+        "model_access": {
+          "$ref": "../common.json#/$defs/model_access_pref"
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/model_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "locale": {
+          "$ref": "../common.json#/$defs/locale"
+        }
+      },
+      "required": [
+        "model_access",
+        "model_id",
+        "locale"
+      ],
+      "additionalProperties": false
+    },
+    "task_row": {
+      "type": "object",
+      "description": "task metadata (02-data-model.md section 2.4); the title lives only in task.meta events",
+      "properties": {
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "org_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wg_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "owner_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "state": {
+          "$ref": "../common.json#/$defs/task_state"
+        },
+        "state_reason": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/session_failure_reason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "state_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "last_activity_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "closed_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "main_session_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title_event_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "task_id",
+        "org_id",
+        "wg_id",
+        "owner_id",
+        "state",
+        "state_reason",
+        "created_at",
+        "state_at",
+        "last_activity_at",
+        "closed_at",
+        "main_session_id",
+        "title_event_id"
+      ],
+      "additionalProperties": false
+    },
+    "task_transition": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "state": {
+          "$ref": "../common.json#/$defs/task_state"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/error_code"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "seq",
+        "state",
+        "reason",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "session_row": {
+      "type": "object",
+      "description": "session metadata (02-data-model.md section 2.4)",
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "org_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wg_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "owner_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "device_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "vm_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/vm_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent_session_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "origin_operation_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "state": {
+          "$ref": "../common.json#/$defs/session_state"
+        },
+        "state_reason": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/session_failure_reason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_access": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/model_access"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/model_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent_kind": {
+          "type": "string",
+          "enum": [
+            "claude-code"
+          ]
+        },
+        "agent_version": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/version_text"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "estimate_ms": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "ready_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_working_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "task_id",
+        "org_id",
+        "wg_id",
+        "owner_id",
+        "device_id",
+        "vm_id",
+        "parent_session_id",
+        "origin_operation_id",
+        "depth",
+        "state",
+        "state_reason",
+        "model_access",
+        "model_id",
+        "agent_kind",
+        "agent_version",
+        "estimate_ms",
+        "created_at",
+        "ready_at",
+        "first_working_at",
+        "ended_at"
+      ],
+      "additionalProperties": false
+    },
+    "session_transition": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "state": {
+          "$ref": "../common.json#/$defs/session_state"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/error_code"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "received_at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "seq",
+        "state",
+        "reason",
+        "at",
+        "received_at"
+      ],
+      "additionalProperties": false
+    },
+    "usage": {
+      "type": "object",
+      "description": "usage counter of one session (02-data-model.md section 2.8)",
+      "properties": {
+        "requests": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "input_tokens": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "output_tokens": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "cache_read_tokens": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "cache_write_tokens": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "thinking_tokens": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "cost_micro_usd": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "cost_basis": {
+          "type": "string",
+          "enum": [
+            "provider",
+            "list_price",
+            "subscription_equivalent"
+          ]
+        },
+        "context_used_tokens": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "context_window_tokens": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "last_provider": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[ -~]{1,64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updated_at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "requests",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "thinking_tokens",
+        "cost_micro_usd",
+        "cost_basis",
+        "context_used_tokens",
+        "context_window_tokens",
+        "last_provider",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+    "vm_row": {
+      "type": "object",
+      "description": "VM as reported by the runner (02-data-model.md section 2.4)",
+      "properties": {
+        "vm_id": {
+          "$ref": "../common.json#/$defs/vm_id"
+        },
+        "device_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wg_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pool",
+            "assigning",
+            "running",
+            "stopping",
+            "stopped",
+            "deleted"
+          ]
+        },
+        "golden_version": {
+          "$ref": "../common.json#/$defs/version_text"
+        },
+        "cpus": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "memory_mib": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "disk_gib": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "state_at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "vm_id",
+        "device_id",
+        "wg_id",
+        "state",
+        "golden_version",
+        "cpus",
+        "memory_mib",
+        "disk_gib",
+        "created_at",
+        "state_at"
+      ],
+      "additionalProperties": false
+    },
+    "operation_row": {
+      "type": "object",
+      "description": "operation metadata (02-data-model.md section 2.5); parameters and results only in events",
+      "properties": {
+        "operation_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "org_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wg_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "device_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "actor_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "type": {
+          "$ref": "../common.json#/$defs/operation_type"
+        },
+        "state": {
+          "$ref": "../common.json#/$defs/operation_state"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/operation_error_code"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "duplicate_of": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attempt": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "params_event_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_event_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "decided_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "org_id",
+        "wg_id",
+        "task_id",
+        "session_id",
+        "device_id",
+        "actor_id",
+        "type",
+        "state",
+        "error_code",
+        "retryable",
+        "duplicate_of",
+        "attempt",
+        "params_event_id",
+        "result_event_id",
+        "created_at",
+        "decided_at",
+        "started_at",
+        "finished_at"
+      ],
+      "additionalProperties": false
+    },
+    "operation_transition": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "state": {
+          "$ref": "../common.json#/$defs/operation_state"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/operation_error_code"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "by_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "seq",
+        "state",
+        "error_code",
+        "at",
+        "by_id"
+      ],
+      "additionalProperties": false
+    },
+    "notification_row": {
+      "type": "object",
+      "description": "content-free notification (02-data-model.md section 2.6)",
+      "properties": {
+        "notification_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "whiteboard.entry",
+            "task.idle",
+            "task.failed",
+            "invite.accepted",
+            "rotation.required"
+          ]
+        },
+        "org_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wg_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "read_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "notification_id",
+        "kind",
+        "org_id",
+        "wg_id",
+        "task_id",
+        "ref",
+        "created_at",
+        "read_at"
+      ],
+      "additionalProperties": false
+    },
+    "metric_sample": {
+      "type": "object",
+      "description": "latest metric sample of one entity (02-data-model.md section 2.8)",
+      "properties": {
+        "ts": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "cpu_ratio": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mem_used_bytes": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mem_limit_bytes": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "disk_used_bytes": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "disk_limit_bytes": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "net_rx_bytes": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "net_tx_bytes": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "uptime_seconds": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "state": {
+          "type": "string",
+          "pattern": "^[a-z_]{1,32}$"
+        },
+        "free_vm_slots": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "free_mem_bytes": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "ts",
+        "cpu_ratio",
+        "mem_used_bytes",
+        "mem_limit_bytes",
+        "disk_used_bytes",
+        "disk_limit_bytes",
+        "net_rx_bytes",
+        "net_tx_bytes",
+        "uptime_seconds",
+        "reachable",
+        "state",
+        "free_vm_slots",
+        "free_mem_bytes"
+      ],
+      "additionalProperties": false
+    },
+    "device_ref": {
+      "type": "object",
+      "description": "device of a workgroup with presence (03-api.md section 4.5)",
+      "properties": {
+        "device_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "kind": {
+          "$ref": "../common.json#/$defs/device_kind"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "capacity": {
+          "$ref": "../common.json#/$defs/capacity"
+        },
+        "capacity_low": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "device_id",
+        "kind",
+        "online",
+        "capacity",
+        "capacity_low"
+      ],
+      "additionalProperties": false
+    },
+    "latest_event": {
+      "type": "object",
+      "properties": {
+        "scope_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "scope_seq": {
+          "$ref": "../common.json#/$defs/positive"
+        }
+      },
+      "required": [
+        "scope_id",
+        "scope_seq"
+      ],
+      "additionalProperties": false
+    },
+    "attestation_credential": {
+      "type": "object",
+      "description": "registration response of navigator.credentials.create()",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/credential_id"
+        },
+        "clientDataJSON": {
+          "$ref": "../common.json#/$defs/b64u",
+          "type": "string",
+          "maxLength": 8192
+        },
+        "attestationObject": {
+          "$ref": "../common.json#/$defs/b64u",
+          "type": "string",
+          "maxLength": 65536
+        },
+        "transports": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "usb",
+              "nfc",
+              "ble",
+              "smart-card",
+              "hybrid",
+              "internal"
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 6
+        }
+      },
+      "required": [
+        "id",
+        "clientDataJSON",
+        "attestationObject",
+        "transports"
+      ],
+      "additionalProperties": false
+    },
+    "creation_options": {
+      "type": "object",
+      "description": "PublicKeyCredentialCreationOptions JSON (03-api.md section 4.1): ES256 only, resident key and user verification required, PRF extension, timeout 300000",
+      "properties": {
+        "rp": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 253
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "id",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "user": {
+          "type": "object",
+          "description": "user handle = the 16 bytes of user_id; name and displayName = user_id text (zero knowledge)",
+          "properties": {
+            "id": {
+              "$ref": "../common.json#/$defs/b64u_16"
+            },
+            "name": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "displayName": {
+              "$ref": "../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "displayName"
+          ],
+          "additionalProperties": false
+        },
+        "challenge": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        },
+        "pubKeyCredParams": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "public-key"
+              },
+              "alg": {
+                "type": "integer",
+                "const": -7
+              }
+            },
+            "required": [
+              "type",
+              "alg"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "authenticatorSelection": {
+          "type": "object",
+          "properties": {
+            "residentKey": {
+              "type": "string",
+              "const": "required"
+            },
+            "userVerification": {
+              "type": "string",
+              "const": "required"
+            },
+            "requireResidentKey": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "residentKey",
+            "userVerification"
+          ],
+          "additionalProperties": false
+        },
+        "extensions": {
+          "type": "object",
+          "properties": {
+            "prf": {
+              "type": "object",
+              "properties": {
+                "eval": {
+                  "type": "object",
+                  "properties": {
+                    "first": {
+                      "$ref": "../common.json#/$defs/prf_input"
+                    }
+                  },
+                  "required": [
+                    "first"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "eval"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "prf"
+          ],
+          "additionalProperties": false
+        },
+        "timeout": {
+          "type": "integer",
+          "const": 300000
+        },
+        "attestation": {
+          "type": "string",
+          "enum": [
+            "none"
+          ]
+        },
+        "excludeCredentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "public-key"
+              },
+              "id": {
+                "$ref": "../common.json#/$defs/credential_id"
+              },
+              "transports": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "usb",
+                    "nfc",
+                    "ble",
+                    "smart-card",
+                    "hybrid",
+                    "internal"
+                  ]
+                },
+                "minItems": 0,
+                "maxItems": 6
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "rp",
+        "user",
+        "challenge",
+        "pubKeyCredParams",
+        "authenticatorSelection",
+        "extensions",
+        "timeout"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

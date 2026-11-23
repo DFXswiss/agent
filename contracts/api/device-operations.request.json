@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-operations.request.json",
+  "title": "POST /v1/device/operations request",
+  "description": "operation registration (03-api.md section 8.3); local_check rejected carries the error code",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wg_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "type": {
+          "$ref": "../common.json#/$defs/operation_type"
+        },
+        "requested_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "local_check": {
+          "type": "string",
+          "const": "passed"
+        },
+        "dedupe": {
+          "anyOf": [
+            {
+              "type": "object",
+              "description": "dedupe slot (04-crypto.md section 4.10); null for types without dedupe",
+              "properties": {
+                "epoch": {
+                  "$ref": "../common.json#/$defs/epoch"
+                },
+                "tag": {
+                  "$ref": "../common.json#/$defs/b64u_32"
+                }
+              },
+              "required": [
+                "epoch",
+                "tag"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "params_event": {
+          "$ref": "../events/objects.json#/$defs/event_operation_params"
+        }
+      },
+      "required": [
+        "operation_id",
+        "session_id",
+        "task_id",
+        "wg_id",
+        "type",
+        "requested_at",
+        "local_check",
+        "dedupe",
+        "params_event"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wg_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "type": {
+          "$ref": "../common.json#/$defs/operation_type"
+        },
+        "requested_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "local_check": {
+          "type": "string",
+          "const": "rejected"
+        },
+        "error_code": {
+          "$ref": "../common.json#/$defs/operation_error_code"
+        },
+        "dedupe": {
+          "anyOf": [
+            {
+              "type": "object",
+              "description": "dedupe slot (04-crypto.md section 4.10); null for types without dedupe",
+              "properties": {
+                "epoch": {
+                  "$ref": "../common.json#/$defs/epoch"
+                },
+                "tag": {
+                  "$ref": "../common.json#/$defs/b64u_32"
+                }
+              },
+              "required": [
+                "epoch",
+                "tag"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "params_event": {
+          "$ref": "../events/objects.json#/$defs/event_operation_params"
+        }
+      },
+      "required": [
+        "operation_id",
+        "session_id",
+        "task_id",
+        "wg_id",
+        "type",
+        "requested_at",
+        "local_check",
+        "error_code",
+        "dedupe",
+        "params_event"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

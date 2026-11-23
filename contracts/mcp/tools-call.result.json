@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/tools-call.result.json",
+  "title": "tools/call result",
+  "description": "Result of tools/call: one text item with the JSON result (mcp/tools/<tool>.output.json) or, with isError true, the JSON of mcp/tool-error.json.",
+  "type": "object",
+  "properties": {
+    "content": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 1048576
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 1
+    },
+    "isError": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "content",
+    "isError"
+  ],
+  "additionalProperties": false
+}

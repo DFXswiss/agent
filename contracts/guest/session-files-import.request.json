@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/session-files-import.request.json",
+  "title": "guest POST /v1/sessions/{id}/files/import request",
+  "description": "query parameters; the body is application/x-tar (regular files and directories only, <= 512 MiB)",
+  "type": "object",
+  "properties": {
+    "dir": {
+      "$ref": "objects.json#/$defs/rel_path"
+    },
+    "replace": {
+      "type": "string",
+      "enum": [
+        "true",
+        "false"
+      ]
+    }
+  },
+  "required": [
+    "dir",
+    "replace"
+  ],
+  "additionalProperties": false
+}

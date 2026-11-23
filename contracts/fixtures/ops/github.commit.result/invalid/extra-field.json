@@ -1,0 +1,7 @@
+{
+  "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "parent_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "tree_sha": "cccccccccccccccccccccccccccccccccccccccc",
+  "files_changed": 1,
+  "zz_unexpected": "x"
+}

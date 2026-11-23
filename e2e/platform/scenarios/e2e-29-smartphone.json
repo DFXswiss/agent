@@ -1,0 +1,38 @@
+{
+  "name": "e2e-29-smartphone",
+  "description": "E2E-29: a first task on a phone whose turn waits 12 s for the model (the terminal shows the waiting animation live; the session works long enough for the owner's 'task waiting' notification), writes a file and answers; then a follow-up in the same task. Canary texts for the plaintext scan.",
+  "steps": [
+    {
+      "id": "write",
+      "expect": { "user_text_contains": "E2E29-PHONE", "has_tools": true, "has_tool_result": false, "stream": true },
+      "delay_ms": 12000,
+      "reply": {
+        "content": [
+          { "type": "text", "text": "I will note that on the phone." },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": { "file_path": "${cwd}/phone.md", "content": "# Phone\nkz29-file-v4p8n2c6\n" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": { "tool_result_is_error": false, "tool_result_contains": "phone.md" },
+      "reply": { "content": [{ "type": "text", "text": "Noted on the phone: kz29-answer-h7d3s9m1." }] }
+    },
+    {
+      "id": "follow-up",
+      "expect": { "user_text_contains": "E2E29-FOLLOW", "has_tool_result": false },
+      "reply": { "content": [{ "type": "text", "text": "Follow-up on the phone: kz29-follow-b2w6r5t8." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Phone" }] }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "status": "error",
+  "error": {
+    "error": "not_found",
+    "message": "The task was not found."
+  }
+}

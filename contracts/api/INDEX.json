@@ -1,0 +1,1448 @@
+{
+  "description": "Every HTTP endpoint of the hub (03-api.md sections 4, 5, 6.1, 6.2) with its schemas. request/response null: schema pending in the named owner package. error responses: api/error.response.json.",
+  "error_response": "api/error.response.json",
+  "pending_owners": [],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/health",
+      "name": "health",
+      "section": "4.1",
+      "auth": "anon",
+      "rights": [
+        "anon"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/health.request.json",
+      "response": "api/health.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/config",
+      "name": "config",
+      "section": "4.1",
+      "auth": "anon",
+      "rights": [
+        "anon"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/config.request.json",
+      "response": "api/config.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/invites/lookup",
+      "name": "invites-lookup",
+      "section": "4.1",
+      "auth": "anon",
+      "rights": [
+        "anon"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/invites-lookup.request.json",
+      "response": "api/invites-lookup.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/passkeys/register/begin",
+      "name": "passkeys-register-begin",
+      "section": "4.1",
+      "auth": "anon_or_browser",
+      "rights": [
+        "anon",
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/passkeys-register-begin.request.json",
+      "response": "api/passkeys-register-begin.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/passkeys/register/finish",
+      "name": "passkeys-register-finish",
+      "section": "4.1",
+      "auth": "anon_or_browser",
+      "rights": [
+        "anon",
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/passkeys-register-finish.request.json",
+      "response": "api/passkeys-register-finish.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/passkeys/login/begin",
+      "name": "passkeys-login-begin",
+      "section": "4.1",
+      "auth": "anon",
+      "rights": [
+        "anon"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/passkeys-login-begin.request.json",
+      "response": "api/passkeys-login-begin.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/passkeys/login/finish",
+      "name": "passkeys-login-finish",
+      "section": "4.1",
+      "auth": "anon",
+      "rights": [
+        "anon"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/passkeys-login-finish.request.json",
+      "response": "api/passkeys-login-finish.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/recovery/begin",
+      "name": "recovery-begin",
+      "section": "4.1",
+      "auth": "anon",
+      "rights": [
+        "anon"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/recovery-begin.request.json",
+      "response": "api/recovery-begin.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/recovery/finish",
+      "name": "recovery-finish",
+      "section": "4.1",
+      "auth": "anon",
+      "rights": [
+        "anon"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/recovery-finish.request.json",
+      "response": "api/recovery-finish.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/session/end",
+      "name": "session-end",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/session-end.request.json",
+      "response": "api/session-end.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me",
+      "name": "me",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/me.request.json",
+      "response": "api/me.response.json",
+      "read_resource": "me",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/bundles/recovery",
+      "name": "me-bundles-recovery",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/me-bundles-recovery.request.json",
+      "response": "api/me-bundles-recovery.response.json",
+      "read_resource": "me.bundles.recovery",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/me/bundles/{slot}",
+      "name": "me-bundles-put",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "slot": "bundle_slot"
+      },
+      "request_kind": "body",
+      "request": "api/me-bundles-put.request.json",
+      "response": "api/me-bundles-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/me/recovery/begin",
+      "name": "me-recovery-begin",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/me-recovery-begin.request.json",
+      "response": "api/me-recovery-begin.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-01"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/passkeys/{credential_id}",
+      "name": "passkeys-delete",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "credential_id": "credential_id"
+      },
+      "request_kind": "query",
+      "request": "api/passkeys-delete.request.json",
+      "response": "api/passkeys-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/me/settings",
+      "name": "me-settings-put",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/me-settings-put.request.json",
+      "response": "api/me-settings-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/devices",
+      "name": "me-devices",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/me-devices.request.json",
+      "response": "api/me-devices.response.json",
+      "read_resource": "me.devices",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/quotas",
+      "name": "me-quotas",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/me-quotas.request.json",
+      "response": "api/me-quotas.response.json",
+      "read_resource": "me.quotas",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/orgs/{org}/invites",
+      "name": "org-invites-create",
+      "section": "4.2",
+      "auth": "browser",
+      "rights": [
+        "org:admin"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/org-invites-create.request.json",
+      "response": "api/org-invites-create.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/invites",
+      "name": "org-invites-list",
+      "section": "4.2",
+      "auth": "browser",
+      "rights": [
+        "org:admin"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/org-invites-list.request.json",
+      "response": "api/org-invites-list.response.json",
+      "read_resource": "org.invites",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/orgs/{org}/invites/{id}/revoke",
+      "name": "org-invites-revoke",
+      "section": "4.2",
+      "auth": "browser",
+      "rights": [
+        "org:admin"
+      ],
+      "path_params": {
+        "org": "uuid",
+        "id": "invite_id"
+      },
+      "request_kind": "body",
+      "request": "api/org-invites-revoke.request.json",
+      "response": "api/org-invites-revoke.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/platform/invites",
+      "name": "platform-invites-create",
+      "section": "4.2",
+      "auth": "browser",
+      "rights": [
+        "platform:inviter"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/platform-invites-create.request.json",
+      "response": "api/platform-invites-create.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/invites",
+      "name": "platform-invites-list",
+      "section": "4.2",
+      "auth": "browser",
+      "rights": [
+        "platform:inviter"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/platform-invites-list.request.json",
+      "response": "api/platform-invites-list.response.json",
+      "read_resource": "platform.invites",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/platform/invites/{id}/revoke",
+      "name": "platform-invites-revoke",
+      "section": "4.2",
+      "auth": "browser",
+      "rights": [
+        "platform:inviter"
+      ],
+      "path_params": {
+        "id": "invite_id"
+      },
+      "request_kind": "body",
+      "request": "api/platform-invites-revoke.request.json",
+      "response": "api/platform-invites-revoke.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/orgs",
+      "name": "orgs-create",
+      "section": "4.3",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/orgs-create.request.json",
+      "response": "api/orgs-create.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}",
+      "name": "org-get",
+      "section": "4.3",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/org-get.request.json",
+      "response": "api/org-get.response.json",
+      "read_resource": "org",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/log",
+      "name": "org-log-get",
+      "section": "4.3",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/org-log-get.request.json",
+      "response": "api/org-log-get.response.json",
+      "read_resource": "org.log",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/orgs/{org}/log",
+      "name": "org-log-append",
+      "section": "4.3",
+      "auth": "browser",
+      "rights": [
+        "per_entry_type"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/org-log-append.request.json",
+      "response": "api/org-log-append.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/wraps",
+      "name": "wraps-get",
+      "section": "4.3",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/wraps-get.request.json",
+      "response": "api/wraps-get.response.json",
+      "read_resource": "wraps",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/wraps",
+      "name": "wraps-post",
+      "section": "4.3",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/wraps-post.request.json",
+      "response": "api/wraps-post.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/catch-up",
+      "name": "org-catch-up",
+      "section": "4.3",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/org-catch-up.request.json",
+      "response": "api/org-catch-up.response.json",
+      "read_resource": "org.catch_up",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/log",
+      "name": "platform-log-get",
+      "section": "4.3",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/platform-log-get.request.json",
+      "response": "api/platform-log-get.response.json",
+      "read_resource": "platform.log",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/platform/log",
+      "name": "platform-log-append",
+      "section": "4.3",
+      "auth": "root",
+      "rights": [
+        "root"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/platform-log-append.request.json",
+      "response": "api/platform-log-append.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/enrollments",
+      "name": "platform-enrollments",
+      "section": "4.3",
+      "auth": "root",
+      "rights": [
+        "root"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/platform-enrollments.request.json",
+      "response": "api/platform-enrollments.response.json",
+      "read_resource": "platform.enrollments",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/events",
+      "name": "events-post",
+      "section": "4.4",
+      "auth": "browser",
+      "rights": [
+        "per_event_kind"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/events-post.request.json",
+      "response": "api/events-post.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/scopes/{scope_id}/events",
+      "name": "scope-events-get",
+      "section": "4.4",
+      "auth": "browser",
+      "rights": [
+        "org:member",
+        "wg:read"
+      ],
+      "path_params": {
+        "scope_id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/scope-events-get.request.json",
+      "response": "api/scope-events-get.response.json",
+      "read_resource": "scope.events",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}",
+      "name": "workgroup-get",
+      "section": "4.5",
+      "auth": "browser",
+      "rights": [
+        "wg:read"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/workgroup-get.request.json",
+      "response": "api/workgroup-get.response.json",
+      "read_resource": "workgroup",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/device-candidates",
+      "name": "workgroup-device-candidates",
+      "section": "4.5",
+      "auth": "browser",
+      "rights": [
+        "wg:write"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/workgroup-device-candidates.request.json",
+      "response": "api/workgroup-device-candidates.response.json",
+      "read_resource": "workgroup.device_candidates",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/devices",
+      "name": "org-devices",
+      "section": "4.5",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/org-devices.request.json",
+      "response": "api/org-devices.response.json",
+      "read_resource": "org.devices",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks",
+      "name": "tasks-create",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "wg:write"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/tasks-create.request.json",
+      "response": "api/tasks-create.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/tasks",
+      "name": "workgroup-tasks",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "wg:read"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/workgroup-tasks.request.json",
+      "response": "api/workgroup-tasks.response.json",
+      "read_resource": "workgroup.tasks",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task}",
+      "name": "task-get",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:read"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/task-get.request.json",
+      "response": "api/task-get.response.json",
+      "read_resource": "task",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{task}/prompts",
+      "name": "task-prompts-post",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:write"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/task-prompts-post.request.json",
+      "response": "api/task-prompts-post.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{task}/close",
+      "name": "task-close",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:write"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/task-close.request.json",
+      "response": "api/task-close.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session}/control",
+      "name": "session-control",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:write"
+      ],
+      "path_params": {
+        "session": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/session-control.request.json",
+      "response": "api/session-control.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session}",
+      "name": "session-get",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:read"
+      ],
+      "path_params": {
+        "session": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/session-get.request.json",
+      "response": "api/session-get.response.json",
+      "read_resource": "session",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task}/operations",
+      "name": "task-operations",
+      "section": "4.7",
+      "auth": "browser",
+      "rights": [
+        "task:read"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/task-operations.request.json",
+      "response": "api/task-operations.response.json",
+      "read_resource": "task.operations",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/operations/{id}",
+      "name": "operation-get",
+      "section": "4.7",
+      "auth": "browser",
+      "rights": [
+        "task:read"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/operation-get.request.json",
+      "response": "api/operation-get.response.json",
+      "read_resource": "operation",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/credentials",
+      "name": "me-credentials-list",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/me-credentials-list.request.json",
+      "response": "api/me-credentials-list.response.json",
+      "read_resource": "me.credentials",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/credentials/{kind}",
+      "name": "me-credential-get",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "kind": "credential_kind"
+      },
+      "request_kind": "query",
+      "request": "api/me-credential-get.request.json",
+      "response": "api/me-credential-get.response.json",
+      "read_resource": "me.credential",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/me/credentials/{kind}",
+      "name": "me-credential-put",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "kind": "credential_kind"
+      },
+      "request_kind": "body",
+      "request": "api/me-credential-put.request.json",
+      "response": "api/me-credential-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/me/credentials/{kind}",
+      "name": "me-credential-delete",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "kind": "credential_kind"
+      },
+      "request_kind": "query",
+      "request": "api/me-credential-delete.request.json",
+      "response": "api/me-credential-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/me/credentials/rotate",
+      "name": "me-credentials-rotate",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/me-credentials-rotate.request.json",
+      "response": "api/me-credentials-rotate.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/whiteboards",
+      "name": "whiteboards-list",
+      "section": "4.9",
+      "auth": "browser",
+      "rights": [
+        "org:member",
+        "wg:read"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/whiteboards-list.request.json",
+      "response": "api/whiteboards-list.response.json",
+      "read_resource": "whiteboards",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/whiteboards/{entry}/history",
+      "name": "whiteboard-history",
+      "section": "4.9",
+      "auth": "browser",
+      "rights": [
+        "org:member",
+        "wg:read"
+      ],
+      "path_params": {
+        "entry": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/whiteboard-history.request.json",
+      "response": "api/whiteboard-history.response.json",
+      "read_resource": "whiteboard.history",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notifications",
+      "name": "notifications-list",
+      "section": "4.9",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/notifications-list.request.json",
+      "response": "api/notifications-list.response.json",
+      "read_resource": "notifications",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/notifications/read",
+      "name": "notifications-read",
+      "section": "4.9",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/notifications-read.request.json",
+      "response": "api/notifications-read.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device-requests",
+      "name": "requests-create",
+      "section": "4.10",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/requests-create.request.json",
+      "response": "api/requests-create.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device-requests/{id}",
+      "name": "requests-get",
+      "section": "4.10",
+      "auth": "browser",
+      "rights": [
+        "owner"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/requests-get.request.json",
+      "response": "api/requests-get.response.json",
+      "read_resource": "device_request",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/monitoring/overview",
+      "name": "monitoring-overview",
+      "section": "4.11",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/monitoring-overview.request.json",
+      "response": "api/monitoring-overview.response.json",
+      "read_resource": "monitoring.overview",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/monitoring/series",
+      "name": "monitoring-series",
+      "section": "4.11",
+      "auth": "browser",
+      "rights": [
+        "org:member",
+        "wg:read"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/monitoring-series.request.json",
+      "response": "api/monitoring-series.response.json",
+      "read_resource": "monitoring.series",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/audit",
+      "name": "org-audit",
+      "section": "4.11",
+      "auth": "browser",
+      "rights": [
+        "org:admin",
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/org-audit.request.json",
+      "response": "api/org-audit.response.json",
+      "read_resource": "org.audit",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/audit/verify",
+      "name": "org-audit-verify",
+      "section": "4.11",
+      "auth": "browser",
+      "rights": [
+        "org:admin"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/org-audit-verify.request.json",
+      "response": "api/org-audit-verify.response.json",
+      "read_resource": "org.audit.verify",
+      "streaming": false,
+      "owner": "CTR-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/stream",
+      "name": "stream",
+      "section": "5",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {},
+      "request_kind": "stream",
+      "request": "ws/sse/query.json",
+      "response": "ws/sse/frame.json",
+      "read_resource": null,
+      "streaming": true,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/enroll",
+      "name": "device-enroll",
+      "section": "6.1",
+      "auth": "device_enroll",
+      "rights": [
+        "invite_proof"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/device-enroll.request.json",
+      "response": "api/device-enroll.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/state",
+      "name": "device-state",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:any"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/device-state.request.json",
+      "response": "api/device-state.response.json",
+      "read_resource": "device.state",
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/outbox",
+      "name": "device-outbox",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/device-outbox.request.json",
+      "response": "api/device-outbox.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/pull",
+      "name": "device-pull",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg",
+        "device:org"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/device-pull.request.json",
+      "response": "api/device-pull.response.json",
+      "read_resource": "device.pull",
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/workgroups/{wg}/tasks",
+      "name": "device-workgroup-tasks",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/device-workgroup-tasks.request.json",
+      "response": "api/device-workgroup-tasks.response.json",
+      "read_resource": "device.workgroup.tasks",
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/tasks/{task}",
+      "name": "device-task-get",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/device-task-get.request.json",
+      "response": "api/device-task-get.response.json",
+      "read_resource": "device.task",
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/logs",
+      "name": "device-logs",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/device-logs.request.json",
+      "response": "api/device-logs.response.json",
+      "read_resource": "device.logs",
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/platform-log",
+      "name": "device-platform-log",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/device-platform-log.request.json",
+      "response": "api/device-platform-log.response.json",
+      "read_resource": "device.platform_log",
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/wraps",
+      "name": "device-wraps-get",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/device-wraps-get.request.json",
+      "response": "api/device-wraps-get.response.json",
+      "read_resource": "device.wraps",
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/wraps",
+      "name": "device-wraps-post",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/device-wraps-post.request.json",
+      "response": "api/device-wraps-post.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/operations",
+      "name": "device-operations",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:session"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/device-operations.request.json",
+      "response": "api/device-operations.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/credentials/{owner}/{kind}",
+      "name": "device-credential-get",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_eligible"
+      ],
+      "path_params": {
+        "owner": "uuid",
+        "kind": "credential_kind"
+      },
+      "request_kind": "query",
+      "request": "api/device-credential-get.request.json",
+      "response": "api/device-credential-get.response.json",
+      "read_resource": "device.credential",
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/device/credentials/{owner}/{kind}",
+      "name": "device-credential-put",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_eligible"
+      ],
+      "path_params": {
+        "owner": "uuid",
+        "kind": "credential_kind"
+      },
+      "request_kind": "body",
+      "request": "api/device-credential-put.request.json",
+      "response": "api/device-credential-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/requests/{id}",
+      "name": "device-request-get",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_addressed"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/device-request-get.request.json",
+      "response": "api/device-request-get.response.json",
+      "read_resource": "device.request",
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/requests/{id}/responses",
+      "name": "device-request-responses",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_addressed"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/device-request-responses.request.json",
+      "response": "api/device-request-responses.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/ws",
+      "name": "device-ws",
+      "section": "6.2",
+      "auth": "device",
+      "rights": [
+        "device"
+      ],
+      "path_params": {},
+      "request_kind": "stream",
+      "request": "ws/device/query.json",
+      "response": "ws/device/hint.json",
+      "read_resource": null,
+      "streaming": true,
+      "owner": "CTR-03"
+    }
+  ]
+}

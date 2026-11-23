@@ -1,0 +1,7 @@
+{
+  "dir": "repos/example-org/example-repo",
+  "paths": [
+    "README.md",
+    "src/app.py"
+  ]
+}

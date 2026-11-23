@@ -1,0 +1,27 @@
+{
+  "name": "e2e-12-terminal-read-only",
+  "description": "E2E-12: one turn whose answer arrives after 12 s, so the terminal shows the waiting animation live while the terminal view is open, then a multi-line answer with a canary. Text typed into the browser's terminal view or straight into the pane never reaches the model (no further step).",
+  "steps": [
+    {
+      "id": "slow-answer",
+      "expect": { "user_text_contains": "E2E12-TERMINAL", "has_tools": true, "has_tool_result": false, "stream": true },
+      "delay_ms": 12000,
+      "reply": {
+        "chunk_size": 8,
+        "content": [
+          {
+            "type": "text",
+            "text": "Terminal check kz12-answer-t6w3y8q1.\n\nLine one of the answer.\nLine two of the answer.\nLine three of the answer.\nDone."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Terminal" }] }
+    }
+  ]
+}

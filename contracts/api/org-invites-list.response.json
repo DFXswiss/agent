@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-invites-list.response.json",
+  "title": "GET /v1/orgs/{org}/invites response",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/invites (03-api.md section 4.2).",
+  "type": "object",
+  "properties": {
+    "invites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "invite_id": {
+            "$ref": "../common.json#/$defs/invite_id"
+          },
+          "kind": {
+            "$ref": "../common.json#/$defs/principal_kind"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "used",
+              "revoked",
+              "expired"
+            ]
+          },
+          "log_seq": {
+            "$ref": "../common.json#/$defs/seq"
+          },
+          "created_by": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "created_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "expires_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "registered": {
+            "type": "boolean"
+          },
+          "used_at": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "used_by": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "invite_id",
+          "kind",
+          "state",
+          "log_seq",
+          "created_by",
+          "created_at",
+          "expires_at",
+          "registered",
+          "used_at",
+          "used_by",
+          "revoked_at"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    }
+  },
+  "required": [
+    "invites"
+  ],
+  "additionalProperties": false
+}

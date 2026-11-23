@@ -12,3 +12,13 @@ htmlcov/
 *.sqlite3
 .env
 .DS_Store
+.coverage.*
+.mypy_cache/
+.ruff_cache/
+.wp/
+node_modules/
+contracts/node_modules/
+src/agent_hub/static/*
+!src/agent_hub/static/.keep
+!web/build/
+!web/tests/build/

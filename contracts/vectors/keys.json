@@ -1,0 +1,119 @@
+{
+  "about": "Raw key formats: X25519/Ed25519 32 bytes, P-256 65-byte point and r||s signatures (RFC 6979 here).",
+  "ed25519": {
+    "message": "YWdlbnQuZGZ4LnN3aXNzIGtleSB2ZWN0b3I",
+    "public_key": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+    "signature": "xz5wKHV6lNMXmACDMugH50pAVQYR4dPFyYvtFT7wuzwm4sN2EaGG3Tc8BJuC0A_W_I9R8CLcYaEDoL_IjRdtCQ"
+  },
+  "identities": {
+    "alice": {
+      "id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2",
+      "kem": "X3xkD9W588YXHe8sKzDPPiJcr3BuchqsjAfFoDHl2W8",
+      "kem_sk": "bLITtKxqd65POjEt99JGl4yLMa8bFiAnIjsGo-r07VM",
+      "sig": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+      "sig_sk": "shNulxzFT3EckRSkNpSnMAZnlJFjRM-6lVcn-iRhgic"
+    },
+    "bob": {
+      "id": "01a1ee56-5e00-7476-87e0-4918c293c341",
+      "kem": "_AhUvdcxtJhZ-CcmASD5KAJKHsc9ubuf7ojLFChBGmw",
+      "kem_sk": "JcB_jHvPz2FPjMcSSrubKqLSWcJ2zMMt_p05RQGWTb4",
+      "sig": "HqhesIzFfr14TTaobMwxl16StxDy22-ONU9cVOKo5OQ",
+      "sig_sk": "U76uloBeAX29BH3MhW3YckucDwkRGHllwDP6yywriLg"
+    },
+    "device": {
+      "id": "01a1ee56-5e00-7390-8018-c0145a37621b",
+      "kem": "wAz1CQhxUyntlAN3sTZbOKwuz5d9_mxNJO2OGE4ZyiA",
+      "kem_sk": "AwMKCx9dltDS1Q5TOW0JwDR-BpcMW1CrnzXv-DmPyrI",
+      "sig": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI",
+      "sig_sk": "M4xx_92hi1ubpMkari6TlCAQt6VsHHfhYPYJjOkEcEo"
+    }
+  },
+  "invalid": [
+    {
+      "args": {
+        "message": "YWdlbnQuZGZ4LnN3aXNzIGtleSB2ZWN0b3Ih",
+        "public_key": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "signature": "xz5wKHV6lNMXmACDMugH50pAVQYR4dPFyYvtFT7wuzwm4sN2EaGG3Tc8BJuC0A_W_I9R8CLcYaEDoL_IjRdtCQ"
+      },
+      "error": "signature_invalid",
+      "name": "ed25519_other_message",
+      "op": "ed25519_verify"
+    },
+    {
+      "args": {
+        "message": "YWdlbnQuZGZ4LnN3aXNzIGtleSB2ZWN0b3I",
+        "public_key": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "signature": "xz5wKHV6lNMXmACDMugH50pAVQYR4dPFyYvtFT7wuzwm4sN2EaGG3Tc8BJuC0A_W_I9R8CLcYaEDoL_IjRdt"
+      },
+      "error": "signature_invalid",
+      "name": "ed25519_short_signature",
+      "op": "ed25519_verify"
+    },
+    {
+      "args": {
+        "message": "YWdlbnQuZGZ4LnN3aXNzIGtleSB2ZWN0b3I",
+        "public_key": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "signature": "xz5wKHV6lNMXmACDMugH50pAVQYR4dPFyYvtFT7wuzwTtrnTKwSZNQ7Z-z1hyu7q_I9R8CLcYaEDoL_IjRdtGQ"
+      },
+      "error": "signature_invalid",
+      "name": "ed25519_noncanonical_s",
+      "op": "ed25519_verify"
+    },
+    {
+      "args": {
+        "message": "YWdlbnQuZGZ4LnN3aXNzIGtleSB2ZWN0b3I",
+        "public_key": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "signature": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "error": "signature_invalid",
+      "name": "ed25519_small_order_key",
+      "op": "ed25519_verify"
+    },
+    {
+      "args": {
+        "message": "YWdlbnQuZGZ4LnN3aXNzIGtleSB2ZWN0b3I",
+        "public_key": "JuiVj8KyJ7BFw_SJ8u-Y8NXfrAXTxjM5sTgCiG1T_AU",
+        "signature": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "error": "signature_invalid",
+      "name": "ed25519_small_order_key_order8",
+      "op": "ed25519_verify"
+    },
+    {
+      "args": {
+        "message": "eA",
+        "public_key": "BGltWeV2uxCLw1yPL7p0IC_Bl403Yc1jtYF94mn8ktwUawfUqPkAkZi8xHUN72UNKGPbxzkTMPEdR7rKLwsbL44",
+        "signature": "ZlGDjAnvX8L0y1yhotI3wMkmK3qLPD320FWyOn8fDHWwwJCxM3YdiEAkOhqap5kVD97SJpsL8iDiSpDAdHZpyw"
+      },
+      "error": "signature_invalid",
+      "name": "p256_other_message",
+      "op": "p256_verify_raw"
+    },
+    {
+      "args": {
+        "message": "YWdlbnQuZGZ4LnN3aXNzIGtleSB2ZWN0b3I",
+        "public_key": "BGltWeV2uxCLw1yPL7p0IC_Bl403Yc1jtYF94mn8ktwUawfUqPkAkZi8xHUN72UNKGPbxzkTMPEdR7rKLwsbL44",
+        "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACwwJCxM3YdiEAkOhqap5kVD97SJpsL8iDiSpDAdHZpyw"
+      },
+      "error": "signature_invalid",
+      "name": "p256_zero_r",
+      "op": "p256_verify_raw"
+    },
+    {
+      "args": {
+        "message": "YWdlbnQuZGZ4LnN3aXNzIGtleSB2ZWN0b3I",
+        "public_key": "AmltWeV2uxCLw1yPL7p0IC_Bl403Yc1jtYF94mn8ktwU",
+        "signature": "ZlGDjAnvX8L0y1yhotI3wMkmK3qLPD320FWyOn8fDHWwwJCxM3YdiEAkOhqap5kVD97SJpsL8iDiSpDAdHZpyw"
+      },
+      "error": "signature_invalid",
+      "name": "p256_compressed_point",
+      "op": "p256_verify_raw"
+    }
+  ],
+  "p256": {
+    "message": "YWdlbnQuZGZ4LnN3aXNzIGtleSB2ZWN0b3I",
+    "private_scalar": "5Dxs8N_puGiTQ2cww-ATTN4FG5e0SAJZ1WRAPAM1RRU",
+    "public_key": "BGltWeV2uxCLw1yPL7p0IC_Bl403Yc1jtYF94mn8ktwUawfUqPkAkZi8xHUN72UNKGPbxzkTMPEdR7rKLwsbL44",
+    "signature": "ZlGDjAnvX8L0y1yhotI3wMkmK3qLPD320FWyOn8fDHWwwJCxM3YdiEAkOhqap5kVD97SJpsL8iDiSpDAdHZpyw"
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "name": "e2e-26-notify-ping",
+  "description": "E2E-26: a quiet task in the default workgroup is answered at once (its session stays out of scope). The working task in the second workgroup writes a file, then its next model request is held for 90 s - the turn is running while the admin writes a workgroup entry with notify. The next hook answer (PreToolUse of Read) carries the content-free notice; Claude Code 2.1 sends it as a system message after the tool result (the spec checks it in the journal); the session calls get_notifications and get_whiteboard and answers from the entry. No new prompt in between.",
+  "steps": [
+    {
+      "id": "quiet",
+      "expect": {
+        "user_text_contains": "E2E26-QUIET",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Quiet task done kz26-answer-q3n8v1d5."
+          }
+        ]
+      }
+    },
+    {
+      "id": "write",
+      "expect": {
+        "user_text_contains": "E2E26-WORK",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Writing the plan first."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/plan.md",
+              "content": "# Plan\nkz26-file-w5c2h8m4\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "hold",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "plan.md"
+      },
+      "delay_ms": 90000,
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "${cwd}/plan.md"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fetch",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "kz26-file-w5c2h8m4",
+        "tools_include": ["mcp__platform__get_notifications", "mcp__platform__get_whiteboard"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_notifications",
+            "input": {}
+          }
+        ]
+      }
+    },
+    {
+      "id": "board",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "\"kind\":\"whiteboard.entry\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_whiteboard",
+            "input": {
+              "level": "workgroup"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "kz26-entry-b7r4t9x2"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The workgroup board says kz26-answer-f6k1p3s8."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Plan"
+          }
+        ]
+      }
+    }
+  ]
+}
