@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/user-lookup.request.json",
+  "title": "GET /v1/users/lookup request",
+  "description": "query parameters: the account code as shown in the settings (dashes, spaces, lower case and the look-alikes 0, 1, 8 are accepted; 400 account_code_invalid otherwise)",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[A-Za-z0-9 -]+$"
+    }
+  },
+  "required": [
+    "code"
+  ],
+  "additionalProperties": false
+}

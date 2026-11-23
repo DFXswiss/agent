@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/test_wraps.py at 99578e6bf451.
+"""Copied from agent-core tests/platform/hub/log/test_wraps.py at 9d06f916bd4d.
 
 U-HUB-wraps: W1-W3 and catch-up (agent_hub.log.wraps, agent_hub.log.catchup)."""
 
@@ -14,6 +14,7 @@ from agent_runner.crypto.log.vectors import (
     W0,
     W1,
     LogBuilder,
+    admit_builder,
     make_wrap,
     pid,
     recertified_builder,
@@ -93,3 +94,13 @@ def test_cred_wrap_signer_prefers_the_active_principal(main: LogBuilder) -> None
         wraps.check_cred_wrap(old_key, pid("pdev"), [org_a, org_b], 1)
     with pytest.raises(CryptoError, match="wrap_unauthorized"):
         wraps.check_cred_wrap(old_key, pid("pdev"), [org_a], 1, require_active=True)
+
+
+def test_an_org_that_admitted_the_owner_gets_no_credential_key(plat_state: platform.PlatformState) -> None:
+    admitted = verify.verify_log(admit_builder().entries, sig_pk("alice"), platform=plat_state)
+    bob = admitted.state.principals[pid("bob")]
+    assert (bob.active, bob.consented, admitted.state.wg_access(pid("bob"), W1)) == (True, False, "write")
+    assert wraps.cred_readers([admitted.state], pid("bob")) == {pid("bob")}
+    assert wraps.cred_readers([admitted.state], pid("alice")) == {pid("alice"), pid("device"), pid("pdev")}
+    with pytest.raises(CryptoError, match="wrap_unauthorized"):
+        wraps.check_cred_wrap(make_wrap("bob", "cred", pid("bob"), 1, "device"), pid("bob"), [admitted], 1)

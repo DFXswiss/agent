@@ -1617,6 +1617,78 @@
       "read_resource": null,
       "streaming": false,
       "owner": "KOR-24"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/users/lookup",
+      "name": "user-lookup",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/user-lookup.request.json",
+      "response": "api/user-lookup.response.json",
+      "read_resource": "user.lookup",
+      "streaming": false,
+      "owner": "KOR-37"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/users/{user}/identity",
+      "name": "user-identity",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "user": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/user-identity.request.json",
+      "response": "api/user-identity.response.json",
+      "read_resource": "user.identity",
+      "streaming": false,
+      "owner": "KOR-37"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/invitees",
+      "name": "me-invitees",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/me-invitees.request.json",
+      "response": "api/me-invitees.response.json",
+      "read_resource": "me.invitees",
+      "streaming": false,
+      "owner": "KOR-37"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/users/{user}",
+      "name": "platform-user",
+      "section": "4.3",
+      "auth": "root",
+      "rights": [
+        "root"
+      ],
+      "path_params": {
+        "user": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/platform-user.request.json",
+      "response": "api/platform-user.response.json",
+      "read_resource": "platform.user",
+      "streaming": false,
+      "owner": "KOR-37"
     }
   ]
 }

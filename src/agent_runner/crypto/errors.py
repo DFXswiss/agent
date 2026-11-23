@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/errors.py at 99578e6bf451.
+"""Copied from agent-core src/agent_hub/crypto/errors.py at 9d06f916bd4d.
 
 Error codes of the crypto layer (docs/platform/spec/04-crypto.md section 8, 03-api.md section 11).
 
@@ -29,6 +29,7 @@ CRYPTO_CODES = frozenset(
         "size_exceeded",
         "wrap_unauthorized",
         "platform_root_mismatch",
+        "account_code_invalid",
     }
 )
 
@@ -40,6 +41,7 @@ LOG_CODES = frozenset(
         "log_chain",
         "log_genesis",
         "log_accept",
+        "log_admit",
         "log_signature",
         "log_rights",
         "log_epoch",

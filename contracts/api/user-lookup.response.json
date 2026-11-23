@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/user-lookup.response.json",
+  "title": "GET /v1/users/lookup response",
+  "description": "the account with this account code (ADR-060); 404 identity_unproven if none can be admitted",
+  "$ref": "objects.json#/$defs/user_identity"
+}

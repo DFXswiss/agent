@@ -9,6 +9,7 @@ from __future__ import annotations
 
 HUB_ERROR_CODES = frozenset(
     {
+        "account_code_invalid",
         "already_assigned",
         "attestation_invalid",
         "authenticator_data_invalid",
@@ -28,6 +29,7 @@ HUB_ERROR_CODES = frozenset(
         "header_invalid",
         "hpke_short",
         "id_conflict",
+        "identity_unproven",
         "invite_code_invalid",
         "invite_code_length",
         "invite_consumed",
@@ -42,6 +44,7 @@ HUB_ERROR_CODES = frozenset(
         "last_admin",
         "last_passkey",
         "log_accept",
+        "log_admit",
         "log_chain",
         "log_empty",
         "log_epoch",
@@ -60,6 +63,7 @@ HUB_ERROR_CODES = frozenset(
         "pairing_gesture_required",
         "pairing_unknown",
         "params_invalid",
+        "peer_outdated",
         "platform_access_denied",
         "platform_invite_required",
         "prf_length",

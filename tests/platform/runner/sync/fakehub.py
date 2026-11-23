@@ -93,6 +93,7 @@ class FakeHub:
     scripted: list[tuple[int, dict[str, Any], dict[str, str]]] = field(default_factory=list)
     frames: list[dict[str, Any]] = field(default_factory=list)
     connections: int = 0
+    ws_features: list[str | None] = field(default_factory=list)
     refuse_ws: int = 0
     redirect_ws: int = 0
     to_send: asyncio.Queue[str | None] = field(default_factory=asyncio.Queue)
@@ -282,6 +283,7 @@ class FakeHub:
 
     def process_request(self, connection: ServerConnection, request: Request) -> Response | None:
         headers = {k.lower(): v for k, v in request.headers.raw_items()}
+        self.ws_features.append(headers.get("agent-features"))
         if self.refuse_ws > 0:
             self.refuse_ws -= 1
             return connection.respond(503, "unavailable\n")

@@ -201,7 +201,7 @@ row names a command the tool lacks. Rows in stage c are not built yet. Until a c
 | `claude setup-token` | run `claude setup-token` locally (browser approval only), store as `setup_token` |
 | `settings set [--model-access] [--model] [--locale]` | `PUT /v1/me/settings` |
 | `api <METHOD> <path> [--body …]` | the generic signed call |
-| `org list|create|show`, `org invite --org [--role admin|member] [--wg …] [--expires-hours]`, `org join` | organizations and invitations of every role, joining with an invitation |
+| `org list|create|show`, `org invite --org [--role admin|member] [--wg …] [--expires-hours]`, `org join`, `org admit --org --user <id|account code> [--role admin|member] [--wg …]` | organizations and invitations of every role, joining with an invitation, admitting an existing account directly (ADR-060; the identities are verified against the platform log like in the web client) |
 | `wg list|create|grant`, `repos list|allow|disallow`, `device assign` | workgroups, allowed repositories, platform device |
 | `github connect` | device request `github.connect`; opens the verification page, copies the user code to the clipboard, waits |
 | `diagnose [--task <id>]` | why a task does not start: device, assignment, model access, credentials (incl. expiry), last transition, with `reason` and `next` from fixed lists |

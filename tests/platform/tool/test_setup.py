@@ -141,6 +141,7 @@ def test_forged_log_is_refused(tool: Tool, hub: HubFake, account: User) -> None:
         (lambda answer: {**answer, "entries": "x"}, "response_invalid"),
         (lambda answer: {**answer, "head": None}, "response_invalid"),
         (lambda answer: {**answer, "next_after": "x"}, "response_invalid"),
+        (lambda answer: {**answer, "entries": [*answer["entries"], {"entry": {"body": "x"}}]}, "header_invalid"),
     ],
 )
 def test_bad_log_pages(

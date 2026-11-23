@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/crypto/test_primitives.py at 99578e6bf451.
+"""Copied from agent-core tests/platform/hub/crypto/test_primitives.py at 9d06f916bd4d.
 
 U-HUB-crypto: errors, encodings, UUIDv7, HKDF labels, AES-GCM, HPKE and raw key formats (04-crypto.md 1-3)."""
 
@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from types import MappingProxyType
 
 import pytest
@@ -34,9 +36,21 @@ def refused(code: str) -> pytest.RaisesExc[CryptoError]:
 # --- errors ---
 
 
+SPEC = Path(__file__).resolve().parents[4] / "docs" / "platform" / "spec" / "04-crypto.md"
+
+
+def _section_8() -> tuple[set[str], set[str]]:
+    """The code lists `Crypto/format:` and `Log:` of 04-crypto.md section 8."""
+    section = SPEC.read_text(encoding="utf-8").split("## 8. Error codes")[1].split("\n## ")[0]
+    crypto, log = section.split("Crypto/format:")[1].split("Log:")
+    return set(re.findall(r"`([a-z_]+)`", crypto)), set(re.findall(r"`([a-z_]+)`", log))
+
+
 def test_error_codes_are_the_lists_of_section_8() -> None:
-    assert len(errors.CRYPTO_CODES) == 16
-    assert len(errors.LOG_CODES) == 18
+    crypto, log = _section_8()
+    assert crypto == errors.CRYPTO_CODES
+    assert log == errors.LOG_CODES
+    assert {"account_code_invalid", "log_admit"} <= errors.CODES
     assert errors.CODES == errors.CRYPTO_CODES | errors.LOG_CODES
     error = CryptoError("decrypt_failed")
     assert error.code == "decrypt_failed"

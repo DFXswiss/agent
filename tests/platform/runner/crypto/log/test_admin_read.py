@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/test_admin_read.py at 99578e6bf451.
+"""Copied from agent-core tests/platform/hub/log/test_admin_read.py at 9d06f916bd4d.
 
 U-HUB-rights (KOR-34, ADR-058): every admin of an org reads every workgroup by inheritance.
 

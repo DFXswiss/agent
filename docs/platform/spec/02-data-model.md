@@ -30,7 +30,7 @@ the names in code; renaming requires an ADR.
 | Table | Columns | Notes |
 |---|---|---|
 | `principal` | `id` PK, `kind` text CHECK in (`user`,`device`), `created_at`, `disabled_at` NULL | |
-| `user_identity` | `user_id` PK→principal, `kem_pub` bytea(32), `sig_pub` bytea(32), `recovery_id` text UNIQUE, `created_at` | identity public keys |
+| `user_identity` | `user_id` PK→principal, `kem_pub` bytea(32), `sig_pub` bytea(32), `recovery_id` text UNIQUE, `created_at`, `id_sig` bytea(64) NULL, `id_invite_seq` NULL (both or neither) | identity public keys; `id_sig` = the identity proof of a registration through the platform invitation at `id_invite_seq` (ADR-060) |
 | `user_settings` | `user_id` PK, `model_access` text CHECK in (`auto`,`subscription`,`api_key`,`platform`) default `auto`, `model_id` text NULL, `locale` text CHECK in (`de`,`en`) default `en`, `updated_at` | plaintext preferences |
 | `identity_bundle` | (`user_id`,`slot`) PK, `ct` bytea, `updated_at` | slots `passkey:<b64u id>`, `recovery` |
 | `passkey` | `credential_id` bytea PK, `user_id`, `public_key` bytea(65) (uncompressed P-256 point; only ES256 is offered and accepted), `sign_count` bigint, `transports` text[], `prf_seen` bool, `created_at`, `last_used_at`, `removed_at` NULL | verification via `agent_core.passkey` |
@@ -38,7 +38,7 @@ the names in code; renaming requires an ADR.
 | `browser_session` | `key_id` text PK (`session.<32 hex>`), `user_id`, `credential_id`, `public_key` bytea (P-256 point), `statement` text, `created_at`, `expires_at`, `ended_at` NULL, `pairing_id` NULL (KOR-24) | |
 | `agent` | delegated agent access of a user (`11-agent-access.md` §2, migration 0010): `id` PK, `user_id` NULL, `kem_pub`, `sig_pub`, `state`, `bundle_ct`, `label_ct`, `claim_hash`, `claim_misses`, `source`, `created_at`, `expires_at`, `confirmed_at`, `claimed_at`, `last_used_at`, `revoked_at` | |
 | `request_nonce` | (`key_id`,`nonce`) PK, `seen_at` | rows older than 600 s deleted on insert (legacy rule) |
-| `device` | `id` PK→principal, `kind` CHECK in (`platform`,`org`), `kem_pub`, `sig_pub`, `owner_org` NULL, `state` CHECK in (`pending_certification`,`active`,`decertified`,`removed`), `enrolled_at`, `certified_seq` NULL, `agent_version`, `os`, `arch`, `capacity` jsonb (`{"vm_memory_budget_mib","vm_memory_used_mib","vm_slots_total","vm_slots_free","pool_ready"}`), `updated_at` | |
+| `device` | `id` PK→principal, `kind` CHECK in (`platform`,`org`), `kem_pub`, `sig_pub`, `owner_org` NULL, `state` CHECK in (`pending_certification`,`active`,`decertified`,`removed`), `enrolled_at`, `certified_seq` NULL, `agent_version`, `os`, `arch`, `capacity` jsonb (`{"vm_memory_budget_mib","vm_memory_used_mib","vm_slots_total","vm_slots_free","pool_ready"}`), `updated_at`, `features` text[] (capabilities announced on the last live-channel connection, e.g. `log.admit`; ADR-060) | |
 | `device_presence` | `device_id` PK, `hub_instance` text, `connected_at`, `last_heartbeat_at` | online ⇔ heartbeat < 30 s ago |
 | `device_enrollment` | `invite_id` PK, `device_id`, `request` jsonb (enrollment body incl. signatures), `created_at`, `certified_at` NULL | platform devices only |
 | `invite` | `id` text PK (= `invite_id`), `scope` CHECK in (`platform`,`org`), `kind` CHECK in (`user`,`device`), `org_id` NULL, `log_seq` int NULL, `created_by`, `created_at`, `expires_at`, `registered_user` NULL (user registered through this invitation; at most one), `registered_at` NULL, `used_at` NULL, `used_by` NULL, `revoked_at` NULL, `package_ct` bytea NULL, `pk_inv` NULL (public invitation key, ADR-043; required to register) | package deleted (set NULL) on use, revocation or expiry; platform user invitations from the operator CLI also appear as `platform_entry` type `user_invite`; registrations without accept/genesis within 24 h are deleted and `registered_user` reset |
@@ -50,7 +50,7 @@ the names in code; renaming requires an ADR.
 | `org` | `id` PK, `private` bool, `platform_access` bool [P] (true for private orgs created from a platform invitation; else from `org_platform_access` platform-log entries, ADR-026), `default_wg` uuid, `created_by`, `created_at`, `log_head_seq` int, `log_head_hash` text, `rotation_pending` jsonb (list of `{scope,scope_id}`) | |
 | `membership_entry` [AO] | (`org_id`,`seq`) PK, `entry_text` text (canonical JSON of the entry), `entry_hash` text UNIQUE, `type`, `by_id`, `subject_id` NULL, `received_at` | appended under `SELECT … FOR UPDATE` of `org` row |
 | `platform_entry` [AO] | `seq` PK, `entry_text`, `entry_hash` UNIQUE, `type`, `subject_id` NULL, `received_at` | |
-| `org_member` [P] | (`org_id`,`principal_id`) PK, `kind`, `role` CHECK in (`admin`,`member`,`device`), `joined_seq`, `removed_seq` NULL | |
+| `org_member` [P] | (`org_id`,`principal_id`) PK, `kind`, `role` CHECK in (`admin`,`member`,`device`), `joined_seq`, `removed_seq` NULL, `consented` bool default true | `consented` false for a user that entered by `admit` (ADR-060): the org's devices are not eligible for its `CK` |
 | `wg` [P] | `id` PK, `org_id`, `is_default` bool, `created_seq`, `archived_seq` NULL | |
 | `wg_access` [P] | (`wg_id`,`user_id`) PK, `access` CHECK in (`read`,`write`), `granted_seq`, `revoked_seq` NULL, `inherited` boolean (only with `read`; KOR-34) | the effective access: default wg rows created for every member; `inherited` rows give every admin `read` on every other workgroup (ADR-058); credential eligibility ignores inherited rows |
 | `wg_device` [P] | (`wg_id`,`device_id`) PK, `assigned_seq`, `unassigned_seq` NULL | |
@@ -102,7 +102,7 @@ main session failed and no retry is pending; `closed` only by user action.
 |---|---|---|
 | `whiteboard_entry` [P] | `id` PK (= `ref`), `org_id`, `level` CHECK in (`org`,`workgroup`,`task`), `wg_id` NULL, `task_id` NULL, `author_id`, `created_event_id`, `latest_event_id`, `created_at`, `updated_at`, `deleted` bool, `notify` bool | projection of whiteboard events (history = the events) |
 | `session_ping` | `id` PK, `session_id`, `kind` CHECK in (`whiteboard.entry`,`subagent.finished`,`operation.finished`), `level` NULL, `ref`, `created_at`, `delivered_at` NULL | durable content-free pings; undelivered rows are returned in `GET /v1/device/state`; set delivered by the outbox audit item `ping.delivered`; the hub writes only `whiteboard.entry` rows (runner pings live in the runner's `ping` table, KOR-07) |
-| `notification` | `id` PK, `recipient_id`, `kind` CHECK in (`whiteboard.entry`,`task.idle`,`task.failed`,`invite.accepted`,`rotation.required`), `org_id`, `wg_id` NULL, `task_id` NULL, `ref` NULL, `created_at`, `read_at` NULL | content-free |
+| `notification` | `id` PK, `recipient_id`, `kind` CHECK in (`whiteboard.entry`,`task.idle`,`task.failed`,`invite.accepted`,`rotation.required`,`agent.account_change`,`org.admitted`), `org_id`, `wg_id` NULL, `task_id` NULL, `ref` NULL, `created_at`, `read_at` NULL | content-free |
 
 ### 2.7 Credentials and device requests
 

@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/kdf.py at 99578e6bf451.
+"""Copied from agent-core src/agent_hub/crypto/kdf.py at 9d06f916bd4d.
 
 Derivations and labels of 04-crypto.md section 3 (HKDF-SHA256, 32-byte output, empty salt unless stated).
 
@@ -41,6 +41,9 @@ LABEL_DEDUPE = b"dedupe\x00"
 LABEL_RECOVERY_PROOF = b"recovery-proof\x00"
 LABEL_ENROLL = b"enroll\x00"
 LABEL_INVITE_REGISTER = b"invite-register\x00"
+LABEL_INVITE_IDENTITY = b"invite-identity\x00"
+LABEL_ACCOUNT_CODE = b"account-code\x00"
+LABEL_USER_ID = b"user-id\x00"
 
 KEY_BYTES = 32
 CODE_BYTES = 16

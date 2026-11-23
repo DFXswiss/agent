@@ -26,6 +26,7 @@ from agent_platform.pairing import pair, register
 from agent_platform.state import Home
 from agent_runner.crypto.encoding import b64u_decode
 from agent_runner.crypto.errors import CryptoError
+from agent_runner.crypto.identity import account_code, format_account_code
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 MAX_STDIN = 1024 * 1024
@@ -126,6 +127,7 @@ def cmd_status(account: Account, args: argparse.Namespace, context: Context) -> 
         "hub": account.origin,
         "agent_id": account.agent_id,
         "user_id": account.user_id,
+        "account_code": format_account_code(account_code(account.user_id, account.identity.public())),
         "display_name": account.display_name(),
         "settings": me.get("settings"),
         "orgs": orgs.org_list(account)["orgs"],
@@ -228,6 +230,10 @@ def cmd_wg_list(account: Account, args: argparse.Namespace, context: Context) ->
 
 def cmd_wg_create(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
     return orgs.wg_create(account, args.org, args.name)
+
+
+def cmd_org_admit(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return orgs.org_admit(account, args.org, args.user, args.role, orgs.parse_wgs(args.wg))
 
 
 def cmd_wg_grant(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -370,6 +376,13 @@ def _org_commands(tree: Tree) -> None:
     sub.add_argument("--role", choices=["admin", "member"], default="member")
     sub.add_argument("--wg", action="append", default=[], help="<wg_id>[:read|write], repeatable")
     sub.add_argument("--expires-hours", type=int, default=72)
+    sub = tree.add(
+        group, "admit", with_account(cmd_org_admit), "admit an existing account directly (no step on its side)"
+    )
+    sub.add_argument("--org", required=True)
+    sub.add_argument("--user", required=True, help="user ID or account code (XXXX-XXXX-XXXX)")
+    sub.add_argument("--role", choices=["admin", "member"], default="member")
+    sub.add_argument("--wg", action="append", default=[], help="<wg_id>[:read|write], repeatable")
     sub = tree.add(group, "join", with_account(cmd_org_join), "accept an org invitation (link on stdin)")
     sub.add_argument("--display-name")
     group = tree.group("wg", "workgroups")

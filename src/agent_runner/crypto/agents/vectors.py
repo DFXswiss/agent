@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/agents/vectors.py at 99578e6bf451.
+"""Copied from agent-core src/agent_hub/agents/vectors.py at 9d06f916bd4d.
 
 Test vectors of the delegated agent access (11-agent-access.md section 3): `contracts/vectors/agent.json`.
 

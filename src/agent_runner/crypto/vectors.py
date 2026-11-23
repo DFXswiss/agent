@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/vectors.py at 99578e6bf451.
+"""Copied from agent-core src/agent_hub/crypto/vectors.py at 9d06f916bd4d.
 
 Deterministic test vectors of 04-crypto.md section 10 (`contracts/vectors/`), after Spike D `make_vectors.py`.
 
@@ -48,6 +48,7 @@ from agent_runner.crypto import (
     request,
     wrap,
 )
+from agent_runner.crypto import identity as identity_format
 from agent_runner.crypto.encoding import b64u_decode, b64u_encode
 from agent_runner.crypto.errors import CryptoError
 
@@ -1202,6 +1203,53 @@ def build_dedupe() -> Json:
     }
 
 
+def build_identity() -> Json:
+    """Identity proof, the user ID derived from a platform invitation and the account code (section 3, ADR-060)."""
+    code = fixed("identity/code", 16)
+    secrets = invite.invite_secrets(code)
+    invite_ts = "2026-11-21T12:34:56.789Z"
+    user = identity_format.invited_user_id(secrets.invite_id, invite_ts)
+    owner = identity("identity/owner").public()
+    other = identity("identity/other").public()
+    codes = []
+    typed_codes = (
+        "abcd-efgh-2345",
+        " ABCD EFGH 2345 ",
+        "0BCD-1FGH-8345",
+        "ABCD-EFGH-234",
+        "ABCD-EFGH-23456",
+        "AB9D-EFGH-2345",
+    )
+    for typed in typed_codes:
+        try:
+            codes.append({"text": typed, "code": identity_format.parse_account_code(typed)})
+        except CryptoError as refused:
+            codes.append({"text": typed, "error": refused.code})
+    account = identity_format.account_code(user, owner)
+    return {
+        "about": "Identity proof id_sig, derived user ID and account code of 04-crypto.md section 3 (ADR-060).",
+        "invite": {
+            "code": b64u_encode(code),
+            "invite_id": secrets.invite_id,
+            "pk_inv": secrets.pk_inv,
+            "ts": invite_ts,
+        },
+        "user_id": user,
+        "pub": owner,
+        "other_pub": other,
+        "text": b64u_encode(identity_format.identity_text(user, owner)),
+        "id_sig": identity_format.sign_identity(secrets.signing, user, owner),
+        "id_sig_other_keys_valid": identity_format.identity_valid(
+            secrets.pk_inv, user, other, identity_format.sign_identity(secrets.signing, user, owner)
+        ),
+        "account_code": account,
+        "account_code_text": identity_format.format_account_code(account),
+        "account_code_other_keys": identity_format.account_code(user, other),
+        "parse": codes,
+        "invalid": [],
+    }
+
+
 SECTIONS: tuple[Section, ...] = (
     Section("encoding", build_encoding),
     Section("kdf", build_kdf),
@@ -1215,6 +1263,7 @@ SECTIONS: tuple[Section, ...] = (
     Section("recovery", build_recovery),
     Section("enroll", build_enroll),
     Section("dedupe", build_dedupe),
+    Section("identity", build_identity),
 )
 
 

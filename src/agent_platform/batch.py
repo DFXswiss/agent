@@ -4,7 +4,9 @@ sections 4.7 and 5.10, 03-api.md section 4.3).
 `build_batch` signs the requested entries as the user, draws fresh keys for every epoch the batch creates (`genesis`,
 `wg_create`), wraps them for every reader and wraps the current epochs the user holds for every principal the batch
 newly entitles (grant, device assignment, accept; with `history` also the older epochs of a granted workgroup); then
-it runs the hub's own check (`check_batch`) on its result before anything is sent. The checking code is the copy of
+it runs the hub's own check (`check_batch`) on its result before anything is sent. Workgroups named in
+`by_catch_up` may lack a key the user does not hold (an `admit` of an admin that is no member there, ADR-060).
+The checking code is the copy of
 the reference (`agent_runner.crypto.log`). The commands of this stage never take access away, so no batch owes a
 rotation (R is empty); a change that needed one would be refused by `check_batch` (`rotation_required`) before it is
 sent.
@@ -94,6 +96,7 @@ def build_batch(
     platform: PlatformState | None = None,
     invite: Ed25519PrivateKey | None = None,
     history: bool = False,
+    by_catch_up: frozenset[str] = frozenset(),
 ) -> Built:
     """The batch of the module docstring; refusals are `CryptoError`s with the hub's codes."""
     founder = identity.public()["sig"]
@@ -126,6 +129,8 @@ def build_batch(
     wraps: list[dict[str, object]] = []
     for slot in sorted(slots):
         key = ring.get((slot.scope, slot.scope_id, slot.epoch))
+        if key is None and slot.scope == WG and slot.scope_id in by_catch_up:
+            continue  # a key the user does not hold: its holders deliver it by catch-up (04-crypto.md section 5.11)
         if key is None:
             fail("epoch_stale")
         wraps.append(make_wrap(identity, slot, _kem(state, slot.recipient), key))

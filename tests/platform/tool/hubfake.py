@@ -32,6 +32,7 @@ from agent_cli.keys import request_text, response_text
 from agent_platform.batch import build_batch, make_wrap
 from agent_runner.crypto import agent as agent_crypto
 from agent_runner.crypto import enroll
+from agent_runner.crypto import identity as identity_format
 from agent_runner.crypto import invite as invite_format
 from agent_runner.crypto.credential import verify_credential
 from agent_runner.crypto.encoding import b64u_decode, b64u_encode, body_json, format_time
@@ -65,6 +66,8 @@ class User:
     cred_epoch: int = 1
     cred_keys: dict[int, bytes] = field(default_factory=dict)
     disabled: bool = False
+    anchor: Json | None = None
+    """The identity answer of the hub (`platform_seq`, `id_sig`; ADR-060) once the user is anchored."""
 
 
 @dataclass
@@ -147,8 +150,24 @@ class HubFake:
 
     # --- seeding ---
 
-    def add_user(self, *, private_org: bool = True, display_name: str = "Ada", cred: bool = True) -> User:
-        user = User(uuid7(), Identity.generate())
+    def add_user(
+        self,
+        *,
+        private_org: bool = True,
+        display_name: str = "Ada",
+        cred: bool = True,
+        anchor: str | None = None,
+    ) -> User:
+        """A user; `anchor` anchors its identity in the platform log (`certify`: `user_certify`, `invite`: registered
+        through a `user_invite` with the identity proof and the derived user ID; None: not anchored)."""
+        identity = Identity.generate()
+        if anchor == "invite":
+            user = User("", identity)
+            user.id, user.anchor = self.invite_identity(identity)
+        else:
+            user = User(uuid7(), identity)
+            if anchor == "certify":
+                self.anchor_user(user)
         self.users[user.id] = user
         if cred:
             key = secrets.token_bytes(32)
@@ -229,6 +248,61 @@ class HubFake:
 
     def platform_state(self) -> PlatformState:
         return verify_platform_log(self.platform_entries, self.root_text).state
+
+    def _platform_base(self) -> Json:
+        head = self.platform_entries[-1]
+        return {
+            "seq": len(self.platform_entries),
+            "prev": entry_hash(head),
+            "by": "platform-root",
+            "ts": now_ms_text(),
+            "v": 1,
+        }
+
+    def anchor_user(self, user: User) -> None:
+        """A `user_certify` of the user's identity keys."""
+        body = {**self._platform_base(), "type": "user_certify", "user": user.id, "pub": user.identity.public()}
+        user.anchor = {"platform_seq": int(self._platform_append(body)["body"]["seq"]), "id_sig": ""}
+
+    def invite_identity(self, identity: Identity) -> tuple[str, Json]:
+        """A `user_invite` and the identity proof of the account registered with its code: the derived user ID and the
+        anchor (`platform_seq` of the invitation, `id_sig`)."""
+        inv = invite_format.invite_secrets(invite_format.generate_code())
+        body = {
+            **self._platform_base(),
+            "type": "user_invite",
+            "invite_id": inv.invite_id,
+            "pk_inv": inv.pk_inv,
+            "expires": now_ms_text(timedelta(days=1)),
+        }
+        entry = self._platform_append(body)
+        user = identity_format.invited_user_id(inv.invite_id, body["ts"])
+        id_sig = identity_format.sign_identity(inv.signing, user, identity.public())
+        return user, {"platform_seq": int(entry["body"]["seq"]), "id_sig": id_sig}
+
+    def identity_answer(self, user: User) -> Json:
+        """`GET /v1/users/{user}/identity` (ADR-060)."""
+        return {
+            "user_id": user.id,
+            "pub": user.identity.public(),
+            **cast(Json, user.anchor),
+            "account_code": identity_format.account_code(user.id, user.identity.public()),
+        }
+
+    def append(self, org: str, user: User, fields: list[Json]) -> None:
+        """Entries the user appends from another device (e.g. `wg_archive`, which the tool has no command for)."""
+        found = self.orgs[org]
+        built = build_batch(
+            found.log,
+            org=org,
+            author=user.id,
+            identity=user.identity,
+            fields=fields,
+            ts=now_ms_text(),
+            held={},
+            platform=self.platform_state(),
+        )
+        found.log = built.log
 
     def certify_device(self) -> tuple[str, int]:
         """A platform device certified in the platform log (`device_invite` + `device_certify`)."""
@@ -413,6 +487,8 @@ class HubFake:
             ("POST", r"/v1/orgs/(?P<org>[0-9a-f-]+)/invites", self.r_invite),
             ("POST", r"/v1/invites/lookup", self.r_lookup),
             ("GET", r"/v1/platform/log", self.r_platform_log),
+            ("GET", r"/v1/users/lookup", self.r_user_lookup),
+            ("GET", r"/v1/users/(?P<user>[0-9a-f-]+)/identity", self.r_user_identity),
             ("GET", r"/v1/scopes/(?P<scope>[0-9a-f-]+)/events", self.r_events),
             ("GET", r"/v1/workgroups/(?P<wg>[0-9a-f-]+)/device-candidates", self.r_candidates),
             ("GET", r"/v1/tasks/(?P<task>[0-9a-f-]+)", self.r_task),
@@ -424,7 +500,7 @@ class HubFake:
             match = re.fullmatch(pattern, path)
             if match is not None and route_method == method:
                 needs_user = path.startswith(("/v1/me", "/v1/wraps", "/v1/orgs", "/v1/scopes", "/v1/workgroups"))
-                needs_user = needs_user or path.startswith(("/v1/platform", "/v1/tasks", "/v1/agent/me"))
+                needs_user = needs_user or path.startswith(("/v1/platform", "/v1/tasks", "/v1/agent/me", "/v1/users"))
                 if needs_user and request.user is None:
                     return 401, {"error": "unauthorized"}
                 return handler(request, body, **match.groupdict())
@@ -646,6 +722,19 @@ class HubFake:
             if wg in org.log.state.workgroups:
                 return org.id
         return None
+
+    def r_user_identity(self, request: Request, body: Any, user: str) -> tuple[int, Any]:
+        found = self.users.get(user)
+        if found is None or found.anchor is None:
+            return 404, {"error": "identity_unproven"}
+        return 200, self.identity_answer(found)
+
+    def r_user_lookup(self, request: Request, body: Any) -> tuple[int, Any]:
+        code = identity_format.parse_account_code(request.query.get("code"))
+        for user in self.users.values():
+            if user.anchor is not None and identity_format.account_code(user.id, user.identity.public()) == code:
+                return 200, self.identity_answer(user)
+        return 404, {"error": "identity_unproven"}
 
     def r_events(self, request: Request, body: Any, scope: str) -> tuple[int, Any]:
         if self._member(request, self.org_of_wg(scope) or scope) is None:

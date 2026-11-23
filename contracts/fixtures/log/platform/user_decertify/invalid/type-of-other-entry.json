@@ -1,0 +1,14 @@
+{
+  "body": {
+    "by": "platform-root",
+    "expires": "2026-11-24T12:00:00.000Z",
+    "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+    "pk_inv": "N3_qC-_MATnBMcTy9ttk5r911rDWbHP_TGCQfxRgzLU",
+    "prev": "OWRtKOYovyVq_gqjbqRcgInoENRwHAO9yi-f1PC4h_w",
+    "seq": 11,
+    "ts": "2026-11-21T12:11:00.000Z",
+    "type": "user_invite",
+    "v": 1
+  },
+  "sig": "h3Q7yS69TPjdJaeRV80fSSzNNDgEebqL0J_XUsqyMTddBuHNuc1Fkmthn04lwNHNkFWWZoHD0XlRa1CwiTm0Ag"
+}

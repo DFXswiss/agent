@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/batch.py at 99578e6bf451.
+"""Copied from agent-core src/agent_hub/log/batch.py at 9d06f916bd4d.
 
 The atomic append batch of `POST /v1/orgs/{org}/log` and `POST /v1/orgs` (03-api.md section 4.3, 04-crypto.md
 sections 4.7 and 5.10): entries, the rotation obligation and the wraps.
@@ -14,7 +14,9 @@ sections 4.7 and 5.10): entries, the rotation obligation and the wraps.
 3. W3 for every wrap of the batch, created by the appending principal `wrapped_by`, which must be active after the
    batch (`signature_invalid`, `wrap_unauthorized`), checked against the state after the batch;
 4. distribution of every epoch the batch creates and that is current at its end (`genesis`, `wg_create`, `rotate`):
-   a wrap for every entitled recipient (`rotation_required`).
+   a wrap for every entitled recipient (`rotation_required`);
+5. `admit` (ADR-060): wraps for the admitted user of the current org epoch and of the current epoch of the default
+   workgroup (`log_admit`); further workgroups may follow by catch-up.
 
 Platform access for `device_assign` with `platform_seq` is passed in (`platform_access`, fail-closed); the hub checks
 it first to answer `platform_access_denied` (not a log code) and this module refuses with `log_rights` as backstop.
@@ -102,4 +104,11 @@ def check_batch(
         epoch = state.epoch(*scope)
         if any(WrapSlot(*scope, epoch, recipient) not in slots for recipient in state.readers(*scope, skip)):
             fail("rotation_required")
+    for body in bodies:
+        subject = cast(str, body.get("subject"))
+        if body["type"] != "admit" or state.member(subject) is None:
+            continue
+        needed = ((ORG, state.org), (WG, state.default_wg))
+        if any(WrapSlot(*scope, state.epoch(*scope), subject) not in slots for scope in needed):
+            fail("log_admit")
     return BatchResult(after, frozenset(required), stored)

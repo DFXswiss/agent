@@ -1,0 +1,17 @@
+{
+  "body": {
+    "by": "platform-root",
+    "prev": "uanjZCV57Mz08TtMi5vDpiZEqzHM_1KcHmjjDVLR9Wg",
+    "pub": {
+      "kem": "MUbmKmKwNkQPw8Miz0JMpgezZnLgQkVVJRaqvWyM8x8",
+      "sig": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs"
+    },
+    "seq": 12,
+    "ts": "2026-11-21T12:12:00.000Z",
+    "type": "user_certify",
+    "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+    "v": 1,
+    "name": "x"
+  },
+  "sig": "JQxNsdQ_tlkjyP1vojU0OZEkQ9aWFkdO27SoEQuWyK3XAes-e9JdkhABy6rNKjVl9vK4Xws9RO-grGp2UHQSBA"
+}

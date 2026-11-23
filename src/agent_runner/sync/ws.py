@@ -11,6 +11,9 @@ through a signed HTTP fetch by the hint handlers.
   start estimate, which depends on `pool_ready`, is not up to 15 s old). An early frame waits `EARLY_BEAT_S` (the
   outbox push spacing) first, so a burst of VM changes (pool refill) coalesces into one frame.
 - A normal close by the hub (also when a heartbeat send meets it first) is `ws_closed`, everything else `ws_failed`.
+- The upgrade request announces the runner's capabilities in the header `Agent-Features` (`FEATURES`; ADR-060: the
+  hub admits accounts into an org only while every device of it announced `log.admit`). A header, not a query
+  parameter: an older hub refuses unknown query parameters but ignores unknown headers.
 - Reconnect backoff 1 s doubling to 30 s with ±20 % jitter, reset after a connection that stayed up 30 s
   (legacy `cmd_sync` rule). Redirects are never followed; no proxy is used.
 """
@@ -34,6 +37,10 @@ from agent_runner.sync.http import HubRefusal, HubTransportError, Signer, format
 from agent_runner.sync.push import Pusher, SyncFatal
 
 WS_TARGET = "/v1/device/ws"
+FEATURES_HEADER = "Agent-Features"
+FEATURES = ("log.admit",)
+"""What this runner understands: `log.admit` - membership logs with `admit` entries and platform logs with
+`user_certify`/`user_decertify` (the copied verifier of `agent_runner.crypto.log`)."""
 HEARTBEAT_S = 15.0
 EARLY_BEAT_S = 0.25
 STABLE_S = 30.0
@@ -195,7 +202,8 @@ class WsClient:
             started: float | None = None
             signed = self.signer.sign("GET", WS_TARGET, b"")
             try:
-                async with self.connect(self.url, signed.headers) as socket:
+                headers = {**signed.headers, FEATURES_HEADER: ",".join(FEATURES)}
+                async with self.connect(self.url, headers) as socket:
                     started = self.clock()
                     self.connects += 1
                     self.line(f"ws_connected count={self.connects}")

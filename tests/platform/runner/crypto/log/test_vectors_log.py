@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/test_vectors_log.py at 99578e6bf451.
+"""Copied from agent-core tests/platform/hub/log/test_vectors_log.py at 9d06f916bd4d.
 
 CON-02 (log part) and CON-03: the log vector files are current, every negative vector fails with exactly its code,
 the positive parts are reproduced, and the event kind matrix equals contracts/enums/event-kinds.json."""

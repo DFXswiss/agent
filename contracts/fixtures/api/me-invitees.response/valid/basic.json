@@ -1,0 +1,25 @@
+{
+  "invitees": [
+    {
+      "user_id": "01a1fe1a-4495-70ca-90ff-34dadbdf67b4",
+      "invite_id": "FQ-Va_Z6BmGCf62ETdidoQ",
+      "registered_at": "2026-11-21T12:40:00.000Z",
+      "identity": {
+        "user_id": "01a1fe1a-4495-70ca-90ff-34dadbdf67b4",
+        "pub": {
+          "kem": "MReWzGKvoyV2wQwJ6Kqqq7uY-TOGR-DPx3ZKdteKj3g",
+          "sig": "1NjE3kynoUZvbJ0JvH4hUE2BN4QgNET-3PEzx9oFTXI"
+        },
+        "platform_seq": 11,
+        "id_sig": "6jLdJRgs9fRsGEGBYhx-JgS9tfyQe7layaqMsne2IF_onwESqW_0X--4pP3jWQQ55BodQcSrQ75axBhfHEyfDg",
+        "account_code": "XUODQBH7HBXI"
+      }
+    },
+    {
+      "user_id": "01a1fe1a-4495-70ca-90ff-34dadbdf67b5",
+      "invite_id": "AAAAAAAAAAAAAAAAAAAAAA",
+      "registered_at": "2026-11-21T12:30:00.000Z",
+      "identity": null
+    }
+  ]
+}

@@ -19,12 +19,14 @@ from agent_platform.account import Account, check_package_head, unverified
 from agent_platform.batch import Built, build_batch, make_wrap
 from agent_platform.errors import PlatformError
 from agent_platform.hub import anon_request, segment
+from agent_runner.crypto import identity as identity_format
 from agent_runner.crypto import invite as invite_format
 from agent_runner.crypto.encoding import b64u_decode, b64u_encode, body_json, format_time
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.event import new_header, seal_event
 from agent_runner.crypto.ids import is_uuid7, uuid7
-from agent_runner.crypto.log.state import ORG, READ, WG, WRITE
+from agent_runner.crypto.log.platform import PlatformState
+from agent_runner.crypto.log.state import ADMIN, MEMBER, ORG, READ, WG, WRITE
 from agent_runner.crypto.log.verify import VerifiedLog, verify_log
 from agent_runner.crypto.log.wraps import CRED, WrapSlot
 
@@ -364,6 +366,112 @@ def _platform_needed(entries: list[dict[str, object]]) -> bool:
         and "platform_seq" in cast(dict[str, object], entry["body"])
         for entry in entries
     )
+
+
+# --- direct admission (ADR-060) ---
+
+
+def _proven(platform: PlatformState, answer: Mapping[str, Any], user: str | None, code: str | None) -> dict[str, Any]:
+    """The identity answer of the hub, verified against the platform log (never trusted as such): the anchor at
+    `platform_seq` proves `(user_id, pub)`; a typed account code must be the code of exactly these keys."""
+    try:
+        found = {
+            "user_id": str(answer["user_id"]),
+            "pub": {"kem": str(answer["pub"]["kem"]), "sig": str(answer["pub"]["sig"])},
+            "platform_seq": answer["platform_seq"],
+            "id_sig": str(answer["id_sig"]),
+        }
+        seq = found["platform_seq"]
+        anchored = (
+            isinstance(seq, int)
+            and not isinstance(seq, bool)
+            and (user is None or found["user_id"] == user)
+            and platform.identity_anchored(seq, found["user_id"], found["pub"], found["id_sig"], current=True)
+            and (code is None or identity_format.account_code(found["user_id"], found["pub"]) == code)
+        )
+    except (KeyError, TypeError, CryptoError):
+        anchored = False
+    if not anchored:
+        raise unverified("identity_unproven")
+    return found
+
+
+def _identity_of(account: Account, platform: PlatformState, who: str) -> dict[str, Any]:
+    """The proven identity of a user ID or of an account code."""
+    if is_uuid7(who):
+        return _proven(platform, account.call("GET", f"/v1/users/{segment(who)}/identity"), who, None)
+    try:
+        code = identity_format.parse_account_code(who)
+    except CryptoError:
+        raise PlatformError("invalid_argument") from None
+    return _proven(platform, account.call("GET", f"/v1/users/lookup?code={code}"), None, code)
+
+
+def org_admit(account: Account, org: str, who: str, role: str, wgs: dict[str, str]) -> dict[str, Any]:
+    """Admit an existing account (user ID or account code) as member or admin with workgroup access, without any step
+    of the admitted person (04-crypto.md section 5.13): the identities of both sides are verified against the platform
+    log, then `admit` is appended with the wraps of the current org key, the default workgroup key and every listed
+    workgroup key the user holds (the rest arrives by catch-up)."""
+    if role not in (ADMIN, MEMBER):
+        raise PlatformError("invalid_argument")
+    platform = account.platform()
+    subject = _identity_of(account, platform, who)
+    own = _proven(
+        platform, account.call("GET", f"/v1/users/{segment(account.user_id)}/identity"), account.user_id, None
+    )
+    if own["pub"] != account.identity.public():
+        raise unverified("identity_mismatch")
+
+    def attempt() -> Built:
+        log = account.org_log(org)
+        state = log.state
+        if not state.is_admin(account.user_id):
+            raise PlatformError("not_admin")
+        if state.member(subject["user_id"]) is not None:
+            raise PlatformError("invalid_argument", reason="already_member")
+        granted = {wg: access for wg, access in wgs.items() if wg != state.default_wg}
+        if any(not state.writable(wg) for wg in granted):
+            raise PlatformError("invalid_argument")
+        fields = {
+            "type": "admit",
+            "subject": subject["user_id"],
+            "pub": subject["pub"],
+            "platform_seq": subject["platform_seq"],
+            "id_sig": subject["id_sig"],
+            "by_platform_seq": own["platform_seq"],
+            "by_id_sig": own["id_sig"],
+            "role": role,
+            "wgs": granted,
+        }
+        try:
+            built = build_batch(
+                log,
+                org=org,
+                author=account.user_id,
+                identity=account.identity,
+                fields=[fields],
+                ts=now_text(),
+                held=account.keys(org),
+                platform=platform,
+                by_catch_up=frozenset(granted),
+            )
+        except CryptoError as error:
+            raise crypto_refusal(error) from None
+        answer = account.call("POST", f"/v1/orgs/{segment(org)}/log", built.body([]))
+        require_head(answer, built.log)
+        account.remember(org, built.log)
+        return built
+
+    built = with_retry(account, org, attempt)
+    code = identity_format.account_code(subject["user_id"], subject["pub"])
+    return {
+        "org_id": org,
+        "user_id": subject["user_id"],
+        "account_code": identity_format.format_account_code(code),
+        "role": role,
+        "wgs": dict(sorted(cast(dict[str, str], cast(dict[str, Any], built.entries[0]["body"])["wgs"]).items())),
+        "seq": built.log.head.seq,
+    }
 
 
 # --- workgroups ---

@@ -189,11 +189,13 @@ class Account:
         return log
 
     def _trusts(self, log: VerifiedLog) -> bool:
-        """The identity created the org or accepted an invitation into it."""
+        """The identity created the org, accepted an invitation into it or was admitted with its own keys (an `admit`
+        whose admitter's identity rule L5 proved through the platform log, so a hub cannot invent the org; ADR-060)."""
         own = self.sig_public
         for entry in log.entries:
             body = cast(dict[str, Any], entry["body"])
-            if body["type"] in ("genesis", "accept") and body["subject"] == self.user_id and body["pub"]["sig"] == own:
+            joined = body["type"] in ("genesis", "accept", "admit")
+            if joined and body["subject"] == self.user_id and body["pub"]["sig"] == own:
                 return True
         return False
 
@@ -313,9 +315,12 @@ class Account:
 
 
 def _needs_platform(entries: Sequence[object]) -> bool:
+    """A platform device is assigned, or an `admit` anchors identities in the platform log (ADR-060)."""
     for entry in entries:
         body = entry.get("body") if isinstance(entry, dict) else None
-        if isinstance(body, dict) and body.get("type") == "device_assign" and "platform_seq" in body:
+        if not isinstance(body, dict):
+            continue
+        if (body.get("type") == "device_assign" and "platform_seq" in body) or body.get("type") == "admit":
             return True
     return False
 
