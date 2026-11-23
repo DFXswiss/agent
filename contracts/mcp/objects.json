@@ -938,7 +938,7 @@
     },
     "idempotency_key": {
       "type": "string",
-      "description": "optional client key; with it the dedupe fields are {idempotency_key, task}",
+      "description": "optional client key that marks a repetition as the same request; it never lifts the duplicate rule of an operation type with dedupe fields, and reusing it there for other content is params_invalid",
       "minLength": 1,
       "maxLength": 128
     },

@@ -1,7 +1,9 @@
 // E2E-22 (07-testing.md section 2.1; 03-api.md sections 8.3, 9; 04-crypto.md section 4.10; ADR-012): formal checks and
 // duplicates. One session requests operations that the platform must refuse, deduplicate or retry by deterministic
-// rules only: the same comment twice (the second is `duplicate` with the original result, GitHub got one POST), an
-// idempotency key reused with another body (`duplicate`), an unknown type, a repository outside the allow-list, a
+// rules only: the same comment twice (the second is `duplicate` with the original result, GitHub got one POST), the
+// same comment again with a new idempotency key (`duplicate` too: a key never lifts the content rule, KOR-28), an
+// idempotency key reused with another body (`rejected` `params_invalid`), an unknown type, a repository outside the
+// allow-list, a
 // protected branch, a repository the owner's GitHub connection cannot reach, a branch whose ref creation first meets a
 // 502 (retried inside the same operation), the push of an older commit after a newer one (`non_fast_forward`), a commit
 // with a token-shaped secret and a pull request that is already open at GitHub (`existing:true`, MCP `duplicate`).
@@ -117,7 +119,7 @@ test('@E2E-22 @R-9.4 @R-10.9 @R-10.10 @R-11.1 @R-11.2 @R-11.3 @R-11.4 @R-11.5 @R
     `SELECT default_wg FROM hub.org WHERE id = '${uuid(onboarded.org)}'`,
   );
   await allowRepositories(page, onboarded.org, org!.default_wg, [HELLO, 'octo-org/hidden']);
-  // The first ref creation answers 502 once; the comments may reach GitHub twice (one plain, one keyed) and no more.
+  // The first ref creation answers 502 once; the comments may reach GitHub twice (two distinct bodies) and no more.
   await armFaults(orchestrator, [{ route: CREATE_REF, repo: HELLO, kind: 'error', status: 502, times: 1 }]);
   await expectCalls(orchestrator, [{ route: COMMENTS, repo: HELLO, count: 2 }]);
   const connectCalls = (await githubRoutes(orchestrator)).length;
@@ -133,8 +135,9 @@ test('@E2E-22 @R-9.4 @R-10.9 @R-10.10 @R-11.1 @R-11.2 @R-11.3 @R-11.4 @R-11.5 @R
   expect(operations.map((op) => [op.type, op.state, op.error_code])).toEqual([
     ['github.comment', 'succeeded', null],
     ['github.comment', 'duplicate', null],
-    ['github.comment', 'succeeded', null],
     ['github.comment', 'duplicate', null],
+    ['github.comment', 'succeeded', null],
+    ['github.comment', 'rejected', 'params_invalid'],
     ['shell.exec', 'rejected', 'unknown_type'],
     ['github.create_branch', 'rejected', 'repo_not_allowed'],
     ['github.create_branch', 'rejected', 'branch_protected'],
@@ -149,7 +152,7 @@ test('@E2E-22 @R-9.4 @R-10.9 @R-10.10 @R-11.1 @R-11.2 @R-11.3 @R-11.4 @R-11.5 @R
     ['github.create_pull_request', 'succeeded', null],
   ]);
   expect(operations.every((op) => op.session_id === session!.id && op.params_event === 'operation.params')).toBe(true);
-  expect([operations[1]!.duplicate_of, operations[3]!.duplicate_of]).toEqual([operations[0]!.id, operations[2]!.id]);
+  expect([operations[1]!.duplicate_of, operations[2]!.duplicate_of]).toEqual([operations[0]!.id, operations[0]!.id]);
   const finals: Record<string, string> = {
     succeeded: 'operation.succeeded',
     duplicate: 'operation.duplicate',
@@ -165,8 +168,9 @@ test('@E2E-22 @R-9.4 @R-10.9 @R-10.10 @R-11.1 @R-11.2 @R-11.3 @R-11.4 @R-11.5 @R
   ).toEqual([
     ['succeeded', null],
     ['duplicate', null],
-    ['succeeded', null],
     ['duplicate', null],
+    ['succeeded', null],
+    ['rejected', 'params_invalid'],
     ['rejected', 'unknown_type'],
     ['rejected', 'repo_not_allowed'],
     ['rejected', 'branch_protected'],
@@ -181,8 +185,9 @@ test('@E2E-22 @R-9.4 @R-10.9 @R-10.10 @R-11.1 @R-11.2 @R-11.3 @R-11.4 @R-11.5 @R
     ['duplicate', null],
   ]);
   expect(results[1]!.result).toEqual(results[0]!.result);
-  expect(results[3]!.result).toEqual(results[2]!.result);
-  expect(results[15]!.result).toMatchObject({ number: 1, existing: true });
+  expect(results[2]!.result).toEqual(results[0]!.result);
+  expect((results[4]!.error as { pointers?: string[] }).pointers).toEqual(['/idempotency_key']);
+  expect(results[16]!.result).toMatchObject({ number: 1, existing: true });
 
   // GitHub: one POST per distinct comment, the 502 retried inside the branch operation, nothing pushed twice.
   const routes = await githubRoutes(orchestrator, connectCalls);
@@ -204,8 +209,8 @@ test('@E2E-22 @R-9.4 @R-10.9 @R-10.10 @R-11.1 @R-11.2 @R-11.3 @R-11.4 @R-11.5 @R
       route,
     ).toHaveLength(2);
   expect(routes.filter((route) => route === 'PATCH /repos/{owner}/{repo}/git/refs/{ref}')).toHaveLength(1);
-  const pushed = (results[12]!.result as { sha: string }).sha;
-  expect(pushed).toBe((results[11]!.result as { commit_sha: string }).commit_sha);
+  const pushed = (results[13]!.result as { sha: string }).sha;
+  expect(pushed).toBe((results[12]!.result as { commit_sha: string }).commit_sha);
   expect(repo.refs['heads/e2e22/work'] ?? repo.refs['refs/heads/e2e22/work']).toBe(pushed);
   const calls = await githubJournal(orchestrator);
   expect(JSON.stringify(calls)).not.toContain('kz22Fake');

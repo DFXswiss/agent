@@ -1,6 +1,6 @@
 {
   "name": "e2e-22-formal-checks",
-  "description": "E2E-22: formal checks and duplicates of operations against the GitHub double: the same comment twice (duplicate, one POST), an idempotency key reused with another body, an unknown type, a repository outside the allow-list, a protected branch, a repository the GitHub connection cannot reach, a branch whose ref creation first meets a 502 (retried inside the operation), two commits on one parent and the push of the older one after the newer (non_fast_forward), a commit with a token-shaped secret and a pull request that is already open. Each step checks the previous result.",
+  "description": "E2E-22: formal checks and duplicates of operations against the GitHub double: the same comment twice (duplicate, one POST), the same comment again with a new idempotency key (duplicate), an idempotency key reused with another body (rejected, params_invalid), an unknown type, a repository outside the allow-list, a protected branch, a repository the GitHub connection cannot reach, a branch whose ref creation first meets a 502 (retried inside the operation), two commits on one parent and the push of the older one after the newer (non_fast_forward), a commit with a token-shaped secret and a pull request that is already open. Each step checks the previous result.",
   "steps": [
     {
       "id": "comment",
@@ -46,6 +46,29 @@
                 "number": 1,
                 "body": "Looks good kz22-comment-a"
               }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "rekeyed",
+      "expect": {
+        "tool_result_contains": "\"status\":\"duplicate\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1,
+                "body": "Looks good kz22-comment-a"
+              },
+              "idempotency_key": "kz22-idem-0"
             }
           }
         ]
@@ -100,7 +123,7 @@
     {
       "id": "unknown-type",
       "expect": {
-        "tool_result_contains": "\"status\":\"duplicate\""
+        "tool_result_contains": "\"params_invalid\""
       },
       "reply": {
         "content": [

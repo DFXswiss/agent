@@ -180,7 +180,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 | R-11.3 | §11 b2 | … checks permissions. | H2–H4. | HUB | 03 §8.3 | E2E-22, E2E-18 |
 | R-11.4 | §11 b2 | … detects obvious duplicates by deterministic rules. | HMAC dedupe tags, windows per type. ADR-012. | RUN, HUB | 04 §4.10, 03 §9 | E2E-22 |
 | R-11.5 | §11 b3 | Example: the same comment request twice for the same PR is not published twice. | `github.comment` dedupe on (repo, number, sha256(body)), 24 h. | RUN, HUB | 03 §9 | E2E-22 |
-| R-11.6 | §11 b4 (optional) | Idempotency key; retry rules per operation type. | **Adopted**: optional `idempotency_key`; retry and window rules per type. ADR-012. | GST, RUN, HUB | 03 §9 | E2E-22 |
+| R-11.6 | §11 b4 (optional) | Idempotency key; retry rules per operation type. | **Adopted**: optional `idempotency_key` that marks the same request and never replaces the dedupe fields (KOR-28); retry and window rules per type. ADR-012. | GST, RUN, HUB | 03 §9 | E2E-22 |
 | R-11.7 | §11 b5 | Rejected and deduplicated requests are audited too. | | HUB | 03 §8.3 | E2E-22, E2E-15 |
 | R-11.8 | §11 b6 | PR creation: session requests `create_pull_request`; platform checks formally, creates the PR with the connected account, returns ID and URL. | Type name `github.create_pull_request`. | GST, RUN, HUB | 03 §9 | E2E-21, LIVE-02 |
 | R-11.9 | §11 b7 | Detailed relational PR data model deliberately deferred. | **Confirmed**: PR data only in encrypted operation results. ADR-014. | HUB | 02 §2.5 | E2E-21 (asserts no PR table) |
