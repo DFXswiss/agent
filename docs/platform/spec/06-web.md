@@ -80,7 +80,8 @@ via selectors.
 | Route | Screen | Right |
 |---|---|---|
 | `/` | redirect: unauthenticated → `/login`; else last org → `/o/:org` | – |
-| `/invite` (code in fragment `#…`) | invitation (§3.1) | anon |
+| `/invite` (code in fragment `#…`) | invitation (§3.1); with agent pairing parameters after the code: new account through the user's agent (`11-agent-access.md` §5.2) | anon |
+| `/connect` (pairing in fragment `#…`) | confirm the pairing of the user's AI agent with one passkey gesture (`11-agent-access.md` §5.1) | anon → user |
 | `/login` | login and unlock (§3.4) | anon |
 | `/recover` | recovery (§3.5) | anon |
 | `/o/:org` | home: first-task composer (§4) and recent tasks of the default workgroup | org:member |
@@ -95,7 +96,7 @@ via selectors.
 | `/o/:org/monitoring` | monitoring (§9.1) | org:member |
 | `/o/:org/audit` | audit (§9.2) | org:member (scope per `03-api.md` §4.11) |
 | `/notifications` | notification center (§6.2) | user |
-| `/settings` | account: passkeys, recovery code, language, model access, credentials, GitHub, quotas (§3.6, §8) | user |
+| `/settings` | account: passkeys, recovery code, language, model access, credentials, GitHub, quotas, connected agents (§3.6, §8, §8.3) | user |
 | `/platform/invites` | platform invitations (§7.4) | platform:inviter |
 | `/security` | security page (§10.5) | anon |
 | `*` | not found | – |
@@ -422,7 +423,17 @@ screen says so. Private organizations are only created from a platform invitatio
   `login_automation_failed`.
 - **Quotas:** `GET /v1/me/quotas` – bars for 5-hour and weekly windows with reset times; OpenRouter/API-key spend in
   monitoring (§9).
-- Credentials list with version and "Delete".
+- Credentials list with version and "Delete". A `claude_subscription` record shows its origin ("long-lived token" for
+  `setup_token`, "from the Claude Code login" for `login_token`, ADR-056) and, for a login token, its expiry
+  (an expired one highlighted).
+
+### 8.3 Connected agents (KOR-24, `11-agent-access.md`)
+
+- `/settings` → "Connected agents": `GET /v1/me/agents`, each with name and computer (opened from the sealed label),
+  created, last used and state; "Disconnect" (`DELETE /v1/me/agents/{id}`) after a dialog that says the agent loses
+  all access at once and keeps what it has already read. The notice after a pairing (`?agent=connected|failed`) is
+  only a hint; the state shown is always the hub's list.
+- The audit view (§9.2) marks rows with `agent_id` "by agent <name>" ("by agent" when the name is not the user's).
 
 ## 9. Monitoring and audit
 

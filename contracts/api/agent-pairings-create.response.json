@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/agent-pairings-create.response.json",
+  "title": "POST /v1/agent-pairings response",
+  "description": "Body of a successful response to POST /v1/agent-pairings (11-agent-access.md section 4).",
+  "type": "object",
+  "properties": {
+    "pairing_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "expires_at": {
+      "$ref": "../common.json#/$defs/time"
+    }
+  },
+  "required": [
+    "pairing_id",
+    "expires_at"
+  ],
+  "additionalProperties": false
+}

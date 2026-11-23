@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/agent-me.response.json",
+  "title": "GET /v1/agent/me response",
+  "description": "Body of a successful response to GET /v1/agent/me (11-agent-access.md section 4).",
+  "type": "object",
+  "properties": {
+    "agent_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "bundle_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct"
+    },
+    "label_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct"
+    },
+    "created_at": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "claimed_at": {
+      "$ref": "../common.json#/$defs/time"
+    }
+  },
+  "required": [
+    "agent_id",
+    "user_id",
+    "bundle_ct",
+    "label_ct",
+    "created_at",
+    "claimed_at"
+  ],
+  "additionalProperties": false
+}

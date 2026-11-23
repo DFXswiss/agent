@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/agent-claim.request.json",
+  "title": "POST /v1/agent/claim request",
+  "description": "Body of POST /v1/agent/claim (11-agent-access.md section 4).",
+  "type": "object",
+  "properties": {
+    "claim": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    }
+  },
+  "required": [
+    "claim"
+  ],
+  "additionalProperties": false
+}

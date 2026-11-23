@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/bundle.py at 07f6d21b261a.
+"""Copied from agent-core src/agent_hub/crypto/bundle.py at e051302eeb8e.
 
 Identity bundle (04-crypto.md section 4.1), after Spike D `e2ee.wrap_bundle`/`unwrap_bundle`/`Identity.bundle`.
 

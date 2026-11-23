@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/fields.py at 07f6d21b261a.
+"""Copied from agent-core src/agent_hub/crypto/fields.py at e051302eeb8e.
 
 Field checks shared by the header formats of 04-crypto.md section 4 (all failures are `header_invalid`)."""
 

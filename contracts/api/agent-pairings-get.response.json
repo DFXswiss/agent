@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/agent-pairings-get.response.json",
+  "title": "GET /v1/agent-pairings/{pairing_id} response",
+  "description": "Body of a successful response to GET /v1/agent-pairings/{pairing_id} (11-agent-access.md section 4).",
+  "type": "object",
+  "properties": {
+    "pairing_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "pub": {
+      "type": "object",
+      "properties": {
+        "kem": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        },
+        "sig": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "kem",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "open",
+        "confirmed",
+        "active",
+        "closed"
+      ]
+    },
+    "expires_at": {
+      "$ref": "../common.json#/$defs/time"
+    }
+  },
+  "required": [
+    "pairing_id",
+    "pub",
+    "state",
+    "expires_at"
+  ],
+  "additionalProperties": false
+}

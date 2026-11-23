@@ -59,5 +59,6 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [053](053-operator-github-account.md) | Approved users connect GitHub at once with the operator's token on a platform device; second way beside ADR-015 | §9 | yes (as ADR-015) |
 | [054](054-repository-list-optional.md) | The workgroup repository list is optional: without one every repository the GitHub connection reaches is allowed (owner's decision, replaces the default of concept §9) | §9 | no |
 | [055](055-registration-without-recovery-code-step.md) | Passkeys must deliver PRF (refused at registration, when added and in a recovery, the registration withdrawn); the registration has no recovery-code step (unset recovery slot) | §5, §14.1 | no |
+| [056](056-delegated-agent-access.md) | Delegated agent access: the user's own AI agent pairs with one passkey gesture (loopback handover secret, sealed identity, scoped allow-list) and sets the account up, incl. the transfer of the local Claude Code login | §1, §4, §5, §8 | no |
 
 New decisions get the next free number; a superseded ADR keeps its file and is marked `Superseded by ADR-NNN`.

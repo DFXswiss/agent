@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/verify.py at 07f6d21b261a.
+"""Copied from agent-core src/agent_hub/log/verify.py at e051302eeb8e.
 
 Membership-log verification L1-L10 and the state transition of every entry type (04-crypto.md sections 4.7, 6.1).
 

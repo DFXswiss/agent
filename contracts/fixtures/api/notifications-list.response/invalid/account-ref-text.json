@@ -1,0 +1,15 @@
+{
+  "notifications": [
+    {
+      "notification_id": "01930046-0000-7000-8000-000000000047",
+      "kind": "agent.account_change",
+      "org_id": null,
+      "wg_id": null,
+      "task_id": null,
+      "ref": "free text",
+      "created_at": "2026-11-21T12:00:00.000Z",
+      "read_at": null
+    }
+  ],
+  "next_before": null
+}

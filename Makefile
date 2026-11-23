@@ -4,7 +4,7 @@ PYTHON ?= python
 COVERAGE = coverage
 RC = --rcfile=.coveragerc-platform
 PYTEST_ARGS = -c tests/platform/pytest.ini --confcutdir=tests/platform --import-mode=importlib
-PY_PATHS = src/agent_runner src/agent_guest src/agent_doubles scripts/probes deploy/monitoring/agent_monitoring tests/platform
+PY_PATHS = src/agent_runner src/agent_guest src/agent_doubles src/agent_platform scripts/probes deploy/monitoring/agent_monitoring tests/platform
 PLATFORM_CI_STEPS = platform-lint platform-types platform-test platform-contracts
 AGENT_CORE ?= ../agent-core
 

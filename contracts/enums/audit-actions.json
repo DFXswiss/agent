@@ -30,6 +30,22 @@
       "group": "auth"
     },
     {
+      "action": "agent.confirm",
+      "group": "agent"
+    },
+    {
+      "action": "agent.claim",
+      "group": "agent"
+    },
+    {
+      "action": "agent.revoke",
+      "group": "agent"
+    },
+    {
+      "action": "notification.read",
+      "group": "notification"
+    },
+    {
       "action": "invite.lookup",
       "group": "invite"
     },
@@ -395,6 +411,18 @@
     },
     {
       "action": "read.me.quotas",
+      "group": "read"
+    },
+    {
+      "action": "read.me.agents",
+      "group": "read"
+    },
+    {
+      "action": "read.me.audit",
+      "group": "read"
+    },
+    {
+      "action": "read.agent.me",
       "group": "read"
     },
     {

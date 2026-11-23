@@ -2,8 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/passkeys-login-begin.request.json",
   "title": "POST /v1/passkeys/login/begin request",
-  "description": "Body of POST /v1/passkeys/login/begin (03-api.md section 4.1).",
+  "description": "Body of POST /v1/passkeys/login/begin (03-api.md section 4.1); pairing_id: the login confirms this agent pairing (11-agent-access.md section 5).",
   "type": "object",
-  "properties": {},
+  "properties": {
+    "pairing_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
   "additionalProperties": false
 }

@@ -14,6 +14,7 @@ EXPECTED = {
             "agent_runner",
             "agent_guest",
             "agent_doubles",
+            "agent_platform",
             "scripts/probes/probelib",
             "deploy/monitoring/agent_monitoring",
         ],

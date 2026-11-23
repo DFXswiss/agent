@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/rotation.py at 07f6d21b261a.
+"""Copied from agent-core src/agent_hub/log/rotation.py at e051302eeb8e.
 
 The rotation obligation of 04-crypto.md section 4.7: the required rotate set R.
 

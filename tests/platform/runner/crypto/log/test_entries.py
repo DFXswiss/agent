@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/test_entries.py at 07f6d21b261a.
+"""Copied from agent-core tests/platform/hub/log/test_entries.py at e051302eeb8e.
 
 U-HUB-log: entry formats, signing texts, hashes, heads and L9 (agent_hub.log.entries)."""
 

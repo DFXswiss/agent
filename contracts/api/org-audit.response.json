@@ -155,6 +155,10 @@
                 "type": "null"
               }
             ]
+          },
+          "agent_id": {
+            "$ref": "../common.json#/$defs/uuid",
+            "description": "the agent whose request wrote the row (11-agent-access.md section 7); absent otherwise"
           }
         },
         "required": [

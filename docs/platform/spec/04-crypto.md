@@ -41,6 +41,7 @@ in `agent-core` (uses `agent_hub.crypto`); `contracts/` is owned by `agent-core`
 | Device identity | X25519 `kem` + Ed25519 `sig` | runner at enrollment | `$AGENT_RUNNER_HOME/keys/device.key` (0600) | public keys |
 | Platform root | Ed25519 | operator CLI (`agent-hub platform init`) | operator (offline file) | public key (config); log entries |
 | Hub response key | Ed25519 seed | operator | hub env `AGENT_HUB_SIGNING_KEY` | yes (it is the hub's own key) |
+| Agent key **(new, ADR-056)** | X25519 `kem` + Ed25519 `sig` | agent tool on the user's computer | `$AGENT_PLATFORM_HOME/agent.key` (0600) | public keys; the user's identity sealed to it (needs the handover secret, `11-agent-access.md` §3) |
 | Org key `OK_e` | 32 B, epoch e | admin browser (genesis/rotate) | org members (users), devices assigned to any wg of the org **(changed: devices receive OK, ADR-007)** | wraps only |
 | Workgroup key `WK_e` | 32 B, epoch e | admin/writer browser | wg members, devices assigned to the wg | wraps only |
 | Credential key `CK_e` (per user) | 32 B, epoch e | user browser | the user, devices assigned to any wg in which the user is a member | wraps only |
@@ -146,7 +147,8 @@ Event kinds, scopes and allowed authors (hub and readers enforce; bodies in `03-
 
 `kind` ∈ {`github`, `anthropic_api_key`, `claude_subscription`, `mailbox`}. Bodies (`contracts/credentials/`):
 `github {token, login, user_id, scopes, created_at}`, `anthropic_api_key {key}`, `claude_subscription {token,
-email, kind:"setup_token"}`, `mailbox {imap_host, imap_port, imap_user, imap_password, email}`. Authors: the
+email, kind:"setup_token"|"login_token", expires_at?}` (`login_token`: transferred from the user's local Claude Code
+login by the agent tool, ADR-056), `mailbox {imap_host, imap_port, imap_user, imap_password, email}`. Authors: the
 owner (browser) or a device that holds `CK` and acted on a device request of the owner. `version` = previous version
 + 1 (1 for a new record), set by the author and checked by the hub against `expected_version`.
 
@@ -457,9 +459,10 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | Audit and read-log rows (actor, action, target IDs, result) | KONZEPT §6, §8 |
 | Credential metadata (owner, kind, version) | lifecycle |
 | User settings (model access preference, model choice, locale) | session start |
+| Agents of a user (`11-agent-access.md` §2): agent ID, public keys, state, times, claim hash, the source address of an open pairing (≤ 70 min), which login confirmed which pairing, which actions were taken by an agent (`agent_id` of audit rows); the sealed identity and the sealed label are ciphertexts the hub cannot open | delegated agent access (ADR-056) |
 
 Not visible: everything listed as confidential in `00-overview.md` §3, invitation and recovery codes, PRF
-outputs, scope keys, private keys, credential values.
+outputs, scope keys, private keys, credential values, the handover secret of an agent pairing and an agent's name.
 
 ## 8. Error codes
 

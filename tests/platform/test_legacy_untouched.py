@@ -23,6 +23,7 @@ PLATFORM_PREFIXES = (
     "src/agent_runner/",
     "src/agent_guest/",
     "src/agent_doubles/",
+    "src/agent_platform/",
     "tests/platform/",
     "docs/platform/",
     "contracts/",
@@ -40,6 +41,9 @@ EXTENSIBLE_TABLES = (
     ("project", "scripts"),
     ("tool", "setuptools", "package-data"),
 )
+# Tables that configure the platform gates only (lint and types of the platform packages, ADR-027 section 6): a new
+# platform package is added to their lists (KOR-24: `src/agent_platform` in `[tool.mypy] files`).
+PLATFORM_TABLES = (("tool", "mypy"),)
 
 
 def git(*args: str, root: Path = REPO_ROOT) -> str:
@@ -84,6 +88,9 @@ def pyproject_problems(old: str, new: str) -> list[str]:
             for key, value in old_table.items()
             if new_table.get(key) != value
         ]
+        for data in (before, after):
+            dig(data, table[:-1]).pop(table[-1], None)
+    for table in PLATFORM_TABLES:
         for data in (before, after):
             dig(data, table[:-1]).pop(table[-1], None)
     for key, value in before.items():
@@ -215,6 +222,18 @@ def test_equal_except_additions() -> None:
     assert not equal_except_additions({"tool": {"b": {}}}, {"tool": {"b": {}, "c": 2}})
     assert not equal_except_additions({"a": {"b": 1}}, {"a": {}})
     assert not equal_except_additions({"a": 1}, {"a": 2})
+
+
+def test_platform_tables_may_change(repo: Path) -> None:
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n[project.scripts]\nx = "x:main"\n[tool.mypy]\nfiles = ["a"]\n'
+    )
+    run(repo, "commit", "-q", "-am", "Types.")
+    run(repo, "push", "-q", "origin", "develop")
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n[project.scripts]\nx = "x:main"\n[tool.mypy]\nfiles = ["a", "b"]\n'
+    )
+    assert problems(repo) == []
 
 
 def test_new_key_in_legacy_table_is_refused(repo: Path) -> None:

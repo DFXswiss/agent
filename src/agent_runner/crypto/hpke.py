@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/hpke.py at 07f6d21b261a.
+"""Copied from agent-core src/agent_hub/crypto/hpke.py at e051302eeb8e.
 
 HPKE RFC 9180 base mode, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM, single shot.
 

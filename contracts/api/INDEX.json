@@ -1460,6 +1460,163 @@
       "read_resource": null,
       "streaming": true,
       "owner": "CTR-03"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent-pairings",
+      "name": "agent-pairings-create",
+      "section": "11.4",
+      "auth": "anon",
+      "rights": [
+        "anon"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/agent-pairings-create.request.json",
+      "response": "api/agent-pairings-create.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-24"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/agent-pairings/{pairing_id}",
+      "name": "agent-pairings-get",
+      "section": "11.4",
+      "auth": "anon",
+      "rights": [
+        "anon"
+      ],
+      "path_params": {
+        "pairing_id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/agent-pairings-get.request.json",
+      "response": "api/agent-pairings-get.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-24"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/me/agents",
+      "name": "me-agents-confirm",
+      "section": "11.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/me-agents-confirm.request.json",
+      "response": "api/me-agents-confirm.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-24"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/agents",
+      "name": "me-agents-list",
+      "section": "11.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/me-agents-list.request.json",
+      "response": "api/me-agents-list.response.json",
+      "read_resource": "me.agents",
+      "streaming": false,
+      "owner": "KOR-24"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/audit",
+      "name": "me-audit",
+      "section": "11.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/me-audit.request.json",
+      "response": "api/me-audit.response.json",
+      "read_resource": "me.audit",
+      "streaming": false,
+      "owner": "KOR-24"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/me/agents/{agent_id}",
+      "name": "me-agents-revoke",
+      "section": "11.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "agent_id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/me-agents-revoke.request.json",
+      "response": "api/me-agents-revoke.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-24"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent/claim",
+      "name": "agent-claim",
+      "section": "11.4",
+      "auth": "agent",
+      "rights": [
+        "agent:confirmed"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/agent-claim.request.json",
+      "response": "api/agent-claim.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-24"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/agent/me",
+      "name": "agent-me",
+      "section": "11.4",
+      "auth": "agent",
+      "rights": [
+        "agent"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/agent-me.request.json",
+      "response": "api/agent-me.response.json",
+      "read_resource": "agent.me",
+      "streaming": false,
+      "owner": "KOR-24"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/me/agents",
+      "name": "me-agents-revoke-all",
+      "section": "11.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/me-agents-revoke-all.request.json",
+      "response": "api/me-agents-revoke-all.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-24"
     }
   ]
 }

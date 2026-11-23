@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/vectors.py at 07f6d21b261a.
+"""Copied from agent-core src/agent_hub/crypto/vectors.py at e051302eeb8e.
 
 Deterministic test vectors of 04-crypto.md section 10 (`contracts/vectors/`), after Spike D `make_vectors.py`.
 

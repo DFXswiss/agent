@@ -555,6 +555,30 @@
       "source": "04-crypto \u00a78"
     },
     {
+      "code": "pairing_unknown",
+      "statuses": [
+        404
+      ],
+      "origin": "hub",
+      "source": "11-agent-access \u00a74"
+    },
+    {
+      "code": "pairing_gesture_required",
+      "statuses": [
+        403
+      ],
+      "origin": "hub",
+      "source": "11-agent-access \u00a74"
+    },
+    {
+      "code": "claim_invalid",
+      "statuses": [
+        401
+      ],
+      "origin": "hub",
+      "source": "11-agent-access \u00a74"
+    },
+    {
       "code": "login_automation_failed",
       "statuses": [],
       "origin": "client",
@@ -583,6 +607,12 @@
       "statuses": [],
       "origin": "client",
       "source": "03-api \u00a711 (client-only)"
+    },
+    {
+      "code": "pairing_mismatch",
+      "statuses": [],
+      "origin": "client",
+      "source": "11-agent-access \u00a75"
     }
   ]
 }

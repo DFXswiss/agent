@@ -22,6 +22,7 @@ SCANNED = (
     "src/agent_runner",
     "src/agent_guest",
     "src/agent_doubles",
+    "src/agent_platform",
     "tests/platform",
     "docs/platform",
     "contracts",

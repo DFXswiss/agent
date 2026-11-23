@@ -1,0 +1,25 @@
+{
+  "rows": [
+    {
+      "seq": 120,
+      "at": "2026-11-21T12:00:00.000Z",
+      "actor_id": "0193000a-0000-7000-8000-00000000000a",
+      "actor_kind": "user",
+      "action": "task.create",
+      "result": "ok",
+      "org_id": "01930001-0000-7000-8000-000000000001",
+      "wg_id": "01930002-0000-7000-8000-000000000002",
+      "task_id": "01930003-0000-7000-8000-000000000003",
+      "session_id": null,
+      "device_id": null,
+      "target_kind": "task",
+      "target_id": "01930003-0000-7000-8000-000000000003",
+      "detail": {
+        "events": 2
+      },
+      "event_id": null
+    }
+  ],
+  "next_before": null,
+  "unexpected_field": 1
+}

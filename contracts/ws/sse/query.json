@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/ws/sse/query.json",
   "title": "GET /v1/stream query",
-  "description": "Query parameters of GET /v1/stream (03-api.md section 5): one org, up to three watched terminals, cursors scope_id:seq separated by commas, monitoring=1.",
+  "description": "Query parameters of GET /v1/stream (03-api.md section 5): one org, up to three watched terminals, cursors scope_id:seq separated by commas, monitoring=1, account=1 (the user's account notifications, 11-agent-access.md section 8).",
   "type": "object",
   "properties": {
     "org": {
@@ -22,6 +22,10 @@
       "maxLength": 16384
     },
     "monitoring": {
+      "type": "string",
+      "const": "1"
+    },
+    "account": {
       "type": "string",
       "const": "1"
     }

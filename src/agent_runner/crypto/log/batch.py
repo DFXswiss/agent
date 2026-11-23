@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/batch.py at 07f6d21b261a.
+"""Copied from agent-core src/agent_hub/log/batch.py at e051302eeb8e.
 
 The atomic append batch of `POST /v1/orgs/{org}/log` and `POST /v1/orgs` (03-api.md section 4.3, 04-crypto.md
 sections 4.7 and 5.10): entries, the rotation obligation and the wraps.

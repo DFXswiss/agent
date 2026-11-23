@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/test_wraps.py at 07f6d21b261a.
+"""Copied from agent-core tests/platform/hub/log/test_wraps.py at e051302eeb8e.
 
 U-HUB-wraps: W1-W3 and catch-up (agent_hub.log.wraps, agent_hub.log.catchup)."""
 

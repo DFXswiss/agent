@@ -7,6 +7,7 @@
 |----------------------------------|-----------------------------------------------|
 | `src/agent_hub/crypto/<m>.py`    | `src/agent_runner/crypto/<m>.py`              |
 | `src/agent_hub/log/<m>.py`       | `src/agent_runner/crypto/log/<m>.py`          |
+| `src/agent_hub/agents/vectors.py`| `src/agent_runner/crypto/agents/vectors.py`   |
 | `tests/platform/hub/crypto/...`  | `tests/platform/runner/crypto/...`            |
 | `tests/platform/hub/log/...`     | `tests/platform/runner/crypto/log/...`        |
 
@@ -46,12 +47,16 @@ SOURCE_DIRS = (
     ("src/agent_hub/crypto", "src/agent_runner/crypto"),
     ("src/agent_hub/log", "src/agent_runner/crypto/log"),
 )
+# Single reference modules of other hub areas: their vector sections (KOR-24, `contracts/vectors/agent.json`).
+SOURCE_FILES = (("src/agent_hub/agents/vectors.py", "src/agent_runner/crypto/agents/vectors.py"),)
 TEST_DIRS = (
     ("tests/platform/hub/crypto", "tests/platform/runner/crypto"),
     ("tests/platform/hub/log", "tests/platform/runner/crypto/log"),
 )
 # Longest prefix first; the copy side is matched the same way when a copy is normalised.
 MODULE_NAMES = (
+    ("agent_hub.agents.vectors", "agent_runner.crypto.agents.vectors"),
+    ("agent_hub.agents", "agent_runner.crypto.agents"),
     ("agent_hub.log", "agent_runner.crypto.log"),
     ("agent_hub.crypto", "agent_runner.crypto"),
 )
@@ -99,6 +104,15 @@ SOURCE_ADAPTATIONS: dict[str, list[tuple[str, str]]] = {
 
 # Exact text blocks of a reference test and their replacement (after the names are replaced).
 TEST_ADAPTATIONS: dict[str, list[tuple[str, str]]] = {
+    "tests/platform/hub/crypto/test_agent.py": [
+        # After renaming, agent_runner.crypto.agents sorts after agent_runner.crypto (ruff isort).
+        (
+            "from agent_hub.agents import vectors as agent_vectors\n"
+            "from agent_hub.crypto import agent, hpke, keys, vectors\n",
+            "from agent_hub.crypto import agent, hpke, keys, vectors\n"
+            "from agent_hub.agents import vectors as agent_vectors\n",
+        ),
+    ],
     "tests/platform/hub/crypto/test_vectors.py": [
         # contracts/tools/make_vectors.py of the agent copy imports agent_hub and runs only in agent-core.
         ("import subprocess\n", ""),
@@ -160,7 +174,7 @@ def git_reference(agent_core: Path, rev: str) -> Reference:
 
     head = git("rev-parse", "--verify", f"{rev}^{{commit}}").strip()
     # The last commit that changed a copied path, so unrelated agent-core merges leave the copy unchanged.
-    paths = [directory for directory, _copy in (*SOURCE_DIRS, *TEST_DIRS)]
+    paths = [directory for directory, _copy in (*SOURCE_DIRS, *SOURCE_FILES, *TEST_DIRS)]
     commit = git("log", "-1", "--format=%H", head, "--", *paths).strip()
 
     def list_dir(directory: str) -> list[str]:
@@ -253,6 +267,9 @@ def sha256(text: str) -> str:
 
 
 def target(path: str, dirs: Sequence[tuple[str, str]]) -> str:
+    for reference_file, copy_file in SOURCE_FILES:
+        if path == reference_file:
+            return copy_file
     for reference_dir, copy_dir in dirs:
         if path.startswith(reference_dir + "/"):
             return copy_dir + path[len(reference_dir) :]
@@ -273,22 +290,23 @@ def build(reference: Reference) -> tuple[dict[str, str], dict[str, object]]:
     """`(files to write by repository path, ORIGIN.json document)`."""
     files: dict[str, str] = {}
     entries: list[dict[str, object]] = []
-    for reference_dir, _copy_dir in SOURCE_DIRS:
-        for path in reference.list_dir(reference_dir):
-            if not path.endswith(".py"):
-                continue
-            text = reference.read(path)
-            adaptations = SOURCE_ADAPTATIONS.get(path, [])
-            copy = target(path, SOURCE_DIRS)
-            files[copy] = copy_module(text, path, reference.commit, adaptations)
-            entries.append(
-                {
-                    "adaptations": [{"copy": new, "reference": old} for old, new in adaptations],
-                    "copy": copy,
-                    "sha256": sha256(text),
-                    "source": path,
-                }
-            )
+    sources = [path for directory, _copy_dir in SOURCE_DIRS for path in reference.list_dir(directory)]
+    sources += [reference_file for reference_file, _copy_file in SOURCE_FILES]
+    for path in sources:
+        if not path.endswith(".py"):
+            continue
+        text = reference.read(path)
+        adaptations = SOURCE_ADAPTATIONS.get(path, [])
+        copy = target(path, SOURCE_DIRS)
+        files[copy] = copy_module(text, path, reference.commit, adaptations)
+        entries.append(
+            {
+                "adaptations": [{"copy": new, "reference": old} for old, new in adaptations],
+                "copy": copy,
+                "sha256": sha256(text),
+                "source": path,
+            }
+        )
     tests: list[dict[str, object]] = []
     for reference_dir, _copy_dir in TEST_DIRS:
         for path in _walk(reference, reference_dir):

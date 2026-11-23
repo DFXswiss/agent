@@ -48,6 +48,7 @@ login = ["playwright>=1.65"]
 agent = "agent_cli.main:main"
 agent-runner = "agent_runner.__main__:main"
 agent-guest = "agent_guest.__main__:main"
+agent-platform = "agent_platform.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -56,6 +57,7 @@ where = ["src"]
 agent_cli = ["static/*", "skills/**"]
 agent_doubles = ["**/*.json"]
 agent_runner = ["store/migrations/*.sql", "model/model-catalog.json"]
+agent_platform = ["guide.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -96,4 +98,4 @@ strict = true
 mypy_path = ["src", "scripts/probes", "deploy/monitoring"]
 explicit_package_bases = true
 warn_unreachable = true
-files = ["src/agent_runner", "src/agent_guest", "src/agent_doubles", "scripts/probes", "deploy/monitoring/agent_monitoring", "tests/platform"]
+files = ["src/agent_runner", "src/agent_guest", "src/agent_doubles", "src/agent_platform", "scripts/probes", "deploy/monitoring/agent_monitoring", "tests/platform"]

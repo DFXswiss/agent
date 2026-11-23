@@ -16,3 +16,4 @@ device, runner device, second device. The cutover to production is a separate pl
 | [export-restore.md](export-restore.md) | Org export and restore, projection rebuild, runner store wipe (DR-01) |
 | [local-development-and-tests.md](local-development-and-tests.md) | Setup, `make platform-ci`, `make platform-ci-linux`, `e2e/platform/run.sh` |
 | [operator-github.md](operator-github.md) | The operator's GitHub token on a platform device: setup, atomic replacement, approving and withdrawing users |
+| [agent-account-takeover.md](agent-account-takeover.md) | Account taken over through a stolen agent key: disconnect all, security activity, operator-assisted recovery (ADR-056) |

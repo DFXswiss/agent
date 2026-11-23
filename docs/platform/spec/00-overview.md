@@ -89,6 +89,7 @@ fixture or commit names internal host names, IP addresses or secrets.
 | B4 Runner host ↔ VM | runner host | VM (guest agent and sessions) | Only the host initiates connections (Lima-forwarded unix socket); the guest never holds device keys or scope keys; it receives exactly the plaintext of its own workgroup that it needs. |
 | B5 Guest agent ↔ session sandbox | guest agent (`platform` user) | Claude Code session | Two independent layers (`05-runner.md` §4): Claude Code managed settings + HTTP hooks, and OS sandbox (UID, systemd, Landlock, noexec, nftables). Sessions reach only `127.0.0.1:7700`. |
 | B6 Execution device ↔ outside services | execution device | model providers, GitHub, mailbox | TLS, per-credential scoping (GitHub App, OpenRouter guardrail), formal operation checks. |
+| B7 Agent tool ↔ Hub (ADR-056, `11-agent-access.md`) | agent tool `agent-platform` on the user's computer: a trusted client of the user (holds the user's identity, decrypts, verifies like a browser) | hub | as B1: the tool verifies logs, wraps and the platform log itself and pins the hub key at pairing (`11-agent-access.md` §8.3); the identity reaches it only sealed with a secret the hub never sees. The user trusts the agent like an unlocked browser of their own: it can do everything the user can. |
 
 KONZEPT §5 trust statement made concrete: the user trusts the **execution device** that serves their
 workgroup with plaintext; the user does **not** trust the hub with any confidential content. Confidential

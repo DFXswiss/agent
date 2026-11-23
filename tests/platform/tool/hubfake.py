@@ -1,0 +1,658 @@
+"""An in-process hub for the tests of the agent tool (11-agent-access.md sections 4 and 6; 03-api.md section 4).
+
+HTTP on 127.0.0.1 (an OS-drawn port) in a thread. It checks every signed request like the hub (`agent-request-v1`,
+key ID `agent.<32 hex>`, the agent's state) and signs every answer to a signed request with `agent-response-v1`
+(`agent_cli.keys.response_text`, the text the runner's client verifies). Appends run the reference rules of the copy
+(`check_batch`, `check_cred_wrap`), so a batch the tool builds wrongly is refused as by the real hub.
+
+The fake also plays the user's browser where the hub needs one (`confirm`: the confirmation of a pairing with the
+sealed identity, label and claim hash) and seeds accounts (`add_user`: identity, `CK_1` with its self-wrap, optionally
+a private organization with profile events). `hooks` replace the answer of a route (`(method, path)` -> callable
+returning `(status, body)` or None to go on), to simulate refusals, faults and a malicious hub.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import secrets
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, cast
+from urllib.parse import parse_qs, urlsplit
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from agent_cli.keys import request_text, response_text
+from agent_platform.batch import build_batch, make_wrap
+from agent_runner.crypto import agent as agent_crypto
+from agent_runner.crypto import enroll
+from agent_runner.crypto import invite as invite_format
+from agent_runner.crypto.credential import verify_credential
+from agent_runner.crypto.encoding import b64u_decode, b64u_encode, body_json, format_time
+from agent_runner.crypto.errors import CryptoError
+from agent_runner.crypto.event import new_header, seal_event
+from agent_runner.crypto.ids import uuid7
+from agent_runner.crypto.keys import Identity, ed25519_public_raw, ed25519_verify
+from agent_runner.crypto.log.batch import check_batch
+from agent_runner.crypto.log.entries import Head, entry_hash, sign_platform_entry
+from agent_runner.crypto.log.platform import PlatformState, verify_platform_log
+from agent_runner.crypto.log.state import ORG
+from agent_runner.crypto.log.verify import VerifiedLog
+from agent_runner.crypto.log.wraps import CRED, WrapSlot, check_cred_wrap
+from agent_runner.crypto.wrap import unwrap_key
+from agent_runner.sync.http import format_time as request_time
+
+HUB_KEY_ID = "hub-test"
+Json = dict[str, Any]
+Hook = Callable[[Json | None, "Request"], tuple[int, Any] | None]
+
+
+def now_ms_text(offset: timedelta = timedelta()) -> str:
+    return format_time(datetime.now(UTC) + offset)
+
+
+@dataclass
+class User:
+    id: str
+    identity: Identity
+    settings: Json = field(default_factory=lambda: {"model_access": "auto", "model_id": None, "locale": "en"})
+    cred_epoch: int = 1
+    cred_keys: dict[int, bytes] = field(default_factory=dict)
+    disabled: bool = False
+
+
+@dataclass
+class AgentRow:
+    id: str
+    kem: bytes
+    sig: bytes
+    state: str = "open"
+    user: str | None = None
+    bundle_ct: str | None = None
+    label_ct: str | None = None
+    claim_hash: bytes | None = None
+    misses: int = 0
+    expires: float = 0.0
+
+
+@dataclass
+class Org:
+    id: str
+    log: VerifiedLog
+    private: bool
+    platform_access: bool
+
+
+@dataclass
+class Request:
+    method: str
+    path: str
+    query: dict[str, str]
+    user: str | None
+    agent: str | None
+    raw: bytes
+
+
+class HubFake:
+    def __init__(self) -> None:
+        self.hub_key = Ed25519PrivateKey.generate()
+        self.root = Ed25519PrivateKey.generate()
+        self.root_text = b64u_encode(ed25519_public_raw(self.root))
+        self.users: dict[str, User] = {}
+        self.agents: dict[str, AgentRow] = {}
+        self.orgs: dict[str, Org] = {}
+        self.wraps: list[Json] = []
+        self.events: dict[str, list[Json]] = {}
+        self.credentials: dict[tuple[str, str], Json] = {}
+        self.invites: dict[str, Json] = {}
+        self.devices: dict[str, list[Any]] = {}
+        self.candidates: dict[str, list[Any]] = {}
+        self.tasks: dict[str, Json] = {}
+        self.hooks: dict[tuple[str, str], Hook] = {}
+        self.requests: list[Request] = []
+        self.bodies: list[bytes] = []
+        self.platform_entries: list[Json] = []
+        self.platform_devices: dict[str, Identity] = {}
+        self.sign_answers = True
+        self.lock = threading.RLock()
+        body = {"seq": 0, "prev": "", "type": "root", "by": "platform-root", "ts": now_ms_text(), "v": 1}
+        self._platform_append({**body, "pub": self.root_text})
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    # --- lifecycle ---
+
+    @property
+    def port(self) -> int:
+        return int(self.server.server_address[1])
+
+    @property
+    def origin(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    def start(self) -> HubFake:
+        self.thread.start()
+        return self
+
+    def stop(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+    # --- seeding ---
+
+    def add_user(self, *, private_org: bool = True, display_name: str = "Ada", cred: bool = True) -> User:
+        user = User(uuid7(), Identity.generate())
+        self.users[user.id] = user
+        if cred:
+            key = secrets.token_bytes(32)
+            user.cred_keys[1] = key
+            self.add_wrap(user, WrapSlot(CRED, user.id, 1, user.id), user.identity.kem_public(), key)
+        if private_org:
+            self.create_org(user, private=True, name="Private", display_name=display_name)
+        return user
+
+    def add_wrap(self, wrapper: User, slot: WrapSlot, kem: bytes, key: bytes) -> Json:
+        record = {**make_wrap(wrapper.identity, slot, kem, key), "wrapped_by": wrapper.id, "created_at": now_ms_text()}
+        self.wraps.append(record)
+        return record
+
+    def org_key(self, org: str, user: User, scope: str = ORG, scope_id: str | None = None) -> bytes:
+        scope_id = org if scope_id is None else scope_id
+        epoch = self.orgs[org].log.state.epoch(scope, scope_id)
+        for wrap in self.wraps:
+            if (wrap["scope"], wrap["scope_id"], wrap["epoch"], wrap["recipient_id"]) == (
+                scope,
+                scope_id,
+                epoch,
+                user.id,
+            ):
+                return unwrap_key(
+                    user.identity.kem, scope=scope, scope_id=scope_id, epoch=epoch, recipient=user.id, wrap=wrap["wrap"]
+                )
+        raise KeyError(scope_id)
+
+    def create_org(self, user: User, *, private: bool, name: str, display_name: str) -> str:
+        org, wg = uuid7(), uuid7()
+        genesis = {
+            "type": "genesis",
+            "subject": user.id,
+            "pub": user.identity.public(),
+            "default_wg": wg,
+            "private": private,
+        }
+        built = build_batch(
+            None, org=org, author=user.id, identity=user.identity, fields=[genesis], ts=now_ms_text(), held={}
+        )
+        self.orgs[org] = Org(org, built.log, private, private)
+        for record in built.wraps:
+            self.wraps.append({**record, "wrapped_by": user.id, "created_at": now_ms_text()})
+        key = built.new_keys[(ORG, org, 1)]
+        self.add_event(org, user, key, "org.profile", {"name": name}, lh=0)
+        self.add_event(org, user, key, "wg.profile", {"name": "Default"}, lh=0, wg=wg)
+        if display_name:
+            self.add_event(org, user, key, "member.profile", {"display_name": display_name}, lh=0, ref=user.id)
+        return org
+
+    def add_event(self, org: str, user: User, key: bytes, kind: str, body: Json, *, lh: int, **extra: str) -> Json:
+        epoch = self.orgs[org].log.state.epoch(ORG, org)
+        header = new_header(
+            id=uuid7(),
+            org=org,
+            scope=ORG,
+            scope_id=org,
+            epoch=epoch,
+            author=user.id,
+            kind=kind,
+            ts=now_ms_text(),
+            lh=lh,
+            **extra,
+        )
+        event = seal_event(key, header, body_json(body), user.identity.sig)
+        self.store_event(org, event)
+        return event
+
+    def store_event(self, scope: str, event: Json) -> None:
+        found = self.events.setdefault(scope, [])
+        found.append({"scope_seq": len(found) + 1, "received_at": now_ms_text(), "event": event})
+
+    def _platform_append(self, body: Json) -> Json:
+        entry = sign_platform_entry(body, self.root)
+        self.platform_entries.append(entry)
+        return entry
+
+    def platform_state(self) -> PlatformState:
+        return verify_platform_log(self.platform_entries, self.root_text).state
+
+    def certify_device(self) -> tuple[str, int]:
+        """A platform device certified in the platform log (`device_invite` + `device_certify`)."""
+        device, ident = uuid7(), Identity.generate()
+        code = invite_format.generate_code()
+        inv = invite_format.invite_secrets(code)
+        head = self.platform_entries[-1]
+        seq = len(self.platform_entries)
+        expires = now_ms_text(timedelta(days=1))
+        base = {"by": "platform-root", "ts": now_ms_text(), "v": 1}
+        self._platform_append(
+            {
+                **base,
+                "seq": seq,
+                "prev": entry_hash(head),
+                "type": "device_invite",
+                "invite_id": inv.invite_id,
+                "pk_inv": inv.pk_inv,
+                "expires": expires,
+            }
+        )
+        capacity = {
+            "vm_memory_budget_mib": 8192,
+            "vm_memory_used_mib": 0,
+            "vm_slots_total": 4,
+            "vm_slots_free": 4,
+            "pool_ready": 1,
+        }
+        extra = {"agent_version": "1.0.0", "os": "linux", "arch": "arm64", "capacity": capacity}
+        unsigned = {"device_id": device, "kind": "platform", "invite_id": inv.invite_id, "pub": ident.public(), **extra}
+        enrollment = enroll.sign_enrollment(unsigned, ident.sig, inv.signing)
+        self._platform_append(
+            {
+                **base,
+                "seq": seq + 1,
+                "prev": entry_hash(self.platform_entries[-1]),
+                "type": "device_certify",
+                "device": device,
+                "pub": ident.public(),
+                "invite_id": inv.invite_id,
+                **extra,
+                "enroll_sig": enrollment["enroll_sig"],
+                "inv_sig": enrollment["inv_sig"],
+            }
+        )
+        self.platform_devices[device] = ident
+        return device, seq + 1
+
+    # --- the browser side of a pairing ---
+
+    def confirm(self, pairing_id: str, user: User, secret: bytes, label: Json | None = None) -> None:
+        row = self.agents[pairing_id]
+        claim = agent_crypto.claim(secret, pairing_id, user.id)
+        row.bundle_ct = agent_crypto.seal_identity(row.kem, secret, pairing_id, user.id, user.identity)
+        row.label_ct = agent_crypto.seal_label(
+            user.identity.kem_public(), pairing_id, user.id, label or {"name": "Claude Code", "host": "mac"}
+        )
+        row.claim_hash = agent_crypto.claim_hash(claim)
+        row.user = user.id
+        row.state = "confirmed"
+
+    def override(self, name: str, handler: Callable[..., tuple[int, Any]]) -> None:
+        """Replace a route handler (`r_*`) of this instance, e.g. with a forging wrapper of the original."""
+        setattr(self, name, handler)
+
+    def restore(self, name: str) -> None:
+        delattr(self, name)
+
+    def revoke(self, agent_id: str) -> None:
+        self.agents[agent_id].state = "revoked"
+        self.agents[agent_id].bundle_ct = None
+
+    # --- HTTP ---
+
+    def _handler(self) -> type[BaseHTTPRequestHandler]:
+        hub = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: Any) -> None:
+                return
+
+            def _serve(self) -> None:
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length) if length else b""
+                status, body, signed = hub.handle(self.command, self.path, dict(self.headers.items()), raw)
+                data = json.dumps(body, separators=(",", ":")).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                if signed is not None and hub.sign_answers:
+                    key_id, nonce, agent_time = signed
+                    hub_time = request_time(time.time())
+                    text = response_text(key_id, nonce, agent_time, status, hub_time, hashlib.sha256(data).hexdigest())
+                    self.send_header("Agent-Hub-Key", HUB_KEY_ID)
+                    self.send_header("Agent-Hub-Time", hub_time)
+                    self.send_header("Agent-Hub-Signature", b64u_encode(hub.hub_key.sign(text.encode())))
+                self.end_headers()
+                self.wfile.write(data)
+
+            do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _serve
+
+        return Handler
+
+    def handle(self, method: str, target: str, headers: dict[str, str], raw: bytes) -> tuple[int, Any, Any]:
+        with self.lock:
+            self.bodies.append(raw)
+            parts = urlsplit(target)
+            query = {key: values[0] for key, values in parse_qs(parts.query).items()}
+            signed = None
+            user = agent = None
+            if "Agent-Key" in headers:
+                key_id, nonce, agent_time = headers["Agent-Key"], headers["Agent-Nonce"], headers["Agent-Time"]
+                signed = (key_id, nonce, agent_time)
+                found = self._authenticate(method, target, headers, raw)
+                if isinstance(found, tuple):
+                    return found[0], found[1], signed
+                agent = found
+                row = self.agents[found]
+                user = row.user
+                if row.state == "confirmed" and (method, parts.path) != ("POST", "/v1/agent/claim"):
+                    return 403, {"error": "forbidden"}, signed
+            body = json.loads(raw) if raw else None
+            request = Request(method, parts.path, query, user, agent, raw)
+            self.requests.append(request)
+            hook = self.hooks.get((method, parts.path))
+            if hook is not None:
+                answer = hook(body, request)
+                if answer is not None:
+                    return answer[0], answer[1], signed
+            try:
+                status, result = self.route(request, body)
+            except CryptoError as error:
+                status, result = 400, {"error": error.code if error.code != "header_invalid" else "request_invalid"}
+            return status, result, signed
+
+    def _authenticate(self, method: str, target: str, headers: dict[str, str], raw: bytes) -> str | tuple[int, Json]:
+        key_id = headers["Agent-Key"]
+        match = re.fullmatch(r"agent\.([0-9a-f]{32})", key_id)
+        row = None
+        if match is not None:
+            hexed = match.group(1)
+            row = next((r for r in self.agents.values() if r.id.replace("-", "") == hexed), None)
+        if row is None or row.state == "open":
+            return 401, {"error": "key_unknown"}
+        text = request_text(
+            key_id,
+            method,
+            headers["Host"],
+            target,
+            headers["Agent-Time"],
+            headers["Agent-Nonce"],
+            hashlib.sha256(raw).hexdigest(),
+        )
+        try:
+            ed25519_verify(row.sig, b64u_decode(headers["Agent-Signature"]), text.encode())
+        except (CryptoError, ValueError):
+            return 401, {"error": "signature_invalid"}
+        if row.state == "revoked" or (row.user is not None and self.users[row.user].disabled):
+            return 401, {"error": "key_revoked"}
+        return row.id
+
+    # --- routes ---
+
+    def route(self, request: Request, body: Any) -> tuple[int, Any]:
+        method, path = request.method, request.path
+        table: list[tuple[str, str, Callable[..., tuple[int, Any]]]] = [
+            ("GET", r"/v1/config", self.r_config),
+            ("POST", r"/v1/agent-pairings", self.r_pairing_create),
+            ("POST", r"/v1/agent/claim", self.r_claim),
+            ("GET", r"/v1/agent/me", self.r_agent_me),
+            ("GET", r"/v1/me", self.r_me),
+            ("PUT", r"/v1/me/settings", self.r_settings),
+            ("GET", r"/v1/me/credentials", self.r_credentials),
+            ("GET", r"/v1/me/credentials/(?P<kind>[a-z_]+)", self.r_credential_get),
+            ("PUT", r"/v1/me/credentials/(?P<kind>[a-z_]+)", self.r_credential_put),
+            ("GET", r"/v1/me/devices", self.r_devices),
+            ("GET", r"/v1/wraps", self.r_wraps),
+            ("POST", r"/v1/wraps", self.r_wraps_post),
+            ("POST", r"/v1/orgs", self.r_org_create),
+            ("GET", r"/v1/orgs/(?P<org>[0-9a-f-]+)/log", self.r_log),
+            ("POST", r"/v1/orgs/(?P<org>[0-9a-f-]+)/log", self.r_log_append),
+            ("POST", r"/v1/orgs/(?P<org>[0-9a-f-]+)/invites", self.r_invite),
+            ("POST", r"/v1/invites/lookup", self.r_lookup),
+            ("GET", r"/v1/platform/log", self.r_platform_log),
+            ("GET", r"/v1/scopes/(?P<scope>[0-9a-f-]+)/events", self.r_events),
+            ("GET", r"/v1/workgroups/(?P<wg>[0-9a-f-]+)/device-candidates", self.r_candidates),
+            ("GET", r"/v1/tasks/(?P<task>[0-9a-f-]+)", self.r_task),
+        ]
+        for route_method, pattern, handler in table:
+            match = re.fullmatch(pattern, path)
+            if match is not None and route_method == method:
+                needs_user = path.startswith(("/v1/me", "/v1/wraps", "/v1/orgs", "/v1/scopes", "/v1/workgroups"))
+                needs_user = needs_user or path.startswith(("/v1/platform", "/v1/tasks", "/v1/agent/me"))
+                if needs_user and request.user is None:
+                    return 401, {"error": "unauthorized"}
+                return handler(request, body, **match.groupdict())
+        return 404, {"error": "not_found"}
+
+    def r_config(self, request: Request, body: Any) -> tuple[int, Any]:
+        public = b64u_encode(ed25519_public_raw(self.hub_key))
+        return 200, {
+            "origin": self.origin,
+            "platform_root_key": self.root_text,
+            "hub_key": {"id": HUB_KEY_ID, "public_key": public},
+        }
+
+    def r_pairing_create(self, request: Request, body: Json) -> tuple[int, Any]:
+        kem, sig = b64u_decode(body["pub"]["kem"], 32), b64u_decode(body["pub"]["sig"], 32)
+        try:
+            agent_crypto.verify_pop(body["pairing_id"], kem, sig, body["pop"])
+        except CryptoError:
+            return 401, {"error": "signature_invalid"}
+        row = AgentRow(body["pairing_id"], kem, sig, expires=time.time() + 600)
+        self.agents[row.id] = row
+        return 200, {"pairing_id": row.id, "expires_at": now_ms_text(timedelta(seconds=600))}
+
+    def _agent_me(self, row: AgentRow) -> Json:
+        return {
+            "agent_id": row.id,
+            "user_id": row.user,
+            "bundle_ct": row.bundle_ct,
+            "label_ct": row.label_ct,
+            "created_at": now_ms_text(),
+            "claimed_at": now_ms_text(),
+        }
+
+    def r_claim(self, request: Request, body: Json) -> tuple[int, Any]:
+        row = self.agents[cast(str, request.agent)]
+        claim = b64u_decode(body["claim"], 32)
+        if agent_crypto.claim_hash(claim) != row.claim_hash:
+            row.misses += 1
+            return 401, {"error": "claim_invalid"}
+        row.state = "active"
+        return 200, self._agent_me(row)
+
+    def r_agent_me(self, request: Request, body: Any) -> tuple[int, Any]:
+        return 200, self._agent_me(self.agents[cast(str, request.agent)])
+
+    def r_me(self, request: Request, body: Any) -> tuple[int, Any]:
+        user = self.users[cast(str, request.user)]
+        orgs = []
+        for org in self.orgs.values():
+            member = org.log.state.member(user.id)
+            if member is not None:
+                orgs.append(
+                    {
+                        "org_id": org.id,
+                        "role": member.role,
+                        "private": org.private,
+                        "default_wg": org.log.state.default_wg,
+                        "log_head": org.log.head.to_json(),
+                    }
+                )
+        return 200, {
+            "user_id": user.id,
+            "identity": {"kem_pub": user.identity.public()["kem"], "sig_pub": user.identity.public()["sig"]},
+            "settings": user.settings,
+            "orgs": orgs,
+            "platform_roles": [],
+            "unread_notifications": 0,
+            "passkeys": [],
+            "cred_holders": {"epoch": user.cred_epoch, "devices": []},
+        }
+
+    def r_settings(self, request: Request, body: Json) -> tuple[int, Any]:
+        if set(body) != {"model_access", "model_id", "locale"}:
+            return 400, {"error": "request_invalid"}
+        self.users[cast(str, request.user)].settings = dict(body)
+        return 200, dict(body)
+
+    def r_credentials(self, request: Request, body: Any) -> tuple[int, Any]:
+        found = [
+            {"kind": kind, "version": row["version"], "epoch": row["record"]["header"]["epoch"], "updated_at": "x"}
+            for (owner, kind), row in self.credentials.items()
+            if owner == request.user
+        ]
+        return 200, {"credentials": found}
+
+    def r_credential_get(self, request: Request, body: Any, kind: str) -> tuple[int, Any]:
+        row = self.credentials.get((cast(str, request.user), kind))
+        return (404, {"error": "not_found"}) if row is None else (200, {"record": row["record"]})
+
+    def r_credential_put(self, request: Request, body: Json, kind: str) -> tuple[int, Any]:
+        user = self.users[cast(str, request.user)]
+        record = body["record"]
+        header = verify_credential(record, user.identity.sig_public())
+        stored = self.credentials.get((user.id, kind))
+        current = 0 if stored is None else stored["version"]
+        if header["owner"] != user.id or header["kind"] != kind or header["epoch"] != user.cred_epoch:
+            return 400, {"error": "request_invalid"}
+        if header["version"] != body["expected_version"] + 1:
+            return 400, {"error": "request_invalid"}
+        if body["expected_version"] != current:
+            return 409, {"error": "version_conflict", "detail": {"expected": current}}
+        if stored is not None and stored["record"]["header"]["id"] != header["id"]:
+            return 400, {"error": "request_invalid"}
+        self.credentials[(user.id, kind)] = {"record": record, "version": header["version"]}
+        return 200, {"version": header["version"]}
+
+    def r_devices(self, request: Request, body: Any) -> tuple[int, Any]:
+        return 200, {"devices": self.devices.get(cast(str, request.user), [])}
+
+    def r_wraps(self, request: Request, body: Any) -> tuple[int, Any]:
+        return 200, {"wraps": [wrap for wrap in self.wraps if wrap["recipient_id"] == request.user]}
+
+    def r_wraps_post(self, request: Request, body: Json) -> tuple[int, Any]:
+        user = cast(str, request.user)
+        logs = [org.log for org in self.orgs.values() if org.log.state.member(user) is not None]
+        for wrap in body["wraps"]:
+            check_cred_wrap(wrap, user, logs, self.users[user].cred_epoch, require_active=True)
+            self.wraps.append({**wrap, "wrapped_by": user, "created_at": now_ms_text()})
+        return 200, {"stored": len(body["wraps"]), "ignored": 0}
+
+    def r_org_create(self, request: Request, body: Json) -> tuple[int, Any]:
+        user = self.users[cast(str, request.user)]
+        genesis = body["genesis"]
+        result = check_batch(None, [genesis], body["wraps"], wrapped_by=user.id, founder=user.identity.public()["sig"])
+        org = result.log.state.org
+        if result.log.state.private:
+            return 403, {"error": "platform_invite_required"}
+        self.orgs[org] = Org(org, result.log, False, False)
+        for wrap in body["wraps"]:
+            self.wraps.append({**wrap, "wrapped_by": user.id, "created_at": now_ms_text()})
+        for event in body["events"]:
+            self.store_event(org, event)
+        return 200, {"org_id": org, "default_wg": result.log.state.default_wg}
+
+    def _member(self, request: Request, org: str) -> Org | None:
+        found = self.orgs.get(org)
+        if found is None or found.log.state.member(cast(str, request.user)) is None:
+            return None
+        return found
+
+    def r_log(self, request: Request, body: Any, org: str) -> tuple[int, Any]:
+        found = self._member(request, org)
+        if found is None:
+            return 404, {"error": "not_found"}
+        after = int(request.query.get("after", "-1"))
+        limit = int(request.query.get("limit", "200"))
+        entries = list(found.log.entries)[after + 1 : after + 1 + limit]
+        items = [{"seq": cast(Json, entry["body"])["seq"], "entry": entry} for entry in entries]
+        more = after + 1 + limit < len(found.log.entries)
+        return 200, {
+            "entries": items,
+            "head": found.log.head.to_json(),
+            "next_after": items[-1]["seq"] if more else None,
+        }
+
+    def r_log_append(self, request: Request, body: Json, org: str) -> tuple[int, Any]:
+        found = self.orgs.get(org)
+        if found is None:
+            return 404, {"error": "not_found"}
+        if body["expected_seq"] != found.log.head.seq + 1:
+            return 409, {"error": "seq_conflict", "detail": {"expected_seq": found.log.head.seq + 1}}
+        result = check_batch(
+            found.log,
+            body["entries"],
+            body["wraps"],
+            wrapped_by=cast(str, request.user),
+            platform=self.platform_state(),
+            now=datetime.now(UTC),
+            platform_access=found.platform_access,
+        )
+        found.log = result.log
+        for wrap in body["wraps"]:
+            self.wraps.append({**wrap, "wrapped_by": request.user, "created_at": now_ms_text()})
+        for event in body["events"]:
+            self.store_event(org, event)
+        return 200, {"head": result.log.head.to_json()}
+
+    def r_invite(self, request: Request, body: Json, org: str) -> tuple[int, Any]:
+        found = self.orgs[org]
+        if not found.log.state.is_admin(cast(str, request.user)):
+            return 403, {"error": "forbidden"}
+        result = check_batch(found.log, [body["entry"]], [], wrapped_by=cast(str, request.user))
+        found.log = result.log
+        invite_id = body["entry"]["body"]["invite_id"]
+        self.invites[invite_id] = {"org": org, "package_ct": body["package_ct"]}
+        return 200, {"invite_id": invite_id, "seq": result.log.head.seq}
+
+    def r_lookup(self, request: Request, body: Json) -> tuple[int, Any]:
+        found = self.invites.get(body["invite_id"])
+        if found is None:
+            return 404, {"error": "invite_unknown"}
+        org = self.orgs[found["org"]]
+        return 200, {
+            "kind": "user",
+            "scope": "org",
+            "org_id": org.id,
+            "expires_at": now_ms_text(timedelta(hours=1)),
+            "registered": False,
+            "package_ct": found["package_ct"],
+            "log_head": org.log.head.to_json(),
+            "log": list(org.log.entries),
+        }
+
+    def r_platform_log(self, request: Request, body: Any) -> tuple[int, Any]:
+        after = int(request.query.get("after", "-1"))
+        limit = int(request.query.get("limit", "200"))
+        entries = self.platform_entries[after + 1 : after + 1 + limit]
+        items = [{"seq": entry["body"]["seq"], "entry": entry} for entry in entries]
+        more = after + 1 + limit < len(self.platform_entries)
+        last = self.platform_entries[-1]
+        head = {"seq": last["body"]["seq"], "hash": entry_hash(last)}
+        return 200, {"entries": items, "head": head, "next_after": items[-1]["seq"] if more else None}
+
+    def r_events(self, request: Request, body: Any, scope: str) -> tuple[int, Any]:
+        if self._member(request, scope) is None:
+            return 404, {"error": "not_found"}
+        kinds = set(request.query.get("kinds", "").split(","))
+        after = int(request.query.get("after", "0"))
+        found = [
+            item
+            for item in self.events.get(scope, [])
+            if item["scope_seq"] > after and item["event"]["header"]["kind"] in kinds
+        ]
+        return 200, {"events": found, "next_after": None, "head": len(self.events.get(scope, []))}
+
+    def r_candidates(self, request: Request, body: Any, wg: str) -> tuple[int, Any]:
+        return 200, {"candidates": self.candidates.get(wg, [])}
+
+    def r_task(self, request: Request, body: Any, task: str) -> tuple[int, Any]:
+        found = self.tasks.get(task)
+        return (404, {"error": "not_found"}) if found is None else (200, found)
+
+
+def head_of(log: VerifiedLog) -> Head:
+    return log.head

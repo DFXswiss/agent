@@ -20,7 +20,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[3]
 PACKAGE = REPO_ROOT / "src" / "agent_runner" / "crypto"
-RUNNER_ONLY = {"src/agent_runner/crypto/storage.py"}
+RUNNER_ONLY = {"src/agent_runner/crypto/storage.py", "src/agent_runner/crypto/agents/__init__.py"}
 RUNNER_ONLY_TESTS = {
     f"tests/platform/runner/crypto/{name}"
     for name in (
@@ -28,6 +28,7 @@ RUNNER_ONLY_TESTS = {
         "test_copy.py",
         "test_storage.py",
         "test_runner_vectors.py",
+        "test_agent_vectors.py",
         "data/storage.json",
     )
 }
@@ -169,6 +170,11 @@ def test_copy_module_refusals() -> None:
         tool.copy_module("X = 1\n", "m.py", "a" * 40, [])
     with pytest.raises(tool.CopyError, match="outside the copied directories"):
         tool.target("src/agent_hub/db/x.py", tool.SOURCE_DIRS)
+    with pytest.raises(tool.CopyError, match="outside the copied directories"):
+        tool.target("src/agent_hub/agents/routes.py", tool.SOURCE_DIRS)
+    assert (
+        tool.target("src/agent_hub/agents/vectors.py", tool.SOURCE_DIRS) == "src/agent_runner/crypto/agents/vectors.py"
+    )
 
 
 def test_empty_module_round_trip() -> None:

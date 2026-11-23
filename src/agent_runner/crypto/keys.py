@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/keys.py at 07f6d21b261a.
+"""Copied from agent-core src/agent_hub/crypto/keys.py at e051302eeb8e.
 
 Raw key formats (04-crypto.md sections 1 and 2): X25519 and Ed25519 as 32 raw bytes, P-256 session keys as the
 65-byte uncompressed point with raw `r || s` signatures (the `agent-session-v1` scheme of `agent_core.passkey`).

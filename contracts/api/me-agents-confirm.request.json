@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/me-agents-confirm.request.json",
+  "title": "POST /v1/me/agents request",
+  "description": "Body of POST /v1/me/agents (11-agent-access.md section 4).",
+  "type": "object",
+  "properties": {
+    "pairing_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "bundle_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct"
+    },
+    "label_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct"
+    },
+    "claim_hash": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    }
+  },
+  "required": [
+    "pairing_id",
+    "bundle_ct",
+    "label_ct",
+    "claim_hash"
+  ],
+  "additionalProperties": false
+}

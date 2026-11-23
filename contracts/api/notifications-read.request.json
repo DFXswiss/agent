@@ -27,6 +27,10 @@
         "all": {
           "type": "boolean",
           "const": true
+        },
+        "account": {
+          "type": "boolean",
+          "description": "with all: also mark the account notifications read (11-agent-access.md section 8)"
         }
       },
       "required": [
