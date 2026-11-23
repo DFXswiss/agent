@@ -1,5 +1,5 @@
 // One row of a task list (06-web.md sections 5.1, 12.4): the decrypted title (or the neutral "unverifiable" label
-// with its code), the state badge, the owner's display name (the signed author of the task's first user-written
+// with its code), the workgroup in lists of several workgroups (KOR-26B), the state badge, the owner's display name (the signed author of the task's first user-written
 // `task.meta`; the hub's `owner_id` is ignored, KOR-04) and the last activity as absolute local time with a
 // relative label as secondary text.
 import { Link } from 'react-router-dom';
@@ -36,11 +36,14 @@ export function TaskItem({
   row,
   directory,
   now,
+  workgroup,
 }: {
   org: string;
   row: TaskRow;
   directory: Directory;
   now: number;
+  /** The name of the row's workgroup, shown in lists of several workgroups. */
+  workgroup?: string;
 }) {
   const { t, locale } = useI18n();
   const title = useTitle(row);
@@ -60,6 +63,11 @@ export function TaskItem({
             <span className="text-gray-500">{t('tasks.title.unverifiable', { code: title.code })}</span>
           )}
         </span>
+        {workgroup !== undefined && (
+          <span className="text-sm text-gray-700" data-testid="tasks.row.wg" data-wg={row.wg_id}>
+            {workgroup}
+          </span>
+        )}
         <span
           className={`self-start rounded px-2 text-xs ${BADGE[row.state] ?? 'bg-gray-100 text-gray-800'}`}
           data-testid="tasks.row.state"

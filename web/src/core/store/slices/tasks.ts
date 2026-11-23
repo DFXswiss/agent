@@ -82,7 +82,7 @@ export function staleSession(
 
 export type ListStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-/** One task list (`listKey(wg, state)`): task IDs newest first and the cursor of the next page. */
+/** One task list (`listKey(wg, state)`): task IDs newest first (latest activity) and the cursor of the next page. */
 export interface TaskList {
   readonly wg: string;
   readonly state: string | null;
@@ -189,9 +189,12 @@ export function taskList(state: TasksState, wg: string, filter: string | null): 
   return idle;
 }
 
-/** Newest first: `created_at` descending, then `task_id` descending (the hub's order and tie-breaker). */
+/**
+ * Newest first: the latest activity (`last_activity_at`) descending, then `task_id` descending – the hub's order of
+ * `order=activity` and its tie-breaker (KOR-26B; "newest" is the latest change, CONTRIBUTING.md).
+ */
 export function newestFirst(tasks: Readonly<Record<string, TaskRow>>, ids: Iterable<string>): string[] {
-  const time = (id: string) => parseTime(tasks[id]!.created_at);
+  const time = (id: string) => parseTime(tasks[id]!.last_activity_at);
   return [...new Set(ids)].sort((a, b) => time(b) - time(a) || Number(b > a) - Number(b < a));
 }
 

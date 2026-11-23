@@ -1,11 +1,10 @@
 // Bottom navigation below `md` (06-web.md section 12.1): Home, Tasks, Notifications, Monitoring and More, reachable
-// with the thumb. Tasks opens the task list of the workgroup in view, else of the active org's default workgroup.
+// with the thumb. Tasks opens the task overview of the active org (all readable workgroups, KOR-26B).
 // More opens a sheet with every other navigation entry (discovered, ADR-027 section 4), the settings and the security
 // page. Shown only with an active org (signed in).
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { matchPath, NavLink, useLocation } from 'react-router-dom';
-import { meOrgs } from '../../core/account/session';
+import { NavLink } from 'react-router-dom';
 import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
 import { type NavEntry, navEntries } from '../nav';
@@ -14,18 +13,11 @@ import { navTarget } from '../shell/Nav';
 import { Sheet } from './Sheet';
 
 /** Entries of the bar itself; the rest of the discovered entries go to "More". */
-export const BAR_IDS = ['home', 'monitoring'];
+export const BAR_IDS = ['home', 'tasks', 'monitoring'];
 
 const ITEM =
   'flex min-h-14 min-w-11 flex-col items-center justify-center px-1 text-xs aria-[current=page]:font-semibold ' +
   'aria-[current=page]:text-blue-800';
-
-/** The workgroup whose tasks "Tasks" opens: the one in the path, else the org's default workgroup. */
-export function tasksWorkgroup(pathname: string, org: string, profile: Readonly<Record<string, unknown>> | null) {
-  const inPath = matchPath('/o/:org/w/:wg/*', pathname)?.params;
-  if (inPath?.org === org && inPath.wg !== undefined) return inPath.wg;
-  return meOrgs(profile).find((entry) => entry.org_id === org)?.default_wg ?? null;
-}
 
 function More({ entries, org, onClose }: { entries: readonly NavEntry[]; org: string; onClose: () => void }) {
   const { t } = useI18n();
@@ -67,18 +59,13 @@ function More({ entries, org, onClose }: { entries: readonly NavEntry[]; org: st
 export function BottomNav({ entries = navEntries() }: { readonly entries?: readonly NavEntry[] }) {
   const { app } = useAppEnv();
   const { t } = useI18n();
-  const location = useLocation();
   const org = useStore((state) => state.session.activeOrg, app.store);
-  const profile = useStore((state) => state.me.profile, app.store);
   const [more, setMore] = useState(false);
   if (org === null) return null;
   const base = `/o/${encodeURIComponent(org)}`;
-  const wg = tasksWorkgroup(location.pathname, org, profile);
   const items = [
     { id: 'home', to: base, label: t('home.nav'), end: true },
-    ...(wg === null
-      ? []
-      : [{ id: 'tasks', to: `${base}/w/${encodeURIComponent(wg)}`, label: t('shell.tasks'), end: true }]),
+    { id: 'tasks', to: `${base}/tasks`, label: t('shell.tasks'), end: true },
     { id: 'notifications', to: '/notifications', label: t('shell.notifications'), end: true },
     { id: 'monitoring', to: `${base}/monitoring`, label: t('monitoring.nav'), end: true },
   ];
