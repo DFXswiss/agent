@@ -40,7 +40,9 @@ Record the results (versions, run IDs, pass counts, PERF numbers) in the change'
 ## 3. Release
 
 Merge the pin change, then release the golden on every runner device
-([golden-image-release.md](golden-image-release.md)). Running workgroup VMs move to the new golden at their next start
+([golden-image-release.md](golden-image-release.md)) and install the same Claude Code version on each runner host
+([runner-installation.md §1](runner-installation.md#1-prerequisites); the subscription login runs it there, doctor
+`login_cli`). Running workgroup VMs move to the new golden at their next start
 (05 §3.5). Rollback = rebuild from the previous pin ([golden-image-release.md](golden-image-release.md#retire)); release
 on one runner device first and on the others after a day without incidents.
 
