@@ -36,7 +36,7 @@ document differ, this document wins; §4.6 lists the spike defects that MUST NOT
 | `agent-runner enroll --hub URL --code CODE [--platform]` | §2.1 |
 | `agent-runner run` | foreground daemon (development, tests, launchd target) |
 | `agent-runner status [--json]` | identity, hub connection, outbox backlog, VMs, sessions, pool, capacity |
-| `agent-runner doctor` | checks: Lima ≥ 2.3, vz available, golden ready, Landlock ABI in golden (from build record), PostgreSQL, hub reachability and pinned key, textfile dir writable, clock skew < 5 s against hub time |
+| `agent-runner doctor` | checks: Lima ≥ 2.3, vz available, golden ready, Landlock ABI in golden (from build record), PostgreSQL, login command on the host (`login_cli`: `LOGIN_ARGV[0]` resolved like §11.2; for the default command its `--version`, with a time limit and the login's allow-list env, equals the golden's Claude Code pin, else warn `version_mismatch`; missing or not executable: fail `login_cli_missing`; details in `runbooks/runner-installation.md` §4), hub reachability and pinned key, textfile dir writable, clock skew < 5 s against hub time |
 | `agent-runner image build [--claude-version V]` / `image list` / `image retire VERSION` | §3.1 |
 | `agent-runner pool status` | pool VMs and refill state |
 | `agent-runner service install` / `service uninstall` | §1.1 |
@@ -65,7 +65,7 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `GITHUB_API_URL` / `GITHUB_WEB_URL` | `https://api.github.com` / `https://github.com` | doubles in tests |
 | `MODEL_UPSTREAM_ANTHROPIC` / `MODEL_UPSTREAM_OPENROUTER` | `https://api.anthropic.com` / `https://openrouter.ai/api` | doubles in tests |
 | `ANTHROPIC_USAGE_URL` | `https://api.anthropic.com/api/oauth/usage` | quota polling |
-| `LOGIN_ARGV` | `["claude","setup-token"]` (JSON array) | login-CLI double in tests |
+| `LOGIN_ARGV` | `["claude","setup-token"]` (JSON array) | login-CLI double in tests; the default needs Claude Code on the host at the golden's pin (doctor `login_cli`) |
 | `LOGIN_AUTOMATION` | `on` for platform devices (platform install profile), `off` for org devices | `on` enables §11.3 (needs the `login` extra; the platform install profile includes it) |
 | `GOLDEN_TEMPLATE` | `images/golden.yaml` of the checkout | the build also reads `images/`, `src/agent_guest/` and `contracts/` next to the template; missing → `golden_source_missing` (KOR-03) |
 | `TEST_MODE` | `0` | allows loopback HTTP and double upstreams; MUST be `0` in production (doctor warns) |
@@ -653,7 +653,9 @@ equivalent (`subscription_equivalent`). Claude Code's own cost fields are never 
 1. Create temp dir `$AGENT_RUNNER_HOME/tmp/login-<id>` (0700) with its own `CLAUDE_CONFIG_DIR`/`HOME`; existing
    profiles are never read or written.
 2. Start `LOGIN_ARGV` in a PTY with an allow-list env and `BROWSER` set to a capture helper (pattern of
-   `account_login._write_capture_helper`); wait ≤ 30 s for the authorize URL.
+   `account_login._write_capture_helper`); wait ≤ 30 s for the authorize URL. The program runs on the host and is
+   looked up in the runner's `PATH`: Claude Code is a host prerequisite of every runner device
+   (`runbooks/runner-installation.md` §1), checked by `agent-runner doctor` (`login_cli`).
 3. Response 1: `{step:"authorize", url}`. The user opens it in their own browser, authorizes, copies the code.
 4. Follow-up request (new request ID, same kind `claude.login`, header `follows` = original request ID, `04-crypto.md` §4.5): `{code}` → typed
    into the PTY.

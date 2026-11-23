@@ -9,14 +9,39 @@ LaunchDaemon, checking it with `doctor`, and the faults that need an operator
 ## 1. Prerequisites
 
 - macOS on Apple silicon, Lima ≥ 2.3 with the `vz` VM type, PostgreSQL binaries (the runner manages its own loopback
-  cluster under its home), Python 3.12.
+  cluster under its home), Python 3.12, Node.js with `npm` (for Claude Code on the host, below).
 - A dedicated unprivileged account (the **runner account**) that owns the Lima instances; the daemon never runs as
-  root (`service install` refuses root as `UserName`).
+  root (`service install` refuses root as `UserName`). The runner account needs no `sudo`; the steps that need root
+  run from an administrator account (§3).
 - The agent repository checked out for that account, installed with `pip install -e ".[platform]"` in a virtual
-  environment (`[platform,login]` on platform devices is done by the platform profile below). The golden build
+  environment **that has pip** (`python3.12 -m venv <venv>`; `uv venv` only with `--seed`), owned by the runner
+  account: the platform profile below installs the `login` extra with `<venv>/bin/python -m pip` as the runner
+  account and stops with `login_extra_install_failed` when the environment has no pip. The golden build
   reads `images/`, `src/agent_guest/` and `contracts/` from this checkout; an install without a checkout (wheel)
   needs `AGENT_RUNNER_GOLDEN_TEMPLATE` pointing to a checkout's `images/golden.yaml`, else the build stops with
   `golden_source_missing` (KOR-03).
+- **Claude Code on the host, at the version the golden pins.** "Connect Claude subscription"
+  ([05 §11.2](../spec/05-runner.md#112-claudelogin--setup-token-relay-default)) runs `AGENT_RUNNER_LOGIN_ARGV`
+  (default `claude setup-token`) **on the host**, not in a VM; the runner looks the program up in its own `PATH` (the
+  `PATH` written into the plist at `service install`). Without it every subscription login ends with
+  `login_cli_failed`, and a device without a platform OpenRouter key then has no model access at all. The pin is
+  `claude_code` in `images/versions.json` of the release checkout, the same value `agent-runner image build` uses
+  (`agent-runner image list` shows it per golden). Install it from an administrator account into a directory of the
+  service `PATH` (Homebrew's Node: `/opt/homebrew/bin`), so the runner account can run but not change it. `node`
+  must be in the same directory as the `claude` link: the login passes on only that directory and the system
+  directories in `PATH`.
+
+  ```sh
+  V=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["claude_code"])' <checkout>/images/versions.json)
+  npm install -g "@anthropic-ai/claude-code@$V"
+  claude --version        # "<V> (Claude Code)"
+  ```
+
+  Check: `agent-runner doctor` prints `runner.doctor.check name=login_cli result=ok detail=version value=<V>` (§4). The runner starts this program only with an
+  empty temporary home (no account profile on the host is read or written); never log in with it by hand. Update it
+  only together with the golden: after a pin change passed the
+  [Claude Code upgrade gate](claude-code-upgrade-gate.md), install the new version on the host when the new golden is
+  released ([golden-image-release.md](golden-image-release.md)); doctor warns `version_mismatch` while they differ.
 
 ## 2. Configuration
 
@@ -31,19 +56,38 @@ org devices). `AGENT_RUNNER_TEST_MODE` MUST be `0` in production. Home: `~/.loca
 1. As the runner account, export the configuration and enroll the device
    ([device-certification.md](device-certification.md)).
 2. Build the golden image ([golden-image-release.md](golden-image-release.md)).
-3. Install the service with the same environment, through `sudo` from the runner account:
-   `sudo -E <venv>/bin/agent-runner service install --profile platform` (platform device) or `--profile org`
-   (org device). The command writes `/Library/LaunchDaemons/swiss.dfx.agent-runner.plist` with
-   `UserName=<runner account>` (from `--user` or `SUDO_USER`), `RunAtLoad`, `KeepAlive`, `EnvironmentVariables`
-   (`AGENT_RUNNER_HOME`, `PATH` and every runner setting that differs from its default – launchd has no other
-   configuration source; no secret is among them) and runs `launchctl bootout`/`bootstrap system`. The platform
-   profile also installs the `login` extra and Chromium for the runner account and sets `LOGIN_AUTOMATION=on`; the
-   org profile sets it `off`. Logs: `$AGENT_RUNNER_HOME/log/runner.{out,err}.log`.
-4. Check: `agent-runner status` (identity, hub connection, outbox backlog, VMs, sessions, pool, capacity) and
-   `agent-runner doctor`.
+3. Install the service from an **administrator account** (the runner account has no `sudo`), with the runner's
+   settings and nothing else of the administrator's environment, naming the runner account:
+
+   ```sh
+   sudo env -i PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+     AGENT_RUNNER_HUB_URL=… AGENT_RUNNER_PLATFORM_ROOT_KEY=… <further AGENT_RUNNER_* settings> \
+     <venv>/bin/agent-runner service install --profile platform --user <runner account>
+   ```
+
+   (`--profile org` on an org device). The command writes `/Library/LaunchDaemons/swiss.dfx.agent-runner.plist` with
+   `UserName=<runner account>` (from `--user`, else `SUDO_USER`), `RunAtLoad`, `KeepAlive`, `EnvironmentVariables`
+   (`AGENT_RUNNER_HOME` – without the setting the default below the runner account's home; it must be the home used
+   for `enroll`, else the daemon runs unenrolled –, `PATH` and every runner
+   setting that differs from its default – launchd has no other configuration source; no secret is among them) and
+   runs `launchctl bootout`/`bootstrap system`. The `PATH` given here is the daemon's `PATH`: it must contain Lima,
+   the PostgreSQL binaries and Claude Code (§1). The platform profile also installs the `login` extra and Chromium for
+   the runner account and sets `LOGIN_AUTOMATION=on`; the org profile sets it `off`. Logs:
+   `$AGENT_RUNNER_HOME/log/runner.{out,err}.log`.
+
+   The daemon **starts at once** (`RunAtLoad`), so install the service only after step 1: a daemon that is not
+   enrolled keeps running with any formally valid root key, ends only its hub tasks (`not_enrolled`) and fills the
+   VM pool. To prepare a device before its enrollment, stop and disable the daemon right after the install
+   (`sudo launchctl bootout system/swiss.dfx.agent-runner`, `sudo launchctl disable system/swiss.dfx.agent-runner`;
+   the disable survives a restart); after the enrollment `sudo launchctl enable system/swiss.dfx.agent-runner` and
+   run the install command again.
+4. Check as the runner account, with the runner's settings and the `PATH` of step 3 (Lima and PostgreSQL are
+   looked up there; the `login_cli` check reads the `PATH` from the installed plist itself):
+   `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin <venv>/bin/agent-runner status` (identity,
+   hub connection, outbox backlog, VMs, sessions, pool, capacity) and the same with `doctor`.
 
 Changing a setting means installing the service again with the new environment (the plist is rewritten).
-`sudo agent-runner service uninstall` unloads and removes the daemon only.
+`sudo <venv>/bin/agent-runner service uninstall` (administrator account) unloads and removes the daemon only.
 
 ## 4. `agent-runner doctor`
 
@@ -57,6 +101,7 @@ One line per check, in fixed order, result `ok`, `warn` or `fail` with a closed 
 | `postgresql` | store answers | warn `store_missing` before the first `run`/`enroll`; `store_unavailable` – see the daemon log |
 | `golden` | a `ready` golden | `no_golden` – build one |
 | `landlock` | ABI ≥ 4 in the build record | warn `record_missing`; fail – rebuild the golden |
+| `login_cli` | the login command (`LOGIN_ARGV`, default `claude setup-token`) is found in the daemon's `PATH` (from the installed plist; before the install the caller's) and runs; for the default command `claude --version` equals the golden's pin (value: the version) | `login_cli_missing` – not found, not executable or `--version` fails: install Claude Code (§1) or fix the service `PATH`; warn `version_mismatch` (value: the host's version) – install the pinned version; warn `version_unknown` – no answer within 10 s or no version in the output, check `claude --version` by hand; warn `pin_missing` – `images/versions.json` of the checkout is unreadable. A different `LOGIN_ARGV` (test double) is only checked for being executable: ok `executable` |
 | `hub` | signed device state verifies with the pinned hub key | `hub_unreachable`, `response_unsigned`, `key_revoked`, `platform_root_mismatch`; warn `not_enrolled` |
 | `clock` | skew to the hub < 5 s | `skew_seconds` – fix NTP |
 | `textfile` | textfile directory writable or sink off | `textfile_unwritable` |

@@ -25,6 +25,9 @@ Inputs live in the agent repository: `images/golden.yaml`, `images/versions.json
    `$AGENT_RUNNER_HOME/log/image.log`.
 3. `agent-runner image list` – the new version is `ready`; exactly one golden is `ready` for new clones.
 4. `agent-runner doctor` – `golden ok`, `landlock ok` (ABI from the build record).
+5. When the Claude Code pin changed, install the same version on the host too
+   ([runner-installation.md §1](runner-installation.md#1-prerequisites)): the subscription login runs it there;
+   doctor's `login_cli` line then reads `result=ok detail=version` instead of `result=warn detail=version_mismatch`.
 
 ## Rollout to running workgroups
 
