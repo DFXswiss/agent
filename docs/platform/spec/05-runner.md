@@ -753,6 +753,17 @@ runner's account that nobody else may write; anything else is not read,
 `_connect_failures_total` (08 §3) watch the file and the connects. Every other user keeps the device flow. The stored credential is
 sealed under the user's `CK` like every `github` credential, so the approved user can open it (ADR-053).
 
+**Existing token (KOR-25, ADR-065).** A second, equal way: `github.connect` with `{token}` (an existing
+GitHub token, e.g. that of a GitHub CLI login or a personal access token, HPKE-encrypted to the device like every
+request). No `GITHUB_CLIENT_ID` is needed. The device checks it with `GET <GITHUB_API_URL>/user`: login and account
+ID from the body, scopes from `X-OAuth-Scopes` (a missing header means a fine-grained token: `scopes: []`); a classic
+token with neither `repo` nor `public_repo` → `failed scope_missing`; `401` → `failed token_refused`; network errors
+→ `upstream_unreachable` (retried as above); an organisation that requires SSO authorisation → `sso_required`. On
+success the device stores the credential `github {token, login, user_id, scopes, source:"token"}` (the device flow
+stores `source:"device_flow"`; records without `source` stay valid) with the repetition above and answers
+`{step:"done", login, scopes, source}`. The token is never logged or sent back. Such a token reaches as far as the
+account; the boundary stays the workgroup's allow-list, checked formally and audited for every operation.
+
 ## 12. Operations (ADR-012)
 
 Pipeline for every `request_operation`:
@@ -767,6 +778,26 @@ Pipeline for every `request_operation`:
    ADR-054), repository list when set, GitHub credential present, sizes, secret patterns. For `github.commit` the runner takes **one** workspace export
    snapshot into the scratch directory `tmp/op-<id>` here, before registration; scan, local tree SHA and the later
    commit all use exactly this snapshot (`03-api.md` §9).
+   **Held instead of rejected (KOR-25, ADR-066).** If the check of a `github.*` type fails with `github_not_connected` (no
+   usable connection of the task owner), the operation is not rejected but held locally before registration: state stays `received`,
+   marked held with the reason and `until` = receipt + 15 min. The runner writes one `session.status`
+   `{state:"waiting", waiting_for:"github_connection", operation_id, operation_type, repo?, until}`
+   (`03-api.md` §10), which the web shows to the task owner as a card in the task's chat. It checks again at every
+   scan (5 s) and as soon as a new `github` credential of the owner arrives; when the check
+   passes the operation goes on normally (steps 4–7; the MCP call answered `pending` after 20 s, the result comes with
+   the ping `operation.finished`). At `until` it is rejected with the original code and the message "…not connected
+   within 15 minutes" (audited like every rejection). Flood limits: at most 3 held operations per session at a time
+   (more are rejected at once as before) and at most one `waiting` event per session and reason per
+   60 s. The registration expiry (10 min in `received`) counts for a held operation from the end of the hold.
+   A held operation whose session ended meanwhile (`stopping`, `stopped`, `failed`; closing a task stops its sessions)
+   is rejected with `not_found` without running its checks. A credential GitHub refused is remembered by its record
+   version (`held_credential`): the pre-check asks GitHub again only when a new version arrives. A fourth held
+   operation of a session is rejected at once with a fixed text saying that the owner is already being asked.
+   `github.request_connection` has no other check: its pre-check asks `GET /user` once; held while the owner is not
+   connected or the token is refused, else answered with `{login}` from the credential. The session's context and the harness state the owner's GitHub connection
+   (connected as `<login>` / not connected) and the rule: if the task needs GitHub, request the operation even
+   without a connection; the platform obtains the connection from the user; do not explain what is missing and do
+   not offer workarounds.
 4. Dedupe tag (`04-crypto.md` §4.10) with the current WK epoch.
 5. Encrypted `operation.params` event; `POST /v1/device/operations` (retry with backoff while the hub is
    unreachable; 10 min in `received` → `expired`, `hub_unreachable`).
@@ -780,18 +811,29 @@ Pipeline for every `request_operation`:
 
 | Type | Steps |
 |---|---|
-| `github.list_repositories` | `GET /user/installations` → `GET /user/installations/{id}/repositories` (paginated); a token without the GitHub App (`403` on `/user/installations`, ADR-053) lists `GET /user/repos` (paginated, same limits) instead; mark `allowed` from settings (every entry when the workgroup sets no list, ADR-054) |
+| `github.list_repositories` | `GET /user/installations` → `GET /user/installations/{id}/repositories` (paginated); a token without the GitHub App (`403` on `/user/installations`, ADR-053) lists `GET /user/repos` (paginated, same limits) instead - the same for a connection with an existing token (§11.4); mark `allowed` from settings (every entry when the workgroup sets no list, ADR-054) |
 | `github.checkout` | resolve ref (`GET /repos/{r}/commits/{ref}`) → `GET /repos/{r}/tarball/{sha}` streamed to scratch → safe extraction (regular files/dirs only; reject absolute, `..`, links, devices; strip the top directory; size limits) → re-tar → `files/import?dir=repos/<owner>/<name>&replace=true` (`<owner>/<name>` in lower case: GitHub names, the allow-list and the dedupe are case-insensitive; the result's `dir` names the path, KOR-10); remember base sha per (session, repo) |
 | `github.get_pull_request` | `GET /repos/{r}/pulls/{n}`, `/files` (paginated), `/issues/{n}/comments` |
 | `github.create_branch` | `GET /repos/{r}/git/ref/heads/{from}` (or commit sha) → `POST /repos/{r}/git/refs` |
 | `github.commit` | uses the snapshot taken in step 3 (no second export) → parent = head of `branch` at GitHub at check time, or the checkout commit if the branch does not exist → compare with the parent tree (`GET /repos/{r}/git/trees/{parent_tree}?recursive=1`; blob and tree SHA-1 computed locally in git object format) → dedupe fields include the local tree SHA → after acceptance `POST /git/blobs` for changed files → `POST /git/trees` with `base_tree` (+ deletions) → verify returned tree SHA = local (`tree_mismatch`) → `POST /git/commits` (parent as determined) |
 | `github.push` | check fast-forward (`GET /repos/{r}/compare/{head}...{sha}` status `ahead`/`identical`) → `PATCH /repos/{r}/git/refs/heads/{branch}` `force:false` or `POST /git/refs` if missing |
 | `github.create_pull_request` | `GET /repos/{r}/pulls?head=<owner>:<head>&base=<base>&state=open` (existing ⇒ operation `succeeded` with that PR and `result.existing:true`; MCP status `duplicate`) → else `POST /repos/{r}/pulls` |
-| `github.comment` | `POST /repos/{r}/issues/{n}/comments` |
+| `github.comment` | `POST /repos/{r}/issues/{n}/comments` (issues and pull requests alike) |
+| `github.list_issues` | `GET /repos/{r}/issues?state&labels&sort&direction&per_page&page` (one page; entries with `pull_request` are left out; `next_page` from the `Link` header) |
+| `github.get_issue` | `GET /repos/{r}/issues/{n}` → `GET /repos/{r}/issues/{n}/comments?per_page&page` (one page; `comments_total` from the issue's `comments`); cut to 200 KiB (newest comments of the page first, then the body; `truncated`) |
+| `github.create_issue` | `POST /repos/{r}/issues` `{title, body?, labels?}` |
+| `github.update_issue` | `PATCH /repos/{r}/issues/{n}` with the given fields only (`state_reason` with `state`; `labels` replaces all) |
+| `github.list_pull_requests` | `GET /repos/{r}/pulls?state&base&sort&direction&per_page&page` (one page; `next_page` from the `Link` header) |
+| `github.request_connection` | no GitHub call: `{login}` of the owner's credential |
 | `subagent.request` | hub returns `child_session_id`; runner starts the child (§13) |
 | `task.set_title` | device-authored `task.meta` event |
 
 Rate limits: honour `Retry-After`, `x-ratelimit-remaining = 0` → wait until reset (≤ 60 s else retryable failure).
+Error mapping of every GitHub type: `401` → `github_not_connected` (token revoked or expired; in a formal check that
+reaches GitHub this holds the operation for a new connection, §12 step 3); `404` → `not_found`; `410` (issues disabled in the repository) → `not_found` with
+"Issues are disabled in this repository."; `403` with `x-github-sso: required…` → `upstream_error` with a message
+that an organisation requires SSO authorisation of the token (the URL of the header is never kept); other `403` →
+`upstream_error`. Every executor works with both kinds of connection (device flow and existing token, §11.4).
 Every GitHub request carries `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, timeout
 30 s, no redirects except for tarball downloads (to the codeload host of the configured web URL).
 

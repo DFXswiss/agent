@@ -16,6 +16,7 @@ COMMENTS = "POST /repos/{owner}/{repo}/issues/{number}/comments"
 USER = "GET /user"
 TREE_GET = "GET /repos/{owner}/{repo}/git/trees/{tree}"
 TREE_POST = "POST /repos/{owner}/{repo}/git/trees"
+ISSUES = "GET /repos/{owner}/{repo}/issues"
 
 
 def faults(gh: Any, *items: dict[str, Any]) -> Any:
@@ -221,3 +222,32 @@ def test_tree_mismatch_and_truncated_listing(github: Any) -> None:
     whole = github.get(f"/repos/octo-org/hello/git/trees/{tree}?recursive=1")
     assert (len(whole["tree"]), whole["truncated"]) == (3, False)
     assert github.state()["ok"] is True
+
+
+def test_rate_limits_on_the_issue_list(github: Any) -> None:
+    faults(
+        github,
+        {"route": ISSUES, "kind": "primary_rate_limit", "reset_in": 30},
+        {"route": ISSUES, "kind": "secondary_rate_limit", "retry_after": 60},
+        {"route": "POST /repos/{owner}/{repo}/issues", "kind": "error", "status": 502},
+    )
+    path = "/repos/octo-org/hello/issues"
+    primary = github.api("GET", path)
+    assert (primary.status, primary.headers["x-ratelimit-remaining"]) == (403, "0")
+    assert primary.headers["x-ratelimit-reset"] == str(int(github.clock.now) + 30)
+    assert primary.json()["message"].startswith("API rate limit exceeded")
+    secondary = github.api("GET", path)
+    assert (secondary.status, secondary.headers["retry-after"]) == (403, "60")
+    assert "secondary rate limit" in secondary.json()["message"]
+    assert github.api("GET", path).json() == []
+    assert github.api("POST", path, {"title": "t"}).status == 502
+    assert github.api("POST", path, {"title": "t"}).status == 201
+    assert [e.get("fault") for e in github.client.journal()] == [
+        "primary_rate_limit",
+        "secondary_rate_limit",
+        None,
+        "error",
+        None,
+    ]
+    state = github.state()
+    assert (state["ok"], state["done"]) == (True, True)

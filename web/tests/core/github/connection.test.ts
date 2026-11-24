@@ -15,7 +15,10 @@ import {
   loadGithub,
   openGithubRecord,
   startConnect,
+  tokenInput,
 } from '../../../src/core/github/connection';
+import { openRequest } from '../../../src/core/crypto/request';
+import { fromUtf8 } from '../../../src/core/encoding/bytes';
 import { HubError } from '../../../src/core/net/signedFetch';
 import type { RequestView } from '../../../src/core/requests/client';
 import { setProfile } from '../../../src/core/store/slices/me';
@@ -78,12 +81,24 @@ describe('loadGithub', () => {
     expect(connection).toEqual({
       status: 'connected',
       login: 'octo-cat',
+      scopes: [],
+      source: 'device_flow',
       createdAt: BODY.created_at,
       version: 2,
       revocable: false,
     });
     expect(t.store.getState().github).toEqual(connection);
     expect(JSON.stringify(t.store.getState().github)).not.toContain('gho_');
+  });
+
+  it('reads the source and the scopes of a stored token', async () => {
+    const t = await world();
+    serve(t, await record(t, t.device, { body: { ...BODY, scopes: ['repo', 'read:org'], source: 'token' } }));
+    expect(await loadGithub(t.context)).toMatchObject({ source: 'token', scopes: ['repo', 'read:org'] });
+    serve(t, await record(t, t.device, { body: { ...BODY, source: 'device_flow' } }));
+    expect(await loadGithub(t.context)).toMatchObject({ source: 'device_flow', scopes: [] });
+    serve(t, await record(t, t.device, { body: { ...BODY, source: 'paste' } }));
+    expect(await loadGithub(t.context)).toEqual({ status: 'unverifiable', code: 'params_invalid' });
   });
 
   it('opens a record written by the user', async () => {
@@ -332,6 +347,31 @@ describe('startConnect and connectProgress', () => {
     expect(prepared.envelope.header).toMatchObject({ device: t.device.id, kind: 'github.connect' });
   });
 
+  it('seals a token for the device only', async () => {
+    const t = await world();
+    t.client.on('POST /v1/device-requests', (body) => ({
+      request_id: (body as { envelope: { header: { id: string } } }).envelope.header.id,
+      state: 'pending',
+    }));
+    const prepared = await startConnect(t.context, t.device.id, 'ghp_not_a_real_token');
+    const opened = JSON.parse(
+      fromUtf8(await openRequest(t.device.identity.kem, prepared.envelope, t.me.identity.sigPublic())),
+    );
+    expect(opened).toEqual({ token: 'ghp_not_a_real_token' });
+    expect(JSON.stringify(t.client.calls)).not.toContain('ghp_not_a_real_token');
+    await expect(startConnect(t.context, t.device.id, 'with space')).rejects.toMatchObject({
+      code: 'params_invalid',
+    });
+  });
+
+  it('trims a pasted token and refuses what cannot be one', () => {
+    expect(tokenInput('  ghp_abc\n')).toBe('ghp_abc');
+    expect(tokenInput('')).toBeNull();
+    expect(tokenInput('gh p')).toBeNull();
+    expect(tokenInput('ä')).toBeNull();
+    expect(tokenInput('x'.repeat(4097))).toBeNull();
+  });
+
   const base: RequestView = { id: 'r', state: 'delivered', expiresAt: T0, responses: [] };
   const verified = (seq: number, body: unknown, final = false) =>
     ({ seq, status: 'verified', final, at: T0, body }) as RequestView['responses'][number];
@@ -356,6 +396,15 @@ describe('startConnect and connectProgress', () => {
     expect(connectProgress({ ...base, responses: [verified(2, { step: 'done', login: 'octo' }, true)] })).toEqual({
       step: 'done',
       login: 'octo',
+      scopes: null,
+      source: null,
+    });
+    const token = { step: 'done', login: 'octo', scopes: ['repo'], source: 'token' };
+    expect(connectProgress({ ...base, responses: [verified(1, token, true)] })).toEqual({
+      step: 'done',
+      login: 'octo',
+      scopes: ['repo'],
+      source: 'token',
     });
     expect(connectProgress({ ...base, responses: [verified(1, { step: 'failed', code: 'busy' }, true)] })).toEqual({
       step: 'failed',

@@ -124,9 +124,10 @@ def test_list_repositories_marks_the_allowed_ones(store_dsn: str, github: GitHub
 def test_without_a_connection_nothing_reaches_github(store_dsn: str, github: GitHub) -> None:
     async def body(kit: OKit) -> None:
         sid = await kit.session()
-        kit.hub.decisions.append({"state": "rejected", "error_code": "github_not_connected"})
         op = await kit.run(sid, "github.comment", {"repo": REPO, "number": 1, "body": "x"})
-        assert (op.state, op.error_code) == ("rejected", "github_not_connected")
+        # held for the owner's connection (KOR-25): not registered, nothing sent to GitHub
+        assert (op.state, op.held, op.registration) == ("received", True, None)
+        assert kit.hub.requests == []
         assert github.paths() == []
 
     pipeline_run(store_dsn, github, body, connected=False)

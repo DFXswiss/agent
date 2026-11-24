@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/enroll.py at 3392035c31d1.
+"""Copied from agent-core src/agent_hub/crypto/enroll.py at 56db2db59b0e.
 
 Enrollment text of platform devices (04-crypto.md section 3, new; body of `POST /v1/device/enroll`).
 

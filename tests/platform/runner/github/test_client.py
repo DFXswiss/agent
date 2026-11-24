@@ -338,8 +338,8 @@ def test_download_refuses_other_redirects_and_reads_direct_answers() -> None:
         async with mock_client(answering(direct)) as client:
             assert await client.download("/t", got.append, max_bytes=10) == 3
         codeload = httpx.Response(302, headers={"location": "https://codeload.ghe.example/o/r/legacy.tar.gz/x"})
-        gone = httpx.Response(410, content=b"{")
-        async with mock_client(answering(codeload, gone)) as client:
+        teapot = httpx.Response(418, content=b"{")
+        async with mock_client(answering(codeload, teapot)) as client:
             with pytest.raises(GitHubError) as failed:
                 await client.download("/t", got.append, max_bytes=10)
             assert failed.value.kind == "invalid_response"
@@ -418,5 +418,26 @@ def test_refusal_messages_include_the_validation_items_and_no_token_means_no_aut
         async with anonymous:
             await anonymous.request("GET", "/meta")
         assert "authorization" not in transport.seen[1].headers  # type: ignore[attr-defined]
+
+    run(body)
+
+
+def test_a_forbidden_answer_names_an_sso_requirement_without_keeping_its_url() -> None:
+    async def body() -> None:
+        sso = httpx.Response(
+            403,
+            json={"message": "Resource protected by organization SAML enforcement."},
+            headers={"x-github-sso": "required; url=https://github.example/orgs/octo-org/sso?authorization_request=x"},
+        )
+        plain = httpx.Response(403, json={"message": "Must have admin rights to Repository."})
+        partial = httpx.Response(403, json={}, headers={"x-github-sso": "partial-results; organizations=1"})
+        found = []
+        for answer in (sso, plain, partial):
+            async with mock_client(answering(answer)) as client:
+                with pytest.raises(GitHubError) as refused:
+                    await client.request("GET", "/repos/octo-org/hello")
+                found.append((refused.value.kind, refused.value.sso))
+                assert "authorization_request" not in str(vars(refused.value))
+        assert found == [("forbidden", True), ("forbidden", False), ("forbidden", False)]
 
     run(body)

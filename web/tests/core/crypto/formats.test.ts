@@ -279,4 +279,17 @@ describe('dedupe', () => {
     expect(b64uDecode(await dedupe.dedupeTag(dk, 'github.push', fields)).length).toBe(32);
     expect(bodyJson(dedupe.DEDUPE_TYPES)).toEqual(bodyJson([...dedupe.DEDUPE_TYPES].sort()));
   });
+
+  it('hashes the optional body of github.create_issue (empty when left out)', async () => {
+    const empty = await dedupe.sha256Hex('');
+    const withBody = await dedupe.dedupeFields('github.create_issue', { repo: 'A/B', title: 'T', body: 'text' });
+    expect(withBody).toEqual({ repo: 'a/b', title: await dedupe.sha256Hex('T'), body: await dedupe.sha256Hex('text') });
+    const without = await dedupe.dedupeFields('github.create_issue', { repo: 'a/b', title: 'T' });
+    expect(without.body).toBe(empty);
+    const blank = await dedupe.dedupeFields('github.create_issue', { repo: 'a/b', title: 'T', body: '' });
+    expect(blank.body).toBe(empty);
+    expect(await codeOf(() => dedupe.dedupeFields('github.create_issue', { repo: 'a/b', title: 'T', body: 1 }))).toBe(
+      'header_invalid',
+    );
+  });
 });

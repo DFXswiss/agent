@@ -52,7 +52,7 @@ test('suggestion chips fill the composer and never send; the GitHub chip offers 
   await expect(page.getByTestId('composer.github-hint')).toHaveCount(0);
   await page.getByTestId('composer.chip.github').click();
   await expect(prompt).toHaveValue('Open a pull request that ');
-  await expect(page.getByTestId('composer.github-connect')).toHaveText('Connect GitHub');
+  await expect(page.getByTestId('composer.github-hint').getByTestId('github.connect')).toHaveText('Connect GitHub');
   await page.getByTestId('composer.chip.explain').click();
   await expect(prompt).toHaveValue('Explain this repository: ');
   await page.getByTestId('composer.chip.plan').click();
@@ -61,9 +61,10 @@ test('suggestion chips fill the composer and never send; the GitHub chip offers 
   await prompt.fill('   ');
   await expect(page.getByTestId('composer.send')).toBeDisabled();
   expect(tasks).toBe(0);
+  // connecting starts right below the composer
   await page.getByTestId('composer.chip.github').click();
-  await page.getByTestId('composer.github-connect').click();
-  await expect(page).toHaveURL(/\/settings$/);
+  await page.getByTestId('composer.github-hint').getByTestId('github.connect').click();
+  await expect(page.getByTestId('composer.github-hint').getByTestId('github.flow')).toBeVisible();
 });
 
 test('the workgroup choice lists only writable workgroups and the task lands in the chosen one', async ({

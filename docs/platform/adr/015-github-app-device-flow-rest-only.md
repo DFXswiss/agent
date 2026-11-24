@@ -19,6 +19,12 @@ Status: Accepted (2026-11-21)
 - Non-expiring tokens rely on explicit disconnect/uninstall for revocation (documented in the UI).
 - GitHub double must implement device flow, REST and Git Data API (`agent_doubles.github`).
 
+## Addendum (2026-11-23)
+The device flow stays unchanged. By the owner's decision a second, equal way exists: an existing GitHub token (GitHub
+CLI login, personal access token) checked by the execution device and stored as the same credential
+([ADR-065](065-github-existing-token.md)); the "pasted PATs" alternative below is therefore no longer excluded. The
+App's repository permissions stay Contents, Pull requests and Issues "Read and write" and Metadata "Read-only".
+
 ## Alternatives considered
 OAuth App with `repo` scope (too broad), web flow via hub callback (token at hub), `git` CLI on host (executes repository-controlled config), fine-grained PATs pasted by users (poor UX, manual expiry).
 

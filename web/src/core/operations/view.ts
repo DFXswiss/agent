@@ -6,8 +6,12 @@
 // that fails is reported with its code, never as content. Without a row (not loaded yet) the state comes from the
 // verified result (`status`), else `received`. Result facts are the links and values of 03-api.md section 9: the PR
 // (number, URL), the commit SHA, the pushed branch (SHA, URL), the comment URL, the created branch, the checkout
-// commit, the subagent session, the new task title (`task.set_title`: "renamed by session") and the number of listed
-// repositories. URLs pass `safeUrl` (http(s) only; the contracts allow https only).
+// commit, the subagent session, the new task title (`task.set_title`: "renamed by session"), the number of listed
+// repositories, issues and pull requests, the issue (number, URL) of `github.get_issue`, `github.create_issue` and
+// `github.update_issue` with the new state, and the connected login of `github.request_connection`. The lists of
+// `github.list_issues` / `github.list_pull_requests` (`listing`) and the issue of `github.get_issue` with one page of
+// comments (`issue`) are read entry by entry: an entry without a number or title is left out. Text from GitHub is
+// untrusted and only ever rendered as text; URLs pass `httpsUrl` (`safeUrl` and https only, as the contracts allow).
 import { safeUrl } from '../chat/links';
 import { isRecord } from '../registry';
 import type { EventEntry } from '../store/slices/events';
@@ -41,6 +45,44 @@ export interface Fact {
   readonly session?: string;
 }
 
+/** One entry of an issue or pull request list. */
+export interface ListEntry {
+  readonly number: number;
+  readonly title: string;
+  /** `open` or `closed`; null when the result carries another value. */
+  readonly state: string | null;
+  readonly draft: boolean;
+  readonly author: string | null;
+  readonly labels: readonly string[];
+  readonly href?: string;
+}
+
+/** The list of `github.list_issues` (`issues`) or `github.list_pull_requests` (`pull_requests`). */
+export interface Listing {
+  readonly kind: 'issues' | 'pull_requests';
+  readonly entries: readonly ListEntry[];
+  readonly nextPage: number | null;
+  readonly truncated: boolean;
+}
+
+export interface IssueComment {
+  readonly id: string;
+  readonly author: string | null;
+  readonly body: string;
+  readonly createdAt: string | null;
+}
+
+/** The issue of `github.get_issue` with one page of its comments. */
+export interface IssueContent extends ListEntry {
+  readonly stateReason: string | null;
+  readonly body: string | null;
+  readonly pullRequest: boolean;
+  readonly comments: readonly IssueComment[];
+  readonly commentsTotal: number | null;
+  readonly commentsNextPage: number | null;
+  readonly truncated: boolean;
+}
+
 export interface OperationView {
   readonly id: string;
   readonly type: string;
@@ -55,12 +97,37 @@ export interface OperationView {
   /** A short description from the parameters (repository, PR number, branch, purpose, title). */
   readonly subject: string | null;
   readonly facts: readonly Fact[];
+  /** The listed issues or pull requests of a succeeded list operation. */
+  readonly listing: Listing | null;
+  /** The issue of a succeeded `github.get_issue`. */
+  readonly issue: IssueContent | null;
 }
 
 const raw = (entry: EventEntry): Readonly<Record<string, unknown>> =>
   isRecord(entry.event) && isRecord(entry.event.header) ? entry.event.header : {};
 
 const text = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+const count = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+
+/** Issue and pull request states and state reasons of the contracts (`operations.value.<value>`). */
+export const ISSUE_VALUES: ReadonlySet<string> = new Set([
+  'open',
+  'closed',
+  'completed',
+  'not_planned',
+  'reopened',
+  'duplicate',
+]);
+const known = (value: unknown): string | null => (typeof value === 'string' && ISSUE_VALUES.has(value) ? value : null);
+
+/** The URL if it is an absolute `https:` URL that `safeUrl` keeps, else null. */
+export function httpsUrl(value: unknown): string | null {
+  const url = typeof value === 'string' ? safeUrl(value) : null;
+  return url !== null && new URL(url).protocol === 'https:' ? url : null;
+}
 
 /**
  * The newest verified event of `kind` that refers to `operation`, else the newest unverifiable one (by its unchecked
@@ -126,14 +193,79 @@ export function subjectOf(type: string, params: Readonly<Record<string, unknown>
   const repo = text(params.repo);
   if (repo === null) return null;
   if (typeof params.number === 'number') return `${repo}#${params.number}`;
+  if (type === 'github.create_issue' && typeof params.title === 'string') return `${repo}: ${params.title}`;
   const branch = text(params.branch) ?? text(params.head);
   return branch === null ? repo : `${repo} ${branch}`;
 }
 
 function link(label: string, value: unknown, href: unknown): Fact[] {
-  const url = typeof href === 'string' ? safeUrl(href) : null;
+  const url = httpsUrl(href);
   if (typeof value !== 'string' && typeof value !== 'number') return [];
   return [{ label, text: String(value), ...(url !== null && { href: url }) }];
+}
+
+const issueLink = (result: Readonly<Record<string, unknown>>): Fact[] =>
+  link('issue', typeof result.number === 'number' ? `#${result.number}` : null, result.url);
+
+/** An entry of a list (or the head of an issue); null without a positive integer number or a title. */
+function entryOf(value: unknown): ListEntry | null {
+  if (!isRecord(value)) return null;
+  const { number, title } = value;
+  if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1 || typeof title !== 'string')
+    return null;
+  const href = httpsUrl(value.url);
+  return {
+    number,
+    title,
+    state: value.state === 'open' || value.state === 'closed' ? value.state : null,
+    draft: value.draft === true,
+    author: text(value.author),
+    labels: strings(value.labels),
+    ...(href !== null && { href }),
+  };
+}
+
+const LIST_KEYS: Readonly<Record<string, Listing['kind']>> = {
+  'github.list_issues': 'issues',
+  'github.list_pull_requests': 'pull_requests',
+};
+
+/** The listed issues or pull requests of a succeeded result (module comment); null for other types. */
+export function listingOf(type: string, result: Readonly<Record<string, unknown>>): Listing | null {
+  const kind = Object.hasOwn(LIST_KEYS, type) ? LIST_KEYS[type]! : null;
+  if (kind === null) return null;
+  const items: unknown = result[kind];
+  return {
+    kind,
+    entries: Array.isArray(items) ? items.map(entryOf).filter((entry) => entry !== null) : [],
+    nextPage: count(result.next_page),
+    truncated: result.truncated === true,
+  };
+}
+
+function commentOf(value: unknown): IssueComment | null {
+  if (!isRecord(value) || typeof value.body !== 'string') return null;
+  const id = typeof value.id === 'number' || typeof value.id === 'string' ? String(value.id) : null;
+  if (id === null) return null;
+  return { id, author: text(value.author), body: value.body, createdAt: text(value.created_at) };
+}
+
+/** The issue of a succeeded `github.get_issue` (module comment); null for other types or without number and title. */
+export function issueOf(type: string, result: Readonly<Record<string, unknown>>): IssueContent | null {
+  if (type !== 'github.get_issue') return null;
+  const head = entryOf(result);
+  if (head === null) return null;
+  const comments = Array.isArray(result.comments) ? result.comments.map(commentOf).filter((c) => c !== null) : [];
+  return {
+    ...head,
+    stateReason: known(result.state_reason),
+    body: text(result.body),
+    pullRequest: result.pull_request === true,
+    comments,
+    commentsTotal: count(result.comments_total),
+    commentsNextPage: count(result.comments_next_page),
+    truncated: result.truncated === true,
+  };
 }
 
 /** The facts of a succeeded result (module comment). */
@@ -154,6 +286,21 @@ export function factsOf(type: string, result: Readonly<Record<string, unknown>>,
       return link('commit', result.commit_sha, null);
     case 'github.list_repositories':
       return Array.isArray(result.repositories) ? link('repositories', result.repositories.length, null) : [];
+    case 'github.list_issues':
+      return Array.isArray(result.issues) ? link('issues', result.issues.length, null) : [];
+    case 'github.list_pull_requests':
+      return Array.isArray(result.pull_requests) ? link('pull_requests', result.pull_requests.length, null) : [];
+    case 'github.get_issue':
+    case 'github.create_issue':
+      return issueLink(result);
+    case 'github.update_issue':
+      return [
+        ...issueLink(result),
+        ...link('state', known(result.state), null),
+        ...link('state_reason', known(result.state_reason), null),
+      ];
+    case 'github.request_connection':
+      return link('login', result.login, null);
     case 'subagent.request':
       return typeof result.session_id === 'string'
         ? [{ label: 'session', text: result.session_id, session: result.session_id }]
@@ -194,6 +341,8 @@ export function operationView(
     result,
     subject: params.status === 'verified' ? subjectOf(type, params.value.params) : null,
     facts: succeeded === null ? [] : factsOf(type, succeeded, params),
+    listing: succeeded === null ? null : listingOf(type, succeeded),
+    issue: succeeded === null ? null : issueOf(type, succeeded),
   };
 }
 

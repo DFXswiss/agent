@@ -46,8 +46,9 @@ export async function operation(
 export interface Step {
   readonly body: unknown;
   readonly final?: boolean;
-  /** Writes the `github` credential with this login first (what the device does before `done`). */
-  readonly store?: { readonly login: string };
+  /** Writes the `github` credential with this login (and source and scopes) first (what the device does before
+   *  `done`). */
+  readonly store?: { readonly login: string; readonly source?: 'device_flow' | 'token'; readonly scopes?: string[] };
 }
 
 /** Answers the newest open device request of `device`; returns the request and its opened body. */

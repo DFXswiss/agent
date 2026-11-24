@@ -105,6 +105,13 @@ TABLES = {
         "retryable",
         "answer",
         "answered_at",
+        # 0015 (KOR-25): held operations
+        "held_reason",
+        "held_repo",
+        "held_until",
+        "held_notified_at",
+        "held_ended_at",
+        "held_credential",
     ],
     "guest_cursor": ["vm_id", "journal_seq"],
     "credential_cache": ["owner_id", "kind", "version", "record"],

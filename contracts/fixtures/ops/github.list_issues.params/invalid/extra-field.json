@@ -1,0 +1,12 @@
+{
+  "repo": "example-org/example-repo",
+  "state": "open",
+  "labels": [
+    "bug"
+  ],
+  "sort": "created",
+  "direction": "desc",
+  "per_page": 30,
+  "page": 1,
+  "extra": 1
+}

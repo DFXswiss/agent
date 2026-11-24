@@ -115,7 +115,9 @@ def test_an_approved_user_is_connected_at_once_with_the_operators_token(
     async def body(env: Env) -> None:
         env.context.config.github_client_id = None  # as on the platform device: no GitHub App registered
         request_id = await connect(env)
-        assert env.hub.bodies(request_id) == [{"step": "done", "login": "op-account"}]
+        assert env.hub.bodies(request_id) == [
+            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}
+        ]
         assert [h["final"] for h, _b in env.hub.responses(request_id)] == [True]
         for response in env.hub.bodies(request_id):
             assert SCHEMAS.errors("requests/github.connect.response.json", response) == []
@@ -206,7 +208,7 @@ def test_a_missing_file_fails_logged_once_and_a_later_file_connects(
         assert opgh.paths() == []
         write_token(token_file, OPERATOR_TOKEN)
         third = await connect(env)
-        assert env.hub.bodies(third) == [{"step": "done", "login": "op-account"}]
+        assert env.hub.bodies(third) == [{"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}]
         token_file.unlink()
         await connect(env)
         assert env.log().count("operator_github file_unusable reason=missing") == 2
@@ -221,9 +223,13 @@ def test_a_file_replaced_between_connects_is_read_anew(store_dsn: str, opgh: Git
     write_token(token_file, OPERATOR_TOKEN)
 
     async def body(env: Env) -> None:
-        assert env.hub.bodies(await connect(env)) == [{"step": "done", "login": "op-account"}]
+        assert env.hub.bodies(await connect(env)) == [
+            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}
+        ]
         write_token(token_file, OTHER_OPERATOR_TOKEN + "\n")
-        assert env.hub.bodies(await connect(env)) == [{"step": "done", "login": "op-second"}]
+        assert env.hub.bodies(await connect(env)) == [
+            {"step": "done", "login": "op-second", "scopes": ["repo"], "source": "token"}
+        ]
         async with cache.opened(env.context, ALICE, "github") as stored:
             assert (stored["token"], stored["login"]) == (OTHER_OPERATOR_TOKEN, "op-second")
 
@@ -415,7 +421,9 @@ def test_the_repository_list_falls_back_to_the_accounts_repositories_with_pages(
     write_token(token_file, OPERATOR_TOKEN)
 
     async def body(env: Env) -> None:
-        assert env.hub.bodies(await connect(env)) == [{"step": "done", "login": "op-account"}]
+        assert env.hub.bodies(await connect(env)) == [
+            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}
+        ]
         data = {"allowed": [REPO, "op-account/tools"]}
         result = await EXECUTORS["github.list_repositories"](context_for(env, {}, data=data))
         assert SCHEMAS.errors("ops/github.list_repositories.result.json", result) == []
@@ -441,7 +449,9 @@ def test_other_failures_of_the_installation_list_are_not_a_fallback(
     write_token(token_file, OPERATOR_TOKEN)
 
     async def body(env: Env) -> None:
-        assert env.hub.bodies(await connect(env)) == [{"step": "done", "login": "op-account"}]
+        assert env.hub.bodies(await connect(env)) == [
+            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}
+        ]
         opgh.faults({"route": "GET /user/installations", "kind": "error", "status": 503, "times": 1})
         with pytest.raises(OperationFailed) as failed:
             await EXECUTORS["github.list_repositories"](context_for(env, {}))
@@ -458,7 +468,9 @@ def test_connect_then_read_and_write_a_pull_request_with_the_operators_token(
     write_token(token_file, OPERATOR_TOKEN)
 
     async def body(env: Env) -> None:
-        assert env.hub.bodies(await connect(env)) == [{"step": "done", "login": "op-account"}]
+        assert env.hub.bodies(await connect(env)) == [
+            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}
+        ]
         for op_type in ("github.get_pull_request", "github.create_branch", "github.comment"):
             await PRECHECKS[op_type](precheck_request(env, op_type, {"repo": REPO}))
         # the repository exists, but the account is no collaborator of it: not accessible, as for an App user token

@@ -306,6 +306,7 @@ class Starter:
             wg_id=desired.wg_id,
             task_id=desired.task_id,
             owner_id=desired.owner_id,
+            github=await harness.github_login(env.context, desired.owner_id),
         )
 
     async def _names(self, conn: Any, desired: Desired) -> profiles.Names:

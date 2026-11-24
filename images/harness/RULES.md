@@ -62,8 +62,9 @@ Request every other action with `mcp__platform__request_operation` (arguments `t
 `idempotency_key`). The platform checks each request formally and against the rights of the task owner, recognises
 duplicates, executes it with its own components and returns a result. The answer has a `status`: `succeeded`,
 `failed`, `rejected`, `duplicate`, `denied` or `pending`. If it is `pending`, ask again later with
-`mcp__platform__get_operation`. Repeating the same request does not repeat the action: a duplicate returns the
-result of the first request.
+`mcp__platform__get_operation`. An answer `pending` for a GitHub operation means the platform is waiting for the
+task owner (e.g. to connect GitHub): wait for it with get_operation and do not request it again or explain what is
+missing. Repeating the same request does not repeat the action: a duplicate returns the result of the first request.
 
 Operation types and parameter examples:
 
@@ -82,8 +83,27 @@ Operation types and parameter examples:
   `{"type": "github.push", "params": {"repo": "example-org/example-repo", "branch": "fix-typo", "commit_sha": "0123456789abcdef0123456789abcdef01234567"}}`
 - `github.create_pull_request` – open a pull request (`body` and `draft` optional):
   `{"type": "github.create_pull_request", "params": {"repo": "example-org/example-repo", "head": "fix-typo", "base": "main", "title": "Fix a typo in the README", "body": "One word.", "draft": true}}`
-- `github.comment` – comment on a pull request:
+- `github.comment` – comment on an issue or a pull request:
   `{"type": "github.comment", "params": {"repo": "example-org/example-repo", "number": 42, "body": "Looks good to me."}}`
+- `github.list_issues` – list one page of the issues of a repository, newest first (`state` `open` by default, or
+  `closed`, `all`; `labels`, `sort` `created`/`updated`/`comments`, `direction` `desc`/`asc`, `per_page` up to 100 and
+  `page` optional). Pull requests are left out, so a page may hold fewer issues than `per_page`; ask for `next_page`
+  while it is set. The newest issue is the first entry of `{"repo": "example-org/example-repo"}`:
+  `{"type": "github.list_issues", "params": {"repo": "example-org/example-repo", "state": "open", "labels": ["bug"], "per_page": 10}}`
+- `github.get_issue` – read an issue with one page of its comments, oldest first (`comments_page` and
+  `comments_per_page` optional):
+  `{"type": "github.get_issue", "params": {"repo": "example-org/example-repo", "number": 17}}`
+- `github.create_issue` – open an issue (`body` and `labels` optional); the result names its number and URL:
+  `{"type": "github.create_issue", "params": {"repo": "example-org/example-repo", "title": "Login fails on Safari", "body": "Steps to reproduce: …", "labels": ["bug"]}}`
+- `github.update_issue` – close or reopen an issue (`state_reason` only together with `state`), change its title or
+  text or replace its labels; name at least one of `state`, `title`, `body` and `labels`:
+  `{"type": "github.update_issue", "params": {"repo": "example-org/example-repo", "number": 17, "state": "closed", "state_reason": "completed"}}`
+- `github.list_pull_requests` – list one page of the pull requests of a repository, newest first (`state`, `base`,
+  `sort` `created`/`updated`, `direction`, `per_page` and `page` optional):
+  `{"type": "github.list_pull_requests", "params": {"repo": "example-org/example-repo", "state": "open", "per_page": 10}}`
+- `github.request_connection` – ask for the task owner's GitHub connection when the task needs GitHub and no other
+  type fits yet; the result names the connected account:
+  `{"type": "github.request_connection", "params": {}}`
 - `subagent.request` – ask the platform to start a subagent session for a part of this task (`model_id` optional):
   `{"type": "subagent.request", "params": {"purpose": "Review pull request 42", "prompt": "Review the changes of pull request 42 in example-org/example-repo and list every defect."}}`
 - `task.set_title` – set the short title of this task (one line):
@@ -93,6 +113,10 @@ Operation types and parameter examples:
   `{"type": "workvm.request", "params": {"size": "large", "scope": "session"}}`
 - `workvm.release` – tear down your work VM when you no longer need it (`scope` optional):
   `{"type": "workvm.release", "params": {}}`
+
+If the task needs GitHub, request the operation – even when GitHub is not connected; the platform asks the user to
+connect and continues your operation afterwards. Do not explain what is missing and do not offer workarounds. If no
+other type fits yet, request `github.request_connection`.
 
 Subagents exist only through `subagent.request`: the platform decides, starts the subagent in its own sandbox and
 links it to this task. Read its answer with `mcp__platform__get_subagent_result`.

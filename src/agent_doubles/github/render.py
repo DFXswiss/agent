@@ -11,10 +11,20 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from agent_doubles.github.objects import TREE_MODE, Commit, Signature, api_mode
-from agent_doubles.github.repos import FileChange, Installation, Pull, Repo, User, World, diff_trees, iso
+from agent_doubles.github.repos import (
+    FileChange,
+    Installation,
+    Issue,
+    Pull,
+    Repo,
+    User,
+    World,
+    diff_trees,
+    iso,
+)
 
 DOCS = "https://docs.github.com/rest"
 PULL_LIST_OMITS = frozenset(
@@ -53,9 +63,9 @@ def node_id(kind: str, value: object) -> str:
     return base64.b64encode(f"{kind}:{value}".encode()).decode()
 
 
-def error_body(status: int, message: str, **extra: Any) -> dict[str, Any]:
+def error_body(status: int, message: str, *, docs: str = DOCS, **extra: Any) -> dict[str, Any]:
     """A REST error answer (``message``, ``documentation_url``, ``status`` as a string)."""
-    return {"message": message, **extra, "documentation_url": DOCS, "status": str(status)}
+    return {"message": message, **extra, "documentation_url": docs, "status": str(status)}
 
 
 def validation_error(message: str, resource: str, field: str | None = None, code: str = "custom") -> dict[str, Any]:
@@ -204,7 +214,7 @@ def repository(urls: Urls, repo: Repo, *, form: str = "full", push: bool = True)
         "stargazers_count": 0,
         "watchers_count": 0,
         "language": None,
-        "has_issues": True,
+        "has_issues": repo.has_issues,
         "has_projects": True,
         "has_downloads": True,
         "has_wiki": True,
@@ -214,7 +224,7 @@ def repository(urls: Urls, repo: Repo, *, form: str = "full", push: bool = True)
         "mirror_url": None,
         "archived": False,
         "disabled": False,
-        "open_issues_count": sum(1 for pull in repo.pulls.values() if pull.state == "open"),
+        "open_issues_count": repo.open_items,
         "license": None,
         "allow_forking": True,
         "is_template": False,
@@ -224,7 +234,7 @@ def repository(urls: Urls, repo: Repo, *, form: str = "full", push: bool = True)
         "topics": [],
         "visibility": "private" if repo.private else "public",
         "forks": 0,
-        "open_issues": sum(1 for pull in repo.pulls.values() if pull.state == "open"),
+        "open_issues": repo.open_items,
         "watchers": 0,
         "default_branch": repo.default_branch,
         "permissions": {"admin": False, "maintain": False, "push": push, "triage": push, "pull": True},
@@ -489,16 +499,16 @@ def pull(urls: Urls, world: World, repo: Repo, item: Pull, *, listed: bool = Fal
         "title": item.title,
         "user": login_user(urls, world, item.user),
         "body": item.body,
-        "labels": [],
+        "labels": [label(urls, repo, name) for name in item.labels],
         "milestone": None,
         "active_lock_reason": None,
         "created_at": stamp,
-        "updated_at": stamp,
-        "closed_at": stamp if item.state == "closed" else None,
+        "updated_at": iso(item.updated),
+        "closed_at": iso(item.closed) if item.closed is not None else None,
         "merged_at": None,
         "merge_commit_sha": None,
-        "assignee": None,
-        "assignees": [],
+        "assignee": login_user(urls, world, item.assignees[0]) if item.assignees else None,
+        "assignees": [login_user(urls, world, login) for login in item.assignees],
         "requested_reviewers": [],
         "requested_teams": [],
         "head": {
@@ -525,7 +535,7 @@ def pull(urls: Urls, world: World, repo: Repo, item: Pull, *, listed: bool = Fal
             "commits": {"href": f"{api}/pulls/{number}/commits"},
             "statuses": {"href": f"{api}/statuses/{head}"},
         },
-        "author_association": "OWNER" if item.user.lower() == repo.owner.lower() else "COLLABORATOR",
+        "author_association": _association(repo, item.user),
         "auto_merge": None,
         "draft": item.draft,
         "merged": False,
@@ -533,7 +543,7 @@ def pull(urls: Urls, world: World, repo: Repo, item: Pull, *, listed: bool = Fal
         "rebaseable": None if item.state == "closed" else True,
         "mergeable_state": "draft" if item.draft else "clean",
         "merged_by": None,
-        "comments": sum(1 for comment in repo.comments if comment.number == number),
+        "comments": repo.comment_count(number),
         "review_comments": 0,
         "maintainer_can_modify": False,
         "commits": commits,
@@ -562,19 +572,99 @@ def comment(urls: Urls, world: World, repo: Repo, item: Any) -> dict[str, Any]:
         "created_at": stamp,
         "updated_at": stamp,
         "body": item.body,
-        "author_association": "OWNER" if item.user.lower() == repo.owner.lower() else "COLLABORATOR",
-        "reactions": {
-            "url": f"{url}/reactions",
-            "total_count": 0,
-            "+1": 0,
-            "-1": 0,
-            "laugh": 0,
-            "hooray": 0,
-            "confused": 0,
-            "heart": 0,
-            "rocket": 0,
-            "eyes": 0,
-        },
+        "author_association": _association(repo, item.user),
+        "reactions": _reactions(url),
         "performed_via_github_app": None,
         "minimized": None,
     }
+
+
+def _association(repo: Repo, login: str) -> str:
+    return "OWNER" if login.lower() == repo.owner.lower() else "COLLABORATOR"
+
+
+def _reactions(url: str) -> dict[str, Any]:
+    return {
+        "url": f"{url}/reactions",
+        "total_count": 0,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 0,
+    }
+
+
+# --- issues ------------------------------------------------------------------------------------------
+
+
+def label(urls: Urls, repo: Repo, name: str) -> dict[str, Any]:
+    """A label of the repository (`name` as the repository writes it)."""
+    found = repo.labels[name.lower()]
+    return {
+        "id": found.id,
+        "node_id": node_id("Label", found.id),
+        "url": f"{urls.api}/repos/{repo.full_name}/labels/{quote(found.name, safe='')}",
+        "name": found.name,
+        "color": found.color,
+        "default": False,
+        "description": found.description,
+    }
+
+
+# Issue ids of pull requests in issue form: an id space of their own, so the pull request id stays the counter's.
+PULL_ISSUE_IDS = 2_000_000_000
+
+
+def issue(urls: Urls, world: World, repo: Repo, item: Issue | Pull) -> dict[str, Any]:
+    """An issue of ``GET``/``POST``/``PATCH …/issues``; a pull request in issue form carries ``pull_request`` (and
+    ``draft``) and no ``state_reason``."""
+    api = f"{urls.api}/repos/{repo.full_name}"
+    web = f"{urls.web}/{repo.full_name}"
+    number = item.number
+    url = f"{api}/issues/{number}"
+    is_pull = isinstance(item, Pull)
+    issue_id = PULL_ISSUE_IDS + item.id if is_pull else item.id
+    data: dict[str, Any] = {
+        "url": url,
+        "repository_url": api,
+        "labels_url": f"{url}/labels{{/name}}",
+        "comments_url": f"{url}/comments",
+        "events_url": f"{url}/events",
+        "html_url": f"{web}/pull/{number}" if is_pull else f"{web}/issues/{number}",
+        "id": issue_id,
+        "node_id": node_id("Issue", issue_id),
+        "number": number,
+        "title": item.title,
+        "user": login_user(urls, world, item.user),
+        "labels": [label(urls, repo, name) for name in item.labels],
+        "state": item.state,
+        "locked": False,
+        "assignee": login_user(urls, world, item.assignees[0]) if item.assignees else None,
+        "assignees": [login_user(urls, world, login) for login in item.assignees],
+        "milestone": None,
+        "comments": repo.comment_count(number),
+        "created_at": iso(item.created),
+        "updated_at": iso(item.updated),
+        "closed_at": iso(item.closed) if item.closed is not None else None,
+        "author_association": _association(repo, item.user),
+        "active_lock_reason": None,
+        "body": item.body,
+        "reactions": _reactions(url),
+        "timeline_url": f"{url}/timeline",
+        "performed_via_github_app": None,
+        "state_reason": item.state_reason,
+    }
+    if isinstance(item, Pull):
+        data["draft"] = item.draft
+        data["pull_request"] = {
+            "url": f"{api}/pulls/{number}",
+            "html_url": f"{web}/pull/{number}",
+            "diff_url": f"{web}/pull/{number}.diff",
+            "patch_url": f"{web}/pull/{number}.patch",
+            "merged_at": None,
+        }
+    return data

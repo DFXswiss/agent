@@ -7,8 +7,11 @@ ADR-012).
   without `refs/heads/`, SHAs lower case, texts as `sha256_hex`) built from the effective parameters plus the
   requesting session (`github.checkout` `session`, `subagent.request` parent `session`) and the pre-check's dedupe
   fields (`github.checkout` `ref` = resolved commit SHA, `github.commit` `parent_sha` and `tree_sha`);
-- types without dedupe fields (`github.list_repositories`, `github.get_pull_request`, `task.set_title`) have a slot
-  only with an idempotency key: `{"idempotency_key": key, "task": task_id}`, which the hub holds for 24 h.
+- `github.create_issue` (KOR-25): `repo`, `title` and `body` as `sha256_hex` (an issue left without body counts as
+  the empty text), so the same issue is not opened twice within the window of `contracts/ops/dedupe-fields.json`;
+- types without dedupe fields (`github.list_repositories`, `github.get_pull_request`, the reading and connection types
+  of KOR-25, `github.update_issue` - setting values is idempotent -, `task.set_title`) have a slot only with an
+  idempotency key: `{"idempotency_key": key, "task": task_id}`, which the hub holds for 24 h.
 
 The content rule of a type with dedupe fields applies whether or not the session passes a key (KOR-28): the key never
 replaces the fields, so a new key cannot repeat the same operation. It can only mark a repetition as the same request:
@@ -37,6 +40,7 @@ WINDOWS: Mapping[str, int] = MappingProxyType(
         "github.push": 86400,
         "github.create_pull_request": 604800,
         "github.comment": 86400,
+        "github.create_issue": 86400,
         "subagent.request": 600,
     }
 )

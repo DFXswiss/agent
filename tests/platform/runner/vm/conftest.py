@@ -23,12 +23,13 @@ from typing import Any
 
 import pytest
 
+import agent_guest
 from agent_runner.store.migrate import migrate
 from agent_runner.vm import golden
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CLAUDE = "2.1.330"
-GUEST = "0.1.0"
+GUEST = agent_guest.__version__
 TOKEN = "t" * 43
 EXEC_SHA = "66a6c4ac95894cf4fb078a9fc7f2964f6fec21cf18b8448a494967a6276b16a2"
 

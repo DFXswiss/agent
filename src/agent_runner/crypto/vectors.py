@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/vectors.py at 3392035c31d1.
+"""Copied from agent-core src/agent_hub/crypto/vectors.py at 56db2db59b0e.
 
 Deterministic test vectors of 04-crypto.md section 10 (`contracts/vectors/`), after Spike D `make_vectors.py`.
 
@@ -1152,6 +1152,7 @@ def build_dedupe() -> Json:
         "github.push": {"repo": "example-org/example-repo", "branch": "feature/x", "commit_sha": "c" * 40},
         "github.create_pull_request": {"repo": "example-org/example-repo", "head": "feature/x", "base": "develop"},
         "github.comment": {"repo": "example-org/example-repo", "number": 12, "body": "Looks good \u2013 danke!"},
+        "github.create_issue": {"repo": "Example-Org/Example-Repo", "title": "Anmeldung schlägt fehl"},
         "subagent.request": {"session": SESSION, "purpose": "review", "prompt": "Prüfe den Diff."},
     }
     tags = []

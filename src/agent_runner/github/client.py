@@ -14,8 +14,8 @@ Answers are classified into `GitHubError` with a closed `kind`:
 | `429`; `403` with `Retry-After` or the secondary-limit message | `rate_limited` (`Retry-After`, else 60 s) | yes |
 | `403`/`429` with `x-ratelimit-remaining: 0` (primary limit, see below) | `rate_limited` (seconds to the reset) | yes |
 | `401` | `unauthorized` (token revoked or unknown) | no |
-| other `403` | `forbidden` | no |
-| `404`, `409`, `422` | `not_found`, `conflict`, `unprocessable` | no |
+| other `403` | `forbidden` (`sso` when `x-github-sso: required...`: an organisation requires SSO authorisation) | no |
+| `404`, `409`, `410`, `422` | `not_found`, `conflict`, `gone` (e.g. issues disabled), `unprocessable` | no |
 | `3xx`, any other status, a body that is not JSON or larger than the limit | `invalid_response` | no |
 
 A refusal for the primary limit whose reset is at most 60 s away is waited for once and the request repeated. A
@@ -61,12 +61,13 @@ KINDS = frozenset(
         "forbidden",
         "not_found",
         "conflict",
+        "gone",
         "unprocessable",
         "invalid_response",
     }
 )
 REDIRECTS = frozenset({301, 302, 303, 307, 308})
-_STATUS_KINDS = {401: "unauthorized", 404: "not_found", 409: "conflict", 422: "unprocessable"}
+_STATUS_KINDS = {401: "unauthorized", 404: "not_found", 409: "conflict", 410: "gone", 422: "unprocessable"}
 _LINK_NEXT_RE = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
 
 
@@ -74,7 +75,9 @@ class GitHubError(Exception):
     """A refused or failed GitHub request: closed `kind`, HTTP `status`, whether a retry may succeed, `retry_after`
     seconds, GitHub's `message` (kept for classification only, never passed on) and, of `unreachable`, the `cause`:
     the class name of the transport error (`ConnectError`, `ReadError`, `RemoteProtocolError`, ...; it names the
-    phase - connecting, sending, reading - and carries no secret)."""
+    phase - connecting, sending, reading - and carries no secret) and, of `forbidden`, `sso`: GitHub named an
+    organisation that requires SSO authorisation of the token (header `x-github-sso: required; url=...`; the URL is
+    never kept)."""
 
     def __init__(
         self,
@@ -85,6 +88,7 @@ class GitHubError(Exception):
         retry_after: float | None = None,
         message: str = "",
         cause: str = "",
+        sso: bool = False,
     ) -> None:
         if kind not in KINDS:
             raise ValueError(f"unknown GitHub error kind: {kind!r}")
@@ -95,6 +99,7 @@ class GitHubError(Exception):
         self.retry_after = retry_after
         self.message = message
         self.cause = cause
+        self.sso = sso
 
 
 @dataclass(frozen=True)
@@ -294,7 +299,8 @@ class GitHubClient:
                 return GitHubError(
                     "rate_limited", status=status, retryable=True, retry_after=after or DEFAULT_RETRY_AFTER_S
                 )
-            return GitHubError("forbidden", status=status, message=message)
+            sso = headers.get("x-github-sso", "").lower().startswith("required")
+            return GitHubError("forbidden", status=status, message=message, sso=sso)
         kind = _STATUS_KINDS.get(status, "invalid_response")
         return GitHubError(kind, status=status, message=message)
 

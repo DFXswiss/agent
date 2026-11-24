@@ -27,6 +27,12 @@ OPERATION_TYPES = frozenset(
         "task.set_title",
         "workvm.request",
         "workvm.release",
+        "github.list_issues",
+        "github.get_issue",
+        "github.create_issue",
+        "github.update_issue",
+        "github.list_pull_requests",
+        "github.request_connection",
     }
 )
 SUBAGENT_REQUEST = "subagent.request"
@@ -38,6 +44,7 @@ WINDOWS: Mapping[str, int] = MappingProxyType(
         "github.push": 86400,
         "github.create_pull_request": 604800,
         "github.comment": 86400,
+        "github.create_issue": 86400,
         "subagent.request": 600,
     }
 )

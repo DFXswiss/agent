@@ -33,6 +33,13 @@ describe('validRequestBody', () => {
     expect(validRequestBody('github.connect', {}, false)).toBe(true);
     expect(validRequestBody('github.connect', {}, true)).toBe(false);
     expect(validRequestBody('github.connect', { a: 1 }, false)).toBe(false);
+    expect(validRequestBody('github.connect', { token: 'ghp_x' }, false)).toBe(true);
+    expect(validRequestBody('github.connect', { token: 'ghp_x' }, true)).toBe(false);
+    expect(validRequestBody('github.connect', { token: '' }, false)).toBe(false);
+    expect(validRequestBody('github.connect', { token: 'a b' }, false)).toBe(false);
+    expect(validRequestBody('github.connect', { token: 5 }, false)).toBe(false);
+    expect(validRequestBody('github.connect', { token: 'x'.repeat(4097) }, false)).toBe(false);
+    expect(validRequestBody('github.connect', { token: 'x', extra: 1 }, false)).toBe(false);
     expect(validRequestBody('mailbox.check', {}, false)).toBe(true);
     expect(validRequestBody('credential.check', { kind: 'anthropic_api_key' }, false)).toBe(true);
     expect(validRequestBody('credential.check', { kind: 'claude_subscription' }, false)).toBe(true);
@@ -63,6 +70,11 @@ describe('checkResponseBody', () => {
       checkResponseBody('github.connect', { ...code, verification_uri: 'http://127.0.0.1:8080/device' }),
     ).not.toBeNull();
     expect(checkResponseBody('github.connect', { step: 'done', login: 'octo-cat' })).not.toBeNull();
+    expect(
+      checkResponseBody('github.connect', { step: 'done', login: 'octo-cat', scopes: ['repo'], source: 'token' }),
+    ).not.toBeNull();
+    expect(checkResponseBody('github.connect', { step: 'done', login: 'o', scopes: [] })).not.toBeNull();
+    expect(checkResponseBody('github.connect', { step: 'failed', code: 'sso_required' })).not.toBeNull();
     expect(checkResponseBody('github.connect', { step: 'failed', code: 'timeout' })).not.toBeNull();
   });
 
@@ -77,6 +89,10 @@ describe('checkResponseBody', () => {
       { ...code, extra: true },
       { step: 'done', login: 'bad login' },
       { step: 'done' },
+      { step: 'done', login: 'o', scopes: 'repo' },
+      { step: 'done', login: 'o', scopes: ['Repo Write'] },
+      { step: 'done', login: 'o', scopes: Array.from({ length: 65 }, () => 'repo') },
+      { step: 'done', login: 'o', source: 'paste' },
       { step: 'failed', code: 'other' },
       { step: 'failed', code: 'timeout', more: 1 },
       { step: 'authorize', url: 'https://example.com' },

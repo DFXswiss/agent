@@ -227,7 +227,10 @@ def test_a_stored_registration_is_sent_again_after_a_restart(rig: Rig) -> None:
     async def body(env: Any) -> None:
         kit_, sid = await ready(env)
         op_id = await kit_.request(sid, "task.set_title", {"title": "x"})
-        prepared = await kit_.pipeline._prepare(await kit_.op(op_id), env.clock() + 600)
+        found = await kit_.pipeline._checks(await kit_.op(op_id))
+        assert found is not None
+        op, error, checked = found
+        prepared = await kit_.pipeline._prepare(op, env.clock() + 600, error, checked)
         assert prepared is not None
         assert prepared.registration is not None
         assert prepared.state == "received"

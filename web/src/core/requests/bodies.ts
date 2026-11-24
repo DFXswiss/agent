@@ -2,6 +2,8 @@
 // four request kinds, what a user may send for each, and the closed set of response steps a device may answer. A body
 // that does not match is refused like a forged response (`params_invalid`): the browser renders only checked bodies.
 //
+// `github.connect` may carry an existing token (KOR-25, ADR-065); its `done` then names the scopes and the source.
+//
 // Used by WEB-09 (`github.connect`) and WEB-10 (`claude.login`, `credential.check`, `mailbox.check`).
 import { isRecord } from '../registry';
 
@@ -19,6 +21,9 @@ export const FAILURE_CODES = [
   'upstream_error',
   'upstream_unreachable',
   'device_shutdown',
+  'token_refused',
+  'scope_missing',
+  'sso_required',
 ] as const;
 export type FailureCode = (typeof FAILURE_CODES)[number];
 /** Client code of a request the hub failed (device no longer eligible, or replaced by a newer one of its kind). */
@@ -32,6 +37,12 @@ export const USER_CODE_RE = /^[A-Z0-9-]{4,16}$/;
 export const LOGIN_RE = /^[A-Za-z0-9-]{1,39}$/;
 export const EMAIL_RE = /^[!-?A-~]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63}){0,8}$/;
 export const CODE_RE = /^[!-~]+$/;
+/** An existing GitHub token (`contracts/requests/github.connect.request.json`): printable ASCII without spaces. */
+export const TOKEN_RE = /^[!-~]{1,4096}$/;
+/** A scope of a classic token (`X-OAuth-Scopes`). */
+export const SCOPE_RE = /^[a-z0-9:_-]{1,64}$/;
+export const SOURCES = ['device_flow', 'token'] as const;
+export type Source = (typeof SOURCES)[number];
 
 export type ResponseBody =
   | {
@@ -42,7 +53,14 @@ export type ResponseBody =
     }
   | { readonly step: 'authorize'; readonly url: string; readonly automation?: 'failed' }
   | { readonly step: 'progress'; readonly stage: (typeof PROGRESS_STAGES)[number] }
-  | { readonly step: 'done'; readonly login?: string; readonly email?: string; readonly valid?: boolean }
+  | {
+      readonly step: 'done';
+      readonly login?: string;
+      readonly email?: string;
+      readonly valid?: boolean;
+      readonly scopes?: readonly string[];
+      readonly source?: Source;
+    }
   | { readonly step: 'failed'; readonly code: FailureCode };
 
 export const isRequestKind = (value: unknown): value is RequestKind =>
@@ -62,11 +80,17 @@ const matches = (value: unknown, re: RegExp, max = Infinity): value is string =>
 const isInt = (value: unknown, min: number, max: number): value is number =>
   Number.isSafeInteger(value) && (value as number) >= min && (value as number) <= max;
 
+/** At most 64 scopes of the contract's form. */
+export const isScopes = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.length <= 64 && value.every((scope) => matches(scope, SCOPE_RE));
+
 /** A request body a user may send for `kind` (first request or, with `follows`, a follow-up). */
 export function validRequestBody(kind: RequestKind, body: unknown, followUp: boolean): boolean {
   if (!isRecord(body)) return false;
   switch (kind) {
     case 'github.connect':
+      // without `token` the device flow runs; with it the device checks and stores an existing token (KOR-25)
+      return !followUp && keysAre(body, [], ['token']) && (body.token === undefined || matches(body.token, TOKEN_RE));
     case 'mailbox.check':
       return !followUp && keysAre(body, []);
     case 'credential.check':
@@ -99,7 +123,13 @@ export function checkResponseBody(kind: RequestKind, body: unknown): ResponseBod
             matches(body.verification_uri, URL_RE, 2048) &&
             isInt(body.expires_in, 1, 3600)
           );
-        return body.step === 'done' && keysAre(body, ['step', 'login']) && matches(body.login, LOGIN_RE);
+        return (
+          body.step === 'done' &&
+          keysAre(body, ['step', 'login'], ['scopes', 'source']) &&
+          matches(body.login, LOGIN_RE) &&
+          (body.scopes === undefined || isScopes(body.scopes)) &&
+          (body.source === undefined || (SOURCES as readonly unknown[]).includes(body.source))
+        );
       case 'claude.login':
         if (body.step === 'authorize')
           return (

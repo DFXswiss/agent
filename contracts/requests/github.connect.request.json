@@ -2,9 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/github.connect.request.json",
   "title": "device request body github.connect",
-  "description": "no parameters",
+  "description": "no parameters: the device flow of the GitHub App; token: store an existing GitHub token (a GitHub CLI login or a personal access token) after the device checked it (KOR-25)",
   "type": "object",
-  "properties": {},
+  "properties": {
+    "token": {
+      "type": "string",
+      "description": "printable ASCII without spaces",
+      "pattern": "^[!-~]+$",
+      "minLength": 1,
+      "maxLength": 4096
+    }
+  },
   "required": [],
   "additionalProperties": false
 }

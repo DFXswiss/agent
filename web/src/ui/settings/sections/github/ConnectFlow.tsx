@@ -3,13 +3,20 @@
 // device request, the user code large with "Copy", the verification link (new tab) and a countdown until the code
 // expires, then the GitHub login or the error. Responses are pulled on `device_response` frames and on a timer
 // (`core/requests/watch.ts`); nothing confidential is shown (the token never reaches the browser UI).
-import { useEffect, useState } from 'react';
+//
+// With `method="token"` (KOR-25, ADR-065) the same flow stores an existing token instead: next to the device choice
+// a password-like field (no autocomplete, no spell check, outside any form a password manager would offer to save).
+// Its value is read once when the user sends it, the field is emptied at once, and the token goes only into the request
+// sealed with HPKE to the device – never into the store, the URL, a log or the component state. The device checks it at
+// GitHub and answers `done` (login, scopes, source) or a failure with its own text (`github.token.failure.<code>`).
+import { type RefObject, useEffect, useId, useRef, useState } from 'react';
 import {
   connectDevices,
   connectProgress,
   type ConnectProgress,
   type DeviceChoice,
   startConnect,
+  tokenInput,
 } from '../../../../core/github/connection';
 import { type PreparedRequest, requestErrorCode, type RequestView } from '../../../../core/requests/client';
 import { watchRequest } from '../../../../core/requests/watch';
@@ -30,6 +37,24 @@ type Phase =
 
 const BUTTON = 'min-h-11 self-start rounded border border-gray-400 px-4';
 const PRIMARY = 'min-h-11 self-start rounded bg-blue-700 px-4 text-white';
+
+export type ConnectMethod = 'device_flow' | 'token';
+
+/** Failures of a stored token with a text of their own. */
+const TOKEN_FAILURES: ReadonlySet<string> = new Set([
+  'token_invalid',
+  'token_refused',
+  'scope_missing',
+  'sso_required',
+  'upstream_unreachable',
+]);
+
+/** The text of a failure of the flow: the token's own texts first (module comment). */
+function useFailure(method: ConnectMethod): (code: string) => string {
+  const { t } = useI18n();
+  const reason = useReason();
+  return (code) => (method === 'token' && TOKEN_FAILURES.has(code) ? t(`github.token.failure.${code}`) : reason(code));
+}
 
 /** `m:ss` of a remaining time. */
 export function remaining(ms: number): string {
@@ -88,16 +113,19 @@ function DeviceCode({ progress }: { readonly progress: Extract<ConnectProgress, 
 
 function Request({
   prepared,
+  method,
   onConnected,
   onRetry,
 }: {
   readonly prepared: PreparedRequest;
+  readonly method: ConnectMethod;
   readonly onConnected: () => void;
   readonly onRetry: () => void;
 }) {
   const { app } = useAppEnv();
   const { t } = useI18n();
   const reason = useReason();
+  const failure = useFailure(method);
   const [view, setView] = useState<RequestView | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
   useEffect(
@@ -120,7 +148,7 @@ function Request({
     return (
       <div className="flex flex-col gap-1">
         <p aria-live="polite" data-testid="github.waiting">
-          {t('github.waiting')}
+          {method === 'token' ? t('github.token.checking') : t('github.waiting')}
         </p>
         {readError !== null && (
           <p className="text-sm text-red-800" data-testid="github.read-failed" data-code={readError}>
@@ -139,7 +167,7 @@ function Request({
   return (
     <div className="flex flex-col gap-2">
       <p role="alert" data-testid="github.failed" data-code={progress.code}>
-        {t('github.failed', { reason: reason(progress.code) })}
+        {t('github.failed', { reason: failure(progress.code) })}
       </p>
       <button type="button" className={BUTTON} onClick={onRetry} data-testid="github.retry">
         {t('github.retry')}
@@ -148,10 +176,37 @@ function Request({
   );
 }
 
+/** The token field (module comment): uncontrolled, so its value lives only in the input element. */
+function TokenField({ field }: { readonly field: RefObject<HTMLInputElement> }) {
+  const { t } = useI18n();
+  const id = useId();
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id}>{t('github.token.label')}</label>
+      <input
+        id={id}
+        ref={field}
+        type="password"
+        name="github-token-input"
+        autoComplete="off"
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
+        data-1p-ignore="true"
+        data-lpignore="true"
+        className="min-h-11 rounded border border-gray-400 px-3 font-mono"
+        data-testid="github.token.input"
+      />
+    </div>
+  );
+}
+
 export function ConnectFlow({
+  method = 'device_flow',
   onConnected,
   onClose,
 }: {
+  readonly method?: ConnectMethod;
   readonly onConnected: () => void;
   readonly onClose: () => void;
 }) {
@@ -159,6 +214,9 @@ export function ConnectFlow({
   const { t } = useI18n();
   const reason = useReason();
   const deviceName = useProfileDeviceNames();
+  const selectId = useId();
+  const field = useRef<HTMLInputElement>(null);
+  const [empty, setEmpty] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: 'devices' });
   useEffect(() => {
     if (phase.kind !== 'devices') return;
@@ -174,9 +232,18 @@ export function ConnectFlow({
     );
   }, [app, phase]);
   const start = async (device: string) => {
+    let token: string | undefined;
+    if (method === 'token') {
+      const input = field.current!;
+      const checked = tokenInput(input.value);
+      input.value = '';
+      setEmpty(checked === null);
+      if (checked === null) return;
+      token = checked;
+    }
     setPhase({ kind: 'starting' });
     try {
-      setPhase({ kind: 'request', prepared: await startConnect(app.tasks, device) });
+      setPhase({ kind: 'request', prepared: await startConnect(app.tasks, device, token) });
     } catch (error) {
       setPhase({ kind: 'error', code: requestErrorCode(error) });
     }
@@ -184,7 +251,15 @@ export function ConnectFlow({
   const retry = () => setPhase({ kind: 'devices' });
   return (
     <section className="flex flex-col gap-3 rounded border border-gray-300 p-4" data-testid="github.flow">
-      <h3 className="font-semibold">{t('github.flow.title')}</h3>
+      <h3 className="font-semibold">{method === 'token' ? t('github.token.title') : t('github.flow.title')}</h3>
+      {method === 'token' && (
+        <>
+          <p className="text-sm">{t('github.token.intro')}</p>
+          <p className="text-sm text-gray-700" data-testid="github.token.recommend">
+            {t('github.token.recommend')}
+          </p>
+        </>
+      )}
       {(phase.kind === 'devices' || phase.kind === 'starting') && (
         <p aria-live="polite" data-testid="github.devices.loading">
           {t('github.devices.loading')}
@@ -210,9 +285,9 @@ export function ConnectFlow({
       )}
       {phase.kind === 'choose' && (
         <>
-          <label htmlFor="github-device">{t('github.devices.label')}</label>
+          <label htmlFor={selectId}>{t('github.devices.label')}</label>
           <select
-            id="github-device"
+            id={selectId}
             className="min-h-11 rounded border border-gray-400 px-3"
             value={phase.selected}
             onChange={(event) => setPhase({ ...phase, selected: event.target.value })}
@@ -228,17 +303,25 @@ export function ConnectFlow({
               );
             })}
           </select>
+          {method === 'token' && <TokenField field={field} />}
+          {empty && (
+            <p role="alert" className="text-sm text-red-800" data-testid="github.token.empty">
+              {t('github.token.empty')}
+            </p>
+          )}
           <button
             type="button"
             className={PRIMARY}
             onClick={() => void start(phase.selected)}
             data-testid="github.start"
           >
-            {t('github.start')}
+            {method === 'token' ? t('github.token.submit') : t('github.start')}
           </button>
         </>
       )}
-      {phase.kind === 'request' && <Request prepared={phase.prepared} onConnected={onConnected} onRetry={retry} />}
+      {phase.kind === 'request' && (
+        <Request prepared={phase.prepared} method={method} onConnected={onConnected} onRetry={retry} />
+      )}
       <button type="button" className={BUTTON} onClick={onClose} data-testid="github.flow.close">
         {t('github.close')}
       </button>

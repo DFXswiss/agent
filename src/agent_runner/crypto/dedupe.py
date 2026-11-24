@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/dedupe.py at 3392035c31d1.
+"""Copied from agent-core src/agent_hub/crypto/dedupe.py at 56db2db59b0e.
 
 Dedupe tags (04-crypto.md section 4.10, new; field sets of 03-api.md section 9).
 
@@ -14,6 +14,7 @@ the runner (Python) and the web client (TypeScript) produce the same tag for the
 | `github.push` | `repo`, `branch`, `commit_sha` |
 | `github.create_pull_request` | `repo`, `head`, `base` |
 | `github.comment` | `repo`, `number`, `body` = sha256_hex(UTF-8 body) |
+| `github.create_issue` | `repo`, `title`, `body` = sha256_hex of the UTF-8 text (body empty when left out) |
 | `subagent.request` | `session` (parent), `prompt` = sha256_hex(UTF-8 purpose || 0x00 || UTF-8 prompt) |
 
 Repository names are lowercased, branch names lose a leading `refs/heads/`, SHAs are lowercased. A branch or ref
@@ -48,6 +49,13 @@ def sha256_hex(text: str) -> str:
 def _text(params: Mapping[str, object], name: str) -> str:
     value = params.get(name)
     if not isinstance(value, str) or not value:
+        fail("header_invalid")
+    return value
+
+
+def _optional_text(params: Mapping[str, object], name: str) -> str:
+    value = params.get(name, "")
+    if not isinstance(value, str):
         fail("header_invalid")
     return value
 
@@ -91,6 +99,11 @@ _BUILDERS: dict[str, Callable[[Mapping[str, object]], dict[str, object]]] = {
         "repo": _repo(p),
         "number": require_int(p.get("number"), 1),
         "body": sha256_hex(_text(p, "body")),
+    },
+    "github.create_issue": lambda p: {
+        "repo": _repo(p),
+        "title": sha256_hex(_text(p, "title")),
+        "body": sha256_hex(_optional_text(p, "body")),
     },
     "subagent.request": lambda p: {
         "session": _session(p),

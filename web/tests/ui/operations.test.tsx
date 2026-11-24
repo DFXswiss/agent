@@ -216,6 +216,241 @@ describe('operation cards in the chat', () => {
   });
 });
 
+describe('issue and pull request operations', () => {
+  const ISSUE_URL = 'https://github.com/dfx/agent/issues/4';
+  const issue = (number: number, title: string, extra: Record<string, unknown> = {}) => ({
+    number,
+    title,
+    state: 'open',
+    state_reason: null,
+    author: 'octo',
+    labels: [],
+    assignees: [],
+    comments: 0,
+    created_at: '2026-11-20T10:00:00Z',
+    updated_at: '2026-11-20T10:00:00Z',
+    closed_at: null,
+    url: `https://github.com/dfx/agent/issues/${number}`,
+    ...extra,
+  });
+  const op = (t: TaskWorld, id: string, type: string, p: unknown, result: unknown) => [
+    event(t, 'operation.params', { operation_id: id, type, params: p }, id),
+    event(t, 'operation.result', { operation_id: id, status: 'succeeded', result }, id),
+  ];
+
+  it('lists issues and pull requests with number, title, state and labels, as text only', async () => {
+    const { t } = await page();
+    act(() => {
+      putOperations(t.store, [
+        row(t, { operation_id: 'op-1', type: 'github.list_issues', state: 'succeeded' }),
+        row(t, { operation_id: 'op-2', type: 'github.list_pull_requests', state: 'succeeded' }),
+        row(t, { operation_id: 'op-3', type: 'github.list_issues', state: 'succeeded' }),
+      ]);
+      putEvents(t.store, t.wg, [
+        ...op(
+          t,
+          'op-1',
+          'github.list_issues',
+          { repo: 'dfx/agent' },
+          {
+            issues: [
+              issue(4, '<img src=x onerror=alert(1)>', { labels: ['bug', 'p1'] }),
+              issue(3, 'Closed one', { state: 'closed', url: 'javascript:alert(1)' }),
+            ],
+            next_page: 2,
+            truncated: true,
+          },
+        ),
+        ...op(
+          t,
+          'op-2',
+          'github.list_pull_requests',
+          { repo: 'dfx/agent', state: 'all' },
+          {
+            pull_requests: [
+              {
+                number: 7,
+                title: 'Draft PR',
+                state: 'open',
+                draft: true,
+                author: 'octo',
+                head: 'feat',
+                base: 'main',
+                created_at: '2026-11-20T10:00:00Z',
+                updated_at: '2026-11-20T10:00:00Z',
+                url: 'https://github.com/dfx/agent/pull/7',
+              },
+            ],
+            next_page: null,
+            truncated: false,
+          },
+        ),
+        ...op(
+          t,
+          'op-3',
+          'github.list_issues',
+          { repo: 'dfx/other' },
+          { issues: [], next_page: null, truncated: false },
+        ),
+      ]);
+    });
+    const cards = await screen.findAllByTestId('operation.card');
+    const by = (id: string) => cards.find((card) => card.getAttribute('data-operation') === id)!;
+    const issues = within(by('op-1'));
+    expect(issues.getByTestId('operation.type')).toHaveTextContent('List issues');
+    expect(issues.getByTestId('operation.subject')).toHaveTextContent('dfx/agent');
+    expect(issues.getByTestId('operation.fact')).toHaveTextContent('Issues: 2');
+    expect(issues.getByTestId('operation.listing')).toHaveAttribute('data-kind', 'issues');
+    const entries = issues.getAllByTestId('operation.entry');
+    expect(entries.map((entry) => entry.getAttribute('data-number'))).toEqual(['4', '3']);
+    // untrusted text stays text: no element is created from it
+    expect(within(entries[0]!).getByTestId('operation.entry.title')).toHaveTextContent('<img src=x onerror=alert(1)>');
+    expect(by('op-1').querySelector('img')).toBeNull();
+    expect(within(entries[0]!).getByRole('link')).toHaveAttribute('href', 'https://github.com/dfx/agent/issues/4');
+    expect(within(entries[0]!).getByRole('link')).toHaveAttribute('rel', 'noopener noreferrer nofollow');
+    expect(
+      within(entries[0]!)
+        .getAllByTestId('operation.entry.label')
+        .map((l) => l.textContent),
+    ).toEqual(['bug', 'p1']);
+    // a URL that is not https is no link
+    expect(within(entries[1]!).queryByRole('link')).toBeNull();
+    expect(within(entries[1]!).getByTestId('operation.entry.state')).toHaveTextContent('closed');
+    expect(issues.getByTestId('operation.listing.next')).toHaveTextContent('More on page 2.');
+    expect(issues.getByTestId('operation.truncated')).toBeInTheDocument();
+    const prs = within(by('op-2'));
+    expect(prs.getByTestId('operation.type')).toHaveTextContent('List pull requests');
+    expect(prs.getByTestId('operation.listing')).toHaveAttribute('data-kind', 'pull_requests');
+    expect(prs.getByTestId('operation.entry.draft')).toHaveTextContent('draft');
+    expect(prs.queryByTestId('operation.listing.next')).toBeNull();
+    expect(within(by('op-3')).getByTestId('operation.listing.empty')).toHaveTextContent('No issues.');
+  });
+
+  it('shows a read issue with its text and comments, a created and an updated issue and the connection', async () => {
+    const { t } = await page();
+    act(() => {
+      putOperations(t.store, [
+        row(t, { operation_id: 'op-1', type: 'github.get_issue', state: 'succeeded' }),
+        row(t, { operation_id: 'op-2', type: 'github.create_issue', state: 'succeeded' }),
+        row(t, { operation_id: 'op-3', type: 'github.update_issue', state: 'succeeded' }),
+        row(t, { operation_id: 'op-4', type: 'github.request_connection', state: 'succeeded' }),
+        row(t, { operation_id: 'op-5', type: 'github.get_issue', state: 'succeeded' }),
+      ]);
+      putEvents(t.store, t.wg, [
+        ...op(
+          t,
+          'op-1',
+          'github.get_issue',
+          { repo: 'dfx/agent', number: 4 },
+          {
+            ...issue(4, 'Login fails', { state: 'closed', state_reason: 'completed', labels: ['bug'] }),
+            body: 'Steps:\n1. <script>alert(1)</script>',
+            pull_request: false,
+            comments_total: 3,
+            comments: [
+              { id: 11, author: 'alice', body: 'Seen it too', created_at: '2026-11-21T09:00:00Z' },
+              { id: 12, author: 'bob', body: '**not markdown**', created_at: '2026-11-21T10:00:00Z' },
+            ],
+            comments_next_page: 2,
+            truncated: false,
+          },
+        ),
+        ...op(
+          t,
+          'op-2',
+          'github.create_issue',
+          { repo: 'dfx/agent', title: 'New bug', body: 'x' },
+          { number: 5, url: 'https://github.com/dfx/agent/issues/5', id: 55 },
+        ),
+        ...op(
+          t,
+          'op-3',
+          'github.update_issue',
+          { repo: 'dfx/agent', number: 4, state: 'closed', state_reason: 'not_planned' },
+          { number: 4, url: ISSUE_URL, state: 'closed', state_reason: 'not_planned', title: 'Login fails', labels: [] },
+        ),
+        ...op(t, 'op-4', 'github.request_connection', {}, { login: 'octo' }),
+        ...op(
+          t,
+          'op-5',
+          'github.get_issue',
+          { repo: 'dfx/agent', number: 7 },
+          {
+            ...issue(7, 'A pull request'),
+            body: null,
+            pull_request: true,
+            comments_total: 0,
+            comments: [],
+            comments_next_page: null,
+            truncated: true,
+          },
+        ),
+      ]);
+    });
+    const cards = await screen.findAllByTestId('operation.card');
+    const by = (id: string) => cards.find((card) => card.getAttribute('data-operation') === id)!;
+    const read = within(by('op-1'));
+    expect(read.getByTestId('operation.type')).toHaveTextContent('Read issue');
+    expect(read.getByTestId('operation.subject')).toHaveTextContent('dfx/agent#4');
+    expect(read.getByTestId('operation.fact').querySelector('a')).toHaveAttribute('href', ISSUE_URL);
+    expect(read.getByTestId('operation.entry.title')).toHaveTextContent('Login fails');
+    expect(read.getByTestId('operation.entry.state')).toHaveTextContent('closed');
+    expect(read.getByTestId('operation.issue.reason')).toHaveTextContent('(completed)');
+    expect(read.getByTestId('operation.issue.author')).toHaveTextContent('octo');
+    expect(read.getByTestId('operation.issue.body')).toHaveTextContent('1. <script>alert(1)</script>');
+    expect(by('op-1').querySelector('script')).toBeNull();
+    expect(read.getByTestId('operation.issue.comments-count')).toHaveTextContent('Comments: 2 of 3');
+    const comments = read.getAllByTestId('operation.issue.comment');
+    expect(comments).toHaveLength(2);
+    expect(comments[0]).toHaveTextContent('alice2026-11-21Seen it too');
+    expect(comments[1]).toHaveTextContent('**not markdown**');
+    expect(by('op-1').querySelector('strong')).toBeNull();
+    expect(read.getByTestId('operation.issue.next')).toHaveTextContent('More comments on page 2.');
+    expect(read.queryByTestId('operation.truncated')).toBeNull();
+    const created = within(by('op-2'));
+    expect(created.getByTestId('operation.subject')).toHaveTextContent('dfx/agent: New bug');
+    expect(created.getByTestId('operation.fact')).toHaveTextContent('Issue: #5');
+    expect(created.getByTestId('operation.fact').querySelector('a')).toHaveAttribute(
+      'href',
+      'https://github.com/dfx/agent/issues/5',
+    );
+    const updated = within(by('op-3')).getAllByTestId('operation.fact');
+    expect(updated.map((fact) => fact.textContent)).toEqual(['Issue: #4', 'State: closed', 'Reason: not planned']);
+    expect(within(by('op-4')).getByTestId('operation.type')).toHaveTextContent('Request GitHub connection');
+    expect(within(by('op-4')).getByTestId('operation.fact')).toHaveTextContent('Connected as: octo');
+    const pr = within(by('op-5'));
+    expect(pr.getByTestId('operation.issue.pull-request')).toHaveTextContent('This number is a pull request.');
+    expect(pr.queryByTestId('operation.issue.body')).toBeNull();
+    expect(pr.queryByTestId('operation.issue.comment')).toBeNull();
+    expect(pr.getByTestId('operation.issue.comments-count')).toHaveTextContent('Comments: 0 of 0');
+    expect(pr.getByTestId('operation.truncated')).toBeInTheDocument();
+  });
+
+  it('shows the comment count without a total and comments without author or date', async () => {
+    const { t } = await page();
+    act(() => {
+      putOperations(t.store, [row(t, { operation_id: 'op-1', type: 'github.get_issue', state: 'succeeded' })]);
+      putEvents(
+        t.store,
+        t.wg,
+        op(
+          t,
+          'op-1',
+          'github.get_issue',
+          { repo: 'dfx/agent', number: 4 },
+          { number: 4, title: 'T', body: '', comments: [{ id: 1, body: 'anon' }] },
+        ),
+      );
+    });
+    const card = within(await screen.findByTestId('operation.card'));
+    expect(card.getByTestId('operation.issue.comments-count')).toHaveTextContent('Comments: 1 of ?');
+    expect(card.getByTestId('operation.issue.comment')).toHaveTextContent('?anon');
+    expect(card.queryByTestId('operation.issue.body')).toBeNull();
+    expect(card.queryByTestId('operation.issue.author')).toBeNull();
+    expect(card.queryByRole('link', { name: '#4' })).toBeNull();
+  });
+});
+
 describe('operation card loading', () => {
   it('stays without a row when the task operations cannot be loaded', async () => {
     const { t } = await page('', (w) =>

@@ -52,7 +52,7 @@ def connect(
             env.clock.on_sleep = on_sleep
             service = service_for(env.context)
             assert service is not None
-            request_id = env.hub.add_request(seal_request("github.connect", {}))
+            request_id = env.hub.add_request(seal_request("github.connect", kw.get("body", {})))
             await service.process(request_id)
             await settle(service)
             await check(env, request_id)
@@ -73,12 +73,17 @@ def test_connect_relays_the_device_code_stores_the_credential_and_answers_done(s
         assert first["verification_uri"] == "https://github.example/login/device"
         assert first["expires_in"] == 900
         assert first["user_code"] == github.double.device.grants()[-1]["user_code"]
-        assert last == {"step": "done", "login": "octo-user"}
+        assert last == {"step": "done", "login": "octo-user", "scopes": [], "source": "device_flow"}
         assert [h["final"] for h, _b in env.hub.responses(request_id)] == [False, True]
         record = env.hub.records[(ALICE, "github")]
         assert record["header"]["author"] == env.context.identity.device.device_id
         async with cache.opened(env.context, ALICE, "github") as body:
-            assert (body["login"], body["user_id"], body["scopes"]) == ("octo-user", 101, [])
+            assert (body["login"], body["user_id"], body["scopes"], body["source"]) == (
+                "octo-user",
+                101,
+                [],
+                "device_flow",
+            )
             token = body["token"]
         assert token
         assert token not in env.log()
@@ -91,7 +96,7 @@ def test_connect_relays_the_device_code_stores_the_credential_and_answers_done(s
         ]
         assert env.clock.sleeps == [5, 5]
         assert github.failures() == []
-        assert f"github_connect done request_id={request_id}" in env.log()
+        assert f"github_connect done request_id={request_id} source=device_flow scopes=-\n" in env.log()
 
     connect(store_dsn, github, decide, check)
 
@@ -104,7 +109,7 @@ def test_slow_down_lengthens_the_poll_interval(store_dsn: str, github: GitHub) -
             github.decide("authorize", login="octo-user")
 
     async def check(env: Env, request_id: str) -> None:
-        assert env.hub.bodies(request_id)[-1] == {"step": "done", "login": "octo-user"}
+        assert env.hub.bodies(request_id)[-1]["login"] == "octo-user"
         assert env.clock.sleeps == [5, 10, 10]
 
     connect(store_dsn, github, decide, check)
@@ -132,7 +137,7 @@ def test_poll_network_errors_are_polled_again_up_to_the_limit(store_dsn: str, gi
             github.decide("authorize", login="octo-user")
 
     async def check(env: Env, request_id: str) -> None:
-        assert env.hub.bodies(request_id)[-1] == {"step": "done", "login": "octo-user"}
+        assert env.hub.bodies(request_id)[-1]["step"] == "done"
         assert env.clock.sleeps == [5, 5, 5]
 
     connect(store_dsn, github, decide, check)
@@ -241,13 +246,15 @@ TOKEN = {"access_token": "gho_mocktoken", "token_type": "bearer", "scope": "repo
 USER = {"login": "octo-user", "id": 101}
 
 
-def mocked(dsn: str, transport: httpx.MockTransport, *, ck: bool = True, client_id: Any = True) -> list[dict[str, Any]]:
+def mocked(
+    dsn: str, transport: httpx.MockTransport, *, ck: bool = True, client_id: Any = True, body: Any = None
+) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
 
     async def check(env: Env, request_id: str) -> None:
         found.extend(env.hub.bodies(request_id))
 
-    connect(dsn, None, lambda _c: None, check, transport=transport, ck=ck, client_id=client_id)
+    connect(dsn, None, lambda _c: None, check, transport=transport, ck=ck, client_id=client_id, body=body or {})
     return found
 
 
@@ -261,7 +268,8 @@ def test_mock_happy_path_records_the_granted_scopes(store_dsn: str) -> None:
         login_oauth_access_token=[(200, {"error": "slow_down"}), (200, TOKEN)],
         user=(200, USER),
     )
-    assert mocked(store_dsn, transport)[-1] == {"step": "done", "login": "octo-user"}
+    done = {"step": "done", "login": "octo-user", "scopes": ["read:user", "repo"], "source": "device_flow"}
+    assert mocked(store_dsn, transport)[-1] == done
 
 
 def test_scopes() -> None:
@@ -386,7 +394,7 @@ def test_a_store_lost_in_transport_is_sent_again_and_the_connect_succeeds(store_
     """KOR-18: the user has confirmed the code; a lost write (before or after the hub stored it) is repeated with the
     same record bytes, so the connect ends done with exactly one stored version."""
     bodies, (hub, log, _request_id) = _stored(store_dsn, lost)
-    assert bodies[-1] == {"step": "done", "login": "octo-user"}
+    assert bodies[-1]["step"] == "done"
     assert hub.records[(ALICE, "github")]["header"]["version"] == 1
     puts = [r for r in hub.requests if r.method == "PUT"]
     assert len(puts) == len([mode for mode in lost if mode]) + 1

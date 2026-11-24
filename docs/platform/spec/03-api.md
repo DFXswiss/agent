@@ -481,9 +481,41 @@ original released its slot (`failed`, `expired`), or with other content (e.g. an
 | `github.commit` | `{repo,branch,message,paths?}` | allow-list (when set); branch not protected; message 1–4096 chars; paths relative, no `..`, not under `.git/`; files ≤ 10 MiB each, ≤ 500 files, ≤ 50 MiB total; deterministic secret patterns (PEM private keys, `ghp_`/`gho_`/`ghu_`/`github_pat_`, `sk-ant-`, `sk-or-`, `AKIA[0-9A-Z]{16}`) ⇒ `secret_detected` | repo, branch, parent sha, local tree sha | 24 h | `{commit_sha,parent_sha,tree_sha,files_changed}`; **one** workspace export snapshot of `repos/<owner>/<name>` is taken into a runner scratch directory before registration; parent = current head of `branch` at GitHub at check time, or the checkout commit if the branch does not exist yet; blob and tree SHA-1 are computed locally in git object format (no git binary) from the snapshot and the parent tree listing; the secret scan runs on the snapshot; the executor commits exactly that snapshot via the Git Data API and verifies that GitHub's tree SHA equals the local one (`tree_mismatch` otherwise); a snapshot without a change against the parent (`files_changed` 0) is rejected at the check with `no_changes` (not retryable; registered as locally rejected without a dedupe slot, nothing reaches GitHub); **no ref update** |
 | `github.push` | `{repo,branch,commit_sha}` | allow-list (when set); branch not protected; commit created by an earlier `github.commit` of this task; fast-forward only (`non_fast_forward`) | repo, branch, commit sha | 24 h | `{branch,sha,url}` (ref update without force; creates the branch ref if missing) |
 | `github.create_pull_request` | `{repo,head,base,title,body?,draft?}` | allow-list (when set); title 1–256; body ≤ 65536; head not protected; `draft` default from settings | repo, head, base | 7 days; additionally, if the executor finds an open PR with the same head/base at GitHub, the operation ends `succeeded` with that PR and `result.existing:true`, and MCP reports `status:"duplicate"` | `{number,url,id,draft}` |
-| `github.comment` | `{repo,number,body}` | allow-list (when set); body 1–65536 | repo, number, sha256(body) | 24 h | `{comment_id,url}` |
+| `github.comment` | `{repo,number,body}` | allow-list (when set); body 1–65536 | repo, number, sha256(body) | 24 h | `{comment_id,url}`; `number` is an issue **or** a pull request (GitHub's issue comment endpoint serves both; KOR-25) |
+| `github.list_issues` | `{repo,state?,labels?,sort?,direction?,per_page?,page?}` | allow-list (when set); `state` `open`(default)/`closed`/`all`; `labels` ≤ 20 names (1–100 chars, no comma, no control character; only issues carrying all of them); `sort` `created`(default)/`updated`/`comments`; `direction` `desc`(default, newest first)/`asc`; `per_page` 1–100 (30); `page` 1–1000 (1) | – | – | `{issues:[{number,title,state,state_reason,author,labels,assignees,comments,created_at,updated_at,closed_at,url}],next_page,truncated}`: one GitHub page; pull requests, which GitHub lists among the issues, are left out, so a page may hold fewer than `per_page` issues while `next_page` is set (`null` on the last page); a GitHub page of only pull requests is followed by the next one, up to 5 GitHub pages, so the newest issue is found even behind pull requests (`next_page` = the page after the last one read); entries that break the result contract are left out and titles cut to 1024 chars (`truncated`) |
+| `github.get_issue` | `{repo,number,comments_page?,comments_per_page?}` | allow-list (when set); number ≥ 1; `comments_page` 1–1000 (1); `comments_per_page` 1–100 (100) | – | – | `{number,title,body,state,state_reason,author,labels,assignees,created_at,updated_at,closed_at,url,pull_request,comments_total,comments:[{id,author,body,created_at}],comments_next_page,truncated}`: one page of comments, oldest first; the result stays within 200 KiB of JSON (the newest comments of the page, then the body are cut first, `truncated`); `pull_request:true` when the number is a pull request (read it with `github.get_pull_request`) |
+| `github.create_issue` | `{repo,title,body?,labels?}` | allow-list (when set); title 1–256; body ≤ 65536; labels as above (GitHub sets labels only for accounts with push access and drops them silently otherwise) | repo, sha256(title), sha256(body, empty when left out) | 24 h | `{number,url,id}` |
+| `github.update_issue` | `{repo,number,state?,state_reason?,title?,body?,labels?}` | allow-list (when set); number ≥ 1; at least one of `state`, `title`, `body`, `labels` (`params_invalid`); `state` `open`/`closed`; `state_reason` only together with a fitting `state` (`reopened` with `open`, `completed`/`not_planned` with `closed`); title 1–256; body ≤ 65536; `labels` replaces every label of the issue (`[]` removes all) | – (setting values is idempotent) | – | `{number,url,state,state_reason,title,labels}` |
+| `github.list_pull_requests` | `{repo,state?,base?,sort?,direction?,per_page?,page?}` | allow-list (when set); `state` `open`(default)/`closed`/`all`; `base` branch syntax; `sort` `created`(default)/`updated`; `direction`, `per_page`, `page` as for `github.list_issues` | – | – | `{pull_requests:[{number,title,state,draft,author,head,base,created_at,updated_at,url}],next_page,truncated}` |
+| `github.request_connection` | `{}` | none; the task owner's GitHub connection is the subject (held while missing, below) | – | – | `{login}` of the connected account |
 | `subagent.request` | `{purpose,prompt,model_id?}` | purpose 1–200, prompt 1–32768 chars; `model_id` from the allowed list of the parent session's access kind (checked by the runner against the model catalog ⇒ `model_not_allowed`) | parent session, sha256(purpose‖prompt) | 10 min | `{session_id}` (hub creates the child session, H4 limits: depth ≤ 2, ≤ 3 running children per task, ≤ 10 children per task) |
 | `task.set_title` | `{title}` | 1–120 chars, single line | – | – | `{}` (runner writes a device-authored `task.meta` event) |
+
+GitHub answers of the issue and list types (KOR-25): `401` → `github_not_connected`; `404` → `not_found`; `410`
+(issues are disabled in the repository) → `not_found` with the message "Issues are disabled in this repository.";
+`403` with the header `x-github-sso: required…` → `upstream_error` with a message that an organisation requires SSO
+authorisation of the token (the authorisation URL of the header is never passed on); rate limits as above
+(`upstream_error`, `retryable:true`). There is no new error code. Texts from GitHub (titles, bodies, comments,
+labels, logins) are untrusted data: the session reads them as data, the web renders them only as text and links
+only `https:` URLs.
+
+Held operations (KOR-25, ADR-066, `05-runner.md` §12): when the formal check or the pre-check of a `github.*` type
+fails with `github_not_connected` (a repository outside a workgroup's list stays `repo_not_allowed` and is rejected at
+once), the runner does not reject the operation but holds it for up to
+15 minutes and asks the task owner in the task's chat (`session.status` `waiting`, §10); the MCP call answers
+`pending` after its 20 s and the result arrives with `operation.finished`. After 15 minutes the operation is rejected
+with `github_not_connected` ("The task owner did not connect GitHub within 15 minutes."). At most 3 held operations
+per session (more are rejected at once) and at most one `waiting` event per session per 60 s. `github.request_connection` lets a session ask for the connection without another type: held
+while the owner is not connected, else `{login}` at once.
+
+Compatibility while the parts are rolled out one by one (KOR-25): a type the hub does not know is `rejected` with
+`unknown_type` (H3) and a type a guest does not know is forwarded with `local_check:"rejected"` and `unknown_type`;
+neither is ever executed in part. A new type is therefore rolled out hub first, then runners, then goldens: a new
+runner beside an old hub would only see its new types refused, an old runner or guest beside a new hub never sends
+them. Old runners never write `session.status` `waiting`; their checks reject as before. A `github.connect` with `{token}` sent to an
+old runner is not understood there (it runs the device flow or fails without `GITHUB_CLIENT_ID`; the token is never
+stored): runners are therefore updated right after the hub. Web tabs still open with the previous bundle do not know
+the new `source`/`scopes` fields and show such a connection as unverifiable until they are reloaded.
 
 Result delivery: the runner writes `operation.result` (encrypted) via the outbox, then the
 `operation_transition`, then answers the pending MCP call. For `duplicate` the runner returns the original
@@ -504,7 +536,7 @@ operation's result (decrypted from its `operation.result` event) with `status:"d
 | `whiteboard.delete` | `{base_event_id}` |
 | `settings.workgroup` | `{repositories,protected_branches,pr_draft_default}` (latest wins) |
 | `session.output` | journal body of `session.output` |
-| `session.tool` / `session.hook` / `session.file` / `session.terminal` / `session.status` | journal bodies (§7.2); `session.status` = `{state,reason,details?}` for errors |
+| `session.tool` / `session.hook` / `session.file` / `session.terminal` / `session.status` | journal bodies (§7.2); `session.status` = `{state,reason,details?}` for errors and states, or `{state:"waiting",waiting_for,operation_id,operation_type,repo?,until}` while the runner holds an operation of the session for the task owner (§9, KOR-25): `waiting_for` `github_connection` (the owner has no usable GitHub connection); `repo` is left out for types without one; `until` = receipt + 15 min; only platform-checked values, never text of the session |
 | `operation.params` | `{operation_id,type,params,idempotency_key?}` |
 | `operation.result` | `{operation_id,status,result?,error?}` |
 | `platform.read` | `{tool,arguments,result_count}` |

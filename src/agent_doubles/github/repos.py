@@ -1,36 +1,49 @@
 """The in-memory GitHub of the double: users and their tokens, App installations, repositories with git objects,
-refs, pull requests and issue comments, and the seeding format.
+refs, issues, pull requests, labels and issue comments, and the seeding format.
 
 Seeding (``POST /_double/seed`` or ``--seed FILE``) adds to what exists; names already present are refused, a
 reset (``POST /_double/reset``) empties everything. Format (every key optional)::
 
-    {"users": [{"login": "octo-user", "id": 101, "name": "Octo User", "email": null, "tokens": ["<token>"],
+    {"users": [{"login": "octo-user", "id": 101, "name": "Octo User", "email": null,
+                "tokens": ["<token>", {"token": "<token>", "kind": "classic", "scopes": ["repo", "read:org"],
+                                       "repositories": ["octo-org/hello"], "revoked": false, "sso": ["octo-org"]}],
                 "personal_tokens": ["<token>"], "collaborator": ["octo-org/hello"]}],
      "installations": [{"id": 31, "account": "octo-org", "account_type": "Organization",
                         "repository_selection": "selected", "repositories": ["octo-org/hello"],
                         "users": ["octo-user"], "permissions": {"contents": "write", ...}}],
      "repositories": [{"full_name": "octo-org/hello", "private": true, "default_branch": "main",
-                       "description": null,
+                       "description": null, "has_issues": true,
                        "branches": [{"name": "main", "commits": [{"message": "Initial commit.",
                                      "files": {"README.md": "hello\\n", "run.sh": {"content": "...", "mode": "100755"},
                                                "logo.bin": {"base64": "..."}, "link": {"target": "README.md"}}}]},
                                     {"name": "feature", "from": "main", "commits": [{"files": {"README.md": null}}]}],
                        "tags": {"v1.0": "main"},
-                       "issues": [{"title": "...", "user": "octo-user"}],
+                       "issues": [{"title": "...", "user": "octo-user", "body": null, "state": "closed",
+                                   "state_reason": "not_planned", "labels": ["bug"], "assignees": ["octo-user"]}],
                        "pulls": [{"title": "...", "head": "feature", "base": "main", "draft": true,
-                                  "user": "octo-user"}],
+                                  "user": "octo-user", "labels": ["bug"]}],
                        "comments": [{"number": 1, "body": "...", "user": "octo-user"}]}],
      "device_flow": {"client_id": "...", "interval": 5, "expires_in": 900},
      "faults": [...], "expectations": [...]}
 
-Issues (only a number, a title and an author: targets for comments) and pull requests share one number sequence per
-repository, issues first. Commit ``files`` are changes against the parent (``null`` deletes a path); a branch
-without ``from`` starts empty. An installation whose account is a user that is not listed in ``users`` is visible to
-that user; repositories of an installation with ``repository_selection: "all"`` are all repositories of its account.
-A repository is accessible with a token when one of the installations visible to the token's user covers it;
-anything else is ``404``. ``personal_tokens`` are tokens without the GitHub App (classic personal access tokens,
-KOR-27): they reach the repositories the user owns and those named in ``collaborator`` (with write access; a name
-that is not seeded is simply not reachable), and GitHub refuses them the installation routes.
+Issues and pull requests share one number sequence per repository, issues first. An issue is ``open`` by default; a
+closed one has the ``state_reason`` ``completed`` unless the seed names one (``completed``, ``not_planned``,
+``reopened``, ``duplicate`` or ``null``). Label names of issues and pull requests create the repository's labels on
+first use (as ``POST …/issues`` does); assignees are seeded logins; the comment count of an issue is the number of its
+``comments``. ``has_issues: false`` disables the issue routes (``410``). Commit ``files`` are changes against the
+parent (``null`` deletes a path); a branch without ``from`` starts empty. An installation whose account is a user that
+is not listed in ``users`` is visible to that user; repositories of an installation with
+``repository_selection: "all"`` are all repositories of its account.
+
+A token is a string (a GitHub App user token, ``ghu_…``) or an object; only ``token`` is required. ``kind`` is
+``app`` (default), ``classic`` or ``fine_grained`` (personal access tokens); ``scopes`` are the OAuth scopes of a
+classic token; ``repositories`` limits a personal access token to these full names (default: every repository);
+``revoked: true`` makes every request ``401 Bad credentials``; ``sso`` names organisations that enforce SAML single
+sign-on for which the token is not authorized. With an App token a repository is accessible when one of the
+installations visible to the token's user covers it; a personal access token reaches its repositories without an
+installation; anything else is ``404``.
+``personal_tokens`` (KOR-27) are short for classic tokens with the scope ``repo`` that reach the repositories the
+user owns and those named in ``collaborator`` (a name that is not seeded is simply not reachable).
 
 Time is logical: seeded and created objects take timestamps from `World.stamp`, which starts at ``base_time`` and
 advances one second per object, so object ids are deterministic.
@@ -67,6 +80,10 @@ PERMISSION_LEVELS = frozenset({"read", "write"})
 SELECTIONS = frozenset({"all", "selected"})
 ACCOUNT_TYPES = frozenset({"User", "Organization"})
 PULL_STATES = frozenset({"open", "closed"})
+ISSUE_STATES = PULL_STATES
+STATE_REASONS = frozenset({"completed", "not_planned", "reopened", "duplicate"})
+TOKEN_KINDS = frozenset({"app", "classic", "fine_grained"})
+LABEL_COLOR = "ededed"
 LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 REPO_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -136,6 +153,13 @@ def _bool(data: Mapping[str, Any], key: str, what: str, default: bool) -> bool:
     return value
 
 
+def _names(data: Mapping[str, Any], key: str, what: str) -> list[str]:
+    value = _list(data.get(key, []), f"{what}.{key}")
+    if any(not isinstance(item, str) or not item for item in value):
+        raise SeedError(f"{what}.{key} must be non-empty strings")
+    return value
+
+
 def _check_keys(data: Mapping[str, Any], allowed: set[str], what: str) -> None:
     unknown = sorted(set(data) - allowed)
     if unknown:
@@ -153,6 +177,36 @@ class User:
     email: str | None
     type: str = "User"
     collaborator: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Token:
+    """A credential of a user: a GitHub App user token (`kind` ``app``) or a personal access token (``classic`` with
+    OAuth `scopes`, ``fine_grained``); `repositories` (lower-case full names, None for all) limits a personal access
+    token, `sso` names (lower-case) organisations whose SAML enforcement the token is not authorized for."""
+
+    token: str
+    login: str
+    kind: str = "app"
+    scopes: list[str] = field(default_factory=list)
+    repositories: list[str] | None = None
+    revoked: bool = False
+    sso: list[str] = field(default_factory=list)
+    collaborator: list[str] | None = None
+    """Set for ``personal_tokens``: the token reaches only the user's own repositories and these (lower case)."""
+
+    def reaches(self, repo: Repo) -> bool:
+        """Whether this personal access token names `repo`."""
+        if self.collaborator is not None:
+            return repo.owner.lower() == self.login or repo.key in self.collaborator
+        return self.repositories is None or repo.key in self.repositories
+
+    def can_write(self, repo: Repo) -> bool:
+        """Whether this personal access token may write to `repo` (classic tokens: scope ``repo``, or
+        ``public_repo`` for a public repository)."""
+        if self.kind == "fine_grained":
+            return True
+        return "repo" in self.scopes or ("public_repo" in self.scopes and not repo.private)
 
 
 @dataclass
@@ -180,13 +234,35 @@ class Pull:
     state: str
     user: str
     created: int
+    updated: int = 0
+    closed: int | None = None
+    labels: list[str] = field(default_factory=list)
+    assignees: list[str] = field(default_factory=list)
+    state_reason: str | None = None
 
 
 @dataclass
 class Issue:
     number: int
+    id: int
     title: str
+    body: str | None
     user: str
+    state: str
+    state_reason: str | None
+    labels: list[str]
+    assignees: list[str]
+    created: int
+    updated: int
+    closed: int | None
+
+
+@dataclass
+class Label:
+    id: int
+    name: str
+    color: str = LABEL_COLOR
+    description: str | None = None
 
 
 @dataclass
@@ -209,11 +285,13 @@ class Repo:
     default_branch: str
     description: str | None
     created: int
+    has_issues: bool = True
     objects: ObjectStore = field(default_factory=ObjectStore)
     refs: dict[str, str] = field(default_factory=dict)
     pulls: dict[int, Pull] = field(default_factory=dict)
     issues: dict[int, Issue] = field(default_factory=dict)
     comments: list[Comment] = field(default_factory=list)
+    labels: dict[str, Label] = field(default_factory=dict)
     next_number: int = 1
 
     @property
@@ -223,6 +301,19 @@ class Repo:
     @property
     def key(self) -> str:
         return self.full_name.lower()
+
+    def item(self, number: int) -> Issue | Pull | None:
+        """The issue or pull request `number`."""
+        return self.issues.get(number) or self.pulls.get(number)
+
+    def comment_count(self, number: int) -> int:
+        return sum(1 for comment in self.comments if comment.number == number)
+
+    @property
+    def open_items(self) -> int:
+        """Open issues and pull requests (``open_issues_count``)."""
+        items: list[Issue | Pull] = [*self.issues.values(), *self.pulls.values()]
+        return sum(1 for item in items if item.state == "open")
 
     # --- refs and commits -----------------------------------------------------------------------
 
@@ -386,8 +477,7 @@ class World:
         """Forget everything and restart the counters (the lock stays, so concurrent requests keep one lock)."""
         with self.lock:
             self.users: dict[str, User] = {}
-            self.tokens: dict[str, str] = {}
-            self.personal: set[str] = set()
+            self.tokens: dict[str, Token] = {}
             self.installations: dict[int, Installation] = {}
             self.repos: dict[str, Repo] = {}
             self._tick = 0
@@ -408,25 +498,36 @@ class World:
     # --- lookups ------------------------------------------------------------------------------------
 
     def user_for_token(self, token: str) -> User | None:
-        login = self.tokens.get(token)
-        return self.users[login] if login is not None else None
+        """The user of a known token that is not revoked."""
+        found = self.tokens.get(token)
+        return self.users[found.login] if found is not None and not found.revoked else None
 
     def add_token(self, login: str, token: str) -> None:
-        self.tokens[token] = login
+        """Give user `login` (lower case) a GitHub App user token."""
+        self.tokens[token] = Token(token, login)
 
     def revoke_token(self, token: str) -> bool:
         """Forget a token (``POST /credentials/revoke``); True when it was known."""
-        self.personal.discard(token)
         return self.tokens.pop(token, None) is not None
 
-    def is_personal(self, token: str) -> bool:
-        return token in self.personal
+    def revoke(self, token: str) -> None:
+        """Revoke a known token (later requests with it are ``401 Bad credentials``)."""
+        found = self.tokens.get(token)
+        if found is None:
+            raise SeedError("unknown token")
+        found.revoked = True
 
-    def personal_repos(self, user: User) -> list[Repo]:
-        """The repositories a personal token of `user` reaches (own and `collaborator`), by full name."""
-        named = {name.lower() for name in user.collaborator}
-        found = [repo for repo in self.repos.values() if repo.owner.lower() == user.login.lower() or repo.key in named]
-        return sorted(found, key=lambda repo: repo.key)
+    def token_repos(self, user: User, token: Token) -> list[Repo]:
+        """The repositories `token` reaches (an App token: through the installations visible to `user`), by full name,
+        without those of organisations whose SAML enforcement the token is not authorized for."""
+        if token.kind == "app":
+            found = {
+                repo.key: repo for inst in self.visible_installations(user) for repo in self.installation_repos(inst)
+            }
+            repos = list(found.values())
+        else:
+            repos = [repo for repo in self.repos.values() if token.reaches(repo)]
+        return sorted((repo for repo in repos if repo.owner.lower() not in token.sso), key=lambda repo: repo.key)
 
     def account_id(self, login: str) -> int:
         """The id of user `login`, or a stable id for an organisation the seed only names."""
@@ -472,7 +573,6 @@ class World:
         data = _object(payload, "seed")
         _check_keys(data, {"users", "installations", "repositories", "device_flow", "faults", "expectations"}, "seed")
         saved = (dict(self.users), dict(self.tokens), dict(self.installations), dict(self.repos), self._tick, self._ids)
-        personal = set(self.personal)
         try:
             for raw in _list(data.get("users", []), "users"):
                 self._seed_user(_object(raw, "user"))
@@ -483,7 +583,6 @@ class World:
         except SeedError:
             # A refused seed leaves nothing behind (seeding only adds new objects, so restoring the tables suffices).
             self.users, self.tokens, self.installations, self.repos, self._tick, self._ids = saved
-            self.personal = personal
             raise
 
     def _seed_user(self, data: dict[str, Any]) -> None:
@@ -504,15 +603,47 @@ class World:
                 raise SeedError("user.collaborator must name repositories as owner/name")
             user.collaborator.append(name)
         self.users[login.lower()] = user
-        for key in ("tokens", "personal_tokens"):
-            for token in _list(data.get(key, []), f"user.{key}"):
-                if not isinstance(token, str) or not token:
-                    raise SeedError(f"user.{key} must be non-empty strings")
-                if token in self.tokens:
-                    raise SeedError("a token belongs to one user only")
-                self.add_token(user.login.lower(), token)
-                if key == "personal_tokens":
-                    self.personal.add(token)
+        for raw in _list(data.get("personal_tokens", []), "user.personal_tokens"):
+            if not isinstance(raw, str) or not raw:
+                raise SeedError("user.personal_tokens must be non-empty strings")
+            self._add_seeded(
+                Token(raw, user.login.lower(), "classic", ["repo"], collaborator=[n.lower() for n in user.collaborator])
+            )
+        for raw in _list(data.get("tokens", []), "user.tokens"):
+            token = self._seed_token(user.login.lower(), raw)
+            self._add_seeded(token)
+
+    def _add_seeded(self, token: Token) -> None:
+        if token.token in self.tokens:
+            raise SeedError("a token belongs to one user only")
+        self.tokens[token.token] = token
+
+    @staticmethod
+    def _seed_token(login: str, raw: Any) -> Token:
+        if isinstance(raw, str):
+            raw = {"token": raw}
+        data = _object(raw, "token")
+        _check_keys(data, {"token", "kind", "scopes", "repositories", "revoked", "sso"}, "token")
+        token = data.get("token")
+        if not isinstance(token, str) or not token:
+            raise SeedError("user.tokens must be non-empty strings")
+        kind = _text(data, "kind", "token", "app")
+        if kind not in TOKEN_KINDS:
+            raise SeedError(f"token.kind must be one of {sorted(TOKEN_KINDS)}")
+        repositories = None
+        if "repositories" in data:
+            repositories = [name.lower() for name in _names(data, "repositories", "token")]
+            if any("/" not in name for name in repositories):
+                raise SeedError("token.repositories must be full names (owner/name)")
+        return Token(
+            token,
+            login,
+            kind,
+            _names(data, "scopes", "token"),
+            repositories,
+            _bool(data, "revoked", "token", False),
+            [org.lower() for org in _names(data, "sso", "token")],
+        )
 
     def _seed_installation(self, data: dict[str, Any]) -> None:
         _check_keys(
@@ -568,6 +699,7 @@ class World:
                 "private",
                 "default_branch",
                 "description",
+                "has_issues",
                 "branches",
                 "tags",
                 "pulls",
@@ -593,6 +725,7 @@ class World:
             _text(data, "default_branch", "repository", "main"),
             _optional_text(data, "description", "repository"),
             self.stamp(),
+            _bool(data, "has_issues", "repository", True),
         )
         for raw in _list(data.get("branches", []), "repository.branches"):
             self._seed_branch(repo, _object(raw, "branch"))
@@ -603,9 +736,7 @@ class World:
             repo.refs[f"refs/tags/{tag}"] = sha
         self.repos[repo.key] = repo
         for raw in _list(data.get("issues", []), "repository.issues"):
-            issue = _object(raw, "issue")
-            _check_keys(issue, {"title", "user"}, "issue")
-            self.add_issue(repo, _text(issue, "title", "issue"), self._seeded_login(_text(issue, "user", "issue")))
+            self._seed_issue(repo, _object(raw, "issue"))
         for raw in _list(data.get("pulls", []), "repository.pulls"):
             self._seed_pull(repo, _object(raw, "pull"))
         for raw in _list(data.get("comments", []), "repository.comments"):
@@ -681,8 +812,29 @@ class World:
         stamp = parse_iso(_text(data, "date", "author")) if "date" in data else when
         return Signature(_text(data, "name", "author"), _text(data, "email", "author"), stamp)
 
+    def _seed_issue(self, repo: Repo, data: dict[str, Any]) -> None:
+        _check_keys(data, {"title", "body", "user", "state", "state_reason", "labels", "assignees"}, "issue")
+        state = _text(data, "state", "issue", "open")
+        if state not in ISSUE_STATES:
+            raise SeedError("issue.state must be open or closed")
+        reason = _optional_text(data, "state_reason", "issue")
+        if reason is not None and reason not in STATE_REASONS:
+            raise SeedError(f"issue.state_reason must be null or one of {sorted(STATE_REASONS)}")
+        if state == "closed" and "state_reason" not in data:
+            reason = "completed"
+        self.add_issue(
+            repo,
+            _text(data, "title", "issue"),
+            self._seeded_login(_text(data, "user", "issue")),
+            body=_optional_text(data, "body", "issue"),
+            state=state,
+            state_reason=reason,
+            labels=_names(data, "labels", "issue"),
+            assignees=[self._seeded_login(login) for login in _names(data, "assignees", "issue")],
+        )
+
     def _seed_pull(self, repo: Repo, data: dict[str, Any]) -> None:
-        _check_keys(data, {"title", "body", "head", "base", "draft", "state", "user"}, "pull")
+        _check_keys(data, {"title", "body", "head", "base", "draft", "state", "user", "labels"}, "pull")
         head, base = _text(data, "head", "pull"), _text(data, "base", "pull", repo.default_branch)
         if repo.branch(head) is None or repo.branch(base) is None:
             raise SeedError(f"pull {head} → {base}: unknown branch")
@@ -690,7 +842,7 @@ class World:
         if state not in PULL_STATES:
             raise SeedError("pull.state must be open or closed")
         user = self._seeded_login(_text(data, "user", "pull"))
-        self.add_pull(
+        pull = self.add_pull(
             repo,
             title=_text(data, "title", "pull"),
             body=_optional_text(data, "body", "pull"),
@@ -700,6 +852,7 @@ class World:
             user=user,
             state=state,
         )
+        pull.labels = self.labels(repo, _names(data, "labels", "pull"))
 
     def _seed_comment(self, repo: Repo, data: dict[str, Any]) -> None:
         _check_keys(data, {"number", "body", "user"}, "comment")
@@ -729,18 +882,60 @@ class World:
         user: str,
         state: str = "open",
     ) -> Pull:
-        pull = Pull(repo.next_number, self.new_id(), title, body, head, base, draft, state, user, self.stamp())
+        when = self.stamp()
+        closed = when if state == "closed" else None
+        pull = Pull(repo.next_number, self.new_id(), title, body, head, base, draft, state, user, when, when, closed)
         repo.pulls[pull.number] = pull
         repo.next_number += 1
         return pull
 
-    def add_issue(self, repo: Repo, title: str, user: str) -> Issue:
-        issue = Issue(repo.next_number, title, user)
+    def add_issue(
+        self,
+        repo: Repo,
+        title: str,
+        user: str,
+        *,
+        body: str | None = None,
+        state: str = "open",
+        state_reason: str | None = None,
+        labels: list[str] | None = None,
+        assignees: list[str] | None = None,
+    ) -> Issue:
+        when = self.stamp()
+        issue = Issue(
+            repo.next_number,
+            self.new_id(),
+            title,
+            body,
+            user,
+            state,
+            state_reason,
+            self.labels(repo, labels or []),
+            list(assignees or []),
+            when,
+            when,
+            when if state == "closed" else None,
+        )
         repo.issues[issue.number] = issue
         repo.next_number += 1
         return issue
 
+    def labels(self, repo: Repo, names: list[str]) -> list[str]:
+        """The repository's names of the labels `names` (matched without case), creating unknown ones, each once."""
+        found: list[str] = []
+        for name in names:
+            label = repo.labels.get(name.lower())
+            if label is None:
+                label = repo.labels[name.lower()] = Label(self.new_id(), name)
+            if label.name not in found:
+                found.append(label.name)
+        return found
+
     def add_comment(self, repo: Repo, number: int, body: str, user: str) -> Comment:
+        """Add a comment to issue or pull request `number` (which must exist); its ``updated_at`` advances."""
         comment = Comment(self.new_id(), number, body, user, self.stamp())
         repo.comments.append(comment)
+        item = repo.item(number)
+        assert item is not None
+        item.updated = comment.created
         return comment

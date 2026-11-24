@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/crypto/test_primitives.py at 3392035c31d1.
+"""Copied from agent-core tests/platform/hub/crypto/test_primitives.py at 56db2db59b0e.
 
 U-HUB-crypto: errors, encodings, UUIDv7, HKDF labels, AES-GCM, HPKE and raw key formats (04-crypto.md 1-3)."""
 

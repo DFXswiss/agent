@@ -9,8 +9,9 @@ The context block has a fixed structure (decisions/GST-02.md):
 
 1. ``# Context of this session``
 2. the runner's ``harness.context_markdown`` of ``POST /v1/sessions`` verbatim: the confidential part the guest cannot
-   know (organization, workgroup and task names and IDs, task owner display name, rights, subagent limits); RUN-04
-   builds it with ``context_markdown(...)`` of this module
+   know (organization, workgroup and task names and IDs, task owner display name, rights, subagent limits, the task
+   owner's GitHub connection with the rule for GitHub tasks, KOR-25); RUN-04 builds it with ``context_markdown(...)``
+   of this module
 3. ``## Session``: what the guest knows itself (session and task ID, parent session and depth, model, resource limits)
 4. ``## Platform tools``: every MCP tool of 03-api.md section 8.1 with one example call
 5. ``## Restarted session`` (only for a restarted session): read the history with ``get_task_messages``
@@ -20,8 +21,8 @@ Interface:
 * ``SessionFacts`` - the guest-side facts of block 3 and 5
 * ``load_rules(path=RULES_FILE) -> Rules`` - text and ``harness_version``
 * ``render(rules, facts, context_markdown) -> str``
-* ``context_markdown(org, workgroup, task, owner, rights, limits) -> str`` - block 2 in its documented form, every
-  name collapsed to one line (``inline``)
+* ``context_markdown(org, workgroup, task, owner, rights, limits, github=None) -> str`` - block 2 in its documented
+  form, every name collapsed to one line (``inline``)
 * ``write(path, text)`` - atomic write, root 0444, directory 0711
 * ``TOOLS`` - ``(name, purpose, example arguments)`` of every platform tool
 """
@@ -40,6 +41,12 @@ RULES_FILE = "/opt/agent-guest/harness/RULES.md"
 FILE_MODE = 0o444
 DIR_MODE = 0o711
 MAX_CONTEXT_CHARS = 65536
+GITHUB_CONNECTED = "- GitHub of the task owner: connected as {login}"
+GITHUB_NOT_CONNECTED = (
+    "- GitHub of the task owner: not connected. If the task needs GitHub, request the GitHub operation anyway; the"
+    " platform asks the task owner to connect and then continues it. Do not explain what is missing and do not offer"
+    " workarounds."
+)
 
 TOOLS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ("get_context", "organization, workgroup, task, session, your rights and limits", {}),
@@ -160,9 +167,11 @@ def context_markdown(
     owner: str,
     rights: str,
     limits: tuple[int, int, int],
+    github: str | None = None,
 ) -> str:
     """Block 2 as RUN-04 sends it: ``org=(id, name)``, ``workgroup=(id, name, is_default)``, ``task=(id, title)``,
-    ``owner`` display name, ``rights`` (``read``/``write``), ``limits`` = subagent depth, parallel, total."""
+    ``owner`` display name, ``rights`` (``read``/``write``), ``limits`` = subagent depth, parallel, total, ``github``
+    = the task owner's GitHub login (None: not connected, with the rule to request GitHub operations anyway)."""
     wg_id, wg_name, is_default = workgroup
     default = " (default workgroup)" if is_default else ""
     depth, parallel, total = limits
@@ -174,6 +183,7 @@ def context_markdown(
             f"- Task owner: {inline(owner)}",
             f"- Rights of the task owner in the workgroup: {inline(rights)}",
             f"- Subagent limits: depth {depth}, {parallel} running at a time, {total} per task",
+            GITHUB_NOT_CONNECTED if github is None else GITHUB_CONNECTED.format(login=inline(github)),
         ]
     )
 

@@ -53,6 +53,12 @@ VALID: dict[str, dict[str, Any]] = {
     "github.push": {"repo": REPO, "branch": "feature/x", "commit_sha": SHA},
     "github.create_pull_request": {"repo": REPO, "head": "feature/x", "base": "main", "title": "Fix", "body": ""},
     "github.comment": {"repo": REPO, "number": 7, "body": "Looks good."},
+    "github.list_issues": {"repo": REPO, "state": "all", "labels": ["bug", "help wanted"], "per_page": 1},
+    "github.get_issue": {"repo": REPO, "number": 7, "comments_page": 2, "comments_per_page": 100},
+    "github.create_issue": {"repo": REPO, "title": "Login fails", "body": "", "labels": ["bug"]},
+    "github.update_issue": {"repo": REPO, "number": 7, "state": "closed", "state_reason": "not_planned"},
+    "github.list_pull_requests": {"repo": REPO, "state": "closed", "base": "develop", "sort": "updated"},
+    "github.request_connection": {},
     "subagent.request": {"purpose": "Review", "prompt": "Review PR 7.", "model_id": "deepseek/deepseek-v4-pro"},
     "task.set_title": {"title": "Fix the login"},
 }
@@ -142,6 +148,42 @@ def test_unknown_types_are_refused() -> None:
         ("task.set_title", {"title": "two\nlines"}, ["/params/title"]),
         ("task.set_title", {"title": "Fix", "description": "x"}, ["/params/description"]),
         ("github.comment", {"repo": 1, "number": 7, "body": "x", "a/b": 1}, ["/params/a~1b", "/params/repo"]),
+        # KOR-25: the issue, pull-request-list and connection types (attack forms of the params)
+        ("github.list_issues", {}, ["/params/repo"]),
+        ("github.list_issues", with_("github.list_issues", state="merged"), ["/params/state"]),
+        ("github.list_issues", with_("github.list_issues", labels=["a,b"]), ["/params/labels"]),
+        ("github.list_issues", with_("github.list_issues", labels=["bad\nlabel"]), ["/params/labels"]),
+        ("github.list_issues", with_("github.list_issues", labels=[""]), ["/params/labels"]),
+        ("github.list_issues", with_("github.list_issues", labels=["l" * 101]), ["/params/labels"]),
+        ("github.list_issues", with_("github.list_issues", labels=["x"] * 21), ["/params/labels"]),
+        ("github.list_issues", with_("github.list_issues", labels="bug"), ["/params/labels"]),
+        ("github.list_issues", with_("github.list_issues", sort="popularity"), ["/params/sort"]),
+        ("github.list_issues", with_("github.list_issues", direction="up"), ["/params/direction"]),
+        ("github.list_issues", with_("github.list_issues", per_page=0), ["/params/per_page"]),
+        ("github.list_issues", with_("github.list_issues", per_page=101), ["/params/per_page"]),
+        ("github.list_issues", with_("github.list_issues", page=1001), ["/params/page"]),
+        ("github.list_issues", with_("github.list_issues", page=True), ["/params/page"]),
+        ("github.list_issues", with_("github.list_issues", page=1.0), ["/params/page"]),
+        ("github.list_issues", with_("github.list_issues", query="is:open"), ["/params/query"]),
+        ("github.get_issue", {"repo": REPO}, ["/params/number"]),
+        ("github.get_issue", with_("github.get_issue", number="7"), ["/params/number"]),
+        ("github.get_issue", with_("github.get_issue", comments_page=0), ["/params/comments_page"]),
+        ("github.get_issue", with_("github.get_issue", comments_per_page=101), ["/params/comments_per_page"]),
+        ("github.create_issue", {"repo": REPO}, ["/params/title"]),
+        ("github.create_issue", with_("github.create_issue", title=""), ["/params/title"]),
+        ("github.create_issue", with_("github.create_issue", title="t" * 257), ["/params/title"]),
+        ("github.create_issue", with_("github.create_issue", body="b" * 65537), ["/params/body"]),
+        ("github.create_issue", with_("github.create_issue", labels=["a,b"]), ["/params/labels"]),
+        ("github.create_issue", with_("github.create_issue", assignees=["octo"]), ["/params/assignees"]),
+        ("github.update_issue", with_("github.update_issue", state="merged"), ["/params/state"]),
+        ("github.update_issue", with_("github.update_issue", state_reason="duplicate"), ["/params/state_reason"]),
+        ("github.update_issue", with_("github.update_issue", title=""), ["/params/title"]),
+        ("github.update_issue", with_("github.update_issue", labels=["a,b"]), ["/params/labels"]),
+        ("github.update_issue", with_("github.update_issue", lock=True), ["/params/lock"]),
+        ("github.list_pull_requests", with_("github.list_pull_requests", base="a..b"), ["/params/base"]),
+        ("github.list_pull_requests", with_("github.list_pull_requests", sort="comments"), ["/params/sort"]),
+        ("github.list_pull_requests", with_("github.list_pull_requests", head="x"), ["/params/head"]),
+        ("github.request_connection", {"repo": REPO}, ["/params/repo"]),
     ],
 )
 def test_parameters_are_checked_with_pointers(op_type: str, params: dict[str, Any], pointers: list[str]) -> None:
@@ -169,12 +211,15 @@ def test_commit_paths_are_path_invalid(path: str) -> None:
     assert (failed.code, failed.pointers) == ("path_invalid", ["/params/paths/1"])
 
 
-@pytest.mark.parametrize("op_type", [t for t in VALID if t.startswith("github.") and t != "github.list_repositories"])
+WITH_REPO = [t for t in VALID if "repo" in VALID[t]]
+
+
+@pytest.mark.parametrize("op_type", WITH_REPO)
 def test_repositories_outside_the_allow_list_are_refused(op_type: str) -> None:
     assert refused(op_type, with_(op_type, repo="other/repo")).code == "repo_not_allowed"
 
 
-@pytest.mark.parametrize("op_type", [t for t in VALID if t.startswith("github.") and t != "github.list_repositories"])
+@pytest.mark.parametrize("op_type", WITH_REPO)
 def test_without_an_allow_list_every_repository_passes(op_type: str) -> None:
     # KOR-30: no settings event, or an event with an empty list, restricts nothing (GitHub is the boundary)
     empty = replace(SETTINGS, repositories=frozenset())
@@ -247,6 +292,64 @@ def test_effective_parameters_normalise_branches_and_take_the_draft_default() ->
     assert checks.check(request("github.create_pull_request", params))["draft"] is True
     found = checks.check(request("github.push", with_("github.push", branch="refs/heads/feature/x")))
     assert found["branch"] == "feature/x"
+
+
+@pytest.mark.parametrize(
+    ("params", "pointers"),
+    [
+        ({"repo": REPO, "number": 7}, ["/params/body", "/params/labels", "/params/state", "/params/title"]),
+        (
+            {"repo": REPO, "number": 7, "state_reason": "completed"},
+            ["/params/body", "/params/labels", "/params/state", "/params/title"],
+        ),
+        ({"repo": REPO, "number": 7, "title": "New", "state_reason": "completed"}, ["/params/state_reason"]),
+        ({"repo": REPO, "number": 7, "state": "closed", "state_reason": "reopened"}, ["/params/state_reason"]),
+        ({"repo": REPO, "number": 7, "state": "open", "state_reason": "completed"}, ["/params/state_reason"]),
+        ({"repo": REPO, "number": 7, "state": "open", "state_reason": "not_planned"}, ["/params/state_reason"]),
+    ],
+)
+def test_an_issue_update_changes_something_and_gives_a_reason_only_with_a_state(
+    params: dict[str, Any], pointers: list[str]
+) -> None:
+    failed = refused("github.update_issue", params)
+    assert (failed.code, failed.pointers) == ("params_invalid", pointers)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"title": "New"},
+        {"body": ""},
+        {"labels": []},
+        {"state": "open"},
+        {"state": "open", "state_reason": "reopened"},
+        {"state": "closed", "state_reason": "completed"},
+    ],
+)
+def test_an_issue_update_with_one_field_passes(params: dict[str, Any]) -> None:
+    full = {"repo": REPO, "number": 7, **params}
+    assert checks.check(request("github.update_issue", full)) == full
+
+
+def test_the_issue_and_list_types_keep_their_params_and_the_pull_list_base_loses_refs_heads() -> None:
+    assert checks.check(request("github.list_issues", {"repo": REPO})) == {"repo": REPO}
+    found = checks.check(request("github.list_pull_requests", {"repo": REPO, "base": "refs/heads/develop"}))
+    assert found == {"repo": REPO, "base": "develop"}
+    assert checks.check(request("github.list_pull_requests", {"repo": REPO})) == {"repo": REPO}
+    # a protected base is only read, never written
+    assert checks.check(request("github.list_pull_requests", {"repo": REPO, "base": "main"}))["base"] == "main"
+
+
+def test_the_connection_request_names_no_repository() -> None:
+    assert checks.check(request("github.request_connection", {})) == {}
+    assert checks.check(request("github.request_connection", {}, settings=DEFAULTS)) == {}
+    assert refused("github.request_connection", {}, connected=False).code == "github_not_connected"
+
+
+def test_a_foreign_repository_of_a_new_type_is_refused_before_the_connection() -> None:
+    for op_type in ("github.list_issues", "github.get_issue", "github.create_issue", "github.update_issue"):
+        failed = refused(op_type, with_(op_type, repo="foreign-org/secret"), connected=False)
+        assert failed.code == "repo_not_allowed"
 
 
 def test_check_order_gives_the_first_failing_code() -> None:

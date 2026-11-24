@@ -16,4 +16,10 @@ PRECHECKS: dict[str, Callable[..., Any]] = {
     "github.checkout": checkout.check,
     "github.commit": commit.check,
     "github.push": push.check,
+    "github.list_issues": precheck.repo_access,
+    "github.get_issue": precheck.repo_access,
+    "github.create_issue": precheck.repo_access,
+    "github.update_issue": precheck.repo_access,
+    "github.list_pull_requests": precheck.repo_access,
+    "github.request_connection": precheck.verified_connection,
 }

@@ -15,15 +15,19 @@ import pytest
 
 from agent_guest import harness as guest_harness
 from agent_guest.schema import SchemaSet
+from agent_runner.credentials.cache import _store
 from agent_runner.crypto.log import verify
 from agent_runner.crypto.log.vectors import W1, LogBuilder, pid, sig_pk
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestProtocolError, GuestRefused, GuestUnreachable
 from agent_runner.inbox.pull import inbox_for
+from agent_runner.orgs.db import session
+from agent_runner.orgs.keys import store_scope_key
 from agent_runner.sessions import harness, records
 from agent_runner.sessions.extensions import InitialPrompt
 from agent_runner.sessions.start import Starter, StartTimer
 
+from ..credentials.kit import ck, github_body, make_record
 from ..reconcile.rig import Rig, World, seal, standard_world
 from .kit import CLAUDE, KEY, ORG, OWNER, TASK, WG, Kit, desired, kit, session_id
 
@@ -377,7 +381,54 @@ def test_context_markdown_equals_the_guest_format() -> None:
         "limits": (2, 3, 10),
     }
     assert harness.context_markdown(**arguments) == guest_harness.context_markdown(**arguments)
+    for login in (None, "octo-user"):
+        same = {**arguments, "github": login}
+        assert harness.context_markdown(**same) == guest_harness.context_markdown(**same)
     assert harness.inline("a\n\tb `c`") == guest_harness.inline("a\n\tb `c`")
+
+
+def test_the_context_names_the_owners_github_connection(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        found = await kit(env)
+        starter = Starter(found.session_env)
+        assert await harness.github_login(env.context, OWNER) is None
+        async with session(env.pool) as conn:
+            await store_scope_key(conn, env.sync.storage_key, ("cred", OWNER, 1), ck(), source="wrap")
+            await _store(conn, OWNER, "github", 1, make_record(github_body(login="octo-user")))
+        assert await harness.github_login(env.context, OWNER) == "octo-user"
+        assert await harness.github_login(None, OWNER) is None
+        report = await starter.start(desired())
+        assert report.started
+        context = call(found, "create_session")["harness"]["context_markdown"]
+        assert context.splitlines()[-1] == "- GitHub of the task owner: connected as octo-user"
+        # a login that is not one, and a record that does not open: not connected
+        async with session(env.pool) as conn:
+            await _store(conn, OWNER, "github", 2, make_record({**github_body(), "login": "a b"}, version=2))
+        assert await harness.github_login(env.context, OWNER) is None
+        async with session(env.pool) as conn:
+            await conn.execute('UPDATE runner.credential_cache SET record = record || \'{"ct": "AAAA"}\'::jsonb')
+        assert await harness.github_login(env.context, OWNER) is None
+
+    run(rig, body)
+
+
+def test_without_github_the_context_tells_the_session_to_request_the_operation_anyway() -> None:
+    text = harness.context_markdown(
+        org=("o", "O"), workgroup=("w", "W", True), task=("t", "T"), owner="B", rights="write", limits=(2, 3, 10)
+    )
+    line = text.splitlines()[-1]
+    assert line.startswith("- GitHub of the task owner: not connected. If the task needs GitHub, request")
+    assert "Do not explain what is missing and do not offer workarounds." in line
+    named = harness.context_markdown(
+        org=("o", "O"),
+        workgroup=("w", "W", True),
+        task=("t", "T"),
+        owner="B",
+        rights="write",
+        limits=(2, 3, 10),
+        github="x`\ny",
+    )
+    assert named.splitlines()[-1] == "- GitHub of the task owner: connected as x' y"
 
 
 def test_rights_and_default_flag_without_state() -> None:

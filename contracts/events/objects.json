@@ -504,7 +504,7 @@
       "$ref": "../guest/journal/record.json#/$defs/body_session_terminal"
     },
     "body_session_status": {
-      "description": "error status of a session (03-api.md section 10)",
+      "description": "status of a session (03-api.md section 10): an error, a state, or an operation the platform holds until the task owner acts (KOR-25)",
       "oneOf": [
         {
           "type": "object",
@@ -594,6 +594,43 @@
           "required": [
             "state",
             "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "an operation of the session waits for the task owner; the runner checks it again when the owner connects GitHub or the workgroup settings change and rejects it at until. Only platform-checked values, never text of the session",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "waiting"
+            },
+            "waiting_for": {
+              "type": "string",
+              "enum": [
+                "github_connection"
+              ],
+              "description": "github_connection: the task owner has no usable GitHub connection"
+            },
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "operation_type": {
+              "$ref": "../common.json#/$defs/operation_type"
+            },
+            "repo": {
+              "$ref": "../ops/objects.json#/$defs/repo"
+            },
+            "until": {
+              "$ref": "../common.json#/$defs/time"
+            }
+          },
+          "required": [
+            "state",
+            "waiting_for",
+            "operation_id",
+            "operation_type",
+            "until"
           ],
           "additionalProperties": false
         }
@@ -782,6 +819,150 @@
             },
             "params": {
               "$ref": "../ops/objects.json#/$defs/params_github_comment"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.list_issues"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_list_issues"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.get_issue"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_get_issue"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.create_issue"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_create_issue"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.update_issue"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_update_issue"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.list_pull_requests"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_list_pull_requests"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.request_connection"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_request_connection"
             },
             "idempotency_key": {
               "$ref": "#/$defs/idempotency_key"

@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/crypto/test_formats.py at 3392035c31d1.
+"""Copied from agent-core tests/platform/hub/crypto/test_formats.py at 56db2db59b0e.
 
 U-HUB-crypto: bundle, wrap, event, credential, device request/response, invitation, recovery, enrollment and dedupe
 formats (04-crypto.md sections 3, 4.1-4.6, 4.10, 5.5, 6.4 E1/E2/E4/E8)."""
@@ -689,6 +689,14 @@ def test_dedupe_fields_normalisation() -> None:
     assert dedupe.dedupe_fields("subagent.request", {"session": SESSION, "purpose": "a", "prompt": "bc"}) != (
         dedupe.dedupe_fields("subagent.request", {"session": SESSION, "purpose": "ab", "prompt": "c"})
     )
+    assert dedupe.dedupe_fields("github.create_issue", {"repo": "A/B", "title": "ü"}) == {
+        "repo": "a/b",
+        "title": dedupe.sha256_hex("ü"),
+        "body": dedupe.sha256_hex(""),
+    }
+    assert dedupe.dedupe_fields("github.create_issue", {"repo": "a/b", "title": "t", "body": "x"})["body"] == (
+        dedupe.sha256_hex("x")
+    )
     assert {
         "github.checkout",
         "github.create_branch",
@@ -696,12 +704,15 @@ def test_dedupe_fields_normalisation() -> None:
         "github.push",
         "github.create_pull_request",
         "github.comment",
+        "github.create_issue",
         "subagent.request",
     } == dedupe.DEDUPE_TYPES
 
 
 def test_dedupe_refusals() -> None:
     refusals: list[tuple[str, object]] = [
+        ("github.create_issue", {"repo": "a/b", "title": "t", "body": 5}),
+        ("github.create_issue", {"repo": "a/b", "body": "x"}),
         ("github.list_repositories", {}),
         ("github.push", {"repo": "", "branch": "x", "commit_sha": "c"}),
         ("github.push", {"repo": 5, "branch": "x", "commit_sha": "c"}),

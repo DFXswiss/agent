@@ -9,19 +9,36 @@ received yet is shown as `unknown` - the start never waits for it.
 
 Rights: the owner's access to the workgroup in the verified membership log (`write`, `read`); an owner without
 access has `none`.
+
+GitHub (KOR-25, 05-runner.md section 12 step 3): `github_login(context, owner_id)` is the login of the owner's `github`
+credential when it is cached on this device and opens (no hub or GitHub request, so the start never waits); anything
+else is "not connected", with the rule to request GitHub operations anyway (the runner holds them and asks the owner).
+The line travels in the context block, so it reaches guests of older golden versions too.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Any
 
+from agent_runner.credentials import cache
 from agent_runner.crypto.log.state import OrgState
+from agent_runner.orgs.db import session
 from agent_runner.sessions.profiles import Names
 
 UNKNOWN = "unknown"
 SUBAGENT_LIMITS = (2, 3, 10)
 """Subagent depth, running children per task, children per task (05-runner.md section 13, ADR-017)."""
 GIB = 1024**3
+LOGIN_RE = re.compile(r"^[A-Za-z0-9-]{1,39}$")
+
+GITHUB_CONNECTED = "- GitHub of the task owner: connected as {login}"
+GITHUB_NOT_CONNECTED = (
+    "- GitHub of the task owner: not connected. If the task needs GitHub, request the GitHub operation anyway; the"
+    " platform asks the task owner to connect and then continues it. Do not explain what is missing and do not offer"
+    " workarounds."
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +74,7 @@ def context_markdown(
     owner: str,
     rights: str,
     limits: tuple[int, int, int],
+    github: str | None = None,
 ) -> str:
     """The context block (copy of `agent_guest.harness.context_markdown`)."""
     wg_id, wg_name, is_default = workgroup
@@ -70,8 +88,22 @@ def context_markdown(
             f"- Task owner: {inline(owner)}",
             f"- Rights of the task owner in the workgroup: {inline(rights)}",
             f"- Subagent limits: depth {depth}, {parallel} running at a time, {total} per task",
+            GITHUB_NOT_CONNECTED if github is None else GITHUB_CONNECTED.format(login=inline(github)),
         ]
     )
+
+
+async def github_login(context: Any, owner_id: str) -> str | None:
+    """The login of the owner's cached `github` credential; None when none is cached or it does not open."""
+    try:
+        async with session(context.pool) as conn:
+            if await cache.cached(conn, owner_id, "github") is None:
+                return None
+        async with cache.opened(context, owner_id, "github") as body:
+            login = body.get("login")
+    except Exception:
+        return None
+    return login if isinstance(login, str) and LOGIN_RE.fullmatch(login) else None
 
 
 def rights(state: OrgState | None, owner_id: str, wg_id: str) -> str:
@@ -85,7 +117,14 @@ def is_default(state: OrgState | None, wg_id: str) -> bool:
 
 
 def session_context(
-    *, names: Names, state: OrgState | None, org_id: str, wg_id: str, task_id: str, owner_id: str
+    *,
+    names: Names,
+    state: OrgState | None,
+    org_id: str,
+    wg_id: str,
+    task_id: str,
+    owner_id: str,
+    github: str | None = None,
 ) -> str:
     return context_markdown(
         org=(org_id, names.org or UNKNOWN),
@@ -94,4 +133,5 @@ def session_context(
         owner=names.owner or UNKNOWN,
         rights=rights(state, owner_id, wg_id),
         limits=SUBAGENT_LIMITS,
+        github=github,
     )

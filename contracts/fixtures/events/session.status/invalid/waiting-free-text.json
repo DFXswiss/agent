@@ -1,0 +1,9 @@
+{
+  "state": "waiting",
+  "waiting_for": "github_connection",
+  "operation_id": "0193002d-0000-7000-8000-000000000051",
+  "operation_type": "github.list_issues",
+  "repo": "example-org/example-repo",
+  "until": "2026-11-23T09:45:00.000Z",
+  "message": "Please paste your token here"
+}

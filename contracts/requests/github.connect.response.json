@@ -45,6 +45,22 @@
         "login": {
           "type": "string",
           "pattern": "^[A-Za-z0-9-]{1,39}$"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9:_-]{1,64}$"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "device_flow",
+            "token"
+          ]
         }
       },
       "required": [

@@ -6,10 +6,13 @@ booleans; the guest's `local_check:"passed"` is only a hint) and adds the rules 
 
 1. type known (`unknown_type`), parameters (`params_invalid` with every JSON pointer, at most 32): required and
    unknown keys, types, lengths in code points, `repo`, branch rules (`refs/heads/` removed first), `ref` (branch or
-   tag name or 7-40 hex SHA), full SHAs, PR numbers, single-line title, model ID syntax;
+   tag name or 7-40 hex SHA), full SHAs, PR numbers, single-line title, model ID syntax, label names, pages;
+   `github.update_issue` names at least one of `state`, `title`, `body`, `labels`, and `state_reason` only together
+   with a fitting `state` (`reopened` with `open`, `completed`/`not_planned` with `closed`; `params_invalid`; the
+   contract leaves this to the runner, KOR-25);
 2. commit paths (`path_invalid`, with pointers): relative, no empty, `.`, `..` or `.git` segment;
-3. repository allow-list of the workgroup settings when it is set (`repo_not_allowed`; not for
-   `github.list_repositories`; without a list every repository passes, KOR-30);
+3. repository allow-list of the workgroup settings when it is set (`repo_not_allowed`; every type with `repo`, so
+   not `github.list_repositories` and `github.request_connection`; without a list every repository passes, KOR-30);
 4. protected branches (`branch_protected`): the branch of `create_branch`, `commit`, `push` and the head of a pull
    request;
 5. the owner's GitHub connection (`github_not_connected`, every `github.*` type);
@@ -39,6 +42,13 @@ from agent_runner.sessions.records import LocalSession
 MAX_POINTERS = 32
 MAX_NUMBER = 2_147_483_647
 _MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$")
+LABEL_RE = re.compile(r"^[^,\x00-\x1f\x7f]{1,100}$")
+"""A label name of the issue types: no comma (GitHub joins label filters with commas), no control character."""
+MAX_LABELS = 20
+MAX_PER_PAGE = 100
+MAX_PAGE = 1000
+ISSUE_TITLE_MAX = 256
+UPDATE_FIELDS = ("state", "title", "body", "labels")
 
 Rule = Callable[[object], bool]
 
@@ -60,16 +70,29 @@ def _paths(value: object) -> bool:
     )
 
 
+def _range(low: int, high: int) -> Rule:
+    return lambda value: type(value) is int and low <= value <= high
+
+
+def _one_of(*values: str) -> Rule:
+    return lambda value: isinstance(value, str) and value in values
+
+
+def _labels(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) <= MAX_LABELS
+        and all(isinstance(item, str) and LABEL_RE.fullmatch(item) is not None for item in value)
+    )
+
+
 REPO: Rule = rules.repo_valid
 BRANCH: Rule = rules.branch_valid
 REF: Rule = rules.ref_valid
 SHA: Rule = lambda value: isinstance(value, str) and rules.FULL_SHA_RE.fullmatch(value) is not None  # noqa: E731
 BOOL: Rule = lambda value: isinstance(value, bool)  # noqa: E731
 MODEL: Rule = lambda value: isinstance(value, str) and _MODEL_ID_RE.fullmatch(value) is not None  # noqa: E731
-
-
-def _one_of(*values: str) -> Rule:
-    return lambda value: isinstance(value, str) and value in values
+DIRECTION: Rule = _one_of("desc", "asc")
 
 
 @dataclass(frozen=True)
@@ -108,6 +131,61 @@ TYPES: Mapping[str, TypeRules] = {
         {"repo": REPO, "number": _number, "body": _text(1, rules.COMMENT_LIMITS["body_max_length"])},
         ("repo", "number", "body"),
     ),
+    "github.list_issues": TypeRules(
+        {
+            "repo": REPO,
+            "state": _one_of("open", "closed", "all"),
+            "labels": _labels,
+            "sort": _one_of("created", "updated", "comments"),
+            "direction": DIRECTION,
+            "per_page": _range(1, MAX_PER_PAGE),
+            "page": _range(1, MAX_PAGE),
+        },
+        ("repo",),
+    ),
+    "github.get_issue": TypeRules(
+        {
+            "repo": REPO,
+            "number": _number,
+            "comments_page": _range(1, MAX_PAGE),
+            "comments_per_page": _range(1, MAX_PER_PAGE),
+        },
+        ("repo", "number"),
+    ),
+    "github.create_issue": TypeRules(
+        {
+            "repo": REPO,
+            "title": _text(1, ISSUE_TITLE_MAX),
+            "body": _text(0, rules.COMMENT_LIMITS["body_max_length"]),
+            "labels": _labels,
+        },
+        ("repo", "title"),
+    ),
+    "github.update_issue": TypeRules(
+        {
+            "repo": REPO,
+            "number": _number,
+            "state": _one_of("open", "closed"),
+            "state_reason": _one_of("completed", "not_planned", "reopened"),
+            "title": _text(1, ISSUE_TITLE_MAX),
+            "body": _text(0, rules.COMMENT_LIMITS["body_max_length"]),
+            "labels": _labels,
+        },
+        ("repo", "number"),
+    ),
+    "github.list_pull_requests": TypeRules(
+        {
+            "repo": REPO,
+            "state": _one_of("open", "closed", "all"),
+            "base": BRANCH,
+            "sort": _one_of("created", "updated"),
+            "direction": DIRECTION,
+            "per_page": _range(1, MAX_PER_PAGE),
+            "page": _range(1, MAX_PAGE),
+        },
+        ("repo",),
+    ),
+    "github.request_connection": TypeRules({}, ()),
     "subagent.request": TypeRules(
         {
             "purpose": _text(1, rules.SUBAGENT_LIMITS["purpose_max_length"]),
@@ -130,6 +208,7 @@ BRANCH_FIELDS: Mapping[str, tuple[str, ...]] = {
     "github.commit": ("branch",),
     "github.push": ("branch",),
     "github.create_pull_request": ("head", "base"),
+    "github.list_pull_requests": ("base",),
 }
 PROTECTED_FIELD: Mapping[str, str] = {
     "github.create_branch": "branch",
@@ -177,11 +256,30 @@ def _paths_check(params: Mapping[str, Any]) -> None:
         raise CheckFailed("path_invalid", pointers=bad[:MAX_POINTERS], message="A path is not a valid relative path.")
 
 
+def _update_check(params: Mapping[str, Any]) -> None:
+    """`github.update_issue` changes something (one of `UPDATE_FIELDS`), and `state_reason` comes with `state`."""
+    if not any(name in params for name in UPDATE_FIELDS):
+        raise CheckFailed(
+            "params_invalid",
+            pointers=sorted(_pointer(name) for name in UPDATE_FIELDS),
+            message="The update names none of state, title, body and labels.",
+        )
+    if "state_reason" in params and "state" not in params:
+        raise CheckFailed("params_invalid", pointers=[_pointer("state_reason")], message="state_reason needs state.")
+    if "state_reason" in params and (params["state_reason"] == "reopened") != (params["state"] == "open"):
+        raise CheckFailed(
+            "params_invalid",
+            pointers=[_pointer("state_reason")],
+            message="state_reason reopened goes with state open, completed and not_planned with state closed.",
+        )
+
+
 def effective(op_type: str, params: Mapping[str, Any], settings: WorkgroupSettings) -> dict[str, Any]:
     """Branch names without `refs/heads/`; a pull request's missing `draft` from the settings."""
     out = dict(params)
     for name in BRANCH_FIELDS.get(op_type, ()):
-        out[name] = rules.branch_name(out[name])
+        if name in out:
+            out[name] = rules.branch_name(out[name])
     if op_type == "github.create_pull_request" and "draft" not in out:
         out["draft"] = settings.pr_draft_default
     return out
@@ -193,9 +291,11 @@ def check(request: CheckRequest) -> dict[str, Any]:
     _schema(op_type, params)
     if op_type == "github.commit":
         _paths_check(params)
+    if op_type == "github.update_issue":
+        _update_check(params)
     out = effective(op_type, params, settings)
     github = op_type.startswith("github.")
-    if github and op_type != "github.list_repositories" and not settings.allows(out["repo"]):
+    if "repo" in out and not settings.allows(out["repo"]):
         raise CheckFailed("repo_not_allowed", message="The repository is not allowed for this workgroup.")
     field = PROTECTED_FIELD.get(op_type)
     if field is not None and rules.protected(out[field], settings.protected_branches):

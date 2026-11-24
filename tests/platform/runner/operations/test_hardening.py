@@ -219,7 +219,10 @@ def test_an_operation_accepted_too_long_ago_is_expired_and_not_executed(rig: Rig
         kit_, runs = await counting(env)
         sid = await kit_.session()
         op_id = await kit_.request(sid, "task.set_title", {"title": "x"})
-        prepared = await kit_.pipeline._prepare(await kit_.op(op_id), env.clock() + 600)
+        found = await kit_.pipeline._checks(await kit_.op(op_id))
+        assert found is not None
+        op, error, checked = found
+        prepared = await kit_.pipeline._prepare(op, env.clock() + 600, error, checked)
         assert prepared is not None
         async with env.pool.connection() as conn:
             await records.update(conn, op_id, state="accepted")

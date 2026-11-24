@@ -112,3 +112,18 @@ def test_seed_through_the_control_route(start_github: Any) -> None:
     seeded = gh.control("POST", "seed", {"users": [{"login": "late", "tokens": ["late-token"]}]})
     assert (seeded.status, seeded.json()["ok"]) == (200, True)
     assert gh.get("/user", token="late-token")["login"] == "late"
+
+
+def test_token_control_route(github: Any) -> None:
+    assert github.api("GET", "/user").status == 200
+    for body, error in (
+        ({"revoke": "none"}, "unknown token"),
+        ({"revoke": 5}, "revoke must name a token"),
+        ([], "body must be an object"),
+    ):
+        refused = github.control("POST", "tokens", body)
+        assert (refused.status, refused.json()) == (400, {"error": error})
+    assert github.control("GET", "tokens").status == 405
+    assert github.control("POST", "tokens", {"revoke": "double-user-token"}).status == 200
+    assert github.api("GET", "/user").status == 401
+    assert github.state()["ok"] is True

@@ -10,11 +10,27 @@
    this device (an executor, and a pre-check for `extensions.NEEDS_PRECHECK`, else `unknown_type`) and the type's
    pre-check (`extensions.PRECHECKS`; any error other than `CheckFailed` is `upstream_error`). The guest's
    `local_check:"rejected"` skips them: its error is binding.
+1a. **Hold** (`_hold`, KOR-25, 05-runner.md section 12 step 3): a `github.*` operation whose checks fail only with
+   `github_not_connected` is not registered but held (state `received`, `held_*` columns of migration 0012): `until`
+   = the request plus `HOLD_S`, and one `session.status` event `{state:"waiting", waiting_for:"github_connection",
+   operation_id, operation_type, repo?, until}` (device-authored, workgroup scope of the session; only checked
+   values: a known type, a repository of valid form, device times). Every scan checks it again, and a stored `github`
+   credential of anyone wakes the pipeline at once (`credentials.cache.subscribe_stored`); when the check no longer
+   fails with that code the hold ends and the operation goes on (the session's MCP call answered `pending` after 20 s,
+   so the result comes with `operation.finished`). At `until` the hold ends with `github_not_connected` and
+   `TIMEOUT_MESSAGES` (registered `rejected` like every local rejection). A held operation whose session ended
+   (`SESSION_ENDED`; closing a task stops its sessions) is released and registered `rejected` with `not_found`, so it
+   never runs. A cached credential that the check refused (a revoked token, `401`) is remembered by its version
+   (`held_credential`): the checks are skipped - no request with the refused token - until another version arrives.
+   Flood limits per session: at most `HOLD_MAX` held at a time (more are rejected at once with `FULL_MESSAGES`), at
+   most one `waiting` event per reason per `WAITING_EVERY_S` (a held operation whose event was left out gets it at a
+   later scan). The state lives in the store, so a restarted daemon goes on with it.
 2. **Registration** (`register.build`, `register.Registrar`): the encrypted `operation.params` event, the dedupe
    tag with the current workgroup epoch (an idempotency key reused for other content is `params_invalid`, KOR-28),
    `local_check` and the error code, stored before the first attempt; posted
    with backoff while the hub is unreachable. While the device holds no workgroup key the registration waits for it.
-   No decision 10 min after the request reached the runner: `expired` with `hub_unreachable` (the session gets
+   No decision 10 min after the request reached the runner (after the end of the hold for a held operation):
+   `expired` with `hub_unreachable` (the session gets
    `failed`, `retryable:true`; the hub never knew the operation, so no event or transition is written). A final
    refusal of the request (`4xx` other than `429`) ends `failed` (`rights_denied` for `403`, else `upstream_error`).
 3. **Decision**: `accepted` -> execute; `duplicate` -> the original's result (below); `denied`/`rejected` -> the
@@ -48,16 +64,17 @@ from __future__ import annotations
 import asyncio
 import random as _random
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import psycopg
 
 from agent_runner import registry
+from agent_runner.credentials import cache as credential_cache
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import uuid7
 from agent_runner.guestlink.errors import GuestError, GuestRefused
-from agent_runner.operations import checks, records, register, results
+from agent_runner.operations import checks, records, register, results, rules
 from agent_runner.operations import settings as workgroup_settings
 from agent_runner.operations.extensions import (
     NEEDS_PRECHECK,
@@ -78,6 +95,7 @@ from agent_runner.operations.records import Operation
 from agent_runner.orgs.db import session as store_session
 from agent_runner.sessions import records as session_records
 from agent_runner.sessions.env import SessionEnv
+from agent_runner.sessions.events import session_event
 from agent_runner.sessions.records import LocalSession
 from agent_runner.sync.http import HubClient
 from agent_runner.sync.outbox import event_draft
@@ -100,6 +118,26 @@ ACCEPTED_EXPIRY_S = 1740.0
 """The hub expires an operation 30 min in `accepted` without `executing` (03 §12); acceptance is never earlier than
 the request, so an operation whose request is older than this (with a minute of margin) is not executed any more."""
 STORE_ATTEMPTS = 3
+HOLD_S = 900.0
+"""A held operation waits at most 15 min from its request (KOR-25)."""
+HOLD_MAX = 3
+"""Held operations per session at a time."""
+WAITING_EVERY_S = 60.0
+"""At most one `waiting` event per session and reason within this time."""
+HOLD_CODES = {"github_not_connected": "github_connection"}
+"""Check error code -> waiting reason of a held operation."""
+TIMEOUT_MESSAGES = {"github_connection": "The task owner did not connect GitHub within 15 minutes."}
+FULL_MESSAGES = {
+    "github_connection": "The task owner is already being asked to connect GitHub. Wait for the pending GitHub"
+    " operations of this session before you request more."
+}
+"""The answer to an operation beyond `HOLD_MAX` (a fixed platform text)."""
+NOT_CONNECTED_MESSAGE = "The task owner has not connected GitHub."
+SESSION_ENDED = frozenset({"stopping", "stopped", "failed"})
+"""Session states in which a held operation is not run any more (a closed task stops its sessions)."""
+SESSION_ENDED_MESSAGE = "The session ended while the operation waited for the task owner."
+HOLD_LATE = "late"
+HOLD_FULL = "full"
 ERROR_KEYS = frozenset({"code", "message", "pointers", "retryable"})
 
 Refresh = Callable[[], Awaitable[object]]
@@ -303,8 +341,8 @@ class Pipeline:
             raise CheckFailed("unknown_type", message="The operation type is not enabled on this device.")
         return {"params": params, "dedupe": dict(found.dedupe), "data": dict(found.data)}
 
-    async def _prepare(self, op: Operation, deadline: float) -> Operation | None:
-        """Checks and the stored registration body; None when no workgroup key arrived before `deadline`."""
+    async def _checks(self, op: Operation) -> tuple[Operation, dict[str, Any] | None, dict[str, Any]] | None:
+        """The (reloaded) operation, the local error and the checked parameters; None while the operation is held."""
         error = op.local_error
         checked: dict[str, Any] = {}
         session = await self._session(op)
@@ -312,10 +350,130 @@ class Pipeline:
             error = CheckFailed("not_found", message="The session is not known on this device.").error()
         if error is None:
             assert session is not None
-            try:
-                checked = await self._check(op, session)
-            except CheckFailed as failed:
-                error = failed.error()
+            version = await self._github_version(session)
+            ended = op.held and session.state in SESSION_ENDED
+            if ended or (op.held and version is not None and version == op.held_credential):
+                # an ended session's operation is released below; the same credential was refused before: no new
+                # request with it until another one arrives
+                error = CheckFailed("github_not_connected", message=NOT_CONNECTED_MESSAGE).error()
+            else:
+                try:
+                    checked = await self._check(op, session)
+                except CheckFailed as failed:
+                    error = failed.error()
+            held = await self._hold(op, session, error, version)
+            if held is None:
+                return None
+            op, error = held
+        return op, error, checked
+
+    # -- held operations (KOR-25) --------------------------------------------------------------------------------
+
+    def _since_start(self, op: Operation) -> float:
+        """Seconds counted against the registration expiry: since the request, or since the end of a hold."""
+        if op.held_ended_at is None:
+            return self.elapsed(op)
+        return max(0.0, self.env.wall() - op.held_ended_at.timestamp())
+
+    async def _github_version(self, session: LocalSession) -> int | None:
+        async with store_session(self.env.db) as conn:
+            return await records.github_version(conn, session.owner_id)
+
+    async def _hold(
+        self, op: Operation, session: LocalSession, error: dict[str, Any] | None, version: int | None
+    ) -> tuple[Operation, dict[str, Any] | None] | None:
+        """Hold, keep holding (None) or release the operation after its checks (module docstring, step 1a)."""
+        reason = HOLD_CODES.get(str((error or {}).get("code"))) if op.type.startswith("github.") else None
+        now = self.now()
+        if op.held and session.state in SESSION_ENDED:
+            self.line(f"hold_session_ended operation_id={op.id} session_state={session.state}")
+            return await self._end_hold(op, now), {"code": "not_found", "message": SESSION_ENDED_MESSAGE}
+        if reason is not None and op.held_until is not None and now >= op.held_until:
+            assert error is not None
+            error = {"code": error["code"], "message": TIMEOUT_MESSAGES[reason]}
+            self.line(f"hold_timeout operation_id={op.id} reason={reason}")
+            return await self._end_hold(op, now), error
+        if reason is None or op.held_ended_at is not None:
+            return (await self._end_hold(op, now) if op.held else op), error
+        if op.held_until is None:
+            refused = await self._start_hold(op, session, reason, now, version)
+            if refused == HOLD_FULL:
+                assert error is not None
+                return op, {"code": error["code"], "message": FULL_MESSAGES[reason]}
+            if refused is not None:
+                return op, error
+        elif op.held_credential != version:
+            async with self.env.transaction() as conn:
+                await records.update(conn, op.id, held_credential=version)
+        await self._waiting(op.id, session, reason, now)
+        return None
+
+    async def _end_hold(self, op: Operation, now: datetime) -> Operation:
+        async with self.env.transaction() as conn:
+            await records.update(conn, op.id, held_ended_at=now)
+        self.line(f"hold_ended operation_id={op.id}")
+        return await self._reload(op.id)
+
+    async def _start_hold(
+        self, op: Operation, session: LocalSession, reason: str, now: datetime, version: int | None
+    ) -> str | None:
+        """Mark the operation held (None), or why not: `HOLD_LATE` (the request is older than `HOLD_S`, a daemon that
+        was down; rejected as before) or `HOLD_FULL` (the session holds `HOLD_MAX` already)."""
+        repo = op.params.get("repo")
+        until = datetime.fromtimestamp(self.env.wall() - self.elapsed(op), UTC) + timedelta(seconds=HOLD_S)
+        async with self.env.transaction() as conn:
+            await records.lock_session(conn, session.id)
+            refused = (
+                HOLD_LATE
+                if until <= now
+                else HOLD_FULL
+                if await records.held_count(conn, session.id) >= HOLD_MAX
+                else None
+            )
+            if refused is not None:
+                self.line(f"hold_refused operation_id={op.id} reason={reason} why={refused}")
+                return refused
+            await records.update(
+                conn,
+                op.id,
+                held_reason=reason,
+                held_repo=repo if rules.repo_valid(repo) else None,
+                held_until=until,
+                held_credential=version,
+            )
+        self.line(f"held operation_id={op.id} reason={reason}")
+        return None
+
+    async def _waiting(self, operation_id: str, session: LocalSession, reason: str, now: datetime) -> None:
+        """The `session.status` `waiting` event of a held operation, once, within the session's rate limit."""
+        async with self.env.transaction() as conn:
+            await records.lock_session(conn, session.id)
+            op = await records.get(conn, operation_id)
+            assert op is not None
+            assert op.held_until is not None
+            last = await records.last_waiting(conn, session.id, reason)
+            recent = last is not None and now < last + timedelta(seconds=WAITING_EVERY_S)
+            if op.held_notified_at is not None or recent:
+                return
+            body: dict[str, Any] = {
+                "state": "waiting",
+                "waiting_for": reason,
+                "operation_id": op.id,
+                "operation_type": op.type,
+            }
+            if op.held_repo is not None:
+                body["repo"] = op.held_repo
+            body["until"] = session_records.time_text(op.held_until.timestamp())
+            await session_event(conn, self.env.outbox, session, kind="session.status", body=body, ts=self.env.at())
+            await records.update(conn, op.id, held_notified_at=now)
+        self.line(f"waiting operation_id={op.id} reason={reason}")
+
+    # -- registration --------------------------------------------------------------------------------------------
+
+    async def _prepare(
+        self, op: Operation, deadline: float, error: dict[str, Any] | None, checked: dict[str, Any]
+    ) -> Operation | None:
+        """The stored registration body; None when no workgroup key arrived before `deadline`."""
         while True:
             try:
                 async with self.env.transaction() as conn:
@@ -351,12 +509,18 @@ class Pipeline:
                 await self.sleep(min(KEY_WAIT_S, remaining))
 
     async def _register(self, op: Operation) -> Operation:
-        deadline = self.env.clock() + max(0.0, EXPIRY_S - self.elapsed(op))
         if op.registration is None:
-            prepared = await self._prepare(op, deadline)
+            found = await self._checks(op)
+            if found is None:
+                return op
+            op, error, checked = found
+            deadline = self.env.clock() + max(0.0, EXPIRY_S - self._since_start(op))
+            prepared = await self._prepare(op, deadline, error, checked)
             if prepared is None:
                 return await self._expire(op)
             op = prepared
+        else:
+            deadline = self.env.clock() + max(0.0, EXPIRY_S - self._since_start(op))
         assert op.registration is not None
         decision = await self.registrar.send(op.id, op.registration, deadline)
         if decision is None:
@@ -702,7 +866,15 @@ def existing(context: Any) -> Pipeline | None:
 
 
 def install(context: Any, pipeline: Pipeline) -> Pipeline:
+    """Make `pipeline` the daemon's pipeline; a `github` credential cached on this device wakes it (held operations,
+    KOR-25)."""
+
+    async def arrived(_owner: str, kind: str) -> None:
+        if kind == "github":
+            pipeline.wake()
+
     setattr(context, ATTRIBUTE, pipeline)
+    credential_cache.subscribe_stored(context, arrived)
     return pipeline
 
 

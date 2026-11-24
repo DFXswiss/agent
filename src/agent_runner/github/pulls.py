@@ -46,7 +46,7 @@ def _ref(value: object) -> dict[str, str]:
     return {"ref": str(ref), "sha": ops.text(data.get("sha"), ops.SHA_RE)}
 
 
-def _cut(value: str, limit: int) -> tuple[str, bool]:
+def cut(value: str, limit: int) -> tuple[str, bool]:
     return (value[:limit], True) if len(value) > limit else (value, False)
 
 
@@ -66,7 +66,7 @@ def _file(item: object) -> tuple[dict[str, Any], str | None] | None:
     return entry, patch if isinstance(patch, str) else None
 
 
-def _comment(item: object) -> tuple[dict[str, Any], bool] | None:
+def comment_entry(item: object) -> tuple[dict[str, Any], bool] | None:
     try:
         data = ops.obj(item)
         entry = {
@@ -77,17 +77,17 @@ def _comment(item: object) -> tuple[dict[str, Any], bool] | None:
     except GitHubError:
         return None
     text = data.get("body")
-    body, cut = _cut(text if isinstance(text, str) else "", MAX_TEXT)
-    return {**entry, "body": body}, cut
+    body, shortened = cut(text if isinstance(text, str) else "", MAX_TEXT)
+    return {**entry, "body": body}, shortened
 
 
 def _header(pull: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    title, cut_title = _cut(ops.text(pull.get("title"), re.compile(r"^.*$", re.S)), MAX_TITLE)
+    title, cut_title = cut(ops.text(pull.get("title"), re.compile(r"^.*$", re.S)), MAX_TITLE)
     text = pull.get("body")
     body: str | None = None
     cut_body = False
     if isinstance(text, str):
-        body, cut_body = _cut(text, MAX_TEXT)
+        body, cut_body = cut(text, MAX_TEXT)
     state = pull.get("state")
     if state not in ("open", "closed"):
         raise ops.invalid()
@@ -117,7 +117,7 @@ async def get_pull_request(ctx: OperationContext, client: GitHubClient) -> dict[
         files.append(found)
     comments: list[dict[str, Any]] = []
     for item in await client.items(f"/repos/{repo}/issues/{number}/comments"):
-        made = _comment(item)
+        made = comment_entry(item)
         if made is None or len(comments) >= MAX_COMMENTS:
             truncated = True
             continue
@@ -141,11 +141,12 @@ async def get_pull_request(ctx: OperationContext, client: GitHubClient) -> dict[
     return result
 
 
-def fit(result: dict[str, Any]) -> int:
-    """Shrink a result without patches to `RESULT_BUDGET` bytes of body JSON - the newest comments first, then the
-    body, then the last files, then the title; each step sets `truncated` - and return its size."""
+def fit(result: dict[str, Any], keys: tuple[str, ...] = ("comments", "body", "files", "title")) -> int:
+    """Shrink a result without patches to `RESULT_BUDGET` bytes of body JSON - by default the newest comments first,
+    then the body, then the last files, then the title (`github.get_issue` passes its own `keys`); each step sets
+    `truncated` - and return its size."""
     used = len(body_json(result))
-    for key in ("comments", "body", "files", "title"):
+    for key in keys:
         while used > RESULT_BUDGET and result[key]:
             value = result[key]
             if isinstance(value, list):

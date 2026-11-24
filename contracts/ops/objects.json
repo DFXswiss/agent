@@ -780,9 +780,722 @@
         },
         {
           "$ref": "#/$defs/result_workvm_release"
+        },
+        {
+          "$ref": "#/$defs/result_github_list_issues"
+        },
+        {
+          "$ref": "#/$defs/result_github_get_issue"
+        },
+        {
+          "$ref": "#/$defs/result_github_create_issue"
+        },
+        {
+          "$ref": "#/$defs/result_github_update_issue"
+        },
+        {
+          "$ref": "#/$defs/result_github_list_pull_requests"
+        },
+        {
+          "$ref": "#/$defs/result_github_request_connection"
         }
       ],
       "description": "result of any operation type"
+    },
+    "params_github_list_issues": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "closed",
+            "all"
+          ],
+          "description": "default open"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "label name: no comma (GitHub joins the filter with commas), no control character",
+            "pattern": "^[^,\u0000-\u001f]{1,100}$"
+          },
+          "minItems": 0,
+          "maxItems": 20,
+          "description": "only issues carrying every one of these labels"
+        },
+        "sort": {
+          "type": "string",
+          "enum": [
+            "created",
+            "updated",
+            "comments"
+          ],
+          "description": "default created"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "desc",
+            "asc"
+          ],
+          "description": "default desc (newest first)"
+        },
+        "per_page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "default 30"
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "default 1"
+        }
+      },
+      "required": [
+        "repo"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_get_issue": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "comments_page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "default 1"
+        },
+        "comments_per_page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "default 100"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_create_issue": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "label name: no comma (GitHub joins the filter with commas), no control character",
+            "pattern": "^[^,\u0000-\u001f]{1,100}$"
+          },
+          "minItems": 0,
+          "maxItems": 20
+        }
+      },
+      "required": [
+        "repo",
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_update_issue": {
+      "type": "object",
+      "description": "at least one of state, title, body, labels, and state_reason only together with state: checked by the formal checks of the runner (params_invalid), not by this schema",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "state_reason": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "not_planned",
+            "reopened"
+          ],
+          "description": "only with state"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "label name: no comma (GitHub joins the filter with commas), no control character",
+            "pattern": "^[^,\u0000-\u001f]{1,100}$"
+          },
+          "minItems": 0,
+          "maxItems": 20,
+          "description": "replaces every label of the issue"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_list_pull_requests": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "closed",
+            "all"
+          ],
+          "description": "default open"
+        },
+        "base": {
+          "$ref": "#/$defs/branch"
+        },
+        "sort": {
+          "type": "string",
+          "enum": [
+            "created",
+            "updated"
+          ],
+          "description": "default created"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "desc",
+            "asc"
+          ],
+          "description": "default desc (newest first)"
+        },
+        "per_page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "default 30"
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "default 1"
+        }
+      },
+      "required": [
+        "repo"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_request_connection": {
+      "$ref": "../common.json#/$defs/empty"
+    },
+    "result_github_list_issues": {
+      "type": "object",
+      "description": "one page of the repository's issues; pull requests, which GitHub lists among the issues, are left out, so a page may hold fewer than per_page issues while next_page is set; truncated: entries that did not fit the contract were left out or titles were cut",
+      "properties": {
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "number": {
+                "$ref": "#/$defs/number"
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "closed"
+                ]
+              },
+              "state_reason": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "completed",
+                      "not_planned",
+                      "reopened",
+                      "duplicate"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "author": {
+                "$ref": "#/$defs/github_login"
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "description": "label name (GitHub allows at most 50 characters)",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "minItems": 0,
+                "maxItems": 100
+              },
+              "assignees": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/github_login"
+                },
+                "minItems": 0,
+                "maxItems": 100
+              },
+              "comments": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "created_at": {
+                "$ref": "#/$defs/github_time"
+              },
+              "updated_at": {
+                "$ref": "#/$defs/github_time"
+              },
+              "closed_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/github_time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "url": {
+                "$ref": "#/$defs/url"
+              }
+            },
+            "required": [
+              "number",
+              "title",
+              "state",
+              "state_reason",
+              "author",
+              "labels",
+              "assignees",
+              "comments",
+              "created_at",
+              "updated_at",
+              "closed_at",
+              "url"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "next_page": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 1000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the page to ask for next, null on the last page"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "issues",
+        "next_page",
+        "truncated"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_get_issue": {
+      "type": "object",
+      "description": "an issue with one page of its comments (oldest first); the result stays within 200 KiB of JSON (newest comments of the page, then the body are cut first, truncated)",
+      "properties": {
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "body": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 262144
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "state_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "completed",
+                "not_planned",
+                "reopened",
+                "duplicate"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "author": {
+          "$ref": "#/$defs/github_login"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "label name (GitHub allows at most 50 characters)",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "assignees": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/github_login"
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "created_at": {
+          "$ref": "#/$defs/github_time"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/github_time"
+        },
+        "closed_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/github_time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "url": {
+          "$ref": "#/$defs/url"
+        },
+        "pull_request": {
+          "type": "boolean",
+          "description": "the number belongs to a pull request (read it with github.get_pull_request)"
+        },
+        "comments_total": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/github_id"
+              },
+              "author": {
+                "$ref": "#/$defs/github_login"
+              },
+              "body": {
+                "type": "string",
+                "maxLength": 262144
+              },
+              "created_at": {
+                "$ref": "#/$defs/github_time"
+              }
+            },
+            "required": [
+              "id",
+              "author",
+              "body",
+              "created_at"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        },
+        "comments_next_page": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 1000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the page to ask for next, null on the last page"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "number",
+        "title",
+        "body",
+        "state",
+        "state_reason",
+        "author",
+        "labels",
+        "assignees",
+        "created_at",
+        "updated_at",
+        "closed_at",
+        "url",
+        "pull_request",
+        "comments_total",
+        "comments",
+        "comments_next_page",
+        "truncated"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_create_issue": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "url": {
+          "$ref": "#/$defs/url"
+        },
+        "id": {
+          "$ref": "#/$defs/github_id"
+        }
+      },
+      "required": [
+        "number",
+        "url",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_update_issue": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "url": {
+          "$ref": "#/$defs/url"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "state_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "completed",
+                "not_planned",
+                "reopened",
+                "duplicate"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "label name (GitHub allows at most 50 characters)",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "minItems": 0,
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "number",
+        "url",
+        "state",
+        "state_reason",
+        "title",
+        "labels"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_list_pull_requests": {
+      "type": "object",
+      "description": "one page of the repository's pull requests",
+      "properties": {
+        "pull_requests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "number": {
+                "$ref": "#/$defs/number"
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "closed"
+                ]
+              },
+              "draft": {
+                "type": "boolean"
+              },
+              "author": {
+                "$ref": "#/$defs/github_login"
+              },
+              "head": {
+                "$ref": "#/$defs/branch"
+              },
+              "base": {
+                "$ref": "#/$defs/branch"
+              },
+              "created_at": {
+                "$ref": "#/$defs/github_time"
+              },
+              "updated_at": {
+                "$ref": "#/$defs/github_time"
+              },
+              "url": {
+                "$ref": "#/$defs/url"
+              }
+            },
+            "required": [
+              "number",
+              "title",
+              "state",
+              "draft",
+              "author",
+              "head",
+              "base",
+              "created_at",
+              "updated_at",
+              "url"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "next_page": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 1000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the page to ask for next, null on the last page"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pull_requests",
+        "next_page",
+        "truncated"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_request_connection": {
+      "type": "object",
+      "description": "the task owner's connected GitHub account; while the owner is not connected the platform holds the request and asks the owner to connect (KOR-25)",
+      "properties": {
+        "login": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{1,39}$"
+        }
+      },
+      "required": [
+        "login"
+      ],
+      "additionalProperties": false
     }
   }
 }

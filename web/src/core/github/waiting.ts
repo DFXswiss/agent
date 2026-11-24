@@ -1,0 +1,135 @@
+// Held operations in the task's chat (KOR-25, ADR-066, `contracts/events/objects.json` `body_session_status`, third
+// variant): the runner holds a `github.*` operation of a session instead of refusing it when the task owner has no
+// usable GitHub connection (`github_connection`, the only reason) and writes one `session.status` event
+// `{state:"waiting", waiting_for, operation_id, operation_type, repo?, until}`. A repository outside a workgroup's
+// optional repository list is refused as before (`repo_not_allowed`) – there is no approval card (no list means every
+// repository of the connection, ADR-054). The chat shows it as a card with the platform's own text only:
+//
+// - `parseWaiting`: the body exactly as the contract allows it (no further key, a known reason, a UUIDv7, a dotted
+//   type, `owner/name` of 03-api.md section 9, a time). Anything else is no card – the session cannot slip text or a
+//   foreign address into it; the chat shows a neutral row instead.
+// - `foldWaiting`: waiting items of the same reason are one card at the place of the newest of them, with every
+//   operation it stands for, the operation type of the newest item, the repository of the newest item that named one
+//   and the latest `until` (a session cannot flood the chat with cards).
+// - `waitStatus`: `done` once the viewer is the owner and has a GitHub connection made at or after the newest waiting
+//   item (an older one is the connection the runner found unusable, expired or revoked, so the card offers to connect
+//   again) or every operation of the card is registered at the hub; `expired` after `until` or when every registered
+//   operation was refused; else `open`.
+import { UUID7_RE } from '../encoding/ids';
+import { parseTime } from '../encoding/time';
+import { isRecord } from '../registry';
+import type { OperationRow } from '../store/slices/operations';
+import { REPO_RE } from '../wg-settings/settings';
+import type { TimelineItem } from '../chat/timeline';
+
+export const WAIT_REASONS = ['github_connection'] as const;
+export type WaitReason = (typeof WAIT_REASONS)[number];
+
+/** `operation_type` of `contracts/common.json`. */
+const TYPE_RE = /^[a-z][a-z_]*(\.[a-z][a-z_]*)+$/;
+const REQUIRED = ['state', 'waiting_for', 'operation_id', 'operation_type', 'until'];
+
+export interface Waiting {
+  readonly reason: WaitReason;
+  readonly operationId: string;
+  readonly operationType: string;
+  readonly repo: string | null;
+  /** Unix ms. */
+  readonly until: number;
+}
+
+/** A waiting body exactly as the contract allows it, else null (module comment). */
+export function parseWaiting(body: unknown): Waiting | null {
+  if (!isRecord(body) || body.state !== 'waiting') return null;
+  const keys = Object.keys(body);
+  if (!REQUIRED.every((key) => keys.includes(key)) || !keys.every((key) => REQUIRED.includes(key) || key === 'repo'))
+    return null;
+  const { waiting_for: reason, operation_id: id, operation_type: type, repo } = body;
+  if (!(WAIT_REASONS as readonly unknown[]).includes(reason)) return null;
+  if (typeof id !== 'string' || !UUID7_RE.test(id)) return null;
+  if (typeof type !== 'string' || type.length > 64 || !TYPE_RE.test(type)) return null;
+  if (repo !== undefined && (typeof repo !== 'string' || !REPO_RE.test(repo))) return null;
+  let until: number;
+  try {
+    until = parseTime(body.until);
+  } catch {
+    return null;
+  }
+  return {
+    reason: reason as WaitReason,
+    operationId: id,
+    operationType: type,
+    repo: (repo as string | undefined) ?? null,
+    until,
+  };
+}
+
+/** One card: the waiting items of one kind (module comment). */
+export interface WaitingCard {
+  readonly reason: WaitReason;
+  /** The repository of the newest item that named one. */
+  readonly repo: string | null;
+  /** The operation type of the newest item. */
+  readonly operationType: string;
+  /** Every operation the card stands for, oldest first. */
+  readonly operations: readonly string[];
+  /** The latest `until` (Unix ms). */
+  readonly until: number;
+  /** The time of the newest item (Unix ms). */
+  readonly since: number;
+}
+
+/** Whether a timeline item is a `session.status` event of the `waiting` state. */
+export const isWaitingItem = (item: TimelineItem): boolean =>
+  item.kind === 'session.status' && item.source === 'event' && isRecord(item.body) && item.body.state === 'waiting';
+
+/** The ordered timeline with the waiting items of one kind folded into one (module comment). */
+export function foldWaiting(items: readonly TimelineItem[]): TimelineItem[] {
+  const cards = new Map<string, { card: WaitingCard; last: number }>();
+  const parsed = new Map<number, string>();
+  items.forEach((item, index) => {
+    const waiting = isWaitingItem(item) ? parseWaiting(item.body) : null;
+    if (waiting === null) return;
+    const key = waiting.reason;
+    parsed.set(index, key);
+    const known = cards.get(key)?.card;
+    const operations = known?.operations ?? [];
+    cards.set(key, {
+      card: {
+        reason: waiting.reason,
+        repo: waiting.repo ?? known?.repo ?? null,
+        operationType: waiting.operationType,
+        operations: operations.includes(waiting.operationId) ? operations : [...operations, waiting.operationId],
+        until: Math.max(known?.until ?? 0, waiting.until),
+        since: item.at,
+      },
+      last: index,
+    });
+  });
+  const folded: TimelineItem[] = [];
+  items.forEach((item, index) => {
+    const key = parsed.get(index);
+    if (key === undefined) folded.push(item);
+    else if (cards.get(key)!.last === index) folded.push({ ...item, waiting: cards.get(key)!.card });
+  });
+  return folded;
+}
+
+export type WaitStatus = 'open' | 'done' | 'expired';
+
+export interface WaitContext {
+  readonly now: number;
+  /** When the viewer's verified GitHub connection was made (Unix ms) if the viewer is the task owner, else null. */
+  readonly connectedAt: number | null;
+  readonly rows: Readonly<Record<string, OperationRow>>;
+}
+
+const REFUSED: ReadonlySet<string> = new Set(['rejected', 'denied', 'expired']);
+
+/** The state of a card (module comment). */
+export function waitStatus(card: WaitingCard, context: WaitContext): WaitStatus {
+  if (context.connectedAt !== null && context.connectedAt >= card.since) return 'done';
+  const rows = card.operations.map((id) => context.rows[id]).filter((row) => row !== undefined);
+  if (rows.length === card.operations.length) return rows.every((row) => REFUSED.has(row.state)) ? 'expired' : 'done';
+  return context.now >= card.until ? 'expired' : 'open';
+}

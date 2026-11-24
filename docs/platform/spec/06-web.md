@@ -306,13 +306,23 @@ state explains how to create a task. Details: `decisions/KOR-32.md`.
   - `session.output` – Markdown (§2.1 rules), per session; subagent outputs are indented with the subagent label.
   - `session.tool` – collapsed row "Read src/app.py", "Edit …" (expand: input/result summaries, error flag).
   - `operation.params` / `operation.result` + `operation` rows – inline card with type, state badge (live), and
-    result links (PR URL, commit SHA, comment URL); duplicates show "duplicate of …" linking the original.
+    result links (PR URL, commit SHA, comment URL, issue number and URL, connected login); duplicates show
+    "duplicate of …" linking the original. Listed issues and pull requests (`github.list_issues`,
+    `github.list_pull_requests`) show number (linked), title, state, draft and labels, with "more on page n" and
+    the size-limit notice; a read issue (`github.get_issue`) shows title, author, state reason, its text and its page of
+    comments; `github.update_issue` shows the new state and reason (KOR-25). Texts from GitHub are untrusted: they are
+    rendered only as text (never as Markdown or HTML), and only `https:` URLs become links.
   - `session.file` – "Changed `path`" with an expandable patch (monospace, no syntax highlighting dependency). The
     patch is rendered only while expanded and at most 20 000 characters at a time ("Show more"). Two or more
     consecutive `session.file` items of one session are one row "N files changed" with the time span (HOT-05); it
     expands to the list of files, 50 at a time ("Show more files"), each with its own expandable patch.
   - `session.hook` with `deny` – muted row "Blocked: <tool> (<reason>)".
   - `session.status` errors and task/session state changes – system rows.
+  - `session.status` `waiting` (KOR-25, `03-api.md` §10) – a card for the task owner only: "waiting for the GitHub
+    connection" with Connect (device flow or existing token, §8.1) right in the card, or "Allow repository
+    `<owner/name>` for this workgroup" with the allow action for users who may write the workgroup settings. It shows
+    only platform text and the checked repository name, never text of the session, and disappears once the condition
+    is met (GitHub connected, repository allowed), the operation is registered or `until` has passed.
   - Countdown summaries (§4.4).
 - Long prompts, messages and tool inputs/outputs show 20 000 characters at a time ("Show more"); a tool row renders its
   details only while expanded.
@@ -340,7 +350,8 @@ usage; each node links to `/o/:org/s/:session`.
 
 ### 5.4 Operations tab
 
-`GET /v1/tasks/{task}/operations`, newest first; detail drawer shows transitions, decrypted params and result.
+`GET /v1/tasks/{task}/operations`, newest first; detail drawer shows transitions, decrypted params and result, with
+the same readable views of issue and pull request lists and of a read issue as the chat card (§5.2).
 
 ### 5.5 Session detail and read-only terminal (`/o/:org/s/:session`)
 
@@ -460,6 +471,12 @@ screen says so. Private organizations are only created from a platform invitatio
   → device request `github.connect` (`POST /v1/device-requests`) → response 1 shows `user_code` large with copy
   and the verification link (opens in a new tab) and a countdown until code expiry → response 2 shows success with
   the GitHub login, or the error. Hint to select repositories when installing the GitHub App.
+- **Store an existing token (KOR-25):** paste field for an existing GitHub token (GitHub CLI login, personal access
+  token); it leaves the browser only HPKE-encrypted to the device in the device request `github.connect` `{token}`;
+  the device checks and stores it (`05-runner.md` §11.4). Afterwards "Connected as `<login>`" with the origin (device
+  flow / token) and the scopes; fine-grained tokens are recommended, not enforced.
+- **Composer hint:** a prompt with an obvious GitHub reference (`owner/name`, a GitHub URL, "issue", "pull request")
+  while GitHub is not connected offers Connect next to the composer; the task is sent anyway.
 - **Disconnect:** `DELETE /v1/me/credentials/github` + link to the GitHub settings page to revoke the app
   authorization.
 - Workgroup settings (`/o/:org/w/:wg/settings`, `wg:write`): optional repository allow-list (`owner/name`, validated

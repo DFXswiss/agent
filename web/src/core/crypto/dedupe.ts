@@ -10,6 +10,7 @@
 // | `github.push` | `repo`, `branch`, `commit_sha` |
 // | `github.create_pull_request` | `repo`, `head`, `base` |
 // | `github.comment` | `repo`, `number`, `body` = sha256_hex(UTF-8 body) |
+// | `github.create_issue` | `repo`, `title` = sha256_hex(UTF-8 title), `body` = sha256_hex(UTF-8 body, empty when left out) |
 // | `subagent.request` | `session` (parent), `prompt` = sha256_hex(UTF-8 purpose || 0x00 || UTF-8 prompt) |
 //
 // Repository names and SHAs are lowercased, branch names lose a leading `refs/heads/`; a value that is not printable
@@ -69,11 +70,23 @@ const BUILDERS: Record<string, (p: Params) => Promise<Fields>> = {
     number: F.requireInt(p.number, 1),
     body: await sha256Hex(F.text(p.body)),
   }),
+  'github.create_issue': async (p) => ({
+    repo: await repo(p),
+    title: await sha256Hex(F.text(p.title)),
+    body: await sha256Hex(optionalText(p.body)),
+  }),
   'subagent.request': async (p) => ({
     session: session(p),
     prompt: await sha256Hex(`${F.text(p.purpose)}\0${F.text(p.prompt)}`),
   }),
 };
+
+/** A string that may be empty; a missing value is the empty text. */
+function optionalText(value: unknown): string {
+  if (value === undefined) return '';
+  if (typeof value !== 'string') fail('header_invalid');
+  return value;
+}
 
 /** Operation types with duplicate protection (03-api.md section 9); the others have no dedupe fields. */
 export const DEDUPE_TYPES = Object.keys(BUILDERS).sort();

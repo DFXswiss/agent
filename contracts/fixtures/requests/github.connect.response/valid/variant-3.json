@@ -1,0 +1,9 @@
+{
+  "step": "done",
+  "login": "octocat",
+  "scopes": [
+    "repo",
+    "read:org"
+  ],
+  "source": "token"
+}

@@ -1,4 +1,17 @@
-"""Device request `github.connect` (05-runner.md section 11.4, ADR-015, 04-crypto.md section 4.4).
+"""Device request `github.connect` (05-runner.md section 11.4, ADR-015, 04-crypto.md section 4.4, KOR-25).
+
+The body is `{}` (the device flow of the GitHub App) or `{token}` (an existing GitHub token: a GitHub CLI login or a
+personal access token); any other body is `upstream_error`, a token that is not printable ASCII up to 4096 characters
+`token_invalid`.
+
+**Token** (no `GITHUB_CLIENT_ID` needed): `GET <GITHUB_API_URL>/user` with the token: `401` -> `token_refused`
+(revoked or unknown), `403` naming an SSO requirement -> `sso_required`, network errors and `5xx` ->
+`upstream_unreachable`, anything else -> `upstream_error`. The scopes are the header `X-OAuth-Scopes` (a classic
+token); without the header the token is fine-grained (or a GitHub App user token) and has `scopes: []`. A classic
+token with neither `repo` nor `public_repo` is `scope_missing`. Then the credential is stored as in step 5 below with
+`source: "token"` and the answer is `{step:"done", login, scopes, source:"token"}`.
+
+**Device flow** (body `{}`):
 
 1. `POST <GITHUB_WEB_URL>/login/device/code` with the public client ID of the GitHub App (`GITHUB_CLIENT_ID`); a
    network error or `5xx` is tried again after `DEVICE_CODE_DELAYS` (2 s, then 8 s: three attempts, the first two
@@ -10,22 +23,25 @@
    more), `expired_token` -> `timeout`, `access_denied` and every other error -> `upstream_error`; network errors and
    `5xx` are polled again up to `UNREACHABLE_LIMIT` times in a row, then `upstream_unreachable`;
 4. `GET <GITHUB_API_URL>/user` with the token (`login`, `id`);
-5. credential `github {token, login, user_id, scopes, created_at}` under the owner's `CK`, written as this device while
-   answering the request (`credentials.cache.put`); a read or write lost in transport (`hub_unreachable`) is sent
-   again after `RESPOND_DELAYS` like a response (KOR-18: the user has already confirmed the code, so one lost request
-   must not discard the connection), the write with the same record bytes, so it never stores a second version;
-6. response 2 `{step:"done", login}` (final).
+5. credential `github {token, login, user_id, scopes, created_at, source}` (`source: "device_flow"`) under the
+   owner's `CK`, written as this device while answering the request (`credentials.cache.put`); a read or write lost
+   in transport (`hub_unreachable`) is sent again after `RESPOND_DELAYS` like a response (KOR-18: the user has
+   already confirmed the code, so one lost request must not discard the connection), the write with the same record
+   bytes, so it never stores a second version;
+6. response 2 `{step:"done", login, scopes, source:"device_flow"}` (final).
 
 A user approved for the operator's GitHub account (KOR-27, ADR-053, `github.operator`) skips steps 1-3: the
 operator's token file is read, checked with step 4 (scopes from `X-OAuth-Scopes`, as far as GitHub names them) and
-stored with step 5; the only response is `{step:"done", login}` (final) - the web client takes `done` as the first
-response as well. An unusable file is `credential_missing`; log lines of this way carry `source=operator`.
+stored with step 5 (`source: "token"`); the only response is `{step:"done", login, scopes, source}` (final) - the
+web client takes `done` as the first response as well. An unusable file is `credential_missing`; log lines of this
+way carry `source=operator`.
 
 Failures end with `{step:"failed", code}` (final): `upstream_error`, `upstream_unreachable`, `timeout`, `token_invalid`
-(an access token that is not printable ASCII up to 4096 characters), `credential_missing` (this device holds no `CK`
-of the owner) - the codes of `contracts/requests/objects.json`. The token is never logged or answered. A failure of a
-GitHub call is logged with its step (`device_code`, `poll`, `user`), the error kind and, for a transport error, its
-class (`cause`), so the phase of a lost connection is visible.
+(an access token that is not printable ASCII up to 4096 characters), `token_refused`, `scope_missing`,
+`sso_required`, `credential_missing` (this device holds no `CK` of the owner) - the codes of
+`contracts/requests/objects.json`. The token is never logged or answered. A failure of a GitHub call is logged with
+its step (`device_code`, `poll`, `user`), the error kind and, for a transport error, its class (`cause`), so the phase
+of a lost connection is visible; a success is logged with its `source` and the scopes.
 """
 
 from __future__ import annotations
@@ -170,29 +186,35 @@ async def poll(flow: Flow, web: GitHubClient, client_id: str, grant: tuple[str, 
         raise ConnectFailed("upstream_error")
 
 
-async def _user(client: GitHubClient) -> tuple[str, int, list[str]]:
-    """`(login, id, scopes)` of `GET /user`; the scopes are those GitHub names in `X-OAuth-Scopes` (classic tokens;
-    GitHub App user tokens and fine-grained tokens name none)."""
+SCOPES_HEADER = "x-oauth-scopes"
+REPO_SCOPES = frozenset({"repo", "public_repo"})
+
+
+async def _user(client: GitHubClient) -> tuple[str, int, GitHubResponse]:
+    """`GET /user`: the login, the account ID and the answer (its headers carry the scopes of a classic token)."""
     answer = await client.request("GET", "/user")
     data = answer.data if isinstance(answer.data, dict) else {}
     login, user_id = data.get("login"), data.get("id")
     if not isinstance(login, str) or not LOGIN_RE.fullmatch(login):
         raise ConnectFailed("upstream_error")
     try:
-        return login, ops.integer(user_id), scopes(answer.headers.get("x-oauth-scopes"))
+        return login, ops.integer(user_id), answer
     except GitHubError:
         raise ConnectFailed("upstream_error") from None
 
 
-async def _store(flow: Flow, token: str, user: tuple[str, int, list[str]], *, minted: bool = False) -> None:
-    """Credential `github {token, login, user_id, scopes, created_at}` under the owner's `CK` (step 5)."""
-    login, user_id, granted = user
+async def _store(
+    flow: Flow, token: str, identity: tuple[str, int, list[str]], source: str, *, minted: bool = False
+) -> None:
+    """Credential `github {token, login, user_id, scopes, created_at, source}` under the owner's `CK`."""
+    login, user_id, granted = identity
     body = {
         "token": token,
         "login": login,
         "user_id": user_id,
         "scopes": granted,
         "created_at": time_text(flow.service.sync.wall()),
+        "source": source,
     }
     try:
         await put(flow.context, flow.user, "github", body, flow.id, delays=RESPOND_DELAYS, sleep=flow.sleep)
@@ -211,9 +233,10 @@ async def _store(flow: Flow, token: str, user: tuple[str, int, list[str]], *, mi
         await revoke.remember(flow.context, flow.user, token)
 
 
-async def _connect_operator(flow: Flow) -> str:
+async def _connect_operator(flow: Flow) -> tuple[str, int, list[str]]:
     """The operator's token (KOR-27, `github.operator`) checked with `GET /user` and stored; the GitHub login. An
-    unusable file is `credential_missing` (its reason is logged by `read_token`)."""
+    unusable file is `credential_missing` (its reason is logged by `read_token`). Stored with `source: "token"`: it
+    is an existing token, not one of the device flow."""
     settings = settings_for(flow.context)
     state = operator.state_for(flow.context)
     try:
@@ -222,15 +245,16 @@ async def _connect_operator(flow: Flow) -> str:
         raise ConnectFailed("credential_missing", f"step=operator_file reason={unusable.reason}") from None
     async with settings.client(token, flow.user) as api:
         try:
-            user = await _user(api)
+            login, user_id, answer = await _user(api)
         except GitHubError as error:
             raise _failed("user", error) from None
-    await _store(flow, token, user)
-    return user[0]
+    identity = (login, user_id, scopes(answer.headers.get(SCOPES_HEADER)))
+    await _store(flow, token, identity, "token")
+    return identity
 
 
-async def _connect(flow: Flow) -> str:
-    """The device flow up to the stored credential; the GitHub login."""
+async def _device_flow(flow: Flow) -> tuple[str, int, list[str]]:
+    """The device flow up to the stored credential; `(login, user_id, scopes)`."""
     settings = settings_for(flow.context)
     if settings.client_id is None:
         flow.service.line("github_connect client_id_missing")
@@ -247,18 +271,56 @@ async def _connect(flow: Flow) -> str:
         raise ConnectFailed("token_invalid")
     async with settings.client(token, flow.user) as api:
         try:
-            login, user_id, _named = await _user(api)
+            login, user_id, _answer = await _user(api)
         except GitHubError as error:
             raise _failed("user", error) from None
-    await _store(flow, token, (login, user_id, scopes(issued.get("scope"))), minted=True)
-    return login
+    identity = (login, user_id, scopes(issued.get("scope")))
+    await _store(flow, token, identity, "device_flow", minted=True)
+    return identity
+
+
+async def _token(flow: Flow, token: str) -> tuple[str, int, list[str]]:
+    """Check an existing token with `GET /user` and store it; `(login, user_id, scopes)`."""
+    async with settings_for(flow.context).client(token, flow.user) as api:
+        try:
+            login, user_id, answer = await _user(api)
+        except GitHubError as error:
+            if error.kind == "unauthorized":
+                raise ConnectFailed("token_refused", _detail("user", error)) from None
+            if error.sso:
+                raise ConnectFailed("sso_required", _detail("user", error)) from None
+            raise _failed("user", error) from None
+    header = answer.headers.get(SCOPES_HEADER)
+    granted = scopes(header)
+    if header is not None and not REPO_SCOPES & set(granted):
+        raise ConnectFailed("scope_missing", "step=user kind=scopes")
+    identity = (login, user_id, granted)
+    await _store(flow, token, identity, "token")
+    return identity
+
+
+async def _connect(flow: Flow) -> tuple[str, int, list[str], str]:
+    """The connection the body asks for: `(login, user_id, scopes, source)`."""
+    body = flow.body
+    if set(body) - {"token"}:
+        raise ConnectFailed("upstream_error", "step=request kind=body")
+    if "token" not in body:
+        return (*await _device_flow(flow), "device_flow")
+    token = body["token"]
+    if not isinstance(token, str) or not ops.TOKEN_RE.fullmatch(token):
+        raise ConnectFailed("token_invalid", "step=request kind=token")
+    return (*await _token(flow, token), "token")
 
 
 async def connect(flow: Flow) -> None:
     by_operator = operator.approved(flow.context, flow.user)
     source = " source=operator" if by_operator else ""
     try:
-        login = await (_connect_operator(flow) if by_operator else _connect(flow))
+        if by_operator:
+            login, _user_id, granted = await _connect_operator(flow)
+            kind = "token"
+        else:
+            login, _user_id, granted, kind = await _connect(flow)
     except ConnectFailed as failed:
         detail = f" {failed.detail}" if failed.detail else ""
         flow.service.line(f"github_connect failed request_id={flow.id} code={failed.code}{source}{detail}")
@@ -266,7 +328,8 @@ async def connect(flow: Flow) -> None:
             operator.state_for(flow.context).failures += 1
         await flow.respond({"step": "failed", "code": failed.code}, final=True)
         return
-    flow.service.line(f"github_connect done request_id={flow.id}{source}")
+    shown = ",".join(granted) or "-"
+    flow.service.line(f"github_connect done request_id={flow.id}{source or ' source=' + kind} scopes={shown}")
     if by_operator:
         operator.state_for(flow.context).connects += 1
-    await flow.respond({"step": "done", "login": login}, final=True)
+    await flow.respond({"step": "done", "login": login, "scopes": granted, "source": kind}, final=True)

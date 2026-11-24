@@ -279,6 +279,61 @@ def test_ref_resolution_and_history() -> None:
         ({"installations": [{"account": "o", "users": ["nobody"]}]}, "is not seeded"),
         ({"installations": [{"account": "o", "permissions": {"contents": "admin"}}]}, "must be read or write"),
         ({"installations": [{"id": 1, "account": "o"}, {"id": 1, "account": "o"}]}, "installation 1 already exists"),
+        ({"repositories": [{"full_name": "o/r", "has_issues": "no"}]}, "repository.has_issues must be a boolean"),
+        ({"users": [{"login": "u", "tokens": [5]}]}, "token must be an object"),
+        ({"users": [{"login": "u", "tokens": [{"kind": "app"}]}]}, "user.tokens must be non-empty strings"),
+        ({"users": [{"login": "u", "tokens": [{"token": "t", "x": 1}]}]}, "token: unknown keys"),
+        ({"users": [{"login": "u", "tokens": [{"token": "t", "kind": "oauth"}]}]}, "token.kind must be one of"),
+        ({"users": [{"login": "u", "tokens": [{"token": "t", "scopes": "repo"}]}]}, "token.scopes must be a list"),
+        ({"users": [{"login": "u", "tokens": [{"token": "t", "sso": [""]}]}]}, "token.sso must be non-empty strings"),
+        ({"users": [{"login": "u", "tokens": [{"token": "t", "revoked": 1}]}]}, "token.revoked must be a boolean"),
+        (
+            {"users": [{"login": "u", "tokens": [{"token": "t", "repositories": ["hello"]}]}]},
+            "token.repositories must be full names",
+        ),
+        (
+            {"users": [{"login": "u", "tokens": ["t", {"token": "t", "kind": "classic"}]}]},
+            "a token belongs to one user only",
+        ),
+        (
+            {
+                "users": [{"login": "u"}],
+                "repositories": [{"full_name": "o/r", "issues": [{"title": "t", "user": "u", "state": "x"}]}],
+            },
+            "issue.state must be open or closed",
+        ),
+        (
+            {
+                "users": [{"login": "u"}],
+                "repositories": [
+                    {"full_name": "o/r", "issues": [{"title": "t", "user": "u", "state_reason": "fixed"}]}
+                ],
+            },
+            "issue.state_reason must be null or one of",
+        ),
+        (
+            {
+                "users": [{"login": "u"}],
+                "repositories": [{"full_name": "o/r", "issues": [{"title": "t", "user": "u", "body": 1}]}],
+            },
+            "issue.body must be a string or null",
+        ),
+        (
+            {
+                "users": [{"login": "u"}],
+                "repositories": [{"full_name": "o/r", "issues": [{"title": "t", "user": "u", "labels": "bug"}]}],
+            },
+            "issue.labels must be a list",
+        ),
+        (
+            {
+                "users": [{"login": "u"}],
+                "repositories": [
+                    {"full_name": "o/r", "issues": [{"title": "t", "user": "u", "assignees": ["nobody"]}]}
+                ],
+            },
+            "user 'nobody' is not seeded",
+        ),
     ],
 )
 def test_seed_refusals_leave_nothing_behind(seed: Any, message: str) -> None:
@@ -286,7 +341,7 @@ def test_seed_refusals_leave_nothing_behind(seed: Any, message: str) -> None:
     with pytest.raises(SeedError, match=message):
         world.seed(seed)
     assert (world.users, world.tokens, world.repos, world.installations) == ({}, {}, {}, {})
-    assert world.personal == set()
+    assert all(user.collaborator == [] for user in world.users.values())
 
 
 def test_seeded_pull_needs_known_user_and_state() -> None:
@@ -297,6 +352,7 @@ def test_seeded_pull_needs_known_user_and_state() -> None:
     for pull, message in (
         ({"title": "t", "head": "f", "user": "nobody"}, "is not seeded"),
         ({"title": "t", "head": "f", "user": "octo-user", "state": "merged"}, "pull.state must be open or closed"),
+        ({"title": "t", "head": "f", "user": "octo-user", "labels": [1]}, "pull.labels must be non-empty strings"),
     ):
         world = World()
         with pytest.raises(SeedError, match=message):
@@ -321,3 +377,52 @@ def test_installation_defaults_and_account_ids() -> None:
     assert repo is not None
     assert world.installation_for(user, repo) is first
     assert world.user_for_token("none") is None
+
+
+def test_issue_and_token_defaults() -> None:
+    world = World()
+    world.seed(
+        {
+            "users": [
+                {
+                    "login": "octo-user",
+                    "tokens": [
+                        "app-token",
+                        {"token": "pat", "kind": "classic", "repositories": ["Octo-Org/R"], "sso": ["Acme"]},
+                    ],
+                }
+            ],
+            "repositories": [
+                {
+                    "full_name": "octo-org/r",
+                    "issues": [
+                        {"title": "a", "user": "octo-user"},
+                        {"title": "b", "user": "octo-user", "state": "closed"},
+                        {"title": "c", "user": "octo-user", "state": "closed", "state_reason": None},
+                        {"title": "d", "user": "octo-user", "labels": ["Bug", "bug", "ui"]},
+                    ],
+                }
+            ],
+        }
+    )
+    repo = world.repo("octo-org", "r")
+    assert repo is not None
+    assert repo.has_issues is True
+    assert [(i.state, i.state_reason, i.closed is not None) for i in repo.issues.values()] == [
+        ("open", None, False),
+        ("closed", "completed", True),
+        ("closed", None, True),
+        ("open", None, False),
+    ]
+    assert repo.issues[4].labels == ["Bug", "ui"]
+    assert sorted(repo.labels) == ["bug", "ui"]
+    assert repo.open_items == 2
+    app, pat = world.tokens["app-token"], world.tokens["pat"]
+    assert (app.kind, app.scopes, app.repositories, app.revoked, app.sso) == ("app", [], None, False, [])
+    assert (pat.kind, pat.repositories, pat.sso) == ("classic", ["octo-org/r"], ["acme"])
+    assert pat.reaches(repo)
+    assert not pat.can_write(repo)
+    world.revoke("pat")
+    assert world.user_for_token("pat") is None
+    with pytest.raises(SeedError, match="unknown token"):
+        world.revoke("none")

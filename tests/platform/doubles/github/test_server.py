@@ -125,6 +125,8 @@ def test_write_needs_the_installation_permission(start_github: Callable[..., Any
         ("POST", f"{REPO}/git/commits", {"message": "m", "tree": EMPTY_TREE}),
         ("POST", f"{REPO}/pulls", {"title": "t", "head": "feature", "base": "main"}),
         ("POST", f"{REPO}/issues/1/comments", {"body": "b"}),
+        ("POST", f"{REPO}/issues", {"title": "t"}),
+        ("PATCH", f"{REPO}/issues/1", {"title": "t"}),
     ):
         response = gh.api(method, path, body)
         assert (response.status, response.json()["message"]) == (403, "Resource not accessible by integration")
@@ -847,3 +849,481 @@ def test_revocation_refuses_credentials_and_malformed_bodies(github: Any) -> Non
     for body in bodies:
         assert github.api("POST", "/credentials/revoke", body, token=None).status == 422
     assert github.api("GET", "/user").status == 200
+
+
+# --- issues ------------------------------------------------------------------------------------------
+
+
+def issue_seed(seed: Callable[[], Any]) -> Any:
+    """Three issues (one open, two closed) and an open pull request #4, with comments on #4 and #1."""
+    data = seed()
+    repo = data["repositories"][0]
+    repo["issues"] = [
+        {
+            "title": "Bug",
+            "user": "other-user",
+            "body": "It breaks.",
+            "labels": ["bug", "UI", "Bug"],
+            "assignees": ["octo-user", "other-user"],
+        },
+        {"title": "Old", "user": "octo-user", "state": "closed", "state_reason": "not_planned", "labels": ["bug"]},
+        {"title": "Done", "user": "octo-user", "state": "closed"},
+    ]
+    repo["pulls"] = [{"title": "Feature", "head": "feature", "user": "octo-user", "labels": ["bug"]}]
+    repo["comments"] = [
+        {"number": 4, "body": "pull", "user": "octo-user"},
+        {"number": 1, "body": "one", "user": "octo-user"},
+        {"number": 1, "body": "two", "user": "other-user"},
+    ]
+    return data
+
+
+def numbers(gh: Any, query: str) -> list[int]:
+    return [item["number"] for item in gh.get(f"{REPO}/issues{query}")]
+
+
+def test_issue_list_mixes_issues_and_pull_requests(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    gh = start_github(issue_seed(seed))
+    base, web = f"{gh.double.url}{REPO}", f"{gh.double.url}/octo-org/hello"
+    listed = gh.get(f"{REPO}/issues")
+    assert [i["number"] for i in listed] == [4, 1]
+    pull, bug = listed
+    assert pull["pull_request"] == {
+        "url": f"{base}/pulls/4",
+        "html_url": f"{web}/pull/4",
+        "diff_url": f"{web}/pull/4.diff",
+        "patch_url": f"{web}/pull/4.patch",
+        "merged_at": None,
+    }
+    assert (pull["html_url"], pull["state_reason"], pull["draft"], pull["comments"]) == (
+        f"{web}/pull/4",
+        None,
+        False,
+        1,
+    )
+    assert pull["id"] != gh.get(f"{REPO}/pulls/4")["id"]
+    assert "pull_request" not in bug
+    assert (bug["html_url"], bug["url"], bug["repository_url"]) == (f"{web}/issues/1", f"{base}/issues/1", base)
+    assert (bug["title"], bug["body"], bug["state"], bug["state_reason"], bug["closed_at"]) == (
+        "Bug",
+        "It breaks.",
+        "open",
+        None,
+        None,
+    )
+    assert (bug["user"]["login"], bug["author_association"], bug["comments"]) == ("other-user", "COLLABORATOR", 2)
+    assert bug["assignee"]["login"] == "octo-user"
+    assert [a["login"] for a in bug["assignees"]] == ["octo-user", "other-user"]
+    assert [label["name"] for label in bug["labels"]] == ["bug", "UI"]
+    assert bug["labels"][1] == {
+        "id": bug["labels"][1]["id"],
+        "node_id": bug["labels"][1]["node_id"],
+        "url": f"{base}/labels/UI",
+        "name": "UI",
+        "color": "ededed",
+        "default": False,
+        "description": None,
+    }
+    assert (bug["timeline_url"], bug["reactions"]["url"]) == (f"{base}/issues/1/timeline", f"{base}/issues/1/reactions")
+    closed = gh.get(f"{REPO}/issues?state=closed")
+    assert [(i["number"], i["state_reason"], i["closed_at"] is not None) for i in closed] == [
+        (3, "completed", True),
+        (2, "not_planned", True),
+    ]
+    assert numbers(gh, "?state=all&direction=asc") == [1, 2, 3, 4]
+    assert numbers(gh, "?labels=BUG,%20ui") == [1]
+    assert numbers(gh, "?labels=bug&state=all") == [4, 2, 1]
+    assert numbers(gh, "?labels=none") == []
+    assert numbers(gh, "?sort=comments") == [1, 4]
+    assert numbers(gh, "?sort=comments&direction=asc") == [4, 1]
+    assert numbers(gh, "?sort=updated") == [1, 4]
+    assert numbers(gh, "?sort=updated&direction=asc") == [4, 1]
+    assert numbers(gh, "?sort=created&direction=desc") == [4, 1]
+    assert gh.get(REPO)["open_issues_count"] == 2
+    for query, field in (("state=merged", "state"), ("sort=votes", "sort"), ("direction=up", "direction")):
+        refused = gh.api("GET", f"{REPO}/issues?{query}")
+        assert refused.status == 422
+        assert refused.json()["errors"] == [{"resource": "Issue", "field": field, "code": "invalid"}]
+    assert gh.state()["ok"] is True
+
+
+def test_issue_list_pages_with_link_headers(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    gh = start_github(issue_seed(seed))
+    first = gh.api("GET", f"{REPO}/issues?state=all&per_page=3")
+    assert [i["number"] for i in first.json()] == [4, 3, 2]
+    base = f"{gh.double.url}{REPO}/issues"
+    assert first.headers["link"] == (
+        f'<{base}?state=all&per_page=3&page=2>; rel="next", <{base}?state=all&per_page=3&page=2>; rel="last"'
+    )
+    second = gh.api("GET", f"{REPO}/issues?state=all&per_page=3&page=2")
+    assert [i["number"] for i in second.json()] == [1]
+    assert second.headers["link"] == (
+        f'<{base}?state=all&per_page=3&page=1>; rel="prev", <{base}?state=all&per_page=3&page=1>; rel="first"'
+    )
+
+
+def test_get_issue_and_pull_request_in_issue_form(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    gh = start_github(issue_seed(seed))
+    assert gh.get(f"{REPO}/issues/2")["state_reason"] == "not_planned"
+    assert gh.get(f"{REPO}/issues/4")["pull_request"]["url"].endswith("/pulls/4")
+    missing = gh.api("GET", f"{REPO}/issues/9")
+    assert (missing.status, missing.json()["message"]) == (404, "Not Found")
+    pull = gh.get(f"{REPO}/pulls/4")
+    assert [label["name"] for label in pull["labels"]] == ["bug"]
+    assert pull["updated_at"] > pull["created_at"]
+    assert gh.control("GET", "repos/octo-org/hello").json()["issues"][0] == {
+        "number": 1,
+        "title": "Bug",
+        "body": "It breaks.",
+        "state": "open",
+        "state_reason": None,
+        "labels": ["bug", "UI"],
+        "assignees": ["octo-user", "other-user"],
+        "user": "other-user",
+    }
+
+
+def test_create_issue(github: Any) -> None:
+    created = github.api(
+        "POST",
+        f"{REPO}/issues",
+        {"title": "New", "body": "Text.", "labels": ["Fresh", "fresh"], "assignees": ["Other-User"]},
+    )
+    assert created.status == 201
+    issue = created.json()
+    assert created.headers["location"] == issue["url"] == f"{github.double.url}{REPO}/issues/1"
+    assert (issue["number"], issue["title"], issue["body"], issue["state"], issue["user"]["login"]) == (
+        1,
+        "New",
+        "Text.",
+        "open",
+        "octo-user",
+    )
+    assert ([label["name"] for label in issue["labels"]], issue["assignee"]["login"]) == (["Fresh"], "other-user")
+    assert issue["author_association"] == "COLLABORATOR"
+    bare = github.api("POST", f"{REPO}/issues", {"title": "Bare", "labels": None}).json()
+    assert (bare["number"], bare["body"], bare["labels"], bare["assignee"]) == (2, None, [], None)
+    assert github.get(f"{REPO}/issues/1") == issue
+    assert github.state()["ok"] is True
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        ({}, [{"resource": "Issue", "field": "title", "code": "missing_field"}]),
+        ({"title": ""}, [{"resource": "Issue", "field": "title", "code": "missing_field"}]),
+        ({"title": "t", "assignees": ["nobody"]}, [{"resource": "Issue", "field": "assignees", "code": "invalid"}]),
+    ],
+)
+def test_create_issue_validation(github: Any, body: dict[str, Any], error: list[dict[str, Any]]) -> None:
+    response = github.api("POST", f"{REPO}/issues", body)
+    assert (response.status, response.json()["message"], response.json()["errors"]) == (
+        422,
+        "Validation Failed",
+        error,
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ({"title": "t", "body": 5}, "For 'properties/body', 5 is not a string or null."),
+        ({"title": "t", "labels": "bug"}, "For 'properties/labels', \"bug\" is not an array of strings."),
+        ({"title": "t", "labels": [""]}, "For 'properties/labels', [\"\"] is not an array of strings."),
+        ({"title": "t", "assignees": "x"}, "For 'properties/assignees', \"x\" is not an array of strings."),
+        ({"title": "t", "assignees": [1]}, "For 'properties/assignees', [1] is not an array of strings."),
+    ],
+)
+def test_create_issue_type_errors(github: Any, body: dict[str, Any], message: str) -> None:
+    response = github.api("POST", f"{REPO}/issues", body)
+    assert (response.status, response.json()["message"]) == (422, f"Invalid request.\n\n{message}")
+
+
+def test_update_issue(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    gh = start_github(issue_seed(seed))
+    before = gh.get(f"{REPO}/issues/1")
+
+    def patch(number: int, body: dict[str, Any]) -> Any:
+        response = gh.api("PATCH", f"{REPO}/issues/{number}", body)
+        assert response.status == 200, response.body
+        return response.json()
+
+    renamed = patch(1, {"title": "Renamed", "labels": ["other"]})
+    assert (renamed["title"], renamed["body"], renamed["state"]) == ("Renamed", "It breaks.", "open")
+    assert [label["name"] for label in renamed["labels"]] == ["other"]
+    assert renamed["updated_at"] > before["updated_at"]
+    closed = patch(1, {"state": "closed", "body": None})
+    assert (closed["state"], closed["state_reason"], closed["body"]) == ("closed", "completed", None)
+    assert closed["closed_at"] is not None
+    assert closed["labels"] == renamed["labels"]
+    again = patch(1, {"state": "closed", "state_reason": "duplicate"})
+    assert (again["state_reason"], again["closed_at"]) == ("duplicate", closed["closed_at"])
+    reopened = patch(1, {"state": "open"})
+    assert (reopened["state"], reopened["state_reason"], reopened["closed_at"]) == ("open", "reopened", None)
+    not_planned = patch(1, {"state": "closed", "state_reason": "not_planned"})
+    assert not_planned["state_reason"] == "not_planned"
+    open_again = patch(1, {"state": "open", "state_reason": None, "title": "Back"})
+    assert (open_again["state_reason"], open_again["title"]) == ("reopened", "Back")
+    unchanged = patch(1, {"state": "open"})
+    assert unchanged["state_reason"] == "reopened"
+    marked = patch(1, {"state_reason": "completed"})
+    assert (marked["state"], marked["state_reason"]) == ("open", "completed")
+    pull = patch(4, {"state": "closed", "labels": ["release"]})
+    assert (pull["state"], pull["state_reason"], pull["pull_request"]["merged_at"]) == ("closed", None, None)
+    as_pull = gh.get(f"{REPO}/pulls/4")
+    assert (as_pull["state"], as_pull["closed_at"], as_pull["labels"][0]["name"]) == (
+        "closed",
+        pull["closed_at"],
+        "release",
+    )
+    assert numbers(gh, "?sort=updated&state=all") == [4, 1, 3, 2]
+    assert gh.api("PATCH", f"{REPO}/issues/9", {"title": "x"}).status == 404
+    assert gh.state()["ok"] is True
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        ({"title": ""}, {"resource": "Issue", "field": "title", "code": "missing_field"}),
+        ({"title": 5}, {"resource": "Issue", "field": "title", "code": "missing_field"}),
+        ({"state": "merged"}, {"resource": "Issue", "field": "state", "code": "invalid"}),
+        ({"state_reason": "fixed"}, {"resource": "Issue", "field": "state_reason", "code": "invalid"}),
+    ],
+)
+def test_update_issue_validation(
+    start_github: Callable[..., Any], seed: Callable[[], Any], body: dict[str, Any], error: dict[str, Any]
+) -> None:
+    gh = start_github(issue_seed(seed))
+    response = gh.api("PATCH", f"{REPO}/issues/1", body)
+    assert (response.status, response.json()["errors"]) == (422, [error])
+    typed = gh.api("PATCH", f"{REPO}/issues/1", {"labels": 5})
+    assert (typed.status, typed.json()["message"]) == (
+        422,
+        "Invalid request.\n\nFor 'properties/labels', 5 is not an array of strings.",
+    )
+    assert gh.get(f"{REPO}/issues/1")["title"] == "Bug"
+
+
+def test_disabled_issues_answer_410(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    data = issue_seed(seed)
+    data["repositories"][0]["has_issues"] = False
+    gh = start_github(data)
+    gone = {
+        "message": "Issues are disabled for this repo",
+        "documentation_url": "https://docs.github.com/v3/issues/",
+        "status": "410",
+    }
+    for method, path, body in (
+        ("GET", f"{REPO}/issues", None),
+        ("GET", f"{REPO}/issues/1", None),
+        ("GET", f"{REPO}/issues/4", None),
+        ("POST", f"{REPO}/issues", {"title": "t"}),
+        ("PATCH", f"{REPO}/issues/1", {"title": "t"}),
+        ("GET", f"{REPO}/issues/1/comments", None),
+        ("POST", f"{REPO}/issues/1/comments", {"body": "b"}),
+        ("GET", f"{REPO}/issues/9/comments", None),
+    ):
+        response = gh.api(method, path, body)
+        assert (response.status, response.json()) == (410, gone), (method, path)
+    assert [c["body"] for c in gh.get(f"{REPO}/issues/4/comments")] == ["pull"]
+    assert gh.api("POST", f"{REPO}/issues/4/comments", {"body": "still"}).status == 201
+    assert gh.get(REPO)["has_issues"] is False
+    assert gh.state()["ok"] is True
+
+
+def test_pull_request_sorting(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    data = seed()
+    repo = data["repositories"][0]
+    repo["pulls"] = [{"title": f"P{n}", "head": "feature", "user": "octo-user"} for n in range(3)]
+    repo["comments"] = [
+        {"number": 1, "body": "a", "user": "octo-user"},
+        {"number": 1, "body": "b", "user": "octo-user"},
+        {"number": 3, "body": "c", "user": "octo-user"},
+    ]
+    gh = start_github(data)
+
+    def order(query: str) -> list[int]:
+        return [p["number"] for p in gh.get(f"{REPO}/pulls{query}")]
+
+    assert order("") == [3, 2, 1]
+    assert order("?sort=created&direction=asc") == [1, 2, 3]
+    assert order("?sort=updated") == [2, 1, 3]
+    assert order("?sort=updated&direction=desc") == [3, 1, 2]
+    assert order("?sort=popularity") == [2, 3, 1]
+    assert order("?sort=long-running") == [1, 2, 3]
+    assert order("?sort=popularity&direction=desc&head=octo-org:feature&base=main") == [1, 3, 2]
+    for query, field in (("sort=votes", "sort"), ("direction=up", "direction")):
+        refused = gh.api("GET", f"{REPO}/pulls?{query}")
+        assert (refused.status, refused.json()["errors"]) == (
+            422,
+            [{"resource": "Issue", "field": field, "code": "invalid"}],
+        )
+    assert gh.get(f"{REPO}/pulls/2")["updated_at"] == gh.get(f"{REPO}/pulls/2")["created_at"]
+
+
+# --- personal access tokens, revoked tokens, SAML single sign-on ------------------------------------
+
+
+def token_seed(seed: Callable[[], Any]) -> Any:
+    """Personal access tokens of every kind beside the App token, a second installation and a free organisation."""
+    data = seed()
+    data["users"][0]["tokens"] += [
+        {"token": "classic-all", "kind": "classic", "scopes": ["repo", "read:org"]},
+        {
+            "token": "classic-public",
+            "kind": "classic",
+            "scopes": ["public_repo"],
+            "repositories": ["octo-org/hello", "Octo-Org/Second"],
+        },
+        {"token": "classic-none", "kind": "classic"},
+        {"token": "fine", "kind": "fine_grained", "repositories": ["octo-org/hidden"]},
+        {"token": "revoked", "revoked": True},
+        {"token": "sso", "kind": "classic", "scopes": ["repo"], "sso": ["octo-org"]},
+        {"token": "app-sso", "sso": ["Octo-Org"]},
+    ]
+    data["repositories"].append({"full_name": "free-org/open", "branches": [{"name": "main", "commits": [{}]}]})
+    data["installations"].append(
+        {"id": 40, "account": "octo-org", "repository_selection": "all", "users": ["octo-user"]}
+    )
+    return data
+
+
+def repos_of(gh: Any, token: str) -> list[tuple[str, bool]]:
+    return [(r["full_name"], r["permissions"]["push"]) for r in gh.get("/user/repos", token=token)]
+
+
+def test_personal_access_tokens_cannot_list_installations(
+    start_github: Callable[..., Any], seed: Callable[[], Any]
+) -> None:
+    gh = start_github(token_seed(seed))
+    expected = {
+        "message": "You must authenticate with an access token authorized to a GitHub App in order to list "
+        "installations",
+        "documentation_url": "https://docs.github.com/rest/apps/installations"
+        "#list-app-installations-accessible-to-the-user-access-token",
+        "status": "403",
+    }
+    for token in ("classic-all", "fine"):
+        for path in ("/user/installations", "/user/installations/31/repositories"):
+            response = gh.api("GET", path, token=token)
+            assert (response.status, response.json()) == (403, expected)
+    assert gh.get("/user/installations")["total_count"] == 2
+
+
+def test_user_names_the_scopes_of_classic_tokens(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    gh = start_github(token_seed(seed))
+    classic = gh.api("GET", "/user", token="classic-all")
+    assert (classic.headers["x-oauth-scopes"], classic.headers["x-accepted-oauth-scopes"]) == ("repo, read:org", "")
+    assert gh.api("GET", "/user", token="classic-none").headers["x-oauth-scopes"] == ""
+    for token in ("fine", "double-user-token"):
+        response = gh.api("GET", "/user", token=token)
+        assert response.status == 200
+        assert "x-oauth-scopes" not in response.headers
+        assert "x-accepted-oauth-scopes" not in response.headers
+
+
+def test_user_repos(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    gh = start_github(token_seed(seed))
+    assert repos_of(gh, "classic-all") == [
+        ("free-org/open", True),
+        ("octo-org/hello", True),
+        ("octo-org/hidden", True),
+        ("octo-org/second", True),
+    ]
+    assert repos_of(gh, "classic-public") == [("octo-org/hello", False), ("octo-org/second", True)]
+    assert repos_of(gh, "classic-none") == [
+        ("free-org/open", False),
+        ("octo-org/hello", False),
+        ("octo-org/hidden", False),
+        ("octo-org/second", False),
+    ]
+    assert repos_of(gh, "fine") == [("octo-org/hidden", True)]
+    assert repos_of(gh, "double-user-token") == [
+        ("octo-org/hello", True),
+        ("octo-org/hidden", True),
+        ("octo-org/second", True),
+    ]
+    assert repos_of(gh, OTHER) == []
+    assert repos_of(gh, "sso") == [("free-org/open", True)]
+    assert repos_of(gh, "app-sso") == []
+    listed = gh.get("/user/repos?affiliation=owner&visibility=all&sort=pushed&direction=asc", token="classic-all")
+    assert set(listed[0]) == set(gh.get(REPO))
+    assert listed[0]["permissions"] == {"admin": False, "maintain": False, "push": True, "triage": True, "pull": True}
+    paged = gh.api("GET", "/user/repos?per_page=1&page=2", token="classic-all")
+    assert [r["full_name"] for r in paged.json()] == ["octo-org/hello"]
+    base = f"{gh.double.url}/user/repos"
+    assert paged.headers["link"] == (
+        f'<{base}?per_page=1&page=1>; rel="prev", <{base}?per_page=1&page=1>; rel="first", '
+        f'<{base}?per_page=1&page=3>; rel="next", <{base}?per_page=1&page=4>; rel="last"'
+    )
+    assert gh.state()["ok"] is True
+
+
+def test_repository_access_of_personal_access_tokens(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    gh = start_github(token_seed(seed))
+    assert gh.get("/repos/octo-org/hidden", token="classic-all")["permissions"]["push"] is True
+    assert gh.get("/repos/free-org/open", token="classic-all")["full_name"] == "free-org/open"
+    assert gh.get(REPO, token="classic-public")["permissions"]["push"] is False
+    for path, token in (
+        ("/repos/octo-org/hidden", "classic-public"),
+        ("/repos/octo-org/missing", "classic-all"),
+        (REPO, "fine"),
+    ):
+        assert gh.api("GET", path, token=token).status == 404, (path, token)
+    denied = {
+        "message": "Resource not accessible by personal access token",
+        "documentation_url": "https://docs.github.com/rest",
+        "status": "403",
+    }
+    for path, token in (
+        (REPO, "classic-public"),
+        ("/repos/octo-org/second", "classic-none"),
+    ):
+        response = gh.api("POST", f"{path}/issues", {"title": "t"}, token=token)
+        assert (response.status, response.json()) == (403, denied)
+    for path, token in (
+        ("/repos/octo-org/second", "classic-public"),
+        (REPO, "classic-all"),
+        ("/repos/octo-org/hidden", "fine"),
+    ):
+        response = gh.api("POST", f"{path}/issues", {"title": "t"}, token=token)
+        assert response.status == 201, (path, token)
+        assert response.json()["user"]["login"] == "octo-user"
+    assert gh.state()["ok"] is True
+
+
+def test_revoked_tokens_are_bad_credentials(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    gh = start_github(token_seed(seed))
+    bad = {"message": "Bad credentials", "documentation_url": "https://docs.github.com/rest", "status": "401"}
+    for path in ("/user", REPO, "/user/repos"):
+        response = gh.api("GET", path, token="revoked")
+        assert (response.status, response.json()) == (401, bad)
+    assert gh.api("GET", "/user", token="classic-all").status == 200
+    revoked = gh.control("POST", "tokens", {"revoke": "classic-all"})
+    assert (revoked.status, revoked.json()["ok"]) == (200, True)
+    assert gh.api("GET", "/user", token="classic-all").status == 401
+    assert gh.state()["ok"] is True
+
+
+def test_saml_enforcement(start_github: Callable[..., Any], seed: Callable[[], Any]) -> None:
+    gh = start_github(token_seed(seed))
+    expected = {
+        "message": "Resource protected by organization SAML enforcement. You must grant your Personal Access token "
+        "access to this organization.",
+        "documentation_url": "https://docs.github.com/articles/"
+        "authenticating-to-a-github-organization-with-saml-single-sign-on/",
+        "status": "403",
+    }
+    for path, token in (
+        (REPO, "sso"),
+        (f"{REPO}/issues", "sso"),
+        ("/repos/octo-org/missing", "app-sso"),
+        (f"{REPO}/pulls", "app-sso"),
+    ):
+        response = gh.api("GET", path, token=token)
+        assert (response.status, response.json()) == (403, expected)
+        assert response.headers["x-github-sso"] == (
+            "required; url=https://github.com/orgs/octo-org/sso?authorization_request=x"
+        )
+    assert gh.get("/repos/free-org/open", token="sso")["full_name"] == "free-org/open"
+    assert gh.state()["ok"] is True

@@ -1,0 +1,151 @@
+{
+  "name": "e2e-22-issues",
+  "description": "E2E-22 (KOR-25): issues are written once. The session files an issue and repeats the same request (duplicate with the original's result, GitHub got one POST), comments on the issue and repeats the comment (duplicate, one POST), then asks for the issues of a repository that is not on the workgroup's repository list (rejected, repo_not_allowed, no GitHub call). Each step checks the previous result.",
+  "steps": [
+    {
+      "id": "create",
+      "expect": {
+        "user_text_contains": "E2E22-ISSUES",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Filing the issue."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_issue",
+              "params": {
+                "repo": "octo-org/hello",
+                "title": "Track the notes kz22-issue-title-h3m8",
+                "body": "Found while testing kz22-issue-body-w6q1",
+                "labels": ["notes"]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "create-again",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_issue",
+              "params": {
+                "repo": "octo-org/hello",
+                "title": "Track the notes kz22-issue-title-h3m8",
+                "body": "Found while testing kz22-issue-body-w6q1",
+                "labels": ["notes"]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "comment",
+      "expect": {
+        "tool_result_contains": "\"status\":\"duplicate\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1,
+                "body": "On it kz22-issue-comment-f2t9"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "comment-again",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1,
+                "body": "On it kz22-issue-comment-f2t9"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "foreign",
+      "expect": {
+        "tool_result_contains": "\"status\":\"duplicate\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_issues",
+              "params": {
+                "repo": "octo-org/secret"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "done",
+      "expect": {
+        "tool_result_contains": "\"repo_not_allowed\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Issue #1 is filed and commented kz22-issues-answer-n5c3."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Notes issue"
+          }
+        ]
+      }
+    }
+  ]
+}

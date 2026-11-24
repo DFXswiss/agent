@@ -31,7 +31,9 @@ Purges call the listeners registered with `subscribe(context, listener)` (`liste
 gateways (RUN-12) can withdraw a deleted credential from running sessions (05 section 2.6). Before the cached record
 is deleted, the listeners of `subscribe_before_purge(context, listener)` get its decrypted body for one use
 (`listener(owner, kind, body)`), so the GitHub area can revoke a token the platform minted (`github.revoke`, KOR-40);
-a record that does not open is skipped with a fact line, and a failing listener changes nothing.
+a record that does not open is skipped with a fact line, and a failing listener changes nothing. Every record cached
+by `fetch` or `put` calls the listeners of `subscribe_stored(context, listener)`, so operations held for the owner's
+GitHub connection are checked again at once (KOR-25, 05-runner.md section 12 step 3).
 """
 
 from __future__ import annotations
@@ -92,6 +94,7 @@ BeforePurge = Callable[[str, str, dict[str, Any]], Awaitable[None]]
 class Listeners:
     items: list[Listener] = field(default_factory=list)
     before: list[tuple[frozenset[str], BeforePurge]] = field(default_factory=list)
+    stored: list[Listener] = field(default_factory=list)
 
 
 def _listeners(context: Any) -> Listeners:
@@ -111,6 +114,19 @@ def subscribe(context: Any, listener: Listener) -> None:
 def subscribe_before_purge(context: Any, kinds: frozenset[str], listener: BeforePurge) -> None:
     """Call `listener(owner, kind, body)` with the decrypted body before a cached record of `kinds` is purged."""
     _listeners(context).before.append((kinds, listener))
+
+
+def subscribe_stored(context: Any, listener: Listener) -> None:
+    """Call `listener(owner, kind)` after every record this device cached (fetched or written)."""
+    _listeners(context).stored.append(listener)
+
+
+async def _stored(context: Any, owner: str, kind: str) -> None:
+    for listener in list(_listeners(context).stored):
+        try:
+            await listener(owner, kind)
+        except Exception as exc:
+            _line(context, f"listener_failed error={type(exc).__name__}")
 
 
 def _line(context: Any, text: str) -> None:
@@ -257,6 +273,7 @@ async def fetch(context: Any, owner: str, kind: str) -> dict[str, Any] | None:
                 target_id=f"{owner}:{kind}",
             )
         raise
+    await _stored(context, owner, kind)
     return cast(dict[str, Any], record)
 
 
@@ -403,5 +420,6 @@ async def put(
         async with session(context.pool) as conn:
             await _store(conn, owner, kind, stored, record)
         _line(context, f"stored owner={owner} kind={kind} version={stored}")
+        await _stored(context, owner, kind)
         return stored
     raise CredentialUnavailable("refused", "version_conflict")

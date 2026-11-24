@@ -8,11 +8,15 @@ the dedupe tag and the registration:
   (`github_not_connected` otherwise). `github.list_repositories` uses only this; its pre-check data carries the
   workgroup's allow-list for the executor (`allowed`) and whether it restricts at all (`restricted`; false without a
   list: then every repository is allowed, KOR-30).
+- `verified_connection(request)` (`github.request_connection`, KOR-25): additionally `GET /user` with the owner's
+  token, so a revoked token is not answered with its login: `401` -> `github_not_connected` (the runner holds the
+  operation and the owner is asked to connect again), any other failure -> `upstream_error`.
 - `repo_access(request)` (every type with `repo`): additionally `GET /repos/{repo}` with the owner's token: `404` ->
   `repo_not_accessible` (the repository is allowed by the settings, or no list is set, but not reachable with the
   owner's token: GitHub App installations, or the account's own access for the operator's token of ADR-053),
   `401` -> `github_not_connected`; any other failure -> `upstream_error` (a pre-check is not retried: the session
-  may request the operation again).
+  may request the operation again; a `403` for an organisation that requires SSO authorisation of the token says
+  so, `ops.SSO_REQUIRED`).
 
 RUN-10 registers its own pre-checks for `github.checkout`, `github.commit` and `github.push` (the registry allows one
 per type) and calls `repo_access` first, so every `github.*` type gets the same connection and access checks.
@@ -38,6 +42,19 @@ async def connection(request: PrecheckRequest) -> PrecheckResult:
     return PrecheckResult()
 
 
+async def verified_connection(request: PrecheckRequest) -> PrecheckResult:
+    try:
+        async with ops.owner_client(request.context, request.session.owner_id) as client:
+            await client.request("GET", "/user")
+    except ops.NotConnected:
+        raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
+    except GitHubError as error:
+        if error.kind == "unauthorized":
+            raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
+        raise CheckFailed("upstream_error", message=ops.SSO_REQUIRED if error.sso else ACCESS_FAILED) from None
+    return PrecheckResult()
+
+
 async def list_repositories(request: PrecheckRequest) -> PrecheckResult:
     await connection(request)
     settings = request.settings
@@ -58,5 +75,5 @@ async def repo_access(request: PrecheckRequest) -> PrecheckResult:
             ) from None
         if error.kind == "unauthorized":
             raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
-        raise CheckFailed("upstream_error", message=ACCESS_FAILED) from None
+        raise CheckFailed("upstream_error", message=ops.SSO_REQUIRED if error.sso else ACCESS_FAILED) from None
     return PrecheckResult()

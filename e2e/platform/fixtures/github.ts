@@ -1,8 +1,8 @@
 // Steps of the GitHub and operation scenarios (SCN-04): the GitHub double through the orchestrator's generic double
 // route (seed, faults, expectations, device-flow decisions, journal, repository inspection; the double runs on the
-// runner device in T1 and T2), the connect flow and the workgroup allow-list in the browser, and the hub's operation
-// records.
-import { expect, type Page } from '@playwright/test';
+// runner device in T1 and T2), the connect flows (device flow and an existing token, KOR-25) and the workgroup
+// allow-list in the browser, and the hub's operation records.
+import { expect, type Locator, type Page } from '@playwright/test';
 import type { Orchestrator } from './orchestrator.ts';
 import { uuid } from './platform.ts';
 
@@ -13,6 +13,8 @@ export interface GitHubCall {
   readonly seq: number;
   readonly method: string;
   readonly path: string;
+  /** The query string without `?` (empty when there is none). */
+  readonly query: string;
   /** `METHOD template`, e.g. `GET /repos/{owner}/{repo}` (absent for an unknown route). */
   readonly route?: string;
   readonly status: number;
@@ -54,10 +56,11 @@ export async function githubRoutes(orchestrator: Orchestrator, from = 0): Promis
   return (await githubJournal(orchestrator)).slice(from).map((call) => call.route ?? `${call.method} ${call.path}`);
 }
 
-/** Refs, pull requests and comments of a repository as the double holds them. */
+/** Refs, issues, pull requests and comments of a repository as the double holds them. */
 export const githubRepo = (orchestrator: Orchestrator, repo: string) =>
   control<{
     refs: Record<string, string>;
+    issues: readonly Record<string, unknown>[];
     pulls: readonly Record<string, unknown>[];
     comments: readonly Record<string, unknown>[];
   }>(orchestrator, 'GET', `/_double/repos/${repo}`);
@@ -100,30 +103,85 @@ export function repository(fullName: string, extra: Record<string, unknown> = {}
 }
 
 /**
- * Connects GitHub from the home composer (06-web.md section 8.1): the GitHub chip offers "Connect GitHub", the settings
- * flow sends `github.connect` to the platform device, which starts the device flow at the double; the user code shown
- * in the page is authorized at the double for `login`, the device stores the credential and the page shows the login.
- * Returns the user code and the verification link.
+ * One user whose existing classic token (`repo`, `read:org`; a GitHub CLI login or a personal access token) reaches
+ * every repository of the seed without a GitHub App installation (KOR-25: the App endpoints refuse such a token),
+ * further users `others` (authors of issues and comments) and the repositories.
+ */
+export function tokenWorld(
+  login: string,
+  token: string,
+  repositories: readonly Record<string, unknown>[],
+  others: readonly string[] = [],
+) {
+  return {
+    users: [
+      {
+        login,
+        id: 7001,
+        name: 'Octo Tester',
+        email: null,
+        tokens: [{ token, kind: 'classic', scopes: ['repo', 'read:org'] }],
+      },
+      ...others.map((other, index) => ({ login: other, id: 7002 + index, name: 'Octo Mate', email: null })),
+    ],
+    repositories,
+  };
+}
+
+/** The settings screen with its GitHub section loaded (the header link: client-side, the unlock stays). */
+export async function openGitHubSettings(page: Page): Promise<Locator> {
+  await page.getByTestId('shell.settings').click();
+  await expect(page).toHaveURL(/\/settings$/);
+  const section = page.getByTestId('github.state');
+  await expect(section).toBeVisible({ timeout: 30_000 });
+  return section;
+}
+
+/**
+ * Connects GitHub in the settings (06-web.md section 8.1): "Connect GitHub" sends `github.connect` to the platform
+ * device, which starts the device flow at the double; the user code shown in the page is authorized at the double for
+ * `login`, the device stores the credential and the page shows the login. Returns the user code and the verification
+ * link.
  */
 export async function connectGitHub(
   page: Page,
   orchestrator: Orchestrator,
   login: string,
 ): Promise<{ userCode: string; verification: string }> {
-  await page.getByTestId('composer.chip.github').click();
-  await page.getByTestId('composer.github-connect').click();
-  await expect(page).toHaveURL(/\/settings$/);
-  await expect(page.getByTestId('github.disconnected')).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId('github.connect').click();
-  await expect(page.getByTestId('github.start')).toBeEnabled({ timeout: 60_000 });
-  await page.getByTestId('github.start').click();
-  const code = page.getByTestId('github.code.value');
+  const section = await openGitHubSettings(page);
+  await expect(section.getByTestId('github.disconnected')).toBeVisible({ timeout: 30_000 });
+  await section.getByTestId('github.connect').click();
+  await expect(section.getByTestId('github.start')).toBeEnabled({ timeout: 60_000 });
+  await section.getByTestId('github.start').click();
+  const code = section.getByTestId('github.code.value');
   await expect(code).toHaveText(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/, { timeout: 60_000 });
   const userCode = (await code.textContent())!;
-  const verification = (await page.getByTestId('github.code.open').getAttribute('href'))!;
+  const verification = (await section.getByTestId('github.code.open').getAttribute('href'))!;
   await control(orchestrator, 'POST', '/_double/device', { user_code: userCode, action: 'authorize', login });
   await expect(page.getByTestId('github.connected')).toHaveText(`Connected as ${login}`, { timeout: 60_000 });
   return { userCode, verification };
+}
+
+/**
+ * "Use an existing token" inside `scope` (the settings section, a waiting card or the composer's offer; KOR-25,
+ * ADR-065): the flow preselects the platform device, the token is pasted and sent sealed to the device, which checks
+ * it at the double (`GET /user`) and stores the credential. The caller waits for the outcome of its place.
+ */
+export async function storeGitHubToken(scope: Locator, token: string): Promise<void> {
+  await scope.getByTestId('github.token').click();
+  const input = scope.getByTestId('github.token.input');
+  await expect(input).toBeVisible({ timeout: 60_000 });
+  await input.fill(token);
+  await scope.getByTestId('github.start').click();
+}
+
+/** Connects GitHub in the settings with an existing token; the section then names the login, the source and scopes. */
+export async function connectGitHubToken(page: Page, token: string, login: string): Promise<Locator> {
+  const section = await openGitHubSettings(page);
+  await expect(section.getByTestId('github.disconnected')).toBeVisible({ timeout: 30_000 });
+  await storeGitHubToken(section, token);
+  await expect(page.getByTestId('github.connected')).toHaveText(`Connected as ${login}`, { timeout: 60_000 });
+  return section;
 }
 
 /** Saves the workgroup's repository allow-list on its settings screen (client-side navigation keeps the unlock). */

@@ -1,6 +1,7 @@
 """The static harness text images/harness/RULES.md (docs/platform/spec/05-runner.md section 8, 03-api.md
 sections 8.1 and 9, 13-work-vm.md section 9): every mandatory statement and every operation type with a parameter
-example."""
+example (KOR-25: the issue types, the pull-request list, the connection request and the rule to request GitHub
+operations even without a connection)."""
 
 from __future__ import annotations
 
@@ -27,6 +28,12 @@ SPEC_OPERATIONS: dict[str, tuple[set[str], set[str]]] = {
     "github.push": ({"repo", "branch", "commit_sha"}, set()),
     "github.create_pull_request": ({"repo", "head", "base", "title"}, {"body", "draft"}),
     "github.comment": ({"repo", "number", "body"}, set()),
+    "github.list_issues": ({"repo"}, {"state", "labels", "sort", "direction", "per_page", "page"}),
+    "github.get_issue": ({"repo", "number"}, {"comments_page", "comments_per_page"}),
+    "github.create_issue": ({"repo", "title"}, {"body", "labels"}),
+    "github.update_issue": ({"repo", "number"}, {"state", "state_reason", "title", "body", "labels"}),
+    "github.list_pull_requests": ({"repo"}, {"state", "base", "sort", "direction", "per_page", "page"}),
+    "github.request_connection": (set(), set()),
     "subagent.request": ({"purpose", "prompt"}, {"model_id"}),
     "task.set_title": ({"title"}, set()),
     "workvm.request": (set(), {"size", "scope"}),
@@ -41,6 +48,15 @@ MANDATORY = [
     "You may create, write and edit files only inside your task workspace",
     "Request every other action with `mcp__platform__request_operation`",
     "Subagents exist only through `subagent.request`",
+    "If the task needs GitHub, request the operation",
+    "even when GitHub is not connected; the platform asks the user to connect",
+    "continues your operation afterwards.",
+    "Do not explain what is missing and do not offer workarounds.",
+    "If no other type fits yet, request `github.request_connection`.",
+    "comment on an issue or a pull request",
+    "An answer `pending` for a GitHub operation means the platform is waiting for the task owner",
+    "wait for it with get_operation and do not request it again or explain what is missing.",
+    'The newest issue is the first entry of `{"repo": "example-org/example-repo"}`',
     "content-free hint",
     "Use `mcp__platform__get_notifications`",
     "Every blocked attempt",

@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/encoding.py at 3392035c31d1.
+"""Copied from agent-core src/agent_hub/crypto/encoding.py at 56db2db59b0e.
 
 Encodings of 04-crypto.md section 1: strict base64url, canonical JSON, body JSON, times and the domain prefix.
 

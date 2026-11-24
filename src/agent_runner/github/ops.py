@@ -5,8 +5,10 @@
   fetchable record, a record that does not open or a body without a usable token is `NotConnected`; a hub that cannot
   be asked for a missing record is `GitHubError("unreachable")` (retryable).
 - `failure(error, not_found=...)`: the operation failure of a `GitHubError`: `401` -> `github_not_connected`, `404`
-  -> the type's code, retryable errors (network, `5xx`, `429`, secondary and primary rate limits) -> `upstream_error`
-  with `retryable` and `retry_after`, anything else -> `upstream_error`.
+  -> the type's code, `410` (the repository's issues are disabled, KOR-25) -> `not_found` with `ISSUES_DISABLED`,
+  retryable errors (network, `5xx`, `429`, secondary and primary rate limits) -> `upstream_error` with `retryable`
+  and `retry_after`, a `403` that names an organisation requiring SSO authorisation of the token -> `upstream_error`
+  with `SSO_REQUIRED` (GitHub's authorisation URL is never passed on), anything else -> `upstream_error`.
 - validators of the GitHub answer fields a result carries (`contracts/ops/objects.json`): an answer that does not fit
   the result contract is `upstream_error`, never passed on.
 """
@@ -34,6 +36,11 @@ TIME_RE = re.compile(
 MAX_GITHUB_ID = 9_007_199_254_740_991
 MAX_NUMBER = 2_147_483_647
 NOT_CONNECTED = "The task owner's GitHub connection is missing or was refused; connect GitHub again."
+ISSUES_DISABLED = "Issues are disabled in this repository."
+SSO_REQUIRED = (
+    "The organisation of the repository requires SSO authorisation of the GitHub token; the task owner must authorise "
+    "the token for the organisation at GitHub."
+)
 
 
 class NotConnected(Exception):
@@ -64,6 +71,10 @@ def failure(error: GitHubError, *, not_found: str = "not_found") -> OperationFai
         return OperationFailed("github_not_connected", message=NOT_CONNECTED)
     if error.kind == "not_found":
         return OperationFailed(not_found)
+    if error.kind == "gone":
+        return OperationFailed("not_found", message=ISSUES_DISABLED)
+    if error.sso:
+        return OperationFailed("upstream_error", message=SSO_REQUIRED)
     if error.retryable:
         return OperationFailed("upstream_error", retryable=True, retry_after=error.retry_after)
     return OperationFailed("upstream_error", message="GitHub refused the request.")

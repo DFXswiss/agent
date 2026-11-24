@@ -18,8 +18,6 @@
   "chip.explain.text": "Explain this repository: ",
   "chip.plan": "Write a plan",
   "chip.plan.text": "Write a short plan for ",
-  "github.hint": "Pull requests need a connected GitHub account.",
-  "github.connect": "Connect GitHub",
   "prompt.label": "Prompt",
   "prompt.placeholder": "Describe the task or ask a question – every request becomes a task.",
   "send": "Send",

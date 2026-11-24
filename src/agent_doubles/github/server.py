@@ -5,22 +5,30 @@ Routes (`ROUTES`, the REST subset the runner uses, 05-runner.md §11.4 and §12.
 - Device flow on the web host: ``POST /login/device/code``, ``POST /login/oauth/access_token`` (form or JSON
   parameters; JSON answers when ``Accept`` names ``application/json``, else form-encoded like GitHub) and
   ``GET /login/device`` (an informational page; the decision is made through ``POST /_double/device``).
-- REST on the API host: user, installations and the user's repositories (``GET /user/repos``), repositories,
-  commits, tarball (``302`` to the codeload-like route ``GET /codeload/{owner}/{repo}/legacy.tar.gz/{ref}``), refs,
-  the Git Data API, compare, pull requests and issue comments.
+- REST on the API host: user, installations and ``GET /user/repos``, repositories, commits, tarball (``302`` to the
+  codeload-like route ``GET /codeload/{owner}/{repo}/legacy.tar.gz/{ref}``), refs, the Git Data API, compare, pull
+  requests (``GET …/pulls`` filters by ``state``, ``head``, ``base`` and sorts by ``sort``/``direction``), issues
+  (``GET …/issues``: issues and pull requests in issue form, filtered by ``state`` and ``labels``, sorted by
+  ``sort``/``direction``; ``GET``/``PATCH …/issues/{number}``, ``POST …/issues``) and issue comments. A repository
+  with ``has_issues: false`` answers the issue routes ``410 Issues are disabled for this repo`` (comments too, unless
+  the number is a pull request).
 - ``POST /credentials/revoke`` (``{"credentials": [token, ...]}``, KOR-40): unauthenticated like GitHub's (a request
   with ``Authorization`` is ``403`` and a failure); known tokens are forgotten, answered ``202 {}``.
 
 API requests must carry ``Accept: application/vnd.github+json``, ``X-GitHub-Api-Version: 2022-11-28`` and
 ``Authorization: Bearer <token>`` (``token <token>`` is accepted too, as by GitHub). A missing or different header is
 answered as GitHub would and recorded as a failure (an unsupported version is ``400``, a missing credential ``401``);
-an unknown token is a plain ``401 Bad credentials`` (no failure: revoked tokens are a legitimate test case). A
-repository the token's user cannot reach through an installation is ``404``, a write without the installation
-permission ``403 Resource not accessible by integration``. A personal token (``personal_tokens`` of the seed, no
-GitHub App) is refused the installation routes with ``403`` as by GitHub, reaches the repositories of
-`World.personal_repos` with write access and gets ``X-OAuth-Scopes: repo`` on every API answer. Unknown routes
-answer ``404``, are journaled and are failures; so are invalid JSON bodies, forced ref updates (the runner never
-forces) and a codeload request that carries an ``Authorization`` header (a token forwarded across the redirect).
+an unknown or revoked token is a plain ``401 Bad credentials`` (no failure: revoked tokens are a legitimate test
+case). With a GitHub App token a repository the token's user cannot reach through an installation is ``404``, a write
+without the installation permission ``403 Resource not accessible by integration``. A personal access token
+(``classic``, ``fine_grained``) reaches its repositories without an installation; installation routes answer it
+``403``, a classic token without the scope ``repo`` (``public_repo`` for a public repository) cannot write
+(``403 Resource not accessible by personal access token``), and ``GET /user`` names its scopes in ``X-OAuth-Scopes``.
+``personal_tokens`` of the seed
+(KOR-27) are classic tokens with the scope ``repo``. A repository of an organisation in the token's ``sso`` list is
+``403`` with ``X-GitHub-SSO`` (SAML enforcement). Unknown routes answer ``404``, are journaled and are
+failures; so are invalid JSON bodies, forced ref updates (the runner never forces) and a codeload request that
+carries an ``Authorization`` header (a token forwarded across the redirect).
 
 Every API answer carries the rate-limit headers (``x-ratelimit-limit``/``-remaining``/``-used``/``-reset``/
 ``-resource``) per user; faults (`agent_doubles.github.faults`) inject errors, rate limits, delays and disconnects.
@@ -29,8 +37,8 @@ Control routes (not journaled, not counted): ``GET /_double/state``, ``GET /_dou
 ``POST /_double/reset`` (empties the world, the plan, the device grants, the failures and the journal in memory),
 ``POST /_double/seed`` (`agent_doubles.github.repos`), ``GET|POST /_double/faults`` (``{"faults": [...]}``),
 ``POST /_double/expect`` (``{"expectations": [...]}``), ``GET|POST /_double/device`` (grants; user decision),
-``POST /_double/clock`` (``{"advance": seconds}``) and ``GET /_double/repos/{owner}/{repo}`` (refs, pull requests and
-comments for assertions).
+``POST /_double/clock`` (``{"advance": seconds}``), ``POST /_double/tokens`` (``{"revoke": "<token>"}``) and
+``GET /_double/repos/{owner}/{repo}`` (refs, issues, pull requests and comments for assertions).
 """
 
 from __future__ import annotations
@@ -64,7 +72,19 @@ from agent_doubles.github.objects import (
     Signature,
     git_mode,
 )
-from agent_doubles.github.repos import SHA_RE, Repo, SeedError, User, World, parse_iso, tarball
+from agent_doubles.github.repos import (
+    SHA_RE,
+    STATE_REASONS,
+    Issue,
+    Pull,
+    Repo,
+    SeedError,
+    Token,
+    User,
+    World,
+    parse_iso,
+    tarball,
+)
 
 DOUBLE_NAME = "github"
 ACCEPT = "application/vnd.github+json"
@@ -78,6 +98,19 @@ SECONDARY_MESSAGE = (
     "GitHub Support for help, please include the request ID."
 )
 MISMATCH_PATH = ".double-tree-mismatch"
+ISSUES_DISABLED = render.error_body(410, "Issues are disabled for this repo", docs="https://docs.github.com/v3/issues/")
+APP_TOKEN_NEEDED = render.error_body(
+    403,
+    "You must authenticate with an access token authorized to a GitHub App in order to list installations",
+    docs="https://docs.github.com/rest/apps/installations#list-app-installations-accessible-to-the-user-access-token",
+)
+SAML_MESSAGE = (
+    "Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this "
+    "organization."
+)
+SAML_DOCS = "https://docs.github.com/articles/authenticating-to-a-github-organization-with-saml-single-sign-on/"
+ISSUE_SORTS = frozenset({"created", "updated", "comments"})
+PULL_SORTS = frozenset({"created", "updated", "popularity", "long-running"})
 DEVICE_PAGE = (
     b"<!doctype html><title>Device activation</title><h1>Device activation (GitHub double)</h1>"
     b"<p>The test decides through POST /_double/device.</p>"
@@ -140,6 +173,10 @@ ROUTES = (
     Route("POST", "/repos/{owner}/{repo}/pulls", "api", "create_pull"),
     Route("GET", "/repos/{owner}/{repo}/pulls/{number}", "api", "get_pull"),
     Route("GET", "/repos/{owner}/{repo}/pulls/{number}/files", "api", "pull_files"),
+    Route("GET", "/repos/{owner}/{repo}/issues", "api", "list_issues"),
+    Route("POST", "/repos/{owner}/{repo}/issues", "api", "create_issue"),
+    Route("GET", "/repos/{owner}/{repo}/issues/{number}", "api", "get_issue"),
+    Route("PATCH", "/repos/{owner}/{repo}/issues/{number}", "api", "update_issue"),
     Route("GET", "/repos/{owner}/{repo}/issues/{number}/comments", "api", "list_comments"),
     Route("POST", "/repos/{owner}/{repo}/issues/{number}/comments", "api", "create_comment"),
     Route("POST", "/credentials/revoke", "revoke", "revoke_credentials"),
@@ -156,12 +193,9 @@ WRITE_PERMISSIONS = {
     "create_commit": "contents",
     "create_pull": "pull_requests",
     "create_comment": "issues",
+    "create_issue": "issues",
+    "update_issue": "issues",
 }
-# Routes GitHub answers only for GitHub App user tokens (a personal token gets `APP_ONLY_MESSAGE` with `403`).
-APP_ONLY = frozenset({"installations", "installation_repositories"})
-APP_ONLY_MESSAGE = (
-    "You must authenticate with an access token authorized to a GitHub App in order to list installations"
-)
 
 
 def match_route(method: str, path: str) -> tuple[Route, dict[str, str]] | None:
@@ -192,6 +226,16 @@ def unprocessable(message: str) -> Reply:
     return Reply(422, render.error_body(422, message))
 
 
+def invalid(resource: str, name: str) -> Reply:
+    """``422 Validation Failed`` for an invalid parameter."""
+    return Reply(422, render.validation_error("", resource, name, code="invalid"))
+
+
+def not_a(name: str, value: Any, kind: str) -> Reply:
+    """``422`` for a body property of the wrong JSON type, as GitHub words it."""
+    return unprocessable(f"Invalid request.\n\nFor 'properties/{name}', {json.dumps(value)} is not {kind}.")
+
+
 @dataclass
 class Call:
     """One API request being answered."""
@@ -203,7 +247,7 @@ class Call:
     raw: bytes
     headers: dict[str, str]
     user: User | None = None
-    personal: bool = False
+    token: Token | None = None
     repo: Repo | None = None
     fault: Fault | None = None
 
@@ -211,6 +255,11 @@ class Call:
     def the_user(self) -> User:
         assert self.user is not None
         return self.user
+
+    @property
+    def the_token(self) -> Token:
+        assert self.token is not None
+        return self.token
 
     @property
     def the_repo(self) -> Repo:
@@ -418,6 +467,19 @@ class GitHubDouble:
             return {
                 "full_name": repo.full_name,
                 "refs": dict(sorted(repo.refs.items())),
+                "issues": [
+                    {
+                        "number": i.number,
+                        "title": i.title,
+                        "body": i.body,
+                        "state": i.state,
+                        "state_reason": i.state_reason,
+                        "labels": list(i.labels),
+                        "assignees": list(i.assignees),
+                        "user": i.user,
+                    }
+                    for i in repo.issues.values()
+                ],
                 "pulls": [
                     {
                         "number": p.number,
@@ -427,6 +489,7 @@ class GitHubDouble:
                         "base": p.base,
                         "draft": p.draft,
                         "state": p.state,
+                        "labels": list(p.labels),
                         "user": p.user,
                     }
                     for p in repo.pulls.values()
@@ -638,8 +701,6 @@ class _Handler(DoubleHandler):
                 ("x-github-media-type", "github.v3; format=json"),
                 *self.double.rate_headers(call.user, exhausted),
             ]
-            if call.personal:
-                sent.append(("x-oauth-scopes", "repo"))
         return sent
 
     # --- API checks -----------------------------------------------------------------------------------
@@ -662,7 +723,7 @@ class _Handler(DoubleHandler):
             raise Reply(401, render.error_body(401, "Requires authentication"))
         with double.world.lock:
             call.user = double.world.user_for_token(token.strip())
-            call.personal = double.world.is_personal(token.strip())
+            call.token = double.world.tokens.get(token.strip()) if call.user is not None else None
 
     def _api(self, call: Call) -> None:
         route = call.route
@@ -670,22 +731,40 @@ class _Handler(DoubleHandler):
         with world.lock:
             if call.user is None:
                 raise Reply(401, render.error_body(401, "Bad credentials"))
-            if call.personal and route.name in APP_ONLY:
-                raise Reply(403, render.error_body(403, APP_ONLY_MESSAGE))
-            if "owner" in call.params and call.personal:
-                call.repo = world.repo(call.params["owner"], call.params["repo"])
-                if call.repo is None or call.repo not in world.personal_repos(call.user):
-                    raise not_found()
-            elif "owner" in call.params:
-                call.repo = world.repo(call.params["owner"], call.params["repo"])
-                inst = world.installation_for(call.user, call.repo) if call.repo else None
-                if inst is None:
-                    raise not_found()
-                needed = WRITE_PERMISSIONS.get(route.name)
-                if needed is not None and inst.permissions.get(needed) != "write":
-                    raise Reply(403, render.error_body(403, "Resource not accessible by integration"))
+            if "owner" in call.params:
+                self._check_repo_access(call)
             status, payload, headers = getattr(self, f"_r_{route.name}")(call)
         self._answer(call, status, payload, headers)
+
+    def _check_repo_access(self, call: Call) -> None:
+        """SAML enforcement, then the repository (``404``), then the write right of the token (``403``)."""
+        world = self.double.world
+        token = call.the_token
+        owner = call.params["owner"]
+        if owner.lower() in token.sso:
+            sso = f"required; url=https://github.com/orgs/{owner}/sso?authorization_request=x"
+            raise Reply(403, render.error_body(403, SAML_MESSAGE, docs=SAML_DOCS), (("x-github-sso", sso),))
+        call.repo = repo = world.repo(owner, call.params["repo"])
+        needed = WRITE_PERMISSIONS.get(call.route.name)
+        if token.kind != "app":
+            if repo is None or not token.reaches(repo):
+                raise not_found()
+            if needed is not None and not token.can_write(repo):
+                raise Reply(403, render.error_body(403, "Resource not accessible by personal access token"))
+            return
+        inst = world.installation_for(call.the_user, repo) if repo else None
+        if inst is None:
+            raise not_found()
+        if needed is not None and inst.permissions.get(needed) != "write":
+            raise Reply(403, render.error_body(403, "Resource not accessible by integration"))
+
+    def _can_push(self, call: Call, repo: Repo) -> bool:
+        """Whether the token may push to `repo` (``permissions.push`` of repository answers)."""
+        token = call.the_token
+        if token.kind != "app":
+            return token.can_write(repo)
+        inst = self.double.world.installation_for(call.the_user, repo)
+        return inst is not None and inst.permissions.get("contents") == "write"
 
     def _paginate(self, call: Call, items: list[Any]) -> tuple[list[Any], list[tuple[str, str]]]:
         """The page of `items` the query asks for, with the ``Link`` header GitHub sends."""
@@ -751,9 +830,19 @@ class _Handler(DoubleHandler):
 
     def _r_user(self, call: Call) -> Result:
         user = call.the_user
-        return 200, render.authenticated_user(self.double.urls, user, self.double.world.base_time), []
+        token = call.the_token
+        headers = []
+        if token.kind == "classic":
+            headers = [("x-oauth-scopes", ", ".join(token.scopes)), ("x-accepted-oauth-scopes", "")]
+        return 200, render.authenticated_user(self.double.urls, user, self.double.world.base_time), headers
+
+    @staticmethod
+    def _need_app_token(call: Call) -> None:
+        if call.the_token.kind != "app":
+            raise Reply(403, APP_TOKEN_NEEDED)
 
     def _r_installations(self, call: Call) -> Result:
+        self._need_app_token(call)
         world = self.double.world
         found = world.visible_installations(call.the_user)
         page, headers = self._paginate(call, found)
@@ -761,6 +850,7 @@ class _Handler(DoubleHandler):
         return 200, {"total_count": len(found), "installations": listed}, headers
 
     def _r_installation_repositories(self, call: Call) -> Result:
+        self._need_app_token(call)
         world = self.double.world
         inst = world.installations.get(int(call.params["installation_id"]))
         if inst is None or inst not in world.visible_installations(call.the_user):
@@ -773,26 +863,16 @@ class _Handler(DoubleHandler):
         return 200, payload, headers
 
     def _r_user_repos(self, call: Call) -> Result:
-        """The user's repositories: those of a personal token, else those of the visible installations."""
-        world = self.double.world
-        if call.personal:
-            repos = world.personal_repos(call.the_user)
-        else:
-            covered = {
-                repo.key: repo
-                for inst in world.visible_installations(call.the_user)
-                for repo in world.installation_repos(inst)
-            }
-            repos = [covered[key] for key in sorted(covered)]
+        """``GET /user/repos`` by full name (``affiliation``, ``visibility``, ``sort`` and ``direction`` are
+        accepted and ignored)."""
+        repos = self.double.world.token_repos(call.the_user, call.the_token)
         page, headers = self._paginate(call, repos)
-        return 200, [render.repository(self.double.urls, repo) for repo in page], headers
+        return 200, [render.repository(self.double.urls, r, push=self._can_push(call, r)) for r in page], headers
 
     # --- repositories, commits, tarball -------------------------------------------------------------
 
     def _r_repository(self, call: Call) -> Result:
-        world = self.double.world
-        inst = world.installation_for(call.the_user, call.the_repo)
-        push = call.personal or (inst is not None and inst.permissions.get("contents") == "write")
+        push = self._can_push(call, call.the_repo)
         return 200, render.repository(self.double.urls, call.the_repo, push=push), []
 
     def _resolve(self, call: Call, ref: str) -> str:
@@ -1006,19 +1086,44 @@ class _Handler(DoubleHandler):
 
     # --- pull requests and comments -----------------------------------------------------------------
 
-    def _r_list_pulls(self, call: Call) -> Result:
-        repo = call.the_repo
+    @staticmethod
+    def _state_filter(call: Call) -> str:
         state = call.query.get("state", "open")
         if state not in {"open", "closed", "all"}:
-            raise Reply(422, render.validation_error("", "Issue", "state", code="invalid"))
+            raise invalid("Issue", "state")
+        return state
+
+    @staticmethod
+    def _sorted(call: Call, items: list[Any], sorts: frozenset[str], default_desc: bool) -> list[Any]:
+        """`items` in the order of ``sort`` (``created``, ``updated``, ``comments``/``popularity`` by comment count,
+        ``long-running`` like ``created``; ties by number) and ``direction`` (default ``desc`` for issues; for pull
+        requests ``desc`` with ``sort=created`` only, ``asc`` otherwise, as GitHub)."""
+        repo = call.the_repo
+        sort = call.query.get("sort", "created")
+        if sort not in sorts:
+            raise invalid("Issue", "sort")
+        direction = call.query.get("direction", "desc" if default_desc or sort == "created" else "asc")
+        if direction not in {"asc", "desc"}:
+            raise invalid("Issue", "direction")
+        keys: dict[str, Callable[[Any], tuple[int, int]]] = {
+            "created": lambda i: (i.created, i.number),
+            "long-running": lambda i: (i.created, i.number),
+            "updated": lambda i: (i.updated, i.number),
+            "comments": lambda i: (repo.comment_count(i.number), i.number),
+            "popularity": lambda i: (repo.comment_count(i.number), i.number),
+        }
+        return sorted(items, key=keys[sort], reverse=direction == "desc")
+
+    def _r_list_pulls(self, call: Call) -> Result:
+        repo = call.the_repo
+        state = self._state_filter(call)
         found = [p for p in repo.pulls.values() if state in {"all", p.state}]
         if "head" in call.query:
             owner, _, branch = call.query["head"].partition(":")
             found = [p for p in found if owner.lower() == repo.owner.lower() and p.head == branch]
         if "base" in call.query:
             found = [p for p in found if p.base == call.query["base"]]
-        found.sort(key=lambda p: p.number, reverse=True)
-        page, headers = self._paginate(call, found)
+        page, headers = self._paginate(call, self._sorted(call, found, PULL_SORTS, default_desc=False))
         world = self.double.world
         return 200, [render.pull(self.double.urls, world, repo, p, listed=True) for p in page], headers
 
@@ -1068,10 +1173,101 @@ class _Handler(DoubleHandler):
         return 200, [render.file_change(self.double.urls, repo, change, head) for change in page], headers
 
     def _issue_number(self, call: Call) -> int:
+        """The number of an existing issue or pull request; issue comments of a repository without issues are
+        ``410``."""
         number = int(call.params["number"])
-        if number not in call.the_repo.pulls and number not in call.the_repo.issues:
-            raise not_found()
+        if number not in call.the_repo.pulls:
+            self._issues_enabled(call)
+            if number not in call.the_repo.issues:
+                raise not_found()
         return number
+
+    @staticmethod
+    def _issues_enabled(call: Call) -> None:
+        if not call.the_repo.has_issues:
+            raise Reply(410, ISSUES_DISABLED)
+
+    def _issue(self, call: Call) -> Issue | Pull:
+        self._issues_enabled(call)
+        found = call.the_repo.item(int(call.params["number"]))
+        if found is None:
+            raise not_found()
+        return found
+
+    def _r_list_issues(self, call: Call) -> Result:
+        self._issues_enabled(call)
+        repo = call.the_repo
+        state = self._state_filter(call)
+        items: list[Issue | Pull] = [*repo.issues.values(), *repo.pulls.values()]
+        found = [i for i in items if state in {"all", i.state}]
+        wanted = {name.strip().lower() for name in call.query.get("labels", "").split(",") if name.strip()}
+        found = [i for i in found if wanted <= {name.lower() for name in i.labels}]
+        page, headers = self._paginate(call, self._sorted(call, found, ISSUE_SORTS, default_desc=True))
+        return 200, [render.issue(self.double.urls, self.double.world, repo, i) for i in page], headers
+
+    def _r_get_issue(self, call: Call) -> Result:
+        return 200, render.issue(self.double.urls, self.double.world, call.the_repo, self._issue(call)), []
+
+    @staticmethod
+    def _issue_text(body: dict[str, Any], name: str) -> str | None:
+        value = body.get(name)
+        if value is not None and not isinstance(value, str):
+            raise not_a(name, value, "a string or null")
+        return value
+
+    def _label_names(self, call: Call, body: dict[str, Any]) -> list[str] | None:
+        value = body.get("labels")
+        if value is None:
+            return None
+        if not isinstance(value, list) or any(not isinstance(name, str) or not name for name in value):
+            raise not_a("labels", value, "an array of strings")
+        return self.double.world.labels(call.the_repo, value)
+
+    def _r_create_issue(self, call: Call) -> Result:
+        self._issues_enabled(call)
+        body = call.json_body()
+        repo = call.the_repo
+        world = self.double.world
+        title = body.get("title")
+        if not isinstance(title, str) or not title:
+            raise Reply(422, render.validation_error("", "Issue", "title", code="missing_field"))
+        text = self._issue_text(body, "body")
+        assignees = body.get("assignees", [])
+        if not isinstance(assignees, list) or any(not isinstance(login, str) for login in assignees):
+            raise not_a("assignees", assignees, "an array of strings")
+        if any(login.lower() not in world.users for login in assignees):
+            raise invalid("Issue", "assignees")
+        labels = self._label_names(call, body) or []
+        logins = [world.users[login.lower()].login for login in assignees]
+        created = world.add_issue(repo, title, call.the_user.login, body=text, labels=labels, assignees=logins)
+        payload = render.issue(self.double.urls, world, repo, created)
+        return 201, payload, [("location", payload["url"])]
+
+    def _r_update_issue(self, call: Call) -> Result:
+        item = self._issue(call)
+        body = call.json_body()
+        title = body.get("title", item.title)
+        if not isinstance(title, str) or not title:
+            raise Reply(422, render.validation_error("", "Issue", "title", code="missing_field"))
+        text = self._issue_text(body, "body") if "body" in body else item.body
+        state = body.get("state", item.state)
+        if state not in {"open", "closed"}:
+            raise invalid("Issue", "state")
+        reason = body.get("state_reason")
+        if reason is not None and reason not in STATE_REASONS:
+            raise invalid("Issue", "state_reason")
+        labels = self._label_names(call, body)
+        world = self.double.world
+        now = world.stamp()
+        if state != item.state:
+            item.closed = now if state == "closed" else None
+            reason = reason or ("completed" if state == "closed" else "reopened")
+        if isinstance(item, Issue) and reason is not None:
+            item.state_reason = reason
+        item.title, item.body, item.state, item.updated = title, text, state, now
+        if labels is not None:
+            item.labels = labels
+        return 200, render.issue(self.double.urls, world, call.the_repo, item), []
 
     def _r_list_comments(self, call: Call) -> Result:
         repo = call.the_repo
@@ -1103,6 +1299,7 @@ class _Handler(DoubleHandler):
             "/_double/expect": ("POST",),
             "/_double/device": ("GET", "POST"),
             "/_double/clock": ("POST",),
+            "/_double/tokens": ("POST",),
         }
         inspect = re.match(r"^/_double/repos/([^/]+)/([^/]+)$", path)
         allowed = ("GET",) if inspect else routes.get(path)
@@ -1143,6 +1340,7 @@ class _Handler(DoubleHandler):
             ("GET", "/_double/device"): double.device.grants,
             ("POST", "/_double/device"): lambda: double.device.control(body, self._known_login),
             ("POST", "/_double/clock"): lambda: self._advance(body),
+            ("POST", "/_double/tokens"): lambda: self._tokens(body),
         }
         return 200, actions[(self.command, path)]()
 
@@ -1172,6 +1370,14 @@ class _Handler(DoubleHandler):
             raise FaultError("advance must be a non-negative number of seconds")
         self.double.advance(float(advance))
         return {"now": self.double.clock()}
+
+    def _tokens(self, body: Any) -> dict[str, Any]:
+        token = _body_object(body).get("revoke")
+        if not isinstance(token, str):
+            raise SeedError("revoke must name a token")
+        with self.double.world.lock:
+            self.double.world.revoke(token)
+        return self.double.state()
 
     def _known_login(self, login: str) -> str | None:
         world = self.double.world

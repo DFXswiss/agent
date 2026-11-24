@@ -3,7 +3,8 @@
 
 `client(request)` opens the task owner's client for a pre-check and turns every failure into `CheckFailed`: a missing
 or refused connection (`NotConnected`, `401`) is `github_not_connected`, any other GitHub failure `upstream_error` (a
-pre-check is not retried; the session may request the operation again). `repository(client, repo)` is
+pre-check is not retried; the session may request the operation again; an organisation that requires SSO
+authorisation of the token is named, `ops.SSO_REQUIRED`). `repository(client, repo)` is
 `GET /repos/{repo}` with `404` -> `repo_not_accessible` and returns the answer (default branch, `html_url`), so the
 pre-checks need no second request for it.
 """
@@ -32,7 +33,7 @@ async def client(request: PrecheckRequest) -> AsyncIterator[GitHubClient]:
     except GitHubError as error:
         if error.kind == "unauthorized":
             raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
-        raise CheckFailed("upstream_error", message=ACCESS_FAILED) from None
+        raise CheckFailed("upstream_error", message=ops.SSO_REQUIRED if error.sso else ACCESS_FAILED) from None
 
 
 async def repository(github: GitHubClient, repo: str) -> dict[str, Any]:

@@ -320,10 +320,13 @@ def test_a_revoked_token_and_an_unusable_credential(store_dsn: str, start_github
         sid = await r.session()
         github.double.world.tokens.clear()
         params = {"repo": REPO, "branch": "work", "message": "M."}
-        assert refused(await r.run(sid, "github.commit", params)) == "github_not_connected"
+        # held for the owner's connection (KOR-25), not registered
+        commit = await r.run(sid, "github.commit", params)
+        assert (commit.state, commit.held, commit.registration) == ("received", True, None)
         async with r.ok.env.pool.connection() as conn:
             await conn.execute('UPDATE runner.credential_cache SET record = record || \'{"ct": "AAAA"}\'::jsonb')
-        assert refused(await r.run(sid, "github.checkout", {"repo": REPO})) == "github_not_connected"
+        checkout = await r.run(sid, "github.checkout", {"repo": REPO})
+        assert (checkout.state, checkout.held, checkout.registration) == ("received", True, None)
 
     run10(store_dsn, github, tmp_path, body)
 

@@ -3,16 +3,23 @@
 // task: device check (automatic assignment where allowed), sealed `task.meta` + `prompt`, `POST /v1/tasks`, then the
 // task page at once. While the send runs, the countdown starts (`PreparingPanel`). A failed send keeps the prepared
 // request: sending the unchanged prompt to the same workgroup again re-uses its IDs (idempotent). Offline, the button
-// says "Offline" and nothing is queued. The GitHub chip offers "Connect GitHub" while no connection is known.
-import { type KeyboardEvent, useId, useRef, useState } from 'react';
+// says "Offline" and nothing is queued. GitHub (KOR-25 part three, ADR-066): when the GitHub chip was used or the
+// text obviously refers to GitHub (`core/github/mention.ts`) and the GitHub connection is not there, the composer
+// offers connecting right here (device flow or an existing token, `GithubConnect`); the task is sent either way. The
+// connection state is loaded once when first needed; a typed reference shows the hint only once the state is known (a
+// connected user sees nothing flash). The offer sits below the form: its token field belongs to no form, and Enter
+// there never sends the task.
+import { type KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { loadGithub } from '../../core/github/connection';
+import { mentionsGithub } from '../../core/github/mention';
 import { type PreparedTask, prepareTask, sendable, sendErrorCode, sendTask } from '../../core/tasks/send';
 import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
 import { useAppEnv } from '../shell/context';
 import { PreparingPanel } from '../countdown/PreparingPanel';
 import { useAboveKeyboard } from '../responsive/keyboard';
+import { GithubConnect } from '../settings/sections/github/Connect';
 
 /** Failures after which the same request (same IDs) is sent again: the hub may not have seen it or may succeed later. */
 export const RETRYABLE: ReadonlySet<string> = new Set(['unavailable', 'rate_limited', 'seq_conflict']);
@@ -49,6 +56,15 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
   const label = useId();
   const sending = status.kind === 'sending';
   const disabled = sending || !online || !sendable(text);
+  const mention = mentionsGithub(text);
+  const offerGithub = githubStatus !== 'connected' && (github || (mention && githubStatus !== 'unknown'));
+  const githubLoad = useRef(false);
+  useEffect(() => {
+    // loaded once when first needed (module comment)
+    if (!(github || mention) || githubStatus !== 'unknown' || githubLoad.current) return;
+    githubLoad.current = true;
+    loadGithub(app.tasks).catch(() => undefined);
+  }, [app, github, mention, githubStatus]);
 
   const send = async () => {
     if (disabled) return;
@@ -83,88 +99,87 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
 
   const fill = (chip: (typeof CHIPS)[number]) => {
     setText(t(`home.chip.${chip}.text`));
-    setGithub(chip === 'github');
     // the chip offers "Connect GitHub" only while no connection is known (06-web.md section 4.1, WEB-09)
-    if (chip === 'github' && githubStatus === 'unknown') loadGithub(app.tasks).catch(() => undefined);
+    setGithub(chip === 'github');
     field.current?.focus();
   };
 
   return (
-    <form
-      ref={form}
-      className="flex flex-col gap-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void send();
-      }}
-      data-testid="composer"
-    >
-      {suggestions && (
-        <ul className="flex flex-wrap gap-2" aria-label={t('home.chips.label')} data-testid="composer.chips">
-          {CHIPS.map((chip) => (
-            <li key={chip}>
-              <button
-                type="button"
-                className="min-h-11 rounded-full border border-gray-300 px-3 text-sm"
-                onClick={() => fill(chip)}
-                data-testid={`composer.chip.${chip}`}
-              >
-                {t(`home.chip.${chip}`)}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {github && githubStatus !== 'connected' && (
-        <p className="text-sm" data-testid="composer.github-hint">
-          {t('home.github.hint')}{' '}
-          <Link className="underline" to="/settings" data-testid="composer.github-connect">
-            {t('home.github.connect')}
-          </Link>
-        </p>
-      )}
-      <label htmlFor={label} className="sr-only">
-        {t('home.prompt.label')}
-      </label>
-      <textarea
-        id={label}
-        ref={field}
-        className="min-h-28 w-full rounded border border-gray-300 p-2"
-        placeholder={t('home.prompt.placeholder')}
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={onKeyDown}
-        disabled={sending}
-        data-testid="composer.prompt"
-      />
-      <div className="flex items-center gap-3">
-        <button
-          type="submit"
-          className="min-h-11 rounded bg-blue-700 px-4 text-white disabled:opacity-50"
-          disabled={disabled}
-          data-testid="composer.send"
-        >
-          {online ? t('home.send') : t('home.offline')}
-        </button>
-        <span className="hidden text-xs text-gray-600 md:inline">{t('home.send.shortcut')}</span>
-      </div>
-      {status.kind === 'error' && (
-        <div
-          role="alert"
-          className="rounded border border-red-200 bg-red-50 p-3 text-red-900"
-          data-testid="composer.error"
-          data-code={status.code}
-        >
-          <p className="font-semibold">{error(status.code).title}</p>
-          <p>{error(status.code).body}</p>
-          {status.code === 'no_device_available' && (
-            <Link className="underline" to={`/o/${encodeURIComponent(org)}/devices`} data-testid="composer.devices">
-              {t('home.devices')}
-            </Link>
-          )}
+    <div className="flex flex-col gap-3">
+      <form
+        ref={form}
+        className="flex flex-col gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void send();
+        }}
+        data-testid="composer"
+      >
+        {suggestions && (
+          <ul className="flex flex-wrap gap-2" aria-label={t('home.chips.label')} data-testid="composer.chips">
+            {CHIPS.map((chip) => (
+              <li key={chip}>
+                <button
+                  type="button"
+                  className="min-h-11 rounded-full border border-gray-300 px-3 text-sm"
+                  onClick={() => fill(chip)}
+                  data-testid={`composer.chip.${chip}`}
+                >
+                  {t(`home.chip.${chip}`)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <label htmlFor={label} className="sr-only">
+          {t('home.prompt.label')}
+        </label>
+        <textarea
+          id={label}
+          ref={field}
+          className="min-h-28 w-full rounded border border-gray-300 p-2"
+          placeholder={t('home.prompt.placeholder')}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={onKeyDown}
+          disabled={sending}
+          data-testid="composer.prompt"
+        />
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            className="min-h-11 rounded bg-blue-700 px-4 text-white disabled:opacity-50"
+            disabled={disabled}
+            data-testid="composer.send"
+          >
+            {online ? t('home.send') : t('home.offline')}
+          </button>
+          <span className="hidden text-xs text-gray-600 md:inline">{t('home.send.shortcut')}</span>
+        </div>
+        {status.kind === 'error' && (
+          <div
+            role="alert"
+            className="rounded border border-red-200 bg-red-50 p-3 text-red-900"
+            data-testid="composer.error"
+            data-code={status.code}
+          >
+            <p className="font-semibold">{error(status.code).title}</p>
+            <p>{error(status.code).body}</p>
+            {status.code === 'no_device_available' && (
+              <Link className="underline" to={`/o/${encodeURIComponent(org)}/devices`} data-testid="composer.devices">
+                {t('home.devices')}
+              </Link>
+            )}
+          </div>
+        )}
+        {status.kind === 'sending' && <PreparingPanel startedAt={status.startedAt} assigning={status.assigning} />}
+      </form>
+      {offerGithub && (
+        <div className="flex flex-col gap-2 rounded border border-gray-300 p-3" data-testid="composer.github-hint">
+          <p className="text-sm">{t('github.composer.hint')}</p>
+          <GithubConnect />
         </div>
       )}
-      {status.kind === 'sending' && <PreparingPanel startedAt={status.startedAt} assigning={status.assigning} />}
-    </form>
+    </div>
   );
 }

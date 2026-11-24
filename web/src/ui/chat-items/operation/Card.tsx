@@ -1,13 +1,24 @@
 // The operation card (06-web.md sections 5.2 and 5.4), shared by the chat items `operation.params` /
 // `operation.result` and the Operations tab: type, live state badge (from the `operation` frames), a short subject
 // from the decrypted parameters, the result links and values (PR URL, commit SHA, comment URL, branch, subagent
-// session), "Renamed by session" for `task.set_title`, the error code, and "Duplicate of …" linking the original.
-// Unverifiable parameters or results are shown as such with their code, never as content.
+// session, issue, login), "Renamed by session" for `task.set_title`, the error code, and "Duplicate of …" linking the
+// original. Listed issues and pull requests show number (linked), title, state and labels; a read issue shows its text
+// and its page of comments. Text from GitHub is untrusted: it is only rendered as React text (never as HTML or
+// Markdown), links are https only (`httpsUrl`). Unverifiable parameters or results are shown as such with their code,
+// never as content.
 import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { LINK_REL } from '../../../core/chat/links';
 import { ensureOperations, loadOperation } from '../../../core/operations/load';
-import { type Fact, type OperationView, selectOperation } from '../../../core/operations/view';
+import {
+  type Fact,
+  ISSUE_VALUES,
+  type IssueContent,
+  type ListEntry,
+  type Listing,
+  type OperationView,
+  selectOperation,
+} from '../../../core/operations/view';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
@@ -21,6 +32,12 @@ export const KNOWN_TYPES: ReadonlySet<string> = new Set([
   'github.push',
   'github.create_pull_request',
   'github.comment',
+  'github.list_issues',
+  'github.get_issue',
+  'github.create_issue',
+  'github.update_issue',
+  'github.list_pull_requests',
+  'github.request_connection',
   'subagent.request',
   'task.set_title',
 ]);
@@ -78,11 +95,146 @@ function FactItem({ fact, org }: { readonly fact: Fact; readonly org: string }) 
         {short.slice(0, 8)}
       </Link>
     );
+  else if ((fact.label === 'state' || fact.label === 'state_reason') && ISSUE_VALUES.has(fact.text))
+    value = <span>{t(`operations.value.${fact.text}`)}</span>;
   else value = <span className={fact.label === 'commit' ? 'font-mono' : ''}>{short}</span>;
   return (
     <li data-testid="operation.fact" data-label={fact.label} title={fact.text}>
       {label}: {value}
     </li>
+  );
+}
+
+function IssueNumber({ entry }: { readonly entry: ListEntry }) {
+  return entry.href === undefined ? (
+    <span>#{entry.number}</span>
+  ) : (
+    <a className="text-blue-800 underline" href={entry.href} target="_blank" rel={LINK_REL}>
+      #{entry.number}
+    </a>
+  );
+}
+
+/** Number, title, state (closed, draft) and labels of an issue or pull request. */
+function EntryHead({ entry }: { readonly entry: ListEntry }) {
+  const { t } = useI18n();
+  return (
+    <>
+      <IssueNumber entry={entry} /> <span data-testid="operation.entry.title">{entry.title}</span>
+      {entry.state === 'closed' && (
+        <span className="ml-1 rounded bg-gray-200 px-1 text-xs text-gray-800" data-testid="operation.entry.state">
+          {t('operations.value.closed')}
+        </span>
+      )}
+      {entry.draft && (
+        <span className="ml-1 rounded bg-gray-200 px-1 text-xs text-gray-800" data-testid="operation.entry.draft">
+          {t('operations.draft')}
+        </span>
+      )}
+      {entry.labels.map((label) => (
+        <span
+          key={label}
+          className="ml-1 rounded bg-indigo-50 px-1 text-xs text-indigo-900"
+          data-testid="operation.entry.label"
+        >
+          {label}
+        </span>
+      ))}
+    </>
+  );
+}
+
+function ListingView({ listing }: { readonly listing: Listing }) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-col gap-1 text-sm" data-testid="operation.listing" data-kind={listing.kind}>
+      {listing.entries.length === 0 ? (
+        <p className="text-gray-600" data-testid="operation.listing.empty">
+          {t(`operations.listing.empty.${listing.kind}`)}
+        </p>
+      ) : (
+        <ul className="flex max-h-80 flex-col gap-1 overflow-y-auto">
+          {listing.entries.map((entry) => (
+            <li key={entry.number} className="break-words" data-testid="operation.entry" data-number={entry.number}>
+              <EntryHead entry={entry} />
+              {entry.author !== null && <span className="ml-1 text-xs text-gray-600">{entry.author}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {listing.nextPage !== null && (
+        <p className="text-xs text-gray-600" data-testid="operation.listing.next">
+          {t('operations.listing.next', { page: listing.nextPage })}
+        </p>
+      )}
+      {listing.truncated && (
+        <p className="text-xs text-gray-600" data-testid="operation.truncated">
+          {t('operations.truncated')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function IssueView({ issue }: { readonly issue: IssueContent }) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-col gap-1 text-sm" data-testid="operation.issue" data-number={issue.number}>
+      <p className="break-words">
+        <EntryHead entry={issue} />
+      </p>
+      <p className="text-xs text-gray-600">
+        {issue.author !== null && <span data-testid="operation.issue.author">{issue.author}</span>}
+        {issue.stateReason !== null && (
+          <span className="ml-1" data-testid="operation.issue.reason">
+            ({t(`operations.value.${issue.stateReason}`)})
+          </span>
+        )}
+        {issue.pullRequest && (
+          <span className="ml-1" data-testid="operation.issue.pull-request">
+            {t('operations.issue.pull-request')}
+          </span>
+        )}
+      </p>
+      {issue.body !== null && issue.body !== '' && (
+        <p
+          className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-2"
+          data-testid="operation.issue.body"
+        >
+          {issue.body}
+        </p>
+      )}
+      <p className="text-xs text-gray-600" data-testid="operation.issue.comments-count">
+        {t('operations.issue.comments', { shown: issue.comments.length, total: issue.commentsTotal ?? '?' })}
+      </p>
+      {issue.comments.length > 0 && (
+        <ol className="flex max-h-80 flex-col gap-2 overflow-y-auto">
+          {issue.comments.map((comment) => (
+            <li key={comment.id} className="rounded border border-gray-100 p-2" data-testid="operation.issue.comment">
+              <p className="text-xs text-gray-600">
+                {comment.author ?? '?'}
+                {comment.createdAt !== null && (
+                  <time className="ml-1" dateTime={comment.createdAt}>
+                    {comment.createdAt.slice(0, 10)}
+                  </time>
+                )}
+              </p>
+              <p className="whitespace-pre-wrap break-words">{comment.body}</p>
+            </li>
+          ))}
+        </ol>
+      )}
+      {issue.commentsNextPage !== null && (
+        <p className="text-xs text-gray-600" data-testid="operation.issue.next">
+          {t('operations.issue.next', { page: issue.commentsNextPage })}
+        </p>
+      )}
+      {issue.truncated && (
+        <p className="text-xs text-gray-600" data-testid="operation.truncated">
+          {t('operations.truncated')}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -129,6 +281,8 @@ export function CardBody({
           ))}
         </ul>
       )}
+      {view.listing !== null && <ListingView listing={view.listing} />}
+      {view.issue !== null && <IssueView issue={view.issue} />}
       {view.duplicateOf !== null && (
         <Link
           className="text-sm text-blue-800 underline"

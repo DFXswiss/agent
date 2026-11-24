@@ -687,6 +687,14 @@ def test_dedupe_fields_normalisation() -> None:
     assert dedupe.dedupe_fields("subagent.request", {"session": SESSION, "purpose": "a", "prompt": "bc"}) != (
         dedupe.dedupe_fields("subagent.request", {"session": SESSION, "purpose": "ab", "prompt": "c"})
     )
+    assert dedupe.dedupe_fields("github.create_issue", {"repo": "A/B", "title": "ü"}) == {
+        "repo": "a/b",
+        "title": dedupe.sha256_hex("ü"),
+        "body": dedupe.sha256_hex(""),
+    }
+    assert dedupe.dedupe_fields("github.create_issue", {"repo": "a/b", "title": "t", "body": "x"})["body"] == (
+        dedupe.sha256_hex("x")
+    )
     assert {
         "github.checkout",
         "github.create_branch",
@@ -694,12 +702,15 @@ def test_dedupe_fields_normalisation() -> None:
         "github.push",
         "github.create_pull_request",
         "github.comment",
+        "github.create_issue",
         "subagent.request",
     } == dedupe.DEDUPE_TYPES
 
 
 def test_dedupe_refusals() -> None:
     refusals: list[tuple[str, object]] = [
+        ("github.create_issue", {"repo": "a/b", "title": "t", "body": 5}),
+        ("github.create_issue", {"repo": "a/b", "body": "x"}),
         ("github.list_repositories", {}),
         ("github.push", {"repo": "", "branch": "x", "commit_sha": "c"}),
         ("github.push", {"repo": 5, "branch": "x", "commit_sha": "c"}),

@@ -15,6 +15,14 @@ parameters (local only). States are those of the hub (`contracts/common.json#/$d
 
 `answer` is the outcome given (or to be given) to the session's pending MCP call; `answered_at` is set once the guest
 took it.
+
+A **held** operation (KOR-25, migration 0015, 05-runner.md section 12 step 3) stays `received` with `held_reason`
+(`github_connection`), `held_repo` (the checked repository of its `session.status` `waiting` event, if any),
+`held_until` (the request plus 15 min), `held_notified_at` (when its `waiting` event was written), `held_ended_at`
+(when the hold ended: the owner connected, the session ended, or `held_until` passed) and `held_credential` (the
+version of the owner's cached `github` credential the last check refused; `github_version`). It is held while
+`held_until` is set and `held_ended_at` is not (`held`). `held_count` and `last_waiting` serve the flood limits per
+session.
 """
 
 from __future__ import annotations
@@ -50,6 +58,12 @@ COLUMNS = frozenset(
         "retryable",
         "answer",
         "answered_at",
+        "held_reason",
+        "held_repo",
+        "held_until",
+        "held_notified_at",
+        "held_ended_at",
+        "held_credential",
     }
 )
 _SELECT = (
@@ -58,6 +72,7 @@ _SELECT = (
     " dedupe_tag, attempt, requested_at, idempotency_key, local_error, checked, registration,"
     " duplicate_of::text AS duplicate_of, child_session_id::text AS child_session_id,"
     " result_event_id::text AS result_event_id, retryable, answer, answered_at, created_at,"
+    " held_reason, held_repo, held_until, held_notified_at, held_ended_at, held_credential,"
     " EXTRACT(EPOCH FROM (now() - created_at))::float8 AS age FROM runner.operation"
 )
 
@@ -90,8 +105,19 @@ class Operation:
     answer: dict[str, Any] | None
     answered_at: datetime | None
     created_at: datetime
+    held_reason: str | None
+    held_repo: str | None
+    held_until: datetime | None
+    held_notified_at: datetime | None
+    held_ended_at: datetime | None
+    held_credential: int | None
     age: float
     """Seconds since the row was written (store clock)."""
+
+    @property
+    def held(self) -> bool:
+        """The operation is held for the task owner (KOR-25)."""
+        return self.held_until is not None and self.held_ended_at is None
 
 
 def _row(data: Mapping[str, Any]) -> Operation:
@@ -204,3 +230,41 @@ async def github_connected(conn: AsyncConnection[Any], owner_id: str) -> bool:
         "SELECT 1 FROM runner.credential_cache WHERE owner_id = %s AND kind = 'github'", (owner_id,)
     )
     return await cur.fetchone() is not None
+
+
+async def github_version(conn: AsyncConnection[Any], owner_id: str | None) -> int | None:
+    """The version of the owner's cached `github` credential (None without one or without an owner)."""
+    cur = await conn.execute(
+        "SELECT version FROM runner.credential_cache WHERE owner_id = %s AND kind = 'github'", (owner_id,)
+    )
+    row = await cur.fetchone()
+    return None if row is None else int(row[0])
+
+
+async def lock_session(conn: AsyncConnection[Any], session_id: str) -> None:
+    """Serialise the holds of one session until the end of the transaction (flood limits, KOR-25)."""
+    await conn.execute("SELECT pg_advisory_xact_lock(hashtext('runner.operation.hold'), hashtext(%s))", (session_id,))
+
+
+async def held_count(conn: AsyncConnection[Any], session_id: str) -> int:
+    """Operations of the session held right now."""
+    cur = await conn.execute(
+        "SELECT count(*) FROM runner.operation WHERE session_id = %s AND state = 'received'"
+        " AND held_until IS NOT NULL AND held_ended_at IS NULL",
+        (session_id,),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+async def last_waiting(conn: AsyncConnection[Any], session_id: str, reason: str) -> datetime | None:
+    """When the session's last `waiting` event for `reason` was written (device wall clock)."""
+    cur = await conn.execute(
+        "SELECT max(held_notified_at) FROM runner.operation WHERE session_id = %s AND held_reason = %s",
+        (session_id, reason),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    found: datetime | None = row[0]
+    return found
