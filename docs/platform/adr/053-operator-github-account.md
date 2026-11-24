@@ -1,6 +1,10 @@
 # ADR-053: The operator's GitHub account for approved users (second way to connect GitHub)
 
-Status: Accepted (2026-11-23)
+Status: Accepted (2026-11-23); amended by ADR-068 (2026-11-24): the operator's GitHub account is the operator's own
+connection and serves **exactly one user, the operator** - `OPERATOR_GITHUB_USERS` with more than one user is
+`config_invalid` (`OPERATOR_GITHUB_USERS:one_user_only`). A personal connection must never be used on behalf of
+another person nor handed to one; "approved users" below therefore means the one operator user. Handing the token to
+further users, as the consequences below describe, is no longer possible.
 
 ## Context
 - ADR-015 connects a user's GitHub account through the device flow of a GitHub App. It needs a registered App

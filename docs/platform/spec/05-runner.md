@@ -63,7 +63,7 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `OPENROUTER_KEY_FILE` | empty | platform devices only; file 0600; refused on org devices (`config_invalid`) |
 | `OPERATOR_SUBSCRIPTION_DIR` | empty | platform devices only (refused on org devices); directory 0700 of the runner account, not a symlink, holding the operator's subscription token files `<name>.token` (§10.1, ADR-052); only together with `OPERATOR_SUBSCRIPTION_ORGS` |
 | `OPERATOR_SUBSCRIPTION_ORGS` | empty = nobody | comma-separated organization IDs whose sessions may use the operator's subscriptions; only together with `OPERATOR_SUBSCRIPTION_DIR` (one without the other: `config_invalid`) |
-| `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` | empty / empty | the operator's GitHub token (absolute path) and the approved user IDs (comma-separated UUIDs); both or neither, platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
+| `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` | empty / empty | the operator's own GitHub token (absolute path) and the operator's user ID (exactly one UUID; more is `config_invalid` `OPERATOR_GITHUB_USERS:one_user_only`, HOT-14); both or neither, platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
 | `GITHUB_CLIENT_ID` | required for the device flow | public client ID of the GitHub App; users approved for the operator's GitHub account (§11.4) connect without it |
 | `GITHUB_API_URL` / `GITHUB_WEB_URL` | `https://api.github.com` / `https://github.com` | doubles in tests |
 | `MODEL_UPSTREAM_ANTHROPIC` / `MODEL_UPSTREAM_OPENROUTER` | `https://api.anthropic.com` / `https://openrouter.ai/api` | doubles in tests |
@@ -746,8 +746,10 @@ the same applies to the `claude_subscription` credential of §11.2)
 deletion (`DELETE /v1/me/credentials/github`), runners purge caches; the UI links to the GitHub App settings for
 revocation at GitHub.
 
-**Operator's GitHub account (KOR-27, ADR-053).** For a user listed in `OPERATOR_GITHUB_USERS` (the user of the
-verified request header) the runner skips the device flow: it reads `OPERATOR_GITHUB_TOKEN_FILE` anew (regular file,
+**Operator's GitHub account (KOR-27, ADR-053).** The operator's own GitHub connection, for exactly one user: the
+operator. `OPERATOR_GITHUB_USERS` names one user; more than one is `config_invalid`
+`OPERATOR_GITHUB_USERS:one_user_only` (the daemon does not start, doctor names it; HOT-14). For that user (the user
+of the verified request header) the runner skips the device flow: it reads `OPERATOR_GITHUB_TOKEN_FILE` anew (regular file,
 not a symlink, owned by the runner's account, 0600 or stricter, one line with the token, in a directory of the
 runner's account that nobody else may write; anything else is not read,
 `credential_missing`, the reason logged once), checks the token with `GET <GITHUB_API_URL>/user` (scopes from
@@ -755,7 +757,8 @@ runner's account that nobody else may write; anything else is not read,
 `{step:"done", login}` (final). A refused token ends `{step:"failed", code:"upstream_error"}`. Log lines carry
 `source=operator`; doctor `operator_github` and the counters `agent_runner_operator_github_connects_total` /
 `_connect_failures_total` (08 §3) watch the file and the connects. Every other user keeps the device flow. The stored credential is
-sealed under the user's `CK` like every `github` credential, so the approved user can open it (ADR-053).
+sealed under the user's `CK` like every `github` credential, so that user can open it, and operations use it only
+for that user's own instructions (§12 step 3, ADR-053).
 
 **Existing token (KOR-25, ADR-065).** A second, equal way: `github.connect` with `{token}` (an existing
 GitHub token, e.g. that of a GitHub CLI login or a personal access token, HPKE-encrypted to the device like every
@@ -779,15 +782,31 @@ Pipeline for every `request_operation`:
 2. Control journals `operation.request`; runner receives it, assigns state `received`.
 3. Runner formal checks (`03-api.md` §9) on plaintext: settings from the latest verified `settings.workgroup`
    event (no event: the defaults, no repository list; a stored event that no longer opens: no repository allowed;
-   ADR-054), repository list when set, GitHub credential present, sizes, secret patterns. For `github.commit` the runner takes **one** workspace export
+   ADR-054), repository list when set, GitHub credential of the acting user present, sizes, secret patterns. For `github.commit` the runner takes **one** workspace export
    snapshot into the scratch directory `tmp/op-<id>` here, before registration; scan, local tree SHA and the later
    commit all use exactly this snapshot (`03-api.md` §9).
+   **Acting user (HOT-14, ADR-068).** A personal connection must never be used on behalf of another person. Several
+   people may write in one task (shared sessions), so an operation that needs a personal connection (today every
+   `github.*` type) uses the connection of the **acting user** - the verified author of the prompt that started the
+   session's current turn - and never the task owner's as such. The runner keeps the author of every verified prompt
+   (`prompt_event.author_id`); the guest's `session.state prompt_accepted` of a main session sets the turn's acting
+   user, `idle` closes the turn; a second prompt of another (or an unknown) author in the same open turn leaves the
+   turn without acting user. `operation.request` is stamped with the acting user at receipt (`operation.actor_id`; a
+   held operation keeps it); a child session takes the acting user of the `subagent.request` that started it. One
+   module decides and opens the credential (`credentials/acting.py`); a structural test keeps it the only one. An
+   operation needing a personal connection without acting user is rejected at once with `github_not_connected` and
+   uses nobody's connection; it is not held (nobody could be asked). The `operation.result` event names the user
+   whose connection an executed operation used (`connection_of`). Only users author prompts; a user's own agent
+   signs as that user. Credential kinds of a session (inventory): `github` is the only personal connection an
+   operation uses; the model access is the session's, chosen at its start, its consumption carried by the
+   organisation (KONZEPT A15); `mailbox` and the login kinds serve only that user's own device requests.
    **Held instead of rejected (KOR-25, ADR-066).** If the check of a `github.*` type fails with `github_not_connected` (no
-   usable connection of the task owner), the operation is not rejected but held locally before registration: state stays `received`,
+   usable connection of the acting user), the operation is not rejected but held locally before registration: state stays `received`,
    marked held with the reason and `until` = receipt + 15 min. The runner writes one `session.status`
-   `{state:"waiting", waiting_for:"github_connection", operation_id, operation_type, repo?, until}`
-   (`03-api.md` §10), which the web shows to the task owner as a card in the task's chat. It checks again at every
-   scan (5 s) and as soon as a new `github` credential of the owner arrives; when the check
+   `{state:"waiting", waiting_for:"github_connection", operation_id, operation_type, repo?, for_user, until}`
+   (`03-api.md` §10; `for_user` = the acting user), which the web shows to that person as a card in the task's chat
+   (everybody else, the task owner too, sees whom it waits for). It checks again at every
+   scan (5 s) and as soon as a new `github` credential arrives; when the check
    passes the operation goes on normally (steps 4–7; the MCP call answered `pending` after 20 s, the result comes with
    the ping `operation.finished`). At `until` it is rejected with the original code and the message "…not connected
    within 15 minutes" (audited like every rejection). Flood limits: at most 3 held operations per session at a time
@@ -796,8 +815,8 @@ Pipeline for every `request_operation`:
    A held operation whose session ended meanwhile (`stopping`, `stopped`, `failed`; closing a task stops its sessions)
    is rejected with `not_found` without running its checks. A credential GitHub refused is remembered by its record
    version (`held_credential`): the pre-check asks GitHub again only when a new version arrives. A fourth held
-   operation of a session is rejected at once with a fixed text saying that the owner is already being asked.
-   `github.request_connection` has no other check: its pre-check asks `GET /user` once; held while the owner is not
+   operation of a session is rejected at once with a fixed text saying that the person is already being asked.
+   `github.request_connection` has no other check: its pre-check asks `GET /user` once; held while the acting user is not
    connected or the token is refused, else answered with `{login}` from the credential. The session's context and the harness state the owner's GitHub connection
    (connected as `<login>` / not connected) and the rule: if the task needs GitHub, request the operation even
    without a connection; the platform obtains the connection from the user; do not explain what is missing and do
@@ -828,7 +847,7 @@ Pipeline for every `request_operation`:
 | `github.create_issue` | `POST /repos/{r}/issues` `{title, body?, labels?}` |
 | `github.update_issue` | `PATCH /repos/{r}/issues/{n}` with the given fields only (`state_reason` with `state`; `labels` replaces all) |
 | `github.list_pull_requests` | `GET /repos/{r}/pulls?state&base&sort&direction&per_page&page` (one page; `next_page` from the `Link` header) |
-| `github.request_connection` | no GitHub call: `{login}` of the owner's credential |
+| `github.request_connection` | no GitHub call: `{login}` of the acting user's credential |
 | `subagent.request` | hub returns `child_session_id`; runner starts the child (§13) |
 | `task.set_title` | device-authored `task.meta` event |
 

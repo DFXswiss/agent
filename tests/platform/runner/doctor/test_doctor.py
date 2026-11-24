@@ -239,6 +239,18 @@ def test_doctor_checks_the_operators_github_token_file_without_naming_it(case: C
     assert "01a1ee56" not in out
 
 
+def test_doctor_names_why_the_operators_github_is_refused_for_a_second_user(case: Case, tmp_path: Path) -> None:
+    # the operator's GitHub is the operator's own connection: a second user is refused, and doctor says so
+    case.env["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = str(tmp_path / "github.token")
+    case.env["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = (
+        "01a1ee56-5e00-7359-8ec3-2c90dd7ae358,01a1ee56-5e00-73da-a86c-5c56722cfde3"
+    )
+    code, out, err = case.cli("doctor")
+    assert code != 0
+    assert "code=config_invalid name=OPERATOR_GITHUB_USERS:one_user_only" in out + err
+    assert "01a1ee56" not in out + err
+
+
 def test_doctor_reports_every_failure(case: Case) -> None:
     case.enroll()
     case.golden(abi=3)

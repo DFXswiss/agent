@@ -464,10 +464,11 @@ General: `params` schema in `contracts/ops/<type>.json`; violations → `params_
 `git check-ref-format --branch` rules (implemented without git: no `..`, no ASCII control chars, no `~^:?*[\`,
 no leading `-` or `/`, no trailing `/` or `.lock`, no `@{`, ≤ 200 chars). Workgroup settings (`settings.workgroup`
 event): `repositories` allow-list (exact `owner/name`, lowercased; optional: empty, the default, allows every
-repository the owner's GitHub connection reaches, ADR-054), `protected_branches` patterns (default
+repository the acting user's GitHub connection reaches, ADR-054), `protected_branches` patterns (default
 `["main","master","develop","release/*"]`), `pr_draft_default` (true). Repository-level checks: `repo` in the
-allow-list when the list is not empty (`repo_not_allowed`) and accessible with the owner's GitHub connection
-(`github_not_connected`, `repo_not_accessible`). `github.list_repositories` marks every entry `allowed` when the
+allow-list when the list is not empty (`repo_not_allowed`) and accessible with the GitHub connection of the acting
+user - the person whose instruction started the session's turn, never the task owner as such (HOT-14, ADR-068,
+`05-runner.md` §12 step 3; `github_not_connected`, `repo_not_accessible`). `github.list_repositories` marks every entry `allowed` when the
 list is empty. Retry: retryable failures (network, GitHub 5xx, 429, secondary rate limit) are retried
 by the runner inside the same operation: 3 attempts, delays 2 s, 8 s, 30 s (respecting `Retry-After`); then
 `failed` with `retryable:true`, which releases the dedupe slot.
@@ -496,7 +497,7 @@ original released its slot (`failed`, `expired`), or with other content (e.g. an
 | `github.create_issue` | `{repo,title,body?,labels?}` | allow-list (when set); title 1–256; body ≤ 65536; labels as above (GitHub sets labels only for accounts with push access and drops them silently otherwise) | repo, sha256(title), sha256(body, empty when left out) | 24 h | `{number,url,id}` |
 | `github.update_issue` | `{repo,number,state?,state_reason?,title?,body?,labels?}` | allow-list (when set); number ≥ 1; at least one of `state`, `title`, `body`, `labels` (`params_invalid`); `state` `open`/`closed`; `state_reason` only together with a fitting `state` (`reopened` with `open`, `completed`/`not_planned` with `closed`); title 1–256; body ≤ 65536; `labels` replaces every label of the issue (`[]` removes all) | – (setting values is idempotent) | – | `{number,url,state,state_reason,title,labels}` |
 | `github.list_pull_requests` | `{repo,state?,base?,sort?,direction?,per_page?,page?}` | allow-list (when set); `state` `open`(default)/`closed`/`all`; `base` branch syntax; `sort` `created`(default)/`updated`; `direction`, `per_page`, `page` as for `github.list_issues` | – | – | `{pull_requests:[{number,title,state,draft,author,head,base,created_at,updated_at,url}],next_page,truncated}` |
-| `github.request_connection` | `{}` | none; the task owner's GitHub connection is the subject (held while missing, below) | – | – | `{login}` of the connected account |
+| `github.request_connection` | `{}` | none; the acting user's GitHub connection is the subject (held while missing, below) | – | – | `{login}` of the connected account |
 | `subagent.request` | `{purpose,prompt,model_id?}` | purpose 1–200, prompt 1–32768 chars; `model_id` from the allowed list of the parent session's access kind (checked by the runner against the model catalog ⇒ `model_not_allowed`) | parent session, sha256(purpose‖prompt) | 10 min | `{session_id}` (hub creates the child session, H4 limits: depth ≤ 2, ≤ 3 running children per task, ≤ 10 children per task) |
 | `task.set_title` | `{title}` | 1–120 chars, single line | – | – | `{}` (runner writes a device-authored `task.meta` event) |
 
@@ -511,11 +512,12 @@ only `https:` URLs.
 Held operations (KOR-25, ADR-066, `05-runner.md` §12): when the formal check or the pre-check of a `github.*` type
 fails with `github_not_connected` (a repository outside a workgroup's list stays `repo_not_allowed` and is rejected at
 once), the runner does not reject the operation but holds it for up to
-15 minutes and asks the task owner in the task's chat (`session.status` `waiting`, §10); the MCP call answers
+15 minutes and asks the acting user in the task's chat (`session.status` `waiting` with `for_user`, §10; without an
+acting user it is rejected at once and uses nobody's connection, HOT-14); the MCP call answers
 `pending` after its 20 s and the result arrives with `operation.finished`. After 15 minutes the operation is rejected
-with `github_not_connected` ("The task owner did not connect GitHub within 15 minutes."). At most 3 held operations
+with `github_not_connected` ("The person who gave this instruction did not connect GitHub within 15 minutes."). At most 3 held operations
 per session (more are rejected at once) and at most one `waiting` event per session per 60 s. `github.request_connection` lets a session ask for the connection without another type: held
-while the owner is not connected, else `{login}` at once.
+while the acting user is not connected, else `{login}` at once.
 
 Compatibility while the parts are rolled out one by one (KOR-25): a type the hub does not know is `rejected` with
 `unknown_type` (H3) and a type a guest does not know is forwarded with `local_check:"rejected"` and `unknown_type`;
@@ -545,9 +547,9 @@ operation's result (decrypted from its `operation.result` event) with `status:"d
 | `whiteboard.delete` | `{base_event_id}` |
 | `settings.workgroup` | `{repositories,protected_branches,pr_draft_default}` (latest wins) |
 | `session.output` | journal body of `session.output` |
-| `session.tool` / `session.hook` / `session.file` / `session.terminal` / `session.status` | journal bodies (§7.2); `session.status` = `{state,reason,details?}` for errors and states, or `{state:"waiting",waiting_for,operation_id,operation_type,repo?,until}` while the runner holds an operation of the session for the task owner (§9, KOR-25): `waiting_for` `github_connection` (the owner has no usable GitHub connection); `repo` is left out for types without one; `until` = receipt + 15 min; only platform-checked values, never text of the session |
+| `session.tool` / `session.hook` / `session.file` / `session.terminal` / `session.status` | journal bodies (§7.2); `session.status` = `{state,reason,details?}` for errors and states, or `{state:"waiting",waiting_for,operation_id,operation_type,repo?,for_user?,until}` while the runner holds an operation of the session for the person who gave the instruction (§9, KOR-25, HOT-14): `waiting_for` `github_connection` (that person has no usable GitHub connection); `for_user` = that person, the acting user (05-runner.md §12 step 3; a body without it, from an older runner, means the task owner); `repo` is left out for types without one; `until` = receipt + 15 min; only platform-checked values, never text of the session |
 | `operation.params` | `{operation_id,type,params,idempotency_key?}` |
-| `operation.result` | `{operation_id,status,result?,error?}` |
+| `operation.result` | `{operation_id,status,connection_of?,result?,error?}`; `connection_of` = the user whose own personal connection (GitHub) the executed operation used - the acting user, never anybody else (HOT-14, ADR-068) |
 | `platform.read` | `{tool,arguments,result_count}` |
 
 ## 11. Error codes (HTTP status)

@@ -72,6 +72,7 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [066](066-held-github-operations.md) | A `github.*` operation without a connection is held up to 15 min and the connection is requested in the task's chat | §9, §10 | no |
 | [067](067-agent-pairing-from-another-computer.md) | Pairing an agent that runs on another computer: explicit remote mode, agent code typed on the page, handover sealed to the agent through the hub, return code checked by the agent, notification and banner | §5, §8, E-03, E-04 | no |
 | [068](068-first-prompt-after-the-platform-tools.md) | The first prompt reaches the agent only after it listed the platform tools (no prompt on the command line; start step `tools_ready`; restart when the tools stay away); connecting MCP methods answered, refused methods named | §3, §6 | no |
+| [068](068-personal-connections-follow-the-instruction.md) | A personal connection follows the person who gave the instruction: operations use the GitHub connection of the turn's verified prompt author (children inherit it), never the task owner's as such; one module decides; nobody's connection without exactly one such person; the operator's GitHub for exactly one user | A15, Idee 36, E-19 | no |
 | [069](069-community-chat.md) | Community: one group chat of all users under a shared community key with anonymous key requests; moderation at the hub | §5, §8 | no |
 
 New decisions get the next free number; a superseded ADR keeps its file and is marked `Superseded by ADR-NNN`.

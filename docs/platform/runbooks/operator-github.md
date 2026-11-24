@@ -1,13 +1,16 @@
 # The operator's GitHub account on a platform device
 
-Approved users connect GitHub at once with a token of the operator's GitHub account: "Connect GitHub" in the
-settings answers "Connected as …" without a device code (ADR-053, 05-runner.md §11.4). Every other user keeps the
-device flow of the GitHub App (ADR-015). Only platform devices accept the settings; an org device refuses to start
-with `config_invalid OPERATOR_GITHUB_TOKEN_FILE`.
+The operator connects GitHub at once with a token of the operator's own GitHub account: "Connect GitHub" in the
+settings answers "Connected as …" (the account's login) without a device code (ADR-053, 05-runner.md §11.4). Every
+other user keeps the device flow of the GitHub App (ADR-015) or an existing token of their own (ADR-065). Only
+platform devices accept the settings; an org device refuses to start with `config_invalid OPERATOR_GITHUB_TOKEN_FILE`.
 
-**Approve only people you would give the token to.** The connection is stored like every GitHub connection, sealed
-for the user: the user's browser and the devices of the user's organizations can open it, so an approved user can
-read the token (ADR-053). Revoking the token at GitHub is the only way to take it back.
+**Exactly one user: the operator.** A personal connection is never shared (ADR-068). `OPERATOR_GITHUB_USERS` names
+one user; with more the runner does not start and `agent-runner doctor` reports
+`config_invalid name=OPERATOR_GITHUB_USERS:one_user_only`. The connection is stored like every GitHub connection,
+sealed for the user, and operations use it only for that user's own instructions: whoever writes in the operator's
+tasks works with their own GitHub connection. Revoking the token at GitHub is the only way to take back a token that
+was stored for someone else before.
 
 The token reaches as far as the account. Use a dedicated account for AI work with access to the needed repositories
 only, and a token with the rights the operations need (classic token: scope `repo`; fine-grained token: contents,
@@ -37,11 +40,11 @@ line, in a directory owned by the runner account that nobody else may write (070
 
 ```bash
 AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE=<home of the runner account>/operator-github/github.token
-AGENT_RUNNER_OPERATOR_GITHUB_USERS=<user id>[,<user id>...]
+AGENT_RUNNER_OPERATOR_GITHUB_USERS=<the operator's user id>
 ```
 
 (see [runner-installation.md](runner-installation.md): changing a setting means installing the service again). Both
-settings are needed together. A user ID is the UUID of the user's platform account.
+settings are needed together. The user ID is the UUID of the operator's platform account; one ID only.
 
 Check as the runner account: `agent-runner doctor` shows `operator_github ok usable`. After a connect the daemon log
 shows `github_connect done request_id=… source=operator`; the token, the account and the users are never logged.
@@ -54,13 +57,17 @@ Connections made before keep the token they stored: affected users disconnect ("
 press "Connect GitHub" to take the new token. Revoke the old token at GitHub afterwards; connections still holding it then end
 operations with `github_not_connected` until the user connects again.
 
-## 3. Approve and withdraw users
+## 3. Change the user, withdraw earlier approvals
 
-Change `AGENT_RUNNER_OPERATOR_GITHUB_USERS` and install the service again. Withdrawing a user stops new connects
+Only one user is accepted. A configuration from before ADR-068 that names several users stops the runner at its
+start (`config_invalid name=OPERATOR_GITHUB_USERS:one_user_only`): set the operator's user ID alone and install the
+service again. Every other user that connected through the operator's token before still holds a copy of it: **revoke
+the token at GitHub and place a new one** (section 2); those users then connect their own accounts. Changing
+`AGENT_RUNNER_OPERATOR_GITHUB_USERS` and installing the service again stops new connects
 through the operator's token; that user's next connect uses the device flow (which needs a GitHub App). An existing
 connection of the withdrawn user stays until the user disconnects ("Disconnect" in the settings) or the operator
 revokes the token at GitHub; a withdrawn user may also have read the token (see above). To end every connection at
-once, revoke the token at GitHub, place a new one and let the approved users connect again. The hint after
+once, revoke the token at GitHub, place a new one and let the operator connect again. The hint after
 "Disconnect" in the settings points to the GitHub App authorization; for the operator's token it does not apply -
 only the operator revokes it.
 
