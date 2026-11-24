@@ -36,10 +36,11 @@ A personal connection must never be used on behalf of another person (KONZEPT A1
 11. **"Connected as …" (goal 3).** Checked, nothing built: the operator path answers `{step:"done", login}` with the
     login GitHub returns for the token (`GET /user`), stored in the credential; settings and card show it
     ("Connected as {login}"); `tests/platform/runner/github/test_operator_github.py` covers it.
-12. **E2E.** The scenario of the package (A owns, B without GitHub writes, B connects, A writes again) runs in
-    `tests/platform/runner/github/test_acting_user.py` against the GitHub double with the real pipeline, store,
-    hub double and credential records, tokens told apart per request. A browser E2E with two signed-in people and a
-    running VM needs a second user in the E2E fixtures that no scenario provides yet; it is left to KOR-46.
+12. **E2E.** E2E-51 (`e2e/platform/specs/e2e-51-shared-task-github.spec.ts`, T1, green): Ada owns and is connected,
+    Wendy (no GitHub) writes and asks for a comment → held, card only for Wendy, no GitHub request at all; Wendy
+    connects in the card → comment by Wendy's login; Ada writes again → Ada's login; `for_user` and `connection_of`
+    checked. The runner-level test `tests/platform/runner/github/test_acting_user.py` covers the same with tokens
+    told apart per request. T2 (two devices) is not available (INF-05).
 13. **Prompts stored before the upgrade.** Migration 0016 fills `author_id` from the stored event's header: the inbox
     verified the event with the author's key and the signature covers the header. Operations received before the
     upgrade have no acting user and use no connection; a turn that started before the upgrade gets its acting user
