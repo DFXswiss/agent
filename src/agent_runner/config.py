@@ -66,6 +66,7 @@ NAMES = (
     "WORKVM_MAX_SIZE",
     "WORKVM_IDLE_SECONDS",
     "WORKVM_POOL_SIZE",
+    "WORKVM_DISK_QUOTA_GIB",
     "WORKVM_QUEUE_SECONDS",
     "WORKVM_MAX_PER_TASK",
     "WORKVM_MAX_PER_ORG",
@@ -88,6 +89,7 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "WORKVM_SLOTS": (0, 0, 100),
     "WORKVM_IDLE_SECONDS": (1800, 60, 604_800),
     "WORKVM_POOL_SIZE": (1, 0, 16),
+    "WORKVM_DISK_QUOTA_GIB": (0, 0, 1_000_000),
     "WORKVM_QUEUE_SECONDS": (900, 0, 86_400),
     "WORKVM_MAX_PER_TASK": (4, 1, 100),
     "WORKVM_MAX_PER_ORG": (16, 1, 100),
@@ -168,6 +170,7 @@ class Config:
     workvm_max_size: str = "large"
     workvm_idle_seconds: int = 1800
     workvm_pool_size: int = 1
+    workvm_disk_quota_gib: int = 0
     workvm_queue_seconds: int = 900
     workvm_max_per_task: int = 4
     workvm_max_per_org: int = 16
@@ -259,6 +262,7 @@ class _WorkVmSettings(TypedDict):
     workvm_max_size: str
     workvm_idle_seconds: int
     workvm_pool_size: int
+    workvm_disk_quota_gib: int
     workvm_queue_seconds: int
     workvm_max_per_task: int
     workvm_max_per_org: int
@@ -286,6 +290,7 @@ def _workvm(
         "workvm_max_size": max_size,
         "workvm_idle_seconds": integers["WORKVM_IDLE_SECONDS"],
         "workvm_pool_size": integers["WORKVM_POOL_SIZE"],
+        "workvm_disk_quota_gib": integers["WORKVM_DISK_QUOTA_GIB"],
         "workvm_queue_seconds": integers["WORKVM_QUEUE_SECONDS"],
         "workvm_max_per_task": integers["WORKVM_MAX_PER_TASK"],
         "workvm_max_per_org": integers["WORKVM_MAX_PER_ORG"],

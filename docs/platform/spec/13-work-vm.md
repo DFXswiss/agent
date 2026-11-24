@@ -232,7 +232,12 @@ machine-id at first boot (cloud-init new instance-id).
   (same limits, queue and boundary checks as `workvm.request`; recorded by the `workvm.state` `created` event with
   `implicit: true`). The tool waits within its `wait_seconds`; a queued request answers `unavailable` with "capacity
   queue" text and keeps the place.
-- Disk: allocated disk of all work VMs ≤ the volume quota; a request that does not fit waits like RAM.
+- Disk (built): with `WORKVM_DISK_QUOTA_GIB` set (to the `--quota-gib` of the installation; 0 = not checked), the
+  allocated disk of all live work VMs plus 50 GiB per pool entry plus the request must stay within it; a request
+  that does not fit waits like RAM, and a ready pool entry gives its disk back first; the pool starts an entry only
+  when two standard disks still fit.
+- The organization RAM share is not built (decisions #31): one FIFO queue per device; the per-task, -organization
+  and -owner VM counts bound one organization.
 - Warm pool (stage b, built): `WORKVM_POOL_SIZE` (default 1, 0…16) started, unassigned **standard** clones of the
   current image in `runner.workvm_pool` (`starting` → `ready`). A standard request with an empty queue takes the oldest
   `ready` entry: one transaction deletes the entry and inserts the `runner.workvm` row with the same Lima name and

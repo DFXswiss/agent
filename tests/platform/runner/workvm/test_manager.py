@@ -1161,3 +1161,31 @@ def test_a_request_the_pool_cannot_make_fit_leaves_the_pool(world: World) -> Non
         world.run(body)
     assert caught.value.code == "timeout"
     assert [entry["state"] for entry in pool_rows(world)] == ["ready"]
+
+
+def test_the_disk_quota_holds_requests_and_the_pool(world: World) -> None:
+    world.settings = manager_module.Settings(
+        **{**world.settings.__dict__, "slots": 3, "pool_size": 1, "disk_quota_gib": 120, "queue_seconds": 2}
+    )
+
+    async def body(vms: WorkVms) -> tuple[int, dict[str, Any]]:
+        pool = await vms.pool_pass()  # two standard disks (100 GiB) fit the quota: one entry starts
+        first = await request(vms, {"size": "large"})  # 100 GiB: the pool entry gives its disk back
+        return pool, first
+
+    pool, first = world.run(body)
+    assert (pool, first["size"]) == (1, "large")
+    assert pool_rows(world) == []
+
+    async def more(vms: WorkVms) -> int:
+        return await vms.pool_pass()  # 100 + 2 x 50 > 120: no entry
+
+    assert world.run(more) == 0
+    with pytest.raises(OperationFailed) as caught:
+        world.run(lambda vms: request(vms, {}, session(CHILD, task_id=TASK_B)))  # 100 + 50 > 120: waits, times out
+    assert caught.value.code == "timeout"
+
+
+def test_without_a_disk_quota_the_disk_is_not_checked(world: World) -> None:
+    world.settings = manager_module.Settings(**{**world.settings.__dict__, "disk_quota_gib": 0})
+    assert world.run(request)["created"] is True

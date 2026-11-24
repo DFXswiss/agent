@@ -48,7 +48,8 @@ sudo AGENT_RUNNER=<path>/agent-runner images/workvm/host-rehearsal.sh \
    - `sudo pfctl -a com.apple -sA` lists `com.apple/000.agent.workvm` first;
    - `cat /var/run/agent.workvm.state` shows `ok utunN`;
    - `agent-runner workvm firewall check` shows `ok=yes internet=yes`.
-4. Enable: set `AGENT_RUNNER_WORKVM_SLOTS=<n>` in the runner's environment, then run `agent-runner service install`
+4. Enable: set `AGENT_RUNNER_WORKVM_SLOTS=<n>` and `AGENT_RUNNER_WORKVM_DISK_QUOTA_GIB=<q>` (the quota of step 2)
+   in the runner's environment, then run `agent-runner service install`
    and restart the runner.
 5. Build the work image as the runner account: `agent-runner workvm image build` (about 2 minutes). The warm pool
    fills within a minute (`runner.workvm pool_ready … start_ms=`).

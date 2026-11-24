@@ -92,6 +92,8 @@ class Settings:
     ssh_port_base: int
     test_mode: bool
     pool_size: int = 0
+    disk_quota_gib: int = 0
+    """Allocated disk of all work VMs and pool entries may not exceed it (0: not checked, spec 13 section 7)."""
 
 
 @dataclass
@@ -232,7 +234,7 @@ class WorkVms:
                 implicit=implicit,
             )
 
-        vm = await self._wait_for_capacity(SIZES[size][1], build, from_pool)
+        vm = await self._wait_for_capacity(SIZES[size][1], SIZES[size][2], build, from_pool)
         try:
             if vm.state == "starting":
                 vm = await self._boot(vm)
@@ -243,6 +245,7 @@ class WorkVms:
     async def _wait_for_capacity(
         self,
         memory_mib: int,
+        disk_gib: int,
         build: Callable[[int], WorkVm],
         from_pool: Callable[[], Awaitable[WorkVm | None]],
     ) -> WorkVm:
@@ -261,9 +264,10 @@ class WorkVms:
                     async with self.slot_lock:
                         slot = await self._free_slot()
                         free = await self.deps.free_memory_mib()
-                        if slot is not None and free >= memory_mib:
+                        disk = await self._disk_fits(disk_gib)
+                        if slot is not None and free >= memory_mib and disk:
                             return await self._insert(build(slot))
-                    if await self._drop_one_pooled(free_mib=free, need_mib=memory_mib):
+                    if await self._drop_one_pooled(free_mib=free, need_mib=memory_mib, disk_short=not disk):
                         continue
                 if self.deps.now() >= deadline:
                     raise OperationFailed(
@@ -446,6 +450,7 @@ class WorkVms:
                 len(await records.pool(self.deps.db)) >= settings.pool_size
                 or slot is None
                 or await self.deps.free_memory_mib() < 2 * memory_mib
+                or not await self._disk_fits(2 * SIZES[POOL_SIZE][2])
             ):
                 return 0
             lima_name = self.deps.lima_for(slot).name(_lima_suffix())
@@ -478,12 +483,19 @@ class WorkVms:
         except LimaError as error:
             self.deps.log(f"runner.workvm pool_delete_failed slot={entry.slot} code={error.code}")
 
-    async def _drop_one_pooled(self, *, free_mib: int, need_mib: int) -> bool:
-        """Give the slot and RAM of the oldest `ready` pool entry back (a `starting` one belongs to the running
-        refill) - only when the RAM of all ready entries would make the request fit; False otherwise or when there
-        is none."""
+    async def _disk_fits(self, disk_gib: int) -> bool:
+        """The disk of a new VM fits the volume quota (always when no quota is configured)."""
+        quota = self.deps.settings.disk_quota_gib
+        if quota == 0:
+            return True
+        return await records.disk_in_use(self.deps.db, SIZES[POOL_SIZE][2]) + disk_gib <= quota
+
+    async def _drop_one_pooled(self, *, free_mib: int, need_mib: int, disk_short: bool) -> bool:
+        """Give the slot, RAM and disk of the oldest `ready` pool entry back (a `starting` one belongs to the running
+        refill) - when the disk is short or the RAM of all ready entries would make the request fit; False otherwise
+        or when there is none."""
         ready = [entry for entry in await records.pool(self.deps.db) if entry.state == "ready"]
-        if not ready or free_mib + sum(entry.memory_mib for entry in ready) < need_mib:
+        if not ready or (not disk_short and free_mib + sum(entry.memory_mib for entry in ready) < need_mib):
             return False
         await self._drop(ready[0])
         return True

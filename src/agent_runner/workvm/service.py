@@ -184,6 +184,7 @@ def workvms_for(context: Any) -> WorkVms | None:
         ssh_port_base=config.workvm_ssh_port_base,
         test_mode=config.test_mode,
         pool_size=config.workvm_pool_size,
+        disk_quota_gib=config.workvm_disk_quota_gib,
     )
 
     async def emit(identity: Identity, kind: str, body: Mapping[str, Any]) -> None:

@@ -240,3 +240,9 @@ MON-3. **Runner measures only from outside** (`agent_runner.metrics.workvm`): th
     with `session_ended`. Not changed: the UDP probe to the gateway cannot tell "blocked" from "no DNS service"
     (both end without an answer); the test resolver
     literal in the egress tests is the work VMs' resolver.
+31. **Disk admission built, organization RAM share not (2026-11-24).** `WORKVM_DISK_QUOTA_GIB` (0 = off; set it to
+    the installation's `--quota-gib`) admits a request only when the allocated disk of the live work VMs, the pool
+    entries (standard disks) and the request fit; it waits like RAM, a ready pool entry gives its disk back first,
+    and the pool keeps room for one more standard disk. The organization RAM share needs a queue per organization
+    (one FIFO queue cannot let a later request of another organization pass a blocked head without starving it);
+    the per-organization VM count (`WORKVM_MAX_PER_ORG`) bounds an organization meanwhile.

@@ -173,6 +173,17 @@ async def used_slots(db: Any) -> set[int]:
     return {int(row["slot"]) for row in rows}
 
 
+async def disk_in_use(db: Any, pool_disk_gib: int) -> int:
+    """GiB of disk allocated to live work VMs plus `pool_disk_gib` per pool entry (pool entries are standard VMs)."""
+    rows = await _rows(
+        db,
+        "SELECT (SELECT coalesce(sum(disk_gib), 0) FROM runner.workvm WHERE state <> 'deleted')"
+        " + (SELECT count(*) FROM runner.workvm_pool) * %s AS gib",
+        (pool_disk_gib,),
+    )
+    return int(rows[0]["gib"])
+
+
 async def memory_in_use(db: Any) -> int:
     """MiB held by work VMs (states of `MEMORY_STATES`) and by pool entries."""
     rows = await _rows(

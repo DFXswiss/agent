@@ -82,7 +82,7 @@ def test_default_home_expands_user(base: dict[str, str]) -> None:
 
 
 def test_every_name_is_listed_once() -> None:
-    assert len(NAMES) == len(set(NAMES)) == 39
+    assert len(NAMES) == len(set(NAMES)) == 40
     assert "VM_PREFIX" in NAMES
     assert "TEST_MODE" in NAMES
     assert frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"}) == HUB_NAMES
@@ -638,6 +638,7 @@ def test_workvm_defaults_offer_no_work_vm(base: dict[str, str]) -> None:
     cfg = load(base)
     assert (cfg.workvm_slots, cfg.workvm_slots_self, cfg.workvm_max_size) == (0, False, "large")
     assert (cfg.workvm_idle_seconds, cfg.workvm_queue_seconds, cfg.workvm_pool_size) == (1800, 900, 1)
+    assert cfg.workvm_disk_quota_gib == 0
     assert (cfg.workvm_max_per_task, cfg.workvm_max_per_org, cfg.workvm_max_per_owner) == (4, 16, 8)
     assert (cfg.workvm_ssh_port_base, cfg.workvm_template) == (47200, None)
     assert not any(name.startswith("AGENT_RUNNER_WORKVM_") for name in environment(cfg))
@@ -654,12 +655,14 @@ def test_workvm_settings_round_trip(base: dict[str, str], tmp_path: Path) -> Non
             "AGENT_RUNNER_WORKVM_MAX_SIZE": "xlarge",
             "AGENT_RUNNER_WORKVM_IDLE_SECONDS": "600",
             "AGENT_RUNNER_WORKVM_POOL_SIZE": "0",
+            "AGENT_RUNNER_WORKVM_DISK_QUOTA_GIB": "500",
             "AGENT_RUNNER_WORKVM_TEMPLATE": str(template),
         }
     )
     cfg = load(base)
     assert (cfg.workvm_slots, cfg.workvm_slots_self, cfg.workvm_max_size) == (3, True, "xlarge")
     assert (cfg.workvm_idle_seconds, cfg.workvm_template, cfg.workvm_pool_size) == (600, template, 0)
+    assert cfg.workvm_disk_quota_gib == 500
     env = environment(cfg)
     assert env["AGENT_RUNNER_WORKVM_SLOTS_SELF"] == "1"
     assert env["AGENT_RUNNER_WORKVM_SLOTS"] == "3"

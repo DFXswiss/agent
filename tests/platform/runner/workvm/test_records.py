@@ -182,3 +182,16 @@ def test_two_concurrent_assignments_never_take_the_same_entry(dsn: str) -> None:
     taken = [name for name in names if name is not None]
     assert sorted(taken) == ["wp-t-wvm-000000a1", "wp-t-wvm-000000a2"]
     assert names.count(None) == 1
+
+
+def test_disk_in_use_counts_live_vms_and_pool_entries(dsn: str) -> None:
+    async def body(db: Any) -> tuple[int, int]:
+        empty = await records.disk_in_use(db, 50)
+        await records.insert(db, ROW)
+        await records.insert(
+            db, dataclasses.replace(ROW, id="wvm-0000000b", lima_name="x-b", slot=1, task_id=TASK_B, state="deleted")
+        )
+        await records.pool_add(db, records.Pooled("wp-t-wvm-000000c1", 2, "img", 8192, "ready", START))
+        return empty, await records.disk_in_use(db, 50)
+
+    assert run(dsn, body) == (0, 50 + 50)

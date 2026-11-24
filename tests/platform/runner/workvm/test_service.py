@@ -270,6 +270,7 @@ def config(home: Path, **changes: Any) -> SimpleNamespace:
         "workvm_max_size": "large",
         "workvm_idle_seconds": 14400,
         "workvm_pool_size": 1,
+        "workvm_disk_quota_gib": 0,
         "workvm_queue_seconds": 900,
         "workvm_max_per_task": 4,
         "workvm_max_per_org": 16,
