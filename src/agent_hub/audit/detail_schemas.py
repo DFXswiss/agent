@@ -1199,6 +1199,10 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
     },
+    "prompt.withdraw": {
+        "properties": {"state": [{"type": "string", "enum": ["withdrawn", "withdrawing"]}]},
+        "required": ["state"],
+    },
     "read.agent.handover": {"properties": {}, "required": []},
     "read.agent.me": {"properties": {}, "required": []},
     "read.community": {"properties": {}, "required": []},
@@ -1305,6 +1309,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.task.log.chunk": {"properties": {}, "required": []},
     "read.task.log": {"properties": {}, "required": []},
     "read.task.operations": {"properties": {}, "required": []},
+    "read.task.queue": {"properties": {}, "required": []},
     "read.user.identity": {"properties": {}, "required": []},
     "read.user.lookup": {"properties": {}, "required": []},
     "read.whiteboard.history": {"properties": {}, "required": []},
@@ -1507,6 +1512,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"reason": [{"type": "string", "enum": ["unregistered", "delivery_failed"]}]},
         "required": ["reason"],
     },
+    "session.prompt_withdrawn": {"properties": {}, "required": []},
     "session.requested": {
         "properties": {
             "reason": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, {"type": "null"}],

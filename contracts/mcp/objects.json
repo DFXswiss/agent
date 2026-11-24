@@ -1333,13 +1333,16 @@
       "pattern": "^agent\\.dfx\\.swiss session notice: (.|\\n)+$"
     },
     "hook_context": {
-      "description": "additionalContext of a decorated hook answer: a ping notice, a session notice, or a session notice followed by a ping notice",
+      "description": "additionalContext of a decorated hook answer: a ping notice, a session notice, or a session notice followed by a ping notice; for an accepted UserPromptSubmit also the sender line, optionally followed by those",
       "anyOf": [
         {
           "$ref": "#/$defs/notice"
         },
         {
           "$ref": "#/$defs/session_notice"
+        },
+        {
+          "$ref": "#/$defs/speaker_context"
         }
       ]
     },
@@ -2018,6 +2021,13 @@
         "job_id"
       ],
       "additionalProperties": false
+    },
+    "speaker_context": {
+      "type": "string",
+      "description": "additionalContext of an accepted UserPromptSubmit that carries the sender line (ADR-083 section 1, addon attribution, the first addon); a session notice and/or a ping notice may follow after a blank line",
+      "minLength": 1,
+      "maxLength": 135168,
+      "pattern": "^agent\\.dfx\\.swiss instruction from: [^\\n\\r]+(\\n\\n(.|\\n)+)?$"
     }
   }
 }

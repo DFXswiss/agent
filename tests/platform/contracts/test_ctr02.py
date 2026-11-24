@@ -76,7 +76,7 @@ SPEC_GUEST = {
         "upstream_base_url auth_header auth_value extra_headers provider_allowlist access models_allowed budget",
         "",
     ),
-    ("POST", "/v1/sessions/{id}/prompts"): ("prompt_id text", "state"),
+    ("POST", "/v1/sessions/{id}/prompts"): ("prompt_id text speaker", "state"),  # speaker: ADR-083
     ("POST", "/v1/sessions/{id}/control"): ("action", ""),
     ("POST", "/v1/sessions/{id}/files/import"): ("dir replace", "files bytes"),
     ("POST", "/v1/sessions/{id}/files/export"): ("dir paths", "files skipped"),
@@ -99,7 +99,7 @@ SPEC_GUEST_TAR = {("POST", "/v1/sessions/{id}/files/export"), ("POST", "/v1/sess
 SPEC_GUEST_NESTED = {
     ("guest/sessions-create.request.json", "/properties/harness"): "context_markdown",
     ("guest/sessions-create.request.json", "/properties/model"): "access model_id env",
-    ("guest/sessions-create.request.json", "/properties/initial_prompt"): "prompt_id text",
+    ("guest/sessions-create.request.json", "/properties/initial_prompt"): "prompt_id text speaker",
     ("guest/sessions-create.request.json", "/properties/limits"): "memory_max cpu_quota tasks_max runtime_max_sec",
     ("guest/sessions-create.request.json", "/properties/restore"): "claude_session_id object_id note",
     ("guest/objects.json", "/$defs/vm_metrics"): "cpu_usage_usec mem_used_bytes mem_total_bytes disk_used_bytes"

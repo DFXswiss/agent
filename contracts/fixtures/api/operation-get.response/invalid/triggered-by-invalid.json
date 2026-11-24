@@ -1,0 +1,33 @@
+{
+  "operation": {
+    "operation_id": "0193001e-0000-7000-8000-00000000001e",
+    "org_id": "01930001-0000-7000-8000-000000000001",
+    "wg_id": "01930002-0000-7000-8000-000000000002",
+    "task_id": "01930003-0000-7000-8000-000000000003",
+    "session_id": "01930004-0000-7000-8000-000000000004",
+    "device_id": "01930014-0000-7000-8000-000000000014",
+    "actor_id": "0193000a-0000-7000-8000-00000000000a",
+    "type": "github.comment",
+    "state": "succeeded",
+    "error_code": null,
+    "retryable": false,
+    "duplicate_of": null,
+    "attempt": 1,
+    "params_event_id": "0193002a-0000-7000-8000-00000000002a",
+    "result_event_id": "0193002b-0000-7000-8000-00000000002b",
+    "created_at": "2026-11-21T12:00:00.000Z",
+    "decided_at": "2026-11-21T12:00:00.000Z",
+    "started_at": "2026-11-21T12:00:00.000Z",
+    "finished_at": "2026-11-21T12:00:05.250Z",
+    "triggered_by": "wendy"
+  },
+  "transitions": [
+    {
+      "seq": 1,
+      "state": "accepted",
+      "error_code": null,
+      "at": "2026-11-21T12:00:00.000Z",
+      "by_id": null
+    }
+  ]
+}

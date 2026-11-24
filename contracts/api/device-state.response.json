@@ -634,6 +634,33 @@
           },
           "minItems": 0,
           "maxItems": 1000
+        },
+        "prompt_queue": {
+          "type": "object",
+          "description": "ADR-083 section 3: via_agent - pending prompts of this device's sessions the hub received from the author's agent; withdrawn - pending prompts of this device's sessions whose author asked to withdraw them. Its presence tells the runner that the hub takes triggered_by and session.prompt_withdrawn.",
+          "properties": {
+            "via_agent": {
+              "type": "array",
+              "items": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "minItems": 0,
+              "maxItems": 10000
+            },
+            "withdrawn": {
+              "type": "array",
+              "items": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "minItems": 0,
+              "maxItems": 10000
+            }
+          },
+          "required": [
+            "via_agent",
+            "withdrawn"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

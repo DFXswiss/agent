@@ -461,6 +461,17 @@
             }
           ],
           "description": "the GitHub identity of the session (subagents, ADR-078 section 3)"
+        },
+        "triggered_by": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the person whose instruction created the session (ADR-083 section 2): the author of the prompt a main session was created for, the triggering person of the subagent.request of a child session; null when unknown"
         }
       },
       "required": [
@@ -875,7 +886,8 @@
             "org.admitted",
             "operator.request",
             "device.needed",
-            "model.switched"
+            "model.switched",
+            "prompt.waiting_for_device"
           ]
         },
         "org_id": {
@@ -1831,6 +1843,96 @@
       "required": [
         "own_to_dfx",
         "operator_to_platform"
+      ],
+      "additionalProperties": false
+    },
+    "charge_person": {
+      "type": "object",
+      "description": "consumption of one person (ADR-083 section 2): charges whose consumption item names the person (triggered_by); user_id null for unattributed consumption. Amounts in micro-USD.",
+      "properties": {
+        "user_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tokens_micro_usd": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "runtime_micro_usd": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "tokens": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "runtime_ms": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "user_id",
+        "tokens_micro_usd",
+        "runtime_micro_usd",
+        "tokens",
+        "runtime_ms"
+      ],
+      "additionalProperties": false
+    },
+    "queue_prompt": {
+      "type": "object",
+      "description": "a prompt of the task not yet delivered (ADR-083 section 3), in event order",
+      "properties": {
+        "event_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "author_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "via_agent": {
+          "type": "boolean",
+          "description": "the hub received it from the author's agent"
+        },
+        "scope_seq": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "received_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "device_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "waiting",
+            "waiting_for_device",
+            "withdrawing"
+          ]
+        }
+      },
+      "required": [
+        "event_id",
+        "author_id",
+        "via_agent",
+        "scope_seq",
+        "received_at",
+        "session_id",
+        "device_id",
+        "state"
       ],
       "additionalProperties": false
     }

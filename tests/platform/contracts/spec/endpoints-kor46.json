@@ -1,0 +1,28 @@
+{
+  "description": "Endpoints added by KOR-46 (ADR-083): the queue of a task's prompts and the withdrawal of a waiting prompt by its author; 03-api.md section 4.6.",
+  "rights": [
+    "task:read",
+    "task:write"
+  ],
+  "auth": [
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{task}/prompts/{event}/withdraw",
+      "rights": [
+        "task:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task}/queue",
+      "rights": [
+        "task:read"
+      ],
+      "section": "4.6"
+    }
+  ]
+}

@@ -15,6 +15,7 @@
     "read.session.get_subagent_result",
     "ping.delivered",
     "session.prompt_refused",
+    "session.prompt_withdrawn",
     "model.provider_outside_allowlist",
     "runner.inbound_rejected",
     "runner.log_rollback",

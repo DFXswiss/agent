@@ -394,6 +394,17 @@
         "at": {
           "$ref": "../common.json#/$defs/time",
           "description": "time of the request (selects the price list version); without it the hub's receive time"
+        },
+        "triggered_by": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the person whose instruction this follows from (ADR-083 section 2): the acting user of the turn, or of the subagent.request of a child session; null when the turn had several authors or none"
         }
       },
       "required": [
@@ -686,6 +697,17 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 3600000
+        },
+        "triggered_by": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the person whose instruction this follows from (ADR-083 section 2): the acting user of the turn, or of the subagent.request of a child session; null when the turn had several authors or none"
         }
       },
       "required": [
@@ -1491,6 +1513,52 @@
                 "reason"
               ],
               "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "result",
+            "target_kind",
+            "target_id",
+            "detail"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "session.prompt_withdrawn"
+            },
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "denied",
+                "rejected",
+                "duplicate",
+                "failed"
+              ]
+            },
+            "task_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "session_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "target_kind": {
+              "type": "string",
+              "pattern": "^[a-z_]{1,32}$"
+            },
+            "target_id": {
+              "type": "string",
+              "description": "an ID (UUID, vm-..., key or code), never content",
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+            },
+            "detail": {
+              "description": "detail of audit rows with action session.prompt_withdrawn: the device withdrew a prompt its author took back before it reached the guest (ADR-083 section 3); the target is the prompt event. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+              "$ref": "../common.json#/$defs/empty"
             }
           },
           "required": [

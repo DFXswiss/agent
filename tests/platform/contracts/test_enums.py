@@ -94,8 +94,8 @@ SPEC_OUTBOX_KINDS = (
     " operator_quota dfx_key_state dfx_key_issued dfx_key_usage session_wait"  # ADR-081 (contracts/changes/KOR-50.md)
 )
 SPEC_OUTBOX_AUDIT = (
-    "hook.denied read.session.<tool> ping.delivered session.prompt_refused model.provider_outside_allowlist"
-    " runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert session.context_restored"
+    "hook.denied read.session.<tool> ping.delivered session.prompt_refused session.prompt_withdrawn"
+    " model.provider_outside_allowlist runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert session.context_restored"
     " session.context_fallback"
     " runner.operator_github_users"  # ADR-078 section 7 (contracts/changes/KOR-47.md)
     " session.model_switched"  # ADR-081 section 5 (contracts/changes/KOR-50.md)
@@ -113,6 +113,8 @@ SPEC_AUDIT_FIXED = (
     " session.prompt_refused model.provider_outside_allowlist runner.inbound_rejected runner.log_rollback"
     " runner.log_fork runner.alert session.context_restored session.context_fallback session.context_saved"
     " session.context_refused session.pr_linked"
+    # ADR-083 (KOR-46): withdrawing a waiting prompt
+    " prompt.withdraw session.prompt_withdrawn"
 )
 SPEC_AUDIT_PATTERNS = {
     # 04-crypto.md section 4.7

@@ -146,6 +146,7 @@ def test_hints_carry_no_content(contracts: Contracts, hint: str) -> None:
         "task_id",
         "level",
         "entry_id",
+        "via_agent",  # a flag of the prompt hint (ADR-083), no content
     }
     definition = defs(contracts, "ws/device/objects.json")[f"hint_{hint.replace('.', '_')}"]
     for variant in definition.get("oneOf", [definition]):

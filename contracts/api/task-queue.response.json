@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-queue.response.json",
+  "title": "GET /v1/tasks/{task}/queue response",
+  "description": "Body of a successful response to GET /v1/tasks/{task}/queue (03-api.md section 4.6, ADR-083 section 3): the prompts not yet delivered, in event order.",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "prompts": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/queue_prompt"
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    },
+    "withdrawals": {
+      "type": "array",
+      "description": "the withdrawals of the task's prompts with their outcome, newest first (at most 100): withdrawn, withdrawing (the device has not answered yet) or too_late (delivered meanwhile)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "withdrawn",
+              "withdrawing",
+              "too_late"
+            ]
+          },
+          "requested_at": {
+            "$ref": "../common.json#/$defs/time"
+          }
+        },
+        "required": [
+          "event_id",
+          "state",
+          "requested_at"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 100
+    }
+  },
+  "required": [
+    "task_id",
+    "prompts",
+    "withdrawals"
+  ],
+  "additionalProperties": false
+}

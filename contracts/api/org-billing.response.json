@@ -177,6 +177,15 @@
       },
       "minItems": 0,
       "maxItems": 10000
+    },
+    "people": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/charge_person"
+      },
+      "minItems": 0,
+      "maxItems": 10000,
+      "description": "the consumption per person (ADR-083 section 2), largest amount first"
     }
   },
   "required": [

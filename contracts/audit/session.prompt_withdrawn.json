@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/session.prompt_withdrawn.json",
+  "title": "audit detail session.prompt_withdrawn",
+  "description": "detail of audit rows with action session.prompt_withdrawn: the device withdrew a prompt its author took back before it reached the guest (ADR-083 section 3); the target is the prompt event. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "$ref": "../common.json#/$defs/empty"
+}

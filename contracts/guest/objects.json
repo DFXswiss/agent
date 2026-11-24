@@ -288,6 +288,13 @@
         "reason"
       ],
       "additionalProperties": false
+    },
+    "speaker_line": {
+      "type": "string",
+      "description": "the sender line of a prompt (ADR-083 section 1): the verified person who gave the instruction, composed by the runner; one line",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^agent\\.dfx\\.swiss instruction from: [^\\n\\r]+$"
     }
   }
 }

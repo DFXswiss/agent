@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/prompt-withdraw.request.json",
+  "title": "POST /v1/tasks/{task}/prompts/{event}/withdraw request",
+  "description": "Body of POST /v1/tasks/{task}/prompts/{event}/withdraw (03-api.md section 4.6, ADR-083 section 3).",
+  "$ref": "../common.json#/$defs/empty"
+}

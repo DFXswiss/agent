@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-queue.request.json",
+  "title": "GET /v1/tasks/{task}/queue request",
+  "description": "Query of GET /v1/tasks/{task}/queue (03-api.md section 4.6): no parameters.",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

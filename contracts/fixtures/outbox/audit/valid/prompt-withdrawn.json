@@ -1,0 +1,7 @@
+{
+  "action": "session.prompt_withdrawn",
+  "result": "ok",
+  "target_kind": "event",
+  "target_id": "01930032-0000-7000-8000-000000000032",
+  "detail": {}
+}

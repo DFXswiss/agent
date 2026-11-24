@@ -791,6 +791,45 @@
     },
     {
       "method": "POST",
+      "path": "/v1/tasks/{task}/prompts/{event}/withdraw",
+      "name": "prompt-withdraw",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:write"
+      ],
+      "path_params": {
+        "task": "uuid",
+        "event": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/prompt-withdraw.request.json",
+      "response": "api/prompt-withdraw.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-46"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task}/queue",
+      "name": "task-queue",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:read"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/task-queue.request.json",
+      "response": "api/task-queue.response.json",
+      "read_resource": "task.queue",
+      "streaming": false,
+      "owner": "KOR-46"
+    },
+    {
+      "method": "POST",
       "path": "/v1/tasks/{task}/close",
       "name": "task-close",
       "section": "4.6",

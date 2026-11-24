@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/prompt-withdraw.response.json",
+  "title": "POST /v1/tasks/{task}/prompts/{event}/withdraw response",
+  "description": "Body of a successful response to POST /v1/tasks/{task}/prompts/{event}/withdraw (03-api.md section 4.6, ADR-083 section 3): withdrawn at once, or withdrawing until the session's device answers.",
+  "type": "object",
+  "properties": {
+    "state": {
+      "type": "string",
+      "enum": [
+        "withdrawn",
+        "withdrawing"
+      ]
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "additionalProperties": false
+}

@@ -91,6 +91,10 @@
         },
         "scope_seq": {
           "$ref": "../../common.json#/$defs/positive"
+        },
+        "via_agent": {
+          "type": "boolean",
+          "description": "the hub received the prompt from the author's agent (ADR-083 section 1); absent means false"
         }
       },
       "required": [

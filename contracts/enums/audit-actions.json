@@ -178,6 +178,10 @@
       "group": "session"
     },
     {
+      "action": "prompt.withdraw",
+      "group": "task"
+    },
+    {
       "action": "session.working",
       "group": "session"
     },
@@ -347,6 +351,10 @@
     },
     {
       "action": "session.prompt_refused",
+      "group": "runner"
+    },
+    {
+      "action": "session.prompt_withdrawn",
       "group": "runner"
     },
     {
@@ -695,6 +703,10 @@
     },
     {
       "action": "read.task.contexts",
+      "group": "read"
+    },
+    {
+      "action": "read.task.queue",
       "group": "read"
     },
     {

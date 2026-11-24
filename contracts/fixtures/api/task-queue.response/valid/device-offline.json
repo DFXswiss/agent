@@ -1,0 +1,16 @@
+{
+  "task_id": "0193001e-0000-7000-8000-00000000001e",
+  "prompts": [
+    {
+      "event_id": "01930032-0000-7000-8000-000000000032",
+      "author_id": "0193000b-0000-7000-8000-00000000000b",
+      "via_agent": true,
+      "scope_seq": 12,
+      "received_at": "2026-11-24T10:00:00.000Z",
+      "session_id": "01930028-0000-7000-8000-000000000028",
+      "device_id": null,
+      "state": "waiting_for_device"
+    }
+  ],
+  "withdrawals": []
+}

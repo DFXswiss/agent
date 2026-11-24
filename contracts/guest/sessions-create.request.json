@@ -148,6 +148,9 @@
         },
         "text": {
           "$ref": "objects.json#/$defs/text_256k"
+        },
+        "speaker": {
+          "$ref": "objects.json#/$defs/speaker_line"
         }
       },
       "required": [
