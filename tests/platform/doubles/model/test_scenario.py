@@ -44,6 +44,8 @@ OR: dict[str, Any] = {"openrouter": {}}
         ({"name": "x", "steps": [{**TEXT, "expect": {"stream": "yes"}}]}, "must be a boolean"),
         ({"name": "x", "steps": [{**TEXT, "expect": {"has_tools": 1}}]}, "must be a boolean"),
         ({"name": "x", "steps": [{**TEXT, "expect": {"min_messages": -1}}]}, "at least 0"),
+        ({"name": "x", "steps": [{**TEXT, "expect": {"max_messages": 0}}]}, "at least 1"),
+        ({"name": "x", "steps": [{**TEXT, "expect": {"text_absent": "Paris"}}]}, "list of strings"),
         ({"name": "x", "steps": [{**TEXT, "expect": {"headers": {"a": 1}}}]}, "map names to strings"),
         ({"name": "x", "steps": [{**TEXT, "expect": {"headers_absent": "a"}}]}, "list of strings"),
         ({"name": "x", "steps": [{**TEXT, "capture": []}]}, "capture must be an object"),
@@ -112,6 +114,8 @@ def test_parse_full_scenario() -> None:
                         "has_tools": True,
                         "has_tool_result": False,
                         "min_messages": 1,
+                        "max_messages": 2,
+                        "text_absent": ["Paris"],
                     },
                     "reply": {
                         **REPLY,
@@ -131,6 +135,7 @@ def test_parse_full_scenario() -> None:
     assert (step.repeat, step.delay_ms) == (3, 5)
     assert step.expect.headers == (("anthropic-version", "2023"),)
     assert step.expect.headers_absent == ("x-api-key",)
+    assert (step.expect.max_messages, step.expect.text_absent) == (2, ("Paris",))
     assert step.reply is not None
     assert (step.reply.cost, step.reply.provider, step.reply.chunk_size, step.reply.model) == (1.0, "Q", 3, "mm")
     error = scenario.steps[1].error
@@ -197,6 +202,8 @@ def test_matcher_and_reading() -> None:
         model="m",
         stream=True,
         min_messages=3,
+        max_messages=3,
+        text_absent=("Paris", "sys prompts"),
         has_tools=True,
         has_tool_result=True,
         headers=(("anthropic-version", "2023"),),
@@ -213,12 +220,16 @@ def test_matcher_and_reading() -> None:
         model="o",
         stream=False,
         min_messages=9,
+        max_messages=2,
+        text_absent=("plain", "sys prompt", "go"),
         has_tools=False,
         has_tool_result=False,
         headers=(("anthropic-beta", "oauth"), ("x-api-key", "other")),
         headers_absent=("x-api-key",),
     ).mismatches(body, headers)
-    assert len(misses) == 14
+    assert len(misses) == 16
+    assert "more than 2 messages" in misses
+    assert "request holds 'plain', 'sys prompt', 'go'" in misses
     assert "header x-api-key lacks the expected value" in misses
     assert "header anthropic-beta lacks 'oauth'" in misses
     assert all("secret" not in m and "other" not in m for m in misses)

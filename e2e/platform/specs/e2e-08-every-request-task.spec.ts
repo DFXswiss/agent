@@ -1,7 +1,10 @@
 // E2E-08 (07-testing.md section 2.1, KONZEPT section 2): every request is a task. Two knowledge questions from the
 // home screen become two tasks with distinct IDs, derived titles and the workgroup set; a follow-up prompt of the
 // first task stays in that task and reaches its session; there is no project object in the API, the schema or the UI.
-// Runs on T1 and T2.
+// Fresh context per task (KONZEPT idea 43, KOR-60): both tasks belong to the same user and run as two sessions of the
+// same workgroup VM; the model double refuses the first turn of each task unless its conversation is exactly one
+// message that holds nothing of the other task (`max_messages`, `text_absent`), and the spec checks the same on the
+// double's journal. Runs on T1 and T2.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures/test.ts';
 import {
@@ -20,6 +23,11 @@ import { PageUser } from '../../../web/e2e/helpers/user.ts';
 const scenario: unknown = JSON.parse(
   readFileSync(new URL('../scenarios/e2e-08-every-request-task.json', import.meta.url), 'utf8'),
 );
+
+interface JournalEntry {
+  readonly path: string;
+  readonly body: { readonly tools?: readonly unknown[]; readonly messages?: readonly unknown[] } | null;
+}
 
 test.describe.configure({ mode: 'serial' });
 
@@ -67,6 +75,26 @@ test('@E2E-08 @R-0.2 @R-2.6 @R-2.7 @R-2.8 @R-2.9 @R-2.10 @R-P.5 @needs-vm two qu
   expect(await texts(second, 'prompt', 'text')).toEqual(['Who wrote Hamlet?\n\nOne line is enough.']);
   expect(await mainSessions(orchestrator, first)).toHaveLength(1);
   expect(await outputs(second)).toEqual(['William Shakespeare.']);
+
+  // Fresh context: same user, same workgroup VM, two sessions; the second task's first model request is a
+  // conversation of one message without anything of the first task (the double refused anything else, see above).
+  const vms = await orchestrator.hubQuery<{ vm_id: string | null }>(
+    `SELECT s.vm_id FROM hub.session s JOIN hub.task t ON t.id = s.task_id
+      WHERE s.task_id IN ('${uuid(first)}', '${uuid(second)}') AND s.depth = 0 ORDER BY t.created_at`,
+  );
+  expect(vms).toHaveLength(2);
+  expect(vms[0]!.vm_id).not.toBeNull();
+  expect(vms[1]!.vm_id).toBe(vms[0]!.vm_id);
+  const journal = (await orchestrator.doubleRequest('model', 'GET', '/_double/journal')).body as JournalEntry[];
+  const conversations = journal
+    .filter((entry) => entry.path.startsWith('/v1/messages') && !entry.path.includes('count'))
+    .map((entry) => entry.body)
+    .filter((body) => (body?.tools ?? []).length > 0)
+    .map((body) => body?.messages ?? []);
+  const opening = conversations.filter((messages) => JSON.stringify(messages).includes('Who wrote Hamlet?'));
+  expect(opening.length).toBeGreaterThan(0);
+  expect(opening[0]).toHaveLength(1);
+  expect(JSON.stringify(opening[0])).not.toMatch(/capital of France|Paris\./);
 
   // Titles derived from the first line; both tasks in the org's default workgroup, nothing else created.
   expect(await texts(first, 'task.meta', 'title')).toEqual(['What is the capital of France?']);

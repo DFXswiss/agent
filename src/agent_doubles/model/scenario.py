@@ -28,7 +28,10 @@ object::
 
 Steps are consumed strictly in order, one per request; a step with ``repeat: n`` answers the next n requests. A
 request that does not satisfy the next step's ``expect`` is a failure: it is answered with an
-``invalid_request_error`` naming the mismatch, so Claude Code stops instead of drifting. ``side`` steps are never
+``invalid_request_error`` naming the mismatch, so Claude Code stops instead of drifting. ``max_messages`` bounds
+the length of ``messages`` (a fresh conversation has exactly one); ``text_absent`` lists texts that must appear
+nowhere in the request, neither in the system prompt nor in any message (text or tool result) - together they show
+that a request carries no history of another conversation. ``side`` steps are never
 consumed: a request that matches one of them (checked before the ordered steps) is answered by it; they serve
 background requests (title generation and the like) that are not part of the conversation under test.
 
@@ -72,6 +75,8 @@ MATCHER_KEYS = frozenset(
         "model",
         "stream",
         "min_messages",
+        "max_messages",
+        "text_absent",
         "headers",
         "headers_absent",
     }
@@ -117,6 +122,8 @@ class Matcher:
     model: str | None = None
     stream: bool | None = None
     min_messages: int | None = None
+    max_messages: int | None = None
+    text_absent: tuple[str, ...] = ()
     headers: tuple[tuple[str, str], ...] = ()
     headers_absent: tuple[str, ...] = ()
 
@@ -143,6 +150,11 @@ class Matcher:
             out.append("tool_result missing" if self.has_tool_result else "unexpected tool_result")
         if self.system_contains is not None and self.system_contains not in system_text(body):
             out.append(f"system prompt lacks {self.system_contains!r}")
+        if self.text_absent:
+            whole = system_text(body) + "\n" + messages_text(body)
+            present = [text for text in self.text_absent if text in whole]
+            if present:
+                out.append("request holds " + ", ".join(repr(text) for text in present))
         return out
 
     def _request_mismatches(self, body: dict[str, Any]) -> list[str]:
@@ -158,6 +170,8 @@ class Matcher:
             out.append(f"stream is {bool(body.get('stream'))}, expected {self.stream}")
         if self.min_messages is not None and len(body.get("messages") or []) < self.min_messages:
             out.append(f"fewer than {self.min_messages} messages")
+        if self.max_messages is not None and len(body.get("messages") or []) > self.max_messages:
+            out.append(f"more than {self.max_messages} messages")
         return out
 
     def _header_mismatches(self, headers: Mapping[str, str]) -> list[str]:
@@ -397,7 +411,7 @@ def _matcher(raw: Any, path: str) -> Matcher:
     for key in ("user_text_contains", "tool_result_contains", "system_contains", "model"):
         if key in raw:
             kwargs[key] = _str(raw[key], f"{path}.{key}")
-    for key in ("tools_include", "tools_exclude"):
+    for key in ("tools_include", "tools_exclude", "text_absent"):
         if key in raw:
             kwargs[key] = _strings(raw[key], f"{path}.{key}")
     for key in ("tool_result_is_error", "has_tool_result", "has_tools", "stream"):
@@ -405,6 +419,8 @@ def _matcher(raw: Any, path: str) -> Matcher:
             kwargs[key] = _bool(raw[key], f"{path}.{key}")
     if "min_messages" in raw:
         kwargs["min_messages"] = _count(raw["min_messages"], f"{path}.min_messages", 0)
+    if "max_messages" in raw:
+        kwargs["max_messages"] = _count(raw["max_messages"], f"{path}.max_messages", 1)
     if "headers" in raw:
         headers = _string_map(raw["headers"], f"{path}.headers")
         kwargs["headers"] = tuple((name.lower(), value) for name, value in headers.items())
