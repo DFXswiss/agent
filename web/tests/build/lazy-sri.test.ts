@@ -85,6 +85,16 @@ describe('dynamic imports', () => {
     const withBack = { ...FILES, ...back };
     const assets = Object.keys(withBack).sort();
     expect(dynamicImportProblems(PAGE, assets, reader(withBack))).toEqual([]);
+    // from a lazy importer, a dependency outside the importer's own static imports still has to be listed
+    const outside = {
+      ...withBack,
+      '/assets/Chart-e.js': 'import{b}from"./Lazy-b.js";import{d}from"./more-f.js";export const e=b+d',
+      '/assets/more-f.js': 'export const d=1',
+    };
+    const outsideAssets = Object.keys(outside).sort();
+    expect(dynamicImportProblems(PAGE, outsideAssets, reader(outside))).toEqual([
+      '/assets/Lazy-b.js: import() of /assets/Chart-e.js would load /assets/more-f.js without integrity',
+    ]);
     // from the first load the same chunk needs both in its list
     const fromIndex = { ...withBack, '/assets/index-a.js': `${HELPER};f(()=>import("./Chart-e.js"),[])` };
     expect(dynamicImportProblems(PAGE, assets, reader(fromIndex))).toEqual([
