@@ -69,7 +69,7 @@ async function followUntil(orchestrator: Orchestrator, home: string, task: strin
   throw new Error(`task ${task}: no event with ${text} within 240 s`);
 }
 
-test('@E2E-51 @needs-vm an agent alone registers, works, invites an agent and moves without any person', async ({
+test('@E2E-51 @R-1.14 @needs-vm an agent alone registers, works, invites an agent and moves without any person', async ({
   page,
   e2e,
   orchestrator,

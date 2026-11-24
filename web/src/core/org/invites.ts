@@ -178,7 +178,7 @@ export interface InviteRow {
   readonly created_at: string;
   readonly expires_at: string;
   readonly created_by: string;
-  /** Whether a person registered a passkey with it (the join may still be missing). */
+  /** Whether an account was registered with it, by a person or an agent alone (the join may still be missing). */
   readonly registered?: boolean;
   /** First lookup of the invitation (hubs since KOR-36; null: never opened, absent: older hub). */
   readonly opened_at?: string | null;
