@@ -3,7 +3,7 @@
 // first task stays in that task and reaches its session; there is no project object in the API, the schema or the UI.
 // Fresh context per task (KONZEPT idea 43, KOR-60): both tasks belong to the same user and run as two sessions of the
 // same workgroup VM; the model double refuses the first turn of each task unless its conversation is exactly one
-// message that holds nothing of the other task (`max_messages`, `text_absent`), and the spec checks the same on the
+// user message that holds nothing of the other task (`max_user_messages`, `text_absent`), and the spec checks the same on the
 // double's journal. Runs on T1 and T2.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures/test.ts';
@@ -77,7 +77,7 @@ test('@E2E-08 @R-0.2 @R-2.6 @R-2.7 @R-2.8 @R-2.9 @R-2.10 @R-P.5 @needs-vm two qu
   expect(await outputs(second)).toEqual(['William Shakespeare.']);
 
   // Fresh context: same user, same workgroup VM, two sessions; the second task's first model request is a
-  // conversation of one message without anything of the first task (the double refused anything else, see above).
+  // conversation of one user message without anything of the first task (the double refused anything else, see above).
   const vms = await orchestrator.hubQuery<{ vm_id: string | null }>(
     `SELECT s.vm_id FROM hub.session s JOIN hub.task t ON t.id = s.task_id
       WHERE s.task_id IN ('${uuid(first)}', '${uuid(second)}') AND s.depth = 0 ORDER BY t.created_at`,
@@ -93,7 +93,7 @@ test('@E2E-08 @R-0.2 @R-2.6 @R-2.7 @R-2.8 @R-2.9 @R-2.10 @R-P.5 @needs-vm two qu
     .map((body) => body?.messages ?? []);
   const opening = conversations.filter((messages) => JSON.stringify(messages).includes('Who wrote Hamlet?'));
   expect(opening.length).toBeGreaterThan(0);
-  expect(opening[0]).toHaveLength(1);
+  expect(opening[0]!.filter((message) => (message as { role?: string }).role === 'user')).toHaveLength(1);
   expect(JSON.stringify(opening[0])).not.toMatch(/capital of France|Paris\./);
 
   // Titles derived from the first line; both tasks in the org's default workgroup, nothing else created.

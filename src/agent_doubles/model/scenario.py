@@ -28,8 +28,9 @@ object::
 
 Steps are consumed strictly in order, one per request; a step with ``repeat: n`` answers the next n requests. A
 request that does not satisfy the next step's ``expect`` is a failure: it is answered with an
-``invalid_request_error`` naming the mismatch, so Claude Code stops instead of drifting. ``max_messages`` bounds
-the length of ``messages`` (a fresh conversation has exactly one); ``text_absent`` lists texts that must appear
+``invalid_request_error`` naming the mismatch, so Claude Code stops instead of drifting. ``max_user_messages``
+bounds the messages with role ``user`` (a fresh conversation has exactly one; Claude Code adds a ``system`` message
+with its environment); ``text_absent`` lists texts that must appear
 nowhere in the request, neither in the system prompt nor in any message (text or tool result) - together they show
 that a request carries no history of another conversation. ``side`` steps are never
 consumed: a request that matches one of them (checked before the ordered steps) is answered by it; they serve
@@ -75,7 +76,7 @@ MATCHER_KEYS = frozenset(
         "model",
         "stream",
         "min_messages",
-        "max_messages",
+        "max_user_messages",
         "text_absent",
         "headers",
         "headers_absent",
@@ -122,7 +123,7 @@ class Matcher:
     model: str | None = None
     stream: bool | None = None
     min_messages: int | None = None
-    max_messages: int | None = None
+    max_user_messages: int | None = None
     text_absent: tuple[str, ...] = ()
     headers: tuple[tuple[str, str], ...] = ()
     headers_absent: tuple[str, ...] = ()
@@ -170,8 +171,9 @@ class Matcher:
             out.append(f"stream is {bool(body.get('stream'))}, expected {self.stream}")
         if self.min_messages is not None and len(body.get("messages") or []) < self.min_messages:
             out.append(f"fewer than {self.min_messages} messages")
-        if self.max_messages is not None and len(body.get("messages") or []) > self.max_messages:
-            out.append(f"more than {self.max_messages} messages")
+        users = [m for m in body.get("messages") or [] if isinstance(m, dict) and m.get("role") == "user"]
+        if self.max_user_messages is not None and len(users) > self.max_user_messages:
+            out.append(f"more than {self.max_user_messages} user messages")
         return out
 
     def _header_mismatches(self, headers: Mapping[str, str]) -> list[str]:
@@ -419,8 +421,8 @@ def _matcher(raw: Any, path: str) -> Matcher:
             kwargs[key] = _bool(raw[key], f"{path}.{key}")
     if "min_messages" in raw:
         kwargs["min_messages"] = _count(raw["min_messages"], f"{path}.min_messages", 0)
-    if "max_messages" in raw:
-        kwargs["max_messages"] = _count(raw["max_messages"], f"{path}.max_messages", 1)
+    if "max_user_messages" in raw:
+        kwargs["max_user_messages"] = _count(raw["max_user_messages"], f"{path}.max_user_messages", 1)
     if "headers" in raw:
         headers = _string_map(raw["headers"], f"{path}.headers")
         kwargs["headers"] = tuple((name.lower(), value) for name, value in headers.items())

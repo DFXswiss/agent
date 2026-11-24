@@ -1,6 +1,6 @@
 {
   "name": "e2e-08-every-request-task",
-  "description": "E2E-08: two knowledge questions in two tasks (two sessions of one workgroup VM), then a follow-up in the first task that reaches the same Claude Code session (its conversation holds the earlier turn). Every task starts with a fresh context (KONZEPT idea 43): the first turn of each task is a conversation of exactly one message that holds nothing of the other task (question and answer). Background requests without tools get a short title.",
+  "description": "E2E-08: two knowledge questions in two tasks (two sessions of one workgroup VM), then a follow-up in the first task that reaches the same Claude Code session (its conversation holds the earlier turn). Every task starts with a fresh context (KONZEPT idea 43): the first turn of each task is a conversation of exactly one user message that holds nothing of the other task (question and answer). Background requests without tools get a short title.",
   "steps": [
     {
       "id": "first-task",
@@ -8,7 +8,7 @@
         "user_text_contains": "What is the capital of France?",
         "has_tools": true,
         "stream": true,
-        "max_messages": 1,
+        "max_user_messages": 1,
         "text_absent": ["Who wrote Hamlet?", "William Shakespeare."]
       },
       "reply": { "content": [{ "type": "text", "text": "Paris." }] }
@@ -19,7 +19,7 @@
         "user_text_contains": "Who wrote Hamlet?",
         "has_tools": true,
         "stream": true,
-        "max_messages": 1,
+        "max_user_messages": 1,
         "text_absent": ["capital of France", "Paris."]
       },
       "reply": { "content": [{ "type": "text", "text": "William Shakespeare." }] }
