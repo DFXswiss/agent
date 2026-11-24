@@ -11,6 +11,9 @@ from pathlib import Path
 
 import pytest
 
+# A thread a test starts has ended with the test's teardown (HOT-15, E-19).
+pytest_plugins = ("tests.platform.threadcheck",)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLATFORM_INI = Path(__file__).resolve().with_name("pytest.ini")
 XDIST_WORKER = "PYTEST_XDIST_WORKER"
