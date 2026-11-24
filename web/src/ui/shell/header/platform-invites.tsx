@@ -2,7 +2,7 @@
 // grants the role `inviter` (06-web.md section 1.2; a navigation entry would show it to everybody).
 import { Link } from 'react-router-dom';
 import { useI18n } from '../../i18n';
-import { useInviter } from '../../screens/platform-invites/PlatformInvitesScreen';
+import { useInviter } from '../../screens/platform-invites/useInviter';
 
 export function PlatformInvitesLink() {
   const { t } = useI18n();

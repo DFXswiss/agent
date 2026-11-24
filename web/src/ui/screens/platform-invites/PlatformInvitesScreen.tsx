@@ -8,7 +8,6 @@ import { formatEventTime } from '../../../core/i18n';
 import { actionErrorCode } from '../../../core/org/batch';
 import {
   createPlatformInvite,
-  isInviter,
   listPlatformInvites,
   type PlatformInviteRow,
   preparePlatformInvite,
@@ -20,17 +19,10 @@ import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { NotAvailable } from '../errors/pages';
+import { useInviter } from './useInviter';
 import { useNow } from '../../countdown/useNow';
 import { BUTTON, PRIMARY } from '../members/ActionDialog';
 import { CopyButton, ExpirySelect } from '../devices/parts';
-
-/** The verified inviter right of the signed-in user (null while the platform log is not verified). */
-export function useInviter(): boolean | null {
-  const { app } = useAppEnv();
-  const platform = useStore((state) => state.orgs.platform?.state ?? null, app.store);
-  const userId = useStore((state) => state.me.userId, app.store);
-  return platform === null ? null : isInviter(platform, userId);
-}
 
 function CreateForm(props: {
   readonly onCreated: (created: PreparedPlatformInvite) => void;

@@ -9,7 +9,7 @@ import { dismissToast, type NotificationRow, selectUnread } from '../../../core/
 import { useLiveReload } from '../../hooks/useLiveReload';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
-import { useOpen } from '../../screens/notifications/NotificationsScreen';
+import { useOpen } from '../../screens/notifications/useOpen';
 import { NotificationText, useNames } from '../../screens/notifications/text';
 import { useAppEnv } from '../context';
 

@@ -2,10 +2,8 @@
 // texts and the time; unread rows are marked; a click marks the row read and navigates to its target; "Mark all read";
 // "Load more" for older rows. New rows of the active org arrive live.
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { parseTime } from '../../../core/encoding/time';
-import { loadNotifications, readAll, readNotification } from '../../../core/notifications/actions';
-import { notificationTarget } from '../../../core/notifications/text';
+import { loadNotifications, readAll } from '../../../core/notifications/actions';
 import { type NotificationRow, sortedRows } from '../../../core/store/slices/notifications';
 import { sendErrorCode } from '../../../core/tasks/send';
 import { useLiveReload } from '../../hooks/useLiveReload';
@@ -14,6 +12,7 @@ import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { Time } from '../../whiteboard/Time';
 import { NotificationText, useNames } from './text';
+import { useOpen } from './useOpen';
 
 function timeOf(row: NotificationRow): number {
   try {
@@ -21,16 +20,6 @@ function timeOf(row: NotificationRow): number {
   } catch {
     return 0;
   }
-}
-
-/** Marks a row read (best effort: navigation never waits for a failure) and opens its target. */
-export function useOpen(): (row: NotificationRow) => Promise<void> {
-  const { app } = useAppEnv();
-  const navigate = useNavigate();
-  return async (row) => {
-    if (row.read_at === null) await readNotification(app.tasks, row.notification_id).catch(() => undefined);
-    navigate(notificationTarget(row));
-  };
 }
 
 export function NotificationsScreen() {
