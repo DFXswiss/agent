@@ -68,3 +68,19 @@ The draft of ADR-062 was reviewed by a reviewer without the author's context. Fi
    `credkey.py` and in `spec-deviations.md` (06 §11 job 5, deviation); a lost claim answer is `pairing_failed`,
    `reason: claim_lost`, with the step to disconnect that agent; the guide lists every command that prints a secret
    (`secret_fields`) and explains the two codes of the remote pairing.
+
+## Further decisions
+
+- **Stages delivered together.** Stages a and b share the core files of the tool (command line, error codes, hub
+  fake) and were finished at the same time, stage c's tool side as well; after the unification of the repositories
+  all four stages were merged in one run instead of one run per stage.
+- **Scenario numbers.** The specification named the agent scenarios E2E-40 to E2E-42, but E2E-40 is the quiet
+  checkout and E2E-41 the direct admission. The agent scenarios are E2E-46 (the agent works without a browser) and
+  E2E-47 (pairing from another computer), registered like E2E-41 and E2E-45 (07 §2.1 and `traceability.json`).
+- **Open tabs learn of a remote orchestrator.** The banner of ADR-062 §4.4 reloads the agent list when an
+  `agent_paired_remote` or `agent_revoked` notification arrives, so a tab that was open during the pairing shows it
+  without a reload.
+- **Device flows take two calls** (GitHub, Claude login, credential checks): the user must see the device code or the
+  link before the flow can finish, and the tool prints one JSON object at the end.
+- **What the completeness test cannot see:** a new button inside an existing screen that calls no new route; such an
+  action needs a row by review (the table's intro says so).
