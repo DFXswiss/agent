@@ -57,3 +57,11 @@ directory:
    - The run takes 35–50 s and needs no internet beyond the cached image.
 6. **`metrics/vm.py` stays as it is.** It names `disk` for the allocated size of workgroup VMs. That module belongs to
    another package, does not touch work VMs, and is already correct for Lima 2.x.
+7. **The legacy check counts only the branch's own changes once `develop` is united.** The merge train of this package
+   went red in `test_legacy_untouched`. The cause was not this package but a legacy pull request (#225) that reached
+   `develop` and changed `docs/runner.md` and other legacy files. `merge_base` replaced the merge base with the fixed
+   `AGENT_BASE` (KOR-36), so every package was charged with every later legacy commit on `develop`. KOR-36 left that
+   case open. `merge_base` now returns the merge base with `origin/develop`, and `agent_origin`, added after KOR-36,
+   already finds the agent side of the comparison on the united history. A legacy file the branch itself changes is
+   still refused (checked with `docs/runner.md`). The hermetic test now also lets `develop` change the agent-side
+   legacy file.
