@@ -14,6 +14,7 @@ import { aesKey, seal as aeadSeal } from '../../../src/core/crypto/aead';
 import * as agent from '../../../src/core/crypto/agent';
 import * as bundle from '../../../src/core/crypto/bundle';
 import * as context from '../../../src/core/crypto/context';
+import * as runlog from '../../../src/core/crypto/runlog';
 import * as credential from '../../../src/core/crypto/credential';
 import * as dedupe from '../../../src/core/crypto/dedupe';
 import * as enroll from '../../../src/core/crypto/enroll';
@@ -79,6 +80,7 @@ export const CONSUMED = [
   'keys',
   'recovery',
   'request',
+  'runlog',
   'wrap',
 ];
 
@@ -214,6 +216,10 @@ export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
     context.openContext(Secret.of(b(a.workgroup_key)), a.manifest, a.sig, b(a.author_sig_pk), a.chunks.map(b)),
   open_context_chunk: async (a) => context.openChunk(await aesKey(b(a.key)), a.object, a.index, b(a.sealed)),
   pr_link_tag: async (a) => context.prLinkTag(await context.prLinkKey(Secret.of(b(a.workgroup_key))), a.repo, a.number),
+  verify_log_manifest: async (a) => runlog.verifyManifest(a.manifest, a.sig, b(a.author_sig_pk)),
+  open_log: async (a) =>
+    runlog.openLog(Secret.of(b(a.workgroup_key)), a.manifest, a.sig, b(a.author_sig_pk), a.chunks.map(b)),
+  open_log_chunk: async (a) => runlog.openChunk(await aesKey(b(a.key)), a.object, a.index, b(a.sealed)),
 };
 
 /** Operations whose name one vector file uses for its own function (`agent.json` `parse_code`: the agent and return
@@ -622,6 +628,31 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       same(fromUtf8(context.prLinkText(link.repo, link.number)), link.text, `pr-link text ${link.repo}`);
       same(await context.prLinkTag(linkKey, link.repo, link.number), link.tag, `pr-link tag ${link.repo}`);
     }
+  },
+  runlog: async (data) => {
+    const wk = Secret.of(b(data.workgroup_key));
+    const manifest = data.manifest;
+    const key = await runlog.logKey(wk, b(data.salt), manifest.object);
+    await sameAesKey(key, data.k_log, 'k_log');
+    same([data.limits.chunk_bytes, data.limits.chunk_ct_bytes], [runlog.CHUNK_BYTES, runlog.CHUNK_CT_BYTES], 'limits');
+    const output = b(data.output);
+    const pieces = [output.subarray(0, runlog.CHUNK_BYTES), output.subarray(runlog.CHUNK_BYTES)];
+    for (const [index, piece] of pieces.entries()) {
+      same(
+        await runlog.sealChunk(key, manifest.object, index, piece, b(data.nonces[index])),
+        data.chunks[index],
+        `chunk ${index}`,
+      );
+    }
+    same(fromUtf8(runlog.manifestText(runlog.checkManifest(manifest))), data.manifest_text, 'manifest text');
+    same(await runlog.digest(data.chunks.map(b)), manifest.digest, 'digest');
+    same(await runlog.verifyManifest(manifest, data.sig, b(data.author_sig_pk)), manifest, 'verified manifest');
+    same(await runlog.openLog(wk, manifest, data.sig, b(data.author_sig_pk), data.chunks.map(b)), output, 'opened log');
+    const part = data.part;
+    same(fromUtf8(runlog.chunkAad(manifest.object, part.index)), part.aad, 'chunk AAD');
+    const sealed = await runlog.sealChunk(key, manifest.object, part.index, b(part.plaintext), b(part.nonce));
+    same(sealed, part.sealed, 'sealed part');
+    same(await runlog.openChunk(key, manifest.object, part.index, sealed), part.plaintext, 'opened part');
   },
   title: async (data) => {
     for (const item of data.cases) same(deriveTitle(item.prompt), item.title, `title ${item.name}`);

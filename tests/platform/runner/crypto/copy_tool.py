@@ -114,6 +114,13 @@ SOURCE_ADAPTATIONS: dict[str, list[tuple[str, str]]] = {
 
 # Exact text blocks of a reference test and their replacement (after the names are replaced).
 TEST_ADAPTATIONS: dict[str, list[tuple[str, str]]] = {
+    "tests/platform/hub/crypto/test_runlog.py": [
+        # After renaming, agent_runner.crypto.contexts sorts after agent_runner.crypto (ruff isort).
+        (
+            "from agent_hub.contexts import vectors as context_vectors\nfrom agent_hub.crypto import context, runlog\n",
+            "from agent_hub.crypto import context, runlog\nfrom agent_hub.contexts import vectors as context_vectors\n",
+        ),
+    ],
     "tests/platform/hub/crypto/test_agent.py": [
         # After renaming, agent_runner.crypto.agents sorts after agent_runner.crypto (ruff isort).
         (

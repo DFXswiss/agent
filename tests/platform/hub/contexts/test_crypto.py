@@ -42,7 +42,7 @@ def code(call: Any) -> str:
 
 
 def test_the_vector_file_is_current_and_its_negatives_fail_as_stated() -> None:
-    (section,) = context_vectors.SECTIONS
+    section = context_vectors.SECTIONS[0]
     assert render(section) == (CONTRACTS / "vectors" / "context.json").read_text(encoding="utf-8")
     for vector in VECTORS["invalid"]:
         assert code(lambda v=vector: context_vectors.OPS[v["op"]](v["args"])) == vector["error"], vector["name"]

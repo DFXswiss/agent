@@ -40,7 +40,7 @@
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/contexts/vectors.py",
-      "sha256": "ba587eddb87ec7353c0927e98d5cf983985dc0d16eff5bd96d0388be0f38ce79",
+      "sha256": "72f2cd8a6033d3be4081819ec786c2e1e457f75d2677e08b0436490a6c73d998",
       "source": "src/agent_hub/contexts/vectors.py"
     },
     {
@@ -334,6 +334,12 @@
       "copy_sha256": "00a75a1378768d2cf1e029d9af792718a4f5a23cc6c995a44296cdca10012b03",
       "sha256": "96c641b6da5a829ed3df7c82539dfecaca98e9c72c5d026e2dbbd6002f5a782c",
       "source": "tests/platform/hub/crypto/test_primitives.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/test_runlog.py",
+      "copy_sha256": "32a1ba6c87af8891414ce9db677a022054b2293378563237184b14d3be56bf42",
+      "sha256": "5270c5366f9ad09806578edb89e7ef329f70bd925c8af728828576be073c6a8e",
+      "source": "tests/platform/hub/crypto/test_runlog.py"
     },
     {
       "copy": "tests/platform/runner/crypto/test_vectors.py",
