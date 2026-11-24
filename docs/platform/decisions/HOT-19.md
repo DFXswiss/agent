@@ -89,3 +89,10 @@ Decision (one place each, not per route):
   next step tells the agent to run as the account that is to own the device. `device remove` works as root.
 - `sudo -n true` is asked once per command; if the cached rights expire before the step, the step fails with
   `install_failed` (`admin_step`/`removal_step`) and the command can be run again.
+- Found by the guest proof: right after the enrollment and at boot `agent-runner status` cannot be read for a moment
+  (the runner's store is starting), and `root.publish` then wrote `enrolled: false` and an empty `device_id`, dropping
+  even the device ID the enrollment of the same run had just returned. `device add` reported an empty `device_id`,
+  and a `device remove` while the state said so did not unpair the device. `publish` now keeps the device as last
+  known while the status cannot be read, and an enrollment of the run names its device; a readable status still
+  decides (an unreadable status is no removal). This affected the dialog way as well; E2E-56 writes the state through
+  the seam and could not see it.
