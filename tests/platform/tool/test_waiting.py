@@ -4,7 +4,8 @@ errors (`session.error`), the runtime of a task and of a session and the reachab
 
 from __future__ import annotations
 
-from datetime import timedelta
+import math
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -12,6 +13,7 @@ from typing import Any
 import pytest
 
 from agent_platform import sessions, waiting
+from agent_runner.crypto.encoding import format_time
 from agent_runner.crypto.ids import uuid7
 from agent_runner.crypto.log.state import DEVICE, USER
 
@@ -182,27 +184,37 @@ def test_the_owner_of_a_task() -> None:
 def test_runtime_of_tasks_and_sessions(tool: Tool, hub: HubFake, account: User) -> None:
     _org, wg, device = assign_device(tool, hub, account)
     task = new_task(tool, wg)
+    # every stamp is relative to one moment: a closed runtime is exact however long the tool calls take
+    base = datetime.now(UTC)
+
+    def ago(seconds: int) -> str:
+        return format_time(base - timedelta(seconds=seconds))
+
+    def since(seconds: int) -> int:
+        """`seconds` plus the time that has passed since `base`: the largest runtime a running object can show now."""
+        return seconds + math.ceil((datetime.now(UTC) - base).total_seconds())
+
     row = hub.tasks[task]["task"]
-    row["created_at"] = now_ms_text(timedelta(seconds=-90))
+    row["created_at"] = ago(90)
     shown = tool.run("task", "show", "--task", task)[1]
-    assert 90 <= shown["runtime_s"] < 120
+    assert 90 <= shown["runtime_s"] <= since(90)
     assert shown["task"]["closed_at"] is None
-    row["closed_at"] = now_ms_text(timedelta(seconds=-30))
-    assert 60 <= tool.run("task", "show", "--task", task)[1]["runtime_s"] < 62
+    row["closed_at"] = ago(30)
+    assert tool.run("task", "show", "--task", task)[1]["runtime_s"] == 60
     session = add_session(hub, task, device=device)
     stored = state_of(hub).rows[session]
     stored |= {
-        "created_at": now_ms_text(timedelta(seconds=-50)),
-        "first_working_at": now_ms_text(timedelta(seconds=-20)),
+        "created_at": ago(50),
+        "first_working_at": ago(20),
     }
     shown = tool.run("session", "show", "--session", session)[1]
-    assert 20 <= shown["runtime_s"] < 30
+    assert 20 <= shown["runtime_s"] <= since(20)
     assert shown["device_reachable"] is False
     extra(hub).online[device] = True
     assert tool.run("session", "show", "--session", session)[1]["device_reachable"] is True
     # an ended session runs to its end; without one its runtime is unknown
-    stored |= {"state": "stopped", "first_working_at": None, "ended_at": now_ms_text(timedelta(seconds=-10))}
-    assert 40 <= tool.run("session", "show", "--session", session)[1]["runtime_s"] < 42
+    stored |= {"state": "stopped", "first_working_at": None, "ended_at": ago(10)}
+    assert tool.run("session", "show", "--session", session)[1]["runtime_s"] == 40
     stored["ended_at"] = None
     assert tool.run("session", "show", "--session", session)[1]["runtime_s"] is None
     # without a device, or when the hub's device list does not name it or cannot be read, reachability is unknown
