@@ -22,11 +22,16 @@ knows none of the items and lists no requests).
   key is read every `POLL_S` (at once when its entry changes). Its cumulative spend (`usage`) is reported as
   `dfx_key_usage {key_ref, org_id, device_id, spent_micro_usd, at}` when it differs from the last report of this
   daemon (the hub books only the difference to the highest figure it booked). Then:
-  - `revoke`: the final spend is reported (always) and the key is deleted; nothing more is done for it;
+  - `revoke`: the final spend is read and reported (always, with `at` = now, so after the revocation) and the key is
+    deleted. The hub closes the key once it processed a report with `at` at or after the revocation; while it still
+    lists the key, the issuer repeats the last known cumulative spend every `POLL_S` with a fresh `at` and calls the
+    provider no more (a repeated figure books nothing). A revoked key the provider no longer knows (deleted before a
+    restart, `404`) is reported the same way with the last known spend of this daemon, else 0;
   - `disabled`: the key is switched off at the provider (`PATCH disabled: true`);
   - otherwise the key is switched on and its limit set to `spent + min(headroom_usd, cap)`, with `cap` =
     `AGENT_RUNNER_DFX_KEY_MAX_HEADROOM_USD` (default 5 USD): a compromised hub cannot raise a limit beyond it.
-  A malformed entry is skipped (logged); a malformed headroom counts as 0.
+  A malformed entry is skipped (logged); a malformed headroom counts as 0. A key the provider does not know is logged
+  once per daemon (`key_missing`), not at every poll.
 
 Log lines `runner.dfxkeys ...` carry IDs, key references (the provider's key hash, not a secret), closed reasons and
 amounts, never a key, the management key or an envelope.
@@ -132,6 +137,7 @@ class KeyState:
     directive: Directive | None = None
     reported: int | None = None
     revoked: bool = False
+    missing: bool = False
 
 
 @dataclass
@@ -273,9 +279,12 @@ class Issuer:
             del self.keys[key_ref]
         for directive in listed:
             state = self.keys.setdefault(directive.key_ref, KeyState())
-            if state.revoked or (now < state.next_at and state.directive == directive):
+            if now < state.next_at and (state.revoked or state.directive == directive):
                 continue
             state.next_at = now + POLL_S
+            if state.revoked:
+                await self.report(directive, state.reported or 0, now)
+                continue
             state.directive = directive
             await self.poll(directive, state, now)
 
@@ -287,9 +296,14 @@ class Issuer:
             self.line(f"poll_failed key_ref={key_ref} reason={exc.reason}")
             return
         if meta is None:
-            self.line(f"key_missing key_ref={key_ref}")
-            state.revoked = directive.revoke
+            if not state.missing:
+                self.line(f"key_missing key_ref={key_ref}")
+            state.missing = True
+            if directive.revoke:
+                await self.report(directive, state.reported or 0, now)
+                state.revoked = True
             return
+        state.missing = False
         if meta.usage_micro != state.reported or directive.revoke:
             await self.report(directive, meta.usage_micro, now)
             state.reported = meta.usage_micro

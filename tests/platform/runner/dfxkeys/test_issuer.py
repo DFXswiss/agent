@@ -150,8 +150,17 @@ async def disable_and_revoke(found: Issuer, issuing: Issuing, started: ModelDoub
     assert started.keys.documents() == []
     spent = [item["spent_micro_usd"] for item in await issuing.items("dfx_key_usage")]
     assert spent == [0, 500_000, 750_000]
-    await found.tick(NOW + 200)  # nothing more for a revoked key
+    # the hub lists the key until it processed that report: the last spend is repeated every 60 s with a fresh
+    # `at`, without calling the provider and without logging
+    log = issuing.env.log()
+    calls = len(started.exchanges)
+    await found.tick(NOW + 100)  # not due
     assert len(await issuing.items("dfx_key_usage")) == 3
+    await found.tick(NOW + 134)
+    assert len(started.exchanges) == calls
+    repeated = (await issuing.items("dfx_key_usage"))[-1]
+    assert (repeated["spent_micro_usd"], repeated["at"]) == (750_000, time_text(NOW + 134))
+    assert issuing.env.log() == log
     await found.observe(issuer_state())
     await found.tick(NOW + 300)
     assert found.keys == {}
@@ -320,10 +329,18 @@ def test_provider_failures_are_logged_and_retried(store_dsn: str, tmp_path: Path
                 await found.tick(NOW + 151)
                 log = issuing.env.log()
                 assert f"key_missing key_ref={'f' * 64}" in log
-                assert log.count(f"key_missing key_ref={'g' * 64}") == 1  # a revoked key that is gone is done
+                assert log.count(f"key_missing key_ref={'g' * 64}") == 1
+                # a revoked key the provider no longer knows (deleted before a restart) is reported with the last
+                # known spend (none in this daemon: 0), so the hub can close it; then repeated without provider calls
+                usage = await issuing.items("dfx_key_usage")
+                assert (usage[-1]["key_ref"], usage[-1]["spent_micro_usd"]) == ("g" * 64, 0)
+                calls = len(started.exchanges)
                 await found.tick(NOW + 300)
-                assert log.count(f"key_missing key_ref={'f' * 64}") == 1
-                assert issuing.env.log().count(f"key_missing key_ref={'f' * 64}") == 2
+                after = issuing.env.log()
+                assert after.count(f"key_missing key_ref={'f' * 64}") == 1  # logged once, not at every poll
+                assert after.count(f"key_missing key_ref={'g' * 64}") == 1
+                assert len(started.exchanges) == calls + 1  # only the unrevoked key is read again
+                assert [u["key_ref"] for u in await issuing.items("dfx_key_usage")][-1] == "g" * 64
 
     asyncio.run(main())
 
