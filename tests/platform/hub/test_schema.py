@@ -319,6 +319,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("created_at", TS),
         ("updated_at", TS),
         ("completed_at", TS),
+        ("kind", T),  # KOR-43, migration 0022
     ],
     "context_chunk": [("object_id", U), ("chunk_index", INT), ("ct", B), ("sha256", B)],
     "pr_link": [("wg_id", U), ("epoch", INT), ("tag", T), ("task_id", U), ("session_id", U), ("created_at", TS)],
@@ -871,6 +872,7 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
             ],
         ),
         ("context_object", "state", ["uploading", "complete"]),
+        ("context_object", "kind", ["context", "log"]),
         ("vm", "state", ["pool", "assigning", "running", "stopping", "stopped", "deleted"]),
         (
             "operation",
