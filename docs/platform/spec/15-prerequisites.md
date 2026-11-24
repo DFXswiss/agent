@@ -17,7 +17,7 @@ no class here and is a defect.
 - the hub's error codes (`error-codes.json`, 03-api.md §11), including the client-only verification codes;
 - the reasons a runner holds an operation for (`session.status` `waiting_for`, ADR-066);
 - every code the hub or the runner raises as `HubError`, `CheckFailed`, `StartFailed`, `NoPlacement`, `AccessRefused`,
-  `Refused` or `Rejected` (a literal or a resolvable module constant; the operator's own command lines `cli.py` and the
+  `Refused`, `Rejected`, `OperationFailed`, `RequestClosed`, `PromptRefused` or `QuotaRefused` (a literal or a resolvable module constant; the operator's own command lines `cli.py` and the
   copy of the reference crypto are not scanned).
 
 The test fails for a code without a row, for a row without a source, for an unknown class, and for a row without a
@@ -182,3 +182,7 @@ justification or a handling.
 | `wg_vm_limit` | task wait | `option` | the operator's generous limit of VMs per workgroup (`AGENT_HUB_VMS_PER_WG`, A5/A14) | the task waits and starts when a VM of the workgroup has room or the operator raises the setting | hub scheduler |
 | `workvm_unavailable` | operation | `technical` | no work VM can be started now | the agent requests it again later; the operator sees the capacity | agent, operator |
 | `wrap_unauthorized` | request | `input` | the wrap names a recipient that may not hold the key | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `prompt_misrouted` | prompt delivery (runner) | `third_party` | a prompt addressed to another session would hand a person's instruction to the wrong agent | the prompt is refused at the guest (`session.prompt_refused`); the hub routes the next prompt to the right session | runner, hub |
+| `prompt_stale` | prompt delivery (runner) | `technical` | the prompt belongs to an older key epoch or position than the session's | the runner refuses it and the hub's routing delivers the current prompts | runner, hub |
+| `prompt_unreadable` | prompt delivery (runner) | `technical` | the prompt does not open with the workgroup key the device holds | a key holder's client adds the wrap (catch-up); a follow-up prompt is delivered then | members' clients |
+| `prompt_unverified` | prompt delivery (runner) | `third_party` | a prompt whose author signature does not verify could come from someone else than the person | the prompt is refused and audited; the person sends it again from a verified client | person |

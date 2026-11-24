@@ -216,9 +216,14 @@ def apply(
     if state not in STATES:
         raise HubError("request_invalid")
     checked = check_reason(state, reason)
-    found = connection.execute("SELECT task_id FROM hub.session WHERE id = %s", (session_id,)).fetchone()
+    found = connection.execute(
+        "SELECT s.task_id, t.owner_id FROM hub.session s JOIN hub.task t ON t.id = s.task_id WHERE s.id = %s",
+        (session_id,),
+    ).fetchone()
     if found is None:
         raise HubError("not_found")
+    if state == FAILED and checked == model_retry.REASON:
+        model_retry.lock_owner(connection, found[1])  # before the task lock, as the credential write (ADR-077)
     task = cast(TaskRow, lock_task(connection, found[0]))
     session = cast(SessionRow, lock_session(connection, session_id))
     if reported_by is not None and str(session.device_id) != str(reported_by):

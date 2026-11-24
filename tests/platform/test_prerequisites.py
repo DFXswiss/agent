@@ -3,8 +3,8 @@
 `docs/platform/spec/15-prerequisites.md` has one row for every code with which a task, a session, an operation or a
 request can wait or be refused. The codes come from the closed contract lists - scheduling reasons, session failure
 reasons, operation error codes, hub error codes - from the reasons a runner holds an operation for
-(`agent_runner.operations.pipeline.HOLD_CODES`), and from a scan of the hub and the runner for every code raised as
-`HubError`, `CheckFailed`, `StartFailed`, `NoPlacement`, `AccessRefused`, `Refused` or `Rejected` (a string literal,
+(`agent_runner.operations.pipeline.HOLD_CODES`), and from a scan of the hub and the runner for every code raised by one
+of `RAISERS` (a string literal,
 or a module constant the scan resolves; codes passed through from a variable are re-raises of codes found
 elsewhere). Each row names the class of its justification and the step the platform starts (E-05); a class
 "approval" does not exist (E-11). A new waiting or refusal code is therefore red here until it is registered.
@@ -31,7 +31,21 @@ SKIPPED = (
 )
 OPERATOR_CLI = "cli.py"
 """The operator's own command lines of the hub (`agent-hub platform|billing …`) refuse with messages, not codes."""
-RAISERS = frozenset({"HubError", "CheckFailed", "StartFailed", "NoPlacement", "AccessRefused", "Refused", "Rejected"})
+RAISERS = frozenset(
+    {
+        "HubError",
+        "CheckFailed",
+        "StartFailed",
+        "NoPlacement",
+        "AccessRefused",
+        "Refused",
+        "Rejected",
+        "OperationFailed",
+        "RequestClosed",
+        "PromptRefused",
+        "QuotaRefused",
+    }
+)
 CLASSES = frozenset({"technical", "third_party", "option", "rights", "credit", "input"})
 CODE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 REGISTER_HEADING = "## 5. Register"

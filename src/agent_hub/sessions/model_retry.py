@@ -12,6 +12,8 @@ by itself; nobody repeats the instruction.
 
 - `after_credential(connection, owner, now, effects)` runs in the transaction that stores the credential (the
   credential row is no lock of the tasks area; the tasks are locked one by one, oldest failure first).
+- Both take the advisory lock of the owner (`lock_owner`) before any task lock, so a credential written in the same
+  moment as the failure is seen by one of them.
 - `planned(connection, task, session_id, now)` runs in the transaction that stores the failure: a model credential
   stored after the failed session was created (it arrived while the start ran) gets its attempt at once; otherwise
   the next credential write creates it. So every stored credential leads to at most one attempt per task: an attempt
@@ -43,6 +45,18 @@ _FAILED = (
 )
 
 
+OWNER_LOCK = 742180110
+"""Namespace of the advisory lock per owner (next to the hub's locks 742180100-742180102)."""
+
+
+def lock_owner(connection: Connection, owner: UUID) -> None:
+    """Serialise a credential write and a model-access failure of one owner (taken before any task lock), so that one
+    of the two always sees the other committed: no attempt is lost when both happen at the same moment."""
+    connection.execute(
+        "SELECT pg_catalog.pg_advisory_xact_lock(%s, pg_catalog.hashtext(%s::text))", (OWNER_LOCK, str(owner))
+    )
+
+
 def _credential_after(connection: Connection, owner: UUID, after: datetime) -> bool:
     found = connection.execute(
         "SELECT 1 FROM hub.credential WHERE owner_id = %s AND kind = ANY(%s) AND updated_at > %s",
@@ -67,6 +81,7 @@ def after_credential(connection: Connection, owner: UUID, kind: str, now: dateti
     """Create the attempts of the owner's tasks waiting for model access after it stored `kind`; their number."""
     if kind not in MODEL_KINDS:
         return 0
+    lock_owner(connection, owner)
     started = 0
     for task_id, session_id in connection.execute(_FAILED, (owner, REASON)).fetchall():
         task = cast(TaskRow, lock_task(connection, task_id))

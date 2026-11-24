@@ -297,6 +297,7 @@ _ANSWERED = {
     CREDIT_EXHAUSTED: "SELECT max(at) FROM hub.audit WHERE action = 'credit.changed' AND org_id = %(org)s",
     PLATFORM_ACCESS_REQUIRED: (
         "SELECT max(received_at) FROM hub.platform_entry WHERE type = 'platform_policy'"
+        " AND entry_text::jsonb -> 'body' ->> 'name' = 'open_platform_access'"
         " OR type = 'org_platform_access' AND subject_id = %(org)s"
     ),
 }
