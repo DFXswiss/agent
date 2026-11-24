@@ -228,3 +228,15 @@ MON-3. **Runner measures only from outside** (`agent_runner.metrics.workvm`): th
     touch the device's own traffic). `images/workvm/after-reboot-check.sh` checks after a restart that the volume
     is mounted again (the open assumption of a custom `addVolume` mount point), the homes, the watcher, the anchor
     and the hook; the rehearsal runs it once as a baseline.
+30. **Final review (fresh-context subagent, 2026-11-24) – dispositions.** Fixed: `egress-check.sh` finds the site
+    network's gateway on the physical interface (the default route may name the tunnel) and fails `lan_gateway`
+    when there is none instead of passing the LAN checks; a VM ping answered by a documentation address is `info`
+    (inconclusive), not `pass`; the monitoring round lists all slots at once under one time limit; the work image
+    cache hash covers only what goes into the image (template, provisioning, its files, versions), so the operator
+    scripts can change without a new cache; the pool measurement of E2E-48 is deterministic; the spec names the L9
+    rule; `after-reboot-check.sh` checks its arguments and waits two watcher rounds; the threat model names ICMP from
+    a compromised host agent. Documented in the E2E-48 row: host-agent connections of a work VM are recorded, not
+    refused; the device queue and a task VM used by a later session are runner unit tests; closing the task ends
+    with `session_ended`. Not changed: the UDP probe to the gateway cannot tell "blocked" from "no DNS service"
+    (both end without an answer); the test resolver
+    literal in the egress tests is the work VMs' resolver.

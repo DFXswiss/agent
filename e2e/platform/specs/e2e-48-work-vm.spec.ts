@@ -88,7 +88,8 @@ test('@E2E-48 @needs-vm @needs-workvm the session gets a work VM, runs and fixes
     .toBe(1);
   const [cold] = await runnerStore<{ s: number }>(
     orchestrator,
-    'SELECT extract(epoch FROM ready_at - created_at)::float AS s FROM runner.workvm_pool',
+    "SELECT extract(epoch FROM ready_at - created_at)::float AS s FROM runner.workvm_pool WHERE state = 'ready'" +
+      ' ORDER BY created_at LIMIT 1',
   );
 
   await authenticator('platform');

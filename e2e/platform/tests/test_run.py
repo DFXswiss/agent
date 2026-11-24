@@ -203,7 +203,8 @@ def test_vm_scenarios_ensure_the_golden_image(world: World, monkeypatch: pytest.
 def test_work_vm_scenarios_ensure_the_work_image(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run, "needs_vm", lambda suite, only: True)
     monkeypatch.setattr(run, "needs_workvm", lambda suite, only: True)
-    inputs = ("images/golden.yaml", "src/agent_guest/x.py", "images/workvm.yaml", "images/workvm/provision.sh")
+    inputs: tuple[str, ...] = ("images/golden.yaml", "src/agent_guest/x.py", "images/workvm.yaml")
+    inputs = (*inputs, "images/workvm/provision.sh", "images/workvm/files/x")
     for rel in (*inputs, "images/versions.json"):
         (world.agent / rel).parent.mkdir(parents=True, exist_ok=True)
         (world.agent / rel).write_text(rel)

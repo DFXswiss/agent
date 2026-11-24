@@ -55,16 +55,20 @@ async def entries(context: Any, tools: Tools, at: datetime, line: Any) -> tuple[
     if not rows:
         return ()
     instances: dict[str, Instance] = {}  # by name: in self mode every slot lists the same Lima home
-    for slot in sorted({row.slot for row in rows}):
-        lima = workvms.deps.lima_for(slot)
+
+    async def listing(slot: int) -> list[Instance]:
+        """One slot's instances; a failing or hanging `limactl list` (bounded by `LIST_TIMEOUT_S`, all slots at
+        once, so a round never takes longer) leaves that slot's host values empty."""
         try:
-            listed = await asyncio.wait_for(asyncio.to_thread(lima.list), LIST_TIMEOUT_S)
+            return await asyncio.wait_for(asyncio.to_thread(workvms.deps.lima_for(slot).list), LIST_TIMEOUT_S)
         except LimaError as exc:
             line(f"workvm_list_failed slot={slot} code={exc.code}")
-            continue
-        except TimeoutError:  # a hanging `limactl list` must not hold up the round (the thread ends by itself)
+        except TimeoutError:  # the thread ends by itself
             line(f"workvm_list_failed slot={slot} code=timeout")
-            continue
+        return []
+
+    slots = sorted({row.slot for row in rows})
+    for listed in await asyncio.gather(*(listing(slot) for slot in slots)):
         instances.update((instance.name, instance) for instance in listed)
     known = {row.lima_name for row in rows}
     host = await vm.host_values(tools, [instance for name, instance in instances.items() if name in known])

@@ -127,7 +127,9 @@ if as_slot nc -z -G 5 -w 5 "${smtp:-gmail-smtp-in.l.google.com}" 25 >/dev/null 2
 else
   report port25 pass "blocked"
 fi
-lan=$(route -n get default 2>/dev/null | awk '$1 == "gateway:" { print $2 }')
+# the gateway of the physical network (with the client connected the default route may name the tunnel)
+lan=$(netstat -rn -f inet 2>/dev/null | awk '$1 == "default" && $4 !~ /^utun/ && $2 ~ /^[0-9.]+$/ { print $2; exit }')
+if [ -n "$lan" ]; then report lan_gateway pass "found"; else report lan_gateway fail "no gateway of the site network found; the LAN checks below say nothing"; fi
 own=$(ipconfig getifaddr en0 2>/dev/null)
 for target in ${lan:-} ${own:-}; do
   if as_slot nc -z -G 3 -w 3 "$target" 80 >/dev/null 2>&1 || as_slot nc -z -G 3 -w 3 "$target" 22 >/dev/null 2>&1; then
@@ -173,7 +175,7 @@ if [ -n "$vm" ]; then
   # ICMP and UDP from inside the VM to the site network. A documentation address (never routed) that answers means
   # the user network fakes echo replies; then a gateway answer says nothing and the check passes as `fake`.
   if in_vm ping -c 1 -W 3 192.0.2.1 >/dev/null 2>&1; then
-    report vm_lan_icmp pass "fake: the user network answers every echo request"
+    report vm_lan_icmp info "inconclusive: the user network answers every echo request itself (not forwarded)"
   elif [ -n "${lan:-}" ] && in_vm ping -c 1 -W 3 "$lan" >/dev/null 2>&1; then
     report vm_lan_icmp fail "the gateway answers ICMP from the VM"
   else

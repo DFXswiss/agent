@@ -240,8 +240,9 @@ machine-id at first boot (cloud-init new instance-id).
   request continues on the cold path. Runtime starts at the assignment (pool time is device overhead, not attributed).
   The daemon task refills at once after an assignment and every minute: never while a request waits, never when less
   than two standard VMs of RAM are free (the last one stays for a cold request), never without a ready image and a
-  passing boundary. Entries of an older image are deleted. A waiting request that finds no slot or RAM deletes the
-  oldest pool entry first. Boundary failure and restart delete the pool. Larger sizes are always cloned on demand.
+  passing boundary. Entries of an older image are deleted. A waiting standard request at the head of the queue takes a ready
+  entry; a request that finds no slot or RAM deletes the oldest ready entry first, but only when the RAM of all ready
+  entries would make it fit. Boundary failure and restart delete the pool. Larger sizes are always cloned on demand.
   Log lines `runner.workvm pool_ready slot= start_ms=` (cold start time of the device) and `created … pooled=0|1`.
 - Scale: one device holds `floor((RAM − reserve − workgroup VMs) / 8 GiB)` standard work VMs (512 GiB, 32 GiB reserve:
   60); more parallel agents need more execution devices (ADR-059 decision 11).

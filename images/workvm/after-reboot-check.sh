@@ -20,8 +20,8 @@ count=1
 prefix=
 while [ $# -gt 0 ]; do
   case "$1" in
-    --accounts) count=${2:-}; shift 2 ;;
-    --prefix) prefix=${2:-}; shift 2 ;;
+    --accounts) [ $# -ge 2 ] || { echo "after-reboot-check: --accounts needs a number" >&2; exit 2; }; count=$2; shift 2 ;;
+    --prefix) [ $# -ge 2 ] || { echo "after-reboot-check: --prefix needs a value" >&2; exit 2; }; prefix=$2; shift 2 ;;
     *) sed -n '6,8p' "$0" >&2; exit 2 ;;
   esac
 done
@@ -64,7 +64,7 @@ if launchctl print system/swiss.dfx.agent-runner.pf 2>/dev/null | grep -q 'state
 else
   report watcher fail "LaunchDaemon not running"
 fi
-sleep 3 # one watcher round
+sleep 5 # two watcher rounds
 state=$(cat /var/run/agent.workvm.state 2>/dev/null)
 case "$state" in
   ok\ *) report watcher_state pass "$state" ;;

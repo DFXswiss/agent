@@ -1,13 +1,13 @@
 """Shared work image cache `cache-wimg-<sha12>` for the work VM scenarios (docs/platform/spec/13-work-vm.md
 section 4, ADR-059; same rule as the golden cache in `orchestrator.golden`).
 
-`<sha12>` = first 12 hex digits of the SHA-256 over the lines `<sha256(file)>  <path>` of every file of
-`images/workvm.yaml`, `images/workvm/` and `images/versions.json` (and, when present, the build logic
-`src/agent_runner/workvm/image.py`) of the agent checkout, sorted by path. A run whose selected specs carry
-`@needs-workvm` ensures the cache on the runner device: an existing instance is used as is; otherwise it is built with
-`agent-runner workvm image build --name <sha12>` (self mode, prefix `cache-`) under the lock directory
-`<lock dir>/wimg-<sha12>.lock`. A build downloads packages, so the run refuses a cache it had to build itself (like
-the golden cache): build it before the run with this module.
+`<sha12>` = first 12 hex digits of the SHA-256 over the lines `<sha256(file)> <path>` of every file of
+`images/workvm.yaml`, `images/workvm/provision.sh`, `images/workvm/files/` and `images/versions.json` (and, when
+present, the build logic `src/agent_runner/workvm/image.py`) of the agent checkout, sorted by path. A run whose
+selected specs carry `@needs-workvm` ensures the cache on the runner device: an existing instance is used as is;
+otherwise it is built with `agent-runner workvm image build --name <sha12>` (self mode, prefix `cache-`) under the
+lock directory `<lock dir>/wimg-<sha12>.lock`. A build downloads packages, so the run refuses a cache it had to
+build itself (like the golden cache): build it before the run with this module.
 
     python -m orchestrator.workvm_image --agent <checkout> --python <venv python> --home <scratch> [--lock-dir DIR]
 """
@@ -24,7 +24,9 @@ from pathlib import Path
 
 from orchestrator.golden import BUILT_MARK, CACHE_PREFIX, Run, _run, acquire, pid_alive
 
-INPUTS = ("images/workvm.yaml", "images/workvm", "images/versions.json")
+# What goes into the image: the template, the provisioning script, the files it copies and the pinned versions. The
+# operator scripts next to them (`egress-check.sh`, `host-rehearsal.sh`, ...) run on the host and do not change it.
+INPUTS = ("images/workvm.yaml", "images/workvm/provision.sh", "images/workvm/files", "images/versions.json")
 OPTIONAL_INPUTS = ("src/agent_runner/workvm/image.py",)
 SKIP_PARTS = frozenset({"node_modules", "__pycache__", ".pytest_cache"})
 SKIP_FILES = frozenset({".DS_Store"})

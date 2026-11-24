@@ -12,20 +12,28 @@ from orchestrator import workvm_image
 
 def test_tree_sha_and_name(tmp_path: Path) -> None:
     agent = tmp_path / "agent"
-    with pytest.raises(workvm_image.WorkImageError, match=r"images/workvm\.yaml, images/workvm, images/versions\.json"):
+    expected = r"images/workvm\.yaml, images/workvm/provision\.sh, images/workvm/files, images/versions\.json"
+    with pytest.raises(workvm_image.WorkImageError, match=expected):
         workvm_image.tree_sha(agent)
     files = {
         "images/workvm.yaml": "a",
         "images/workvm/provision.sh": "b",
-        "images/workvm/__pycache__/x.pyc": "c",
-        "images/workvm/.DS_Store": "d",
+        "images/workvm/files/__pycache__/x.pyc": "c",
+        "images/workvm/files/.DS_Store": "d",
+        "images/workvm/files/usr/local/bin/tool": "g",
+        "images/workvm/egress-check.sh": "a host script, not an input",
         "images/versions.json": "e",
         "images/golden.yaml": "not an input",
     }
     for rel, text in files.items():
         (agent / rel).parent.mkdir(parents=True, exist_ok=True)
         (agent / rel).write_text(text)
-    counted = {"images/workvm.yaml": "a", "images/workvm/provision.sh": "b", "images/versions.json": "e"}
+    counted = {
+        "images/workvm.yaml": "a",
+        "images/workvm/provision.sh": "b",
+        "images/workvm/files/usr/local/bin/tool": "g",
+        "images/versions.json": "e",
+    }
 
     def digest(entries: dict[str, str]) -> str:
         lines = "".join(f"{hashlib.sha256(t.encode()).hexdigest()}  {r}\n" for r, t in sorted(entries.items()))
@@ -40,7 +48,7 @@ def test_tree_sha_and_name(tmp_path: Path) -> None:
 
 def test_ensure_builds_once_and_main(tmp_path: Path) -> None:
     agent = tmp_path / "agent"
-    for rel in ("images/workvm.yaml", "images/workvm/provision.sh", "images/versions.json"):
+    for rel in ("images/workvm.yaml", "images/workvm/provision.sh", "images/workvm/files/x", "images/versions.json"):
         (agent / rel).parent.mkdir(parents=True, exist_ok=True)
         (agent / rel).write_text(rel)
     name = workvm_image.cache_name(agent)
