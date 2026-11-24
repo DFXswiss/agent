@@ -51,6 +51,7 @@ test('@E2E-56 @R-3.14 @R-3.5 @needs-vm an agent connects its own Mac with one co
       org_id: org,
       workgroups: [defaultWg],
       version: release.version,
+      admin: 'dialog',
       dialog: 'macOS asks once for your password: this installs the DFX execution service on this Mac.',
     });
     expect(added.notice as string).toContain('Whoever administers this Mac can read the content of every task');

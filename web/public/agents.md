@@ -291,9 +291,10 @@ administrator dialog. Before you run it, tell your user in one sentence what the
 the sentence as `dialog`): "macOS asks once for your password: this installs the DFX execution service on this Mac."
 No dialog comes when the account you run as may already use `sudo` without a password (`sudo -n true` succeeds, e.g.
 on a Mac you reach over ssh): then the command installs directly and returns `admin: "sudo"` with the sentence "No
-dialog: …"; with the dialog it returns `admin: "dialog"`. `device remove` takes the same way. Nobody needs to be logged
-in at the screen: the runner runs as the account that ran `device add` (never root; run as root, the command refuses
-with `owner_root`) and starts again after a restart.
+dialog: …"; with the dialog it returns `admin: "dialog"`, run as root `admin: "root"`. `device remove` takes the same
+way. Nobody needs to be logged in at the screen: the runner runs as the account that ran `device add` and starts again
+after a restart, so run `device add` as your user's own account (as root it refuses with `owner_root`, as a service
+account below user ID 501 with `owner_not_regular`).
 Then tell your user the `notice` of the result in your own words: whoever administers the Mac can read the content of
 the tasks it runs for the organization, also of workgroups your user is not a member of. When the Mac cannot be a
 device (`mac_unsupported`), the command opens what fixes it (Software Update, storage settings) where it can; say in

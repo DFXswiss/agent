@@ -45,6 +45,10 @@ LOGGER = "/usr/bin/logger"
 OSASCRIPT = "/usr/bin/osascript"
 SFLTOOL = "/usr/bin/sfltool"
 MAX_REQUEST = 4096
+# A booted-out runner still shows as loaded until its process (with its database) has ended: the check for what is
+# left waits for that, at most UNLOAD_POLLS times UNLOAD_POLL_S (measured in a macOS guest: a few seconds).
+UNLOAD_POLLS = 30
+UNLOAD_POLL_S = 1.0
 CODE_PROMPT = (
     "To connect this Mac to your organization, paste the device code shown on the devices page of agent.dfx.swiss."
 )
@@ -246,7 +250,8 @@ def publish(
     """Write `state.json` from the runner's status and launchd; returns what was written.
 
     When the status cannot be read (the runner's store is starting: right after an enrollment, at boot), the device
-    stays as last known, and an enrollment of this run names its device: an unreadable status is no removal."""
+    stays as last known, and an enrollment of this run names its device: an unreadable status is no removal. `status`
+    says whether the device fields come from a status read now (`read`) or are kept (`unreadable`)."""
     system = ctx.system
     layout = system.layout
     found = _safe_status(ctx)
@@ -264,6 +269,7 @@ def publish(
         "owner": ctx.owner.name,
         "enrolled": enrolled,
         "device_id": device,
+        "status": "read" if found is not None else "unreadable",
         "connected": bool(found and found.last_connect != "never"),
         "revoked": found.revoked if found else "unknown",
         "removed": found.removed if found else "unknown",
@@ -351,13 +357,26 @@ def uninstall(system: System, keys: Sequence[str], *, self_removal: bool = False
     if layout.payload.exists():
         shutil.rmtree(layout.payload)
         removed.append("payload")
-    left = leftovers(system, found)
-    if self_removal:
-        left = [item for item in left if item != f"service:{MAINTENANCE_LABEL}"]
+    left = _left_after_unloading(system, found, self_removal=self_removal)
     result = {"removed": removed, "leftovers": left, "notes": notes, "background_items": background_items(system)}
     if self_removal:
         system.run([LOGGER, "-t", "dfx-agent-runner", json.dumps(result, sort_keys=True)])
     return result
+
+
+def _left_after_unloading(system: System, found: owner.Owner | None, *, self_removal: bool) -> list[str]:
+    """`leftovers`, asked again while only services are left that may still be ending (the maintenance daemon running
+    its own removal stays loaded until it exits and is not counted then)."""
+
+    def now() -> list[str]:
+        left = leftovers(system, found)
+        return [item for item in left if item != f"service:{MAINTENANCE_LABEL}"] if self_removal else left
+
+    left, polls = now(), 0
+    while left and all(item.startswith("service:") for item in left) and polls < UNLOAD_POLLS:
+        time.sleep(UNLOAD_POLL_S)
+        left, polls = now(), polls + 1
+    return left
 
 
 def _golden_wanted(system: System) -> tuple[str, str] | None:

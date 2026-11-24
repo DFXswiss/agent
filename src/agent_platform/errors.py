@@ -117,6 +117,10 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
         "Run `device add` as the account that is to own the device, not as root; if that account may use sudo "
         "without a password, it needs no dialog."
     ),
+    ("invalid_argument", "owner_not_regular"): (
+        "Run `device add` as the person's own account (a regular account with a user ID of at least 501); the runner "
+        "runs as the account that runs the command."
+    ),
     ("invalid_argument", "recovery_code_unknown"): (
         "The hub knows no account with this recovery code; check the code and the hub address (a code stops working "
         "once a new one is made)."

@@ -15,7 +15,8 @@ The administrator step is the `osascript` dialog, unless the caller already has 
 root caller runs the script directly, a caller whose `sudo -n true` succeeds runs it under `sudo -n` (`admin_way`; the
 output names the way as `admin`: `dialog`, `sudo` or `root`). The runner's owner is the owner of the request file,
 so on these ways too it is the calling account, also without anybody logged in at the screen; `device add` therefore
-refuses a root caller (`invalid_argument`, `owner_root`): it is run as the account that is to own the device. Tests
+refuses a caller that cannot own a device (`invalid_argument`: `owner_root`, `owner_not_regular` below user ID 501):
+it is run as the account that is to own the device. Tests
 and the E2E suite replace the step with the program named in
 `AGENT_PLATFORM_DEVICE_ADMIN`, and the layout's root with `AGENT_PLATFORM_DEVICE_ROOT` (both only together; the program
 gets the same three arguments as the root script); with them `AGENT_PLATFORM_DEVICE_KEYS` (comma-separated) adds
@@ -44,7 +45,7 @@ from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
 from agent_platform.orgs import find_org
 from agent_runner.errors import RunnerError
-from agent_runner.install import admin, preflight, release, update
+from agent_runner.install import admin, owner, preflight, release, update
 from agent_runner.install.layout import Layout
 from agent_runner.install.state import read_json
 from agent_runner.install.system import System, fetch_url, run_argv
@@ -197,12 +198,21 @@ def devices_org_of(account: Account, wg: str) -> str:
     return find_org(account, membership.require_id(wg))
 
 
-def device_add(account: Account, machine: Machine, org: str | None, wgs: list[str]) -> dict[str, Any]:
-    checks = check_mac(machine)
-    way = admin_way(machine)
-    if way == ROOT:
-        # The runner runs as the owner of the request file, and root can never own a device.
+def check_caller(machine: Machine) -> None:
+    """The runner runs as the owner of the request file, the calling account: it must be a regular account (never
+    root, a user ID of at least 501), else the installation would fall back to whoever is at the screen."""
+    if machine.admin is not None:
+        return
+    uid = machine.system.geteuid()
+    if uid == machine.system.root_uid:
         raise PlatformError("invalid_argument", reason="owner_root")
+    if uid < owner.MIN_UID:
+        raise PlatformError("invalid_argument", reason="owner_not_regular")
+
+
+def device_add(account: Account, machine: Machine, org: str | None, wgs: list[str]) -> dict[str, Any]:
+    check_caller(machine)
+    checks = check_mac(machine)
     state = read_state(machine)
     if state is not None and state.get("enrolled") is True:
         raise PlatformError("device_installed", device_id=str(state.get("device_id", "")))
@@ -223,6 +233,7 @@ def device_add(account: Account, machine: Machine, org: str | None, wgs: list[st
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(str(invitation["code"]) + "\n")
         started = machine.system.now().strftime(update.TIME_FORMAT)
+        way = admin_way(machine)  # asked right before the step: cached sudo rights may expire during the download
         try:
             run_admin(machine, True, (str(package_path), feed.package_sha256, str(request)), way)
         except PlatformError:
@@ -257,6 +268,7 @@ def device_remove(account: Account, machine: Machine) -> dict[str, Any]:
     state = read_state(machine)
     if state is None:
         raise PlatformError("not_installed")
+    way = admin_way(machine)  # before the unpairing, which cannot be undone
     device = str(state.get("device_id", ""))
     unpaired: dict[str, Any] = {"device_id": device, "unpaired": False}
     if state.get("enrolled") is True and device:
@@ -267,7 +279,6 @@ def device_remove(account: Account, machine: Machine) -> dict[str, Any]:
                 raise
         else:
             unpaired = {**membership.member_remove(account, org, device), "device_id": device, "unpaired": True}
-    way = admin_way(machine)
     output = run_admin(machine, False, ("", "", ""), way)
     lines = [line for line in output.strip().splitlines() if line.startswith("{")]
     try:

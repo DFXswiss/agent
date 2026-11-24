@@ -557,16 +557,19 @@ def test_device_add_without_a_dialog_through_sudo(mac: Mac, hub: HubFake, accoun
     assert mac.run.called(admin.OSASCRIPT) == []
 
 
-def test_device_add_as_root_is_refused_before_anything(mac: Mac, hub: HubFake, account: User, opened: Account) -> None:
+@pytest.mark.parametrize(("euid", "reason"), [(0, "owner_root"), (500, "owner_not_regular")])
+def test_device_add_by_an_account_that_cannot_own_the_device_is_refused_first(  # noqa: PLR0917 - fixtures
+    mac: Mac, hub: HubFake, account: User, opened: Account, euid: int, reason: str
+) -> None:
     private_org(hub, account)
-    real_step(mac, euid=0, sudo=False)
-    with refused("invalid_argument", reason="owner_root"):
+    real_step(mac, euid=euid, sudo=True)
+    calls = len(mac.run.calls)
+    with refused("invalid_argument", reason=reason):
         ownmac.device_add(opened, mac.machine, None, [])
+    assert len(mac.run.calls) == calls  # not even the checks of the Mac or sudo
     assert mac.fetch.urls == []
     assert mac.folders == []
-    assert "Run `device add` as the account" in str(
-        PlatformError("invalid_argument", reason="owner_root").to_json()["next"]
-    )
+    assert "Run `device add` as" in str(PlatformError("invalid_argument", reason=reason).to_json()["next"])
 
 
 def test_device_add_to_named_workgroups(tool: Tool, mac: Mac, hub: HubFake, account: User, opened: Account) -> None:

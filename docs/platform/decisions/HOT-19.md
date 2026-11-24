@@ -82,13 +82,19 @@ Decision (one place each, not per route):
   No right is added; the script is the constant of `agent_runner.install.admin`, its arguments as before.
 - Owner without a screen session: `owner.resolve` takes the recorded owner, then the spooled one (the owner of the
   request file, recorded by the administrator script), then the user at the screen; on the agent way the spooled owner
-  always exists, so nobody at the screen is needed and `owner_unknown` cannot occur there. The runner is a
+  exists for a regular calling account, so nobody at the screen is needed. A caller below user ID 501 (a service
+  account that may use sudo) would not be accepted as owner and the installation would fall back to the screen, so
+  `device add` refuses it first (`owner_not_regular`), like root (`owner_root`). The runner is a
   LaunchDaemon with `UserName` (`RunAtLoad`, `KeepAlive`), so it starts without a login and after a restart.
-- A root caller of `device add` is refused before anything happens (`invalid_argument`, `owner_root`): the request
-  file would belong to root, which the administrator script refuses as owner, and root never owns a device; the
-  next step tells the agent to run as the account that is to own the device. `device remove` works as root.
-- `sudo -n true` is asked once per command; if the cached rights expire before the step, the step fails with
-  `install_failed` (`admin_step`/`removal_step`) and the command can be run again.
+- Deviation from the package text (goal 1 names root as a way for both commands): a root caller of `device add` is
+  refused before anything happens (`invalid_argument`, `owner_root`): the request file would belong to root, which
+  the administrator script refuses as owner, and root never owns a device; the next step tells the agent to run as
+  the account that is to own the device. `device remove` takes the root way.
+- `sudo -n true` is asked right before the step of `device add` (cached rights may expire during the download) and
+  before the unpairing of `device remove` (which cannot be undone); if the rights expire after it, the step fails
+  with `install_failed` (`admin_step`/`removal_step`) and the command can be run again.
+- `state.json` says with `status` whether its device fields come from a status read in that round (`read`) or were
+  kept because it could not be read (`unreadable`), so a reader does not take a kept value as confirmed (review).
 - Found by the guest proof: right after the enrollment and at boot `agent-runner status` cannot be read for a moment
   (the runner's store is starting), and `root.publish` then wrote `enrolled: false` and an empty `device_id`, dropping
   even the device ID the enrollment of the same run had just returned. `device add` reported an empty `device_id`,

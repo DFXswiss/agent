@@ -15,6 +15,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -514,6 +515,7 @@ def test_postinstall_installs_enrolls_and_publishes(kit: Kit, keys: Keys) -> Non
         "owner": "alice",
         "enrolled": True,
         "device_id": "dev-1",
+        "status": "read",
         "connected": True,
         "revoked": "no",
         "removed": "no",
@@ -664,6 +666,7 @@ def test_publish_keeps_what_this_round_did_not_learn(kit: Kit) -> None:
         "owner": "alice",
         "enrolled": True,
         "device_id": "dev-1",
+        "status": "read",
         "connected": False,
         "revoked": "key_revoked",
         "removed": "no",
@@ -717,18 +720,23 @@ def test_publish_keeps_the_device_while_the_status_cannot_be_read(kit: Kit) -> N
     runner_commands(kit.run, {"status": "not json"})
     fields = root.publish(context(kit), MANIFEST, Maintenance())
     assert (fields["enrolled"], fields["device_id"], fields["revoked"]) == (True, "dev-9", "unknown")
+    assert fields["status"] == "unreadable"
     write_state(kit.layout.state_file, {"enrolled": False, "device_id": "stale"})
     fields = root.publish(context(kit), MANIFEST, Maintenance())
     assert (fields["enrolled"], fields["device_id"]) == (False, "")
     enrolled = {"enrollment": "enrolled", "device_id": "dev-10"}
     fields = root.publish(context(kit), MANIFEST, Maintenance(), enrollment=enrolled)
     assert (fields["enrolled"], fields["device_id"], fields["enrollment"]) == (True, "dev-10", "enrolled")
-    # an enrollment without a device ID changes nothing; a readable status decides
+    # an enrollment without a device ID changes nothing (the status is still unreadable: the device is kept)
     fields = root.publish(context(kit), MANIFEST, Maintenance(), enrollment={"enrollment": "enrolled"})
     assert (fields["enrolled"], fields["device_id"]) == (True, "dev-10")
+    # a readable status decides
     runner_commands(kit.run, {"status": status_doc()})
     fields = root.publish(context(kit), MANIFEST, Maintenance(), enrollment={"enrollment": "failed"})
-    assert (fields["enrolled"], fields["device_id"]) == (True, "dev-1")
+    assert (fields["enrolled"], fields["device_id"], fields["status"]) == (True, "dev-1", "read")
+    runner_commands(kit.run, {"status": status_doc(enrolled=False)})
+    fields = root.publish(context(kit), MANIFEST, Maintenance())
+    assert (fields["enrolled"], fields["device_id"], fields["status"]) == (False, "", "read")
 
 
 # --- removal --------------------------------------------------------------------------------------------------------
@@ -917,6 +925,26 @@ def test_a_created_parent_the_owner_still_uses_stays(kit: Kit, keys: Keys) -> No
     assert "created:.local" not in result["removed"]
     assert kept.is_dir()
     assert result["leftovers"] == []
+
+
+def test_the_removal_waits_until_a_booted_out_service_has_ended(
+    kit: Kit, keys: Keys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A booted-out runner stays loaded until its process (with its database) has ended - a few seconds, measured in
+    a macOS guest (HOT-19): what is left is asked again meanwhile, and a service that never ends stays a leftover."""
+    installed_for_removal(kit, keys)
+    nothing_left(kit)
+    runner_commands(kit.run, {"uninstall": runner_doc()})
+    kit.run.answers(RUNNER_PRINT, [(0, "", ""), (0, "", ""), (113, "", "")])
+    slept: list[float] = []
+    monkeypatch.setattr(root, "UNLOAD_POLLS", 5)
+    monkeypatch.setattr(time, "sleep", slept.append)
+    assert root.uninstall(kit.system, [keys.public])["leftovers"] == []
+    assert slept == [root.UNLOAD_POLL_S, root.UNLOAD_POLL_S]
+    kit.run.answer(RUNNER_PRINT, rc=0)
+    slept.clear()
+    assert root.uninstall(kit.system, [keys.public])["leftovers"] == [f"service:{RUNNER_LABEL}"]
+    assert slept == [root.UNLOAD_POLL_S] * 5
 
 
 def test_a_vm_the_runner_left_is_a_leftover_of_the_removal(kit: Kit, keys: Keys) -> None:

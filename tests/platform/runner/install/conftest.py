@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 
 from agent_runner.errors import RunnerError
-from agent_runner.install import release, runnerctl
+from agent_runner.install import release, root, runnerctl
 from agent_runner.install.layout import Layout
 from agent_runner.install.owner import Owner
 from agent_runner.install.system import System
@@ -41,6 +41,13 @@ NEWER = "2026.11.25.0800"
 NOW = datetime(2026, 11, 24, 12, 0, 0, tzinfo=UTC)
 
 Answer = tuple[int, str, str]
+
+
+@pytest.fixture(autouse=True)
+def no_unload_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake launchd keeps a service loaded unless a test unloads it: the removal does not wait for it here
+    (`test_root.py` tests the wait with a fake sleep)."""
+    monkeypatch.setattr(root, "UNLOAD_POLLS", 0)
 
 
 @dataclass
