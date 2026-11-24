@@ -93,21 +93,30 @@ class ControlContext:
     info: GuestInfo
     guard: AuthGuard = field(default_factory=lambda: AuthGuard(time.monotonic))
     closers: list[Callable[[], None]] = field(default_factory=list)
+    closed: bool = False
 
     def on_close(self, closer: Callable[[], None]) -> None:
-        """Register ``closer`` to run when the control process stops (``close``), before the journal closes."""
+        """Register ``closer`` to run when the control process stops (``close``), before the journal closes; a part
+        created while or after the process closes is closed at once."""
+        if self.closed:
+            _close(closer)
+            return
         self.closers.append(closer)
 
     def close(self) -> None:
-        """Run the closers once, the latest first (a part closes before the parts it was built on); a failing closer
-        is logged and the others still run."""
+        """Run the closers once, in the order of registration: the session manager, which emits the session events,
+        stops before the parts that handle them (capture, delivery). A failing closer is logged; the others run."""
+        self.closed = True
         while self.closers:
-            closer = self.closers.pop()
-            try:
-                closer()
-            except Exception:
-                sys.stderr.write("agent-guest-control: close failed\n")
-                traceback.print_exc(file=sys.stderr)
+            _close(self.closers.pop(0))
+
+
+def _close(closer: Callable[[], None]) -> None:
+    try:
+        closer()
+    except Exception:
+        sys.stderr.write("agent-guest-control: close failed\n")
+        traceback.print_exc(file=sys.stderr)
 
 
 def _json_file(path: str, name: str) -> dict[str, Any] | None:

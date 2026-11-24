@@ -96,6 +96,7 @@ class Capture:
         self.scan_seconds = scan_seconds
         self.poll = poll
         self.sessions: dict[str, SessionCapture] = {}
+        self.closed = False
         self._lock = threading.RLock()
 
     def _session(self, session_id: str) -> Session:
@@ -115,6 +116,8 @@ class Capture:
             existing = self.sessions.get(session_id)
             if existing is not None:
                 return existing
+            if self.closed:
+                raise StateError("not_found")  # the control process stops: nothing is attached any more
             session = self._session(session_id)
             scanner = WorkspaceScanner(self.context.journal, session_id, self.base(session), session.uid)
             scanner.start()
@@ -220,6 +223,7 @@ class Capture:
         """Stop every capture of this process and wait for its threads (the control process stops); recorder and
         follower write what they read. A restarted process attaches again (``attach_running``)."""
         with self._lock:
+            self.closed = True
             captures = list(self.sessions.values())
             self.sessions.clear()
         for capture in captures:
@@ -229,6 +233,8 @@ class Capture:
 
     def attach_running(self, exclude: str | None = None) -> None:
         """Attach the capture of running sessions that have none (after a restart of the control process)."""
+        if self.closed:
+            return
         for session in self.context.state.sessions():
             with self._lock:
                 attached = session.id in self.sessions
@@ -279,6 +285,8 @@ def capture(context: ControlContext) -> Capture:
 def _event(handler: Callable[[Capture, str], None]) -> Callable[[ControlContext, str], None]:
     def callback(context: ControlContext, session_id: str) -> None:
         current = capture(context)
+        if current.closed:
+            return  # a session event while the control process stops (its watchers end first)
         handler(current, session_id)
         current.attach_running(exclude=session_id)
 

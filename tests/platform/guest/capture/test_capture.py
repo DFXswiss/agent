@@ -26,7 +26,7 @@ from agent_guest.control_routes.capture import Capture
 from agent_guest.control_routes.hooks import FILE_HINTS
 from agent_guest.driver import ClaudeCodeDriver
 from agent_guest.hook_addons import file_changes
-from agent_guest.state import Session
+from agent_guest.state import Session, StateError
 from tests.platform.guest.conftest import SESSION_TOKEN, FakeClock
 from tests.platform.guest.hooks.conftest import HookClient, tool_body
 
@@ -389,24 +389,33 @@ def test_the_capture_ends_with_the_control_process(
 ) -> None:
     service = ControlService(guest_config, clock, startup=())
     context = service.start()
-    created = capture_routes.install(
-        context,
-        Capture(
+    try:
+        created = capture_routes.install(
             context,
-            tmux.Tmux(socket="/run/agent-guest/tmux.sock", run=fake_tmux, scope=False),
-            fake_tmux,
-            fifo_dir=str(short_tmp / "capture"),
-            scan_seconds=0.02,
-            poll=0.01,
-        ),
-    )
-    save(context, base, "agent_starting")
-    emit(context, "agent_starting")
-    running = created.sessions[SID]
-    assert running.follower is not None
-    assert running.recorder is not None
-    threads = [running.thread, running.follower._thread, running.recorder._thread]
-    service.stop()
+            Capture(
+                context,
+                tmux.Tmux(socket="/run/agent-guest/tmux.sock", run=fake_tmux, scope=False),
+                fake_tmux,
+                fifo_dir=str(short_tmp / "capture"),
+                scan_seconds=0.02,
+                poll=0.01,
+            ),
+        )
+        save(context, base, "agent_starting")
+        emit(context, "agent_starting")
+        running = created.sessions[SID]
+        assert running.follower is not None
+        assert running.recorder is not None
+        threads = [running.thread, running.follower._thread, running.recorder._thread]
+    finally:
+        service.stop()
     assert created.sessions == {}
     assert not any(thread is not None and thread.is_alive() for thread in threads)
+    assert fake_tmux.subcommands() == ["pipe-pane", "pipe-pane"]
+    # a closed capture attaches nothing any more: not for a late session event, an op or a restart hook
+    emit(context, "agent_starting")
+    created.attach_running()
+    with pytest.raises(StateError, match="not_found"):
+        created.ensure_scanner(SID)
+    assert created.sessions == {}
     assert fake_tmux.subcommands() == ["pipe-pane", "pipe-pane"]

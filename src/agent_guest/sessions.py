@@ -329,6 +329,7 @@ class SessionManager:
     tmux_check: float = TMUX_CHECK_SECONDS
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False)
     _closed: threading.Event = field(default_factory=threading.Event, init=False)
+    _cleanup: threading.Thread | None = field(default=None, init=False)
     _starts: dict[str, _Start] = field(default_factory=dict, init=False)
     _running: dict[str, _Running] = field(default_factory=dict, init=False)
     _stopping: set[str] = field(default_factory=set, init=False)
@@ -1016,10 +1017,12 @@ class SessionManager:
                 traceback.print_exc(file=sys.stderr)
 
     def close(self) -> None:
-        """Stop the watcher and cleanup threads (units and tmux sessions keep running)."""
+        """Stop the watcher and cleanup threads and wait for them (units and tmux sessions keep running)."""
         self._closed.set()
         with self._lock:
             threads = [running.thread for running in self._running.values() if running.thread is not None]
+        if self._cleanup is not None:
+            threads.append(self._cleanup)
         for thread in threads:
             thread.join(5)
 
@@ -1189,7 +1192,8 @@ def manager(context: ControlContext) -> SessionManager:
             tmux=tmux.Tmux(),
             driver=ClaudeCodeDriver(context.info.claude_version),
         )
-        threading.Thread(target=created.cleanup_loop, name="agent-guest-cleanup", daemon=True).start()
+        created._cleanup = threading.Thread(target=created.cleanup_loop, name="agent-guest-cleanup", daemon=True)
+        created._cleanup.start()
         return install(context, created)
 
 

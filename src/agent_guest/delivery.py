@@ -288,11 +288,13 @@ class Delivery:
         if self.spawn is not None:
             self.spawn(work)
             return
-        thread = threading.Thread(target=work, name="agent-guest-delivery", daemon=True)
         with self._lock:
+            if self._closed.is_set():
+                return  # the control process stops: the prompt stays registered for a restarted process
+            thread = threading.Thread(target=work, name="agent-guest-delivery", daemon=True)
             self._threads = [running for running in self._threads if running.is_alive()]
             self._threads.append(thread)
-        thread.start()
+            thread.start()
 
     def pane_lock(self, session_id: str) -> threading.Lock:
         with self._lock:
@@ -300,8 +302,8 @@ class Delivery:
 
     def close(self) -> None:
         """End the workers (their next pause returns ``False``) and wait for them; the control process stops."""
-        self._closed.set()
         with self._lock:
+            self._closed.set()
             threads, self._threads = self._threads, []
         for thread in threads:
             thread.join(5)

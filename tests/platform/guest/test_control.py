@@ -849,7 +849,7 @@ def test_cli_api_does_not_load_the_journal(repo_root: Path) -> None:
     assert done.stdout.strip() == "[]"
 
 
-def test_closers_run_latest_first_once_and_a_failure_does_not_stop_the_others(
+def test_closers_run_in_order_once_and_a_failure_does_not_stop_the_others(
     context: ControlContext, capsys: pytest.CaptureFixture[str]
 ) -> None:
     calls: list[str] = []
@@ -863,18 +863,24 @@ def test_closers_run_latest_first_once_and_a_failure_does_not_stop_the_others(
     context.on_close(lambda: calls.append("last"))
     context.close()
     context.close()
-    assert calls == ["last", "failing", "first"]
+    assert calls == ["first", "failing", "last"]
     err = capsys.readouterr().err
     assert "agent-guest-control: close failed" in err
     assert "RuntimeError: broken part" in err
+    # a part created while or after the process closes is closed at once
+    context.on_close(lambda: calls.append("late"))
+    assert calls[-1] == "late"
+    assert context.closers == []
 
 
 def test_stop_closes_the_parts_while_the_journal_is_still_open(guest_config: GuestConfig, clock: FakeClock) -> None:
     service = ControlService(guest_config, clock, startup=())
     context = service.start()
-    context.state.save_session(make_session())
-    written: list[int] = []
-    context.on_close(lambda: written.append(context.journal.append("session.hook", HOOK, SESSION_ID)))
-    service.stop()
+    try:
+        context.state.save_session(make_session())
+        written: list[int] = []
+        context.on_close(lambda: written.append(context.journal.append("session.hook", HOOK, SESSION_ID)))
+    finally:
+        service.stop()
     assert len(written) == 1
     assert context.closers == []

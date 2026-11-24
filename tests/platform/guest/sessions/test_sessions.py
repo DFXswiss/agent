@@ -864,6 +864,8 @@ def test_default_manager_is_created_once(context: ControlContext) -> None:
         assert created.paths == sessions.Paths()
     finally:
         created.close()
+    assert created._cleanup is not None
+    assert not created._cleanup.is_alive()
 
 
 def test_module_level_entry_points(manager: sessions.SessionManager, context: ControlContext) -> None:

@@ -837,6 +837,9 @@ def test_close_waits_for_the_workers_and_the_control_process_closes_the_delivery
     context.close()
     assert not worker.is_alive()
     assert engine._threads == []
+    # a closed delivery starts no worker any more
+    engine._start(lambda: None)
+    assert engine._threads == []
 
 
 # -------------------------------------------------------------------------------------------- queue
