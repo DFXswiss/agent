@@ -10,9 +10,11 @@ Done by the release operator on an administrator's Mac with the repository check
    never leaves the operator's keychain or safe:
    `python3 -c 'import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("="))' > release.key`
 2. Its public half: `python3 -c 'from agent_runner.install import release; import sys; from agent_runner.crypto.encoding import b64u_decode; print(release.public_key(b64u_decode(open(sys.argv[1]).read().strip(), 32)))' release.key`
-3. Add the public half to `src/agent_runner/install/release_keys.py` (`KEYS: tuple[str, ...] = ("<b64u>",)`) in a reviewed commit.
-   Until a key is listed there, `agent-platform device add` refuses with `release_unavailable`
-   (`release_key_missing`) and own devices do not update.
+3. Add the public half to `src/agent_runner/install/release_keys.py` (`KEYS: tuple[str, ...] = ("<b64u>",)`, on one
+   line: the build reads it from there) in a reviewed commit. Without any key listed, `agent-platform device add`
+   refuses with `release_unavailable` (`release_key_missing`) and own devices do not update. The first key is listed
+   (KOR-66). A package must be built from a commit that already contains its key: the payload trusts only the keys of
+   its own `release_keys.py` (`build_failed` `release_key_untrusted` otherwise).
 4. Rotation: add the new public key, release, then remove the old key in a later release (signed with the new key).
    Removing a key revokes it for every device that runs a release without it.
 
@@ -34,7 +36,12 @@ bytes are the reproducibility check (signatures carry time stamps, so signed bui
 `xcrun notarytool submit <out>/DFX-Agent-Runner-<version>.pkg --keychain-profile <profile> --wait`, then
 `xcrun stapler staple <pkg>`. Stapling changes the package bytes: rebuild the feed afterwards with
 `--notarized` (or re-run the build with `--notarized` and staple again) so `package_sha256` matches the stapled file.
-The device screen offers the download only for a feed with `notarized: true` (any feed in test mode).
+The device screen offers the download only for a feed with `notarized: true` that has not expired.
+
+Without a Developer ID (steps 2 and 4 only, `notarized: false`) the agent way works to the end: `device add` checks
+the feed's signature, expiry, minimum macOS and the package digest, never `notarized`; it writes the package itself
+(no quarantine attribute) and the administrator step installs it with `installer -pkg`, which accepts an unsigned
+package; updates check the same and install the same way. Only the download for people stays closed.
 
 ## 4. Publish
 
