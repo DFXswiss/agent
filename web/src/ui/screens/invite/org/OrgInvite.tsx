@@ -429,7 +429,7 @@ export function OrgInvite({
             <button
               type="button"
               className={PRIMARY}
-              disabled={step.step === 'create_passkey'}
+              disabled={step.step === 'create_passkey' || !codeOk}
               onClick={() => existingFromIntro(step.invitation)}
               data-testid="invite.existing-account"
             >

@@ -816,11 +816,10 @@ describe('OrgInvite: with the pairing of an agent (11-agent-access.md section 5.
     expect(create).toBeDisabled();
     fireEvent.submit(create.closest('form')!);
     expect(screen.getByTestId('invite.org-intro')).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('invite.existing-account'));
-    expect(screen.getByTestId('invite.sign-in')).toBeDisabled();
+    // signing in with an existing account is a passkey gesture too: it waits for the code as well
+    expect(screen.getByTestId('invite.existing-account')).toBeDisabled();
     fireEvent.change(screen.getByTestId('invite.agent.code.input'), { target: { value: code } });
-    expect(screen.getByTestId('invite.sign-in')).toBeEnabled();
-    fireEvent.click(screen.getByTestId('invite.back'));
+    expect(screen.getByTestId('invite.existing-account')).toBeEnabled();
     expect(screen.getByTestId('invite.create-passkey')).toBeEnabled();
     fireEvent.click(screen.getByTestId('invite.create-passkey'));
     fireEvent.click(await screen.findByTestId('invite.unlock'));
