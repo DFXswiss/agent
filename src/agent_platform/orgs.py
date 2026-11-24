@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from agent_platform.account import Account, check_package_head, needs_platform, unverified
+from agent_platform.account import Account, Names, check_package_head, needs_platform, unverified
 from agent_platform.batch import Built, build_batch, make_wrap
 from agent_platform.errors import PlatformError
 from agent_platform.hub import anon_request, segment
@@ -143,7 +143,15 @@ def org_show(account: Account, org: str) -> dict[str, Any]:
     names = account.names(org)
     me = state.member(account.user_id)
     members = [
-        {"principal_id": p.id, "kind": p.kind, "role": p.role, "name": names.members.get(p.id)}
+        {
+            "principal_id": p.id,
+            "kind": p.kind,
+            "role": p.role,
+            "name": names.members.get(p.id),
+            # where the name comes from (ADR-067): own, admin (given_by), invitation (given_by) or none
+            "name_source": names.sources.get(p.id, {}).get("source", "none"),
+            "name_given_by": names.sources.get(p.id, {}).get("by"),
+        }
         for p in sorted(state.principals.values(), key=lambda p: p.joined_seq)
         if p.active
     ]
@@ -162,7 +170,14 @@ def org_show(account: Account, org: str) -> dict[str, Any]:
         for wg in sorted(state.workgroups.values(), key=lambda wg: wg.created_seq)
     ]
     invites = [
-        {"invite_id": inv.invite_id, "kind": inv.kind, "role": inv.role, "expires": inv.expires, "seq": inv.seq}
+        {
+            "invite_id": inv.invite_id,
+            "kind": inv.kind,
+            "role": inv.role,
+            "expires": inv.expires,
+            "seq": inv.seq,
+            "name": names.invitations.get(inv.invite_id, {}).get("name"),
+        }
         for inv in state.invites.values()
         if inv.revoked_seq is None and inv.accepted_seq is None
     ]
@@ -176,17 +191,20 @@ def org_show(account: Account, org: str) -> dict[str, Any]:
         "members": members,
         "workgroups": workgroups,
         "open_invites": invites,
-        **({"invites": invite_states(account, org, state)} if me is not None and me.role == "admin" else {}),
+        **({"invites": invite_states(account, org, state, names)} if me is not None and me.role == "admin" else {}),
     }
 
 
-def invite_states(account: Account, org: str, state: OrgState) -> list[dict[str, Any]]:
+def invite_states(account: Account, org: str, state: OrgState, names: Names | None = None) -> list[dict[str, Any]]:
     """The user invitations with their state for the inviter (KOR-36): `open` (not opened yet as far as the hub
     knows), `opened` (someone looked the link up), `registered` (a new account was created with it, the join is still
-    missing) or `accepted`. Listed are only invitations the verified log knows, not revoked and not expired (accepted
-    ones until their expiry, so that "did they accept?" is answered); an open one must also be open in the hub's list,
-    which is otherwise a hint for `opened` and `registered` only (03-api.md section 4.2; `opened_at` is missing on
-    older hubs)."""
+    missing), `settled` (that account is a member now, admitted directly: the invitation is no longer needed,
+    ADR-067; `registered_user` names it) or `accepted`, with the name an admin gave the invitation (`name`, null
+    without one). Listed are only invitations the verified log knows, not revoked and not expired (accepted ones
+    until their expiry, so that "did they accept?" is answered); an open one must also be open in the hub's list,
+    which is otherwise a hint for `opened`, `registered` and `settled` only (03-api.md section 4.2; `opened_at` and
+    `registered_user` are missing on older hubs)."""
+    names = account.names(org) if names is None else names
     answer = account.call("GET", f"/v1/orgs/{segment(org)}/invites")
     rows = {str(row.get("invite_id")): row for row in answer.get("invites", []) if isinstance(row, dict)}
     now = datetime.now(UTC)
@@ -200,8 +218,14 @@ def invite_states(account: Account, org: str, state: OrgState) -> list[dict[str,
         if inv.accepted_seq is None and row.get("state") != "open":
             continue
         opened = row.get("opened_at")
+        registered = row.get("registered_user")
+        member = state.member(registered) if isinstance(registered, str) else None
+        settled = inv.accepted_seq is None and member is not None and member.kind == "user"
         if inv.accepted_seq is not None:
             status = "accepted"
+        elif settled:
+            # the account that registered with it was admitted directly: no longer needed (ADR-067)
+            status = "settled"
         elif row.get("registered") is True:
             status = "registered"
         else:
@@ -214,6 +238,8 @@ def invite_states(account: Account, org: str, state: OrgState) -> list[dict[str,
                 "status": status,
                 "opened_at": opened,
                 "accepted_by": None if inv.accepted_seq is None else joined.get(inv.accepted_seq),
+                "registered_user": registered if settled else None,
+                "name": names.invitations.get(inv.invite_id, {}).get("name"),
             }
         )
     return found

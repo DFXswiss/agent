@@ -757,6 +757,7 @@ class HubFake:
                 "invite_id": invite_id,
                 "state": found.get("state", "open"),
                 "registered": found["registered"],
+                "registered_user": found.get("registered_user"),
                 "opened_at": found["opened_at"],
             }
             for invite_id, found in self.invites.items()

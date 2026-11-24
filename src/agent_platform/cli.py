@@ -18,7 +18,19 @@ from collections.abc import Mapping, Sequence
 from importlib import resources
 from typing import Any, TextIO
 
-from agent_platform import __version__, alone, claude, diagnose, membership, orgs, registry, remote, tasks, upkeep
+from agent_platform import (
+    __version__,
+    alone,
+    claude,
+    diagnose,
+    membership,
+    names,
+    orgs,
+    registry,
+    remote,
+    tasks,
+    upkeep,
+)
 from agent_platform.account import Account
 from agent_platform.commands import Context, Handler, Help, Parser, Tree, Work, text_argument, with_account
 from agent_platform.credentials import put_record, read_record
@@ -237,12 +249,20 @@ def cmd_org_create(account: Account, args: argparse.Namespace, context: Context)
 
 
 def cmd_org_show(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return orgs.org_show(account, args.org)
+    # opening an org writes the user's own name into it if it has none there (ADR-067); the view never fails on it
+    try:
+        own_name = names.ensure_own_name(account, args.org)
+    except PlatformError:
+        own_name = "failed"
+    return {**orgs.org_show(account, args.org), "own_name": own_name}
 
 
 def cmd_org_invite(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    if args.name is not None:
+        orgs.display_name(args.name)
     wgs = orgs.parse_wgs(args.wg)
-    return orgs.org_invite(account, args.org, args.role, wgs, args.expires_hours, message=_message(args, context))
+    created = orgs.org_invite(account, args.org, args.role, wgs, args.expires_hours, message=_message(args, context))
+    return names.invite_named(account, args.org, created, args.name)
 
 
 def cmd_org_join(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -261,7 +281,11 @@ def cmd_wg_create(account: Account, args: argparse.Namespace, context: Context) 
 
 
 def cmd_org_admit(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return orgs.org_admit(account, args.org, args.user, args.role, orgs.parse_wgs(args.wg))
+    return names.admit_named(account, args.org, args.user, role=args.role, wgs=orgs.parse_wgs(args.wg), name=args.name)
+
+
+def cmd_org_member_name(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return names.member_name(account, args.org, args.user, args.name)
 
 
 def cmd_org_invitees(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -401,11 +425,22 @@ def _org_commands(tree: Tree) -> None:
     sub.add_argument("--wg", action="append", default=[], help="<wg_id>[:read|write], repeatable")
     sub.add_argument("--expires-hours", type=int, default=72)
     sub.add_argument("--message", help=MESSAGE_HELP)
+    sub.add_argument("--name", help="the invited person's name, shown in the invitation list (ADR-067)")
     sub = tree.add(group, "admit", writing(cmd_org_admit), "admit an existing account directly (no step on its side)")
     sub.add_argument("--org", required=True)
     sub.add_argument("--user", required=True, help="user ID or account code (XXXX-XXXX-XXXX)")
     sub.add_argument("--role", choices=["admin", "member"], default="member")
     sub.add_argument("--wg", action="append", default=[], help="<wg_id>[:read|write], repeatable")
+    sub.add_argument("--name", required=True, help="the person's name: every member sees it until their own one")
+    sub = tree.add(
+        group,
+        "member-name",
+        writing(cmd_org_member_name),
+        "give or change the provisional name of a member or an invitation (admins)",
+    )
+    sub.add_argument("--org", required=True)
+    sub.add_argument("--user", required=True, help="user ID, account code (XXXX-XXXX-XXXX) or invitation ID")
+    sub.add_argument("--name", required=True)
     sub = tree.add(
         group, "invitees", with_account(cmd_org_invitees), "accounts registered through your platform invitations"
     )

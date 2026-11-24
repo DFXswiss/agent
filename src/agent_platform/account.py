@@ -11,8 +11,11 @@ verifies it:
 - scope keys: only wraps that pass W1/W2 against the verified log (`check_wrap`); foreign wraps are ignored;
 - the credential key `CK`: only self-wraps of the user signed by the user's identity (W1);
 - the platform log: against the platform root key received over the loopback (or `--platform-root-key`);
-- profile events (names): signature of the author from the verified log, admins only for org and workgroup names,
-  `ref == author` for member names; events that fail are skipped.
+- profile events (names): the reader checks E1-E5 of every event against the verified log (`check_event`; admins only
+  for org, workgroup and admin-given names, `ref == author` for own member names); events that fail are skipped. A
+  member's name is its own `member.profile`, else the newest `member.name` of a current admin about it written during
+  its current membership, else the name of the invitation its membership started with (ADR-067); only the own name is
+  the account's (`display_name`).
 """
 
 from __future__ import annotations
@@ -32,12 +35,15 @@ from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.event import open_event
 from agent_runner.crypto.keys import Identity
 from agent_runner.crypto.log.entries import Head, check_extends
+from agent_runner.crypto.log.events import check_event
 from agent_runner.crypto.log.platform import PlatformState, VerifiedPlatformLog, verify_platform_log
-from agent_runner.crypto.log.state import ORG, WG
+from agent_runner.crypto.log.state import ORG, USER, WG, OrgState
 from agent_runner.crypto.log.verify import VerifiedLog, verify_log
 from agent_runner.crypto.log.wraps import CRED, WRAP_KEYS, check_wrap
 
 PAGE = 1000
+MEMBER_NAME = "member.name"
+"""The kind of a name an admin gives to a member or an invitation (ADR-067)."""
 KeyRing = dict[tuple[str, str, int], bytes]
 
 
@@ -64,11 +70,46 @@ def _wrap_record(item: Mapping[str, Any]) -> dict[str, Any]:
 
 @dataclass
 class Names:
-    """Verified profile names of an org."""
+    """Verified profile names of an org (module docstring): `members` the name to show, `own` the members' own names,
+    `sources` where a shown name comes from (`{"source": "own"|"admin"|"invitation", "by": admin or None}`),
+    `invitations` the names admins gave to invitations (`{"name", "by"}`)."""
 
     org: str | None = None
     workgroups: dict[str, str] = field(default_factory=dict)
     members: dict[str, str] = field(default_factory=dict)
+    own: dict[str, str] = field(default_factory=dict)
+    sources: dict[str, dict[str, str | None]] = field(default_factory=dict)
+    invitations: dict[str, dict[str, str]] = field(default_factory=dict)
+    given: dict[str, list[tuple[str, str, int]]] = field(default_factory=dict, repr=False)
+
+    def resolve(self, state: OrgState) -> Names:
+        """Fills `members`, `sources` and `invitations` from the own and the admin-given names against `state`."""
+
+        def newest(ref: str, since: int) -> tuple[str, str] | None:
+            valid = [(name, by) for name, by, lh in self.given.get(ref, []) if state.is_admin(by) and lh >= since]
+            return valid[-1] if valid else None
+
+        def give(member: str, found: tuple[str, str] | None, source: str) -> None:
+            if found is not None and member not in self.members:
+                self.members[member] = found[0]
+                self.sources[member] = {"source": source, "by": found[1]}
+
+        self.members = dict(self.own)
+        self.sources = {member: {"source": "own", "by": None} for member in self.own}
+        for invite in state.invites.values():
+            named = newest(invite.invite_id, 0)
+            if invite.kind == USER and named is not None:
+                self.invitations[invite.invite_id] = {"name": named[0], "by": named[1]}
+        users = [p for p in state.principals.values() if p.kind == USER]
+        for user in users:
+            give(user.id, newest(user.id, user.joined_seq), "admin")
+        joined = {user.joined_seq: user.id for user in users}
+        for invite in state.invites.values():
+            member = None if invite.accepted_seq is None else joined.get(invite.accepted_seq)
+            invited = self.invitations.get(invite.invite_id)
+            if member is not None and invited is not None:
+                give(member, (invited["name"], invited["by"]), "invitation")
+        return self
 
 
 @dataclass
@@ -310,7 +351,7 @@ class Account:
         log = self.org_log(org)
         ring = self.keys(org)
         names = Names()
-        query = urlencode({"kinds": "org.profile,wg.profile,member.profile", "limit": PAGE})
+        query = urlencode({"kinds": "org.profile,wg.profile,member.profile,member.name", "limit": PAGE})
         after = 0
         while True:
             page = self.call("GET", f"/v1/scopes/{segment(org)}/events?{query}&after={after}")
@@ -321,14 +362,17 @@ class Account:
                 _apply_profile(names, log, ring, item.get("event") if isinstance(item, dict) else None)
             following = page.get("next_after")
             if not isinstance(following, int) or following <= after:
-                return names
+                return names.resolve(log.state)
             after = following
 
-    def display_name(self) -> str | None:
-        """The user's display name from the first org whose member profile verifies (None if none)."""
+    def display_name(self, skip: str | None = None) -> str | None:
+        """The user's own display name from the first org (but `skip`) whose own member profile verifies (None if
+        none); a name an admin gave is never the user's own."""
         for org in self.me().get("orgs", []):
+            if str(org["org_id"]) == skip:
+                continue
             try:
-                found = self.names(str(org["org_id"])).members.get(self.user_id)
+                found = self.names(str(org["org_id"])).own.get(self.user_id)
             except (PlatformError, KeyError, TypeError):
                 continue
             if found:
@@ -348,25 +392,29 @@ def needs_platform(entries: Sequence[object]) -> bool:
 
 
 def _apply_profile(names: Names, log: VerifiedLog, ring: KeyRing, event: object) -> None:
+    """Reads one profile event into `names` if it passes the reader checks (E1-E5) and opens with a held key."""
     try:
-        header = cast(dict[str, Any], cast(dict[str, Any], event)["header"])
-        author = log.state.principals[str(header["author"])]
+        header, _rule = check_event(event, log)
         lh = cast(int, header["lh"])
-        state = log.state_at(lh)
+        author = log.state_at(lh).principals[str(header["author"])]
         key = ring[(ORG, log.state.org, cast(int, header["epoch"]))]
         body = parse_json(open_event(key, event, b64u_decode(author.sig)))
-        kind = header["kind"]
-        if not isinstance(body, dict):
-            return
-        if kind == "member.profile" and header["ref"] == author.id and isinstance(body.get("display_name"), str):
-            names.members[author.id] = body["display_name"]
-        elif kind in ("org.profile", "wg.profile") and state.is_admin(author.id) and isinstance(body.get("name"), str):
-            if kind == "org.profile":
-                names.org = body["name"]
-            else:
-                names.workgroups[str(header["wg"])] = body["name"]
-    except (CryptoError, KeyError, TypeError):
+    except (CryptoError, KeyError):
         return
+    if not isinstance(body, dict):
+        return
+    kind = header["kind"]
+    name = body.get("display_name") if kind in ("member.profile", MEMBER_NAME) else body.get("name")
+    if not isinstance(name, str):
+        return
+    if kind == "member.profile":
+        names.own[author.id] = name
+    elif kind == MEMBER_NAME:
+        names.given.setdefault(str(header["ref"]), []).append((name, author.id, lh))
+    elif kind == "org.profile":
+        names.org = name
+    else:  # wg.profile
+        names.workgroups[str(header["wg"])] = name
 
 
 def check_package_head(head: Mapping[str, Any], entries: Sequence[Mapping[str, object]]) -> None:

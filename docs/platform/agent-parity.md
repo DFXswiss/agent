@@ -67,9 +67,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | org-create | screens/home | `org create` | done |
 | org-join | screens/invite (existing user) | `org join` | done |
 | members-list | screens/members (explicit and inherited access, ADR-058) | `member list` | done |
-| members-invite | screens/members | `org invite --role admin\|member` | done |
+| members-invite | screens/members | `org invite --role admin\|member --name` | done |
 | members-invite-message | screens/members, screens/invite (the inviter's personal message, rule E-28) | `org invite --message`, `org join` (prints the message) | done |
-| members-admit | screens/members | `org admit --user <id\|account code> --role admin\|member --wg` | done |
+| members-admit | screens/members | `org admit --user <id\|account code> --role admin\|member --wg --name` | done |
+| members-name | screens/members | `org member-name --user <id\|account code\|invite id> --name` | done |
 | members-invitees | screens/members (accounts of the admin's own platform invitations) | `org invitees --org` | done |
 | account-code | settings/passkeys | `status` (prints the account code) | done |
 | members-invite-revoke | screens/members | `org invite-revoke` | done |

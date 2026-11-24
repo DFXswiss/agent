@@ -178,11 +178,19 @@ agent-platform status                                   # what exists already
 agent-platform settings set --model-access subscription
 agent-platform org list
 agent-platform org create --name "Acme"                 # only when your user wants a team organization
-agent-platform org invite --org <org_id>                # returns invite_link: give it only to that person
+agent-platform org invite --org <org_id> --name "Dora Example"   # invite_link: give it only to that person
+agent-platform org admit --org <org_id> --user <user_id|account code> --name "Bob Example"   # an existing account
+agent-platform org member-name --org <org_id> --user <user_id|account code|invite_id> --name "Bob Example"
+agent-platform org show --org <org_id>                  # members with name and name_source; writes your own name
 agent-platform wg create --org <org_id> --name "Research"
 agent-platform device assign --wg <wg_id>               # a DFX execution device for the workgroup
 agent-platform github connect                           # opens GitHub for your user (see below)
 ```
+
+**Names.** Give every person a name when you admit or invite them: every member sees it at once (marked as
+provisional) until the person's own name replaces it, which happens by itself when they open the organization.
+`org show` lists `name_source` (`own`, `admin`, `invitation`, `none`) for each member; give a member with `none` a
+name with `org member-name`. An admitted account's open invitation is closed by `org admit` itself.
 
 **Tasks.** When your user says "put this into agent.dfx.swiss as a task":
 
@@ -264,9 +272,9 @@ content). `key: waiting` means another user's client has to hand the key over: i
 agent-platform member list --org <org_id>                        # "inherited": an admin reads every workgroup
 agent-platform member role --org <org_id> --user <user_id> --role admin
 agent-platform member remove --org <org_id> --user <user_id>     # changes the keys: the person reads nothing new
-agent-platform org show --org <org_id>                           # also the invitations: open, opened, registered, accepted
+agent-platform org show --org <org_id>                           # also the invitations: open, opened, registered, settled, accepted
 agent-platform org invitees [--org <org_id>]                     # who registered through your platform invitations
-agent-platform org admit --org <org_id> --user <account_code> [--role admin] [--wg <wg_id>:read]  # adds at once
+agent-platform org admit --org <org_id> --user <account_code> --name "<name>" [--role admin] [--wg <wg_id>:read]  # adds at once
 printf '%s' "<invitation link>" | agent-platform org join         # accept an invitation to an organization
 agent-platform org invite-revoke --org <org_id> --invite=<invite_id>   # "=": an ID may start with "-"
 agent-platform org leave --org <org_id>

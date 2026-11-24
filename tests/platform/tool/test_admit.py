@@ -71,7 +71,7 @@ def test_admit_by_user_id_with_workgroups(tool: Tool, hub: HubFake, account: Use
     # the admin is no reader of `unheld` any more on this computer: its key arrives for Bob by catch-up
     hub.wraps = [wrap for wrap in hub.wraps if not (wrap["scope_id"] == unheld and wrap["recipient_id"] == account.id)]
     bob, bob_tool = paired(hub, tmp_path, "Bob")
-    argv = ["org", "admit", "--org", org, "--user", bob.id, "--wg", f"{held}:read", "--wg", unheld]
+    argv = ["org", "admit", "--org", org, "--user", bob.id, "--name", "Bob", "--wg", f"{held}:read", "--wg", unheld]
     code, admitted = tool.run(*argv, "--wg", f"{default_wg}:read")
     assert code == 0, admitted
     assert admitted["user_id"] == bob.id
@@ -109,7 +109,7 @@ def test_an_invitation_into_an_org_with_an_admitted_member(
     hub.anchor_user(account)
     org = team(tool)
     bob, _bob_tool = paired(hub, tmp_path, "Bob")
-    assert tool.run("org", "admit", "--org", org, "--user", bob.id)[1]["ok"] is True
+    assert tool.run("org", "admit", "--name", "X", "--org", org, "--user", bob.id)[1]["ok"] is True
     invited = tool.run("org", "invite", "--org", org)[1]
     carol, carol_tool = paired(hub, tmp_path, "Carol", anchor=None)
     joined = carol_tool.run("org", "join", stdin=invited["invite_link"])[1]
@@ -124,7 +124,7 @@ def test_admit_by_account_code_as_admin(tool: Tool, hub: HubFake, account: User,
     carol, carol_tool = paired(hub, tmp_path, "Carol", anchor="invite")
     code = carol_tool.run("status")[1]["account_code"]
     assert code == format_account_code(account_code(carol.id, carol.identity.public()))
-    admitted = tool.run("org", "admit", "--org", org, "--user", code.lower(), "--role", "admin")[1]
+    admitted = tool.run("org", "admit", "--org", org, "--user", code.lower(), "--role", "admin", "--name", "Carol")[1]
     assert (admitted["user_id"], admitted["role"], admitted["account_code"]) == (carol.id, "admin", code)
     assert hub.orgs[org].log.state.is_admin(carol.id)
     body = last_body(hub, org)
@@ -135,7 +135,7 @@ def test_admit_by_account_code_as_admin(tool: Tool, hub: HubFake, account: User,
     assert shown["role"] == "admin"
     # as admin Carol admits Dave herself
     dave, _ = paired(hub, tmp_path, "Dave")
-    assert carol_tool.run("org", "admit", "--org", org, "--user", dave.id)[1]["ok"] is True
+    assert carol_tool.run("org", "admit", "--org", org, "--user", dave.id, "--name", "Dave")[1]["ok"] is True
     assert hub.orgs[org].log.state.member(dave.id) is not None
 
 
@@ -160,7 +160,7 @@ def test_forged_identity_answers_are_refused(
     bob, _ = paired(hub, tmp_path, "Bob")
     head = hub.orgs[org].log.head
     forge_identity(hub, lambda answer, user: change(answer, user) if user == bob.id else answer)
-    result = tool.run("org", "admit", "--org", org, "--user", bob.id)[1]
+    result = tool.run("org", "admit", "--org", org, "--user", bob.id, "--name", "Bob")[1]
     assert (result["error"], result["reason"]) == ("hub_refused", "identity_unproven")
     assert hub.orgs[org].log.head == head
 
@@ -172,12 +172,12 @@ def test_identity_of_another_user_is_refused(tool: Tool, hub: HubFake, account: 
     carol, _ = paired(hub, tmp_path, "Carol")
     # a correctly anchored identity, but of Carol, for the request about Bob
     forge_identity(hub, lambda answer, user: hub.identity_answer(carol) if user == bob.id else answer)
-    assert tool.run("org", "admit", "--org", org, "--user", bob.id)[1]["reason"] == "identity_unproven"
+    assert tool.run("org", "admit", "--org", org, "--user", bob.id, "--name", "Bob")[1]["reason"] == "identity_unproven"
     hub.restore("r_user_identity")
     # the hub resolves Bob's code to Carol's (anchored) account: the code of the proven keys does not match
     code = format_account_code(account_code(bob.id, bob.identity.public()))
     hub.hooks[("GET", "/v1/users/lookup")] = lambda body, request: (200, hub.identity_answer(carol))
-    assert tool.run("org", "admit", "--org", org, "--user", code)[1]["reason"] == "identity_unproven"
+    assert tool.run("org", "admit", "--org", org, "--user", code, "--name", "Bob")[1]["reason"] == "identity_unproven"
     assert hub.orgs[org].log.state.member(carol.id) is None
 
 
@@ -185,19 +185,37 @@ def test_admit_refusals(tool: Tool, hub: HubFake, account: User, tmp_path: Path)
     hub.anchor_user(account)
     org = team(tool)
     bob, bob_tool = paired(hub, tmp_path, "Bob")
-    assert tool.run("org", "admit", "--org", org, "--user", "nope")[1]["error"] == "invalid_argument"
-    assert tool.run("org", "admit", "--org", org, "--user", "ABCD-EFGH-IJK9")[1]["error"] == "invalid_argument"
-    assert tool.run("org", "admit", "--org", org, "--user", bob.id, "--wg", "x")[1]["error"] == "invalid_argument"
+    assert tool.run("org", "admit", "--name", "X", "--org", org, "--user", "nope")[1]["error"] == "invalid_argument"
+    assert (
+        tool.run("org", "admit", "--name", "X", "--org", org, "--user", "ABCD-EFGH-IJK9")[1]["error"]
+        == "invalid_argument"
+    )
+    assert (
+        tool.run("org", "admit", "--name", "X", "--org", org, "--user", bob.id, "--wg", "x")[1]["error"]
+        == "invalid_argument"
+    )
     # an unknown code and an unanchored account: the hub's refusal is passed through
-    assert tool.run("org", "admit", "--org", org, "--user", "AAAA-AAAA-AAAA")[1]["hub_error"] == "identity_unproven"
+    assert (
+        tool.run("org", "admit", "--name", "X", "--org", org, "--user", "AAAA-AAAA-AAAA")[1]["hub_error"]
+        == "identity_unproven"
+    )
     stranger, _ = paired(hub, tmp_path, "Eve", anchor=None)
-    assert tool.run("org", "admit", "--org", org, "--user", stranger.id)[1]["hub_error"] == "identity_unproven"
+    assert (
+        tool.run("org", "admit", "--name", "X", "--org", org, "--user", stranger.id)[1]["hub_error"]
+        == "identity_unproven"
+    )
     # an archived workgroup
     wg = tool.run("wg", "create", "--org", org, "--name", "Old")[1]["wg_id"]
     hub.append(org, account, [{"type": "wg_archive", "wg": wg}])
-    assert tool.run("org", "admit", "--org", org, "--user", bob.id, "--wg", wg)[1]["error"] == "invalid_argument"
+    assert (
+        tool.run("org", "admit", "--name", "X", "--org", org, "--user", bob.id, "--wg", wg)[1]["error"]
+        == "invalid_argument"
+    )
     unknown = "01a1ee56-5e00-7242-9e24-f87629ad2977"
-    assert tool.run("org", "admit", "--org", org, "--user", bob.id, "--wg", unknown)[1]["error"] == "invalid_argument"
+    assert (
+        tool.run("org", "admit", "--name", "X", "--org", org, "--user", bob.id, "--wg", unknown)[1]["error"]
+        == "invalid_argument"
+    )
     # a role outside the two (the command line allows only these; the function checks it too)
     opened = Account.open(Home.from_env(tool.env))
     try:
@@ -207,12 +225,12 @@ def test_admit_refusals(tool: Tool, hub: HubFake, account: User, tmp_path: Path)
         opened.close()
     assert refused.value.code == "invalid_argument"
     # admitted once; a second time is refused before anything is sent
-    assert tool.run("org", "admit", "--org", org, "--user", bob.id)[1]["ok"] is True
-    again = tool.run("org", "admit", "--org", org, "--user", bob.id)[1]
+    assert tool.run("org", "admit", "--org", org, "--user", bob.id, "--name", "Bob")[1]["ok"] is True
+    again = tool.run("org", "admit", "--org", org, "--user", bob.id, "--name", "Bob")[1]
     assert (again["error"], again["reason"]) == ("invalid_argument", "already_member")
     # Bob is a member, no admin
     carol, _ = paired(hub, tmp_path, "Carol")
-    assert bob_tool.run("org", "admit", "--org", org, "--user", carol.id)[1]["error"] == "not_admin"
+    assert bob_tool.run("org", "admit", "--name", "X", "--org", org, "--user", carol.id)[1]["error"] == "not_admin"
     assert hub.orgs[org].log.state.member(carol.id) is None
 
 
@@ -220,7 +238,9 @@ def test_own_identity_must_be_the_own_keys(tool: Tool, hub: HubFake, account: Us
     org = team(tool)
     bob, _ = paired(hub, tmp_path, "Bob")
     # the admin's own identity is not anchored: the hub refuses
-    assert tool.run("org", "admit", "--org", org, "--user", bob.id)[1]["hub_error"] == "identity_unproven"
+    assert (
+        tool.run("org", "admit", "--org", org, "--user", bob.id, "--name", "Bob")[1]["hub_error"] == "identity_unproven"
+    )
     # the platform log anchors other keys for the admin's ID: proven, but not this agent's identity
     impostor = User(account.id, Identity.generate())
     hub.anchor_user(impostor)
@@ -228,7 +248,7 @@ def test_own_identity_must_be_the_own_keys(tool: Tool, hub: HubFake, account: Us
         "r_user_identity",
         lambda request, body, user: (200, hub.identity_answer(impostor if user == account.id else hub.users[user])),
     )
-    result = tool.run("org", "admit", "--org", org, "--user", bob.id)[1]
+    result = tool.run("org", "admit", "--org", org, "--user", bob.id, "--name", "Bob")[1]
     assert (result["error"], result["reason"]) == ("hub_refused", "identity_mismatch")
 
 
@@ -243,11 +263,11 @@ def test_admit_seq_conflict(tool: Tool, hub: HubFake, account: User, tmp_path: P
         return (409, {"error": "seq_conflict"}) if len(calls) == 1 else None
 
     hub.hooks[("POST", f"/v1/orgs/{org}/log")] = conflict
-    assert tool.run("org", "admit", "--org", org, "--user", bob.id)[1]["ok"] is True
+    assert tool.run("org", "admit", "--org", org, "--user", bob.id, "--name", "Bob")[1]["ok"] is True
     assert len(calls) == 2
     carol, _ = paired(hub, tmp_path, "Carol")
     hub.hooks[("POST", f"/v1/orgs/{org}/log")] = lambda b, r: (200, {"head": {"seq": 99, "hash": "x"}})
-    assert tool.run("org", "admit", "--org", org, "--user", carol.id)[1]["reason"] == "response_invalid"
+    assert tool.run("org", "admit", "--name", "X", "--org", org, "--user", carol.id)[1]["reason"] == "response_invalid"
 
 
 def test_admit_refused_by_the_log_rules(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
@@ -257,7 +277,7 @@ def test_admit_refused_by_the_log_rules(tool: Tool, hub: HubFake, account: User,
     # without the default workgroup key the admin cannot give Bob the wraps `admit` owes
     default_wg = hub.orgs[org].log.state.default_wg
     hub.wraps = [w for w in hub.wraps if not (w["scope_id"] == default_wg and w["recipient_id"] == account.id)]
-    result = tool.run("org", "admit", "--org", org, "--user", bob.id)[1]
+    result = tool.run("org", "admit", "--org", org, "--user", bob.id, "--name", "Bob")[1]
     assert (result["error"], result["reason"]) == ("hub_refused", "epoch_stale")
 
 
@@ -281,7 +301,7 @@ def test_invitees(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> No
     assert rows[1]["account_code"] is None
     assert listed["org_id"] is None
     # for an org: only the proven accounts that are no member yet; an admitted one leaves the list
-    assert tool.run("org", "admit", "--org", org, "--user", erin.id)[1]["ok"] is True
+    assert tool.run("org", "admit", "--name", "X", "--org", org, "--user", erin.id)[1]["ok"] is True
     scoped = tool.run("org", "invitees", "--org", org)[1]
     assert [row["user_id"] for row in scoped["invitees"]] == [carol.id]
     assert tool.run("org", "invitees", "--org", "x")[1]["error"] == "invalid_argument"
@@ -317,7 +337,7 @@ def test_admins_read_every_workgroup_by_inheritance(tool: Tool, hub: HubFake, ac
     org = team(tool)
     research = tool.run("wg", "create", "--org", org, "--name", "Research")[1]["wg_id"]
     bob, bob_tool = paired(hub, tmp_path, "Bob")
-    assert tool.run("org", "admit", "--org", org, "--user", bob.id, "--role", "admin")[1]["ok"] is True
+    assert tool.run("org", "admit", "--name", "X", "--org", org, "--user", bob.id, "--role", "admin")[1]["ok"] is True
     # Bob reads Research only as admin: shown as inherited, as the web's member list does
     members = {row["user_id"]: row for row in tool.run("member", "list", "--org", org)[1]["members"]}
     access = {item["wg_id"]: item for item in members[bob.id]["access"]}

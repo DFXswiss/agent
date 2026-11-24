@@ -89,7 +89,17 @@ def test_org_list_create_show(tool: Tool, hub: HubFake, account: User) -> None:
     assert shown["name"] == "Acme"
     assert shown["private"] is False
     assert shown["role"] == "admin"
-    assert shown["members"] == [{"principal_id": account.id, "kind": "user", "role": "admin", "name": "Ada"}]
+    assert shown["members"] == [
+        {
+            "principal_id": account.id,
+            "kind": "user",
+            "role": "admin",
+            "name": "Ada",
+            "name_source": "own",
+            "name_given_by": None,
+        }
+    ]
+    assert shown["own_name"] == "present"
     assert [wg["name"] for wg in shown["workgroups"]] == ["Default"]
     assert hub.orgs[org].log.state.founder == account.identity.public()["sig"]
 
