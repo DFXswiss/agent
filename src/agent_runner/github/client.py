@@ -25,8 +25,9 @@ request waits for it when it is at most 60 s away and fails `rate_limited` (retr
 section 9: 3 attempts, 2 s, 8 s, 30 s, honouring `retry_after`); the client itself repeats a request only after a
 primary-limit wait.
 
-`GitHubSettings` (one per daemon, `settings_for(context)`) carries the configured URLs and client ID, the clocks and
-the rate gates per owner; tests may set `github_options` (`GitHubOptions`) on the context.
+`GitHubSettings` (one per daemon, `settings_for(context)`) carries the configured URLs, the client IDs (GitHub App,
+OAuth App), the GitHub App's URL name, the clocks and the rate gates per owner; tests may set `github_options`
+(`GitHubOptions`) on the context.
 """
 
 from __future__ import annotations
@@ -72,6 +73,39 @@ KINDS = frozenset(
 REDIRECTS = frozenset({301, 302, 303, 307, 308})
 _STATUS_KINDS = {401: "unauthorized", 404: "not_found", 409: "conflict", 410: "gone", 422: "unprocessable"}
 _LINK_NEXT_RE = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
+_SSO_URL_RE = re.compile(r"url=(\S+)")
+_SSO_PATH_RE = re.compile(r"^/orgs/[A-Za-z0-9-]{1,39}/sso$")
+_SSO_QUERY_RE = re.compile(r"^authorization_request=[A-Za-z0-9_.~-]{1,512}$")
+TOKEN_KINDS = (
+    ("ghu_", "github_app"),
+    ("gho_", "oauth_app"),
+    ("ghp_", "classic"),
+    ("github_pat_", "fine_grained"),
+)
+"""Prefixes of GitHub's token formats and the kind of token they mark (KOR-65); anything else is `unknown`."""
+
+
+def token_kind(token: str | None) -> str:
+    """`github_app` (a GitHub App user token), `oauth_app` (an OAuth App token, also the GitHub CLI's), `classic`,
+    `fine_grained` (personal access tokens) or `unknown`, from the token's prefix."""
+    for prefix, kind in TOKEN_KINDS:
+        if token is not None and token.startswith(prefix):
+            return kind
+    return "unknown"
+
+
+def sso_link(web_url: str, header: str) -> str | None:
+    """The authorisation URL of an `x-github-sso: required; url=...` header when it is
+    `<web origin>/orgs/<org>/sso?authorization_request=<id>` on the configured web host, else None."""
+    match = _SSO_URL_RE.search(header)
+    if match is None:
+        return None
+    web, target = urlsplit(web_url), urlsplit(match.group(1))
+    if (target.scheme, target.netloc) != (web.scheme, web.netloc) or target.fragment:
+        return None
+    if not _SSO_PATH_RE.fullmatch(target.path) or not _SSO_QUERY_RE.fullmatch(target.query):
+        return None
+    return match.group(1)
 
 
 class GitHubError(Exception):
@@ -79,8 +113,9 @@ class GitHubError(Exception):
     seconds, GitHub's `message` (kept for classification only, never passed on) and, of `unreachable`, the `cause`:
     the class name of the transport error (`ConnectError`, `ReadError`, `RemoteProtocolError`, ...; it names the
     phase - connecting, sending, reading - and carries no secret) and, of `forbidden`, `sso`: GitHub named an
-    organisation that requires SSO authorisation of the token (header `x-github-sso: required; url=...`; the URL is
-    never kept)."""
+    organisation that requires SSO authorisation of the token (header `x-github-sso: required; url=...`) and
+    `sso_url`: that URL when it is exactly GitHub's authorisation page of an organisation on the configured web host
+    (`sso_link`; KOR-65: the one next step shown to the person, never anything else of the header)."""
 
     def __init__(
         self,
@@ -92,6 +127,7 @@ class GitHubError(Exception):
         message: str = "",
         cause: str = "",
         sso: bool = False,
+        sso_url: str | None = None,
     ) -> None:
         if kind not in KINDS:
             raise ValueError(f"unknown GitHub error kind: {kind!r}")
@@ -103,6 +139,7 @@ class GitHubError(Exception):
         self.message = message
         self.cause = cause
         self.sso = sso
+        self.sso_url = sso_url
 
 
 @dataclass(frozen=True)
@@ -137,13 +174,17 @@ class GitHubSettings:
     sleep: Callable[[float], Awaitable[None]]
     transport: httpx.AsyncBaseTransport | None = None
     gates: dict[str, RateGate] = field(default_factory=dict)
+    oauth_client_id: str | None = None
+    """The public client ID of the OAuth App whose device flow `github.connect` prefers (KOR-65); None: not set up."""
+    app_slug: str | None = None
+    """The URL name of the GitHub App (`<web>/apps/<slug>`), for the install link of a next step (KOR-65)."""
 
     def gate(self, owner: str) -> RateGate:
         return self.gates.setdefault(owner, RateGate())
 
     def client(self, token: str | None, owner: str | None = None) -> GitHubClient:
         """A client for one use (close it with `aclose` or `async with`)."""
-        return GitHubClient(
+        made = GitHubClient(
             api_url=self.api_url,
             web_url=self.web_url,
             token=token,
@@ -152,6 +193,8 @@ class GitHubSettings:
             gate=self.gate(owner) if owner is not None else RateGate(),
             transport=self.transport,
         )
+        made.oauth_client_id, made.app_slug = self.oauth_client_id, self.app_slug
+        return made
 
 
 ATTRIBUTE = "github_settings"
@@ -172,6 +215,8 @@ def settings_for(context: Any) -> GitHubSettings:
         wall=options.wall,
         sleep=options.sleep or context.host.sleep,
         transport=options.transport,
+        oauth_client_id=config.github_oauth_client_id,
+        app_slug=config.github_app_slug,
     )
     setattr(context, ATTRIBUTE, built)
     return built
@@ -234,6 +279,14 @@ class GitHubClient:
         self.api_url = api_url.rstrip("/")
         self.web_url = web_url.rstrip("/")
         self._token = token
+        self.token_kind = token_kind(token)
+        """The kind of the token (`token_kind`), kept after `aclose` for the next step of a refusal (KOR-65)."""
+        self.source: str | None = None
+        """How the connection was made (`device_flow`, `token`; credential body), set by `ops.actor_client`."""
+        self.oauth_client_id: str | None = None
+        self.app_slug: str | None = None
+        """The OAuth App's client ID and the GitHub App's URL name of the settings (`GitHubSettings.client`), for the
+        next step of an access refusal (`reach`)."""
         self.wall = wall
         self.sleep = sleep
         self.gate = gate
@@ -302,8 +355,10 @@ class GitHubClient:
                 return GitHubError(
                     "rate_limited", status=status, retryable=True, retry_after=after or DEFAULT_RETRY_AFTER_S
                 )
-            sso = headers.get("x-github-sso", "").lower().startswith("required")
-            return GitHubError("forbidden", status=status, message=message, sso=sso)
+            header = headers.get("x-github-sso", "")
+            sso = header.lower().startswith("required")
+            link = sso_link(self.web_url, header) if sso else None
+            return GitHubError("forbidden", status=status, message=message, sso=sso, sso_url=link)
         kind = _STATUS_KINDS.get(status, "invalid_response")
         return GitHubError(kind, status=status, message=message)
 

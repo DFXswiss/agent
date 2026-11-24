@@ -6,7 +6,7 @@
   "$defs": {
     "failure_code": {
       "type": "string",
-      "description": "closed list of failure codes of device responses: timeout (flow or poll expired), busy (another request of this kind is active), credential_missing (e.g. no mailbox credential), code_invalid (authorization code refused), login_cli_failed, token_invalid (unexpected token format), upstream_error (GitHub/Anthropic/IMAP refused), upstream_unreachable, device_shutdown, token_refused (GitHub refused a stored token: revoked or unknown), scope_missing (a classic token without the repo scope), sso_required (an organisation requires SSO authorisation of the token)",
+      "description": "closed list of failure codes of device responses: timeout (flow or poll expired), busy (another request of this kind is active), credential_missing (e.g. no mailbox credential), code_invalid (authorization code refused), login_cli_failed, token_invalid (unexpected token format), upstream_error (GitHub/Anthropic/IMAP refused), upstream_unreachable, device_shutdown, token_refused (GitHub refused a stored token: revoked or unknown), scope_missing (a classic token without the repo scope), sso_required (an organisation requires SSO authorisation of the token), flow_unavailable (the asked GitHub device flow is not set up on the device, KOR-65)",
       "enum": [
         "timeout",
         "busy",
@@ -19,7 +19,8 @@
         "device_shutdown",
         "token_refused",
         "scope_missing",
-        "sso_required"
+        "sso_required",
+        "flow_unavailable"
       ]
     }
   }

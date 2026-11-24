@@ -1,0 +1,14 @@
+{
+  "state": "waiting",
+  "waiting_for": "github_access",
+  "operation_id": "0193002d-0000-7000-8000-000000000054",
+  "operation_type": "github.checkout",
+  "repo": "third-org/app",
+  "for_user": "0193002d-0000-7000-8000-000000000053",
+  "next": {
+    "action": "approve_app",
+    "owner": "third-org",
+    "url": "https://github.com/settings/connections/applications/Ov23example"
+  },
+  "until": "2026-11-23T09:45:00.000Z"
+}

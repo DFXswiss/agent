@@ -11,10 +11,11 @@ through a signed HTTP fetch by the hint handlers.
   start estimate, which depends on `pool_ready`, is not up to 15 s old). An early frame waits `EARLY_BEAT_S` (the
   outbox push spacing) first, so a burst of VM changes (pool refill) coalesces into one frame.
 - A normal close by the hub (also when a heartbeat send meets it first) is `ws_closed`, everything else `ws_failed`.
-- The upgrade request announces the runner's capabilities in the header `Agent-Features` (`FEATURES`; ADR-060: the
+- The upgrade request announces the runner's capabilities in the header `Agent-Features` (`features`; ADR-060: the
   hub admits accounts into an org only while every device of it announced `log.admit`; ADR-075: `log.org_assign`
-  for assignments to the whole organization, `vm.choice` for the VM of each session named in its transitions). A
-  header, not a query parameter: an older hub refuses unknown query parameters but ignores unknown headers.
+  for assignments to the whole organization, `vm.choice` for the VM of each session named in its transitions;
+  KOR-65: the GitHub ways the web may offer for this device). A header, not a query parameter: an older hub refuses
+  unknown query parameters but ignores unknown headers.
 - Reconnect backoff 1 s doubling to 30 s with ±20 % jitter, reset after a connection that stayed up 30 s
   (legacy `cmd_sync` rule). Redirects are never followed; no proxy is used.
 """
@@ -39,9 +40,27 @@ from agent_runner.sync.push import Pusher, SyncFatal
 
 WS_TARGET = "/v1/device/ws"
 FEATURES_HEADER = "Agent-Features"
-FEATURES = ("log.admit", "log.org_assign", "vm.choice")
+FEATURES = ("log.admit", "log.org_assign", "vm.choice", "github.ways")
 """What this runner understands: `log.admit` - membership logs with `admit` entries and platform logs with
-`user_certify`/`user_decertify` (the copied verifier of `agent_runner.crypto.log`)."""
+`user_certify`/`user_decertify` (the copied verifier of `agent_runner.crypto.log`); `github.ways` - it announces the
+ways of "Connect GitHub" it can run (`features`, KOR-65), so a device without them offers only an existing token."""
+DEVICE_FLOW = "github.device_flow"
+OPERATOR_GITHUB = "github.operator"
+
+
+def features(context: Any) -> tuple[str, ...]:
+    """`FEATURES` and the GitHub ways set up on this device (KOR-65): `github.device_flow` - a device flow (the OAuth
+    App or the GitHub App) has its client ID; `github.operator` - the operator's GitHub account is configured (users
+    approved for it connect without a device flow, ADR-053)."""
+    config = getattr(context, "config", None)
+    found = list(FEATURES)
+    if getattr(config, "github_oauth_client_id", None) or getattr(config, "github_client_id", None):
+        found.append(DEVICE_FLOW)
+    if getattr(config, "operator_github_token_file", None) is not None:
+        found.append(OPERATOR_GITHUB)
+    return tuple(found)
+
+
 HEARTBEAT_S = 15.0
 EARLY_BEAT_S = 0.25
 STABLE_S = 30.0
@@ -203,7 +222,7 @@ class WsClient:
             started: float | None = None
             signed = self.signer.sign("GET", WS_TARGET, b"")
             try:
-                headers = {**signed.headers, FEATURES_HEADER: ",".join(FEATURES)}
+                headers = {**signed.headers, FEATURES_HEADER: ",".join(features(self.context))}
                 async with self.connect(self.url, headers) as socket:
                     started = self.clock()
                     self.connects += 1

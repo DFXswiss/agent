@@ -50,6 +50,8 @@ NAMES = (
     "MODEL_CATALOG",
     "OPENROUTER_KEY_FILE",
     "GITHUB_CLIENT_ID",
+    "GITHUB_OAUTH_CLIENT_ID",
+    "GITHUB_APP_SLUG",
     "GITHUB_API_URL",
     "GITHUB_WEB_URL",
     "MODEL_UPSTREAM_ANTHROPIC",
@@ -124,6 +126,7 @@ _URL_DEFAULTS = {
 }
 _DIGITS_RE = re.compile(r"^[0-9]{1,9}$")
 _CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_APP_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,99}$")
 # Lima instance names start with a letter and use [A-Za-z0-9._-]; the prefix is lower case and ends the
 # instance name's first segment, e.g. `wp-run01-`.
 _VM_PREFIX_RE = re.compile(r"^(?:[a-z][a-z0-9-]{0,31})?$")
@@ -183,6 +186,10 @@ class Config:
     """Occupying sessions per VM, 0 = no limit (KOR-41, ADR-075 section 1)."""
     max_vms: int = 0
     """VMs of the device that occupy a slot, 0 = only the memory budget decides (KOR-41, ADR-075 section 1)."""
+    github_oauth_client_id: str | None = None
+    """Public client ID of the OAuth App whose device flow "Connect GitHub" prefers (KOR-65, ADR-015 addendum)."""
+    github_app_slug: str | None = None
+    """URL name of the GitHub App (`https://github.com/apps/<slug>`), for the install link of a next step (KOR-65)."""
 
     @property
     def pg_dir(self) -> Path:
@@ -274,6 +281,13 @@ def load_config(
         model_catalog=_optional(raw("MODEL_CATALOG"), "MODEL_CATALOG", require, lambda v: _file(v, "MODEL_CATALOG")),
         openrouter_key_file=openrouter,
         github_client_id=_optional(raw("GITHUB_CLIENT_ID"), "GITHUB_CLIENT_ID", require, _client_id),
+        github_oauth_client_id=_optional(
+            raw("GITHUB_OAUTH_CLIENT_ID"),
+            "GITHUB_OAUTH_CLIENT_ID",
+            require,
+            lambda v: _client_id(v, "GITHUB_OAUTH_CLIENT_ID"),
+        ),
+        github_app_slug=_optional(raw("GITHUB_APP_SLUG"), "GITHUB_APP_SLUG", require, _app_slug),
         github_api_url=urls["GITHUB_API_URL"],
         github_web_url=urls["GITHUB_WEB_URL"],
         model_upstream_anthropic=urls["MODEL_UPSTREAM_ANTHROPIC"],
@@ -358,6 +372,8 @@ def environment(config: Config) -> dict[str, str]:
         "MODEL_CATALOG": config.model_catalog,
         "OPENROUTER_KEY_FILE": config.openrouter_key_file,
         "GITHUB_CLIENT_ID": config.github_client_id,
+        "GITHUB_OAUTH_CLIENT_ID": config.github_oauth_client_id,
+        "GITHUB_APP_SLUG": config.github_app_slug,
         "GOLDEN_TEMPLATE": config.golden_template,
         "VM_PREFIX": config.vm_prefix or None,
         "OPERATOR_SUBSCRIPTION_DIR": config.operator_subscription_dir,
@@ -581,9 +597,15 @@ def _user_ids(value: str) -> frozenset[str]:
     return frozenset(found)
 
 
-def _client_id(value: str) -> str:
+def _client_id(value: str, name: str = "GITHUB_CLIENT_ID") -> str:
     if not _CLIENT_ID_RE.fullmatch(value):
-        raise RunnerError("config_invalid", "GITHUB_CLIENT_ID")
+        raise RunnerError("config_invalid", name)
+    return value
+
+
+def _app_slug(value: str) -> str:
+    if not _APP_SLUG_RE.fullmatch(value):
+        raise RunnerError("config_invalid", "GITHUB_APP_SLUG")
     return value
 
 

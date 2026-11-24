@@ -1,8 +1,15 @@
 """Device request `github.connect` (05-runner.md section 11.4, ADR-015, 04-crypto.md section 4.4, KOR-25).
 
-The body is `{}` (the device flow of the GitHub App) or `{token}` (an existing GitHub token: a GitHub CLI login or a
-personal access token); any other body is `upstream_error`, a token that is not printable ASCII up to 4096 characters
-`token_invalid`.
+The body is `{}` (the device flow this device prefers), `{app}` (the device flow of the named app: `oauth_app` or
+`github_app`, KOR-65) or `{token}` (an existing GitHub token: a GitHub CLI login or a personal access token); any other
+body is `upstream_error`, a token that is not printable ASCII up to 4096 characters `token_invalid`.
+
+**Which device flow** (KOR-65, ADR-015 addendum): the **OAuth App** (`GITHUB_OAUTH_CLIENT_ID`, scopes `OAUTH_SCOPES`)
+is preferred when it is set up - its token reaches every repository the account can reach, like the GitHub CLI's
+(own account, forks, organisations; an organisation that restricts OAuth Apps asks its owners for approval, which
+the next step of a held operation links). Otherwise the **GitHub App** (`GITHUB_CLIENT_ID`), whose token reaches only
+repositories of owners where the App is installed. A flow that is not set up on this device is `flow_unavailable`
+(the device does not announce `github.device_flow` then, `sync.ws.features`, so the web does not offer it).
 
 **Token** (no `GITHUB_CLIENT_ID` needed): `GET <GITHUB_API_URL>/user` with the token: `401` -> `token_refused`
 (revoked or unknown), `403` naming an SSO requirement -> `sso_required`, network errors and `5xx` ->
@@ -13,7 +20,8 @@ token with neither `repo` nor `public_repo` is `scope_missing`. Then the credent
 
 **Device flow** (body `{}`):
 
-1. `POST <GITHUB_WEB_URL>/login/device/code` with the public client ID of the GitHub App (`GITHUB_CLIENT_ID`); a
+1. `POST <GITHUB_WEB_URL>/login/device/code` with the public client ID of the chosen app (and, for the OAuth App, the
+   scopes `OAUTH_SCOPES`); a
    network error or `5xx` is tried again after `DEVICE_CODE_DELAYS` (2 s, then 8 s: three attempts, the first two
    waits of the operation pipeline's backoff), then `upstream_unreachable` (KOR-16: the request has no effect a user
    sees - an unused device code expires - so one lost connection must not end the connect);
@@ -36,7 +44,8 @@ stored with step 5 (`source: "token"`); the only response is `{step:"done", logi
 web client takes `done` as the first response as well. An unusable file is `credential_missing`; log lines of this
 way carry `source=operator`.
 
-Failures end with `{step:"failed", code}` (final): `upstream_error`, `upstream_unreachable`, `timeout`, `token_invalid`
+Failures end with `{step:"failed", code}` (final): `flow_unavailable` (the asked device flow is not set up on this
+device), `upstream_error`, `upstream_unreachable`, `timeout`, `token_invalid`
 (an access token that is not printable ASCII up to 4096 characters), `token_refused`, `scope_missing`,
 `sso_required`, `credential_missing` (this device holds no `CK` of the owner) - the codes of
 `contracts/requests/objects.json`. The token is never logged or answered. A failure of a GitHub call is logged with
@@ -51,7 +60,14 @@ from typing import Any
 
 from agent_runner.credentials.cache import CredentialUnavailable, put
 from agent_runner.github import operator, ops, revoke
-from agent_runner.github.client import TOKEN_RE, GitHubClient, GitHubError, GitHubResponse, settings_for
+from agent_runner.github.client import (
+    TOKEN_RE,
+    GitHubClient,
+    GitHubError,
+    GitHubResponse,
+    GitHubSettings,
+    settings_for,
+)
 from agent_runner.requests.service import RESPOND_DELAYS, Flow
 from agent_runner.sessions.records import time_text
 from agent_runner.sync.http import HubRefusal, HubTransportError
@@ -73,6 +89,18 @@ MAX_SCOPES = 64
 DEVICE_CODE_DELAYS = (2, 8)
 """Seconds before the second and the third attempt of `POST /login/device/code`."""
 TRANSIENT = frozenset({"unreachable", "server_error"})
+APPS = ("oauth_app", "github_app")
+OAUTH_SCOPES = "repo workflow"
+"""`repo`: every repository the account can reach, public and private; `workflow`: commits that add or change files
+under `.github/workflows` (GitHub refuses them without it)."""
+
+
+def flow_app(settings: GitHubSettings, app: str | None = None) -> tuple[str, str, str | None] | None:
+    """`(app, client_id, scope)` of the device flow `app` (None: the preferred one), or None when it is not set up."""
+    chosen = app if app is not None else ("oauth_app" if settings.oauth_client_id is not None else "github_app")
+    if chosen == "oauth_app":
+        return None if settings.oauth_client_id is None else (chosen, settings.oauth_client_id, OAUTH_SCOPES)
+    return None if settings.client_id is None else (chosen, settings.client_id, None)
 
 
 class ConnectFailed(Exception):
@@ -100,12 +128,13 @@ def _failed(step: str, error: GitHubError) -> ConnectFailed:
     return ConnectFailed(_code(error), _detail(step, error))
 
 
-async def start(flow: Flow, web: GitHubClient, client_id: str) -> GitHubResponse:
+async def start(flow: Flow, web: GitHubClient, client_id: str, scope: str | None = None) -> GitHubResponse:
     """`POST /login/device/code`, tried again after a transient failure (`DEVICE_CODE_DELAYS`)."""
+    form = {"client_id": client_id} if scope is None else {"client_id": client_id, "scope": scope}
     attempt = 0
     while True:
         try:
-            return await web.web_form("/login/device/code", {"client_id": client_id})
+            return await web.web_form("/login/device/code", form)
         except GitHubError as error:
             if error.kind not in TRANSIENT or attempt == len(DEVICE_CODE_DELAYS):
                 raise _failed("device_code", error) from None
@@ -253,19 +282,22 @@ async def _connect_operator(flow: Flow) -> tuple[str, int, list[str]]:
     return identity
 
 
-async def _device_flow(flow: Flow) -> tuple[str, int, list[str]]:
-    """The device flow up to the stored credential; `(login, user_id, scopes)`."""
+async def _device_flow(flow: Flow, app: str | None) -> tuple[str, int, list[str]]:
+    """The device flow of `app` (None: the preferred one) up to the stored credential; `(login, user_id, scopes)`."""
     settings = settings_for(flow.context)
-    if settings.client_id is None:
-        flow.service.line("github_connect client_id_missing")
-        raise ConnectFailed("upstream_error")
+    chosen = flow_app(settings, app)
+    if chosen is None:
+        flow.service.line(f"github_connect client_id_missing app={app or 'preferred'}")
+        raise ConnectFailed("flow_unavailable", f"step=request kind=app app={app or 'preferred'}")
+    name, client_id, scope = chosen
+    flow.service.line(f"github_connect device_flow request_id={flow.id} app={name}")
     async with settings.client(None) as web:
-        started = await start(flow, web, settings.client_id)
+        started = await start(flow, web, client_id, scope)
         device_code, user_code, uri, expires, interval = _device_code(started.data)
         await flow.respond(
             {"step": "device_code", "user_code": user_code, "verification_uri": uri, "expires_in": expires}
         )
-        issued = await poll(flow, web, settings.client_id, (device_code, interval, expires))
+        issued = await poll(flow, web, client_id, (device_code, interval, expires))
     token = issued.pop("access_token", None)
     if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
         raise ConnectFailed("token_invalid")
@@ -302,10 +334,11 @@ async def _token(flow: Flow, token: str) -> tuple[str, int, list[str]]:
 async def _connect(flow: Flow) -> tuple[str, int, list[str], str]:
     """The connection the body asks for: `(login, user_id, scopes, source)`."""
     body = flow.body
-    if set(body) - {"token"}:
+    app = body.get("app")
+    if set(body) - {"token", "app"} or len(body) > 1 or (app is not None and app not in APPS):
         raise ConnectFailed("upstream_error", "step=request kind=body")
     if "token" not in body:
-        return (*await _device_flow(flow), "device_flow")
+        return (*await _device_flow(flow, app), "device_flow")
     token = body["token"]
     if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
         raise ConnectFailed("token_invalid", "step=request kind=token")

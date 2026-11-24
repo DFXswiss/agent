@@ -17,7 +17,8 @@ parameters (local only). States are those of the hub (`contracts/common.json#/$d
 took it.
 
 A **held** operation (KOR-25, migration 0015, 05-runner.md section 12 step 3) stays `received` with `held_reason`
-(`github_connection`), `held_repo` (the checked repository of its `session.status` `waiting` event, if any),
+(`github_connection`, or `github_access` with its next step `held_next`: migration 0019, KOR-65), `held_repo` (the
+checked repository of its `session.status` `waiting` event, if any),
 `held_until` (the request plus 15 min), `held_notified_at` (when its `waiting` event was written), `held_ended_at`
 (when the hold ended: the acting user connected, the session ended, or `held_until` passed) and `held_credential`
 (the version of the acting user's cached `github` credential the last check refused; `credentials.acting`). `actor_id`
@@ -42,7 +43,7 @@ STATES = frozenset(
 )
 FINAL = frozenset({"rejected", "denied", "duplicate", "succeeded", "failed", "expired"})
 OPEN = ("received", "accepted", "executing")
-JSON_COLUMNS = frozenset({"params", "result", "local_error", "checked", "registration", "answer"})
+JSON_COLUMNS = frozenset({"params", "result", "local_error", "checked", "registration", "answer", "held_next"})
 COLUMNS = frozenset(
     {
         "state",
@@ -65,6 +66,7 @@ COLUMNS = frozenset(
         "held_notified_at",
         "held_ended_at",
         "held_credential",
+        "held_next",
     }
 )
 _SELECT = (
@@ -73,7 +75,7 @@ _SELECT = (
     " dedupe_tag, attempt, requested_at, idempotency_key, local_error, checked, registration,"
     " duplicate_of::text AS duplicate_of, child_session_id::text AS child_session_id,"
     " result_event_id::text AS result_event_id, retryable, answer, answered_at, created_at,"
-    " held_reason, held_repo, held_until, held_notified_at, held_ended_at, held_credential,"
+    " held_reason, held_repo, held_until, held_notified_at, held_ended_at, held_credential, held_next,"
     " actor_id::text AS actor_id, EXTRACT(EPOCH FROM (now() - created_at))::float8 AS age FROM runner.operation"
 )
 
@@ -112,6 +114,8 @@ class Operation:
     held_notified_at: datetime | None
     held_ended_at: datetime | None
     held_credential: int | None
+    held_next: dict[str, Any] | None
+    """The next step of an operation held for repository access (`github_access`, migration 0019, KOR-65)."""
     actor_id: str | None
     """The acting user stamped at the receipt (`credentials.acting`): whose personal connection the operation may use;
     None: nobody's."""

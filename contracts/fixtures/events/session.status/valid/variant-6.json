@@ -1,0 +1,13 @@
+{
+  "state": "waiting",
+  "waiting_for": "github_access",
+  "operation_id": "0193002d-0000-7000-8000-000000000055",
+  "operation_type": "github.list_issues",
+  "repo": "octo-org/app",
+  "for_user": "0193002d-0000-7000-8000-000000000053",
+  "next": {
+    "action": "connect",
+    "owner": "octo-org"
+  },
+  "until": "2026-11-23T09:45:00.000Z"
+}

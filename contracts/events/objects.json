@@ -614,7 +614,7 @@
         },
         {
           "type": "object",
-          "description": "an operation of the session waits for the person who gave the instruction (for_user; absent from runners before HOT-14: the task owner); the runner checks it again when that person connects GitHub or the workgroup settings change and rejects it at until. Only platform-checked values, never text of the session",
+          "description": "an operation of the session waits for the person who gave the instruction (for_user; absent from runners before HOT-14: the task owner); the runner checks it again when that person connects GitHub (and, for github_access, periodically) or the workgroup settings change and rejects it at until. Only platform-checked values, never text of the session",
           "properties": {
             "state": {
               "type": "string",
@@ -623,9 +623,10 @@
             "waiting_for": {
               "type": "string",
               "enum": [
-                "github_connection"
+                "github_connection",
+                "github_access"
               ],
-              "description": "github_connection: the person who gave the instruction has no usable GitHub connection"
+              "description": "github_connection: the person who gave the instruction has no usable GitHub connection; github_access: that person's connection does not reach the repository (KOR-65), next names the one step that fixes it"
             },
             "operation_id": {
               "$ref": "../common.json#/$defs/uuid"
@@ -639,6 +640,9 @@
             "for_user": {
               "$ref": "../common.json#/$defs/uuid",
               "description": "the acting user: the person whose instruction requested the operation and whose own GitHub connection it will use (HOT-14); only this person is asked to connect"
+            },
+            "next": {
+              "$ref": "#/$defs/github_next_step"
             },
             "until": {
               "$ref": "../common.json#/$defs/time"
@@ -1610,6 +1614,39 @@
     "body_session_error": {
       "description": "an error the guest reported for the session (KOR-40, ADR-064 section 5): the code of the closed list of the guest journal's guest.error record (contracts/guest/journal/record.json), never free text",
       "$ref": "../guest/journal/record.json#/$defs/body_guest_error"
+    },
+    "github_next_step": {
+      "type": "object",
+      "description": "github_access (KOR-65): the one step that gives the connection access to the repository. connect: connect GitHub again with the device flow that reaches every repository of the account; install_app: install the GitHub App for the owner (url); approve_app: request or grant the organisation's approval of the OAuth App (url); authorize_sso: authorise the token for the organisation's SAML single sign-on (url); new_token: create a token that reaches the owner (url, pre-filled) and store it; check_access: the account itself has no access - open the repository at GitHub (url) and ask its owner, or connect another account. url is built by the runner from its configured GitHub web URL and checked values only",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "connect",
+            "install_app",
+            "approve_app",
+            "authorize_sso",
+            "new_token",
+            "check_access"
+          ]
+        },
+        "owner": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{1,39}$",
+          "description": "the owner of the repository (account or organisation)"
+        },
+        "url": {
+          "type": "string",
+          "description": "https URL on the GitHub web host, or http on the loopback host (hermetic doubles)",
+          "pattern": "^(https://[!-~]{1,2040}|http://(127\\.0\\.0\\.1|localhost)(:[0-9]{1,5})?(/[!-~]{0,2000})?)$",
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "action",
+        "owner"
+      ],
+      "additionalProperties": false
     }
   }
 }

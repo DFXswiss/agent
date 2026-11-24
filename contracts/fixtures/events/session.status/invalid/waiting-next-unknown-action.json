@@ -1,0 +1,12 @@
+{
+  "state": "waiting",
+  "waiting_for": "github_access",
+  "operation_id": "0193002d-0000-7000-8000-000000000054",
+  "operation_type": "github.checkout",
+  "repo": "third-org/app",
+  "next": {
+    "action": "ask_somebody",
+    "owner": "third-org"
+  },
+  "until": "2026-11-23T09:45:00.000Z"
+}

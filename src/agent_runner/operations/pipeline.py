@@ -27,6 +27,13 @@
    (`SESSION_ENDED`; closing a task stops its sessions) is released and registered `rejected` with `not_found`, so it
    never runs. A cached credential that the check refused (a revoked token, `401`) is remembered by its version
    (`held_credential`): the checks are skipped - no request with the refused token - until another version arrives.
+   **Repository access** (KOR-65, rule E-29): a check that fails with `repo_not_accessible` and a next step
+   (`github.reach`: the connection does not see the repository, an organisation restricts OAuth Apps or classic tokens,
+   SAML single sign-on) is held the same way with the reason `github_access`; its `waiting` event carries `next`
+   (`held_next`). The access is checked again at most every `ACCESS_RECHECK_S` (an installation, an approval or an
+   authorisation at GitHub changes nothing the runner sees) and at once when a new credential of the acting user
+   arrives; a changed reason or step (connected, but no access yet) is announced again. At `until` the operation is
+   rejected with the timeout text followed by the step.
    Flood limits per session: at most `HOLD_MAX` held at a time (more are rejected at once with `FULL_MESSAGES`), at
    most one `waiting` event per reason per `WAITING_EVERY_S` (a held operation whose event was left out gets it at a
    later scan). The state lives in the store, so a restarted daemon goes on with it.
@@ -80,6 +87,7 @@ from agent_runner.credentials import acting
 from agent_runner.credentials import cache as credential_cache
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import uuid7
+from agent_runner.github import reach
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.operations import checks, records, register, results, rules
 from agent_runner.operations import settings as workgroup_settings
@@ -140,15 +148,22 @@ HOLD_MAX = 3
 """Held operations per session at a time."""
 WAITING_EVERY_S = 60.0
 """At most one `waiting` event per session and reason within this time."""
-HOLD_CODES = {"github_not_connected": "github_connection"}
-"""Check error code -> waiting reason of a held operation."""
+HOLD_CODES = {"github_not_connected": "github_connection", "repo_not_accessible": "github_access"}
+"""Check error code -> waiting reason of a held operation (`github_access`: KOR-65, rule E-29)."""
 TIMEOUT_MESSAGES = {
-    "github_connection": "The person who gave this instruction did not connect GitHub within 15 minutes."
+    "github_connection": "The person who gave this instruction did not connect GitHub within 15 minutes.",
+    "github_access": "The person who gave this instruction did not give the GitHub connection access to the"
+    " repository within 15 minutes.",
 }
 FULL_MESSAGES = {
     "github_connection": "The person who gave this instruction is already being asked to connect GitHub. Wait for"
-    " the pending GitHub operations of this session before you request more."
+    " the pending GitHub operations of this session before you request more.",
+    "github_access": "The person who gave this instruction is already being asked to give GitHub access. Wait for"
+    " the pending GitHub operations of this session before you request more.",
 }
+ACCESS_RECHECK_S = 30.0
+"""An operation held for repository access asks GitHub again at most this often while the acting user's credential
+is unchanged (an installation, an organisation's approval or an SSO authorisation changes nothing the runner sees)."""
 """The answer to an operation beyond `HOLD_MAX` (a fixed platform text)."""
 NOT_CONNECTED_MESSAGE = checks.NOT_CONNECTED
 SESSION_ENDED = frozenset({"stopping", "stopped", "failed"})
@@ -196,6 +211,8 @@ class Pipeline:
         self.sealer = sealer
         self.executors = dict(executors)
         self.prechecks = dict(prechecks or {})
+        self._access_checked: dict[str, float] = {}
+        """Monotonic time of the last check of each operation held for repository access (`_access_wait`)."""
         self.notify = notify
         self.refresh = refresh
         self.sleep = sleep
@@ -362,6 +379,7 @@ class Pipeline:
         """The (reloaded) operation, the local error and the checked parameters; None while the operation is held."""
         error = op.local_error
         checked: dict[str, Any] = {}
+        step: dict[str, Any] | None = None
         session = await self._session(op)
         if error is None and session is None:
             error = CheckFailed("not_found", message="The session is not known on this device.").error()
@@ -373,16 +391,26 @@ class Pipeline:
                 # nobody (or more than one person) instructed the turn: no personal connection, never held
                 self.line(f"no_acting_user operation_id={op.id}")
                 error = CheckFailed("github_not_connected", message=acting.NO_ACTOR).error()
-            elif ended or (op.held and version is not None and version == op.held_credential):
+            elif ended or (
+                op.held_reason == "github_connection"
+                and op.held
+                and version is not None
+                and version == op.held_credential
+            ):
                 # an ended session's operation is released below; the same credential was refused before: no new
                 # request with it until another one arrives
                 error = CheckFailed("github_not_connected", message=NOT_CONNECTED_MESSAGE).error()
+            elif self._access_wait(op, version):
+                step = op.held_next
+                assert step is not None
+                error = {"code": "repo_not_accessible", "message": reach.message(step, str(op.params.get("repo")))}
             else:
                 try:
                     checked = await self._check(op, session)
                 except CheckFailed as failed:
-                    error = failed.error()
-            held = await self._hold(op, session, error, version)
+                    error, step = failed.error(), failed.next_step
+                self._access_checked[op.id] = self.env.clock()
+            held = await self._hold(op, session, error, version, step)
             if held is None:
                 return None
             op, error = held
@@ -396,12 +424,25 @@ class Pipeline:
             return self.elapsed(op)
         return max(0.0, self.env.wall() - op.held_ended_at.timestamp())
 
+    def _access_wait(self, op: Operation, version: int | None) -> bool:
+        """Whether an operation held for repository access keeps waiting without a new request to GitHub: the acting
+        user's credential is the one checked last and the last check is younger than `ACCESS_RECHECK_S`."""
+        if not op.held or op.held_reason != "github_access" or op.held_next is None or version != op.held_credential:
+            return False
+        last = self._access_checked.get(op.id)
+        return last is not None and self.env.clock() - last < ACCESS_RECHECK_S
+
     async def _github_version(self, op: Operation) -> int | None:
         async with store_session(self.env.db) as conn:
             return await acting.cached_version(conn, op, "github")
 
     async def _hold(
-        self, op: Operation, session: LocalSession, error: dict[str, Any] | None, version: int | None
+        self,
+        op: Operation,
+        session: LocalSession,
+        error: dict[str, Any] | None,
+        version: int | None,
+        step: dict[str, Any] | None = None,
     ) -> tuple[Operation, dict[str, Any] | None] | None:
         """Hold, keep holding (None) or release the operation after its checks (module docstring, step 1a)."""
         reason = (
@@ -413,20 +454,32 @@ class Pipeline:
         if op.held and session.state in SESSION_ENDED:
             self.line(f"hold_session_ended operation_id={op.id} session_state={session.state}")
             return await self._end_hold(op, now), {"code": "not_found", "message": SESSION_ENDED_MESSAGE}
+        if reason == "github_access" and step is None:
+            reason = None  # an access refusal without a next step is never held (none is built without one)
         if reason is not None and op.held_until is not None and now >= op.held_until:
             assert error is not None
-            error = {"code": error["code"], "message": TIMEOUT_MESSAGES[reason]}
+            text = TIMEOUT_MESSAGES[reason]
+            if reason == "github_access" and error.get("message"):
+                text = f"{text} {error['message']}"[:1024]
+            error = {"code": error["code"], "message": text}
             self.line(f"hold_timeout operation_id={op.id} reason={reason}")
             return await self._end_hold(op, now), error
         if reason is None or op.held_ended_at is not None:
             return (await self._end_hold(op, now) if op.held else op), error
         if op.held_until is None:
-            refused = await self._start_hold(op, session, reason, now, version)
+            refused = await self._start_hold(op, session, (reason, step), now, version)
             if refused == HOLD_FULL:
                 assert error is not None
                 return op, {"code": error["code"], "message": FULL_MESSAGES[reason]}
             if refused is not None:
                 return op, error
+        elif op.held_reason != reason or op.held_next != step:
+            # another reason or another step: announced again (the flood limit per reason still applies)
+            async with self.env.transaction() as conn:
+                await records.update(
+                    conn, op.id, held_reason=reason, held_next=step, held_credential=version, held_notified_at=None
+                )
+            self.line(f"hold_changed operation_id={op.id} reason={reason}")
         elif op.held_credential != version:
             async with self.env.transaction() as conn:
                 await records.update(conn, op.id, held_credential=version)
@@ -434,16 +487,24 @@ class Pipeline:
         return None
 
     async def _end_hold(self, op: Operation, now: datetime) -> Operation:
+        self._access_checked.pop(op.id, None)
         async with self.env.transaction() as conn:
             await records.update(conn, op.id, held_ended_at=now)
         self.line(f"hold_ended operation_id={op.id}")
         return await self._reload(op.id)
 
     async def _start_hold(
-        self, op: Operation, session: LocalSession, reason: str, now: datetime, version: int | None
+        self,
+        op: Operation,
+        session: LocalSession,
+        why: tuple[str, dict[str, Any] | None],
+        now: datetime,
+        version: int | None,
     ) -> str | None:
         """Mark the operation held (None), or why not: `HOLD_LATE` (the request is older than `HOLD_S`, a daemon that
-        was down; rejected as before) or `HOLD_FULL` (the session holds `HOLD_MAX` already)."""
+        was down; rejected as before) or `HOLD_FULL` (the session holds `HOLD_MAX` already); `why` is the reason and
+        the next step of `github_access`."""
+        reason, step = why
         repo = op.params.get("repo")
         until = datetime.fromtimestamp(self.env.wall() - self.elapsed(op), UTC) + timedelta(seconds=HOLD_S)
         async with self.env.transaction() as conn:
@@ -465,6 +526,7 @@ class Pipeline:
                 held_repo=repo if rules.repo_valid(repo) else None,
                 held_until=until,
                 held_credential=version,
+                held_next=step,
             )
         self.line(f"held operation_id={op.id} reason={reason}")
         return None
@@ -490,6 +552,8 @@ class Pipeline:
                 body["repo"] = op.held_repo
             assert op.actor_id is not None
             body["for_user"] = op.actor_id
+            if op.held_next is not None:
+                body["next"] = op.held_next
             body["until"] = session_records.time_text(op.held_until.timestamp())
             await session_event(conn, self.env.outbox, session, kind="session.status", body=body, ts=self.env.at())
             await records.update(conn, op.id, held_notified_at=now)

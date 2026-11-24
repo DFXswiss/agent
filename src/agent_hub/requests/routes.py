@@ -8,8 +8,9 @@
 | `GET /v1/device/requests/{id}` | `device_addressed` |
 | `POST /v1/device/requests/{id}/responses` | `device_addressed` |
 
-`GET /v1/me/devices` lists one item per device and org with the workgroups that make the device eligible and its
-presence. The rules live in `agent_hub.requests.store`. After the commit a new request sends the hint
+`GET /v1/me/devices` lists one item per device and org with the workgroups that make the device eligible, its
+presence and the features it announced on its last live-channel connection (`agent_hub.device.features`; KOR-65: the
+web offers only the GitHub ways a device can run). The rules live in `agent_hub.requests.store`. After the commit a new request sends the hint
 `request {request_id}` to its device (after `reconcile {}` when it replaced an active request, so the runner drops
 the replaced flow), a new response the browser frame `device_response {request_id, seq}` to the
 user's browsers. Reads are read-logged by the pipeline.
@@ -65,11 +66,14 @@ def _path_id(text: str) -> UUID:
 def my_devices(connection: Any, user: UUID, now: Any, online_seconds: int) -> list[dict[str, Any]]:
     """The body items of `GET /v1/me/devices`."""
     items = eligible_devices(connection, user)
+    ids = sorted({str(item.device_id) for item in items})
     seen = dict(
         connection.execute(
-            "SELECT device_id, last_heartbeat_at FROM hub.device_presence WHERE device_id = ANY(%s::uuid[])",
-            (sorted({str(item.device_id) for item in items}),),
+            "SELECT device_id, last_heartbeat_at FROM hub.device_presence WHERE device_id = ANY(%s::uuid[])", (ids,)
         ).fetchall()
+    )
+    announced = dict(
+        connection.execute("SELECT id, features FROM hub.device WHERE id = ANY(%s::uuid[])", (ids,)).fetchall()
     )
     online_after = now - timedelta(seconds=online_seconds)
     return [
@@ -80,6 +84,7 @@ def my_devices(connection: Any, user: UUID, now: Any, online_seconds: int) -> li
             "wg_ids": [str(wg) for wg in item.wg_ids],
             "online": item.device_id in seen and seen[item.device_id] > online_after,
             "last_seen_at": format_time(seen[item.device_id]) if item.device_id in seen else None,
+            "features": sorted(announced.get(item.device_id, [])),
         }
         for item in items
     ]

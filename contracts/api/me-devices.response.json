@@ -39,6 +39,16 @@
                 "type": "null"
               }
             ]
+          },
+          "features": {
+            "type": "array",
+            "description": "the capabilities the device announced on its last live-channel connection (header Agent-Features; e.g. github.ways, github.device_flow, github.operator, KOR-65); absent from older hubs",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$"
+            },
+            "minItems": 0,
+            "maxItems": 16
           }
         },
         "required": [

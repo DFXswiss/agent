@@ -2,17 +2,46 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/github.connect.request.json",
   "title": "device request body github.connect",
-  "description": "no parameters: the device flow of the GitHub App; token: store an existing GitHub token (a GitHub CLI login or a personal access token) after the device checked it (KOR-25)",
-  "type": "object",
-  "properties": {
-    "token": {
-      "type": "string",
-      "description": "printable ASCII without spaces",
-      "pattern": "^[!-~]+$",
-      "minLength": 1,
-      "maxLength": 4096
+  "description": "no parameters: the GitHub device flow the device prefers (the OAuth App when set up, else the GitHub App; KOR-65); app: the device flow of that app; token: store an existing GitHub token (a GitHub CLI login or a personal access token) after the device checked it (KOR-25)",
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "the device flow the device prefers",
+      "properties": {},
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "printable ASCII without spaces",
+          "pattern": "^[!-~]+$",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "enum": [
+            "oauth_app",
+            "github_app"
+          ],
+          "description": "oauth_app: the OAuth App (every repository the account can reach); github_app: the GitHub App (repositories of owners where it is installed)"
+        }
+      },
+      "required": [
+        "app"
+      ],
+      "additionalProperties": false
     }
-  },
-  "required": [],
-  "additionalProperties": false
+  ]
 }

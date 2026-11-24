@@ -62,6 +62,8 @@ async def actor_client(context: Any, operation: Operation) -> AsyncIterator[GitH
                 raise NotConnected
             assert operation.actor_id is not None
             client = settings_for(context).client(token, operation.actor_id)
+            source = body.get("source")
+            client.source = source if isinstance(source, str) else "device_flow"
             del token
             async with client:
                 yield client

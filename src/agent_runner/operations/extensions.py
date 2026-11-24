@@ -85,13 +85,23 @@ def message_text(message: object) -> str | None:
 
 class CheckFailed(Exception):
     """A formal check or pre-check refused the operation: `code` of `operation-error-codes.json`, JSON `pointers`
-    (`params_invalid`) and an optional English sentence."""
+    (`params_invalid`), an optional English sentence and, of a GitHub access refusal, the one next step for the person
+    who gave the instruction (`next_step`, `contracts/events/objects.json` `github_next_step`; KOR-65) - kept out of
+    the error object, the pipeline puts it into the `waiting` event of the held operation."""
 
-    def __init__(self, code: str, *, pointers: list[str] | None = None, message: str | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        *,
+        pointers: list[str] | None = None,
+        message: str | None = None,
+        next_step: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.pointers = pointers
         self.message = message
+        self.next_step = next_step
 
     def error(self) -> dict[str, Any]:
         """The operation error object (`ops/objects.json#/$defs/error`)."""
