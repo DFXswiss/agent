@@ -134,10 +134,11 @@ test('the first screen is interactive within 3 s with CPU ×4 and Fast 3G', asyn
   const description = `median ${median} ms of ${runs.join(', ')} ms`;
   info.annotations.push({ type: 'time to interactive', description });
   console.log(`time to interactive (${info.project.name}): ${description}`);
-  if (median > TTI_BUDGET_MS) {
-    const over = `over budget within tolerance: ${median} ms > ${TTI_BUDGET_MS} ms (limit ${TTI_BUDGET_MS * (1 + TTI_TOLERANCE)} ms)`;
+  const limit = Math.round(TTI_BUDGET_MS * (1 + TTI_TOLERANCE));
+  if (median > TTI_BUDGET_MS && median <= limit) {
+    const over = `over budget within tolerance: ${median} ms > ${TTI_BUDGET_MS} ms (limit ${limit} ms)`;
     info.annotations.push({ type: 'warning', description: over });
     console.warn(`WARNING time to interactive (${info.project.name}): ${over}`);
   }
-  expect(median).toBeLessThanOrEqual(TTI_BUDGET_MS * (1 + TTI_TOLERANCE));
+  expect(median).toBeLessThanOrEqual(limit);
 });
