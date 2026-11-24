@@ -33,7 +33,7 @@ export interface AttentionRow {
   readonly subagents_total: number;
   readonly subagents_active: number;
   readonly updated_at: string;
-  /** When a `quota_wait` / `quota_choice` record continues by itself (ADR-080 section 5); absent otherwise. */
+  /** When a `quota_wait` / `quota_choice` record continues by itself (ADR-081 section 5); absent otherwise. */
   readonly wait_until?: string | null;
 }
 

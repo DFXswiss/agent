@@ -1,6 +1,6 @@
 """Daemon tasks of the model area.
 
-`model_fallback` (KOR-50, ADR-080 section 4): every `fallback.TICK_S` the run of the reconcile step of the same name
+`model_fallback` (KOR-50, ADR-081 section 4): every `fallback.TICK_S` the run of the reconcile step of the same name
 (`model.fallback.run_once`), so a pause ends within seconds of its release time and a used-up access is acted on
 without waiting for the next desired state. It does nothing while the device is not enrolled (no deliverer); a failing
 round is logged and the loop goes on.

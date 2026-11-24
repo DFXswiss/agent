@@ -10,7 +10,7 @@ Each kind is a `Strategy` that answers `None` (not available on this device) or 
 
 - `subscription` / `api_key`: the owner's `claude_subscription` / `anthropic_api_key` credential opens on this
   device (`Request.credentials` names the access kinds whose credential does; `model.access` finds out);
-- `platform`: a usable `OPENROUTER_KEY_FILE` on a platform device, or the limited DFX key of an org device (ADR-080
+- `platform`: a usable `OPENROUTER_KEY_FILE` on a platform device, or the limited DFX key of an org device (ADR-081
   section 7; `SessionEnv.platform_key` answers None without one).
 
 The access kinds are a closed list (`contracts/common.json#/$defs/model_access`) and all three are built in; the
@@ -104,7 +104,7 @@ def platform_env(catalog: Catalog, model_id: str) -> dict[str, str]:
 
 def platform_strategy(request: Request, catalog: Catalog) -> Choice | None:
     """DFX model access through OpenRouter: on any device that has a key for it (the platform key of a platform device,
-    the limited DFX key of an org device, ADR-080 section 7)."""
+    the limited DFX key of an org device, ADR-081 section 7)."""
     if not request.platform_key_available:
         return None
     model = choose_model(catalog, "platform", request.model_pref)

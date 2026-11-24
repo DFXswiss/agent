@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/task-model-consent.request.json",
   "title": "POST /v1/tasks/{task}/model-consent request",
-  "description": "Body of POST /v1/tasks/{task}/model-consent (ADR-080 section 5, KOR-50): empty.",
+  "description": "Body of POST /v1/tasks/{task}/model-consent (ADR-081 section 5, KOR-50): empty.",
   "type": "object",
   "properties": {},
   "additionalProperties": false

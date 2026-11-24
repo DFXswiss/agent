@@ -1,7 +1,7 @@
--- 0024_model_fallback: model access with fallback, visible quotas and DFX access on own hardware (KOR-50, ADR-080;
+-- 0025_model_fallback: model access with fallback, visible quotas and DFX access on own hardware (KOR-50, ADR-081;
 -- 02-data-model.md sections 2.1, 2.4, 2.8 and 3).
 --
--- - `user_settings.fallback_own_to_dfx` / `fallback_operator_to_platform`: the user's crossing rules of ADR-080
+-- - `user_settings.fallback_own_to_dfx` / `fallback_operator_to_platform`: the user's crossing rules of ADR-081
 --   section 1 (defaults off / on); delivered with every session of the owner in the device state.
 -- - `task.model_consent`: a person allowed DFX access for the task while its own access is used up (section 5).
 -- - `session.wait_until` / `session.dfx_choice`: the wait of a session suspended with `model_quota_exhausted`
@@ -92,7 +92,7 @@ ALTER TABLE hub.charge ADD CONSTRAINT charge_scope_check CHECK (
 ALTER TABLE hub.charge DROP CONSTRAINT charge_device_id_origin_seq_key;
 ALTER TABLE hub.charge ADD CONSTRAINT charge_device_id_origin_seq_part_key UNIQUE (device_id, origin_seq, part);
 
--- `model.switched`: the task's owner learns that a session changed its model access (ADR-080 section 5); replaced
+-- `model.switched`: the task's owner learns that a session changed its model access (ADR-081 section 5); replaced
 -- NOT VALID like in 0010, 0013, 0021 and 0023.
 ALTER TABLE hub.notification DROP CONSTRAINT notification_kind_check;
 ALTER TABLE hub.notification ADD CONSTRAINT notification_kind_check CHECK (kind IN (

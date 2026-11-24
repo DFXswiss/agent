@@ -1,6 +1,6 @@
--- DFX model access on own hardware (KOR-50, ADR-080 section 7).
+-- DFX model access on own hardware (KOR-50, ADR-081 section 7).
 --
--- - `runner.outbox` accepts the items `operator_quota` (ADR-080 section 6), `dfx_key_state`, `dfx_key_issued` and
+-- - `runner.outbox` accepts the items `operator_quota` (ADR-081 section 6), `dfx_key_state`, `dfx_key_issued` and
 --   `dfx_key_usage` (section 7).
 -- - `runner.dfx_key` (org devices): the envelope of the limited OpenRouter key of each organization this device
 --   serves, exactly as the hub delivered it in `dfx_key_held` and only after it was verified (signed by a platform

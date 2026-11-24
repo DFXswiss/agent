@@ -1,4 +1,4 @@
--- Model access fallback (KOR-50, ADR-080 sections 2 to 4).
+-- Model access fallback (KOR-50, ADR-081 sections 2 to 4).
 --
 -- - `runner.access_limit`: the subscription accesses this device found used up or refused, kept across restarts.
 --   `access_key` names one access (`own:<owner_id>`, `operator:<file name>`, `dfxkey:<device_id>`), never a token.

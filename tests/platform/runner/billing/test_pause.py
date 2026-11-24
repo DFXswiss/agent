@@ -131,7 +131,7 @@ def test_a_failing_suspend_leaves_the_session_and_an_ended_session_is_released(r
 
 
 def test_org_devices_pause_only_sessions_on_the_dfx_key_and_inactive_billing_never_pauses(rig: Rig) -> None:
-    """KOR-50, ADR-080 section 7: on own hardware the credit pause acts on the sessions whose access is `platform`
+    """KOR-50, ADR-081 section 7: on own hardware the credit pause acts on the sessions whose access is `platform`
     (the DFX key); sessions on the owner's own access are never touched."""
 
     async def body(env: Any) -> None:

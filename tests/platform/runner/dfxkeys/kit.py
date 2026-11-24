@@ -1,4 +1,4 @@
-"""Test kit of the KOR-50 DFX key suites (ADR-080 section 7): an issuing platform device, an org device and the
+"""Test kit of the KOR-50 DFX key suites (ADR-081 section 7): an issuing platform device, an org device and the
 model double with the OpenRouter key management API.
 
 - `issuer_env(dsn, double)`: the RUN-03 rig (`reconcile/rig.py`) - the platform device `rdev` with a real store and

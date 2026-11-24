@@ -20,7 +20,7 @@ runner log and the metrics.
   the format check of the subscription login); a refresh token or anything else is ignored with `reason=format`.
   A file is read again only when its identity (device, inode, modification time, size) changed, so a renewed token is
   picked up at the next scan and an unchanged file costs one `open`/`fstat`.
-- **Choice** (`Pool.choose`): among the usable files (not used up, ADR-080) the one with the most room in its quota
+- **Choice** (`Pool.choose`): among the usable files (not used up, ADR-081) the one with the most room in its quota
   (the lowest `used_percent` of its fullest window of the last reading, `quota.operator`; files without a known quota
   after those with one), then the one with the fewest bound sessions, then the one unused the longest (bound or
   answered last), then by name.
@@ -35,11 +35,11 @@ runner log and the metrics.
   `LIMIT_S`, so a forged record of an untrusted guest cannot take the whole pool); the session's next renewal moves it
   to another usable file when there is one. `429` defers the file for `DEFER_S` for new choices only (the runner sees
   the status, not the `retry-after` header; a running session stays on its file, ADR-052 section 6). A `429` that is
-  held against the file also counts towards its streak (`observe` answers True; `model.exhaustion`, ADR-080 section
+  held against the file also counts towards its streak (`observe` answers True; `model.exhaustion`, ADR-081 section
   2): further `429` of the session that deferred the file count against the same file, never against another one
   within `LIMIT_S`. The blocks are kept in `runner.access_limit` with the file's identity (`model.limits`), so a
   restart keeps them until the file changes.
-- **Used up** (ADR-080): a file whose access key `operator:<name>` is marked used up (`model.limits`) is
+- **Used up** (ADR-081): a file whose access key `operator:<name>` is marked used up (`model.limits`) is
   `exhausted`: no new binding, and a bound session is moved to another usable file by its renewal (in place, the
   model stays); without one the gateway keeps what it holds and the reconcile step `model_fallback` pauses the
   session.
@@ -530,7 +530,7 @@ async def pick(context: Any, org_id: str) -> tuple[str, str, Identity] | None:
 
 
 async def peek(context: Any, org_id: str) -> str | None:
-    """The file `pick` would take for a session of `org_id` now, without binding or logging (ADR-080: what a resume
+    """The file `pick` would take for a session of `org_id` now, without binding or logging (ADR-081: what a resume
     would get)."""
     pool = pool_for(context)
     if pool is None or not pool.allows(org_id):
@@ -542,7 +542,7 @@ async def peek(context: Any, org_id: str) -> str | None:
 
 def used_up(context: Any, org_id: str) -> list[tuple[float, str]]:
     """`(release time, name)` of the used-up files of the pool for a session of `org_id`, earliest first; empty when
-    the organization may not use the pool (ADR-080 section 3: the pool's step waits for the earliest release)."""
+    the organization may not use the pool (ADR-081 section 3: the pool's step waits for the earliest release)."""
     pool = pool_for(context)
     if pool is None or not pool.allows(org_id):
         return []
@@ -556,7 +556,7 @@ def used_up(context: Any, org_id: str) -> list[tuple[float, str]]:
 
 
 def held(context: Any, name: str) -> tuple[str, Identity] | None:
-    """The token and identity of a used-up file a waiting session starts on (ADR-080 section 3), else None."""
+    """The token and identity of a used-up file a waiting session starts on (ADR-081 section 3), else None."""
     pool = pool_for(context)
     entry = None if pool is None else pool.files.get(name)
     if pool is None or entry is None or pool.state(name) != EXHAUSTED:

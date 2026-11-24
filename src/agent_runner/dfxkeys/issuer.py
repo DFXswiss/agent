@@ -1,4 +1,4 @@
-"""The DFX key issuer of a platform device (ADR-080 section 7; contract sheet of KOR-50).
+"""The DFX key issuer of a platform device (ADR-081 section 7; contract sheet of KOR-50).
 
 Everything here is sent only to a hub whose device state carries `model_fallback: {api: 1}` or higher (an older hub
 knows none of the items and lists no requests).
@@ -70,7 +70,7 @@ KEY_KEYS = frozenset({"key_ref", "org_id", "device_id", "headroom_usd", "disable
 
 
 def fallback_api(desired: Mapping[str, Any] | None) -> bool:
-    """The hub accepts the items of ADR-080 (`model_fallback.api >= 1`)."""
+    """The hub accepts the items of ADR-081 (`model_fallback.api >= 1`)."""
     section = None if desired is None else desired.get("model_fallback")
     value = section.get("api") if isinstance(section, Mapping) else None
     return isinstance(value, int) and not isinstance(value, bool) and value >= 1

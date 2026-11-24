@@ -86,7 +86,7 @@ NAMES = (
     "CONTEXT_WORKSPACE_MIB",
     "CONTEXT_TRANSCRIPT_MIB",
     "CONTEXT_WAIT_SECONDS",
-    # DFX model access on own hardware (ADR-080 section 7)
+    # DFX model access on own hardware (ADR-081 section 7)
     "OPENROUTER_MANAGEMENT_KEY_FILE",
     "DFX_KEY_MAX_HEADROOM_USD",
 )
@@ -207,10 +207,10 @@ class Config:
     KOR-47, ADR-078 section 7): an admin's company `github.connect` for it answers with the operator's token."""
     openrouter_management_key_file: Path | None = None
     """The OpenRouter management key file of a DFX key issuer (platform devices only, 0600, never logged or sent;
-    ADR-080 section 7): it can create, read, change and delete the limited per-device keys and nothing else."""
+    ADR-081 section 7): it can create, read, change and delete the limited per-device keys and nothing else."""
     dfx_key_max_headroom_micro_usd: int = DEFAULT_DFX_KEY_MAX_HEADROOM_MICRO_USD
     """The issuer's own cap of a key's headroom above its spend (`DFX_KEY_MAX_HEADROOM_USD`, default 5 USD), so a
-    compromised hub cannot raise a limit beyond it (ADR-080 section 7)."""
+    compromised hub cannot raise a limit beyond it (ADR-081 section 7)."""
 
     @property
     def pg_dir(self) -> Path:

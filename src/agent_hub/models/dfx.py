@@ -1,4 +1,4 @@
-"""Per-device DFX keys: DFX model access on own hardware (ADR-080 section 7, KOR-50; 12-billing.md case 3).
+"""Per-device DFX keys: DFX model access on own hardware (ADR-081 section 7, KOR-50; 12-billing.md case 3).
 
 A platform device whose runner holds a management key of the model provider announces itself (`dfx_key_state
 {issuer: true}`, `hub.dfx_issuer`). The **issuer** is the online, active platform device with the smallest ID among

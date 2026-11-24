@@ -8,7 +8,7 @@ owner names (the verified profile events) and, for the reasons `question` and `a
 `operation.params` event of the operation the record names (`GET /v1/scopes/{wg}/events?kinds=operation.params&task=
 &ref=`), opened only after the reader checks (device author, kind rule, signature) and only when its body names that
 operation and the asking type. Items that do not fit the API shape are left out and counted (`unverified`). An entry
-carries the hub's `wait_until` (ADR-080 section 5: `working/quota_wait` and `needs_decision/quota_choice` continue by
+carries the hub's `wait_until` (ADR-081 section 5: `working/quota_wait` and `needs_decision/quota_choice` continue by
 themselves at that time; null otherwise, and from a hub of an older release).
 """
 

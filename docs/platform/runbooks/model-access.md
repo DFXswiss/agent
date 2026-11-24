@@ -2,7 +2,7 @@
 
 Used-up subscriptions are passed over within their cost class, waits name their release time, quotas are visible per
 organization, and organization devices can use DFX model access through a limited key of the model provider
-([ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardware.md), [05 §10.7–§10.9](../spec/05-runner.md#107-fallback-exhaustion-and-waits-adr-080-sections-15),
+([ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md), [05 §10.7–§10.9](../spec/05-runner.md#107-fallback-exhaustion-and-waits-adr-080-sections-15),
 [12-billing.md §4a](../spec/12-billing.md#4a-case-3-the-provider-key-of-an-org-device-adr-080-7)). Devices are named
 by role only: hub device, platform device (a runner device of kind `platform`), organization device.
 
@@ -11,14 +11,14 @@ by role only: hub device, platform device (a runner device of kind `platform`), 
 Everything is additive; an older runner keeps working against the new hub and a new runner sends nothing new to an
 older hub (it waits for `model_fallback.api` in the device state).
 
-1. **Hub** of this release: `agent-hub migrate` (migration `0024_model_fallback` adds columns with defaults and new
+1. **Hub** of this release: `agent-hub migrate` (migration `0025_model_fallback` adds columns with defaults and new
    tables only), then restart. From now on the device state carries `model_fallback: {api: 1}`, every user's settings
    carry `fallback` (own subscription → DFX access off, operator subscriptions → DFX access over OpenRouter on), and
    `GET /v1/orgs/{org}/quotas` answers.
 2. **Runners** of this release on every **platform device** first (they confirm exhaustion, move and pause sessions,
    poll the operator's subscriptions and send `operator_quota`), then on the organization devices (they accept a DFX
-   key and pause their `platform` sessions when the credit is used up). The runner migrations `0022_model_fallback`
-   and `0023_dfx_key` run at start.
+   key and pause their `platform` sessions when the credit is used up). The runner migrations `0023_model_fallback`
+   and `0024_dfx_key` run at start.
 3. **Web client**: comes with the hub; nothing to do.
 4. Optional, only for DFX access on own hardware: the management key (section 2). Without it organization devices
    simply have no DFX access, as before.

@@ -1,6 +1,6 @@
 # KOR-50 decisions (model access with fallback, visible quotas, DFX access on own hardware)
 
-Design: [ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardware.md); specification
+Design: [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md); specification
 [05-runner.md §10.7–§10.9](../spec/05-runner.md#107-fallback-exhaustion-and-waits-adr-080-sections-15),
 [12-billing.md §4a](../spec/12-billing.md#4a-case-3-the-provider-key-of-an-org-device-adr-080-7), runbook
 [model-access.md](../runbooks/model-access.md). Rules [E-02](../KONZEPT.md#e-02), [E-04](../KONZEPT.md#e-04),
@@ -44,7 +44,7 @@ Design: [ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardwar
 8. **The task view shows the newest switch** from the audit row `session.model_switched` (members read the rows of the
    workgroups they may read); a separate event kind was not needed.
 9. **Agent tool (E-04).** `agent-platform quotas --org`, `settings set --fallback on|off --fallback-platform on|off`
-   and `task model-consent --task` (the existing group `task`; ADR-080 §5 writes it `tasks`). The status entries of
+   and `task model-consent --task` (the existing group `task`; ADR-081 §5 writes it `tasks`). The status entries of
    the situation view carry `wait_until`.
 10. **Guest unchanged.** The runner learns the release time from the usage endpoint, not from the `429` headers; the
     guest journal carries the status only.

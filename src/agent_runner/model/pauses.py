@@ -1,4 +1,4 @@
-"""The model pauses of main sessions (`runner.model_pause`; KOR-50, ADR-080 sections 3 and 4).
+"""The model pauses of main sessions (`runner.model_pause`; KOR-50, ADR-081 sections 3 and 4).
 
 A row is written before the guest is asked anything, so a crash in between is carried on by the next run of the
 reconcile step `model_fallback` (`model.fallback`):

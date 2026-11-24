@@ -21,7 +21,7 @@ owner that is due:
 - **result**: `200` with a valid document -> `parsers.windows_snapshot` -> one outbox item `quota {owner_id, windows,
   fetched_at}` (none when the document reports no window); a malformed document, another status or a transport
   error is logged (status or error type only) and polled again after the interval.
-- **limits** (KOR-50, ADR-080 sections 2 and 6): every reading marks the owner's subscription used up, or releases
+- **limits** (KOR-50, ADR-081 sections 2 and 6): every reading marks the owner's subscription used up, or releases
   it, by the rule of a readable quota (`model.limits.apply`, also without any `429`); towards a hub whose device
   state carries `model_fallback.api` each item carries the latest observed limit of this device (`limited: {at,
   until, readable}`, `runner.access_limit`).

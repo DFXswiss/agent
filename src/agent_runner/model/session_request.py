@@ -1,5 +1,5 @@
 """Request amender of the model area (`sessions.extensions`, `<area>/session_request.py:AMENDERS`, ADR-032): a new main
-session that starts while it waits for model quota is paused before its first prompt (KOR-50, ADR-080 section 3).
+session that starts while it waits for model quota is paused before its first prompt (KOR-50, ADR-081 section 3).
 
 `model.access.resolve` started the session on the access with the earliest release and recorded its wait
 (`model.access.hold`). Its first prompt is therefore taken off the start request (the agent starts without one) and its

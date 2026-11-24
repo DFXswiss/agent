@@ -318,7 +318,7 @@ describe('account-level notifications of an agent (11-agent-access.md section 8)
   });
 });
 
-describe('model switches (ADR-080 section 5)', () => {
+describe('model switches (ADR-081 section 5)', () => {
   const switched = (ref: string | null) =>
     notification('n1', { kind: 'model.switched', org_id: ORG, wg_id: WG, task_id: TASK, ref });
 

@@ -118,7 +118,7 @@ describe('saveModelSettings', () => {
   });
 });
 
-describe('fallback settings (ADR-080 section 1)', () => {
+describe('fallback settings (ADR-081 section 1)', () => {
   const FALLBACK = { own_to_dfx: true, operator_to_platform: false };
 
   it('reads the stored fallback, the defaults for a missing flag, nothing from an older hub', async () => {

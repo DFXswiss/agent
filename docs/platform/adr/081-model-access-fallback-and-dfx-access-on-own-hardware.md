@@ -1,4 +1,4 @@
-# ADR-080: Model access with fallback, visible quotas and DFX access on own hardware
+# ADR-081: Model access with fallback, visible quotas and DFX access on own hardware
 
 Status: Accepted (2026-11-24, after a review of the draft with fresh context). Amends ADR-010 (selection), ADR-052 §4, §6 and Consequences (operator subscriptions:
 exhaustion moves running sessions, blocks survive a restart, the operator's subscriptions are polled), ADR-062 §1 and

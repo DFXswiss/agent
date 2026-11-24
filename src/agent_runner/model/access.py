@@ -1,5 +1,5 @@
 """Model access of a session start: selection, credential and gateway provisioning body (05-runner.md sections 6.1
-step 3, 10.1-10.3, 2.6; 03-api.md section 7.1; ADR-010, ADR-026, ADR-052; KOR-50, ADR-080 sections 1 and 3).
+step 3, 10.1-10.3, 2.6; 03-api.md section 7.1; ADR-010, ADR-026, ADR-052; KOR-50, ADR-081 sections 1 and 3).
 
 `resolve(env, desired)` is called by the session start (and the resume) of the session area. It walks the steps the
 owner's preference allows (`plan`: `auto` = own subscription -> own API key -> operator pool -> platform; the explicit
@@ -16,11 +16,11 @@ fallback) and takes the first access this device can serve that is not used up (
   room first (`operator.Pool.choose`). It is reported as `subscription` like the owner's own; the session is bound to
   the file (`operator.bind`) and the stamp carries the file's name and identity, so the renewal follows the file;
 - `platform`: a usable `OPENROUTER_KEY_FILE` of a platform device, or the limited DFX key of an org device
-  (`SessionEnv.platform_key(org_id)`, ADR-080 section 7; skipped while `dfxkey:<device_id>` is limited). When the
+  (`SessionEnv.platform_key(org_id)`, ADR-081 section 7; skipped while `dfxkey:<device_id>` is limited). When the
   organization has spent its daily platform budget (`platform_budget` of `GET /v1/device/state`) the start is refused
   with `budget_exceeded` (the gateway refuses further requests of running sessions itself with `429 budget_exceeded`).
 
-**Cost classes** (ADR-080 section 1): the owner's own subscription and API key are `own`; the operator pool and
+**Cost classes** (ADR-081 section 1): the owner's own subscription and API key are `own`; the operator pool and
 `platform` are `dfx`. An owner **belongs to `own`** when a step of the preference names an own credential and the
 owner has such a record (`owner_status` is not `MISSING`); then a `dfx` step is taken only when the owner's setting
 `fallback.own_to_dfx` or the task's consent allows it (`model.policy`), never silently - neither because the own
@@ -122,7 +122,7 @@ def provisions(context: Any) -> Provisions:
 
 @dataclass(frozen=True)
 class Wait:
-    """No allowed access is left (ADR-080 section 3): the earliest release `until` among the skipped accesses and
+    """No allowed access is left (ADR-081 section 3): the earliest release `until` among the skipped accesses and
     `choice` = a DFX access would be available but the crossing rule bars it."""
 
     until: float
@@ -139,7 +139,7 @@ class Resolved:
     key: str | None = None
     """The access key of an access that can run out (`model.limits`), else None."""
     wait: Wait | None = None
-    """Set when the session starts on the access with the earliest release and waits (ADR-080 section 3)."""
+    """Set when the session starts on the access with the earliest release and waits (ADR-081 section 3)."""
 
     def __repr__(self) -> str:
         return f"Resolved(access={self.choice.access!r}, model_id={self.choice.model_id!r}, credential=<redacted>)"
@@ -239,7 +239,7 @@ def plan(kinds: tuple[str, ...]) -> list[str]:
     return steps
 
 
-# -- the walk over the steps (ADR-080 section 3) ------------------------------------------------------------------
+# -- the walk over the steps (ADR-081 section 3) ------------------------------------------------------------------
 
 Build = Callable[[], Awaitable[Resolved]]
 DFX_STEPS = frozenset({OPERATOR, "platform"})
@@ -492,7 +492,7 @@ async def _audit(
     env: Any, desired: Desired, previous: tuple[str, str | None, str | None] | None, found: Resolved, unusable: bool
 ) -> None:
     """`session.model_switched` when a resume moves the session to another access because its access was used up,
-    could not be used, or was released again (ADR-080 section 5); only towards a hub with `model_fallback.api`."""
+    could not be used, or was released again (ADR-081 section 5); only towards a hub with `model_fallback.api`."""
     if previous is None or previous[0] == found.label:
         return
     label, key, model = previous

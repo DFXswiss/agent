@@ -1,4 +1,4 @@
-"""Daemon task `dfx_keys` (ADR-080 section 7): every `TICK_S` the issuer of a platform device answers the listed
+"""Daemon task `dfx_keys` (ADR-081 section 7): every `TICK_S` the issuer of a platform device answers the listed
 requests and polls the listed keys that are due (`issuer.Issuer.tick`; each key keeps its own 60 s schedule). A failing
 round is logged by error type and the loop goes on. The task ends at once on an org device and on a device that is not
 enrolled.

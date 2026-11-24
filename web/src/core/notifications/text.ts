@@ -18,7 +18,7 @@
 //   `ref` = `<action>:<acting agent id>:<target>`, no org; `agent_paired_remote` (ADR-067): a pairing from another
 //   computer was confirmed, named by the new agent, the target) | the settings |
 // | `model.switched` | "Task Y: model switched from A to B because A is used up until 14:05" (`ref` =
-//   `<from access>:<to access>:<until or empty>`, ADR-080 section 5; a malformed ref: "Task Y: model switched") |
+//   `<from access>:<to access>:<until or empty>`, ADR-081 section 5; a malformed ref: "Task Y: model switched") |
 //   the task |
 //
 // The level of a whiteboard notification follows from the row: a task → task level, else a workgroup → workgroup

@@ -499,7 +499,7 @@ def _account_commands(tree: Tree) -> None:
     sub.add_argument(
         "--fallback",
         choices=["on", "off"],
-        help="when the own subscription is used up, continue on DFX access (charged; default off, ADR-080)",
+        help="when the own subscription is used up, continue on DFX access (charged; default off, ADR-081)",
     )
     sub.add_argument(
         "--fallback-platform",

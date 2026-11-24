@@ -1,5 +1,5 @@
 """U-HUB-models (quotas): the latest observed limit of an own subscription (`quota.limited`), the operator
-subscriptions of a platform device (`operator_quota`) and `GET /v1/orgs/{org}/quotas` (ADR-080 section 6, KOR-50)."""
+subscriptions of a platform device (`operator_quota`) and `GET /v1/orgs/{org}/quotas` (ADR-081 section 6, KOR-50)."""
 
 from __future__ import annotations
 

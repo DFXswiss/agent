@@ -14,7 +14,7 @@ caller's audit rows (lock order of `agent_hub.sessions.taskstate`). It
    (`state`, `state_reason`, `ready_at` = receive time of the first `prompt_delivering`, `first_working_at` = receive
    time of the first `working`, `ended_at` for `stopped`/`failed`, reported `agent_version`/`model_access`/
    `model_id`; the wait of a session suspended with `model_quota_exhausted`: `wait_until` and `dfx_choice`, KOR-50,
-   ADR-080 section 4 - every other transition clears them), writes the audit row `session.<state>` and derives the
+   ADR-081 section 4 - every other transition clears them), writes the audit row `session.<state>` and derives the
    task (`refresh_task`); the current state reported again with the same reason and another wait updates only the
    wait and derives the task again (the attention record carries the wait);
 5. records the `session` frame (row + transition), the `task` frame and the signal `task.state` in `Applied.effects`;
@@ -80,7 +80,7 @@ SESSION_FAILURE_REASONS = frozenset(
 """A copy of `contracts/enums/session-failure-reasons.json` (a test compares them)."""
 MODEL_ACCESS = frozenset({"subscription", "api_key", "platform"})
 MODEL_QUOTA = "model_quota_exhausted"
-"""The reason of a session paused because no allowed model access is left (ADR-080 section 4)."""
+"""The reason of a session paused because no allowed model access is left (ADR-081 section 4)."""
 NO_WAIT: tuple[datetime | None, bool] = (None, False)
 _ERROR_CODE_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 

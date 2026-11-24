@@ -2,7 +2,7 @@
 
 `Keys` wraps the billing helper (`tests/platform/hub/billing/support.py`): the scene's org device `device` holds keys,
 the scene's other device becomes the platform device `issuer` (`issuer_ready`: platform, online, announced). The
-helpers push the items of ADR-080 as the runner sends them (checked against the contracts by the test client) and run
+helpers push the items of ADR-081 as the runner sends them (checked against the contracts by the test client) and run
 the job `models.dfx_keys`.
 """
 

@@ -1,4 +1,4 @@
-"""The quotas of the operator's subscriptions (KOR-50, ADR-080 sections 2, 3 and 6; ADR-052).
+"""The quotas of the operator's subscriptions (KOR-50, ADR-081 sections 2, 3 and 6; ADR-052).
 
 On a platform device with the operator's pool (`model.operator`), the task `quota` polls every token file's quota
 like an owner's subscription:

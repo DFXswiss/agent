@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/org-quotas.request.json",
   "title": "GET /v1/orgs/{org}/quotas request",
-  "description": "query parameters (ADR-080 section 6, KOR-50)",
+  "description": "query parameters (ADR-081 section 6, KOR-50)",
   "type": "object",
   "properties": {},
   "additionalProperties": false

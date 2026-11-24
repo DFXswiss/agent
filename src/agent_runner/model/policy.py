@@ -1,7 +1,7 @@
-"""What the hub says about the model fallback, from the last desired state (`GET /v1/device/state`; KOR-50, ADR-080
+"""What the hub says about the model fallback, from the last desired state (`GET /v1/device/state`; KOR-50, ADR-081
 sections 1, 5 and 6).
 
-- `api(desired)`: the hub accepts the new items and fields of ADR-080 (`model_fallback.api >= 1`): the outbox item
+- `api(desired)`: the hub accepts the new items and fields of ADR-081 (`model_fallback.api >= 1`): the outbox item
   `operator_quota`, `limited` of `quota`, `wait_until`/`dfx_choice` of `session_transition`, the session failure reason
   `model_quota_exhausted` and the audit action `session.model_switched`. An older hub has no `model_fallback`; the
   runner then sends none of them (the hub would refuse them).

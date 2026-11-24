@@ -1,5 +1,5 @@
 """U-RUN-dfxkey: the org device keeps its DFX key envelopes sealed in `runner.dfx_key` and opens them only for a
-provisioning (ADR-080 section 7); `SessionEnv.platform_key` of the daemon (`model.dfxkey.platform_key`)."""
+provisioning (ADR-081 section 7); `SessionEnv.platform_key` of the daemon (`model.dfxkey.platform_key`)."""
 
 from __future__ import annotations
 

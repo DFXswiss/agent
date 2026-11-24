@@ -1,4 +1,4 @@
-// The summary of an organization's model access (ADR-080 section 6): "Subscriptions: n available · m used up – next
+// The summary of an organization's model access (ADR-081 section 6): "Subscriptions: n available · m used up – next
 // release 14:05", shown in the section "Model access and quotas" and as the counter of the situation view.
 import type { OrgQuotas } from '../../../../core/credentials/orgQuotas';
 import { formatClock, localTimeZone } from '../../../../core/i18n';

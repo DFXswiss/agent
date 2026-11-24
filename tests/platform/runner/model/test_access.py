@@ -178,7 +178,7 @@ def test_a_record_this_device_cannot_use_makes_the_kind_unavailable(store_dsn: s
 
 
 def test_a_hub_failure_while_fetching_makes_the_kind_unavailable_and_never_falls_back_silently(store_dsn: str) -> None:
-    """ADR-080 section 1: the hub answered something else than "missing", so the owner belongs to `own`; a DFX access
+    """ADR-081 section 1: the hub answered something else than "missing", so the owner belongs to `own`; a DFX access
     only with the owner's setting (or the task's consent)."""
 
     async def body(env: Env) -> None:

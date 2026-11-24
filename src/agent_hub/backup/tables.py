@@ -132,7 +132,7 @@ RULES: tuple[TableRule, ...] = (
     TableRule("usage_counter", "session_id = ANY(%(sessions)s)"),
     TableRule("quota_snapshot", "owner_id = ANY(%(users)s)"),
     TableRule("quota_unreadable", "owner_id = ANY(%(users)s)"),
-    # model access with fallback (KOR-50, ADR-080): the limit of an owner, the snapshots and issuers of the devices,
+    # model access with fallback (KOR-50, ADR-081): the limit of an owner, the snapshots and issuers of the devices,
     # the per-device DFX keys of the org (envelope ciphertext only) and the cost waiting for a key's booking
     TableRule("quota_limit", "owner_id = ANY(%(users)s)"),
     TableRule("operator_quota", DEVICE_ROWS),

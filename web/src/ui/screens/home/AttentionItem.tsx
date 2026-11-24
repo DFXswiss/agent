@@ -1,6 +1,6 @@
 // One entry of the situation view (06-web.md section 4.0): the row building block of the task lists (`TaskItem`:
 // title, workgroup, state, the signed owner, last activity) extended by the attention line – the reason in plain words,
-// the main agent's state (a wait for model quota names when it continues, ADR-080 section 5), how long the task is in
+// the main agent's state (a wait for model quota names when it continues, ADR-081 section 5), how long the task is in
 // its group, for "Running" the phase and the active subagents – the
 // next step (`Actions.tsx`, for users who may write in the workgroup), "Open task", and the agent tree on demand.
 //

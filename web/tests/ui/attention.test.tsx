@@ -452,7 +452,7 @@ describe('situation view', () => {
   });
 });
 
-describe('model quota (ADR-080)', () => {
+describe('model quota (ADR-081)', () => {
   const UNTIL = '2026-11-24T14:05:00.000Z';
   const clock = (value: string) =>
     formatClock(Date.parse(value), { locale: 'en', timeZone: localTimeZone(), now: Date.now() });
@@ -744,7 +744,7 @@ describe('badge and notifications', () => {
     ]);
   });
 
-  it('renders a model switch with its accesses and release (ADR-080)', async () => {
+  it('renders a model switch with its accesses and release (ADR-081)', async () => {
     const t = await taskWorld();
     const until = '2026-11-21T14:05:00.000Z';
     const row = {

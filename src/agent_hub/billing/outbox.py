@@ -22,7 +22,7 @@ per-device DFX key, `agent_hub.models.dfx` - numbers them), added to `hub.charge
 measurement, workgroup, device, kind: amount and quantity; with its CHF equivalent at the rate of its day,
 `agent_hub.billing.fx`) and left in `hub.charge_pending` for the settle job, which takes it from the org's credit
 (`agent_hub.billing.credit`); the push never locks the org's account. A charge without a session (the share of a
-per-device key no session reported, ADR-080 section 7) has no workgroup, task or session and is summed per day under
+per-device key no session reported, ADR-081 section 7) has no workgroup, task or session and is summed per day under
 the nil workgroup ID `NO_WG`. Without a price list in force nothing is booked.
 """
 

@@ -70,7 +70,7 @@ class SessionEnv:
     storage_key: bytes
     platform_key: Callable[..., str | None]
     """`platform_key(org_id=None)`: the key of the `platform` access for a session of `org_id` - the platform key file
-    on a platform device, the opened DFX key of that organization on an org device (ADR-080 section 7), None otherwise
+    on a platform device, the opened DFX key of that organization on an org device (ADR-081 section 7), None otherwise
     (`model.dfxkey.platform_key`). Called for each provisioning; the value is never stored or logged."""
     upstream_openrouter: str
     context: Any = None

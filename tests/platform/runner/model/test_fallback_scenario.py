@@ -1,4 +1,4 @@
-"""U-RUN-model (KOR-50, ADR-080 sections 2 to 5): one main session through the whole fallback, driven by the model
+"""U-RUN-model (KOR-50, ADR-081 sections 2 to 5): one main session through the whole fallback, driven by the model
 answering `429` (the gateway's `usage` records) and the usage endpoint reporting the windows full - the owner's own
 subscription used up -> the next operator file -> moved in place to the other file -> DFX access (its usage is
 `platform`) -> a second session finds everything used up and waits before its first prompt until the earliest

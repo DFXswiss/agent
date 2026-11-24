@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/org-quotas.response.json",
   "title": "GET /v1/orgs/{org}/quotas response",
-  "description": "Body of a successful response to GET /v1/orgs/{org}/quotas (ADR-080 section 6, KOR-50): the caller's own subscription, the operator's subscriptions when the organization may use them (verified platform log, ADR-079), whether DFX access over OpenRouter is available and a summary.",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/quotas (ADR-081 section 6, KOR-50): the caller's own subscription, the operator's subscriptions when the organization may use them (verified platform log, ADR-079), whether DFX access over OpenRouter is available and a summary.",
   "type": "object",
   "properties": {
     "own": {
@@ -86,7 +86,7 @@
           "anyOf": [
             {
               "type": "object",
-              "description": "the latest observed limit (ADR-080 section 6)",
+              "description": "the latest observed limit (ADR-081 section 6)",
               "properties": {
                 "at": {
                   "$ref": "../common.json#/$defs/time"

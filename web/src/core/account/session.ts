@@ -446,7 +446,7 @@ export class AppSession {
     };
   }
 
-  /** `PUT /v1/me/settings` with a new locale (model and fallback settings unchanged, ADR-080 section 1). */
+  /** `PUT /v1/me/settings` with a new locale (model and fallback settings unchanged, ADR-081 section 1). */
   async saveLocale(locale: Locale): Promise<void> {
     const profile = this.store.getState().me.profile;
     const settings = isRecord(profile?.settings) ? profile.settings : {};

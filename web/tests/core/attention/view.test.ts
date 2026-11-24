@@ -49,7 +49,7 @@ describe('reasons and actions', () => {
     expect(reasonKey('blocked', 'later_reason')).toBe('attention.generic.blocked');
   });
 
-  it('name the time a wait for model quota continues (ADR-080 section 5)', () => {
+  it('name the time a wait for model quota continues (ADR-081 section 5)', () => {
     const options = { locale: 'en' as const, timeZone: 'UTC', now: Date.parse('2026-11-24T08:00:00.000Z') };
     const until = '2026-11-24T14:05:00.000Z';
     expect(reasonText('working', { reason: 'quota_wait', wait_until: until }, options)).toEqual({

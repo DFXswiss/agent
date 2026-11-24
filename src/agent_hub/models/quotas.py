@@ -1,4 +1,4 @@
-"""`GET /v1/orgs/{org}/quotas`: the model access of an organization as far as readable (ADR-080 section 6, KOR-50).
+"""`GET /v1/orgs/{org}/quotas`: the model access of an organization as far as readable (ADR-081 section 6, KOR-50).
 
 `org_quotas(connection, org, user, now=..., window=..., platform=...)` answers, for a member of the org (the caller
 checks `org:member`):
@@ -9,7 +9,7 @@ checks `org:member`):
   latest `org_operator_subscriptions`, ADR-079); only then `subscriptions`: the newest snapshot of every active
   platform device that is an active member of the organization (`hub.operator_quota`), ordered by device and name.
   `used_percent` / `resets_at` are those of the subscription's fullest window of the whole subscription
-  (`five_hour`, `seven_day`; per-model windows do not count, ADR-080 section 2); null without one.
+  (`five_hour`, `seven_day`; per-model windows do not count, ADR-081 section 2); null without one.
 - `platform.available`: an online, active platform device is an active member of the organization, or one of the
   organization's devices holds a live per-device DFX key.
 - `summary`: over the listed subscriptions - the own one (when the caller has any record of it: windows, an

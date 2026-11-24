@@ -2,7 +2,7 @@
 // Anthropic API key, DFX platform) and the model, saved in the user's settings (`PUT /v1/me/settings`). The models come
 // only from the hub's configuration (`GET /v1/config`, `models` per access kind; `core/credentials/model.ts`); a model
 // the new preference does not allow falls back to the default. The platform is available only on DFX devices.
-// Below, the two fallback settings of ADR-080 section 1, saved with the same button: "Use DFX access when my own
+// Below, the two fallback settings of ADR-081 section 1, saved with the same button: "Use DFX access when my own
 // subscription is used up" (default off) and "… when the operator's subscriptions are used up" (default on); a hub of
 // an older release has none, then they are not shown.
 import { type FormEvent, useState } from 'react';

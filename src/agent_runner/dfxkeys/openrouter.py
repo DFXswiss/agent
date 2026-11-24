@@ -1,4 +1,4 @@
-"""The OpenRouter management API of the DFX key issuer (ADR-080 section 7).
+"""The OpenRouter management API of the DFX key issuer (ADR-081 section 7).
 
 Routes below `MODEL_UPSTREAM_OPENROUTER` (`https://openrouter.ai/api`), each with `Authorization: Bearer
 <management key>`, 8 s timeout, no redirects:

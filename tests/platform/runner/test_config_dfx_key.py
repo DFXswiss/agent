@@ -1,4 +1,4 @@
-"""U-RUN-config: the settings of the DFX key issuer (KOR-50, ADR-080 section 7) - `OPENROUTER_MANAGEMENT_KEY_FILE`
+"""U-RUN-config: the settings of the DFX key issuer (KOR-50, ADR-081 section 7) - `OPENROUTER_MANAGEMENT_KEY_FILE`
 (absolute, 0600, platform devices only, never echoed) and `DFX_KEY_MAX_HEADROOM_USD` (default 5 USD), both carried
 into the service environment."""
 

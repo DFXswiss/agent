@@ -1,4 +1,4 @@
-// U-WEB-credentials (KOR-50, ADR-080 section 5): the newest model switch of a task from the audit rows
+// U-WEB-credentials (KOR-50, ADR-081 section 5): the newest model switch of a task from the audit rows
 // `session.model_switched`; rows of another action or with a malformed detail are left out.
 import { describe, expect, it } from 'vitest';
 import { loadModelSwitch, modelSwitch, SWITCH_ACTION } from '../../../src/core/credentials/switches';

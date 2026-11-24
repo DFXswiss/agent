@@ -9,7 +9,7 @@
 //   (`defaults.platform` for the platform).
 // `platform` is available only on DFX execution devices (platform devices); the UI says so.
 //
-// The two fallback settings of ADR-080 section 1 are stored with them (`fallback`): `own_to_dfx` (default off: an own
+// The two fallback settings of ADR-081 section 1 are stored with them (`fallback`): `own_to_dfx` (default off: an own
 // subscription that is used up never moves to paid DFX access silently) and `operator_to_platform` (default on: from
 // used-up operator subscriptions to DFX access over OpenRouter). A hub whose settings carry no `fallback` is of an older
 // release: the settings then have none and the body sent to it has none either.
@@ -34,7 +34,7 @@ export interface FallbackSettings {
   readonly operatorToPlatform: boolean;
 }
 
-/** The fallback settings when none are stored (ADR-080 section 1). */
+/** The fallback settings when none are stored (ADR-081 section 1). */
 export const FALLBACK_DEFAULTS: FallbackSettings = { ownToDfx: false, operatorToPlatform: true };
 
 export interface ModelSettings {
@@ -157,7 +157,7 @@ async function putSettings(context: RequestsContext, body: SettingsBody): Promis
 }
 
 /**
- * "Always" on the card `quota_choice` (ADR-080 section 5): `fallback.own_to_dfx` on, everything else of the stored
+ * "Always" on the card `quota_choice` (ADR-081 section 5): `fallback.own_to_dfx` on, everything else of the stored
  * settings unchanged (the raw stored preference and model, so a configuration not loaded yet changes nothing).
  */
 export async function allowDfxAlways(context: RequestsContext, locale: Locale): Promise<void> {
@@ -173,7 +173,7 @@ export async function allowDfxAlways(context: RequestsContext, locale: Locale): 
 }
 
 /**
- * "Continue with DFX access" on the card `quota_choice` (ADR-080 section 5): `POST /v1/tasks/{task}/model-consent`
+ * "Continue with DFX access" on the card `quota_choice` (ADR-081 section 5): `POST /v1/tasks/{task}/model-consent`
  * (writers of the task's workgroup); the task may use DFX access while its owner's own subscription is used up.
  */
 export async function allowDfxForTask(context: RequestsContext, task: string): Promise<void> {

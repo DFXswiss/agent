@@ -65,7 +65,7 @@ than 48 h are dropped before push, counted in `agent_runner_device_metrics_dropp
 | `agent_runner_device_verify_failures_total`, `agent_runner_device_metrics_dropped_total`, `agent_runner_vm_start_failures_total` | counter | – |
 | `agent_runner_operator_github_connects_total`, `agent_runner_operator_github_connect_failures_total` (connects through the operator's GitHub token; KOR-27, ADR-053) | counter | – |
 | `agent_runner_device_model_spend_usd` (platform key, daily) | gauge | `window` |
-| `agent_runner_operator_subscription_files` (token files of the operator's subscriptions by state `usable`, `exhausted`, `blocked`, `deferred`, `ignored`; only while `OPERATOR_SUBSCRIPTION_DIR` is set; ADR-052, `exhausted` ADR-080) | gauge | `state` |
+| `agent_runner_operator_subscription_files` (token files of the operator's subscriptions by state `usable`, `exhausted`, `blocked`, `deferred`, `ignored`; only while `OPERATOR_SUBSCRIPTION_DIR` is set; ADR-052, `exhausted` ADR-081) | gauge | `state` |
 | `agent_runner_operator_subscription_sessions` (sessions bound to a token file) | gauge | `file` (file name without `.token`, chosen by the operator) |
 | `agent_runner_operator_subscription_newest_change_age_seconds` (since the newest change of a token file) | gauge | – |
 | `agent_runner_vm_probe_ok` | gauge | `vm`, `wg` |

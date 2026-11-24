@@ -1,4 +1,4 @@
-"""The OpenRouter key management API of the model double (ADR-080 section 7, KOR-50).
+"""The OpenRouter key management API of the model double (ADR-081 section 7, KOR-50).
 
 OpenRouter lets a **management key** create limited keys and read, change and delete them; the platform's DFX key
 issuer uses it to give each org device its own key. The double keeps those keys in memory:

@@ -1,4 +1,4 @@
-// Model access and quotas of an organization (ADR-080 section 6, 03-api.md `GET /v1/orgs/{org}/quotas`): the caller's
+// Model access and quotas of an organization (ADR-081 section 6, 03-api.md `GET /v1/orgs/{org}/quotas`): the caller's
 // own subscription (its windows as `quotas.ts` reads them, since when it is not readable, the latest observed limit),
 // the operator's subscriptions when the organization may use them (per subscription its label, state, whether its
 // quota is readable, the used share of its fullest window, the reset, the latest observed limit and its end), whether
@@ -12,7 +12,7 @@ import type { RequestsContext } from '../requests/client';
 import type { QuotaBar } from '../store/slices/quotas';
 import { quotaBars } from './quotas';
 
-/** The states of an operator subscription (`operator_quota` of ADR-080 section 6). */
+/** The states of an operator subscription (`operator_quota` of ADR-081 section 6). */
 export const SUBSCRIPTION_STATES = ['usable', 'exhausted', 'blocked', 'deferred', 'ignored'] as const;
 
 /** The latest observed limit of a subscription (Unix ms). */

@@ -18,7 +18,7 @@
 - per session, always: `github_identity` / `task_github_identity`, the GitHub identities chosen for the session and its
   task (ADR-078 section 3, null without a choice); `fallback`, the owner's crossing rules of model access
   (`{own_to_dfx, operator_to_platform}`, defaults false/true without settings), and `model_consent`, the task's
-  consent to DFX access (ADR-080 sections 1 and 5, KOR-50);
+  consent to DFX access (ADR-081 sections 1 and 5, KOR-50);
 - `pending_prompts` / `delivered_prompt_event_ids`: the prompt routing of `agent_hub.sessions.prompts` for the main
   sessions in `sessions` (pending only while the session is not `stopping`).
 """

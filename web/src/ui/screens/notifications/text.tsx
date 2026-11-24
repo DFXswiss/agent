@@ -1,6 +1,6 @@
 // The sentence of a notification for the center and the toasts: kind + decrypted names (`core/notifications/text.ts`),
 // neutral fallbacks while a name is not read yet; the names are pulled once per row set. A model switch names its
-// access kinds and the release time in the user's zone (ADR-080 section 5).
+// access kinds and the release time in the user's zone (ADR-081 section 5).
 import { useEffect } from 'react';
 import { formatClock, localTimeZone } from '../../../core/i18n';
 import { pullNames } from '../../../core/notifications/actions';

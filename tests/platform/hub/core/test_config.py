@@ -92,7 +92,7 @@ def test_scheduler_settings(tmp_path: Path) -> None:
 
 
 def test_the_headroom_of_a_dfx_key() -> None:
-    """ADR-080 section 7 (KOR-50): at most 5 USD beyond a per-device key's booked spend unless configured."""
+    """ADR-081 section 7 (KOR-50): at most 5 USD beyond a per-device key's booked spend unless configured."""
     assert load_config(hub_environ()).dfx_key_headroom_usd == Decimal(5)
     assert load_config(hub_environ(AGENT_HUB_DFX_KEY_HEADROOM_USD="")).dfx_key_headroom_usd == Decimal(5)
     assert load_config(hub_environ(AGENT_HUB_DFX_KEY_HEADROOM_USD="0.5")).dfx_key_headroom_usd == Decimal("0.5")

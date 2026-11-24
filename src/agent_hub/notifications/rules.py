@@ -35,7 +35,7 @@ A `notification` row is content-free: recipient, kind, org, workgroup, task, a r
   = the workgroup).
 - `invite.accepted` (`invite_rule`): to the admin who created the org invitation (while still an admin of the org;
   never to the accepting subject itself), `ref` = the subject (user or device).
-- `model.switched` (`switch_rule`, KOR-50, ADR-080 section 5): to the task owner (while the owner reads the task's
+- `model.switched` (`switch_rule`, KOR-50, ADR-081 section 5): to the task owner (while the owner reads the task's
   workgroup) when the hub stores a runner's audit row `session.model_switched`, `ref` =
   `<from_access>:<to_access>:<until or empty>`; `created_at` = the receive time.
 - `rotation.required` is no longer created (KOR-34, ADR-058 section 3: owed rotations run silently in the admins'

@@ -1,4 +1,4 @@
-"""U-HUB-models (DFX keys): DFX model access on own hardware (ADR-080 section 7, KOR-50) - the issuer election, the
+"""U-HUB-models (DFX keys): DFX model access on own hardware (ADR-081 section 7, KOR-50) - the issuer election, the
 requests and revocations of the job `models.dfx_keys`, the headroom, `dfx_key_issued` and the bookings of
 `dfx_key_usage` (cumulative, split over the device's sessions by largest remainder, the rest with the org)."""
 

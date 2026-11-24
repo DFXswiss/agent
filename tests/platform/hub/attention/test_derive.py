@@ -236,7 +236,7 @@ def test_derivation(inputs: Inputs, expected: Attention) -> None:
 
 
 def test_a_main_session_waiting_for_model_quota() -> None:
-    """ADR-080 section 5 (KOR-50): the choice of DFX access needs a person unless the task has the consent or the
+    """ADR-081 section 5 (KOR-50): the choice of DFX access needs a person unless the task has the consent or the
     org's credit is exhausted; otherwise the task waits by itself. Both records carry the wait."""
     until = datetime(2026, 11, 21, 14, 5, tzinfo=UTC)
     waiting = {"main_state": "suspended", "main_reason": "model_quota_exhausted", "main_wait_until": until}

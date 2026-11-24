@@ -196,7 +196,7 @@ class HubConfig:
     """`AGENT_HUB_BILLING_START_CREDIT_USD`: the balance of a new credit account (KOR-31, ADR-062; default 0)."""
     dfx_key_headroom_usd: Decimal = DEFAULT_DFX_KEY_HEADROOM
     """`AGENT_HUB_DFX_KEY_HEADROOM_USD`: the most a per-device DFX key may spend beyond its booked spend (KOR-50,
-    ADR-080 section 7; default 5)."""
+    ADR-081 section 7; default 5)."""
     trusted_proxies: tuple[Network, ...] = ()
     forwarded_header: str = X_FORWARDED_FOR
     context_max_object_bytes: int = DEFAULT_CONTEXT_MAX_OBJECT_BYTES

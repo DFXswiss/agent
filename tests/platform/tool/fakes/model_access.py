@@ -1,4 +1,4 @@
-"""Model access routes of the hub fake as the hub runs them (ADR-080 sections 5 and 6, 03-api.md):
+"""Model access routes of the hub fake as the hub runs them (ADR-081 sections 5 and 6, 03-api.md):
 
 - `GET /v1/orgs/{org}/quotas` (`org:member`, else `404 not_found`): the answer stored for the org in
   `ModelAccess.quotas`, by default nothing readable, no operator subscriptions and no DFX access;

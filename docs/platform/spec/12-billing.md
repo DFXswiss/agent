@@ -1,7 +1,7 @@
 # 11 Billing: usage charges and prepaid credit
 
 Status: binding (KOR-31, ADR-062; case 3 and the provider-key booking: KOR-50,
-[ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardware.md) §7). Concept: ideas 45–47 and section 16. Amounts are integers in micro-USD unless a
+[ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §7). Concept: ideas 45–47 and section 16. Amounts are integers in micro-USD unless a
 field says USD.
 
 ## 1. Terms
@@ -10,8 +10,8 @@ field says USD.
 - **DFX hardware**: a device with `kind = platform`. **Own hardware**: `kind = org`.
 - **Cases of idea 46**: (1) DFX hardware + DFX model access: tokens and runtime; (2) DFX hardware + own access:
   runtime; (3) own hardware + DFX model access: tokens, through a limited OpenRouter key per org device (the
-  **provider key**, ADR-080 §7), booked from the provider's own figures (§4a); (4) own hardware + own access: free.
-- **Cost class** (ADR-080 §1): `own` (own subscription or API key) and `dfx` (operator subscription, platform access
+  **provider key**, ADR-081 §7), booked from the provider's own figures (§4a); (4) own hardware + own access: free.
+- **Cost class** (ADR-081 §1): `own` (own subscription or API key) and `dfx` (operator subscription, platform access
   or a provider key). Inside a class the runner falls back by itself; from `own` to `dfx` only with the owner's
   setting `fallback.own_to_dfx` or the task's consent, so no charge arises without consent.
 - **Charge**: one booking of tokens or runtime, priced by one price list version.
@@ -53,10 +53,10 @@ field says USD.
 | `hub.charge` [AO] | `id` bigserial PK, `org_id`, `wg_id`, `task_id`, `session_id`, `device_id`, `origin_seq`, `kind` (`tokens`,`runtime`), `at`, `amount_micro_usd` ≥ 0, `price_version`, `quantity` jsonb (token counts + model + access, or runtime_ms + vm_kind + size + vm_id) | UNIQUE (`device_id`, `origin_seq`); indexes (`org_id`,`at`), (`task_id`), (`session_id`) |
 | `hub.charge_pending` | `charge_id` bigint PK, `org_id`, `amount_micro_usd` | charges not yet settled into the balance |
 | `hub.charge_daily` | PK (`org_id`,`day`,`wg_id`,`device_id`,`kind`), `amount_micro_usd`, `quantity` bigint (tokens or runtime ms) | one row per device (ADR-037) |
-| `hub.dfx_key` (migration 0024) | `request_id` PK, `org_id`, `device_id`, `key_ref`, `envelope` (ciphertext), `booked_micro_usd` (highest cumulative provider spend booked), `revoked_at`, `closed_at`, … (`02-data-model.md` §2.8) | one live key per org device and organization |
-| `hub.dfx_key_cost` (migration 0024) | (`device_id`,`session_id`) PK, `org_id`, `cost_micro_usd` | provider cost reported by the sessions since the last booking |
+| `hub.dfx_key` (migration 0025) | `request_id` PK, `org_id`, `device_id`, `key_ref`, `envelope` (ciphertext), `booked_micro_usd` (highest cumulative provider spend booked), `revoked_at`, `closed_at`, … (`02-data-model.md` §2.8) | one live key per org device and organization |
+| `hub.dfx_key_cost` (migration 0025) | (`device_id`,`session_id`) PK, `org_id`, `cost_micro_usd` | provider cost reported by the sessions since the last booking |
 
-Migration 0024 also adds `hub.charge.part` (unique with `device_id`, `origin_seq`): one `dfx_key_usage` item books one
+Migration 0025 also adds `hub.charge.part` (unique with `device_id`, `origin_seq`): one `dfx_key_usage` item books one
 row per session share; the share no session reported has no workgroup, task or session (kind `tokens` only) and is
 kept in `charge_daily` under the nil workgroup ID.
 
@@ -81,7 +81,7 @@ has no account).
   unknown fields). The hub reads `access_origin` only from platform devices; `operator` and `platform` are charged with the factor of
   that name, `own` is free.
 
-## 4a. Case 3: the provider key of an org device (ADR-080 §7)
+## 4a. Case 3: the provider key of an org device (ADR-081 §7)
 - The elected issuer (a platform device with the provider's management key) creates one key per active org device of
   an organization that is not exhausted, while billing is active; the org device holds it sealed and uses it as
   `platform` access. The usage items of such sessions carry the origin `platform`; the hub does **not** charge them
@@ -128,7 +128,7 @@ When an org's `exhausted` changes the hub sends `reconcile {}` to the devices as
 | Runner (platform device) | exhausted org: main sessions interrupted (if working) and suspended with `credit_exhausted`, subagent sessions stopped with `credit_exhausted`; no prompt is delivered and no resume happens (a start placed in a race is paused right after it); not exhausted again: interrupted sessions resumed with the fixed continuation prompt |
 
 Chargeable session (runner view): every session of a platform device (runtime is charged), and on an org device every
-session whose access is `platform` through the provider key (case 3, ADR-080 §7): the credit pause acts on those;
+session whose access is `platform` through the provider key (case 3, ADR-081 §7): the credit pause acts on those;
 sessions on own access there are never touched.
 
 ## 8. Operator
@@ -152,7 +152,7 @@ sessions on own access there are never touched.
 - Task view: charges per session (tokens, runtime) and total; a provider-key share without a session is visible in
   the organization's consumption only.
 - Settings section "Model access" (user): "Use DFX access when my own subscription is used up" (default off) and
-  "… when the operator's subscriptions are used up" (default on), ADR-080 §1; the card `quota_choice` asks per task.
+  "… when the operator's subscriptions are used up" (default on), ADR-081 §1; the card `quota_choice` asks per task.
 - Reason text `credit_exhausted` for tasks waiting and sessions suspended; the person sees that credit has been
   requested from the operator (ADR-079).
 

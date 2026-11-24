@@ -80,21 +80,21 @@ SPEC_SESSION_FAILURES = (
     " oom unassigned"
     # KOR-40, ADR-064 section 2: the guest ended the session because a decision hook failed
     " hook_unavailable"
-    # ADR-080 section 3 (contracts/changes/KOR-50.md): no allowed model access is left for a subagent session
+    # ADR-081 section 3 (contracts/changes/KOR-50.md): no allowed model access is left for a subagent session
     " model_quota_exhausted"
 )
 # 03-api.md section 6.1 / 02-data-model.md section 4.
 SPEC_OUTBOX_KINDS = (
     "event session_transition vm_state operation_transition usage quota metrics audit wrap"
     " runtime"  # 12-billing.md section 4 (contracts/changes/KOR-31.md)
-    " operator_quota dfx_key_state dfx_key_issued dfx_key_usage"  # ADR-080 (contracts/changes/KOR-50.md)
+    " operator_quota dfx_key_state dfx_key_issued dfx_key_usage"  # ADR-081 (contracts/changes/KOR-50.md)
 )
 SPEC_OUTBOX_AUDIT = (
     "hook.denied read.session.<tool> ping.delivered session.prompt_refused model.provider_outside_allowlist"
     " runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert session.context_restored"
     " session.context_fallback"
     " runner.operator_github_users"  # ADR-078 section 7 (contracts/changes/KOR-47.md)
-    " session.model_switched"  # ADR-080 section 5 (contracts/changes/KOR-50.md)
+    " session.model_switched"  # ADR-081 section 5 (contracts/changes/KOR-50.md)
 )
 # 03-api.md section 8.1: the session platform tools that read (request_operation writes).
 SPEC_MCP_TOOLS = (
@@ -146,7 +146,7 @@ DECIDED_AUDIT = (
 KOR31_AUDIT = "credit.changed billing.fx_set billing.export"
 # ADR-078 (contracts/changes/KOR-47.md): defaults, primary mark and the task's identity; the reads come from INDEX.json.
 KOR47_AUDIT = "github.default github.primary task.github_identity runner.operator_github_users"
-# ADR-080 section 5 (contracts/changes/KOR-50.md): a session moved to another model access, a task's consent.
+# ADR-081 section 5 (contracts/changes/KOR-50.md): a session moved to another model access, a task's consent.
 KOR50_AUDIT = "session.model_switched task.model_consent"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
@@ -158,7 +158,7 @@ SPEC_ATTENTION = {
         "since_desc",
         "session_failed guest_error device_unreachable model_access_missing no_capacity operation_refused",
     ),
-    "working": ("since_desc", "queued starting working operation subagents quota_wait"),  # quota_*: ADR-080
+    "working": ("since_desc", "queued starting working operation subagents quota_wait"),  # quota_*: ADR-081
     "done": ("since_desc", "idle closed"),
 }
 # 04-crypto.md section 4.3: (kind, scope, author kind, right).
@@ -388,7 +388,7 @@ def test_attention_categories(contracts: Contracts) -> None:
     assert [row["category"] for row in rows] == list(SPEC_ATTENTION)
     assert common_enum(contracts, "attention_category") == list(SPEC_ATTENTION)
     row_schema = contracts.schemas["api/objects.json"]["$defs"]["attention_row"]
-    # every field is required except `wait_until` (ADR-080 section 5: only quota records carry it, KOR-50)
+    # every field is required except `wait_until` (ADR-081 section 5: only quota records carry it, KOR-50)
     assert row_schema["required"] == [name for name in row_schema["properties"] if name != "wait_until"]
     for row in rows:
         for reason in row["reasons"]:

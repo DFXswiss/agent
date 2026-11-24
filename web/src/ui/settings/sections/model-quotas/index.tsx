@@ -1,4 +1,4 @@
-// Settings section "Model access and quotas" of the active organization (ADR-080 section 6, `GET
+// Settings section "Model access and quotas" of the active organization (ADR-081 section 6, `GET
 // /v1/orgs/{org}/quotas`): the summary ("Subscriptions: n available · m used up – next release 14:05"), the user's own
 // subscription (its windows, or honestly "not readable"), the operator's subscriptions when the organization may use
 // them (state, used share or "quota not readable", release), the last observed limit time of each, and whether DFX

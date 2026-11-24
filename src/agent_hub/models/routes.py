@@ -1,4 +1,4 @@
-"""Routes of the models area (ADR-080 sections 5 and 6, KOR-50).
+"""Routes of the models area (ADR-081 sections 5 and 6, KOR-50).
 
 - `POST /v1/tasks/{task}/model-consent` (`task:write`): a person allows DFX model access for the task while its own
   access is used up. The task keeps the consent (`task.model_consent`); the hub writes the audit row

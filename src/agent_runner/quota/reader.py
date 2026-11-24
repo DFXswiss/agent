@@ -1,5 +1,5 @@
 """One read of the Anthropic OAuth usage endpoint with a given subscription token (05-runner.md section 10.6; KOR-50,
-ADR-080 sections 2 and 6).
+ADR-081 sections 2 and 6).
 
 `read(context, token, now)` is the read the exhaustion check (`model.limits`) and the operator quota poller
 (`quota.operator`) share with the owner quota polling (`quota.subscription`): `GET <ANTHROPIC_USAGE_URL>` with

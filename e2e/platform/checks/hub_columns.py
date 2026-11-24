@@ -46,7 +46,7 @@ CATEGORIES: dict[str, str] = {
     "internal": "Hub bookkeeping without user data (applied schema migrations)",
     "billing": "Usage charges and prepaid credit (ADR-062, AUD-04 A4): amounts, token and runtime quantities, model, "
     "access origin and VM size of each charge, balances, credit history, the price list versions, the USD/CHF rates "
-    "and the CHF equivalent of each booking (books); per-device DFX keys (ADR-080): request, key reference, issuer, "
+    "and the CHF equivalent of each booking (books); per-device DFX keys (ADR-081): request, key reference, issuer, "
     "booked provider spend and the cost reported per session for the next booking",
     "contexts": "Context checkpoints (ADR-072): IDs, epoch, chunk counts, sizes, digest and chunk hashes, the signed "
     "manifest, times; pull-request links: opaque tag, epoch, task and session; restore outcomes",

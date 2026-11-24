@@ -8,7 +8,7 @@
 - `quotas`: `GET /v1/me/quotas`, the newest row per window (`five_hour`, `seven_day`, `weekly:<model>`), malformed rows
   left out, ordered five hours, week, then by model; no rows: not available. `unreadable_since` (KOR-40): since when
   the subscription refuses the read (a long-lived token of `claude setup-token` may not read quotas; sessions still
-  run), else null. With `--org` the model access of an org (`agent_platform.modelaccess`, ADR-080).
+  run), else null. With `--org` the model access of an org (`agent_platform.modelaccess`, ADR-081).
 - `monitoring --org`: `GET /v1/monitoring/overview?org=` (devices, VMs, sessions and their work VMs); with
   `--entity-kind/--entity-id/--metric` one series of a range of the web's charts (`GET /v1/monitoring/series`, the
   window aligned to the step like the web).
@@ -287,7 +287,7 @@ def register(tree: Tree) -> None:
             "subscription exhausted release operator model access"
         ),
     )
-    sub.add_argument("--org", help="the model access and quotas of this org (ADR-080)")
+    sub.add_argument("--org", help="the model access and quotas of this org (ADR-081)")
     text = "devices, VMs, sessions and work VMs of an org, or a series"
     sub = tree.command(
         tree.commands,

@@ -344,7 +344,7 @@ def test_settings_are_stored(browser: FakeBrowser, client: SignedClient, access:
 
 
 def test_the_fallback_settings_are_stored_and_kept(browser: FakeBrowser, client: SignedClient) -> None:
-    """KOR-50, ADR-080 section 1: `fallback` is optional; without it the stored values stay."""
+    """KOR-50, ADR-081 section 1: `fallback` is optional; without it the stored values stay."""
     chosen = {"own_to_dfx": True, "operator_to_platform": False}
     settings = {"model_access": "auto", "model_id": None, "locale": "de", "fallback": chosen}
     assert client.put("/v1/me/settings", json=settings).json() == settings

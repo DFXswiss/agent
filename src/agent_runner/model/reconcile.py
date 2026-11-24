@@ -3,7 +3,7 @@
 - `model` (order 75, after the credential changes of step 70; 05-runner.md sections 2.2 step 7, 2.6, 10.2): the
   gateways of running sessions get renewed credentials, the owner's latest platform budget, or lose a credential that
   is gone (`model.gateways`). The first run registers the purge listener of the credential cache.
-- `model_fallback` (order 57, after `billing` 55 and before `prompts` 60; KOR-50, ADR-080 section 4): sessions on a
+- `model_fallback` (order 57, after `billing` 55 and before `prompts` 60; KOR-50, ADR-081 section 4): sessions on a
   used-up access are moved, paused and continued (`model.fallback`), on every desired state.
 """
 

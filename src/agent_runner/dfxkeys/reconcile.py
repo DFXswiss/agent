@@ -1,5 +1,5 @@
 """Reconcile step `dfx_keys` (order 47: after the logs and the state, before the sessions step 50, so a session that
-starts in the same run already finds its organization's DFX key; ADR-080 section 7). It acts only on the state of a
+starts in the same run already finds its organization's DFX key; ADR-081 section 7). It acts only on the state of a
 hub with `model_fallback.api >= 1` (an older hub has no DFX keys).
 
 - Org device: `model.dfxkey.accept` verifies and stores the envelopes of `dfx_key_held`.

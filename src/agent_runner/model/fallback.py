@@ -1,4 +1,4 @@
-"""Running sessions on a used-up access: moved, paused and continued by themselves (KOR-50, ADR-080 sections 4 and 5).
+"""Running sessions on a used-up access: moved, paused and continued by themselves (KOR-50, ADR-081 sections 4 and 5).
 
 `run_once(deliverer)` is the reconcile step `model_fallback` (order 57, after `billing`, on every desired state) and
 the daemon task of the same name (every `TICK_S`). Each session is handled under the deliverer's lock of that session,
@@ -78,7 +78,7 @@ LOADED = "_model_fallback_loaded"
 
 
 def sentence(source: str, target: str, until: datetime | None) -> str:
-    """The continuation prompt of a pause (ADR-080 section 5)."""
+    """The continuation prompt of a pause (ADR-081 section 5)."""
     if source == target:
         return AVAILABLE
     when = "further notice" if until is None else until.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
@@ -103,7 +103,7 @@ async def label_of(env: SessionEnv, session: LocalSession) -> tuple[str, str | N
 
 
 async def suspend(env: SessionEnv, session_id: str, reason: str, extra: dict[str, Any]) -> None:
-    """The `suspended` transition with `reason` and the wait fields of ADR-080 (`records.advance` with a body that
+    """The `suspended` transition with `reason` and the wait fields of ADR-081 (`records.advance` with a body that
     carries `extra`)."""
     async with env.transaction() as conn:
         await conn.execute("SELECT pg_advisory_xact_lock(%s)", (LOCK_ID,))

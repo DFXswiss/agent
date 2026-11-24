@@ -234,7 +234,7 @@ The home of an organization shows where people are needed, across all workgroups
   navigation row, phone bottom bar) carries the "waiting for me" count as a badge. Below them the organization's
   subscriptions ("Subscriptions: n available · m used up – next release 14:05", `GET /v1/orgs/{org}/quotas`, refreshed
   every minute, a link to the section of §8.2; hidden without any subscription to list or when the hub cannot answer;
-  KOR-50, [ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardware.md) §6).
+  KOR-50, [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §6).
 - **Groups** in this order: "Needs your decision" (`needs_decision`, longest waiting first), "Stuck" (`blocked`),
   "Running" (`working`), "Recently finished" (`done`, last 7 days, with the link to the default workgroup's task
   list); the last three newest first. Each group is a windowed list paged by the hub (50 per page; at most 50 entries
@@ -255,7 +255,7 @@ The home of an organization shows where people are needed, across all workgroups
   "Continue with DFX access" (`POST /v1/tasks/{task}/model-consent`) and, to the task's owner only, "Always" (the
   setting `fallback.own_to_dfx` of §8.2), with the note that DFX access is charged and that the task otherwise
   continues by itself; `quota_wait` names the time ("Waiting for model quota – continues at 14:05") and needs nobody
-  (ADR-080 §5); every entry offers "Open task". Users without write access see the entry without controls.
+  (ADR-081 §5); every entry offers "Open task". Users without write access see the entry without controls.
 - **New task**: the composer of §4.1 stays at the top in a compact form (context line with the workgroup selector and
   the prompt field), so a new task is always one step away; its suggestion chips are shown while the organization has
   no task yet, otherwise behind "Suggestions". Users without write access see a short note instead.
@@ -362,7 +362,7 @@ A restored row with a reason the client does not know counts as a full restore (
 error catalog has texts for `quota_exceeded` (a checkpoint over its quota; shown only where a device error reaches a
 user).
 
-### 5.1c Model switch line (task page, KOR-50, [ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardware.md) §5)
+### 5.1c Model switch line (task page, KOR-50, [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §5)
 
 Below the resume notice the task page shows the newest switch of the model access of one of its sessions (audit row
 `session.model_switched`, read from `GET /v1/orgs/{org}/audit?action=session.model_switched&task=`): "Model switched:
@@ -622,11 +622,11 @@ newest `CK` after a rotation.
 
 - Preference (`auto`, `subscription`, `api_key`, `platform`) and model choice (`PUT /v1/me/settings`). Allowed model
   IDs per access kind come only from `GET /v1/config` (`models`); there is no build-time list. `platform` explains it is available only on DFX devices.
-- **Fallback** (KOR-50, [ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardware.md) §1), saved with the same button: "Use DFX access when my own subscription is used
+- **Fallback** (KOR-50, [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §1), saved with the same button: "Use DFX access when my own subscription is used
   up" (`fallback.own_to_dfx`, default off; charged) and "Use DFX access over OpenRouter when the operator's
   subscriptions are used up" (`fallback.operator_to_platform`, default on). Not shown for a hub whose settings carry
   no `fallback` (an older release).
-- **Model access and quotas** (organization, section `model-quotas`, ADR-080 §6): `GET /v1/orgs/{org}/quotas` of the
+- **Model access and quotas** (organization, section `model-quotas`, ADR-081 §6): `GET /v1/orgs/{org}/quotas` of the
   active organization – the summary ("Subscriptions: n available · m used up – next release 14:05"), the user's own
   subscription (its windows, or "Not readable" honestly, with the last observed limit time), the operator's
   subscriptions when the organization may use them (label, state, used share or "quota not readable", release or

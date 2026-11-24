@@ -7,7 +7,7 @@
 // - `connection_missing`: "Connect GitHub" (the settings); `model_access_missing`: the model settings;
 // - `device_missing`: "Assign a computer" for those who may (an admin, any writer of a private org), else who can;
 // - `credit_empty`: the operator sets the balance, "Continue" once it is set;
-// - `quota_choice` (ADR-080 section 5): "Continue with DFX access" (the task's consent, `POST
+// - `quota_choice` (ADR-081 section 5): "Continue with DFX access" (the task's consent, `POST
 //   /v1/tasks/{task}/model-consent`) and, for the task's owner only, "Always" (the setting `fallback.own_to_dfx`);
 //   without an answer the task continues by itself on the own subscription at its release;
 // - `session_failed`, `guest_error`, `device_unreachable`, `no_capacity`: "Try again" (the newest prompt again).

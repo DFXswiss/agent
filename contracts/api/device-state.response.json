@@ -195,7 +195,7 @@
               },
               "fallback": {
                 "type": "object",
-                "description": "the fallback settings of the session's owner (ADR-080 section 1; KOR-50, absent from an older hub: the defaults own_to_dfx false, operator_to_platform true apply)",
+                "description": "the fallback settings of the session's owner (ADR-081 section 1; KOR-50, absent from an older hub: the defaults own_to_dfx false, operator_to_platform true apply)",
                 "properties": {
                   "own_to_dfx": {
                     "type": "boolean"
@@ -212,7 +212,7 @@
               },
               "model_consent": {
                 "type": "boolean",
-                "description": "a person allowed DFX access for the session's task (ADR-080 section 5; KOR-50, absent: false)"
+                "description": "a person allowed DFX access for the session's task (ADR-081 section 5; KOR-50, absent: false)"
               }
             },
             "required": [
@@ -502,7 +502,7 @@
         },
         "model_fallback": {
           "type": "object",
-          "description": "KOR-50, ADR-080: always sent by a hub of KOR-50 or later, optional for older hubs; api tells the runner that the hub accepts operator_quota, dfx_key_*, quota.limited, the wait fields of session_transition and the audit action session.model_switched",
+          "description": "KOR-50, ADR-081: always sent by a hub of KOR-50 or later, optional for older hubs; api tells the runner that the hub accepts operator_quota, dfx_key_*, quota.limited, the wait fields of session_transition and the audit action session.model_switched",
           "properties": {
             "api": {
               "type": "integer",
@@ -517,7 +517,7 @@
         },
         "dfx_keys": {
           "type": "object",
-          "description": "only for the elected issuer (the online platform device with the smallest ID that announced dfx_key_state issuer true; ADR-080 section 7): the keys to create and the keys to watch",
+          "description": "only for the elected issuer (the online platform device with the smallest ID that announced dfx_key_state issuer true; ADR-081 section 7): the keys to create and the keys to watch",
           "properties": {
             "requests": {
               "type": "array",
@@ -597,7 +597,7 @@
         },
         "dfx_key_held": {
           "type": "array",
-          "description": "only for an org device (ADR-080 section 7): the sealed key of each organization the device serves, at most one per organization",
+          "description": "only for an org device (ADR-081 section 7): the sealed key of each organization the device serves, at most one per organization",
           "items": {
             "type": "object",
             "properties": {

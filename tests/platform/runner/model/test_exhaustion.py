@@ -1,4 +1,4 @@
-"""U-RUN-model (KOR-50, ADR-080 section 2): a subscription access is found used up from the gateway's `usage`
+"""U-RUN-model (KOR-50, ADR-081 section 2): a subscription access is found used up from the gateway's `usage`
 records - confirmed by the provider's readable quota at the first `429`, else by a streak of three `429` within five
 minutes -, the DFX key of an org device by a `402`; the mark of the owner's own subscription reaches the hub as
 `quota.limited`.

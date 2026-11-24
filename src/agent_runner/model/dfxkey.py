@@ -1,5 +1,5 @@
 """DFX model access on own hardware: the envelope of the limited per-device OpenRouter key and the org device's side
-(ADR-080 section 7, idea 46 case 3; ADR-062 section 1; ADR-026).
+(ADR-081 section 7, idea 46 case 3; ADR-062 section 1; ADR-026).
 
 **Envelope** (built by the issuing platform device with `seal_envelope`, treated by the hub as an opaque string):
 `base64url(JSON {"v": 1, "header": H, "ct": b64u(enc || ct), "sig": b64u(sig)})` with the header
@@ -27,7 +27,7 @@ replaces a stored one; the refusal is logged once with a closed reason (`REASONS
 
 **Use** (`org_key(context, org_id)`): checks 2-6 again against the current logs (an issuer decertified meanwhile, an
 organization the device left: None) and returns the plaintext key for one provisioning. The plaintext is never
-stored, logged or put into an error; it lives in memory for the provisioning only (accepted risk of ADR-080 section 7:
+stored, logged or put into an error; it lives in memory for the provisioning only (accepted risk of ADR-081 section 7:
 it is in the guest's gateway during a session, bounded by the key's `limit`).
 
 `platform_key(context, org_id)` is the `SessionEnv.platform_key` of the daemon: the platform key file on a platform

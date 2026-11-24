@@ -1,4 +1,4 @@
-"""Outbox items of model access with fallback (ADR-080, KOR-50; ADR-027 section 4 `<area>/outbox.py:HANDLERS`, base
+"""Outbox items of model access with fallback (ADR-081, KOR-50; ADR-027 section 4 `<area>/outbox.py:HANDLERS`, base
 handlers claimed with `BASE_KINDS`, ADR-037).
 
 - `operator_quota` (platform devices only, else `403 forbidden`): the complete snapshot of the device's operator

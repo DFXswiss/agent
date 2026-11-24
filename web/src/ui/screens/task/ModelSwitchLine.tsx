@@ -1,4 +1,4 @@
-// The model switch line of a task (ADR-080 section 5): when the platform moved one of the task's sessions to another
+// The model switch line of a task (ADR-081 section 5): when the platform moved one of the task's sessions to another
 // model access (its access was used up, could not be used or was released again), the newest switch is shown below the
 // header – "Model switched: Claude subscription → DFX access over OpenRouter · used up until 14:05". Read from the
 // audit (`core/credentials/switches.ts`) when the task opens, when the task or its main session changes state (a

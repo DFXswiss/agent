@@ -1,4 +1,4 @@
-// U-WEB-ui-model-access (KOR-50, ADR-080): the two fallback settings in the section "Model access", the section "Model
+// U-WEB-ui-model-access (KOR-50, ADR-081): the two fallback settings in the section "Model access", the section "Model
 // access and quotas" of the active organization (own subscription with windows or "not readable" and the last observed
 // limit, the operator's subscriptions, DFX access, the summary) and the model switch line of the task view.
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';

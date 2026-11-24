@@ -84,7 +84,7 @@ def test_delivery_follows_the_working_transitions(world: World, fleet: Fleet) ->
     answer = state(fleet, desk.scene.device)
     assert answer["sessions"][0]["model_access_pref"] == "platform"
     assert answer["sessions"][0]["model_id_pref"] == "deepseek/deepseek-v4.1-flash-1017"
-    # the owner's fallback settings and the task's consent (KOR-50, ADR-080 sections 1 and 5)
+    # the owner's fallback settings and the task's consent (KOR-50, ADR-081 sections 1 and 5)
     desk.execute(
         "UPDATE hub.user_settings SET fallback_own_to_dfx = true, fallback_operator_to_platform = false"
         " WHERE user_id = %s",

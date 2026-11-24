@@ -1,4 +1,4 @@
-"""Test kit of the KOR-50 model fallback suites (ADR-080): the model kit (credential hub, fake guest, real store) with
+"""Test kit of the KOR-50 model fallback suites (ADR-081): the model kit (credential hub, fake guest, real store) with
 the operator's pool, a deliverer, one wall clock for the limits and the session area, a usage double that answers
 each subscription token with its own quota document, and helpers that feed the gateway's `usage` records through the
 real journal handlers.

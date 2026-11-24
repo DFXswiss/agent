@@ -80,11 +80,11 @@
                   "type": "null"
                 }
               ],
-              "description": "KOR-50, ADR-080 section 4: with reason model_quota_exhausted the time the runner resumes the session by itself (null: unknown)"
+              "description": "KOR-50, ADR-081 section 4: with reason model_quota_exhausted the time the runner resumes the session by itself (null: unknown)"
             },
             "dfx_choice": {
               "type": "boolean",
-              "description": "KOR-50, ADR-080 section 3: with reason model_quota_exhausted, DFX access would be available but the owner's setting does not allow it (the task may ask for consent)"
+              "description": "KOR-50, ADR-081 section 3: with reason model_quota_exhausted, DFX access would be available but the owner's setting does not allow it (the task may ask for consent)"
             }
           },
           "required": [
@@ -407,7 +407,7 @@
       "additionalProperties": false
     },
     "body_quota": {
-      "description": "The windows the device fetched for the owner, or `unavailable: true` when the usage endpoint refused the owner's subscription token (401/403; 05-runner.md section 10.6): the hub then drops the owner's older windows. Optional `limited` (KOR-50, ADR-080 section 6): the latest observed limit of the owner's subscription; sent only to a hub whose device state carries model_fallback.api >= 1.",
+      "description": "The windows the device fetched for the owner, or `unavailable: true` when the usage endpoint refused the owner's subscription token (401/403; 05-runner.md section 10.6): the hub then drops the owner's older windows. Optional `limited` (KOR-50, ADR-081 section 6): the latest observed limit of the owner's subscription; sent only to a hub whose device state carries model_fallback.api >= 1.",
       "anyOf": [
         {
           "type": "object",
@@ -2036,7 +2036,7 @@
               "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
             },
             "detail": {
-              "description": "detail of audit rows with action session.model_switched: the runner moved a session to another model access because its access was used up, could not be used or was released again (ADR-080 sections 4 and 5): the access kinds and models before and after, the cause and the release time of the used-up access (null without one). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+              "description": "detail of audit rows with action session.model_switched: the runner moved a session to another model access because its access was used up, could not be used or was released again (ADR-081 sections 4 and 5): the access kinds and models before and after, the cause and the release time of the used-up access (null without one). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
               "type": "object",
               "properties": {
                 "from_access": {
@@ -2460,7 +2460,7 @@
     },
     "quota_limited": {
       "type": "object",
-      "description": "the latest observed limit of the subscription (ADR-080 sections 2 and 6, runner.access_limit): when it was marked used up, its release time (null: unknown) and whether the release time is the provider's own (readable quota) or a probe time after a streak of 429 answers",
+      "description": "the latest observed limit of the subscription (ADR-081 sections 2 and 6, runner.access_limit): when it was marked used up, its release time (null: unknown) and whether the release time is the provider's own (readable quota) or a probe time after a streak of 429 answers",
       "properties": {
         "at": {
           "$ref": "../common.json#/$defs/time"
@@ -2488,7 +2488,7 @@
     },
     "operator_subscription": {
       "type": "object",
-      "description": "one operator subscription file of a platform device as its runner observes it (ADR-080 section 6): the file name chosen by the operator, never a token",
+      "description": "one operator subscription file of a platform device as its runner observes it (ADR-081 section 6): the file name chosen by the operator, never a token",
       "properties": {
         "name": {
           "type": "string",
@@ -2559,7 +2559,7 @@
     },
     "body_operator_quota": {
       "type": "object",
-      "description": "the complete snapshot of the operator subscriptions of a platform device (ADR-080 section 6); the hub keeps the newest per device and refuses the item from an org device (403 forbidden)",
+      "description": "the complete snapshot of the operator subscriptions of a platform device (ADR-081 section 6); the hub keeps the newest per device and refuses the item from an org device (403 forbidden)",
       "properties": {
         "at": {
           "$ref": "../common.json#/$defs/time"
@@ -2581,7 +2581,7 @@
     },
     "body_dfx_key_state": {
       "type": "object",
-      "description": "whether this platform device can issue per-device DFX keys (it holds a management key of the model provider, ADR-080 section 7); refused from an org device (403 forbidden)",
+      "description": "whether this platform device can issue per-device DFX keys (it holds a management key of the model provider, ADR-081 section 7); refused from an org device (403 forbidden)",
       "properties": {
         "issuer": {
           "type": "boolean"
@@ -2594,7 +2594,7 @@
     },
     "body_dfx_key_issued": {
       "type": "object",
-      "description": "the issuer created the key of a request of its device state and sealed it to the org device (ADR-080 section 7); the hub stores the envelope only",
+      "description": "the issuer created the key of a request of its device state and sealed it to the org device (ADR-081 section 7); the hub stores the envelope only",
       "properties": {
         "request_id": {
           "$ref": "../common.json#/$defs/uuid"
@@ -2614,7 +2614,7 @@
           "$ref": "../common.json#/$defs/b64u",
           "minLength": 1,
           "maxLength": 8192,
-          "description": "base64url of the sealed and signed key envelope (ADR-080 section 7); opaque to the hub"
+          "description": "base64url of the sealed and signed key envelope (ADR-081 section 7); opaque to the hub"
         }
       },
       "required": [
@@ -2628,7 +2628,7 @@
     },
     "body_dfx_key_usage": {
       "type": "object",
-      "description": "the provider's cumulative spend of one per-device key (ADR-080 section 7); the hub books the difference to the highest figure it booked for the key",
+      "description": "the provider's cumulative spend of one per-device key (ADR-081 section 7); the hub books the difference to the highest figure it booked for the key",
       "properties": {
         "key_ref": {
           "type": "string",

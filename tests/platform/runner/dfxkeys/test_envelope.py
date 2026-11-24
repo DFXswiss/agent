@@ -1,4 +1,4 @@
-"""U-RUN-dfxkey: the envelope of the per-device DFX key (ADR-080 section 7, contract sheet of KOR-50) - sealed by the
+"""U-RUN-dfxkey: the envelope of the per-device DFX key (ADR-081 section 7, contract sheet of KOR-50) - sealed by the
 issuing platform device, opened only by the org device it names, and every forgery a hub could make is refused:
 unsigned, signed by a device that is not a certified platform device, sealed for another device, another KEM key or
 another organization."""

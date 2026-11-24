@@ -1,4 +1,4 @@
-"""The sections `model_fallback`, `dfx_keys` and `dfx_key_held` of `GET /v1/device/state` (ADR-080, KOR-50; ADR-027
+"""The sections `model_fallback`, `dfx_keys` and `dfx_key_held` of `GET /v1/device/state` (ADR-081, KOR-50; ADR-027
 section 4 `<area>/device_state.py:SECTION`).
 
 - `model_fallback: {api: 1}` for every active device: this hub accepts the items `operator_quota`, `dfx_key_*`, the

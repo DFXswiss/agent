@@ -27,7 +27,7 @@ handler writes one outbox item `usage` in the journal page's transaction:
 For a session bound to a token file of the operator's subscriptions the record's `status` is handed to the pool
 (`model.operator.observed`: `401`/`403` block the file the session was provisioned from, `429` defers it; KOR-23).
 The status of every session on an access that can run out (the owner's own subscription, an operator file, the DFX
-key of an org device) is handed to `model.exhaustion.observe` (KOR-50, ADR-080 section 2: a `429` starts the check
+key of an org device) is handed to `model.exhaustion.observe` (KOR-50, ADR-081 section 2: a `429` starts the check
 whether the access is used up, a `402` of the DFX key marks it, a success ends a streak).
 
 A `provider` outside the catalog allow-list (the gateway flags `provider_outside_allowlist`) also writes the audit

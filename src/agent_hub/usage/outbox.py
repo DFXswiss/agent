@@ -22,7 +22,7 @@ report than the stored one (a late retry, a report of the previous polling devic
 `unavailable: true` (the usage endpoint refused the owner's token) drops the owner's windows fetched at or before it,
 so `GET /v1/me/quotas` answers no rows and the web shows "not available" instead of an old snapshot (KOR-05).
 
-Either form may carry `limited` (KOR-50, ADR-080 section 6): the latest observed limit of the owner's subscription,
+Either form may carry `limited` (KOR-50, ADR-081 section 6): the latest observed limit of the owner's subscription,
 kept in `hub.quota_limit` (a newer observation replaces an older one, never the reverse). A report without it that was
 fetched after the stored limit was observed releases it: its `until` becomes the fetch time unless it lies earlier,
 and the time of the limit stays visible.

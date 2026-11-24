@@ -1,4 +1,4 @@
-"""U-RUN-dfxkeys: the OpenRouter management client of the issuer (ADR-080 section 7) - routes and documents against
+"""U-RUN-dfxkeys: the OpenRouter management client of the issuer (ADR-081 section 7) - routes and documents against
 the model double, malformed answers of a provider (`httpx.MockTransport`), and errors that never carry a key."""
 
 from __future__ import annotations

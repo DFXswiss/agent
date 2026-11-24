@@ -1,4 +1,4 @@
-"""U-RUN-model (KOR-50, ADR-080 sections 2 and 3; ADR-052 section 6): the operator's pool with used-up files - the
+"""U-RUN-model (KOR-50, ADR-081 sections 2 and 3; ADR-052 section 6): the operator's pool with used-up files - the
 choice by remaining quota, the `429` that count towards a file's streak (also the ones of the session that deferred
 it), the `401`/`403` blocks kept across a restart until the file changes, and what a waiting start may use."""
 

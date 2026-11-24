@@ -699,7 +699,7 @@ Prompts for a session are delivered strictly in event order; a prompt arriving w
 - Delivery journaled (`ping.delivered`) and audited (`ping.delivered`) for every ping; for a hub ping the audit also
   marks the hub `session_ping` row delivered, the runner's own pings have no hub row (KOR-07). Never via `Stop` (a `Stop` hook answer with context would force the session to continue).
 
-## 10. Model access (ADR-010, ADR-025, ADR-080)
+## 10. Model access (ADR-010, ADR-025, ADR-081)
 
 ### 10.1 Selection
 
@@ -719,7 +719,7 @@ hub continues the task by itself once the owner stored a model credential (ADR-0
 in the catalog, else the catalog default (`platform`: `deepseek/deepseek-v4.1-flash-1017`; API key/subscription:
 Claude Code default, no `--model`). Chosen kind and model are reported in `session_transition`. Exhausted
 subscriptions are skipped and the crossing from the owner's own access to DFX access follows the owner's fallback
-settings and the task's consent (§10.7, ADR-080).
+settings and the task's consent (§10.7, ADR-081).
 
 ### 10.2 Gateway (`/model/…` in `agent-guest-api`)
 
@@ -796,7 +796,7 @@ equivalent (`subscription_equivalent`). Claude Code's own cost fields are never 
   (`agent_runner_device_model_spend_*`), operators only.
 - Tokens are never logged, never written to disk outside the encrypted credential record.
 
-### 10.7 Fallback, exhaustion and waits (ADR-080 sections 1–5)
+### 10.7 Fallback, exhaustion and waits (ADR-081 sections 1–5)
 
 - **Cost classes.** `own`: the owner's subscription or API key; `dfx`: an operator subscription or `platform`
   (OpenRouter, also the per-device key of §10.9). Inside a class the runner falls back by itself; from `own` to `dfx`
@@ -834,7 +834,7 @@ equivalent (`subscription_equivalent`). Claude Code's own cost fields are never 
   first. Every switch writes the outbox audit `session.model_switched` `{from_access, to_access, from_model, to_model,
   cause: exhausted|unusable|released, until}`.
 
-### 10.8 Quotas of the operator's subscriptions (ADR-080 section 6)
+### 10.8 Quotas of the operator's subscriptions (ADR-081 section 6)
 
 - A platform device with `OPERATOR_SUBSCRIPTION_DIR` polls the usage endpoint with every usable file's token every
   900 s and at a confirmation (§10.7), parsed like §10.6. It sends the outbox item `operator_quota {at, subscriptions:
@@ -845,7 +845,7 @@ equivalent (`subscription_equivalent`). Claude Code's own cost fields are never 
   it in the settings section "Model access and quotas" and as the counter of the situation view, the agent tool as
   `agent-platform quotas --org`.
 
-### 10.9 DFX key on organization devices (ADR-080 section 7, idea 46 case 3)
+### 10.9 DFX key on organization devices (ADR-081 section 7, idea 46 case 3)
 
 - **Issuer**: a platform device whose runner has `AGENT_RUNNER_OPENROUTER_MANAGEMENT_KEY_FILE` (0600, platform
   devices only, never logged or sent) announces `dfx_key_state {issuer: true}`; the hub elects the online issuer with

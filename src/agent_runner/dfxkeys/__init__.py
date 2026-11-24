@@ -1,4 +1,4 @@
-"""The DFX key issuer of a platform device (KOR-50, ADR-080 section 7, idea 46 case 3).
+"""The DFX key issuer of a platform device (KOR-50, ADR-081 section 7, idea 46 case 3).
 
 A platform device whose runner has `AGENT_RUNNER_OPENROUTER_MANAGEMENT_KEY_FILE` creates one limited OpenRouter key
 per active org device, seals it to that device, keeps every key's limit at its spend plus the hub's headroom, reports

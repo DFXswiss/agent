@@ -63,7 +63,7 @@ DEVICES = (("platform", True), ("platform", False), ("org", False), ("org", True
 
 def expected(preference: str, credentials: frozenset[str], device: str, key: bool) -> str | None:
     """The kind 05 section 10.1 asks for, None for `model_access_unavailable`. `platform` on any device with a key
-    for it (the limited DFX key of an org device, ADR-080 section 7)."""
+    for it (the limited DFX key of an org device, ADR-081 section 7)."""
     available = set(credentials)
     if key:
         available.add("platform")

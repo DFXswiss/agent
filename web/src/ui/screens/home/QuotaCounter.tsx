@@ -1,4 +1,4 @@
-// The counter of the organization's subscriptions in the head of the situation view (ADR-080 section 6): "Subscriptions:
+// The counter of the organization's subscriptions in the head of the situation view (ADR-081 section 6): "Subscriptions:
 // n available · m used up – next release 14:05", a link to the settings section "Model access and quotas". Read when
 // the organization changes and every `REFRESH_MS`; hidden while the organization has no subscription it could list and
 // when the hub cannot answer (an older release has no such route).

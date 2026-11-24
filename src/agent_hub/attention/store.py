@@ -70,7 +70,7 @@ ROW_FIELDS = (
     "wait_until",
 )
 QUOTA_REASONS = frozenset({QUOTA_CHOICE[1], QUOTA_WAIT[1]})
-"""The reasons whose rows carry `wait_until` (ADR-080 section 5); every other row leaves the field out."""
+"""The reasons whose rows carry `wait_until` (ADR-081 section 5); every other row leaves the field out."""
 ROW_COLUMNS = ", ".join(f"a.{name}" for name in ROW_FIELDS)
 _STORED = (
     "org_id, wg_id, owner_id, category, reason, ref_kind, ref_id, since, seq, subagents_total, subagents_active,"

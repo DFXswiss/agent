@@ -1,4 +1,4 @@
-"""U-DBL-model: the OpenRouter key management API of the model double (KOR-50, ADR-080 section 7) - create, list,
+"""U-DBL-model: the OpenRouter key management API of the model double (KOR-50, ADR-081 section 7) - create, list,
 read, change and delete keys with the management token, chat requests with a created key (charged, `402` at the
 limit, `401` while disabled), the control route and the CLI switch."""
 

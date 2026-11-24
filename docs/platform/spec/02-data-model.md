@@ -33,7 +33,7 @@ The community tables (`community_*`, migration 0014) are specified in `14-commun
 |---|---|---|
 | `principal` | `id` PK, `kind` text CHECK in (`user`,`device`), `created_at`, `disabled_at` NULL | |
 | `user_identity` | `user_id` PK→principal, `kem_pub` bytea(32), `sig_pub` bytea(32), `recovery_id` text UNIQUE, `created_at`, `id_sig` bytea(64) NULL, `id_invite_seq` NULL (both or neither) | identity public keys; `id_sig` = the identity proof of a registration through the platform invitation at `id_invite_seq` (ADR-060) |
-| `user_settings` | `user_id` PK, `model_access` text CHECK in (`auto`,`subscription`,`api_key`,`platform`) default `auto`, `model_id` text NULL, `locale` text CHECK in (`de`,`en`) default `en`, `fallback_own_to_dfx` bool default false, `fallback_operator_to_platform` bool default true (KOR-50, [ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardware.md) §1), `updated_at` | plaintext preferences |
+| `user_settings` | `user_id` PK, `model_access` text CHECK in (`auto`,`subscription`,`api_key`,`platform`) default `auto`, `model_id` text NULL, `locale` text CHECK in (`de`,`en`) default `en`, `fallback_own_to_dfx` bool default false, `fallback_operator_to_platform` bool default true (KOR-50, [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §1), `updated_at` | plaintext preferences |
 | `identity_bundle` | (`user_id`,`slot`) PK, `ct` bytea, `updated_at` | slots `passkey:<b64u id>`, `recovery` |
 | `passkey` | `credential_id` bytea PK, `user_id`, `public_key` bytea(65) (uncompressed P-256 point; only ES256 is offered and accepted), `sign_count` bigint, `transports` text[], `prf_seen` bool, `created_at`, `last_used_at`, `removed_at` NULL | verification via `agent_core.passkey` |
 | `ceremony` | `id` PK, `kind` CHECK in (`register`,`login`,`add_passkey`,`recovery`,`recovery_rotate`), `challenge` bytea(32), `user_id` NULL, `invite_id` NULL, `hub_value` bytea NULL, `created_at`, `expires_at` (= +300 s), `used_at` NULL, `pairing_id` NULL (a login that confirms an agent pairing, KOR-24) | purged after 1 day; `recovery_rotate`: passkey proof before a recovery code is replaced (`03-api.md` §4.1, KOR-01) |
@@ -85,8 +85,8 @@ Retention: events are kept for the lifetime of the organization (no deletion in 
 | `session_transition` [AO] | (`session_id`,`seq`) PK, `state`, `reason`, `at` (device clock), `received_at`, `reported_by` | drives the countdown status list |
 | `vm` | `id` text PK (`vm-<8 hex>`), `device_id`, `wg_id` NULL, `state` CHECK in (`pool`,`assigning`,`running`,`stopping`,`stopped`,`deleted`), `golden_version`, `cpus`, `memory_mib`, `disk_gib`, `created_at`, `state_at` | reported by runner |
 
-Model access with fallback (KOR-50, migration `0024_model_fallback`,
-[ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardware.md) §§4–5) adds `task.model_consent` bool
+Model access with fallback (KOR-50, migration `0025_model_fallback`,
+[ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §§4–5) adds `task.model_consent` bool
 default false (a person allowed DFX access for the task while its own access is used up), `session.wait_until`
 timestamptz NULL and `session.dfx_choice` bool default false (the wait of a session suspended with
 `model_quota_exhausted`) and `task_attention.wait_until` timestamptz NULL (the time a `quota_wait` / `quota_choice`
@@ -142,9 +142,9 @@ main session failed and no retry is pending; `closed` only by user action.
 | `metric_rollup` | same key with `ts` = 5-minute bucket; avg and max columns for gauges, last value for counters | kept 90 days; built every 5 min |
 | `usage_counter` | `session_id` PK, `requests`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `thinking_tokens`, `cost_micro_usd` bigint, `cost_basis` CHECK in (`provider`,`list_price`,`subscription_equivalent`), `context_used_tokens`, `context_window_tokens`, `last_provider` text NULL, `updated_at` | |
 | `quota_snapshot` | (`owner_id`,`window`) PK, `used_percent` real, `resets_at`, `severity` NULL, `fetched_at`, `device_id` | windows `five_hour`, `seven_day`, `weekly:<model>`; an `unavailable` report of the polling device deletes the owner's rows fetched at or before it (KOR-05) |
-| `quota_limit` | `owner_id` PK, `at`, `until` NULL, `readable` bool, `device_id`, `fetched_at` | the latest observed limit of an owner's own subscription (`quota.limited`, ADR-080 §6, KOR-50) |
+| `quota_limit` | `owner_id` PK, `at`, `until` NULL, `readable` bool, `device_id`, `fetched_at` | the latest observed limit of an owner's own subscription (`quota.limited`, ADR-081 §6, KOR-50) |
 | `operator_quota` | `device_id` PK, `at`, `snapshot` jsonb (array), `received_at` | the newest `operator_quota` snapshot of a platform device (file names, states, windows; never a token) |
-| `dfx_issuer` | `device_id` PK, `announced_at` | platform devices that announced a management key (`dfx_key_state`, ADR-080 §7) |
+| `dfx_issuer` | `device_id` PK, `announced_at` | platform devices that announced a management key (`dfx_key_state`, ADR-081 §7) |
 | `dfx_key` | `request_id` PK, `org_id`, `device_id`, `requested_at`, `issuer_device_id` NULL, `key_ref` NULL UNIQUE, `envelope` NULL (ciphertext to the org device), `issued_at` NULL, `booked_micro_usd` bigint ≥ 0, `booked_at` NULL, `revoked_at` NULL, `closed_at` NULL | one live key per org device and organization; the highest cumulative provider spend booked (`12-billing.md` §3) |
 | `dfx_key_cost` | (`device_id`,`session_id`) PK, `org_id`, `cost_micro_usd` | provider cost the sessions of an org device reported on its key since the last booking (weights of the split) |
 
@@ -205,7 +205,7 @@ wipe never changes the identity (legacy rule).
 
 Further runner tables added by later migrations (`profile_event`, `prompt_event`, `workgroup_settings`,
 `operation_result`, `metric_pending`, `read_event`, `operator_binding` – the operator's token file a session is bound
-to, file name only, ADR-052; KOR-50 / ADR-080: `access_limit` – used-up or blocked subscription accesses kept across
+to, file name only, ADR-052; KOR-50 / ADR-081: `access_limit` – used-up or blocked subscription accesses kept across
 restarts, `model_pause` – sessions paused for model quota, `dfx_key` – the sealed envelope of an org device's DFX key
 per organization, `dfx_key_issued` – the requests an issuing platform device answered) and added columns are listed in
 [`../spec-deviations.md`](../spec-deviations.md#02-data-model).

@@ -2,6 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/outbox/operator_quota.json",
   "title": "outbox body operator_quota",
-  "description": "Body of the outbox item kind operator_quota (03-api.md section 6.1, ADR-080; KOR-50).",
+  "description": "Body of the outbox item kind operator_quota (03-api.md section 6.1, ADR-081; KOR-50).",
   "$ref": "objects.json#/$defs/body_operator_quota"
 }

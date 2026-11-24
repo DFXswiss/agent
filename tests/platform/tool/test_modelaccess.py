@@ -1,4 +1,4 @@
-"""`quotas --org`, `task model-consent --task` and `settings set --fallback/--fallback-platform` (ADR-080) against the
+"""`quotas --org`, `task model-consent --task` and `settings set --fallback/--fallback-platform` (ADR-081) against the
 hub double, with the web client's checks of the answers (`web/src/core/credentials/orgQuotas.ts`)."""
 
 from __future__ import annotations

@@ -218,9 +218,9 @@ class SessionTransitionBody(Strict):
     claude_session_id_present: bool | None = None
     vm_id: VmId | None = None
     wait_until: Time | None = None
-    """KOR-50, ADR-080 section 4: when a session suspended for `model_quota_exhausted` continues by itself."""
+    """KOR-50, ADR-081 section 4: when a session suspended for `model_quota_exhausted` continues by itself."""
     dfx_choice: bool | None = None
-    """KOR-50, ADR-080 section 3: DFX access would be available but the owner's setting does not allow it."""
+    """KOR-50, ADR-081 section 3: DFX access would be available but the owner's setting does not allow it."""
 
     @model_validator(mode="after")
     def _optional_fields(self) -> SessionTransitionBody:
@@ -324,7 +324,7 @@ class QuotaWindow(Strict):
 
 
 class QuotaLimited(Strict):
-    """The latest observed limit of the owner's subscription (KOR-50, ADR-080 section 6)."""
+    """The latest observed limit of the owner's subscription (KOR-50, ADR-081 section 6)."""
 
     at: Time
     until: Time | None
@@ -362,7 +362,7 @@ Envelope = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]+$", max_len
 
 
 class OperatorSubscription(Strict):
-    """One operator subscription file of a platform device (KOR-50, ADR-080 section 6): its name, never a token."""
+    """One operator subscription file of a platform device (KOR-50, ADR-081 section 6): its name, never a token."""
 
     name: SubscriptionName
     state: Literal["usable", "exhausted", "blocked", "deferred", "ignored"]
@@ -388,7 +388,7 @@ class OperatorQuotaBody(Strict):
 
 
 class DfxKeyStateBody(Strict):
-    """`dfx_key_state`: whether the platform device can issue per-device DFX keys (ADR-080 section 7)."""
+    """`dfx_key_state`: whether the platform device can issue per-device DFX keys (ADR-081 section 7)."""
 
     issuer: bool
 

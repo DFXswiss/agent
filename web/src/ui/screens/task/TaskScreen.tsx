@@ -2,7 +2,7 @@
 // menu with "Close task" for writers, "Renamed by session" after a `task.set_title` (WEB-09), and the tab frame. Tabs are discovered at `ui/task-tabs/<area>/index.tsx`
 // (ADR-027 section 4): Chat (default) and Sessions here; Operations, Whiteboard and Audit join from their packages.
 // Below the header, how the current main session took over the context after a resume (ContextNotice, KOR-33), and the
-// newest switch of the model access (ModelSwitchLine, ADR-080 section 5).
+// newest switch of the model access (ModelSwitchLine, ADR-081 section 5).
 // The send sequence of the home screen navigates here at once (WEB-04); the countdown is part of the chat. The header
 // names device and VM of the main session ("on <device> · vm-…", ADR-075 section 6).
 // The task's GitHub identity is shown below it; writers change it (`TaskIdentity.tsx`, ADR-078).

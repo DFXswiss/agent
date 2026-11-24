@@ -3,7 +3,7 @@ section 6, 12-billing.md section 7; AUD-04 W12: suspend, never stop, so the sess
 
 A **platform device** (DFX hardware) acts on every session: every session there costs runtime. An **org device** (own
 hardware) acts only on the sessions whose access is `platform` - its DFX key, charged by the provider's figures
-(KOR-50, ADR-080 section 7); sessions on the owner's own access there are never touched (idea 45).
+(KOR-50, ADR-081 section 7); sessions on the owner's own access there are never touched (idea 45).
 
 `enforce(deliverer, desired)` (reconcile step `billing`, after the sessions step, on every desired state - the hub
 sends `reconcile {}` when an org's `exhausted` changes). Each session is paused under the deliverer's lock of that
@@ -25,9 +25,9 @@ session, so no prompt is handed over in between:
 `deferred(env, session)`: while its org is exhausted no prompt is handed to a session this device acts on - neither
 to a suspended one (no resume) nor to one that is still idle before the pause; the prompt stays pending and is
 delivered once credit is back (`deliver.Deliverer`). The same holds while the session waits for model quota
-(`model.pauses.holding`, KOR-50, ADR-080 section 4).
+(`model.pauses.holding`, KOR-50, ADR-081 section 4).
 
-**Credit first** (ADR-080 section 4.6): a session paused for credit and for model quota keeps both records. A session
+**Credit first** (ADR-081 section 4.6): a session paused for credit and for model quota keeps both records. A session
 already suspended for model quota gets its credit record too (no guest call; `interrupted` as recorded for the model
 pause), so the credit reason is shown first by the hub while both hold. The credit pause is continued only while no
 model pause holds the session (`model.pauses.holding`); when it is continued, an open model pause of the session ends

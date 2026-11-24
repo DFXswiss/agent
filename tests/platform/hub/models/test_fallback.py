@@ -1,6 +1,6 @@
 """U-HUB-models (fallback): the wait of a session paused for model quota (`session_transition` with `wait_until` and
 `dfx_choice`), the attention reasons `working/quota_wait` and `needs_decision/quota_choice`, the task's consent
-(`POST /v1/tasks/{task}/model-consent`) and the audit action `session.model_switched` (ADR-080 sections 4 and 5,
+(`POST /v1/tasks/{task}/model-consent`) and the audit action `session.model_switched` (ADR-081 sections 4 and 5,
 KOR-50)."""
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def test_another_pause_reason_keeps_no_wait(keys: Keys) -> None:
     )
     assert keys.rows("SELECT wait_until, dfx_choice FROM hub.session WHERE id = %s", session) == [(None, False)]
     assert _attention(keys, task)[:2] == ("needs_decision", "credit_empty")
-    # the same state with the quota reason does not overwrite the credit pause (credit first, ADR-080 section 4)
+    # the same state with the quota reason does not overwrite the credit pause (credit first, ADR-081 section 4)
     _transition(keys, session, "suspended", QUOTA, wait_until=format_time(keys.hub.clock()), dfx_choice=True)
     assert keys.rows("SELECT state_reason, wait_until FROM hub.session WHERE id = %s", session) == [
         ("credit_exhausted", None)

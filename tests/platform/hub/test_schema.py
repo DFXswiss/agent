@@ -48,7 +48,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("model_id", T),
         ("locale", T),
         ("updated_at", TS),
-        ("fallback_own_to_dfx", BOOL),  # KOR-50, migration 0024 (ADR-080)
+        ("fallback_own_to_dfx", BOOL),  # KOR-50, migration 0025 (ADR-081)
         ("fallback_operator_to_platform", BOOL),
     ],
     "identity_bundle": [("user_id", U), ("slot", T), ("ct", B), ("updated_at", TS)],
@@ -264,7 +264,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("placement_device_id", U),  # KOR-41, migration 0020
         ("placement_vm_id", T),
         ("github_identity", U),  # KOR-47, migration 0022
-        ("model_consent", BOOL),  # KOR-50, migration 0024 (ADR-080)
+        ("model_consent", BOOL),  # KOR-50, migration 0025 (ADR-081)
     ],
     "task_transition": [("task_id", U), ("seq", INT), ("state", T), ("reason", T), ("at", TS), ("by_id", U)],
     # KOR-39, migration 0011 (ADR-076): the attention record of a task, a projection
@@ -282,7 +282,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("subagents_total", INT),
         ("subagents_active", INT),
         ("updated_at", TS),
-        ("wait_until", TS),  # KOR-50, migration 0024 (ADR-080)
+        ("wait_until", TS),  # KOR-50, migration 0025 (ADR-081)
     ],
     "session": [
         ("id", U),
@@ -310,7 +310,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("context_reason", T),
         ("not_before", TS),  # KOR-41, migration 0020
         ("github_identity", U),  # KOR-47, migration 0022
-        ("wait_until", TS),  # KOR-50, migration 0024 (ADR-080)
+        ("wait_until", TS),  # KOR-50, migration 0025 (ADR-081)
         ("dfx_choice", BOOL),
     ],
     # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-072)
@@ -486,7 +486,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     "event_audit_cover": [("scope_id", U), ("covered_seq", BI)],
     # the subscription refuses the read of its quotas (KOR-40, migration 0016)
     "quota_unreadable": [("owner_id", U), ("since", TS), ("device_id", U)],
-    # model access with fallback (KOR-50, migration 0024, ADR-080)
+    # model access with fallback (KOR-50, migration 0025, ADR-081)
     "quota_limit": [
         ("owner_id", U),
         ("at", TS),
@@ -607,7 +607,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("fx_day", "date"),
         ("chf_per_usd_e8", BI),
         ("amount_micro_chf", BI),
-        ("part", INT),  # KOR-50, migration 0024: the shares of one per-device key booking
+        ("part", INT),  # KOR-50, migration 0025: the shares of one per-device key booking
     ],
     "charge_pending": [("charge_id", U), ("org_id", U), ("amount_micro_usd", BI)],
     "charge_daily": [

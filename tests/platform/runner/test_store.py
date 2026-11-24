@@ -207,7 +207,7 @@ TABLES = {
     "billing_meter": ["vm_id", "measured_through"],
     "operator_origin": ["session_id", "bound_at"],
     "credit_pause": ["session_id", "org_id", "interrupted", "paused_at", "resumed_at"],
-    # 0022 (KOR-50, ADR-080 sections 2-4): used-up and refused accesses, the model pauses of main sessions
+    # 0022 (KOR-50, ADR-081 sections 2-4): used-up and refused accesses, the model pauses of main sessions
     "access_limit": ["access_key", "kind", "until", "readable", "limited_at", "identity"],
     "model_pause": [
         "session_id",
@@ -221,7 +221,7 @@ TABLES = {
         "suspended",
         "resumed_at",
     ],
-    # 0023 (KOR-50, ADR-080 section 7): the sealed DFX key envelopes of an org device, the requests an issuer answered
+    # 0023 (KOR-50, ADR-081 section 7): the sealed DFX key envelopes of an org device, the requests an issuer answered
     "dfx_key": ["org_id", "key_ref", "issuer_device_id", "envelope", "accepted_at"],
     "dfx_key_issued": ["request_id", "org_id", "device_id", "key_ref", "issued_at"],
     # tokens this device minted through the device flow (KOR-40, migration 0014)

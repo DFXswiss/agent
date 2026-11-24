@@ -1,4 +1,4 @@
-"""U-RUN-model (KOR-50, ADR-080 sections 1, 2 and 6): the used-up accesses of `runner.access_limit` (kept across
+"""U-RUN-model (KOR-50, ADR-081 sections 1, 2 and 6): the used-up accesses of `runner.access_limit` (kept across
 restarts, released when their time passed), the rule of a readable quota, the fallback settings of the device state
 and one read of the usage endpoint against the local double."""
 

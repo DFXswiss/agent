@@ -1,7 +1,7 @@
 """Daemon task `quota` (05-runner.md sections 1.1 and 10.6): every `TICK_S` the subscription quota polling
 (`subscription.SubscriptionPoller`) for the owners of the last desired state, the spend of the platform key
 (`openrouter.SpendPoller`) and, on a platform device with the operator's pool, the quotas of the operator's
-subscriptions and their snapshot `operator_quota` (`operator.OperatorPoller`, `operator.report`; KOR-50, ADR-080
+subscriptions and their snapshot `operator_quota` (`operator.OperatorPoller`, `operator.report`; KOR-50, ADR-081
 section 6). Each poller keeps its own 900 s schedule per owner, key or file; a tick only checks what is due.
 A failing round is logged and the loop goes on. The task ends at once on a device that is not enrolled.
 

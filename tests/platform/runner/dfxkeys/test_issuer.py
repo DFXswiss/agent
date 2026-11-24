@@ -1,5 +1,5 @@
 """U-RUN-dfxkeys: the DFX key issuer of a platform device end to end against the model double's OpenRouter key
-management API and a real store (ADR-080 section 7): announcement, issue, crash orphan cleanup, the org device's use
+management API and a real store (ADR-081 section 7): announcement, issue, crash orphan cleanup, the org device's use
 of the key (platform access, `402` at the limit), cumulative usage reports, limit updates within the issuer's cap,
 disable, revoke with the final spend - and neither the management key nor the platform key ever reaches the org
 device or a log."""

@@ -4,7 +4,7 @@
 //   its category's generic text (a newer hub may add reasons);
 // - the next step of an entry (`actionOf`): an answer field, approve / decline, connect GitHub, assign a computer,
 //   the model settings, "Continue" after an empty balance, "Continue with DFX access" while the own subscription is
-//   used up (ADR-080 section 5), "Try again" only where a new attempt can help, nothing else for a refused action
+//   used up (ADR-081 section 5), "Try again" only where a new attempt can help, nothing else for a refused action
 //   ("Open task" is always offered);
 // - the text of a reason that continues by itself at a time (`quota_wait`, `quota_choice`) names that time;
 // - the prompt of an approval: exactly `Approved.` or `Declined.` (English in every locale, so the agent reads the
@@ -40,7 +40,7 @@ export function reasonKey(category: Category, reason: string): string {
   return REASONS[category].includes(reason) ? `attention.reason.${reason}` : `attention.generic.${category}`;
 }
 
-/** The reasons whose text names the time the task continues by itself (ADR-080 section 5). */
+/** The reasons whose text names the time the task continues by itself (ADR-081 section 5). */
 export const TIMED_REASONS: ReadonlySet<string> = new Set(['quota_wait', 'quota_choice']);
 
 /**

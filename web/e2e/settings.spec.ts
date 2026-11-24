@@ -1,6 +1,6 @@
 // /settings (06-web.md sections 2.5, 2.6): the language is saved in the user's settings and follows the account;
 // sign-out ends the session at the hub and deletes the session entries of IndexedDB; the fallback settings of the model
-// access are saved for the account and the organization's model access and quotas are read from the hub (ADR-080).
+// access are saved for the account and the organization's model access and quotas are read from the hub (ADR-081).
 import { expect, test } from './fixtures/test.ts';
 import { addAuthenticator } from './helpers/authenticator.ts';
 import { onboard } from './helpers/onboard.ts';

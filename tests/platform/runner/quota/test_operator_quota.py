@@ -1,4 +1,4 @@
-"""U-RUN-quota (KOR-50, ADR-080 sections 2, 3 and 6): the quotas of the operator's subscriptions - every token file
+"""U-RUN-quota (KOR-50, ADR-081 sections 2, 3 and 6): the quotas of the operator's subscriptions - every token file
 read every 900 s (a renewed file at once), a full window marks the file used up and a free one releases it, the pool
 learns the room of each file - and the snapshot `operator_quota` sent on change, at most every minute, only to a hub
 with `model_fallback.api`; never a token."""

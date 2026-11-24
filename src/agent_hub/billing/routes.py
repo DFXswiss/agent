@@ -2,7 +2,7 @@
 
 - `GET /v1/orgs/{org}/billing` (`org:member`): balance, exhausted, the price list in force, the credit history and the
   consumption per day and per workgroup of the last 30 days (a share without workgroup - a per-device DFX key's
-  spend no session reported, ADR-080 section 7 - counts in the days, not in the workgroups);
+  spend no session reported, ADR-081 section 7 - counts in the days, not in the workgroups);
 - `GET /v1/workgroups/{wg}/charges` (`wg:read`): charges per task of the last 30 days;
 - `GET /v1/tasks/{task}/charges` (`task:read`): charges per session of the task.
 

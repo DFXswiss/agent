@@ -1,8 +1,8 @@
-"""Used-up and refused subscription accesses, kept across restarts (KOR-50, ADR-080 section 2; ADR-052 section 6).
+"""Used-up and refused subscription accesses, kept across restarts (KOR-50, ADR-081 section 2; ADR-052 section 6).
 
 An **access key** names one access whose provider can run out: `own:<owner_id>` (the owner's own Claude
 subscription), `operator:<file name>` (a token file of the operator's pool) and `dfxkey:<device_id>` (the limited DFX
-key of an org device, ADR-080 section 7). API keys and the platform key of a platform device answer `429` for short
+key of an org device, ADR-081 section 7). API keys and the platform key of a platform device answer `429` for short
 rate limits only and are never limited here.
 
 `Limits` (one per daemon, `limits_for(context)`) mirrors the table `runner.access_limit`:

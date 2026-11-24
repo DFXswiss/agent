@@ -1,6 +1,6 @@
 # KOR-50 – contract changes
 
-ADR-027 section 3 (additive); design: ADR-080 (model access with fallback, visible quotas and DFX access on own
+ADR-027 section 3 (additive); design: ADR-081 (model access with fallback, visible quotas and DFX access on own
 hardware).
 
 ## Outbox (runner → hub), sent only to a hub whose device state carries `model_fallback.api >= 1`
@@ -70,7 +70,7 @@ attention reason with its category's generic text and ignores `fallback` and `wa
 
 ## Notification kind `model.switched`
 
-`api/objects.json` `notification_row.kind` gains `model.switched` (ADR-080 section 5, ADR-020): when the hub stores
+`api/objects.json` `notification_row.kind` gains `model.switched` (ADR-081 section 5, ADR-020): when the hub stores
 the outbox audit `session.model_switched`, the task's owner (while they read the task's workgroup) gets a
 content-free notification with `org_id`, `wg_id`, `task_id` of the session's task and `ref` =
 `<from_access>:<to_access>:<until or empty>` (a new alternative of `ref`). Texts are the web's (code + metadata

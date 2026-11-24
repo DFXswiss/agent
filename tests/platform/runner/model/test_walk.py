@@ -1,4 +1,4 @@
-"""U-RUN-model (KOR-50, ADR-080 sections 1 and 3): the order of `model.access.resolve` skips used-up accesses, keeps
+"""U-RUN-model (KOR-50, ADR-081 sections 1 and 3): the order of `model.access.resolve` skips used-up accesses, keeps
 inside the cost class of the owner's own access unless the owner's setting or the task's consent allows DFX access,
 takes `platform` after a used-up pool only with `operator_to_platform`, and answers a wait (the earliest release, the
 DFX choice): a new main session starts on the access with the earliest release and waits before its first prompt, a

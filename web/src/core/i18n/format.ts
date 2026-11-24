@@ -56,7 +56,7 @@ const clockFormats = new Map<string, { time: Intl.DateTimeFormat; day: Intl.Date
 
 /**
  * A time of day `HH:MM` in the user's zone, prefixed with the date when it is not today (a release time, "continues at
- * 14:05", ADR-080 section 5).
+ * 14:05", ADR-081 section 5).
  */
 export function formatClock(epochMs: number, { locale, timeZone, now }: TimeOptions): string {
   const key = `${locale} ${timeZone}`;

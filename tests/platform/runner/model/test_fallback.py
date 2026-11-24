@@ -1,4 +1,4 @@
-"""U-RUN-model (KOR-50, ADR-080 sections 4 and 5): running sessions on a used-up access - moved in place to another
+"""U-RUN-model (KOR-50, ADR-081 sections 4 and 5): running sessions on a used-up access - moved in place to another
 operator file, paused and resumed at once on another kind of access with the switch sentence, or suspended with
 `model_quota_exhausted`, `wait_until` and `dfx_choice` until an access is allowed again, then continued by themselves;
 subagents end; credit first; the reconcile step and the daemon task `model_fallback`.

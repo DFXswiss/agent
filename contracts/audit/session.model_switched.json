@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/audit/session.model_switched.json",
   "title": "audit detail session.model_switched",
-  "description": "detail of audit rows with action session.model_switched: the runner moved a session to another model access because its access was used up, could not be used or was released again (ADR-080 sections 4 and 5): the access kinds and models before and after, the cause and the release time of the used-up access (null without one). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "description": "detail of audit rows with action session.model_switched: the runner moved a session to another model access because its access was used up, could not be used or was released again (ADR-081 sections 4 and 5): the access kinds and models before and after, the cause and the release time of the used-up access (null without one). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
   "type": "object",
   "properties": {
     "from_access": {

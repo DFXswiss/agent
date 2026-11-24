@@ -1,5 +1,5 @@
 """Exhaustion of a subscription access: detected from the gateway's `usage` records, confirmed by the provider where
-possible (KOR-50, ADR-080 section 2).
+possible (KOR-50, ADR-081 section 2).
 
 `observe(env, session, status, key, counts)` is called by the `usage` journal handler for every record of a session
 whose access can run out (`access_key`: `own:<owner_id>` for the owner's own subscription, `operator:<file>` for a
@@ -187,7 +187,7 @@ async def mark_dfx_key(context: Any, key: str) -> None:
 
 
 def limited_body(limit: Limit) -> dict[str, Any]:
-    """`limited` of the `quota` item (ADR-080 section 6)."""
+    """`limited` of the `quota` item (ADR-081 section 6)."""
     return {
         "at": time_text(limit.limited_at),
         "until": None if limit.until is None else time_text(limit.until),

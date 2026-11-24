@@ -1,4 +1,4 @@
-// The newest model switch of a task (ADR-080 section 5): when the platform moves a session to another model access
+// The newest model switch of a task (ADR-081 section 5): when the platform moves a session to another model access
 // (its access was used up, could not be used or was released again), the runner writes the audit row
 // `session.model_switched` with the access kinds and models before and after, the cause and the release time of the
 // used-up access – metadata only. The task view shows the newest one as a line ("Model switched: … → …"). The rows come

@@ -16,7 +16,7 @@
 5. task `starting` → `working/starting`; task `working` → an operation of the task `accepted` or `executing` →
    `working/operation`, no session of depth 0 `working` but a subagent `working` → `working/subagents`, else
    `working/working`;
-6. task `idle` → a main session `suspended` with `model_quota_exhausted` (ADR-080 section 5) →
+6. task `idle` → a main session `suspended` with `model_quota_exhausted` (ADR-081 section 5) →
    `needs_decision/quota_choice` (ref: the session) when its transition offered the choice of DFX access
    (`dfx_choice`), the task has no consent yet and the org's credit is not exhausted, else `working/quota_wait`; both
    carry the session's `wait_until`. A main session reason of `IDLE_REASONS` → its record (ref: the session);
@@ -159,10 +159,10 @@ class Inputs:
     main_working: bool = False
     subagent_working: bool = False
     main_wait_until: datetime | None = None
-    """The main session's wait (ADR-080 section 4)."""
+    """The main session's wait (ADR-081 section 4)."""
     main_dfx_choice: bool = False
     model_consent: bool = False
-    """The task's consent to DFX model access (ADR-080 section 5)."""
+    """The task's consent to DFX model access (ADR-081 section 5)."""
     credit_exhausted: bool = False
     """The org's credit is exhausted (read only for a main session waiting for model quota)."""
 

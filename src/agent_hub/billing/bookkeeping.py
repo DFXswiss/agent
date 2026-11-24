@@ -4,7 +4,7 @@
 (optionally of one organization), oldest first: the charges (`tokens`, `runtime`) and the credit history entries
 (`start`, `grant`, `set`, `manual`). Each row carries the time, the organization (cost bearer), the kind, the amount in
 USD, the rate, the rate's day, the CHF equivalent booked with it and the reference (charge ID with workgroup, task and
-session - or with the per-device DFX key for a share no session reported, ADR-080 section 7 - or the number of the
+session - or with the per-device DFX key for a share no session reported, ADR-081 section 7 - or the number of the
 credit entry). Amounts are micro-units; the CHF column is the equivalent stored with
 the booking (never recomputed), so the sum of the column is the CHF total of the period. No content of tasks.
 

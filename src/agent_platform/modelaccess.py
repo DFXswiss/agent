@@ -1,4 +1,4 @@
-"""Model access with fallback and visible quotas (ADR-080 sections 1, 5 and 6; twins of
+"""Model access with fallback and visible quotas (ADR-081 sections 1, 5 and 6; twins of
 `web/src/core/credentials/orgQuotas.ts`, `web/src/core/credentials/model.ts`, the settings section "Model access and
 quotas", the counter of the situation view and its card `quota_choice`).
 
@@ -35,7 +35,7 @@ from agent_platform.hub import segment
 
 WINDOW_RE = re.compile(r"five_hour|seven_day|weekly:[A-Za-z0-9._-]{1,64}")
 FALLBACK_DEFAULTS = {"own_to_dfx": False, "operator_to_platform": True}
-"""The settings of ADR-080 section 1 when the hub has none stored."""
+"""The settings of ADR-081 section 1 when the hub has none stored."""
 SUMMARY_KEYS = ("usable", "exhausted")
 SUBSCRIPTION_TIMES = ("resets_at", "limited_at", "until", "fetched_at")
 

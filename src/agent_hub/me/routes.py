@@ -15,7 +15,7 @@
 - `POST /v1/me/recovery/begin`: the ceremony for that assertion.
 - `PUT /v1/me/settings`: `model_access`, `model_id` (null or a model of `/v1/config.models` allowed for the chosen
   access kind; `auto` allows every listed model) and `locale` (02-data-model.md section 2.1); optionally `fallback`
-  `{own_to_dfx, operator_to_platform}` (ADR-080 section 1, KOR-50), without it the stored fallback settings stay. The
+  `{own_to_dfx, operator_to_platform}` (ADR-081 section 1, KOR-50), without it the stored fallback settings stay. The
   settings of `GET /v1/me` and the answer of the PUT always carry `fallback` (defaults false/true).
 The read log of the GETs is written by the pipeline (`read_resource`).
 """

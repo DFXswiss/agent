@@ -1,4 +1,4 @@
-"""The job of the models area (ADR-027 section 4 `<area>/jobs.py:JOBS`, ADR-080 section 7).
+"""The job of the models area (ADR-027 section 4 `<area>/jobs.py:JOBS`, ADR-081 section 7).
 
 `models.dfx_keys` runs every 10 s: one pass of `agent_hub.models.dfx.plan` (revoke the keys of org devices that left,
 request keys for the serving org devices while billing is active). After the commit it sends the content-free hint

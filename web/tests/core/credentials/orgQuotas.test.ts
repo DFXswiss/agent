@@ -1,4 +1,4 @@
-// U-WEB-credentials (KOR-50, ADR-080 section 6): the model access of an organization from `GET /v1/orgs/{org}/quotas` –
+// U-WEB-credentials (KOR-50, ADR-081 section 6): the model access of an organization from `GET /v1/orgs/{org}/quotas` –
 // the own subscription with its windows or "not readable" and the last observed limit, the operator's subscriptions,
 // DFX access and the summary; malformed rows left out, a malformed answer `unavailable`.
 import { describe, expect, it } from 'vitest';
