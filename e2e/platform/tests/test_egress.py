@@ -135,7 +135,7 @@ def test_run_patterns_leave_foreign_golden_builds_out() -> None:
 
 
 def test_work_vm_connections_are_logged_and_allowed(tmp_path: Path) -> None:
-    """A work VM is the session's own machine with internet (agent ADR-056): its host agent's connections are
+    """A work VM is the session's own machine with internet (ADR-059): its host agent's connections are
     logged with `workvm: true`; a session VM's host agent with the same connection stays a violation."""
     ps = (
         " 40 1 /opt/homebrew/bin/limactl hostagent --pidfile /h/.lima/wp-t-e2e-r1-wvm-0a1b2c3d/ha.pid"

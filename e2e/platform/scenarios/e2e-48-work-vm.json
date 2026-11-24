@@ -1,11 +1,11 @@
 {
-  "name": "e2e-41-work-vm",
-  "description": "E2E-41 (KOR-29): the session checks out a repository, gets a work VM, runs the failing tests, fixes the code, runs them green and opens a draft pull request through the platform; a follow-up starts a service in the same VM, reads its page with the browser, shows the VM's status and hits the per-task limit with a clear refusal. Every result is checked by the next step's expectation.",
+  "name": "e2e-48-work-vm",
+  "description": "E2E-48 (KOR-29): the session checks out a repository, gets a work VM, runs the failing tests, fixes the code, runs them green and opens a draft pull request through the platform; a follow-up starts a service in the same VM, reads its page with the browser, shows the VM's status and hits the per-task limit with a clear refusal. Every result is checked by the next step's expectation.",
   "steps": [
     {
       "id": "checkout",
       "expect": {
-        "user_text_contains": "E2E41-FIX",
+        "user_text_contains": "E2E48-FIX",
         "has_tool_result": false,
         "tools_include": ["mcp__platform__workvm_exec", "mcp__platform__workvm_browse", "mcp__platform__workvm_status"]
       },
@@ -76,7 +76,7 @@
             "name": "Write",
             "input": {
               "file_path": "${cwd}/repos/octo-org/calc/calc.py",
-              "content": "def add(a, b):\n    return a + b  # kz41-file-m2n6b8v4\n"
+              "content": "def add(a, b):\n    return a + b  # kz48-file-m2n6b8v4\n"
             }
           }
         ]
@@ -114,7 +114,7 @@
               "type": "github.create_branch",
               "params": {
                 "repo": "octo-org/calc",
-                "branch": "e2e41/fix",
+                "branch": "e2e48/fix",
                 "from": "main"
               }
             }
@@ -125,7 +125,7 @@
     {
       "id": "commit",
       "expect": {
-        "tool_result_contains": "\"branch\":\"e2e41/fix\""
+        "tool_result_contains": "\"branch\":\"e2e48/fix\""
       },
       "reply": {
         "content": [
@@ -136,7 +136,7 @@
               "type": "github.commit",
               "params": {
                 "repo": "octo-org/calc",
-                "branch": "e2e41/fix",
+                "branch": "e2e48/fix",
                 "message": "Fix the addition."
               }
             }
@@ -158,7 +158,7 @@
               "type": "github.push",
               "params": {
                 "repo": "octo-org/calc",
-                "branch": "e2e41/fix",
+                "branch": "e2e48/fix",
                 "commit_sha": "${commit}"
               }
             }
@@ -175,7 +175,7 @@
     {
       "id": "pull-request",
       "expect": {
-        "tool_result_contains": "\"url\":\"https://github.example/octo-org/calc/tree/e2e41/fix\""
+        "tool_result_contains": "\"url\":\"https://github.example/octo-org/calc/tree/e2e48/fix\""
       },
       "reply": {
         "content": [
@@ -186,9 +186,9 @@
               "type": "github.create_pull_request",
               "params": {
                 "repo": "octo-org/calc",
-                "head": "e2e41/fix",
+                "head": "e2e48/fix",
                 "base": "main",
-                "title": "Fix the addition kz41-title-c4x9z1q7",
+                "title": "Fix the addition kz48-title-c4x9z1q7",
                 "body": "Tests pass in the work VM.",
                 "draft": true
               }
@@ -206,7 +206,7 @@
         "content": [
           {
             "type": "text",
-            "text": "The tests failed, I fixed add() and they pass now; draft pull request #1 is open kz41-answer-h3j7k1l5."
+            "text": "The tests failed, I fixed add() and they pass now; draft pull request #1 is open kz48-answer-h3j7k1l5."
           }
         ]
       }
@@ -214,7 +214,7 @@
     {
       "id": "service",
       "expect": {
-        "user_text_contains": "E2E41-SERVICE"
+        "user_text_contains": "E2E48-SERVICE"
       },
       "reply": {
         "content": [
@@ -222,7 +222,7 @@
             "type": "tool_use",
             "name": "mcp__platform__workvm_exec",
             "input": {
-              "command": "mkdir -p /srv/kz41 && printf '<title>KZ41 page</title><h1>Hello kz41-page-r5t8y2u4</h1>' > /srv/kz41/index.html && systemd-run --unit=kz41-site python3 -m http.server 8041 --directory /srv/kz41 && sleep 2 && systemctl is-active kz41-site && curl -s http://127.0.0.1:8041/",
+              "command": "mkdir -p /srv/kz48 && printf '<title>KZ48 page</title><h1>Hello kz48-page-r5t8y2u4</h1>' > /srv/kz48/index.html && systemd-run --unit=kz48-site python3 -m http.server 8048 --directory /srv/kz48 && sleep 2 && systemctl is-active kz48-site && curl -s http://127.0.0.1:8048/",
               "sync": "none",
               "wait_seconds": 30
             }
@@ -233,7 +233,7 @@
     {
       "id": "browse",
       "expect": {
-        "tool_result_contains": "Hello kz41-page-r5t8y2u4"
+        "tool_result_contains": "Hello kz48-page-r5t8y2u4"
       },
       "reply": {
         "content": [
@@ -241,7 +241,7 @@
             "type": "tool_use",
             "name": "mcp__platform__workvm_browse",
             "input": {
-              "url": "http://127.0.0.1:8041/"
+              "url": "http://127.0.0.1:8048/"
             }
           }
         ]
@@ -250,7 +250,7 @@
     {
       "id": "status",
       "expect": {
-        "tool_result_contains": "\"title\":\"KZ41 page\""
+        "tool_result_contains": "\"title\":\"KZ48 page\""
       },
       "reply": {
         "content": [
@@ -291,7 +291,7 @@
         "content": [
           {
             "type": "text",
-            "text": "The page says: Hello kz41-page-r5t8y2u4. A second work VM is above the limit of this task kz41-answer-p8o2i6u3."
+            "text": "The page says: Hello kz48-page-r5t8y2u4. A second work VM is above the limit of this task kz48-answer-p8o2i6u3."
           }
         ]
       }

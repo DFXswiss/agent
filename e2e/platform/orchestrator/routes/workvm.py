@@ -1,5 +1,5 @@
 """`POST /runners/workvm` (`{"slots": n, "max_per_task": m, "pool_size": p}`): work VMs on every runner for the work
-VM scenario (agent docs/platform/spec/11-work-vm.md, ADR-056). Self mode in TEST_MODE (`AGENT_RUNNER_WORKVM_SLOTS_SELF`:
+VM scenario (docs/platform/spec/13-work-vm.md, ADR-059). Self mode in TEST_MODE (`AGENT_RUNNER_WORKVM_SLOTS_SELF`:
 the runner's own account and Lima home, no host filter). For each runner the run's work image cache
 (`Context.workvm_image`, ensured before the run) is cloned once to `<runner prefix>wimg-e2e` (a run instance: deleted
 with the run's other VMs) and registered `ready` in the runner's store; the settings are environment variables the

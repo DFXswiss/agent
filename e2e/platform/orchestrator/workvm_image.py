@@ -1,5 +1,5 @@
-"""Shared work image cache `cache-wimg-<sha12>` for the work VM scenarios (agent docs/platform/spec/11-work-vm.md
-section 4, ADR-056; same rule as the golden cache in `orchestrator.golden`).
+"""Shared work image cache `cache-wimg-<sha12>` for the work VM scenarios (docs/platform/spec/13-work-vm.md
+section 4, ADR-059; same rule as the golden cache in `orchestrator.golden`).
 
 `<sha12>` = first 12 hex digits of the SHA-256 over the lines `<sha256(file)>  <path>` of every file of
 `images/workvm.yaml`, `images/workvm/` and `images/versions.json` (and, when present, the build logic

@@ -12,7 +12,7 @@ Two sources feed the log of a device (`egress.jsonl`, one JSON record per line):
   host agent's connections to port 123 (time sync) or to port 53 of one of the device's resolvers (`/etc/resolv.conf`,
   name lookups) belong to the guest operating system (`vm_os`, ADR-034); they are logged and allowed. Any other
   connection of a VM (e.g. HTTPS, or DNS to another server) stays a violation. Second exception: the host agent of a
-  work VM (instance name `…wvm-<8 hex>`, agent ADR-056): a work VM is the session's own Ubuntu machine with internet
+  work VM (instance name `…wvm-<8 hex>`, ADR-059): a work VM is the session's own Ubuntu machine with internet
   by design (its DNS goes to Cloudflare's public resolvers, its operating system updates itself); its connections are
   logged with `workvm: true` and allowed. The scenarios themselves use only servers inside the VM.
 Processes are started with `HTTP(S)_PROXY` on the closed loopback port 9, so a client that honours the proxy

@@ -1,11 +1,11 @@
-// E2E-41 (KOR-29; agent docs/platform/spec/11-work-vm.md, ADR-056): the work VM on request. The runner offers work
+// E2E-48 (KOR-29; docs/platform/spec/13-work-vm.md, ADR-059): the work VM on request. The runner offers work
 // VMs in self mode (TEST_MODE, two slots, one per task, a warm pool of one) from the run's work image cache. The
 // session checks out a repository through the platform, requests a work VM (answered from the warm pool), runs the
 // failing tests as root, fixes the code in its workspace, runs them green and opens a draft pull request through
 // the GitHub operations. A follow-up prompt of the same task uses the same VM: it starts a program as a service,
 // reads its page with the browser of the VM and shows the VM's status; a second VM for the task is refused with
 // `limit_exceeded`. The chat shows every run; closing the task tears the VM down (`session_ended`). The measured
-// times (assignment, cold start of a pool entry) go to the iteration's artefacts (`e2e-41/work-vm.json`). T1 only.
+// times (assignment, cold start of a pool entry) go to the iteration's artefacts (`e2e-48/work-vm.json`). T1 only.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '../fixtures/test.ts';
@@ -24,21 +24,21 @@ import {
 } from '../fixtures/platform.ts';
 
 const scenario: unknown = JSON.parse(
-  readFileSync(new URL('../scenarios/e2e-41-work-vm.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../scenarios/e2e-48-work-vm.json', import.meta.url), 'utf8'),
 );
-const LOGIN = 'kz41-octo-a6s2d9';
+const LOGIN = 'kz48-octo-a6s2d9';
 const REPO = 'octo-org/calc';
-const PROMPT = 'E2E41-FIX kz41-prompt-w7e3r5t1: run the tests of octo-org/calc, fix the failure and open a draft PR';
-const FOLLOW_UP = 'E2E41-SERVICE kz41-follow-y4u8i2o6: start a small web service and tell me what its page says';
+const PROMPT = 'E2E48-FIX kz48-prompt-w7e3r5t1: run the tests of octo-org/calc, fix the failure and open a draft PR';
+const FOLLOW_UP = 'E2E48-SERVICE kz48-follow-y4u8i2o6: start a small web service and tell me what its page says';
 const CANARIES = [
   LOGIN,
-  'kz41-prompt-w7e3r5t1',
-  'kz41-follow-y4u8i2o6',
-  'kz41-file-m2n6b8v4',
-  'kz41-page-r5t8y2u4',
-  'kz41-answer-h3j7k1l5',
-  'kz41-answer-p8o2i6u3',
-  'kz41-name-q1w5e9r3',
+  'kz48-prompt-w7e3r5t1',
+  'kz48-follow-y4u8i2o6',
+  'kz48-file-m2n6b8v4',
+  'kz48-page-r5t8y2u4',
+  'kz48-answer-h3j7k1l5',
+  'kz48-answer-p8o2i6u3',
+  'kz48-name-q1w5e9r3',
 ];
 const FILES = {
   'calc.py': 'def add(a, b):\n    return a - b\n',
@@ -55,13 +55,13 @@ interface WorkvmRow {
 
 test.describe.configure({ mode: 'serial' });
 
-test('@E2E-41 @needs-vm @needs-workvm the session gets a work VM, runs and fixes the tests, serves and browses a page, and the VM goes with the task', async ({
+test('@E2E-48 @needs-vm @needs-workvm the session gets a work VM, runs and fixes the tests, serves and browses a page, and the VM goes with the task', async ({
   page,
   orchestrator,
   authenticator,
   e2e,
 }) => {
-  test.skip(e2e.topology !== 't1', 'E2E-41 is a T1 test (work VMs in self mode on the runner device)');
+  test.skip(e2e.topology !== 't1', 'E2E-48 is a T1 test (work VMs in self mode on the runner device)');
   test.setTimeout(1_200_000);
   await orchestrator.loadScenario('model', scenario);
   await seedGitHub(
@@ -92,7 +92,7 @@ test('@E2E-41 @needs-vm @needs-workvm the session gets a work VM, runs and fixes
   );
 
   await authenticator('platform');
-  const onboarded = await onboard(page, orchestrator, 'Ada kz41-name-q1w5e9r3');
+  const onboarded = await onboard(page, orchestrator, 'Ada kz48-name-q1w5e9r3');
   await connectGitHub(page, orchestrator, LOGIN);
   const [org] = await orchestrator.hubQuery<{ default_wg: string }>(
     `SELECT default_wg FROM hub.org WHERE id = '${uuid(onboarded.org)}'`,
@@ -102,14 +102,14 @@ test('@E2E-41 @needs-vm @needs-workvm the session gets a work VM, runs and fixes
   // 1. Tests red → fix → green → draft pull request, all through the platform.
   await home(page);
   const task = await sendPrompt(page, PROMPT);
-  await expectAnswerInChat(page, 'draft pull request #1 is open kz41-answer-h3j7k1l5.');
+  await expectAnswerInChat(page, 'draft pull request #1 is open kz48-answer-h3j7k1l5.');
   const repo = await githubRepo(orchestrator, REPO);
-  expect(repo.pulls.map((pull) => [pull.number, pull.draft, pull.head])).toEqual([[1, true, 'e2e41/fix']]);
+  expect(repo.pulls.map((pull) => [pull.number, pull.draft, pull.head])).toEqual([[1, true, 'e2e48/fix']]);
 
   // 2. The follow-up uses the same VM: a service, the browser, the status, and the per-task limit.
   await page.getByTestId('chat.composer.prompt').fill(FOLLOW_UP);
   await page.getByTestId('chat.composer.send').click();
-  await expectAnswerInChat(page, 'A second work VM is above the limit of this task kz41-answer-p8o2i6u3.');
+  await expectAnswerInChat(page, 'A second work VM is above the limit of this task kz48-answer-p8o2i6u3.');
   await expect.poll(async () => (await orchestrator.doubleState('model')).ok, { timeout: 60_000 }).toBe(true);
   const [session] = await mainSessions(orchestrator, task);
 
@@ -134,7 +134,7 @@ test('@E2E-41 @needs-vm @needs-workvm the session gets a work VM, runs and fixes
     ['exec', 'exited', 0],
     ['browse', 'exited', 0],
   ]);
-  expect(String(runs[2]!.output)).toContain('Hello kz41-page-r5t8y2u4');
+  expect(String(runs[2]!.output)).toContain('Hello kz48-page-r5t8y2u4');
   await expect(page.getByTestId('chat.workvm.run')).toHaveCount(4, { timeout: 30_000 });
   const created = (await taskBodies(page, orchestrator, onboarded, task, 'workvm.state')).filter(
     (body) => body.state === 'created',
@@ -166,7 +166,7 @@ test('@E2E-41 @needs-vm @needs-workvm the session gets a work VM, runs and fixes
       ['deleted', 'session_ended'],
     ]);
 
-  const dir = join(e2e.iterationDir, 'e2e-41');
+  const dir = join(e2e.iterationDir, 'e2e-48');
   mkdirSync(dir, { recursive: true });
   const measured = { session: session!.id, assignment_ready_ms: readyMs, pool_cold_start_s: cold!.s };
   writeFileSync(join(dir, 'work-vm.json'), JSON.stringify(measured, null, 1));
