@@ -1,5 +1,6 @@
-// Home screen and the first task (06-web.md sections 4.1-4.3) against the real hub and the device double: the first
-// task assigns a platform device, chips fill and never send, the workgroup choice lists only writable workgroups.
+// Home screen and the first task (06-web.md sections 4.0-4.3) against the real hub and the device double: the first
+// task assigns a platform device, chips fill and never send, the workgroup choice lists only writable workgroups. The
+// composer stays at the top of the situation view (KOR-39); the view itself has its own spec (`attention.spec.ts`).
 import { expect, test } from '../fixtures/test.ts';
 import { mainSession, walk } from '../helpers/director.ts';
 import { freshUser, sendPrompt, START_STEPS } from '../helpers/tasks.ts';
@@ -14,7 +15,9 @@ test('the first task assigns a platform device and lands on the task page', asyn
   await expect(page.getByTestId('home.screen')).toBeVisible();
   await expect(page.getByTestId('home.org')).toHaveText('Private');
   await expect(page.getByTestId('home.wg')).toHaveValue(/.+/);
-  await expect(page.getByTestId('tasks.empty')).toBeVisible();
+  // a new organization: every group of the situation view is empty and the suggestions are open
+  await expect(page.getByTestId('attention.empty')).toHaveCount(4);
+  await expect(page.getByTestId('composer.chips')).toBeVisible();
   const task = await sendPrompt(page, 'What is 2+2?');
   expect(posts).toEqual(expect.arrayContaining([`/v1/orgs/${user.org}/log`, '/v1/wraps', '/v1/tasks']));
   expect(posts.indexOf(`/v1/orgs/${user.org}/log`)).toBeLessThan(posts.indexOf('/v1/tasks'));
@@ -27,8 +30,12 @@ test('the first task assigns a platform device and lands on the task page', asyn
   await expect(page.getByTestId('countdown.summary')).toContainText('Ready in');
   // the second task needs no assignment
   await page.getByTestId('shell.nav.home').click();
-  await expect(page.getByTestId('tasks.row')).toHaveCount(1);
-  await expect(page.getByTestId('tasks.row.title')).toHaveText('What is 2+2?');
+  await expect(page.getByTestId('attention.item')).toHaveCount(1);
+  await expect(page.getByTestId('attention.item').getByTestId('tasks.row.title')).toHaveText('What is 2+2?');
+  // with a task the suggestions wait behind their toggle
+  await expect(page.getByTestId('composer.chips')).toHaveCount(0);
+  await page.getByTestId('home.suggestions').click();
+  await expect(page.getByTestId('composer.chips')).toBeVisible();
   posts.length = 0;
   await page.getByTestId('composer.prompt').fill('And 3+3?');
   await page.keyboard.press('Control+Enter');
