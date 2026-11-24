@@ -91,10 +91,29 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
 @pytest.mark.parametrize(
     ("config", "found"),
     [
-        (None, ("log.admit", "log.org_assign", "log.policy", "vm.choice", "github.ways", "github.identities")),
+        (
+            None,
+            (
+                "log.admit",
+                "log.org_assign",
+                "log.policy",
+                "vm.choice",
+                "github.ways",
+                "github.identities",
+                "prompt.withdraw",
+            ),
+        ),
         (
             SimpleNamespace(github_oauth_client_id=None, github_client_id=None, operator_github_token_file=None),
-            ("log.admit", "log.org_assign", "log.policy", "vm.choice", "github.ways", "github.identities"),
+            (
+                "log.admit",
+                "log.org_assign",
+                "log.policy",
+                "vm.choice",
+                "github.ways",
+                "github.identities",
+                "prompt.withdraw",
+            ),
         ),
         (
             SimpleNamespace(github_oauth_client_id=OAUTH_ID, github_client_id=None, operator_github_token_file=None),
@@ -105,6 +124,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
                 "vm.choice",
                 "github.ways",
                 "github.identities",
+                "prompt.withdraw",
                 "github.device_flow",
                 "github.oauth_app",
             ),
@@ -118,6 +138,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
                 "vm.choice",
                 "github.ways",
                 "github.identities",
+                "prompt.withdraw",
                 "github.device_flow",
                 "github.operator",
             ),
