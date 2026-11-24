@@ -402,6 +402,18 @@ def test_github_client_id_invalid(value: str, base: dict[str, str]) -> None:
     refused(base, "GITHUB_CLIENT_ID")
 
 
+def test_the_oauth_app_and_the_app_slug(base: dict[str, str]) -> None:
+    """KOR-65: the OAuth App's client ID and the GitHub App's URL name; both optional, both checked."""
+    assert (load(base).github_oauth_client_id, load(base).github_app_slug) == (None, None)
+    base["AGENT_RUNNER_GITHUB_OAUTH_CLIENT_ID"] = "Ov23liAbCdEf"
+    base["AGENT_RUNNER_GITHUB_APP_SLUG"] = "agent-dfx-swiss"
+    loaded = load(base)
+    assert (loaded.github_oauth_client_id, loaded.github_app_slug) == ("Ov23liAbCdEf", "agent-dfx-swiss")
+    for slug in ("Upper", "-lead", "with space", "x" * 101):
+        refused({**base, "AGENT_RUNNER_GITHUB_APP_SLUG": slug}, "GITHUB_APP_SLUG")
+    refused({**base, "AGENT_RUNNER_GITHUB_OAUTH_CLIENT_ID": "semi;colon"}, "GITHUB_OAUTH_CLIENT_ID")
+
+
 def test_login_argv(base: dict[str, str]) -> None:
     base["AGENT_RUNNER_LOGIN_ARGV"] = json.dumps(["/opt/double/login", "--fast"])
     assert load(base).login_argv == ("/opt/double/login", "--fast")

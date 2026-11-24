@@ -589,3 +589,9 @@ def test_a_github_app_token_writes_only_where_an_installation_covers_the_reposit
                 await reach.check_write(client, THIRD, {})
 
     asyncio.run(main())
+
+
+def test_an_sso_refusal_without_a_repository_names_the_authorisation() -> None:
+    """A type without a repository (the repository list) keeps the fixed SSO sentence of `ops.failure`."""
+    failed = ops.failure(GitHubError("forbidden", status=403, sso=True))
+    assert (failed.code, failed.message) == ("upstream_error", ops.SSO_REQUIRED)

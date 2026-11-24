@@ -284,6 +284,7 @@ def test_ref_resolution_and_history() -> None:
         ({"users": [{"login": "u", "tokens": [{"kind": "app"}]}]}, "user.tokens must be non-empty strings"),
         ({"users": [{"login": "u", "tokens": [{"token": "t", "x": 1}]}]}, "token: unknown keys"),
         ({"users": [{"login": "u", "tokens": [{"token": "t", "kind": "saml"}]}]}, "token.kind must be one of"),
+        ({"organizations": [{"login": "bad login"}]}, "invalid organization login"),
         ({"users": [{"login": "u", "tokens": [{"token": "t", "scopes": "repo"}]}]}, "token.scopes must be a list"),
         ({"users": [{"login": "u", "tokens": [{"token": "t", "sso": [""]}]}]}, "token.sso must be non-empty strings"),
         ({"users": [{"login": "u", "tokens": [{"token": "t", "revoked": 1}]}]}, "token.revoked must be a boolean"),
