@@ -33,6 +33,8 @@
   "invite.expiry": "Gültig für",
   "invite.expiry.hours": "{count} h",
   "invite.expiry.days": "{count} Tage",
+  "invite.message": "Persönliche Nachricht (optional)",
+  "invite.message.hint": "Die eingeladene Person sieht sie dort, wo sie beitritt. Eine Zeile, bis 500 Zeichen.",
   "invite.submit": "Einladung erstellen",
   "invite.result.title": "Einladung erstellt",
   "invite.result.warning": "Gib den Link oder den Code vertraulich weiter, z. B. persönlich oder über einen verschlüsselten Kanal. Wer ihn hat, kann beitreten, bis er benutzt wurde oder abläuft. Er wird nur jetzt angezeigt.",

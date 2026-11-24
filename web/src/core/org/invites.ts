@@ -8,12 +8,14 @@
 // current keys: `OK` and the `WK` of every invited workgroup (users: plus the default workgroup). The admin must hold
 // those keys (`epoch_stale` otherwise), so the screens offer only workgroups whose current key the admin holds. On
 // `seq_conflict` the entry and the package are rebuilt on the re-read log with the same code. The code is returned
-// once (link `<origin>/invite#<code>` for users) and never stored or sent.
+// once (link `<origin>/invite#<code>` for users) and never stored or sent. A user invitation may carry the inviter's
+// personal message (rule E-28, KOR-64) in the package; the invitee sees it where it joins.
 //
 // Revocation appends `invite_revoke` (`POST …/invites/{id}/revoke`); an invitation that is no longer open in the
 // re-read log is done.
 import { b64uEncode } from '../encoding/b64u';
 import { formatTime } from '../encoding/time';
+import { isMessageText } from '../crypto/agent';
 import { formatCode, generateCode, inviteSecrets, sealPackage } from '../crypto/invite';
 import { buildEntries, type LogFields } from '../log/entries';
 import { ORG, type OrgState, WG } from '../log/state';
@@ -40,6 +42,8 @@ export type InviteRequest =
       /** Further workgroups (the default workgroup is always included with write). */
       readonly wgs: Readonly<Record<string, Access>>;
       readonly hours: number;
+      /** The inviter's personal message for the invitee (rule E-28), sealed in the package; absent: none. */
+      readonly message?: string;
     }
   | {
       readonly kind: 'device';
@@ -134,6 +138,7 @@ async function attemptInvite(context: OrgContext, org: string, input: InviteInpu
     head: { seq: after.head.seq, hash: after.head.hash },
     keys,
     hub_key: { id: input.hubKey.id, public_key: input.hubKey.public_key },
+    ...(request.kind === 'user' && request.message !== undefined ? { message: request.message } : {}),
     v: 1,
   };
   const packageCt = await sealPackage(secrets, pkg);
@@ -157,6 +162,10 @@ async function attemptInvite(context: OrgContext, org: string, input: InviteInpu
 /** Creates an invitation (`invite` entry + sealed package); retried on `seq_conflict` with the same code. */
 export async function createInvite(context: OrgContext, org: string, input: InviteInput): Promise<CreatedInvite> {
   checkExpiry(input.request.hours);
+  const { request } = input;
+  if (request.kind === 'user' && request.message !== undefined && !isMessageText(request.message)) {
+    refuse('params_invalid');
+  }
   const code = (input.code ?? generateCode)();
   return withLogRetry(context, org, (actor) => attemptInvite(context, org, input, code, actor));
 }

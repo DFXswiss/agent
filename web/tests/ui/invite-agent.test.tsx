@@ -70,6 +70,7 @@ describe('InviteScreen with the pairing of an agent', () => {
     expect(screen.getByTestId('invite.agent.name')).toHaveTextContent('Claude Code');
     expect(screen.getByTestId('invite.agent.host')).toHaveTextContent('Mac');
     expect(screen.getByTestId('invite.agent.warning')).toHaveTextContent('Only confirm if you have just asked');
+    expect(screen.queryByTestId('invite.agent.message')).toBeNull();
     expect(screen.getByTestId('invite.proposed-name')).toHaveTextContent('Your display name: Ada Lovelace');
     expect(screen.queryByTestId('invite.display-name')).toBeNull();
     fireEvent.click(screen.getByTestId('invite.create-passkey'));
@@ -81,6 +82,14 @@ describe('InviteScreen with the pairing of an agent', () => {
     expect(confirmations).toHaveLength(1);
     expect(new FormData(submitted[0]!).get('u')).toBe(app.userId);
     expect(hub.orgs.size).toBe(1);
+  });
+
+  it("quotes the agent's personal message in the agent block, and none without it (E-28)", async () => {
+    await agentInvite({ extra: `&t=${encodeURIComponent('Bitte <b>bestätigen</b>: https://example.com')}` });
+    expect(await screen.findByTestId('invite.agent.message.text')).toHaveTextContent(
+      'Bitte <b>bestätigen</b>: https://example.com',
+    );
+    expect(screen.getByTestId('invite.agent.message.text').querySelector('b')).toBeNull();
   });
 
   it('shows the name field without a proposed name', async () => {

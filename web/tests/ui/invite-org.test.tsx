@@ -51,7 +51,7 @@ interface OrgSetup {
 }
 
 /** An org of the core test world with an open user invitation (code `CODE`), wired into `hub`. */
-async function orgWithInvite(hub: SimHub, names = true): Promise<OrgSetup> {
+async function orgWithInvite(hub: SimHub, names = true, message?: string): Promise<OrgSetup> {
   const one = await idOf('wg one');
   const w = await orgWorld({
     setup: async (world, a) => {
@@ -59,7 +59,13 @@ async function orgWithInvite(hub: SimHub, names = true): Promise<OrgSetup> {
     },
   });
   const created = await createInvite(w.context, w.org, {
-    request: { kind: 'user', role: 'member', wgs: { [one]: 'read' }, hours: 72 },
+    request: {
+      kind: 'user',
+      role: 'member',
+      wgs: { [one]: 'read' },
+      hours: 72,
+      ...(message === undefined ? {} : { message }),
+    },
     directory: {
       orgName: names ? 'Grüße AG' : '',
       workgroups: names
@@ -124,11 +130,11 @@ async function orgWithInvite(hub: SimHub, names = true): Promise<OrgSetup> {
 
 /** Opens `/invite#CODE` with an org invitation; `before` prepares the app (sign-in …). */
 async function openOrgInvite(
-  options: { hub?: SimHub; auth?: FakeAuthenticator; names?: boolean; suffix?: string } = {},
+  options: { hub?: SimHub; auth?: FakeAuthenticator; names?: boolean; suffix?: string; message?: string } = {},
   before?: (made: Made, setup: OrgSetup) => Promise<void>,
 ) {
   const hub = options.hub ?? new SimHub();
-  const setup = await orgWithInvite(hub, options.names);
+  const setup = await orgWithInvite(hub, options.names, options.message);
   window.history.replaceState({ key: 'invite' }, '', `/invite#${CODE}${options.suffix ?? ''}`);
   const harness = await renderApp('/invite', { hub, auth: options.auth ?? new FakeAuthenticator() }, async (made) => {
     if (before) await before(made, setup);
@@ -242,6 +248,7 @@ describe('OrgInvite: new user', () => {
       ['One – read', 'read'],
     ]);
     expect(screen.getByTestId('invite.expires')).toHaveTextContent('The invitation is valid until');
+    expect(screen.queryByTestId('invite.message')).toBeNull();
     expect(window.location.hash).toBe('');
     fireEvent.click(screen.getByTestId('invite.create-passkey'));
     expect(screen.getByTestId('invite.display-name.invalid')).toBeInTheDocument();
@@ -411,6 +418,18 @@ describe('OrgInvite: existing account', () => {
     fireEvent.click(screen.getByTestId('shell.joined.close'));
     expect(screen.queryByTestId('shell.joined')).toBeNull();
     expect(harness.hub.users.size).toBe(1);
+  });
+
+  it("quotes the inviter's personal message where the invitee joins, as plain text (E-28)", async () => {
+    const message = 'Willkommen! <img src=x onerror=alert(1)> https://example.com';
+    await openOrgInvite({ message }, async (made) => {
+      await namedUser(made, 'Ada');
+    });
+    await waitFor(() => expect(screen.getByTestId('invite.join')).toBeInTheDocument());
+    const quote = screen.getByTestId('invite.message.text');
+    expect(quote).toHaveTextContent(message);
+    expect(quote.querySelector('img')).toBeNull();
+    expect(screen.getByTestId('invite.message')).toHaveTextContent('Personal message from the person who invited you');
   });
 
   it('joins under another name when asked', async () => {

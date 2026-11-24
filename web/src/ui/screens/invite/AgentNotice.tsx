@@ -8,6 +8,7 @@
 import type { PairingLink } from '../../../core/agents/link';
 import { useI18n } from '../../i18n';
 import { AgentCodeField, RemoteWarning, type useAgentCode } from '../connect/AgentCode';
+import { RequesterMessage } from '../connect/RequesterMessage';
 
 export interface AgentNoticeProps {
   readonly pairing: PairingLink;
@@ -32,6 +33,7 @@ export function AgentNotice({ pairing, code, disabled }: AgentNoticeProps) {
         </dd>
       </dl>
       <p className="text-sm text-gray-700">{t('connect.stated')}</p>
+      <RequesterMessage message={pairing.message} caption={t('connect.message')} testId="invite.agent.message" />
       <p className="font-semibold">{t('connect.access')}</p>
       <p>{t('invite.agent.main')}</p>
       {pairing.mode === 'remote' ? (

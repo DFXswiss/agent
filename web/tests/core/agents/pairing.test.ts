@@ -42,6 +42,7 @@ async function setup(state = 'open') {
     port: 40123,
     name: 'Claude Code',
     host: 'Mac',
+    message: null as string | null,
   };
   const body = { pairing_id: AGENT, pub, state, expires_at: EXPIRES };
   return { agent, link, body };

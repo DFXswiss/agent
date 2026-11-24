@@ -33,6 +33,8 @@
   "invite.expiry": "Valid for",
   "invite.expiry.hours": "{count} h",
   "invite.expiry.days": "{count} days",
+  "invite.message": "Personal message (optional)",
+  "invite.message.hint": "The invitee sees it where they join. One line, up to 500 characters.",
   "invite.submit": "Create invitation",
   "invite.result.title": "Invitation created",
   "invite.result.warning": "Pass the link or the code on confidentially, e.g. in person or through an encrypted channel. Anybody who has it can join until it is used or expires. It is shown only now.",

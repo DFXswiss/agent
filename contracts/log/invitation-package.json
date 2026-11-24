@@ -75,6 +75,12 @@
       ],
       "additionalProperties": false
     },
+    "message": {
+      "type": "string",
+      "description": "optional personal message of the inviter (rule E-28, KOR-64): 1-500 characters, no leading or trailing space, none of the Unicode categories Cc, Cf, Zl, Zp, Cs, Co, Cn (11-agent-access.md section 3); shown as plain text",
+      "minLength": 1,
+      "maxLength": 500
+    },
     "v": {
       "type": "integer",
       "const": 1

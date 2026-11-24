@@ -5,13 +5,15 @@
 // The parser strips `-` and spaces; a character outside the alphabet (checked before uppercasing) is
 // `invite_code_invalid`, a wrong length `invite_code_length`, non-zero trailing bits `invite_code_invalid`.
 // Package: `b64u(nonce || AES-GCM(package_key, body_json(package), AAD = P || "invite-package\0" || invite_id))`.
-// A package that does not open is `invite_code_invalid`; one with a wrong structure is `header_invalid`.
+// A package that does not open is `invite_code_invalid`; one with a wrong structure is `header_invalid`. A user
+// invitation may carry the inviter's personal `message` (rule E-28, KOR-64; `isMessageText`), the one optional key.
 // Registration proof (ADR-043): `inv_sig = Ed25519_{sk_inv}(P || "invite-register\0" || user_id || "\0" || challenge)`
 // over the raw 32-byte challenge of `register/begin`; only the holder of the code can register through an invitation.
 import { b64uDecode, b64uEncode } from '../encoding/b64u';
 import { concat, utf8 } from '../encoding/bytes';
 import { bodyJson, isPlainObject, isPrintableAscii, parseJson } from '../encoding/json';
 import * as aead from './aead';
+import { isMessageText } from './agent';
 import { CryptoError, fail } from './errors';
 import * as F from './fields';
 import { CODE_BYTES, inviteIdRaw, inviteSignSeed, packageKey } from './kdf';
@@ -25,6 +27,7 @@ const BASE32_ANY_CASE_RE = /^[A-Za-z2-7]*$/;
 const HUB_KEY_ID_RE = /^[a-z0-9-]{1,64}$/;
 export const PACKAGE_VERSION = 1;
 export const PACKAGE_KEYS = ['org', 'org_name', 'wg_names', 'founder', 'head', 'keys', 'hub_key', 'v'];
+export const PACKAGE_MESSAGE_KEY = 'message';
 const HEAD_KEYS = ['seq', 'hash'];
 const KEY_KEYS = ['scope', 'scope_id', 'epoch', 'key'];
 const HUB_KEY_KEYS = ['id', 'public_key'];
@@ -100,7 +103,9 @@ export function packageAad(inviteIdText: unknown): Uint8Array<ArrayBuffer> {
 
 /** Exact key sets and value formats of the package (section 4.6). */
 export function checkPackage(value: unknown): F.Fields {
-  const pkg = F.requireKeys(value, PACKAGE_KEYS);
+  const withMessage = isPlainObject(value) && PACKAGE_MESSAGE_KEY in value;
+  const pkg = F.requireKeys(value, withMessage ? [...PACKAGE_KEYS, PACKAGE_MESSAGE_KEY] : PACKAGE_KEYS);
+  if (withMessage && !isMessageText(pkg.message)) fail('header_invalid');
   F.literal(pkg.v, PACKAGE_VERSION);
   F.uuid(pkg.org);
   if (typeof pkg.org_name !== 'string') fail('header_invalid');

@@ -51,6 +51,7 @@ import { useAppEnv } from '../../shell/context';
 import { errorCode } from '../../shell/errors';
 import { AgentCodeField, RemoteWarning, useAgentCode } from './AgentCode';
 import { takeConnectFragment } from './fragment';
+import { RequesterMessage } from './RequesterMessage';
 import { submitHandover } from './handover';
 
 type Status =
@@ -254,6 +255,7 @@ export function ConnectScreen() {
             </dd>
           </dl>
           <p className="text-sm text-gray-700">{t('connect.stated')}</p>
+          <RequesterMessage message={link.message} caption={t('connect.message')} testId="connect.message" />
           <Age requestedAt={pairing.requestedAt} />
           <p className="font-semibold" data-testid="connect.access">
             {t('connect.access')}

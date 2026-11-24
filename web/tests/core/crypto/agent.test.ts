@@ -49,6 +49,17 @@ describe('agent crypto', () => {
     expect(() => agent.checkLabel(['h', 'n'])).toThrow('header_invalid');
   });
 
+  it('checks a request message like a label, up to 500 characters (E-28)', () => {
+    expect(agent.isMessageText('🙂'.repeat(500))).toBe(true);
+    expect(agent.isMessageText('🙂'.repeat(501))).toBe(false);
+    expect(agent.isMessageText('<b>Hi</b> https://example.com')).toBe(true);
+    expect(agent.isMessageText('a\nb')).toBe(false);
+    expect(agent.isMessageText('a\u202eb')).toBe(false);
+    expect(agent.isMessageText(' a')).toBe(false);
+    expect(agent.isMessageText('')).toBe(false);
+    expect(agent.isMessageText(null)).toBe(false);
+  });
+
   it('reads typed codes leniently and refuses malformed handovers (ADR-067)', async () => {
     expect(agent.tryParseCode('gk08v-h4mrf', 10)).toBe('GK08VH4MRF');
     expect(agent.tryParseCode('gk08v-h4mr', 10)).toBeNull();

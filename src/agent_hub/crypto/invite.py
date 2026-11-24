@@ -8,7 +8,9 @@ text form (`agent_hub.crypto.recovery`).
 
 Package **(changed)**: `b64u(nonce || AES-GCM(package_key, body_json(package), AAD = P || "invite-package\\0" ||
 invite_id))`; the plaintext is body JSON (non-ASCII names allowed). A package that does not open is
-`invite_code_invalid` (section 5.1 step 2); a package with a wrong structure is `header_invalid`.
+`invite_code_invalid` (section 5.1 step 2); a package with a wrong structure is `header_invalid`. A user invitation
+may carry the inviter's personal `message` (rule E-28, KOR-64; `agent.check_message`); without it the package is
+exactly as before.
 
 Registration proof **(new, KOR-01, ADR-043)**: `inv_sig = Ed25519_{sk_inv}(P || "invite-register\\0" || user_id ||
 "\\0" || challenge)` over the raw 32-byte challenge of the registration ceremony (`register/begin`): only the holder of
@@ -25,6 +27,7 @@ from dataclasses import dataclass
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from agent_hub.crypto import aead, fields
+from agent_hub.crypto.agent import check_message
 from agent_hub.crypto.encoding import (
     P,
     b64u_decode,
@@ -58,6 +61,7 @@ _BASE32_ANY_CASE_RE = re.compile(r"[A-Za-z2-7]*")
 _HUB_KEY_ID_RE = re.compile(r"[a-z0-9-]{1,64}")
 PACKAGE_VERSION = 1
 PACKAGE_KEYS = frozenset({"org", "org_name", "wg_names", "founder", "head", "keys", "hub_key", "v"})
+PACKAGE_MESSAGE_KEY = "message"
 _HEAD_KEYS = frozenset({"seq", "hash"})
 _KEY_KEYS = frozenset({"scope", "scope_id", "epoch", "key"})
 _HUB_KEY_KEYS = frozenset({"id", "public_key"})
@@ -132,8 +136,11 @@ def package_aad(invite_id_text: str) -> bytes:
 
 
 def check_package(value: object) -> dict[str, object]:
-    """Exact key sets and value formats of the package (section 4.6)."""
-    package = require_keys(value, PACKAGE_KEYS)
+    """Exact key sets and value formats of the package (section 4.6); `message` is the one optional key."""
+    with_message = isinstance(value, dict) and PACKAGE_MESSAGE_KEY in value
+    package = require_keys(value, PACKAGE_KEYS | {PACKAGE_MESSAGE_KEY} if with_message else PACKAGE_KEYS)
+    if PACKAGE_MESSAGE_KEY in package:
+        check_message(package[PACKAGE_MESSAGE_KEY])
     fields.literal(package["v"], PACKAGE_VERSION)
     fields.uuid(package["org"])
     if not isinstance(package["org_name"], str):

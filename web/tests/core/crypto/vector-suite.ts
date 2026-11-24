@@ -456,6 +456,9 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
     same(invite.packageAad(secrets.inviteId), data.package_aad, 'package AAD');
     same(await invite.sealPackage(secrets, data.package, b(data.nonce)), data.sealed, 'sealed package');
     same(await invite.openPackage(secrets, data.sealed), data.package, 'opened package');
+    const withMessage = data.with_message;
+    same(await invite.sealPackage(secrets, withMessage.package, b(data.nonce)), withMessage.sealed, 'package+message');
+    same(await invite.openPackage(secrets, withMessage.sealed), withMessage.package, 'opened package+message');
     const proof = data.register;
     same(invite.registerText(proof.user_id, b(proof.challenge)), proof.text, 'register text');
     same(await invite.signRegister(secrets, proof.user_id, b(proof.challenge)), proof.inv_sig, 'inv_sig');

@@ -82,6 +82,7 @@ describe('createInvite', () => {
     expect(pkg.founder).toBe(a.ada!.identity.public().sig);
     expect(pkg.head).toEqual(w.world.log!.head);
     expect(pkg.hub_key).toEqual(HUB_KEY);
+    expect(pkg).not.toHaveProperty('message');
     const held = keyRing(w.store, w.org);
     const raw = (scope: string, id: string) => held(scope, id, 1)!.reveal((k) => b64uEncode(k));
     expect(pkg.keys).toEqual([
@@ -116,6 +117,23 @@ describe('createInvite', () => {
       w.hub.invites.get(device.inviteId)!.package_ct,
     );
     expect((devicePkg.keys as { scope_id: string }[]).map((k) => k.scope_id)).toEqual([w.org, one]);
+  });
+
+  it("seals the inviter's personal message into the package (E-28)", async () => {
+    const { w, input } = await setup();
+    const message = 'Hallo <b>Bob</b>, siehe https://example.com';
+    const created = await createInvite(
+      w.context,
+      w.org,
+      input({ kind: 'user', role: 'member', wgs: {}, hours: 72, message }),
+    );
+    const pkg = await openPackage(
+      await inviteSecrets(parseCode(created.code)),
+      w.hub.invites.get(created.inviteId)!.package_ct,
+    );
+    expect(pkg.message).toBe(message);
+    const bad = input({ kind: 'user', role: 'member', wgs: {}, hours: 72, message: 'a\nb' });
+    await expect(createInvite(w.context, w.org, bad)).rejects.toMatchObject({ code: 'params_invalid' });
   });
 
   it('refuses what it cannot do', async () => {

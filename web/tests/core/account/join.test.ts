@@ -49,7 +49,7 @@ interface Invited {
   request(method: string, target: string, options?: { body: unknown }): Promise<unknown>;
 }
 
-async function invited(options: { setup?: Parameters<typeof orgWorld>[0] } = {}): Promise<Invited> {
+async function invited(options: { setup?: Parameters<typeof orgWorld>[0]; message?: string } = {}): Promise<Invited> {
   const one = await idOf('wg one');
   const w = await orgWorld({
     ...options.setup,
@@ -59,7 +59,13 @@ async function invited(options: { setup?: Parameters<typeof orgWorld>[0] } = {})
     },
   });
   const created = await createInvite(w.context, w.org, {
-    request: { kind: 'user', role: 'member', wgs: { [one]: 'read' }, hours: 72 },
+    request: {
+      kind: 'user',
+      role: 'member',
+      wgs: { [one]: 'read' },
+      hours: 72,
+      ...(options.message === undefined ? {} : { message: options.message }),
+    },
     directory: {
       orgName: 'Grüße AG',
       workgroups: new Map([
@@ -110,6 +116,12 @@ async function invited(options: { setup?: Parameters<typeof orgWorld>[0] } = {})
 const joiner = (erin: Actor) => ({ userId: erin.id, identity: erin.identity });
 
 describe('openInvitation', () => {
+  it("carries the inviter's personal message of the package (E-28)", async () => {
+    const { w, lookup } = await invited({ message: 'Willkommen <b>Erin</b>' });
+    const invitation = await openInvitation(CODE, lookup(), w.hub.platform!.state);
+    expect(invitation.message).toBe('Willkommen <b>Erin</b>');
+  });
+
   it('opens the package and verifies the lookup log', async () => {
     const { w, one, lookup, inviteId } = await invited();
     const invitation = await openInvitation(CODE, lookup(), w.hub.platform!.state);
@@ -117,6 +129,7 @@ describe('openInvitation', () => {
       inviteId,
       org: w.org,
       orgName: 'Grüße AG',
+      message: null,
       defaultWg: w.world.defaultWg,
       role: 'member',
       expires: formatTime(T0 + 72 * 3600_000),

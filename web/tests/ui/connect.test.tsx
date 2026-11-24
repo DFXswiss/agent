@@ -44,6 +44,8 @@ interface Options {
   readonly signedIn?: boolean;
   /** The user's current main orchestrator: its label sealed to the user (`known`) or to someone else. */
   readonly current?: 'known' | 'unknown';
+  /** Further fragment parameters (e.g. the agent's message `t`). */
+  readonly extra?: string;
 }
 
 async function oldAgent(identity: Identity, userId: string, current: 'known' | 'unknown') {
@@ -80,7 +82,7 @@ async function connectPage(options: Options = {}) {
   const agents: unknown[] = [];
   hub.override.set('GET /v1/me/agents', () => ({ agents }));
   let recoveryCode = '';
-  window.history.replaceState(null, '', `/connect#${await fragmentOf(agent)}`);
+  window.history.replaceState(null, '', `/connect#${await fragmentOf(agent, options.extra)}`);
   const harness = await renderApp('/connect', { hub, auth }, async (made) => {
     const invite = hub.addInvite();
     const registration = await register(made.app.anon, auth, invite);
@@ -116,6 +118,7 @@ describe('ConnectScreen', () => {
     expect(screen.getByTestId('connect.age')).toHaveTextContent('Requested 3 min ago');
     expect(screen.getByTestId('connect.main')).toHaveTextContent('It becomes your main orchestrator.');
     expect(screen.queryByTestId('connect.replaces')).toBeNull();
+    expect(screen.queryByTestId('connect.message')).toBeNull();
     fireEvent.click(screen.getByTestId('connect.confirm'));
     await waitFor(() => expect(submitted).toHaveLength(1));
     expect(screen.getByTestId('connect.handover')).toBeInTheDocument();
@@ -128,6 +131,15 @@ describe('ConnectScreen', () => {
     expect(confirmations).toHaveLength(1);
     const begin = hub.log.filter((entry) => entry.target === '/v1/passkeys/login/begin').at(-1)!;
     expect(JSON.parse(begin.body)).toEqual({ pairing_id: PAIRING });
+  });
+
+  it("quotes the agent's personal message as plain text (E-28)", async () => {
+    const text = '<a href="https://evil.example">Klick</a> **bold**';
+    await connectPage({ extra: `&t=${encodeURIComponent(text)}` });
+    const quote = await screen.findByTestId('connect.message.text');
+    expect(quote).toHaveTextContent(text);
+    expect(quote.querySelector('a')).toBeNull();
+    expect(screen.getByTestId('connect.message')).toHaveTextContent('Personal message of the agent');
   });
 
   it('offers the gesture again after a cancel and after pairing_gesture_required, with the same body', async () => {

@@ -36,6 +36,8 @@ import { sha256 } from './subtle';
 export const FINGERPRINT_BYTES = 16;
 export const SECRET_BYTES = 32;
 export const LABEL_TEXT_MAX = 64;
+/** Longest personal message of a request for access (rule E-28, KOR-64), in characters. */
+export const MESSAGE_TEXT_MAX = 500;
 export const MODE_REMOTE = 'remote';
 export const NONCE_BYTES = 16;
 export const AGENT_CODE_LENGTH = 10;
@@ -149,15 +151,27 @@ export async function openIdentity(
   return parseBundlePlaintext(await aead.openBlob(await bundleKey(secret, agentId, userId), inner, info));
 }
 
-/** Whether `text` may be the name or host of a label (module comment). */
-export function isLabelText(text: unknown): text is string {
+function isRuledText(text: unknown, max: number): text is string {
   return (
     typeof text === 'string' &&
     [...text].length >= 1 &&
-    [...text].length <= LABEL_TEXT_MAX &&
+    [...text].length <= max &&
     text === text.trim() &&
     !REFUSED.test(text)
   );
+}
+
+/** Whether `text` may be the name or host of a label (module comment). */
+export function isLabelText(text: unknown): text is string {
+  return isRuledText(text, LABEL_TEXT_MAX);
+}
+
+/**
+ * Whether `text` may be the personal message of a request for access (rule E-28, KOR-64): 1–500 characters under the
+ * label rules. It is shown only as plain text, quoted as the requester's words.
+ */
+export function isMessageText(text: unknown): text is string {
+  return isRuledText(text, MESSAGE_TEXT_MAX);
 }
 
 /** Exactly `{"host","name"}` with valid texts (`header_invalid`). */

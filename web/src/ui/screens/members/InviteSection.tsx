@@ -4,6 +4,7 @@
 // buttons and the warning to pass them on confidentially; "Done" forgets them. Open invitations (checked against the
 // verified log) can be revoked.
 import { useEffect, useId, useState } from 'react';
+import { MESSAGE_TEXT_MAX } from '../../../core/crypto/agent';
 import { type Access, type Role } from '../../../core/org/members';
 import {
   type CreatedInvite,
@@ -44,10 +45,11 @@ interface InviteFormProps {
 function InviteForm({ org, state, directory, onCreated, onCancel }: InviteFormProps) {
   const { app, origin } = useAppEnv();
   const { t, error } = useI18n();
-  const ids = { role: useId(), expiry: useId() };
+  const ids = { role: useId(), expiry: useId(), message: useId(), hint: useId() };
   const [role, setRole] = useState<Role>('member');
   const [hours, setHours] = useState<number>(USER_EXPIRY_HOURS);
   const [wgs, setWgs] = useState<Record<string, Access>>({});
+  const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [code, setCode] = useState<string | null>(null);
   const held = keyRing(app.store, org);
@@ -59,7 +61,7 @@ function InviteForm({ org, state, directory, onCreated, onCancel }: InviteFormPr
     setCode(null);
     try {
       const created = await createInvite(app.tasks, org, {
-        request: { kind: 'user', role, wgs, hours },
+        request: { kind: 'user', role, wgs, hours, ...(message.trim() === '' ? {} : { message: message.trim() }) },
         directory,
         hubKey: app.config.hub_key,
         origin,
@@ -138,6 +140,22 @@ function InviteForm({ org, state, directory, onCreated, onCancel }: InviteFormPr
           );
         })}
       </select>
+      <label htmlFor={ids.message} className="font-medium">
+        {t('members.invite.message')}
+      </label>
+      <input
+        id={ids.message}
+        type="text"
+        className="min-h-11 rounded border border-gray-300 px-2"
+        value={message}
+        maxLength={MESSAGE_TEXT_MAX}
+        aria-describedby={ids.hint}
+        onChange={(event) => setMessage(event.target.value)}
+        data-testid="members.invite.message"
+      />
+      <p id={ids.hint} className="text-sm text-gray-700">
+        {t('members.invite.message.hint')}
+      </p>
       {code !== null && (
         <p role="alert" className="text-red-800" data-testid="members.invite.error" data-code={code}>
           {error(code).title}

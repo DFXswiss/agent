@@ -58,6 +58,8 @@ export interface OrgInvitation {
   readonly inviteId: string;
   readonly org: string;
   readonly orgName: string;
+  /** The inviter's personal message from the package (rule E-28), or null; shown as plain text only. */
+  readonly message: string | null;
   readonly defaultWg: string;
   readonly role: string;
   readonly workgroups: readonly InvitedWorkgroup[];
@@ -225,6 +227,7 @@ export async function openInvitation(
   return {
     ...base,
     orgName: pkg.org_name as string,
+    message: typeof pkg.message === 'string' ? pkg.message : null,
     defaultWg,
     role: found.role!,
     workgroups: workgroupsOf(defaultWg, found.wgs, pkg.wg_names as Record<string, string>),

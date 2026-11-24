@@ -6,6 +6,7 @@
   "intro.title": "You are invited to {org}",
   "intro.role": "Your role: {role}",
   "intro.workgroups": "You get access to these workgroups:",
+  "message": "Personal message from the person who invited you:",
   "role.admin": "Admin",
   "role.member": "Member",
   "access.read": "read",

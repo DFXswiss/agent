@@ -159,6 +159,18 @@ def test_a_label_must_be_canonical_body_json_and_hold_texts() -> None:
     assert agent.check_label({"host": "Büro-Mac", "name": "x" * 64}) == {"host": "Büro-Mac", "name": "x" * 64}
 
 
+def test_a_request_message_follows_the_label_rules_up_to_500_characters() -> None:
+    assert (
+        agent.check_message("Hallo \u2013 <b>ich</b> bin's: https://example.com")
+        == "Hallo \u2013 <b>ich</b> bin's: https://example.com"
+    )
+    assert agent.check_message("ü" * 500) == "ü" * 500
+    for value in ("", "x" * 501, "a\nb", "a\u202eb", "x ", 5, None):
+        with pytest.raises(CryptoError) as refused:
+            agent.check_message(value)
+        assert refused.value.code == "header_invalid"
+
+
 def test_new_agent_keys_are_fresh_and_seal_with_random_values() -> None:
     first, second = agent.new_agent(), agent.new_agent()
     assert first.public() != second.public()

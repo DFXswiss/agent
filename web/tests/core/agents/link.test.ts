@@ -16,7 +16,21 @@ describe('parsePairingLink', () => {
       port: 40123,
       name: 'Claude Code',
       host: 'Büro-Mac',
+      message: null,
     });
+  });
+
+  it("reads the agent's optional personal message t in either mode (E-28)", () => {
+    const text = '<b>Hi</b> https://example.com';
+    const withMessage = `${valid}&t=${encodeURIComponent(text)}`;
+    expect(parsePairingLink(withMessage)).toMatchObject({ mode: 'loopback', message: text });
+    expect(parsePairingLink(`t=Hallo+Ada&${remote}`)).toMatchObject({ mode: 'remote', message: 'Hallo Ada' });
+    const link = parsePairingLink(withMessage)!;
+    expect(parsePairingLink(pairingFragment(link))).toEqual(link);
+    expect(parsePairingLink(`${valid}&t=${'x'.repeat(500)}`)!.message).toHaveLength(500);
+    for (const bad of [`${valid}&t=a&t=b`, `${valid}&t=`, `${valid}&t=a%0Ab`, `${valid}&t=${'x'.repeat(501)}`]) {
+      expect(parsePairingLink(bad), bad).toBeNull();
+    }
   });
 
   it('refuses anything else', () => {
@@ -46,6 +60,7 @@ describe('parsePairingLink', () => {
       port: null,
       name: 'Claude Code',
       host: 'build-server',
+      message: null,
     });
     expect(parsePairingLink(pairingFragment(link!))).toEqual(link);
     expect(parsePairingLink(pairingFragment(parsePairingLink(valid)!))).toEqual(parsePairingLink(valid));
@@ -116,5 +131,11 @@ describe('parseInviteFragment', () => {
       expect(parseInviteFragment(`${CODE}&${rest}`), rest).toEqual(invalid);
     }
     expect(parseInviteFragment(`${CODE}&u=${'a'.repeat(80)}&${valid}`).displayName).toHaveLength(80);
+  });
+
+  it("carries the agent's message of the pairing (E-28)", () => {
+    const parsed = parseInviteFragment(`${CODE}&${valid}&t=Hallo&u=Ada`);
+    expect(parsed).toMatchObject({ valid: true, displayName: 'Ada', pairing: { message: 'Hallo' } });
+    expect(parseInviteFragment(`${CODE}&${valid}&t=a%0Ab&u=Ada`).valid).toBe(false);
   });
 });

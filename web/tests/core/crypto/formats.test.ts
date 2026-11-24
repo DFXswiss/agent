@@ -229,9 +229,13 @@ describe('invitations', () => {
       { ...pkg, keys: [{ ...pkg.keys[0], scope: 'cred' }] },
       { ...pkg, hub_key: { ...pkg.hub_key, id: 'Hub' } },
       { ...pkg, hub_key: { ...pkg.hub_key, id: 7 } },
+      { ...pkg, message: '' },
+      { ...pkg, message: 'a\nb' },
     ];
     for (const value of bad) expect(await codeOf(() => invite.checkPackage(value))).toBe('header_invalid');
     expect(invite.checkPackage(pkg)).toBe(pkg);
+    const withMessage = { ...pkg, message: 'Hallo <b>Bob</b>' };
+    expect(invite.checkPackage(withMessage)).toBe(withMessage);
   });
 
   it('passes on failures that are not refusals', async () => {

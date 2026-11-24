@@ -6,6 +6,7 @@
   "age.now": "Requested just now",
   "age.minutes": "Requested {minutes} min ago",
   "stated": "Name and computer are what the link states.",
+  "message": "Personal message of the agent (the link states it, it proves nothing):",
   "access": "This agent receives full access to your account and can do everything you can.",
   "main": "It becomes your main orchestrator. You have one at a time: if you already have one, this agent replaces it and the previous one is disconnected at once.",
   "replaces": "Replaces “{name}”, your current main orchestrator. “{name}” is disconnected at once.",

@@ -50,6 +50,7 @@ import { unlockSignIn, uploadMissingSlot, withdrawRegistration } from '../../../
 import { PrfRequired } from '../../../prf-missing/PrfRequired';
 import { PrfMissing } from '../../../prf-missing/PrfMissing';
 import { useAgentCode } from '../../connect/AgentCode';
+import { RequesterMessage } from '../../connect/RequesterMessage';
 import { AgentNotice, ProposedName } from '../AgentNotice';
 import { afterVerify, existingStep, failedStep, type OrgStep, settledPhase, verifyFailed } from './machine';
 
@@ -362,6 +363,7 @@ export function OrgInvite({
 
   const summary = (invitation: OrgInvitation) => (
     <div className="flex flex-col gap-2" data-testid="invite.org-summary">
+      <RequesterMessage message={invitation.message} caption={t('invite-org.message')} testId="invite.message" />
       <p data-testid="invite.role">{t('invite-org.intro.role', { role: t(`invite-org.role.${invitation.role}`) })}</p>
       <p>{t('invite-org.intro.workgroups')}</p>
       <ul className="list-disc pl-6">

@@ -6,6 +6,7 @@
   "age.now": "Gerade eben angefragt",
   "age.minutes": "Vor {minutes} Min. angefragt",
   "stated": "Name und Computer stammen aus dem Link.",
+  "message": "Persönliche Nachricht des Agenten (aus dem Link, sie beweist nichts):",
   "access": "Dieser Agent erhält vollen Zugriff auf dein Konto und kann alles tun, was du tun kannst.",
   "main": "Er wird dein Hauptorchestrator. Du hast immer genau einen: Hast du schon einen, ersetzt ihn dieser Agent, und der bisherige wird sofort getrennt.",
   "replaces": "Ersetzt „{name}“, deinen jetzigen Hauptorchestrator. „{name}“ wird sofort getrennt.",

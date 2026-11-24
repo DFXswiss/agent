@@ -7,8 +7,12 @@
 // A pairing from another computer (ADR-067, section 5.4) has `m=remote` instead of `c`: exactly `p`, `f`, `m`, `a`,
 // `h`. The mode of the link must agree with the hub's `remote` (`pairing.ts`), so neither a changed link nor a hub
 // that flips the flag turns one mode into the other.
+//
+// Either mode may carry one optional `t`: the agent's personal message to the user (rule E-28, KOR-64), 1–500
+// characters under the label rules (`isMessageText`). Like the name it only travels in the fragment, proves nothing
+// and is shown as plain text; a link without `t` is exactly as before.
 import { displayName } from '../account/genesis';
-import { isLabelText, FINGERPRINT_BYTES } from '../crypto/agent';
+import { isLabelText, isMessageText, FINGERPRINT_BYTES } from '../crypto/agent';
 import { isB64u } from '../encoding/b64u';
 import { isUuid7 } from '../encoding/ids';
 
@@ -17,6 +21,8 @@ export const PORT_MAX = 65535;
 export const LINK_KEYS = ['p', 'f', 'c', 'a', 'h'] as const;
 export const REMOTE_LINK_KEYS = ['p', 'f', 'm', 'a', 'h'] as const;
 export const MODE_REMOTE = 'remote';
+/** The optional parameter of the agent's personal message (E-28). */
+export const MESSAGE_KEY = 't';
 
 /** `loopback`: the agent listens on this computer; `remote`: it runs on another computer (ADR-067). */
 export type PairingMode = 'loopback' | 'remote';
@@ -32,6 +38,8 @@ export interface PairingLink {
   /** The agent's name and computer as the link states them (they prove nothing). */
   readonly name: string;
   readonly host: string;
+  /** The agent's personal message as the link states it (`t`), or null. */
+  readonly message: string | null;
 }
 
 /** The port of `c`, or null outside 1024–65535 or not in canonical decimal form. */
@@ -43,7 +51,11 @@ export function parsePort(text: string): number | null {
 
 /** The pairing of a fragment (without `#`), or null if it is not exactly a valid pairing link. */
 export function parsePairingLink(fragment: string): PairingLink | null {
-  const entries = [...new URLSearchParams(fragment)];
+  const params = new URLSearchParams(fragment);
+  const messages = params.getAll(MESSAGE_KEY);
+  if (messages.length > 1 || (messages.length === 1 && !isMessageText(messages[0]))) return null;
+  params.delete(MESSAGE_KEY);
+  const entries = [...params];
   const values = new Map(entries);
   const mode: PairingMode = values.has('m') ? 'remote' : 'loopback';
   const keys = mode === 'remote' ? REMOTE_LINK_KEYS : LINK_KEYS;
@@ -55,7 +67,7 @@ export function parsePairingLink(fragment: string): PairingLink | null {
   const modeValid = mode === 'remote' ? c === MODE_REMOTE : port !== null;
   if (!modeValid || !isUuid7(p) || f!.length !== FINGERPRINT_LENGTH || !isB64u(f)) return null;
   if (!isLabelText(a) || !isLabelText(h)) return null;
-  return { mode, pairingId: p, fingerprint: f, port, name: a, host: h };
+  return { mode, pairingId: p, fingerprint: f, port, name: a, host: h, message: messages[0] ?? null };
 }
 
 /** The fragment of a pairing link (the inverse of `parsePairingLink`). */
@@ -67,6 +79,7 @@ export function pairingFragment(link: PairingLink): string {
     mode,
     ['a', link.name],
     ['h', link.host],
+    ...(link.message === null ? [] : [[MESSAGE_KEY, link.message] as [string, string]]),
   ]).toString();
 }
 
@@ -85,7 +98,7 @@ export interface InviteFragment {
 const DISPLAY_NAME_KEY = 'u';
 
 /**
- * `/invite#<code>[&p=…&f=…&c=…&a=…&h=…[&u=<display name>]]` (11-agent-access.md section 5.2): the code stays the
+ * `/invite#<code>[&p=…&f=…&c=…&a=…&h=…[&t=<message>][&u=<display name>]]` (11-agent-access.md section 5.2): the code stays the
  * first part; parameters after it must be exactly a pairing link and at most one display name. A name that is not
  * 1–80 characters after trimming makes the fragment invalid like a broken pairing.
  */

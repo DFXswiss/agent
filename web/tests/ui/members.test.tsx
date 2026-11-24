@@ -4,6 +4,7 @@
 // are slow or impossible to produce there (refusals, retries, empty and unnamed rows, inherited access).
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { inviteSecrets, openPackage, parseCode } from '../../src/core/crypto/invite';
 import { createI18n } from '../../src/core/i18n';
 import { HubError } from '../../src/core/net/signedFetch';
 import { ActionDialog, advance, NO_PROGRESS, Progress } from '../../src/ui/screens/members/ActionDialog';
@@ -180,6 +181,21 @@ describe('invitations', () => {
     fireEvent.click(screen.getByTestId('members.invite.done'));
     expect(screen.queryByTestId('members.invite.code')).toBeNull();
     expect(await screen.findAllByTestId('members.invites.item')).toHaveLength(1);
+  });
+
+  it('seals an optional personal message into the invitation and refuses one with control characters (E-28)', async () => {
+    const { w } = await membersWorld();
+    mount(w, at('/x'), `/o/${w.org}/members`);
+    fireEvent.click(await screen.findByTestId('members.invite.open'));
+    fireEvent.change(screen.getByTestId('members.invite.message'), { target: { value: 'a\u202eb' } });
+    fireEvent.click(screen.getByTestId('members.invite.submit'));
+    expect(await screen.findByTestId('members.invite.error')).toHaveAttribute('data-code', 'params_invalid');
+    fireEvent.change(screen.getByTestId('members.invite.message'), { target: { value: '  Hallo <b>Erin</b>  ' } });
+    fireEvent.click(screen.getByTestId('members.invite.submit'));
+    const code = (await screen.findByTestId('members.invite.code')).textContent!;
+    const secrets = await inviteSecrets(parseCode(code));
+    const pkg = await openPackage(secrets, w.hub.invites.get(secrets.inviteId)!.package_ct);
+    expect(pkg.message).toBe('Hallo <b>Erin</b>');
   });
 
   it('shows refusals of create, list and revoke and revokes', async () => {
