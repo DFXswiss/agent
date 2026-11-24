@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import os
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -352,7 +353,10 @@ def test_the_pool_of_a_daemon_is_built_once_from_its_configuration(tmp_path: Pat
     off = SimpleNamespace(config=SimpleNamespace())
     assert operator.pool_for(off) is None
     alone = SimpleNamespace(config=SimpleNamespace(operator_subscription_dir=directory, operator_subscription_orgs=()))
-    assert operator.pool_for(alone) is None
+    only_log = operator.pool_for(alone)  # ADR-077: the directory alone is a pool; the organizations come from the log
+    assert only_log is not None
+    assert only_log.orgs == frozenset()
+    assert not only_log.allows(ORG)  # no identity: no verified platform log
     log = io.StringIO()
     context = SimpleNamespace(
         config=SimpleNamespace(operator_subscription_dir=directory, operator_subscription_orgs=frozenset({ORG})),
@@ -367,6 +371,30 @@ def test_the_pool_of_a_daemon_is_built_once_from_its_configuration(tmp_path: Pat
     assert not found.allows(None)
     found.log("runner.model x")
     assert log.getvalue() == "runner.model x\n"
+
+
+def test_the_verified_platform_log_decides_before_the_environment(tmp_path: Path) -> None:
+    """ADR-077 section 3: the latest `org_operator_subscriptions` of an organization in the verified platform log
+    decides, also a revocation of a listed organization; without an entry the environment list applies."""
+    pool = make(pool_dir(tmp_path))
+    listed, granted, revoked = ORG, str(uuid.uuid4()), str(uuid.uuid4())
+    assert pool.allows(listed)  # no verified log yet: the environment list
+    state = SimpleNamespace(operator_subscriptions={granted: True, revoked: False, listed: False})
+    state.operator_subscribed = lambda org: state.operator_subscriptions.get(org, False)
+    pool.platform = lambda: state  # type: ignore[assignment]
+    assert pool.allows(granted)
+    assert not pool.allows(revoked)
+    assert not pool.allows(listed)  # the log's revocation wins over the environment
+    state.operator_subscriptions = {granted: True}
+    assert pool.allows(listed)  # without an entry the environment list applies again
+    assert not pool.allows(str(uuid.uuid4()))
+
+
+def test_the_platform_state_comes_from_the_daemons_book(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert operator.platform_of(SimpleNamespace())() is None
+    found = SimpleNamespace(platform_state="verified")
+    monkeypatch.setattr(operator, "book_for", lambda context: found)
+    assert operator.platform_of(SimpleNamespace(identity=object()))() == "verified"
 
 
 def test_no_representation_shows_a_token(tmp_path: Path) -> None:

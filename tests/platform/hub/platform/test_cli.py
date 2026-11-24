@@ -572,13 +572,53 @@ def test_waiting_lists_the_tasks_the_operator_must_serve(
             " VALUES (%s, %s, 'device', 'device', 1)",
             (own, device),
         )
+    hub.clock.advance(1)
+    credit = _waiting_task(hub, own, "credit_exhausted")  # ADR-077: credit is the operator's as well
     code, out, _ = run("waiting")
     assert code == 0
     assert out.splitlines() == [
         f"org {closed} wg {first} platform_access_required tasks 1 since 2026-11-21T12:00:00.123Z platform access no",
         f"org {granted} wg {second} no_device tasks 1 since 2026-11-21T12:00:01.123Z platform access yes",
+        f"org {own} wg {credit} credit_exhausted tasks 1 since 2026-11-21T12:00:02.123Z platform access no",
     ]
     certified = plat.enroll()
     plat.certify(certified)
-    assert [line.split()[3] for line in run("waiting")[1].splitlines()] == [first]
+    assert [line.split()[3] for line in run("waiting")[1].splitlines()] == [first, credit]
     assert hub.browser().get("/v1/platform/waiting").status_code == 403
+
+
+def test_switches_lists_and_the_operator_role(
+    run: Callable[..., tuple[int, str, str]], hub: HubHarness, plat: Platform
+) -> None:
+    """ADR-077 section 2: `set-policy`, `grant-operator-subscriptions [--revoke]`, `grant-role operator` and
+    `settings`, which prints the switches and lists of the log verified with the operator's own key."""
+    assert run("settings") == (
+        0,
+        "policy open_platform_access off\npolicy open_platform_invites off\n",
+        "",
+    )
+    org, other, user = new_org(hub), new_org(hub), str(new_user(hub))
+    assert run("set-policy", "open_platform_access", "on")[0] == 0
+    assert run("grant-org-access", "--org", other, "--revoke")[0] == 0
+    assert run("grant-operator-subscriptions", "--org", org)[0] == 0
+    assert run("grant-operator-subscriptions", "--org", other, "--revoke")[0] == 0
+    assert run("grant-role", "operator", "--user", user)[1].startswith("appended role_grant")
+    code, out, _ = run("settings")
+    assert code == 0
+    expected = [
+        "policy open_platform_access on",
+        "policy open_platform_invites off",
+        f"org {other} platform access revoked",
+        *sorted(
+            [f"org {org} operator subscriptions granted", f"org {other} operator subscriptions revoked"],
+            key=lambda line: line.split()[1],
+        ),
+    ]
+    assert out.splitlines() == expected
+    assert run("set-policy", "open_platform_invites", "on")[1].startswith("appended platform_policy")
+    assert plat.query('SELECT name, "on" FROM hub.platform_policy ORDER BY name') == [
+        ("open_platform_access", True),
+        ("open_platform_invites", True),
+    ]
+    assert run("set-policy", "open_platform_access", "off")[0] == 0
+    assert "policy open_platform_access off" in run("settings")[1]

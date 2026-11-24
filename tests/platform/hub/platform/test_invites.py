@@ -112,6 +112,27 @@ def test_without_the_role_everything_is_forbidden(plat: Platform, hub: HubHarnes
     assert create(hub.anon, hub, invite_id).status_code == 401
 
 
+def test_the_open_switch_lets_every_user_invite_with_their_own_list(plat: Platform, hub: HubHarness) -> None:
+    """ADR-077 section 3: with `open_platform_invites` on, a user without the role creates invitations and lists and
+    revokes only its own; the role still sees and revokes every invitation; switched off, the user is refused again."""
+    holder = inviter(plat, hub)
+    plat.append("platform_policy", name="open_platform_invites", on=True)
+    alice, bob = hub.browser(), hub.browser()
+    mine, theirs = new_invite_id(), new_invite_id()
+    assert create(alice, hub, mine).status_code == 200
+    hub.clock.advance(1)
+    assert create(bob, hub, theirs).status_code == 200
+    assert [item["invite_id"] for item in alice.get("/v1/platform/invites").json()["invites"]] == [mine]
+    assert [item["invite_id"] for item in holder.get("/v1/platform/invites").json()["invites"]] == [theirs, mine]
+    refused = alice.post(f"/v1/platform/invites/{theirs}/revoke", json={})
+    assert (refused.status_code, refused.json()["error"]) == (404, "not_found")  # another user's invitation
+    assert alice.post(f"/v1/platform/invites/{mine}/revoke", json={}).status_code == 200
+    assert holder.post(f"/v1/platform/invites/{theirs}/revoke", json={}).status_code == 200
+    plat.append("platform_policy", name="open_platform_invites", on=False)
+    closed = create(alice, hub, new_invite_id())
+    assert (closed.status_code, closed.json()["error"]) == (403, "forbidden")
+
+
 @pytest.mark.parametrize("hours", [-1, 0, 30 * 24 + 0.01])
 def test_expiry_must_be_within_thirty_days(plat: Platform, hub: HubHarness, hours: float) -> None:
     response = create(inviter(plat, hub), hub, new_invite_id(), hours=hours)

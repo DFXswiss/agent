@@ -78,16 +78,20 @@ def add_notification(hub: HubFake, user: str, *, org: str | None = None, kind: s
     return cast(str, notification["notification_id"])
 
 
-def grant_inviter(hub: HubFake, user: str) -> None:
-    """A `role_grant` of the platform role `inviter` in the platform log."""
+def grant_inviter(hub: HubFake, user: str, role: str = "inviter") -> None:
+    """A `role_grant` of a platform role (`inviter`, or `operator`, ADR-077) in the platform log."""
+    platform_entry(hub, type="role_grant", subject=user, role=role)
+
+
+def platform_entry(hub: HubFake, **fields: object) -> None:
+    """A root-signed platform-log entry with the given type fields (`platform_policy`,
+    `org_operator_subscriptions`, ...)."""
     head = hub.platform_entries[-1]
     hub._platform_append(
         {
             "seq": len(hub.platform_entries),
             "prev": entry_hash(head),
-            "type": "role_grant",
-            "subject": user,
-            "role": "inviter",
+            **fields,
             "by": "platform-root",
             "ts": now_ms_text(),
             "v": 1,
@@ -266,7 +270,8 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
         return 200, {"revoked": len(rows)}
 
     def inviter(request: Request) -> bool:
-        return hub.platform_state().has_role(cast(str, request.user), "inviter")
+        state = hub.platform_state()
+        return state.has_role(cast(str, request.user), "inviter") or state.policy("open_platform_invites")
 
     def create_invite(request: Request, body: Any) -> tuple[int, Any]:
         if not inviter(request):

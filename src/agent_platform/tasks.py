@@ -129,7 +129,7 @@ def ensure_device(account: Account, org: str, wg: str) -> str | None:
     try:
         return str(device_assign(account, wg)["device_id"])
     except PlatformError as error:
-        if error.code in ("no_device", "hub_refused"):
+        if error.code == "no_device" or error.fields.get("reason") == "platform_access_denied":
             return None
         raise
 

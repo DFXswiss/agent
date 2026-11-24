@@ -18,6 +18,7 @@ from agent_runner.crypto.log.entries import entry_hash
 from agent_runner.crypto.log.state import ORG, WG
 
 from .conftest import Tool
+from .fakes.account_views import platform_entry
 from .fakes.membership import extra
 from .hubfake import HubFake, User, now_ms_text
 
@@ -298,3 +299,33 @@ def test_diagnose_falls_back_to_the_transition_reason(tool: Tool, hub: HubFake, 
     }
     hub.tasks[task_id] = task
     assert tool.run("diagnose", "--task", task_id)[1]["findings"][-1]["reason"] == "keys_pending"
+
+
+# --- the first task of an admin assigns a device (ADR-077, rule E-05) ---
+
+
+def test_an_admins_task_assigns_a_platform_device_first(tool: Tool, hub: HubFake, account: User) -> None:
+    org = private_org(hub, account)
+    wg = hub.orgs[org].log.state.default_wg
+    device, seq = hub.certify_device()
+    hub.candidates[wg] = [{"device_id": device, "platform_seq": seq}]
+    created = tool.run("task", "create", "--wg", wg, "--text", "Fix the login bug")[1]
+    assert created["assigned_device"] == device, created
+    assert hub.orgs[org].log.state.assigned(device, wg)
+    assert tool.run("task", "create", "--wg", wg, "--text", "More")[1]["assigned_device"] is None  # assigned already
+    chosen = tool.run("task", "create", "--wg", wg, "--text", "There", "--device", device)[1]
+    assert chosen["assigned_device"] is None  # a choice is the user's: nothing is assigned on top
+    # a team organization without platform access waits (the operators are asked); with the switch it is assigned
+    team_org = team(tool)
+    team_wg = hub.orgs[team_org].log.state.default_wg
+    hub.candidates[team_wg] = [{"device_id": device, "platform_seq": seq}]
+    assert tool.run("task", "create", "--wg", team_wg, "--text", "Fix it")[1]["assigned_device"] is None
+    platform_entry(hub, type="platform_policy", name="open_platform_access", on=True)
+    assert tool.run("task", "create", "--wg", team_wg, "--text", "Fix it")[1]["assigned_device"] == device
+    # no candidate: the task is created and waits
+    empty_wg = tool.run("wg", "create", "--org", team_org, "--name", "Ops")[1]["wg_id"]
+    assert tool.run("task", "create", "--wg", empty_wg, "--text", "Wait")[1]["assigned_device"] is None
+    # any other failure of the assignment is reported, the task is not sent
+    broken = tool.run("wg", "create", "--org", team_org, "--name", "Broken")[1]["wg_id"]
+    hub.hooks[("GET", f"/v1/workgroups/{broken}/device-candidates")] = lambda body, request: (200, {"candidates": 1})
+    assert tool.run("task", "create", "--wg", broken, "--text", "Never")[1]["ok"] is False

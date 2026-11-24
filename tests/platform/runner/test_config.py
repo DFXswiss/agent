@@ -646,11 +646,13 @@ def test_operator_subscriptions_and_operator_github_together(
     refused(base, "OPERATOR_GITHUB_TOKEN_FILE", device_kind="org")
 
 
-def test_operator_subscriptions_need_both_settings(base: dict[str, str], operator_dir: Path) -> None:
+def test_the_operator_list_needs_the_directory(base: dict[str, str], operator_dir: Path) -> None:
+    """ADR-077: the directory alone is valid (the organizations come from the platform log); the list needs it."""
     base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = str(operator_dir)
-    refused(base, "OPERATOR_SUBSCRIPTION_ORGS")
-    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = "  "  # empty is nobody, and the directory alone is not valid
-    refused(base, "OPERATOR_SUBSCRIPTION_ORGS")
+    alone = load(base, device_kind="platform")
+    assert (alone.operator_subscription_dir, alone.operator_subscription_orgs) == (operator_dir, frozenset())
+    base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = "  "  # empty is nobody
+    assert load(base, device_kind="platform").operator_subscription_orgs == frozenset()
     del base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"]
     base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS"] = ORG_A
     refused(base, "OPERATOR_SUBSCRIPTION_DIR")

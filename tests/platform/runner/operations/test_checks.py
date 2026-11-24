@@ -265,6 +265,13 @@ def test_protected_branches_are_refused(op_type: str, field: str, value: str) ->
     assert refused(op_type, with_(op_type, **{field: value})).code == "branch_protected"
 
 
+@pytest.mark.parametrize("op_type", ["github.create_branch", "github.commit", "github.push"])
+def test_without_settings_no_branch_is_protected(op_type: str) -> None:
+    """ADR-077 section 3, A17: the platform sets no default; GitHub's own branch protection applies."""
+    checked = checks.check(request(op_type, with_(op_type, branch="main"), settings=DEFAULTS))
+    assert checked["branch"] == "main"
+
+
 def test_a_protected_base_or_a_nested_release_branch_is_fine() -> None:
     checks.check(request("github.create_pull_request", with_("github.create_pull_request", base="main")))
     checks.check(request("github.create_branch", with_("github.create_branch", branch="release/1/hotfix")))

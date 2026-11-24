@@ -19,7 +19,7 @@ from agent_runner.crypto.keys import ed25519_seed
 from agent_runner.crypto.recovery import generate_recovery_code, parse_recovery_code, recovery_id
 
 from .conftest import Tool, wait_for
-from .fakes.account_views import grant_inviter, views
+from .fakes.account_views import grant_inviter, platform_entry, views
 from .hubfake import AgentRow, HubFake, User, now_ms_text
 
 
@@ -117,6 +117,23 @@ def test_revoke_all(tool: Tool, hub: HubFake, account: User) -> None:
     done = tool.run("agents", "revoke", "--all")[1]
     assert (done["revoked"], done["this_agent_revoked"]) == (1, True)
     assert {row.state for row in hub.agents.values()} == {"revoked"}
+
+
+def test_the_open_switch_lets_every_user_invite(tool: Tool, hub: HubFake, account: User) -> None:
+    """ADR-077: with `open_platform_invites` on, a user without the role invites; `platform settings` shows why."""
+    shown = tool.run("platform", "settings")[1]
+    assert shown["policies"] == {"open_platform_access": False, "open_platform_invites": False}
+    assert (shown["roles"], shown["may_invite"], shown["operator_subscriptions"]) == ([], False, [])
+    org = uuid7()
+    platform_entry(hub, type="platform_policy", name="open_platform_invites", on=True)
+    platform_entry(hub, type="org_operator_subscriptions", org=org, granted=True)
+    platform_entry(hub, type="org_operator_subscriptions", org=uuid7(), granted=False)
+    grant_inviter(hub, account.id, "operator")
+    shown = tool.run("platform", "settings")[1]
+    assert shown["policies"] == {"open_platform_access": False, "open_platform_invites": True}
+    assert (shown["roles"], shown["may_invite"], shown["operator_subscriptions"]) == (["operator"], True, [org])
+    code, invited = tool.run("platform", "invite")
+    assert code == 0, invited
 
 
 def test_platform_invitations(tool: Tool, hub: HubFake, account: User) -> None:
