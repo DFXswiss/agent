@@ -14,5 +14,12 @@
   "play": "Play",
   "pause": "Pause",
   "speed.label": "Playback speed",
-  "speed": "{speed}×"
+  "speed": "{speed}×",
+  "earlier.load": "Load earlier output",
+  "earlier.loading": "Loading earlier output…",
+  "earlier.loaded": "{count} chunks loaded",
+  "earlier.start": "Start of the recording",
+  "earlier.failed": "Earlier output could not be loaded: {reason}",
+  "earlier.cut": "Later output was unloaded to save memory – choose Follow for the newest output.",
+  "earlier.follow": "Earlier output is not kept here – choose History to load it."
 }

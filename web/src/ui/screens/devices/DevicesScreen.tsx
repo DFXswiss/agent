@@ -8,9 +8,12 @@
 // reason from the error catalog, `platform_access_denied`, instead of the button), assign an org device to a further
 // workgroup, unassign (rotation batch), unpair (rotation batch) and rename. Controls the user's verified rights do not
 // allow are not rendered (section 1.2).
-import { useEffect, useRef, useState } from 'react';
+//
+// The rows are a `WindowedList` (ADR-063 section 1: at most `MAX_ROWS` rendered), rebuilt when their inputs change and
+// memoized on their content, so a presence poll re-renders only the rows whose presence changed.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { formatEventTime } from '../../../core/i18n';
+import { formatEventTime, localTimeZone } from '../../../core/i18n';
 import { actionErrorCode, submitBatch } from '../../../core/org/batch';
 import {
   canManageDevices,
@@ -26,12 +29,14 @@ import {
   unpairPlan,
 } from '../../../core/org/devices';
 import { pullOnce } from '../../../core/tasks/pull';
-import type { Directory } from '../../../core/tasks/directory';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { useNow } from '../../countdown/useNow';
+import { WindowedList } from '../../lists/WindowedList';
 import { ActionDialog, BUTTON, PRIMARY } from '../members/ActionDialog';
+import { Chips } from '../members/Chips';
+import { MAX_ROWS, PAGE, sameValue } from '../members/lists';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 import { AddDevice } from './AddDevice';
 import { AssignPlatformDialog, AssignToWorkgroupDialog, RenameDialog } from './dialogs';
@@ -40,7 +45,7 @@ import { deviceName } from './parts';
 /** Presence is re-read this often (the hub's online window is 30 s). */
 export const POLL_MS = 15_000;
 
-type Open =
+export type Open =
   | { readonly kind: 'assign' }
   | { readonly kind: 'to-wg'; readonly row: DeviceRow }
   | { readonly kind: 'rename'; readonly row: DeviceRow }
@@ -110,21 +115,23 @@ function CapacityBar({ hub }: { readonly hub: HubDevice }) {
   );
 }
 
-function DeviceItem(props: {
+/** What a device row shows: the row, the viewer's rights, the workgroup names (one selector for the list). */
+interface DeviceEntry {
   readonly row: DeviceRow;
   readonly admin: boolean;
-  readonly directory: Directory;
+  readonly names: ReadonlyMap<string, string>;
   readonly onOpen: (open: Open) => void;
-}) {
-  const { row, admin, directory, onOpen } = props;
+}
+
+function DeviceRowView({ item }: { readonly item: DeviceEntry }) {
+  const { row, admin, names, onOpen } = item;
   const { t, locale } = useI18n();
   const now = useNow(false);
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const name = deviceName(t, row);
   const hub = row.hub;
-  const wgName = (wg: string) => directory.workgroups.get(wg) ?? t('devices.wg.unnamed');
+  const wgName = (wg: string) => names.get(wg) ?? t('devices.wg.unnamed');
   return (
-    <li className="flex flex-col gap-2 border-b border-gray-200 py-3" data-testid="devices.item" data-device={row.id}>
+    <>
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium" data-testid="devices.item.name">
           {name}
@@ -152,17 +159,22 @@ function DeviceItem(props: {
             {hub.last_seen_at === null
               ? t('devices.never-seen')
               : t('devices.last-seen', {
-                  time: formatEventTime(Date.parse(hub.last_seen_at), { locale, timeZone, now }),
+                  time: formatEventTime(Date.parse(hub.last_seen_at), { locale, timeZone: localTimeZone(), now }),
                 })}
           </span>
           <span data-testid="devices.item.version">{t('devices.version', { version: hub.agent_version })}</span>
         </div>
       )}
       {hub !== null && <CapacityBar hub={hub} />}
-      <ul className="flex flex-wrap gap-2 text-sm" aria-label={t('devices.workgroups')} data-testid="devices.item.wgs">
-        {row.workgroups.length === 0 && <li className="text-gray-600">{t('devices.no-workgroups')}</li>}
-        {row.workgroups.map((wg) => (
-          <li key={wg} className="flex items-center gap-1 rounded border border-gray-200 px-2" data-wg={wg}>
+      <Chips
+        items={row.workgroups}
+        wgOf={sameWg}
+        testId="devices.item.wgs"
+        label={t('devices.workgroups')}
+        more="devices.wgs.more"
+        empty={<li className="text-gray-600">{t('devices.no-workgroups')}</li>}
+        render={(wg) => (
+          <>
             <span>{wgName(wg)}</span>
             {admin && (
               <button
@@ -175,9 +187,9 @@ function DeviceItem(props: {
                 ×
               </button>
             )}
-          </li>
-        ))}
-      </ul>
+          </>
+        )}
+      />
       {admin && (
         <div className="flex flex-wrap gap-2">
           {row.kind === 'org' && (
@@ -208,7 +220,42 @@ function DeviceItem(props: {
           </button>
         </div>
       )}
-    </li>
+    </>
+  );
+}
+
+const sameWg = (wg: string) => wg;
+const deviceKey = (entry: DeviceEntry) => entry.row.id;
+const deviceAttributes = (entry: DeviceEntry) => ({ 'data-testid': 'devices.item', 'data-device': entry.row.id });
+
+/** The device rows, newest member first, windowed; a presence poll re-renders only rows whose content changed. */
+export function DeviceList(props: {
+  readonly rows: readonly DeviceRow[];
+  readonly admin: boolean;
+  readonly names: ReadonlyMap<string, string>;
+  readonly onOpen: (open: Open) => void;
+}) {
+  const { rows, admin, names, onOpen } = props;
+  const entries = useMemo(
+    () => rows.map((row): DeviceEntry => ({ row, admin, names, onOpen })),
+    [rows, admin, names, onOpen],
+  );
+  return (
+    <WindowedList
+      listId="devices"
+      items={entries}
+      getKey={deviceKey}
+      Row={DeviceRowView}
+      same={sameValue}
+      newest="start"
+      page={PAGE}
+      maxRows={MAX_ROWS}
+      testId="devices.list"
+      labels={{ older: 'devices.list.more', newer: 'devices.list.above', newest: 'devices.list.top' }}
+      rowClassName="flex flex-col gap-2 border-b border-gray-200 py-3"
+      rowAttributes={deviceAttributes}
+      rowHeight="lg"
+    />
   );
 }
 
@@ -254,6 +301,11 @@ export function DevicesScreen() {
   }, [app, org, platformMissing]);
   const hub = useHubDevices(org, state === null ? null : state.head);
   const [open, setOpen] = useState<Open | null>(null);
+  // rebuilt when the log, the platform log, the hub's list or the labels change, not on every render
+  const rows = useMemo(
+    () => (state === null ? [] : deviceRows(state, verified, hub.rows, labels)),
+    [state, verified, hub.rows, labels],
+  );
   if (state === null)
     return (
       <p className="p-4" data-testid="devices.loading">
@@ -267,7 +319,6 @@ export function DevicesScreen() {
       </p>
     );
   const admin = canManageDevices(state, userId);
-  const rows = deviceRows(state, verified, hub.rows, labels);
   const close = () => setOpen(null);
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" data-testid="devices.screen">
@@ -289,11 +340,7 @@ export function DevicesScreen() {
           {t('devices.empty')}
         </p>
       )}
-      <ul data-testid="devices.list">
-        {rows.map((row) => (
-          <DeviceItem key={row.id} row={row} admin={admin} directory={directory} onOpen={setOpen} />
-        ))}
-      </ul>
+      <DeviceList rows={rows} admin={admin} names={directory.workgroups} onOpen={setOpen} />
       {open?.kind === 'assign' && (
         <AssignPlatformDialog org={org} state={state} directory={directory} onClose={close} />
       )}

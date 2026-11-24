@@ -64,5 +64,9 @@
   "rename.open": "Rename",
   "rename.title": "Rename {name}",
   "rename.label": "Name",
-  "rename.confirm": "Save"
+  "rename.confirm": "Save",
+  "wgs.more": "{count} more – show",
+  "list.more": "{count} more devices – show",
+  "list.above": "{count} devices above – show",
+  "list.top": "Back to the top"
 }

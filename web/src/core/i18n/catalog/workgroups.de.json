@@ -27,5 +27,8 @@
   "archive.confirm": "Archivieren",
   "archive.body": "Archivierte Workgroups behalten ihre Historie, nehmen aber keine neuen Tasks oder Änderungen an.",
   "unlocking": "Wird freigeschaltet – die Inhalte erscheinen, sobald ein Mitglied oder Gerät dieser Workgroup online war.",
-  "unlocking.lost": "Ältere Inhalte dieser Workgroup lassen sich nicht mehr öffnen: Niemand, der sie teilen könnte, ist mehr dabei. Neue Inhalte werden in Kürze für dich lesbar."
+  "unlocking.lost": "Ältere Inhalte dieser Workgroup lassen sich nicht mehr öffnen: Niemand, der sie teilen könnte, ist mehr dabei. Neue Inhalte werden in Kürze für dich lesbar.",
+  "list.more": "{count} weitere Workgroups – anzeigen",
+  "list.above": "{count} Workgroups darüber – anzeigen",
+  "list.top": "Zurück zum Anfang"
 }

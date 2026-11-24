@@ -205,6 +205,49 @@ describe('timeline', () => {
     expect(second).not.toBe(first);
     expect(selectTimeline(WG, TASK, MAIN)(store.getState())).toEqual([]);
   });
+
+  it('merges changes of the events incrementally and equals a full build', () => {
+    const store = createStore();
+    putTasks(store, [task({ closed_at: '2026-11-21T12:00:09.500Z' })]);
+    putSession(store, session(MAIN), [], 0);
+    const select = selectTimeline(WG, TASK);
+    const full = () =>
+      buildTimeline({
+        scope: store.getState().events[WG],
+        task: store.getState().tasks.tasks[TASK]!,
+        sessions: store.getState().tasks.sessions,
+      });
+    expect(select(store.getState())).toEqual(full());
+    putEvents(store, WG, [event(3, 'prompt'), event(1, 'prompt', { status: 'pending' })]);
+    const first = select(store.getState());
+    expect(first).toEqual(full());
+    // a pending entry settles, a new one arrives, an unrelated one changes nothing in the items
+    putEvents(store, WG, [event(1, 'prompt'), event(5, 'session.output'), event(6, 'prompt', { task: 'other' })]);
+    const second = select(store.getState());
+    expect(second.map((item) => item.key)).toEqual(full().map((item) => item.key));
+    expect(second.find((item) => item.key === 'e3')).toBe(first.find((item) => item.key === 'e3'));
+    putEvents(store, WG, [event(7, 'prompt', { task: 'other' })]);
+    expect(select(store.getState())).toBe(second);
+    // a replaced item and an evicted one
+    putEvents(store, WG, [event(3, 'prompt', { body: { text: 'changed' } })]);
+    expect(select(store.getState()).find((item) => item.key === 'e3')!.body).toEqual({ text: 'changed' });
+    store.update('events', (events) => {
+      const entries = new Map(events[WG]!.entries);
+      entries.delete(5);
+      entries.delete(6);
+      return { ...events, [WG]: { entries } };
+    });
+    expect(select(store.getState()).map((item) => item.key)).toEqual(full().map((item) => item.key));
+    expect(select(store.getState()).some((item) => item.key === 'e5')).toBe(false);
+    // a hidden entry replaced by a hidden one
+    putEvents(store, WG, [event(8, 'task.meta')]);
+    const hidden = select(store.getState());
+    putEvents(store, WG, [event(8, 'task.meta', { body: { title: 'x' } })]);
+    expect(select(store.getState())).toBe(hidden);
+    // the scope disappears (sign-out of the slice)
+    store.update('events', () => ({}));
+    expect(select(store.getState()).map((item) => item.key)).toEqual(full().map((item) => item.key));
+  });
 });
 
 describe('session tree', () => {

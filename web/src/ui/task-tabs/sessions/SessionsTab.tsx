@@ -2,15 +2,30 @@
 // subagent children by `parent_session_id`, depth ≤ 2 – with state, device (its label,
 // `ui/screens/devices/labels.ts`), model and usage (tokens and cost of the session, slice `usage`); each node links to
 // the session detail `/o/:org/s/:session` (terminal, session chat, children).
+//
+// Many sessions (ADR-063 section 1): the tree is flattened depth first (the depth indents a row) into a
+// `WindowedList` (`WINDOW` rows at first, `PAGE` per move, at most `MAX_ROWS`); one selector delivers the task's
+// sessions and their usage (the same value while neither changed, so other tasks' sessions do not re-render the tab),
+// and the rows are memoized on their session, usage and device name.
+
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { formatMoney, formatNumber } from '../../../core/i18n';
-import { sessionMeta, type SessionNode, sessionTree } from '../../../core/sessions/tree';
+import { flatten, sessionMeta, type SessionNode, sessionTree } from '../../../core/sessions/tree';
+import type { SessionEntry, TasksState } from '../../../core/store/slices/tasks';
+import type { SessionUsage } from '../../../core/store/slices/usage';
+import type { StoreState } from '../../../core/store/store';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
+import { type RowAttributes, WindowedList } from '../../lists/WindowedList';
 import { useDeviceNames } from '../../screens/devices/labels';
 import { useAppEnv } from '../../shell/context';
 import type { TaskTabProps } from '../../registries/task-tabs';
+
+/** Rows rendered at first, rows added by a move, the cap. */
+export const WINDOW = 100;
+export const PAGE = 50;
+export const MAX_ROWS = 200;
 
 export const STATE_BADGE: Readonly<Record<string, string>> = {
   working: 'bg-green-100 text-green-900',
@@ -33,20 +48,22 @@ export function SessionState({ state }: { readonly state: string }) {
   );
 }
 
-/** The device (by name), the model and the usage counter of a session. */
-export function SessionFacts({ node }: { readonly node: Pick<SessionNode, 'entry'> }) {
-  const { app } = useAppEnv();
+/** The device (its name, null without a device), the model and the usage counter of a session. */
+function Facts({
+  entry,
+  device,
+  usage,
+}: {
+  readonly entry: SessionEntry;
+  readonly device: string | null;
+  readonly usage: SessionUsage | null;
+}) {
   const { t, locale } = useI18n();
-  const row = node.entry.row;
-  const name = useDeviceNames([row.org_id]);
-  const model = sessionMeta(node.entry).modelId;
-  const usage = useStore((state) => state.usage.bySession[row.session_id]?.usage ?? null, app.store);
+  const model = sessionMeta(entry).modelId;
   return (
     <span className="flex flex-wrap gap-x-3 text-xs text-gray-600">
       <span data-testid="session.device">
-        {row.device_id === null
-          ? t('task.sessions.device.none')
-          : t('task.sessions.device', { device: name(row.device_id) })}
+        {device === null ? t('task.sessions.device.none') : t('task.sessions.device', { device })}
       </span>
       <span data-testid="session.model">
         {model === null ? t('task.sessions.model.none') : t('task.sessions.model', { model })}
@@ -65,51 +82,144 @@ export function SessionFacts({ node }: { readonly node: Pick<SessionNode, 'entry
   );
 }
 
-function Node({ org, node }: { readonly org: string; readonly node: SessionNode }) {
+/** The facts of one session read from the store (the session screens; the tab reads them once for all rows). */
+export function SessionFacts({ node }: { readonly node: Pick<SessionNode, 'entry'> }) {
+  const { app } = useAppEnv();
+  const row = node.entry.row;
+  const name = useDeviceNames([row.org_id]);
+  const usage = useStore((state) => state.usage.bySession[row.session_id]?.usage ?? null, app.store);
+  return <Facts entry={node.entry} device={row.device_id === null ? null : name(row.device_id)} usage={usage} />;
+}
+
+type Sessions = TasksState['sessions'];
+type Usages = Readonly<Record<string, SessionUsage | null>>;
+
+/** What the tab shows of its task: the task's sessions and the usage of each. */
+export interface TaskSessions {
+  readonly sessions: Sessions;
+  readonly usage: Usages;
+}
+
+function sameRecord<T>(a: Readonly<Record<string, T>>, b: Readonly<Record<string, T>>): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((id) => id in b && a[id] === b[id]);
+}
+
+/** The sessions of `task` and their usage; the same value while neither changed (module comment). */
+export function selectTaskSessions(task: string): (state: StoreState) => TaskSessions {
+  let last: TaskSessions = { sessions: {}, usage: {} };
+  let input: readonly unknown[] = [];
+  return (state) => {
+    // other changes of the store pass without a look at the sessions
+    if (input[0] === state.tasks.sessions && input[1] === state.usage.bySession) return last;
+    input = [state.tasks.sessions, state.usage.bySession];
+    const sessions: Record<string, SessionEntry> = {};
+    const usage: Record<string, SessionUsage | null> = {};
+    for (const [id, entry] of Object.entries(state.tasks.sessions)) {
+      if (entry.row.task_id !== task) continue;
+      sessions[id] = entry;
+      usage[id] = state.usage.bySession[id]?.usage ?? null;
+    }
+    const keep = sameRecord(sessions, last.sessions);
+    const keepUsage = sameRecord(usage, last.usage);
+    if (keep && keepUsage) return last;
+    last = { sessions: keep ? last.sessions : sessions, usage: keepUsage ? last.usage : usage };
+    return last;
+  };
+}
+
+interface Item {
+  readonly node: SessionNode;
+  readonly org: string;
+  /** The device's name, null without a device. */
+  readonly device: string | null;
+  readonly usage: SessionUsage | null;
+}
+
+function Node({ item }: { readonly item: Item }) {
   const { t } = useI18n();
+  const { node, org } = item;
   const id = node.entry.row.session_id;
   return (
-    <li className="flex flex-col gap-1" data-testid="sessions.node" data-session={id} data-depth={node.depth}>
-      <Link
-        className="flex min-h-11 flex-wrap items-center gap-2 rounded px-2 py-1 hover:bg-gray-50"
-        to={`/o/${encodeURIComponent(org)}/s/${encodeURIComponent(id)}`}
-        data-testid="sessions.link"
-      >
-        <span className="font-medium">
-          {node.depth === 0 ? t('task.sessions.main') : t('task.chat.subagent', { path: node.path.join('.') })}
-        </span>
-        <SessionState state={node.entry.row.state} />
-        <SessionFacts node={node} />
-      </Link>
-      {node.children.length > 0 && (
-        <ul className="ml-4 border-l-2 border-gray-200 pl-3">
-          {node.children.map((child) => (
-            <Node key={child.entry.row.session_id} org={org} node={child} />
-          ))}
-        </ul>
-      )}
-    </li>
+    <Link
+      className="flex min-h-11 flex-wrap items-center gap-2 rounded px-2 py-1 hover:bg-gray-50"
+      to={`/o/${encodeURIComponent(org)}/s/${encodeURIComponent(id)}`}
+      data-testid="sessions.link"
+    >
+      <span className="font-medium">
+        {node.depth === 0 ? t('task.sessions.main') : t('task.chat.subagent', { path: node.path.join('.') })}
+      </span>
+      <SessionState state={node.entry.row.state} />
+      <Facts entry={node.entry} device={item.device} usage={item.usage} />
+    </Link>
   );
 }
+
+const sameItem = (a: Item, b: Item): boolean =>
+  a.node.entry === b.node.entry &&
+  a.node.depth === b.node.depth &&
+  a.node.path.join('.') === b.node.path.join('.') &&
+  a.org === b.org &&
+  a.device === b.device &&
+  a.usage === b.usage;
+
+const key = (item: Item): string => item.node.entry.row.session_id;
+
+/** Indentation of a subagent row by its depth (static classes; the depth is at most `MAX_DEPTH`). */
+const INDENT: readonly string[] = ['', 'ml-4 border-l-2 border-gray-200 pl-3', 'ml-8 border-l-2 border-gray-200 pl-3'];
+
+const attributes = (item: Item): RowAttributes => ({
+  className: INDENT[item.node.depth]!,
+  'data-testid': 'sessions.node',
+  'data-session': key(item),
+  'data-depth': item.node.depth,
+});
 
 export function SessionsTab({ orgId, taskId }: TaskTabProps) {
   const { app } = useAppEnv();
   const { t } = useI18n();
-  const sessions = useStore((state) => state.tasks.sessions, app.store);
-  const tree = useMemo(() => sessionTree(sessions, taskId), [sessions, taskId]);
+  const own = useStore(
+    useMemo(() => selectTaskSessions(taskId), [taskId]),
+    app.store,
+  );
+  const name = useDeviceNames([orgId]);
+  const nodes = useMemo(() => flatten(sessionTree(own.sessions, taskId)), [own.sessions, taskId]);
+  const items = useMemo(
+    () =>
+      nodes.map((node): Item => {
+        const row = node.entry.row;
+        return {
+          node,
+          org: orgId,
+          device: row.device_id === null ? null : name(row.device_id),
+          usage: own.usage[row.session_id]!,
+        };
+      }),
+    [nodes, orgId, name, own.usage],
+  );
   return (
     <section aria-label={t('task.sessions.label')} data-testid="sessions">
-      {tree.length === 0 ? (
-        <p className="text-sm text-gray-600" data-testid="sessions.empty">
-          {t('task.sessions.empty')}
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-2" data-testid="sessions.tree">
-          {tree.map((node) => (
-            <Node key={node.entry.row.session_id} org={orgId} node={node} />
-          ))}
-        </ul>
-      )}
+      <WindowedList
+        listId="task.sessions"
+        items={items}
+        getKey={key}
+        Row={Node}
+        same={sameItem}
+        newest="start"
+        size={WINDOW}
+        page={PAGE}
+        maxRows={MAX_ROWS}
+        as="ul"
+        className="flex flex-col gap-2"
+        rowHeight="sm"
+        rowAttributes={attributes}
+        testId="sessions.tree"
+        empty={
+          <p className="text-sm text-gray-600" data-testid="sessions.empty">
+            {t('task.sessions.empty')}
+          </p>
+        }
+      />
     </section>
   );
 }

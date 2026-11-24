@@ -11,6 +11,10 @@
 // whole stream (`404 not_found`) when a watched session is not readable; the channel then drops the newest watched
 // session, reports it with the frame `terminals_refused {sessions}` and connects again at once (one by one, so a
 // refused new session does not end the others; with no terminal left the refusal is fatal as before).
+// After `resync` (the hub dropped frames, ADR-063 section 2) the channel pulls only `resyncKinds` (the non-bulk kinds:
+// titles, whiteboards, profiles, prompts, operations) from each cursor up to the head, without skipping ahead, and
+// moves the cursor to the head; the `resync` frame then makes the mounted views read their newest page
+// (`core/store/focus.ts`), so a flood of session output costs one page per open view instead of a pull of everything.
 // The `monitoring=1` flag (`metrics` frames, only while a monitoring screen is open) changes with `setMonitoring` the
 // same way: a running connection is reopened.
 import { HubError, type SignedClient } from './signedFetch';
@@ -141,6 +145,8 @@ export interface LiveOptions {
   readonly handlers: LiveHandlers;
   readonly terminals?: readonly string[];
   readonly monitoring?: boolean;
+  /** The kinds pulled after `resync` (default: every kind, as after `hello`). */
+  readonly resyncKinds?: readonly string[];
   readonly timers?: Timers;
   readonly random?: () => number;
   readonly now?: () => number;
@@ -433,7 +439,8 @@ export class LiveChannel {
 
   async #resync(data: unknown, generation: number, signal: AbortSignal): Promise<void> {
     this.#set({ status: 'syncing' });
-    for (const scope of this.#options.cursors.scopes()) await this.#pull(scope, generation, signal);
+    const kinds = this.#options.resyncKinds;
+    for (const scope of this.#options.cursors.scopes()) await this.#pull(scope, generation, signal, kinds);
     this.#live();
     // the hub may have dropped row frames (`task`, `operation`, …) as well: the slices reload like after `hello`
     await this.#options.handlers.frame('resync', data);
@@ -487,18 +494,22 @@ export class LiveChannel {
     this.#repairs.set(scope, handle);
   }
 
-  /** Pulls a scope from its cursor up to the hub's head (skipping ahead beyond `MAX_BACKFILL`). */
-  async #pull(scope: string, generation: number, signal: AbortSignal): Promise<void> {
+  /**
+   * Pulls a scope from its cursor up to the hub's head (skipping ahead beyond `MAX_BACKFILL`); with `kinds` only these
+   * kinds, without skipping ahead (`resync`, module comment).
+   */
+  async #pull(scope: string, generation: number, signal: AbortSignal, kinds?: readonly string[]): Promise<void> {
     const cursors = this.#options.cursors;
     // every pulled scope has a cursor: `hello`/`resync` pull known scopes, a gap frame set one in `#accept`
     let after = cursors.get(scope)!;
-    let first = true;
+    let first = kinds === undefined;
+    const filter = kinds === undefined ? '' : `&kinds=${kinds.join(',')}`;
     for (;;) {
       let page: unknown;
       try {
         page = await this.#options.client.request(
           'GET',
-          `/v1/scopes/${encodeURIComponent(scope)}/events?after=${after}&limit=${PAGE_LIMIT}`,
+          `/v1/scopes/${encodeURIComponent(scope)}/events?after=${after}&limit=${PAGE_LIMIT}${filter}`,
           { signal },
         );
       } catch (error) {

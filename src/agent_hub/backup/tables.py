@@ -127,6 +127,7 @@ EXCLUDED: Mapping[str, str] = {
     "schema_version": "the target is migrated by `agent-hub migrate`; the header names the applied migrations",
     "ceremony": "passkey ceremonies live 300 s and are purged after a day; open ceremonies end with the old hub",
     "device_presence": "runtime state: a device is online again once it reconnects to the restored hub",
+    "ui_health_daily": "anonymous hub-wide counters of the web clients (ADR-063 section 5): no org's data",
 }
 
 RULE_BY_TABLE: Mapping[str, TableRule] = {rule.table: rule for rule in RULES}

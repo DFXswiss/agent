@@ -3,7 +3,13 @@
 // Delete only with the board's write right (org level: admin; workgroup and task level: wg write) – without it the
 // controls are not rendered and a notice says so; and the history drawer with the line diff.
 // New entries of others appear live: their events arrive over the org channel and enter the projection.
-import { useEffect, useMemo, useState } from 'react';
+//
+// Volume (ADR-063 section 1): the board selects only the whiteboard events of its scope (`select.ts`), so chat traffic
+// in a workgroup scope does not re-project it; the entries are a `WindowedList` (newest first, `WINDOW` rows at first,
+// `PAGE` more per move, at most `MAX_ROWS`: entries are heavy Markdown), memoized on their content; further pages of
+// the hub's rows are loaded on demand ("Load more") when the loader offers `paging`.
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ListPaging } from '../../core/lists/paging';
 import { createEntry, deleteEntry, editEntry, loadBoard } from '../../core/whiteboards/actions';
 import { type BoardLocation, boardKey, boardScope, canWriteBoard } from '../../core/whiteboards/location';
 import { type BoardEntry, projectBoard } from '../../core/whiteboards/project';
@@ -11,19 +17,35 @@ import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
 import { useDirectory, useOrgView } from '../screens/tasks/hooks';
 import { useAppEnv } from '../shell/context';
+import { WindowedList } from '../lists/WindowedList';
 import { Editor } from './Editor';
-import { EntryItem } from './EntryItem';
+import { type EntryActions, entryAttributes, EntryContext, EntryItem, itemKey, sameItem } from './EntryItem';
 import { History } from './History';
+import { selectBoardEvents } from './select';
 
-/** `location` must be stable (memoized by the caller): a new object reloads the board. */
-export function Board({ location }: { readonly location: BoardLocation }) {
+/** Entries rendered at first, added per move, and at most. */
+export const WINDOW = 40;
+export const PAGE = 20;
+export const MAX_ROWS = 60;
+
+export interface BoardProps {
+  /** Must be stable (memoized by the caller): a new object reloads the board. */
+  readonly location: BoardLocation;
+  /** Server paging of the board's entry rows, when the loader offers it. */
+  readonly paging?: ListPaging;
+  /** Server paging of the opened entry's history, when the loader offers it. */
+  readonly historyPaging?: ListPaging;
+}
+
+export function Board({ location, paging, historyPaging }: BoardProps) {
   const { app } = useAppEnv();
   const { t, error } = useI18n();
   const { state, userId } = useOrgView(location.org);
   const directory = useDirectory(location.org, state !== null);
   const key = boardKey(location);
   const { scopeId } = boardScope(location);
-  const scope = useStore((s) => s.events[scopeId], app.store);
+  const select = useMemo(() => selectBoardEvents(scopeId), [scopeId]);
+  const scope = useStore(select, app.store);
   const load = useStore((s) => s.whiteboards.boards[key] ?? null, app.store);
   const [creating, setCreating] = useState(false);
   const [history, setHistory] = useState<BoardEntry | null>(null);
@@ -34,15 +56,21 @@ export function Board({ location }: { readonly location: BoardLocation }) {
   const checked = load?.checked ?? null;
   const view = useMemo(() => projectBoard(scope, location, rows ?? [], checked), [scope, location, rows, checked]);
   const writer = canWriteBoard(state, userId, location);
-  const name = (principal: string) =>
-    directory.members.get(principal) ?? t('whiteboard.author.unnamed', { id: principal.slice(0, 8) });
-  const actions = {
-    writer,
-    name,
-    onEdit: (entry: BoardEntry, text: string) => editEntry(app.tasks, location, entry, text),
-    onDelete: (entry: BoardEntry) => deleteEntry(app.tasks, location, entry),
-    onHistory: (entry: BoardEntry) => setHistory(entry),
-  };
+  const members = directory.members;
+  const name = useCallback(
+    (principal: string) => members.get(principal) ?? t('whiteboard.author.unnamed', { id: principal.slice(0, 8) }),
+    [members, t],
+  );
+  const actions: EntryActions = useMemo(
+    () => ({
+      writer,
+      name,
+      onEdit: (entry: BoardEntry, text: string) => editEntry(app.tasks, location, entry, text),
+      onDelete: (entry: BoardEntry) => deleteEntry(app.tasks, location, entry),
+      onHistory: (entry: BoardEntry) => setHistory(entry),
+    }),
+    [writer, name, app, location],
+  );
   // the drawer stays open (with the entry as opened) while an event of the entry is being re-read by the reader
   const open = history === null ? null : (view.entries.get(history.id) ?? history);
   return (
@@ -90,12 +118,37 @@ export function Board({ location }: { readonly location: BoardLocation }) {
           {t('whiteboard.empty')}
         </p>
       )}
-      <ul className="flex flex-col gap-3" data-testid="whiteboard.list">
-        {view.items.map((item) => (
-          <EntryItem key={item.key} item={item} actions={actions} />
-        ))}
-      </ul>
-      {open !== null && <History location={location} entry={open} name={name} onClose={() => setHistory(null)} />}
+      <EntryContext.Provider value={actions}>
+        <WindowedList
+          listId="whiteboard.entries"
+          items={view.items}
+          getKey={itemKey}
+          Row={EntryItem}
+          same={sameItem}
+          newest="start"
+          size={WINDOW}
+          page={PAGE}
+          maxRows={MAX_ROWS}
+          className="flex flex-col gap-3"
+          rowAttributes={entryAttributes}
+          rowHeight="lg"
+          testId="whiteboard.list"
+          {...(paging !== undefined && {
+            hasMore: paging.hasMore,
+            loading: paging.loading,
+            onLoadMore: paging.loadMore,
+          })}
+        />
+      </EntryContext.Provider>
+      {open !== null && (
+        <History
+          location={location}
+          entry={open}
+          name={name}
+          onClose={() => setHistory(null)}
+          {...(historyPaging !== undefined && { paging: historyPaging })}
+        />
+      )}
     </section>
   );
 }

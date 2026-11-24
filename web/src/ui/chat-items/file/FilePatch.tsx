@@ -3,7 +3,7 @@
 // rest behind "Show more".
 import { useId, useState } from 'react';
 import { useI18n } from '../../i18n';
-import { Clipped, MORE } from './Clipped';
+import { Clipped, MORE } from '../../lists/Clipped';
 
 export function FilePatch({ patch }: { readonly patch: string }) {
   const { t } = useI18n();
@@ -27,6 +27,7 @@ export function FilePatch({ patch }: { readonly patch: string }) {
             text={patch}
             className="max-h-96 overflow-auto rounded bg-gray-50 p-2 font-mono text-xs"
             testId="chat.file.patch"
+            controls="chat"
           />
         </div>
       )}

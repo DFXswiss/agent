@@ -34,7 +34,7 @@ function SessionChat({ entry }: { readonly entry: SessionEntry }) {
   useEffect(() => {
     pullOnce(app.tasks, org, wg, { kinds: CHAT_KINDS, task }).catch(() => 0);
   }, [app, org, wg, task]);
-  return <Timeline items={items} empty={t('session.chat.empty')} />;
+  return <Timeline listId="session.chat" items={items} empty={t('session.chat.empty')} />;
 }
 
 function SessionView({ entry }: { readonly entry: SessionEntry }) {

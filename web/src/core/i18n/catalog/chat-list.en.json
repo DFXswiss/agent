@@ -6,5 +6,6 @@
   "files.hide": "Hide files",
   "files.more": "Show more files ({count} more)",
   "patch.hide": "Hide changes",
-  "patch.more": "Show more ({count} more characters)"
+  "files.previous": "Show previous files ({count} more)",
+  "files.first": "Back to the first files"
 }

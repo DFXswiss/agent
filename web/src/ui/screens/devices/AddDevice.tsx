@@ -3,33 +3,25 @@
 // default, 1 h – 30 d), and gets the code once with the command `agent-runner enroll --hub <origin> --code <code>`
 // (copy buttons, confidentiality warning). The result follows the verified log: once the device's `accept` arrives (the
 // live channel's `log` frame refreshes the log) it says the device has enrolled, and the device appears in the list.
-// Open device invitations (checked against the verified log) can be revoked.
-import { useEffect, useState } from 'react';
+// Open device invitations (checked against the verified log, `OpenInvites`, windowed) can be revoked.
+import { useState } from 'react';
 import type { OrgState } from '../../../core/log/state';
 import { actionErrorCode, keyRing } from '../../../core/org/batch';
 import { enrollCommand } from '../../../core/org/devices';
-import {
-  type CreatedInvite,
-  createInvite,
-  DEVICE_EXPIRY_HOURS,
-  invitable,
-  type InviteRow,
-  openInvites,
-  revokeInvite,
-} from '../../../core/org/invites';
+import { type CreatedInvite, createInvite, DEVICE_EXPIRY_HOURS, invitable } from '../../../core/org/invites';
 import type { Directory } from '../../../core/tasks/directory';
-import { formatEventTime } from '../../../core/i18n';
+import { formatEventTime, localTimeZone } from '../../../core/i18n';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { useNow } from '../../countdown/useNow';
 import { BUTTON, PRIMARY } from '../members/ActionDialog';
+import { OpenInvites } from '../members/OpenInvites';
 import { CopyButton, ExpirySelect } from './parts';
 
 function useTime() {
   const { locale } = useI18n();
   const now = useNow(false);
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return (text: string) => formatEventTime(Date.parse(text), { locale, timeZone, now });
+  return (text: string) => formatEventTime(Date.parse(text), { locale, timeZone: localTimeZone(), now });
 }
 
 function AddForm(props: {
@@ -156,66 +148,6 @@ function AddResult(props: { readonly created: CreatedInvite; readonly state: Org
   );
 }
 
-function OpenDeviceInvites({ org, version }: { readonly org: string; readonly version: string }) {
-  const { app } = useAppEnv();
-  const { t, error } = useI18n();
-  const time = useTime();
-  const [rows, setRows] = useState<InviteRow[] | null>(null);
-  const [code, setCode] = useState<string | null>(null);
-  const [revoking, setRevoking] = useState(false);
-  const [reload, setReload] = useState(0);
-  useEffect(() => {
-    openInvites(app.tasks, org, 'device').then(
-      (found) => {
-        setRows(found);
-        setCode(null);
-      },
-      (failure: unknown) => setCode(actionErrorCode(failure)),
-    );
-  }, [app, org, version, reload]);
-  const revoke = async (id: string) => {
-    setRevoking(true);
-    try {
-      await revokeInvite(app.tasks, org, id);
-      setReload((n) => n + 1);
-    } catch (failure) {
-      setCode(actionErrorCode(failure));
-    }
-    setRevoking(false);
-  };
-  return (
-    <section className="flex flex-col gap-2" data-testid="devices.invites">
-      <h2 className="font-semibold">{t('devices.invites.title')}</h2>
-      {code !== null && (
-        <p role="alert" className="text-red-800" data-testid="devices.invites.error" data-code={code}>
-          {error(code).title}
-        </p>
-      )}
-      {rows !== null && rows.length === 0 && (
-        <p className="text-gray-600" data-testid="devices.invites.empty">
-          {t('devices.invites.empty')}
-        </p>
-      )}
-      <ul className="flex flex-col gap-2">
-        {(rows ?? []).map((row) => (
-          <li key={row.invite_id} className="flex flex-wrap items-center gap-3" data-testid="devices.invites.item">
-            <span>{t('devices.invites.expires', { time: time(row.expires_at) })}</span>
-            <button
-              type="button"
-              className={BUTTON}
-              disabled={revoking}
-              onClick={() => void revoke(row.invite_id)}
-              data-testid="devices.invites.revoke"
-            >
-              {t('devices.invites.revoke')}
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
 /** The admin's "Add org device" area with the open device invitations. */
 export function AddDevice(props: { readonly org: string; readonly state: OrgState; readonly directory: Directory }) {
   const { t } = useI18n();
@@ -247,7 +179,7 @@ export function AddDevice(props: { readonly org: string; readonly state: OrgStat
         />
       )}
       {/* the list follows the log: a new, revoked or accepted invitation changes its head */}
-      <OpenDeviceInvites org={props.org} version={props.state.head} />
+      <OpenInvites org={props.org} kind="device" version={props.state.head} />
     </div>
   );
 }

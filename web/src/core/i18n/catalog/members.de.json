@@ -55,5 +55,9 @@
   "progress.save": "Wird gespeichert …",
   "access.inherited": "liest als Admin",
   "role.demote": "Bereits gelesene Inhalte bleiben bei der Person; neue Inhalte von Workgroups, in denen sie nicht selbst Mitglied ist, kann sie nicht mehr lesen.",
-  "ungrant.admin-body": "Die Person bleibt Admin und kann diese Workgroup weiter lesen; zum Schreiben braucht sie wieder eine Freigabe."
+  "ungrant.admin-body": "Die Person bleibt Admin und kann diese Workgroup weiter lesen; zum Schreiben braucht sie wieder eine Freigabe.",
+  "access.more": "{count} weitere – anzeigen",
+  "list.more": "{count} weitere Mitglieder – anzeigen",
+  "list.above": "{count} Mitglieder darüber – anzeigen",
+  "list.top": "Zurück zum Anfang"
 }

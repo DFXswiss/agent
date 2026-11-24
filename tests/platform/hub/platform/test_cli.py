@@ -225,7 +225,8 @@ def test_a_log_the_root_did_not_sign_is_refused(run: Callable[..., tuple[int, st
     fake_log = forged.chain(forged.body("root", pub=b64u_encode(ed25519_public_raw(forged.root))))
 
     def handler(request: httpx.Request) -> httpx.Response:
-        response = hub.base.request(request.method, request.url.path, content=request.content, headers=request.headers)
+        target = request.url.raw_path.decode("ascii")
+        response = hub.base.request(request.method, target, content=request.content, headers=request.headers)
         if request.url.path == "/v1/platform/enrollments":
             return resign(hub, request, response.status_code, {"enrollments": [], "log": fake_log})
         return httpx.Response(response.status_code, headers=response.headers, content=response.content)
@@ -413,3 +414,60 @@ def test_a_malformed_answer_is_reported_without_a_traceback(run: Callable[..., t
     code, _, err = run("decertify", "--device", uuid_v7(), http=html)
     assert code == cli.EXIT_REFUSED
     assert err.startswith("agent-hub platform: refused: unavailable")
+
+
+def forwarding(hub: HubHarness, refuse: Callable[[httpx.Request], bool]) -> httpx.Client:
+    """A client to the hub that answers the requests `refuse` picks with a signed `400 request_invalid`."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if refuse(request):
+            return resign(hub, request, 400, {"error": "request_invalid"})
+        target = request.url.raw_path.decode("ascii")
+        response = hub.base.request(request.method, target, content=request.content, headers=request.headers)
+        return httpx.Response(response.status_code, headers=response.headers, content=response.content)
+
+    return httpx.Client(base_url="http://localhost:8788", transport=httpx.MockTransport(handler))
+
+
+def test_the_log_is_read_page_by_page(
+    run: Callable[..., tuple[int, str, str]], hub: HubHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-063 section 2 (KOR-35): the CLI reads the platform log of the enrollments page by page."""
+    monkeypatch.setattr(cli, "LOG_PAGE", 2)
+    targets: list[str] = []
+
+    def note(request: httpx.Request) -> bool:
+        targets.append(request.url.raw_path.decode("ascii"))
+        return False
+
+    client = forwarding(hub, note)
+    for seq in (1, 2, 3):
+        assert run("grant-role", "inviter", "--user", str(new_user(hub)), http=client)[1] == (
+            f"appended role_grant (seq {seq})\n"
+        )
+    assert run("grant-role", "inviter", "--user", str(new_user(hub)), http=client)[1] == "appended role_grant (seq 4)\n"
+    reads = [target for target in targets if target.startswith("/v1/platform/enrollments")]
+    assert reads[-2:] == ["/v1/platform/enrollments?limit=2", "/v1/platform/enrollments?after=1&limit=2"]
+
+
+def test_a_hub_without_paging_answers_the_whole_log(run: Callable[..., tuple[int, str, str]], hub: HubHarness) -> None:
+    assert run("grant-role", "inviter", "--user", str(new_user(hub)))[0] == 0
+    old_hub = forwarding(hub, lambda request: request.url.query != b"" and "enrollments" in request.url.path)
+    assert run("grant-role", "inviter", "--user", str(new_user(hub)), http=old_hub) == (
+        0,
+        "appended role_grant (seq 2)\n",
+        "",
+    )
+
+
+def test_a_refused_later_page_is_reported(
+    run: Callable[..., tuple[int, str, str]], hub: HubHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert run("grant-role", "inviter", "--user", str(new_user(hub)))[0] == 0
+    monkeypatch.setattr(cli, "LOG_PAGE", 1)
+    refusing = forwarding(hub, lambda request: b"after=" in request.url.query)
+    assert run("decertify", "--device", uuid_v7(), http=refusing) == (
+        1,
+        "",
+        "agent-hub platform: refused: request_invalid\n",
+    )

@@ -3,7 +3,6 @@
   "filter.all": "Alle",
   "reload": "Erneut versuchen",
   "empty": "Noch keine Aufgaben.",
-  "more": "Mehr laden",
   "loading": "Wird geladen …",
   "not-found": "Diese Arbeitsgruppe wurde nicht gefunden.",
   "wg.unnamed": "Arbeitsgruppe",
@@ -29,5 +28,8 @@
   "filter.wg": "Workgroup",
   "filter.wg.all": "Alle Workgroups",
   "filter.mine": "Nur meine Tasks",
-  "filter.reset": "Filter zurücksetzen"
+  "filter.reset": "Filter zurücksetzen",
+  "search.scanned": "Die {scanned} neuesten Tasks durchsucht.",
+  "search.scanned-of": "{scanned} von {total} Tasks durchsucht.",
+  "search.further": "Weiter suchen"
 }

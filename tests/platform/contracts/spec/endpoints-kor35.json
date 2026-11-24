@@ -1,0 +1,29 @@
+{
+  "description": "Endpoints of the anonymous UI health early warning (03-api.md section 4.11, KOR-35, ADR-063 section 5): the web client's report and the platform operators' read.",
+  "rights": [
+    "anon",
+    "platform:inviter"
+  ],
+  "auth": [
+    "anon",
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/v1/telemetry/ui",
+      "rights": [
+        "anon"
+      ],
+      "section": "4.11"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/ui-health",
+      "rights": [
+        "platform:inviter"
+      ],
+      "section": "4.11"
+    }
+  ]
+}

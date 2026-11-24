@@ -1,6 +1,7 @@
 // Operations (06-web.md sections 5.2 and 5.4, 03-api.md sections 4.7 and 9): the slice (rows never go back, live
 // frames), loading lists, details and the operation's events, and the card states with result facts and duplicates.
 import { describe, expect, it } from 'vitest';
+import { NEWEST } from '../../../src/core/net/pages';
 import { applyFrame, frameHandlers } from '../../../src/core/net/frames';
 import {
   ensureOperations,
@@ -206,32 +207,17 @@ describe('loading', () => {
     }
   });
 
-  it('pulls every page of the operation events into the reader', async () => {
+  it('pulls the newest page of the operation events into the reader', async () => {
     const t = await taskWorld();
     const item = { scope_seq: 4, received_at: null, event: {} };
-    t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) =>
-      target.includes('after=4') ? { events: [], next_after: null } : { events: [item], next_after: 4 },
-    );
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [item], next_before: null, head: 9 }));
     expect(await pullOperationEvents(t.context, row(t))).toBe(1);
     expect(t.client.calls[0]!.target).toBe(
-      `/v1/scopes/${t.wg}/events?ref=${OP}&kinds=operation.params%2Coperation.result&limit=1000`,
+      `/v1/scopes/${t.wg}/events?before=${NEWEST}&limit=1000&kinds=operation.params%2Coperation.result&ref=${OP}`,
     );
-    expect(t.ingested).toHaveLength(2);
-    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({
-      events: [{ scope_seq: 5, received_at: '2026-11-21T12:00:00.000Z', event: {} }],
-      next_after: null,
-    }));
-    expect(await pullOperationEvents(t.context, row(t))).toBe(1);
-    for (const bad of [
-      null,
-      { events: [{ scope_seq: 'x' }], next_after: null },
-      { events: [{ scope_seq: 1, received_at: 3, event: {} }], next_after: null },
-      { events: [{ scope_seq: 1, received_at: null }], next_after: null },
-      { events: [], next_after: 'x' },
-    ]) {
-      t.client.on(`GET /v1/scopes/${t.wg}/events`, () => bad);
-      await expect(pullOperationEvents(t.context, row(t))).rejects.toMatchObject({ code: 'unavailable' });
-    }
+    expect(t.ingested).toHaveLength(1);
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_before: 'x' }));
+    await expect(pullOperationEvents(t.context, row(t))).rejects.toMatchObject({ code: 'unavailable' });
   });
 });
 

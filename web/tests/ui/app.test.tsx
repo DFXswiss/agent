@@ -54,6 +54,7 @@ describe('boot', () => {
     window.history.replaceState(null, '', '/nowhere');
     const container = document.createElement('div');
     const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json(config));
+    const longTasks = vi.fn();
     const result = await boot({
       container,
       fetch,
@@ -61,8 +62,10 @@ describe('boot', () => {
       origin,
       languages: ['de-CH'],
       ...platform,
+      longTasks,
     });
     expect(result.ok).toBe(true);
+    expect(longTasks).toHaveBeenCalledExactlyOnceWith({ origin, version: config.version, fetch });
     expect(document.documentElement.lang).toBe('de');
     await waitFor(() => expect(container.textContent).toContain('Seite nicht gefunden'));
   });
@@ -70,8 +73,18 @@ describe('boot', () => {
   it('renders the blocking error page on a root key mismatch', async () => {
     const container = document.createElement('div');
     const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json(config));
-    const result = await boot({ container, fetch, rootKey: 'A'.repeat(43), origin, languages: [], ...platform });
+    const longTasks = vi.fn();
+    const result = await boot({
+      container,
+      fetch,
+      rootKey: 'A'.repeat(43),
+      origin,
+      languages: [],
+      ...platform,
+      longTasks,
+    });
     expect(result).toEqual({ ok: false, code: 'platform_root_mismatch' });
+    expect(longTasks).not.toHaveBeenCalled();
     expect(document.documentElement.lang).toBe('en');
     await waitFor(() => expect(container.textContent).toContain('Untrusted server'));
   });

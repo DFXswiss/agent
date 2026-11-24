@@ -3,7 +3,7 @@
 | Route | Right |
 |---|---|
 | `GET /v1/whiteboards?org&wg&task&level&before&limit` | `org:member` (org level) / `wg:read` (wg and task level) |
-| `GET /v1/whiteboards/{entry}/history` | the same right on the entry's level |
+| `GET /v1/whiteboards/{entry}/history?before&limit` | the same right on the entry's level |
 
 The list shows only entries the caller may read (`agent_hub.whiteboards.read`); a named `org` needs `org:member`, a
 named `wg` `wg:read` and a named `task` `task:read` on its workgroup - `404 not_found` otherwise, like an unknown ID.
@@ -18,7 +18,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from agent_hub.errors import HubError
-from agent_hub.events.routes import parse_count, parse_uuid
+from agent_hub.events.routes import MAX_SEQ, parse_count, parse_uuid
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import HubRouter
 from agent_hub.orgs import rights
@@ -76,7 +76,7 @@ async def get_whiteboards(
     return await asyncio.to_thread(_list, context, cast(UUID, principal.principal_id), filters, before, count)
 
 
-def _history(context: HubContext, user: UUID, entry_id: UUID) -> dict[str, Any]:
+def _history(context: HubContext, user: UUID, entry_id: UUID, before: int | None, limit: int | None) -> dict[str, Any]:
     with context.pool.connection() as connection:
         item = read.entry(connection, entry_id)
         if item is None:
@@ -85,7 +85,7 @@ def _history(context: HubContext, user: UUID, entry_id: UUID) -> dict[str, Any]:
             rights.require(connection, user, rights.ORG_MEMBER, org_id=item.org_id)
         else:
             rights.require(connection, user, rights.WG_READ, wg_id=item.wg_id)
-        return {"events": read.history(connection, item)}
+        return read.history(connection, item, before=before, limit=limit)
 
 
 @router.get(
@@ -94,5 +94,11 @@ def _history(context: HubContext, user: UUID, entry_id: UUID) -> dict[str, Any]:
     right=("org:member", "wg:read"),
     read_resource="whiteboard.history",
 )
-async def get_history(context: Context, principal: CurrentPrincipal, entry: str) -> dict[str, Any]:
-    return await asyncio.to_thread(_history, context, cast(UUID, principal.principal_id), path_id(entry))
+async def get_history(
+    context: Context, principal: CurrentPrincipal, entry: str, *, before: str | None = None, limit: str | None = None
+) -> dict[str, Any]:
+    entry_id = path_id(entry)
+    cursor = None if before is None else parse_count(before, 0, 0, MAX_SEQ)
+    count = None if limit is None else parse_count(limit, read.LIST_DEFAULT, 1, read.LIST_MAX)
+    user = cast(UUID, principal.principal_id)
+    return await asyncio.to_thread(_history, context, user, entry_id, cursor, count)

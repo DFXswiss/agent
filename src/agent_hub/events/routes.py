@@ -6,7 +6,8 @@
   (`agent_hub.events.notify.announce`: live frames, device hints, the signal `event.appended`).
 - `GET /v1/scopes/{scope_id}/events` (browser; `org:member` on an org scope, `wg:read` on a workgroup scope; an
   unknown or foreign scope is `404 not_found`): `?after=&limit=&kinds=a,b&task=&session=&ref=` through
-  `agent_hub.events.read.read_events`; read log `read.scope.events`.
+  `agent_hub.events.read.read_events`; with `before=<scope_seq>` instead of `after` newest first with `next_before`
+  (ADR-063 section 2; `after` and `before` together are `400 request_invalid`); read log `read.scope.events`.
 """
 
 from __future__ import annotations
@@ -110,6 +111,7 @@ def scope_page(
     limit: int,
     kinds: frozenset[str] | None,
     filters: dict[str, UUID | None],
+    before: int | None = None,
 ) -> dict[str, Any]:
     """The body of `GET /v1/scopes/{scope_id}/events` after the right check: events and head from one snapshot (an
     event committed between the two reads would otherwise raise the head beyond the page, and the browser would move
@@ -133,6 +135,7 @@ def scope_page(
             task=filters["task"],
             session=filters["session"],
             ref=None if ref is None else str(ref),
+            before=before,
         )
     return page.to_json()
 
@@ -146,6 +149,7 @@ async def get_scope_events(
     scope_id: str,
     *,
     after: str | None = None,
+    before: str | None = None,
     limit: str | None = None,
     kinds: str | None = None,
     task: str | None = None,
@@ -156,6 +160,8 @@ async def get_scope_events(
         scope = parse_uuid(scope_id)
     except ValueError:
         raise HubError("not_found") from None
+    if after is not None and before is not None:
+        raise HubError("request_invalid", detail={"pointers": ["/before"]})
     try:
         filters = {"task": parse_uuid(task), "session": parse_uuid(session), "ref": parse_uuid(ref)}
     except ValueError:
@@ -169,4 +175,5 @@ async def get_scope_events(
         limit=parse_count(limit, read.PAGE_DEFAULT, 1, read.PAGE_MAX),
         kinds=parse_kinds(kinds),
         filters=filters,
+        before=None if before is None else parse_count(before, 0, 0, MAX_SEQ),
     )

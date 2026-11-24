@@ -12,7 +12,10 @@ section 1 (30 per minute per source address, `agent_hub.http.limits`) would refu
 after a few tests. The test hub therefore runs with the anonymous limit raised to `ANONYMOUS_PER_MINUTE` (only in
 this process; the limit itself is tested by the hub's own suite). Decision WEB-03. For the same reason the limit of
 `POST /v1/recovery/begin` per source address (5 per hour) is raised to `RECOVERY_PER_SOURCE`; the limit per recovery
-ID (20 per day, counted in the database) stays, so the suite still sees a real `429` (decision WEB-14).
+ID (20 per day, counted in the database) stays, so the suite still sees a real `429` (decision WEB-14). The limit per
+browser session (600 per minute) is raised to `SESSION_PER_MINUTE` as well: the volume gate (KOR-35) signs one user in
+for many views in a row, and the views it measures read every page of large lists (the limit is tested by the hub's
+own suite).
 
     python scripts/hub_test_server.py --port 20262 --root-key <b64u> [--director-port 20264]
 """
@@ -42,11 +45,13 @@ MODEL_CATALOG = Path(__file__).resolve().parents[1] / "contracts" / "model-catal
 DIRECTOR = Path(__file__).resolve().parent / "hub_test_director.py"
 ANONYMOUS_PER_MINUTE = 100_000
 RECOVERY_PER_SOURCE = 100_000
+SESSION_PER_MINUTE = 100_000
 # `python -m agent_hub serve` with the anonymous limit of the test hub (see the module docstring)
 LAUNCH = (
     "import runpy, sys\n"
     "import agent_hub.http.limits as limits\n"
     "limits.PER_MINUTE['anonymous'] = int(sys.argv[1])\n"
+    "limits.PER_MINUTE['session'] = int(sys.argv[3])\n"
     "import functools\n"
     "import agent_hub.auth.recovery as recovery\n"
     "recovery.SourceLimit = functools.partial(recovery.SourceLimit, limit=int(sys.argv[2]))\n"
@@ -116,7 +121,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "AGENT_HUB_MODEL_CATALOG": str(MODEL_CATALOG),
         }
         hub = subprocess.Popen(
-            [sys.executable, "-c", LAUNCH, str(ANONYMOUS_PER_MINUTE), str(RECOVERY_PER_SOURCE)], env=hub_env
+            [
+                sys.executable,
+                "-c",
+                LAUNCH,
+                str(ANONYMOUS_PER_MINUTE),
+                str(RECOVERY_PER_SOURCE),
+                str(SESSION_PER_MINUTE),
+            ],
+            env=hub_env,
         )
         if args.director_port is not None:
             command = [

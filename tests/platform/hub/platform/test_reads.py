@@ -9,6 +9,7 @@ import pytest
 from psycopg.types.json import Jsonb
 
 from agent_hub.crypto.encoding import b64u_encode
+from agent_hub.events import paging
 from agent_hub.log.platform import PlatformState
 from agent_hub.platform import enrollments
 from agent_hub.platform import log as platform_log
@@ -110,6 +111,30 @@ def test_enrollments_list_verified_pending_requests_with_the_log(plat: Platform,
         ("operator",),
         ("operator",),
     ]
+
+
+def test_the_log_of_the_enrollments_pages_and_is_capped(
+    plat: Platform, hub: HubHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-063 section 2 (KOR-35): `after`/`limit` read the embedded log page by page with `next_after`; without them
+    at most `CAP_LARGE` entries with `truncated: true` when cut."""
+    plat.init()
+    plat.append("role_grant", subject=str(new_user(hub)), role="inviter")
+    plat.append("role_grant", subject=str(new_user(hub)), role="inviter")
+    entries = plat.entries
+    assert len(entries) == 3
+    first = hub.root.get("/v1/platform/enrollments", params={"limit": "2"}).json()
+    assert (first["log"], first["next_after"], first["enrollments"]) == (entries[:2], 1, [])
+    rest = hub.root.get("/v1/platform/enrollments", params={"after": "1"}).json()
+    assert (rest["log"], rest["next_after"]) == (entries[2:], None)
+    assert hub.root.get("/v1/platform/enrollments", params={"after": "2", "limit": "5"}).json()["log"] == []
+    whole = hub.root.get("/v1/platform/enrollments").json()
+    assert (whole["log"], set(whole)) == (entries, {"enrollments", "log"})
+    monkeypatch.setattr(paging, "CAP_LARGE", 2)
+    capped = hub.root.get("/v1/platform/enrollments").json()
+    assert (capped["log"], capped["truncated"]) == (entries[:2], True)
+    response = hub.root.get("/v1/platform/enrollments", params={"limit": "1001"}, extensions={"contract": False})
+    assert (response.status_code, response.json()["error"]) == (400, "request_invalid")
 
 
 def test_enrollments_need_the_root(hub: HubHarness) -> None:

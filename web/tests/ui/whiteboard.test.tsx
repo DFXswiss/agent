@@ -1,6 +1,7 @@
 // U-WEB-ui-whiteboard: the boards in jsdom against the core board world (real reader, scriptable client): the org and
 // workgroup screens with their level bar, loading and not-found states, create/edit/delete with their failures, the
 // reader without controls, neutral rows, paging, load errors, the history drawer with the line diff, the task tab.
+// The volume cases (windows, paging on demand, hunks, clipping, the selector) are in `whiteboard-volume.test.tsx`.
 // The Playwright specs (`e2e/whiteboard.spec.ts`, `e2e/devices/whiteboard-task.spec.ts`) run them against the hub.
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
@@ -95,7 +96,7 @@ describe('org board', () => {
     fireEvent.click(within(entry).getByTestId('whiteboard.item.delete.confirm'));
     expect(await within(entry).findByTestId('whiteboard.item.deleted')).toBeInTheDocument();
     expect(within(entry).queryByTestId('whiteboard.item.edit')).toBeNull();
-    // history: three versions with diffs; the history load failed (unknown route), the versions are shown anyway
+    // history: three versions newest first; the history load failed (unknown route), the versions are shown anyway
     fireEvent.click(within(entry).getByTestId('whiteboard.item.history'));
     const dialog = await screen.findByTestId('whiteboard.history');
     expect(within(dialog).getAllByTestId('whiteboard.history.version')).toHaveLength(3);
@@ -103,7 +104,7 @@ describe('org board', () => {
       within(dialog)
         .getAllByTestId('whiteboard.history.action')
         .map((node) => node.textContent),
-    ).toEqual(['Created', 'Edited', 'Deleted']);
+    ).toEqual(['Deleted', 'Edited', 'Created']);
     expect(await within(dialog).findByTestId('whiteboard.history.error')).toBeInTheDocument();
     // while an event of the entry is re-read (pending), the drawer stays open with the last known versions
     const creating = [...w.store.getState().events[w.org]!.entries.values()].find(
@@ -113,10 +114,13 @@ describe('org board', () => {
     expect(screen.getByTestId('whiteboard.history')).toBeInTheDocument();
     expect(within(dialog).getAllByTestId('whiteboard.history.version')).toHaveLength(3);
     act(() => putEvents(w.store, w.org, [creating]));
+    // the diffs are collapsed until expanded
+    expect(within(dialog).queryByTestId('whiteboard.diff')).toBeNull();
+    for (const toggle of within(dialog).getAllByTestId('whiteboard.history.diff.toggle')) fireEvent.click(toggle);
     const stats = within(dialog)
       .getAllByTestId('whiteboard.diff.stats')
       .map((node) => node.textContent);
-    expect(stats).toEqual(['+1 / −0 lines', '+1 / −1 lines', '+0 / −1 lines']);
+    expect(stats).toEqual(['+0 / −1 lines', '+1 / −1 lines', '+1 / −0 lines']);
     fireEvent.click(within(dialog).getByTestId('whiteboard.history.close'));
     expect(screen.queryByTestId('whiteboard.history')).toBeNull();
   });

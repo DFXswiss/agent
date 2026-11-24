@@ -9,6 +9,7 @@ other command talks to the hub with root-signed requests (`agent-request-v1`, ke
 2. `GET /v1/platform/enrollments`: the platform log, verified here with P1-P4 against the operator's own key (a hub
    cannot make the CLI extend a log the root did not sign) and required to extend the head recorded in the operator
    record (`log_rollback`: a hub cannot make the root sign a fork of a shortened log), and the pending enrollments;
+   the log is read page by page (`?after=&limit=1000`), or in one answer from a hub without paging;
 3. the new entries are built on the verified head, checked locally with the same rules as the hub, signed with the
    root key and sent with `POST /v1/platform/log` (a `root` entry first while the log is empty). A concurrent append
    (`seq_conflict`) is retried on the new head.
@@ -72,6 +73,9 @@ EXIT_USAGE = 2
 KEY_FILE_VERSION = 1
 KEY_FILE_KEYS = frozenset({"v", "root"})
 MAX_ATTEMPTS = 3
+ENROLLMENTS = "/v1/platform/enrollments"
+LOG_PAGE = 1000
+"""Platform log entries per page of `GET /v1/platform/enrollments` (the maximum of the contract)."""
 HOURS = 3600
 
 
@@ -248,10 +252,29 @@ class Operator:
         except Exception as error:
             raise Refused("signature_invalid") from error
 
+    def log_and_enrollments(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """The whole platform log, read page by page (`?after=&limit=`, ADR-063 section 2), and the pending enrollments
+        of the last page. A hub without the paging parameters refuses them with `request_invalid`; then the log comes
+        in one answer as before."""
+        entries: list[dict[str, Any]] = []
+        target = f"{ENROLLMENTS}?limit={LOG_PAGE}"
+        while True:
+            try:
+                data = self.request("GET", target)
+            except Refused as refusal:
+                if refusal.code != "request_invalid" or entries:
+                    raise
+                data = self.request("GET", ENROLLMENTS)
+                return list(data["log"]), list(data["enrollments"])
+            entries += data["log"]
+            after = data.get("next_after")
+            if after is None:
+                return entries, list(data["enrollments"])
+            target = f"{ENROLLMENTS}?after={after}&limit={LOG_PAGE}"
+
     def snapshot(self) -> tuple[VerifiedPlatformLog | None, list[dict[str, Any]]]:
         """The verified platform log (None while empty) and the pending enrollments."""
-        data = self.request("GET", "/v1/platform/enrollments")
-        entries = data["log"]
+        entries, pending = self.log_and_enrollments()
         stored = self._record().get("head")
         try:
             log = verify_platform_log(entries, public_text(self.key)) if entries else None
@@ -260,7 +283,7 @@ class Operator:
             raise Refused(error.code) from error
         if log is not None:
             self._remember(head=log.state.head_value().to_json())
-        return log, list(data["enrollments"])
+        return log, pending
 
     def append(self, build: Builder) -> Appended:
         """Build bodies on the verified head, sign and append them (with `root` first while the log is empty)."""

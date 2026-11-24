@@ -6,7 +6,7 @@
 // renderer takes over on the same terminal, keeping its buffer; the WebGL addon is not disposed, because its disposal
 // installs the DOM renderer (KOR-05). The geometry is the asciicast header's; `fitFont` scales the font with
 // `addon-fit` so that the fixed number of columns fits the container – never resizing the terminal (no reflow); below
-// the minimum font size the container scrolls horizontally.
+// the minimum font size the container scrolls horizontally. The scrollback is 10 000 lines.
 import { CanvasAddon } from '@xterm/addon-canvas';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -16,6 +16,8 @@ import '@xterm/xterm/css/xterm.css';
 export const FONT_SIZE = 13;
 export const MIN_FONT = 7;
 export const MAX_FONT = 15;
+/** Lines a screen keeps above its rows (ADR-063 section 1; older output is replayed from memory or the hub). */
+export const SCROLLBACK = 10_000;
 const HIDE_CURSOR = '\x1b[?25l';
 
 export interface Screen {
@@ -45,7 +47,7 @@ export function openScreen(host: HTMLElement, cols: number, rows: number, webgl:
     cursorInactiveStyle: 'none',
     theme: { cursor: 'transparent', cursorAccent: 'transparent' },
     fontSize: FONT_SIZE,
-    scrollback: 100_000,
+    scrollback: SCROLLBACK,
   });
   terminal.loadAddon(webgl ? webglRenderer(terminal) : new CanvasAddon());
   const fit = new FitAddon();

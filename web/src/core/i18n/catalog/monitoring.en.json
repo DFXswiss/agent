@@ -70,5 +70,10 @@
   "vm-state.running": "Running",
   "vm-state.stopping": "Stopping",
   "vm-state.stopped": "Stopped",
-  "vm-state.deleted": "Deleted"
+  "vm-state.deleted": "Deleted",
+  "truncated": "Showing the {shown} most recently active of {total} sessions.",
+  "tree.more": "{count} more rows – show",
+  "tree.above": "{count} rows above – show",
+  "tree.top": "Back to the top",
+  "chart.table.cut": "Showing the newest {shown} of {total} points."
 }

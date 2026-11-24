@@ -7,7 +7,7 @@
 // write nothing.
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
-import type { StoredEvent } from '../net/sse';
+import { eventsBefore, NEWEST, PAGE_MAX } from '../net/pages';
 import {
   isOperationRow,
   isOperationTransition,
@@ -81,28 +81,10 @@ export async function loadOperation(context: TasksContext, operation: string): P
   return body.operation;
 }
 
-const isStored = (item: unknown): item is StoredEvent =>
-  isRecord(item) &&
-  Number.isSafeInteger(item.scope_seq) &&
-  (item.received_at === null || typeof item.received_at === 'string') &&
-  'event' in item;
-
-/** Pulls the events of one operation (every page) into the reader; returns how many were read. */
+/** Pulls the events of one operation (its newest page; an operation has a few) into the reader; returns the count. */
 export async function pullOperationEvents(context: TasksContext, row: OperationRow): Promise<number> {
-  let after: number | null = null;
-  let count = 0;
-  for (;;) {
-    const params = new URLSearchParams({ ref: row.operation_id, kinds: OPERATION_KINDS.join(','), limit: '1000' });
-    if (after !== null) params.set('after', String(after));
-    const page = await context.client.request('GET', `/v1/scopes/${encodeURIComponent(row.wg_id)}/events?${params}`);
-    const events = isRecord(page) && Array.isArray(page.events) ? page.events : null;
-    const next = isRecord(page) ? page.next_after : undefined;
-    if (events === null || !events.every(isStored) || !(next === null || Number.isSafeInteger(next))) {
-      throw new HubError('unavailable', 200);
-    }
-    await context.ingest(row.org_id, row.wg_id, events);
-    count += events.length;
-    if (next === null) return count;
-    after = next as number;
-  }
+  const query = { ref: row.operation_id, kinds: OPERATION_KINDS };
+  const page = await eventsBefore(context.client, row.wg_id, query, NEWEST, PAGE_MAX);
+  await context.ingest(row.org_id, row.wg_id, page.events);
+  return page.events.length;
 }

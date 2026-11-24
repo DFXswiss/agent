@@ -99,9 +99,10 @@ export class FakeLiveClient {
   };
 
   request = async (method: string, target: string): Promise<unknown> => {
-    const match = /^\/v1\/scopes\/([^/]+)\/events\?after=(\d+)&limit=(\d+)$/.exec(target);
+    const match = /^\/v1\/scopes\/([^/]+)\/events\?after=(\d+)&limit=(\d+)(?:&kinds=([^&]+))?$/.exec(target);
     if (method !== 'GET' || match === null) throw new Error(`unexpected ${method} ${target}`);
-    this.pulls.push(`${decodeURIComponent(match[1]!)}:${match[2]}`);
+    const kinds = match[4] === undefined ? '' : `:${match[4]}`;
+    this.pulls.push(`${decodeURIComponent(match[1]!)}:${match[2]}${kinds}`);
     return this.pull(decodeURIComponent(match[1]!), Number(match[2]), Number(match[3]));
   };
 

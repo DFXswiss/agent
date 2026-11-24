@@ -23,7 +23,7 @@ import { keepWrite, setBoardLoading, setHistoryLoad } from '../../../src/core/st
 import { boardEvent, boardWorld, entryId } from './world';
 
 const TASK = '0190f000-0000-7000-8000-00000000000c';
-const empty = { events: [], next_after: null, head: 0 };
+const empty = { events: [], next_before: null, head: 0 };
 
 const row = (entry: string, org: string) => ({
   entry_id: entry,
@@ -78,7 +78,7 @@ describe('loadBoard', () => {
     );
     w.client.on(`GET /v1/scopes/${w.org}/events`, () => ({
       events: [{ scope_seq: 4, received_at: null, event: stored }],
-      next_after: null,
+      next_before: null,
       head: 4,
     }));
     await loadBoard(w.context, board);

@@ -2,27 +2,23 @@
 // workgroups with read or write (the default workgroup is always write; only workgroups whose key the admin holds),
 // expiry 1 h – 30 d (72 h default). The result shows the link `<origin>/invite#<code>` and the code once, with copy
 // buttons and the warning to pass them on confidentially; "Done" forgets them. Open invitations (checked against the
-// verified log) can be revoked.
-import { useEffect, useId, useState } from 'react';
+// verified log, `OpenInvites`) can be revoked.
+import { useId, useState } from 'react';
 import { type Access, type Role } from '../../../core/org/members';
 import {
   type CreatedInvite,
   createInvite,
   EXPIRY_HOURS,
   invitable,
-  type InviteRow,
-  openInvites,
-  revokeInvite,
   USER_EXPIRY_HOURS,
 } from '../../../core/org/invites';
 import { actionErrorCode, keyRing } from '../../../core/org/batch';
 import type { OrgState } from '../../../core/log/state';
 import type { Directory } from '../../../core/tasks/directory';
-import { formatEventTime } from '../../../core/i18n';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
-import { useNow } from '../../countdown/useNow';
 import { BUTTON, PRIMARY } from './ActionDialog';
+import { OpenInvites } from './OpenInvites';
 
 const clipboardWrite = (text: string) => navigator.clipboard.writeText(text);
 
@@ -202,69 +198,6 @@ function InviteResult({ created, onDone }: { readonly created: CreatedInvite; re
   );
 }
 
-function OpenInvites({ org, version }: { readonly org: string; readonly version: number }) {
-  const { app } = useAppEnv();
-  const { t, error, locale } = useI18n();
-  const [rows, setRows] = useState<InviteRow[] | null>(null);
-  const [code, setCode] = useState<string | null>(null);
-  const [revoking, setRevoking] = useState<string | null>(null);
-  const [reload, setReload] = useState(0);
-  const now = useNow(false);
-  useEffect(() => {
-    // a late answer after unmounting sets nothing (React ignores it); the list is reloaded on every change anyway
-    openInvites(app.tasks, org, 'user').then(
-      (found) => {
-        setRows(found);
-        setCode(null);
-      },
-      (failure: unknown) => setCode(actionErrorCode(failure)),
-    );
-  }, [app, org, version, reload]);
-  const revoke = async (id: string) => {
-    setRevoking(id);
-    try {
-      await revokeInvite(app.tasks, org, id);
-      setReload((n) => n + 1);
-    } catch (failure) {
-      setCode(actionErrorCode(failure));
-    }
-    setRevoking(null);
-  };
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const time = (text: string) => formatEventTime(Date.parse(text), { locale, timeZone, now });
-  return (
-    <section className="flex flex-col gap-2" data-testid="members.invites">
-      <h2 className="font-semibold">{t('members.invites.title')}</h2>
-      {code !== null && (
-        <p role="alert" className="text-red-800" data-testid="members.invites.error" data-code={code}>
-          {error(code).title}
-        </p>
-      )}
-      {rows !== null && rows.length === 0 && (
-        <p className="text-gray-600" data-testid="members.invites.empty">
-          {t('members.invites.empty')}
-        </p>
-      )}
-      <ul className="flex flex-col gap-2">
-        {(rows ?? []).map((row) => (
-          <li key={row.invite_id} className="flex flex-wrap items-center gap-3" data-testid="members.invites.item">
-            <span>{t('members.invites.expires', { time: time(row.expires_at) })}</span>
-            <button
-              type="button"
-              className={BUTTON}
-              disabled={revoking !== null}
-              onClick={() => void revoke(row.invite_id)}
-              data-testid="members.invites.revoke"
-            >
-              {t('members.invites.revoke')}
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
 /** The admin's invitation area. */
 export function InviteSection({
   org,
@@ -312,7 +245,7 @@ export function InviteSection({
           onCancel={() => setMode('closed')}
         />
       )}
-      <OpenInvites org={org} version={version} />
+      <OpenInvites org={org} kind="user" version={version} />
     </div>
   );
 }

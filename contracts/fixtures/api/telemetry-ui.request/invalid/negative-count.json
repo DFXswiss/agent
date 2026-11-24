@@ -1,0 +1,10 @@
+{
+  "version": "0.1.0",
+  "views": {
+    "home": {
+      "count": -1,
+      "blocked_ms": 0,
+      "max_bucket": 0
+    }
+  }
+}

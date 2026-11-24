@@ -12,7 +12,7 @@ export function AuditScreen() {
       <h1 className="text-xl font-semibold" data-testid="audit.title">
         {t('audit.title')}
       </h1>
-      <AuditView org={org} task={null} />
+      <AuditView org={org} task={null} listId="audit" />
     </section>
   );
 }

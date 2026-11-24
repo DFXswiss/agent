@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/telemetry-ui.request.json",
+  "title": "POST /v1/telemetry/ui request",
+  "description": "Anonymous UI health report of a web client (ADR-063 section 5, 03-api.md section 4.11): main-thread blocks over 200 ms per view type since the last report. View names follow enums/ui-views.json (a well-formed name the hub does not know is counted as `other`); the hub clamps the counters to the limits of that file. The body is at most 8 KiB.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "../common.json#/$defs/version_text"
+    },
+    "views": {
+      "type": "object",
+      "description": "view type -> counters (at most 64 view types)",
+      "$comment": "keys: the pattern of a view type, at most 64 characters (checked by the hub; JSON Schema keyword propertyNames is not in the allowed subset)",
+      "additionalProperties": {
+        "$ref": "#/$defs/view_counts"
+      }
+    }
+  },
+  "required": [
+    "version",
+    "views"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "view_counts": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "blocked_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_bucket": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "count",
+        "blocked_ms",
+        "max_bucket"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

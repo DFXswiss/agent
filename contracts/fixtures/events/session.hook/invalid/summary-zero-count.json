@@ -1,0 +1,12 @@
+{
+  "event": "summary",
+  "decision": "allow",
+  "counts": {
+    "PreToolUse": 1
+  },
+  "tools": {
+    "Read": 0
+  },
+  "from": "2026-11-24T10:00:00.000Z",
+  "to": "2026-11-24T10:00:00.000Z"
+}

@@ -482,6 +482,10 @@
       "group": "read"
     },
     {
+      "action": "read.platform.ui_health",
+      "group": "read"
+    },
+    {
       "action": "read.scope.events",
       "group": "read"
     },

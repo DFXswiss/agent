@@ -2,8 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/whiteboard-history.request.json",
   "title": "GET /v1/whiteboards/{entry}/history request",
-  "description": "query parameters",
+  "description": "query parameters; `before`/`limit` (ADR-063 section 2, KOR-35) read one page newest first",
   "type": "object",
-  "properties": {},
+  "properties": {
+    "before": {
+      "$ref": "../common.json#/$defs/q_seq"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_list"
+    }
+  },
   "additionalProperties": false
 }

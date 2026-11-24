@@ -63,7 +63,7 @@ the names in code; renaming requires an ADR.
 | Table | Columns | Notes |
 |---|---|---|
 | `scope_head` | `scope_id` PK, `scope` text, `seq` bigint | `UPDATE … SET seq = seq + 1 RETURNING seq` inside the insert transaction ⇒ gapless per scope |
-| `event` [AO] | (`scope_id`,`scope_seq`) PK; `id` UNIQUE; `scope`, `org_id`, `wg_id` NULL, `task_id` NULL, `session_id` NULL, `author_id`, `author_kind`, `kind`, `ref` text, `epoch`, `ts` (header), `lh` int, `header_text` text (canonical), `ct` bytea, `sig` bytea(64), `size` int, `origin_device_id` NULL, `origin_seq` bigint NULL, `received_at` | indexes: (`task_id`,`scope_seq`), (`session_id`,`kind`,`scope_seq`), (`kind`,`ref`), (`received_at`) |
+| `event` [AO] | (`scope_id`,`scope_seq`) PK; `id` UNIQUE; `scope`, `org_id`, `wg_id` NULL, `task_id` NULL, `session_id` NULL, `author_id`, `author_kind`, `kind`, `ref` text, `epoch`, `ts` (header), `lh` int, `header_text` text (canonical), `ct` bytea, `sig` bytea(64), `size` int, `origin_device_id` NULL, `origin_seq` bigint NULL, `received_at` | indexes: (`task_id`,`scope_seq`), (`session_id`,`kind`,`scope_seq`), (`session_id`,`scope_seq`) WHERE `session_id` IS NOT NULL (newest-first pages of a session, KOR-35), (`kind`,`ref`), (`received_at`) |
 | `device_stream` | `device_id` PK, `last_origin_seq` bigint | gapless device outbox (§5) |
 
 Retention: events are kept for the lifetime of the organization (no deletion in v1). Size limits from
@@ -120,6 +120,7 @@ main session failed and no retry is pending; `closed` only by user action.
 | `metric_rollup` | same key with `ts` = 5-minute bucket; avg and max columns for gauges, last value for counters | kept 90 days; built every 5 min |
 | `usage_counter` | `session_id` PK, `requests`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `thinking_tokens`, `cost_micro_usd` bigint, `cost_basis` CHECK in (`provider`,`list_price`,`subscription_equivalent`), `context_used_tokens`, `context_window_tokens`, `last_provider` text NULL, `updated_at` | |
 | `quota_snapshot` | (`owner_id`,`window`) PK, `used_percent` real, `resets_at`, `severity` NULL, `fetched_at`, `device_id` | windows `five_hour`, `seven_day`, `weekly:<model>`; an `unavailable` report of the polling device deletes the owner's rows fetched at or before it (KOR-05) |
+| `ui_health_daily` | (`day` date,`version`,`view`) PK; `reports`, `blocks`, `blocked_ms` bigint; `max_bucket` smallint | anonymous UI health counters of the web clients (`POST /v1/telemetry/ui`, ADR-063 §5, KOR-35): per UTC day, client version and view type (closed list `contracts/enums/ui-views.json`); no user, org, device, address or object ID; at most 20 versions per day (more count as `other`); not exported with an org (hub-wide, `08-monitoring.md` §6.1) |
 
 ### 2.9 Audit and read log
 

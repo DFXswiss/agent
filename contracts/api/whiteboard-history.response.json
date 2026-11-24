@@ -2,20 +2,56 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/whiteboard-history.response.json",
   "title": "GET /v1/whiteboards/{entry}/history response",
-  "description": "Body of a successful response to GET /v1/whiteboards/{entry}/history (03-api.md section 4.9).",
-  "type": "object",
-  "properties": {
-    "events": {
-      "type": "array",
-      "items": {
-        "$ref": "../common.json#/$defs/stored_event"
+  "description": "Body of a successful response to GET /v1/whiteboards/{entry}/history (03-api.md section 4.9): every projected event ascending (at most 10 000, `truncated: true` when cut) or, with `before`/`limit` (ADR-063 section 2, KOR-35), one page newest first with next_before.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/stored_event"
+          },
+          "minItems": 1,
+          "maxItems": 10000
+        },
+        "truncated": {
+          "type": "boolean",
+          "const": true
+        }
       },
-      "minItems": 1,
-      "maxItems": 10000
+      "required": [
+        "events"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/stored_event"
+          },
+          "minItems": 0,
+          "maxItems": 200
+        },
+        "next_before": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/seq"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "events",
+        "next_before"
+      ],
+      "additionalProperties": false
     }
-  },
-  "required": [
-    "events"
-  ],
-  "additionalProperties": false
+  ]
 }

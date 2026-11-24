@@ -64,5 +64,9 @@
   "rename.open": "Umbenennen",
   "rename.title": "{name} umbenennen",
   "rename.label": "Name",
-  "rename.confirm": "Speichern"
+  "rename.confirm": "Speichern",
+  "wgs.more": "{count} weitere – anzeigen",
+  "list.more": "{count} weitere Geräte – anzeigen",
+  "list.above": "{count} Geräte darüber – anzeigen",
+  "list.top": "Zurück zum Anfang"
 }

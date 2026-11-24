@@ -106,6 +106,7 @@ AUDIT_ACTIONS = frozenset(
         "read.platform.enrollments",
         "read.platform.invites",
         "read.platform.log",
+        "read.platform.ui_health",
         "read.scope.events",
         "read.session",
         "read.session.get_context",

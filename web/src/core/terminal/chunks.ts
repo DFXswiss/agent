@@ -2,6 +2,9 @@
 // `{offset_ms_start, frames: [[t_ms, code, data]], cols, rows}` – asciicast v2 events with `t_ms` in milliseconds since
 // the session's recording started (monotonic across recorder restarts), code `o` (output) or `m` (marker after a
 // recorder restart). Only `o` data is written to the terminal.
+//
+// Replays are bounded (ADR-063 section 1): `outputUntil`/`outputOf` with `maxChars` start at the newest chunk boundary
+// that keeps the output within the bound, never at the first chunk of a long recording.
 import { isRecord } from '../registry';
 
 /** Terminal size of the tmux pane when a chunk does not name one (05-runner.md section 7). */
@@ -9,6 +12,8 @@ export const DEFAULT_COLS = 160;
 export const DEFAULT_ROWS = 48;
 /** Contract bounds of `cols`/`rows`. */
 export const MAX_SIZE = 1000;
+/** Characters of output a replay writes at most (about 10 000 lines of 160 columns, the xterm scrollback). */
+export const REPLAY_CHARS = 2 * 1024 * 1024;
 
 export type FrameCode = 'o' | 'm';
 export type Frame = readonly [tMs: number, code: FrameCode, data: string];
@@ -23,6 +28,10 @@ export interface ChunkBody {
 /** A verified chunk of one session at its `scope_seq`. */
 export interface Chunk extends ChunkBody {
   readonly seq: number;
+  /** The event ID ('' when unknown). */
+  readonly id: string;
+  /** Characters of output (`o` data) in the chunk: the measure of the memory bounds. */
+  readonly chars: number;
   /** Offset of the chunk's last frame (ms). */
   readonly endMs: number;
   /** Unix ms of the event header (`ts`: the device wrote the chunk at its last frame); null if unknown. */
@@ -50,10 +59,15 @@ export function parseChunk(body: unknown): ChunkBody | null {
   return { offsetMs: body.offset_ms_start, frames, cols: body.cols, rows: body.rows };
 }
 
-/** A chunk at `seq` from its body, written at `atMs` (header time, if known). */
-export function chunkAt(seq: number, body: ChunkBody, atMs: number | null = null): Chunk {
-  const endMs = body.frames.reduce((max, frame) => Math.max(max, frame[0]), body.offsetMs);
-  return { ...body, seq, endMs, atMs };
+/** A chunk at `seq` from its body, written at `atMs` (header time, if known), with its event ID. */
+export function chunkAt(seq: number, body: ChunkBody, atMs: number | null = null, id: string = ''): Chunk {
+  let endMs = body.offsetMs;
+  let chars = 0;
+  for (const [tMs, code, data] of body.frames) {
+    endMs = Math.max(endMs, tMs);
+    if (code === 'o') chars += data.length;
+  }
+  return { ...body, seq, id, chars, endMs, atMs };
 }
 
 /**
@@ -67,9 +81,10 @@ export function absoluteAt(chunks: readonly Chunk[], offsetMs: number): number |
 }
 
 /** The output (`o`) data of the frames of `chunks` whose offset lies in `(fromMs, toMs]`, in order. */
-export function outputBetween(chunks: readonly Chunk[], fromMs: number, toMs: number): string {
+export function outputBetween(chunks: readonly Chunk[], fromMs: number, toMs: number, start: number = 0): string {
   let text = '';
-  for (const chunk of chunks) {
+  for (let index = start; index < chunks.length; index += 1) {
+    const chunk = chunks[index]!;
     if (chunk.endMs <= fromMs) continue;
     for (const [tMs, code, data] of chunk.frames) {
       if (code === 'o' && tMs > fromMs && tMs <= toMs) text += data;
@@ -78,14 +93,36 @@ export function outputBetween(chunks: readonly Chunk[], fromMs: number, toMs: nu
   return text;
 }
 
-/** Everything the session wrote up to `toMs` (inclusive). */
-export function outputUntil(chunks: readonly Chunk[], toMs: number): string {
-  return outputBetween(chunks, -1, toMs);
+/**
+ * The index of the first chunk of a bounded replay up to `toMs`: the newest chunk boundary from which the chunks that
+ * start at or before `toMs` hold at most `maxChars` characters of output (at least one such chunk is kept).
+ */
+export function replayStart(chunks: readonly Chunk[], toMs: number, maxChars: number): number {
+  let start = chunks.length;
+  let chars = 0;
+  while (start > 0) {
+    const chunk = chunks[start - 1]!;
+    if (chunk.offsetMs <= toMs) {
+      if (chars > 0 && chars + chunk.chars > maxChars) break;
+      chars += chunk.chars;
+    }
+    start -= 1;
+  }
+  return start;
 }
 
-/** All output of `chunks`. */
-export function outputOf(chunks: readonly Chunk[]): string {
-  return outputUntil(chunks, Number.MAX_SAFE_INTEGER);
+/** What the session wrote up to `toMs` (inclusive), at most about `maxChars` (a bounded replay, `replayStart`). */
+export function outputUntil(
+  chunks: readonly Chunk[],
+  toMs: number,
+  maxChars: number = Number.POSITIVE_INFINITY,
+): string {
+  return outputBetween(chunks, -1, toMs, replayStart(chunks, toMs, maxChars));
+}
+
+/** All output of `chunks`, at most about `maxChars` (the newest). */
+export function outputOf(chunks: readonly Chunk[], maxChars: number = Number.POSITIVE_INFINITY): string {
+  return outputUntil(chunks, Number.MAX_SAFE_INTEGER, maxChars);
 }
 
 export interface Range {

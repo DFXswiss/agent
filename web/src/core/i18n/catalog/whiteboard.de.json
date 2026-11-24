@@ -35,5 +35,11 @@
   "history.deleted": "Gelöscht",
   "history.close": "Schliessen",
   "diff.stats": "+{added} / −{deleted} Zeilen",
-  "reload": "Erneut versuchen"
+  "reload": "Erneut versuchen",
+  "history.diff.show": "Änderungen zeigen",
+  "history.diff.hide": "Änderungen ausblenden",
+  "history.older": "{count} ältere Versionen – zeigen",
+  "history.newer": "{count} neuere Versionen – zeigen",
+  "history.newest": "Zur neuesten Version",
+  "diff.none": "Keine Zeile geändert."
 }

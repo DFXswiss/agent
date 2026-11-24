@@ -1,14 +1,27 @@
 // The `terminal` slice: strict `scope_seq` order, held chunks behind possible gaps, pulled pages with unverifiable and
-// not yet readable chunks, event-ID positions, open/close and the `terminals_refused` frame.
+// not yet readable chunks, event-ID positions, the bounded tail (newest page, trim, epoch), the history window (copy,
+// live growth, earlier pages, its bound), open/close and the `terminals_refused` frame.
 import { describe, expect, it } from 'vitest';
 import { createStore } from '../../../src/core/store';
 import { putEvents } from '../../../src/core/store/slices/events';
 import {
   accountedIn,
+  applyEarlier,
+  applyNewest,
   applyPage,
   type ChunkVerdict,
+  closeHistory,
   closeTerminal,
+  earlierFailed,
+  earlierLoading,
+  earlierPage,
+  earlierPageFailed,
   frames,
+  HISTORY_CHARS,
+  KEEP_CHARS,
+  loadingEarlier,
+  newestPage,
+  openHistory,
   openTerminal,
   pulledPage,
   pulledVerdict,
@@ -16,8 +29,10 @@ import {
   receiveChunks,
   release,
   releaseHeld,
+  setHistory,
   terminalFailed,
   type TerminalEntry,
+  trimTail,
   verdictOf,
 } from '../../../src/core/store/slices/terminal';
 import { body, entry, other, OTHER, SESSION, TARGET, WG } from './helpers';
@@ -200,5 +215,155 @@ describe('store actions', () => {
     frames.terminals_refused!(store, null);
     expect(store.getState().terminal.sessions[SESSION]).toMatchObject({ status: 'error', code: 'not_found' });
     expect(store.getState().terminal.sessions[OTHER]).toBeUndefined();
+  });
+});
+
+/** A verified chunk with `size` characters of output. */
+const sized = (seq: number, size: number) => ok(seq, `id-${seq}`, body(seq * 100, [[seq * 100, 'x'.repeat(size)]]));
+
+describe('the bounded tail', () => {
+  it('grows by push without copying the chunk list', () => {
+    let item = applyPage(opened(), [ok(1)], 1);
+    const list = item.chunks;
+    item = applyPage(item, [ok(2)], 2);
+    item = release(receive(item, ok(3)), all);
+    expect(item.chunks).toBe(list);
+    expect(seqs(item)).toEqual([1, 2, 3]);
+    expect(item.chars).toBe(6);
+  });
+
+  it('keeps the newest characters, drops the oldest by an eighth and remembers the earlier output', () => {
+    expect(KEEP_CHARS).toBe(8 * 1024 * 1024);
+    let item = applyPage(opened(), [sized(1, 40), sized(2, 40), bad(3), sized(4, 40), sized(5, 40)], 5);
+    expect(trimTail(item, 160)).toBe(item);
+    item = trimTail(item, 100);
+    // 160 characters, goal 87.5: two chunks leave, the bad chunk before the first kept one as well
+    expect(seqs(item)).toEqual([4, 5]);
+    expect(item.chars).toBe(80);
+    expect(item.earlier).toBe(4);
+    expect(item.bad).toEqual([]);
+    expect(item.ids.has('id-1')).toBe(false);
+    expect(item.ids.get('id-4')).toBe(4);
+    // a dropped ID may come back at another position (it is no longer in memory)
+    expect(seqs(applyPage(item, [ok(6, 'id-1')], 6))).toEqual([4, 5, 6]);
+    // the newest chunk always stays
+    const single = trimTail(applyPage(opened(), [sized(1, 50), sized(2, 500)], 2), 100);
+    expect(seqs(single)).toEqual([2]);
+    expect(single.earlier).toBe(2);
+  });
+
+  it('replaces the tail with the newest page and counts an epoch when it had content', () => {
+    let item = applyNewest(opened(), [ok(8), ok(9)], 12, 8);
+    expect(seqs(item)).toEqual([8, 9]);
+    expect(item).toMatchObject({ through: 12, earlier: 8, epoch: 0, status: 'ready' });
+    const empty = applyNewest(opened(), [], 0, null);
+    expect(empty).toMatchObject({ through: 0, earlier: null, epoch: 0 });
+    // held chunks beyond the page stay, with their IDs
+    item = receive(item, ok(20));
+    item = openHistory(item);
+    item = applyNewest(item, [bad(15)], 16, 15);
+    expect(seqs(item)).toEqual([]);
+    expect(item).toMatchObject({ through: 16, earlier: 15, epoch: 1, bad: [{ seq: 15, code: 'signature_invalid' }] });
+    expect(item.history!.cut).toBe(true);
+    expect(item.held.map((chunk) => chunk.seq)).toEqual([20]);
+    expect(applyPage(item, [ok(19, 'id-20')], 19).bad.at(-1)).toEqual({ seq: 19, code: 'event_conflict' });
+    // only bad chunks were in it: still an epoch; an open window without content is kept as it is
+    const again = applyNewest(item, [], 30, null);
+    expect(again.epoch).toBe(2);
+    const plain = openHistory(empty);
+    expect(applyNewest(plain, [], 1, null).history).toBe(plain.history);
+  });
+});
+
+describe('the history window', () => {
+  const windowOf = (item: TerminalEntry) => item.history!;
+  const windowSeqs = (item: TerminalEntry) => windowOf(item).chunks.map((chunk) => chunk.seq);
+
+  it('starts as a copy of the tail and grows with live chunks until its bound', () => {
+    let item = applyNewest(opened(), [ok(5), bad(6), ok(7)], 7, 5);
+    expect(closeHistory(item)).toBe(item);
+    item = openHistory(item);
+    expect(openHistory(item)).toBe(item);
+    expect(windowOf(item)).toMatchObject({ before: 5, cut: false, status: 'ready', code: null, chars: 4 });
+    expect(windowOf(item).chunks).not.toBe(item.chunks);
+    expect(windowOf(item).bad).toEqual([{ seq: 6, code: 'signature_invalid' }]);
+    item = release(receive(item, ok(8)), all);
+    expect(windowSeqs(item)).toEqual([5, 7, 8]);
+    // bad chunks of a later pull are recorded in the window as well
+    item = applyPage(item, [bad(9, 'header_invalid')], 9);
+    expect(windowOf(item).bad.at(-1)).toEqual({ seq: 9, code: 'header_invalid' });
+    // at its bound it stops taking live chunks and says so
+    item = { ...item, history: { ...windowOf(item), chars: HISTORY_CHARS } };
+    item = release(receive(item, ok(10)), all);
+    expect(windowSeqs(item)).toEqual([5, 7, 8]);
+    expect(windowOf(item).cut).toBe(true);
+    item = release(receive(item, ok(11)), all);
+    expect(windowSeqs(item)).toEqual([5, 7, 8]);
+    // a cut window takes no bad chunks either
+    item = applyPage(item, [bad(12)], 12);
+    expect(windowOf(item).bad).toHaveLength(2);
+    expect(seqs(item)).toEqual([5, 7, 8, 10, 11]);
+    expect(closeHistory(item).history).toBeNull();
+  });
+
+  it('loads earlier pages in front, newest first from the hub, and records bad ones', () => {
+    let item = openHistory(applyNewest(opened(), [ok(5)], 5, 5));
+    expect(earlierLoading(item, 4)).toBe(item);
+    item = earlierLoading(item, 5);
+    expect(windowOf(item).status).toBe('loading');
+    expect(earlierLoading(item, 5)).toBe(item);
+    // a page for another cursor is ignored
+    expect(applyEarlier(item, 4, [ok(1)], null)).toBe(item);
+    item = applyEarlier(item, 5, [ok(3), bad(2), ok(5), ok(4, 'id-5'), ok(1)], 1);
+    expect(windowSeqs(item)).toEqual([1, 3, 5]);
+    expect(windowOf(item)).toMatchObject({ before: 1, status: 'ready', cut: false });
+    expect(windowOf(item).bad).toEqual([
+      { seq: 2, code: 'signature_invalid' },
+      { seq: 4, code: 'event_conflict' },
+    ]);
+    expect(seqs(item)).toEqual([5]);
+    // a chunk that cannot be read yet fails the load; nothing is applied
+    const failed = applyEarlier(item, 1, [ok(0), waiting(0)], null);
+    expect(windowOf(failed)).toMatchObject({ status: 'error', code: 'unavailable', before: 1 });
+    expect(windowSeqs(failed)).toEqual([1, 3, 5]);
+    expect(earlierFailed(item, 7, 'x')).toBe(item);
+    // at the start of the recording
+    item = applyEarlier(item, 1, [ok(0)], null);
+    expect(windowOf(item).before).toBeNull();
+    expect(earlierLoading(item, 1)).toBe(item);
+  });
+
+  it('drops the newest chunks of a window beyond its bound and keeps the page', () => {
+    let item = openHistory(applyNewest(opened(), [sized(8, 30), sized(9, 30)], 9, 8));
+    item = applyEarlier(item, 8, [sized(6, 30), sized(7, 30)], 6, 70);
+    expect(windowSeqs(item)).toEqual([6, 7]);
+    expect(windowOf(item)).toMatchObject({ chars: 60, cut: true, before: 6 });
+    expect(windowOf(item).ids.has('id-8')).toBe(false);
+    item = applyEarlier(item, 6, [sized(5, 100)], null, 70);
+    expect(windowSeqs(item)).toEqual([5]);
+  });
+
+  it('works on entries without a window', () => {
+    const item = opened();
+    expect(earlierLoading(item, 1)).toBe(item);
+    expect(earlierFailed(item, 1, 'x')).toBe(item);
+    expect(applyEarlier(item, 1, [], null)).toBe(item);
+  });
+
+  it('has store actions for the newest page, the mode and earlier pages', () => {
+    const store = createStore();
+    openTerminal(store, TARGET);
+    const state = () => store.getState().terminal.sessions[SESSION]!;
+    newestPage(store, SESSION, [ok(4)], 4, 4, none);
+    expect(state()).toMatchObject({ earlier: 4, through: 4 });
+    setHistory(store, SESSION, true);
+    loadingEarlier(store, SESSION, 4);
+    expect(state().history!.status).toBe('loading');
+    earlierPageFailed(store, SESSION, 4, 'rate_limited');
+    expect(state().history).toMatchObject({ status: 'error', code: 'rate_limited' });
+    earlierPage(store, SESSION, 4, [ok(2)], null);
+    expect(state().history!.chunks.map((chunk) => chunk.seq)).toEqual([2, 4]);
+    setHistory(store, SESSION, false);
+    expect(state().history).toBeNull();
   });
 });

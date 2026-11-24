@@ -55,5 +55,9 @@
   "progress.save": "Saving …",
   "access.inherited": "reads as admin",
   "role.demote": "Content the person has already read stays with them; they can no longer read new content of workgroups they are not a member of themselves.",
-  "ungrant.admin-body": "The person stays an admin and keeps reading this workgroup; writing needs a new grant."
+  "ungrant.admin-body": "The person stays an admin and keeps reading this workgroup; writing needs a new grant.",
+  "access.more": "{count} more – show",
+  "list.more": "{count} more members – show",
+  "list.above": "{count} members above – show",
+  "list.top": "Back to the top"
 }

@@ -1,7 +1,8 @@
 // Task overview of an organization (KOR-32, route `/o/:org/tasks`, right `org:member`): every task of the workgroups
 // the user can read (from the verified membership log; the others are never requested), newest activity first, with
 // title, workgroup, state, owner and last activity. Filters: state (hub side), workgroup (only that list is loaded),
-// "only mine" and the title search (in the browser: titles are encrypted). The empty state says how a task is created.
+// "only mine" and the title search (in the browser: titles are encrypted; bounded per request, `scan.ts`). The empty
+// state says how a task is created.
 // Filters live in the screen's state, not in the URL: a search text in the address would reach the hub on a reload.
 import { useId, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -100,6 +101,7 @@ export function OverviewScreen() {
       </div>
       <TaskTable
         org={org}
+        listId="tasks.overview"
         wgs={wg === '' ? readable : [wg]}
         state={filter}
         mine={mine ? userId : null}

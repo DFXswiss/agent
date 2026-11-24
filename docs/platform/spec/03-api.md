@@ -23,7 +23,7 @@ this document for semantics. Both implementations validate inbound messages agai
 | Root-signed requests | Operator CLI requests (`POST /v1/platform/log`, `GET /v1/platform/enrollments`) use `agent-request-v1` with key ID `platform-root`, signed by the platform root key (Ed25519); the hub verifies against `AGENT_HUB_PLATFORM_ROOT_KEY`. |
 | Idempotency | Every create request carries a client-generated ID (`task_id`, `event.id`, `operation_id`, `request_id`). Repeating a request with identical content returns the original result with `200` and `"replayed":true`; different content with the same ID → `409 id_conflict`. |
 | Connections | HTTP/1.1 keep-alive. The hub keeps an idle connection for 120 s (`agent-hub serve`); every client reuses an idle connection for a shorter time than any server or proxy on its route keeps it (runner: 2 s), so the client, not the server, closes an idle connection. A reverse proxy in front reuses its upstream connections for less than 120 s. A runner request that fails on a reused connection before any byte of the answer arrived is sent once more (exactly once; the broken connection is dropped), newly signed with the same body; byte-identical repeats are harmless for every device endpoint (Idempotency, `origin_seq`, `seq`, stored credential bytes). The same holds for the copy of a late outbox push, which may reach the hub while the first request is still being processed (the device's stream row serialises them, ADR-050). Answers that do not verify are never repeated (KOR-18, `05-runner.md` §2.3). |
-| Pagination | Logs and events: ascending, `?after=<seq>&limit=<n>` (default 200, max 1000), response `next_after`. Lists: newest first, `?before=<opaque>&limit=` (default 50, max 200), response `next_before`. |
+| Pagination | Logs and events: ascending, `?after=<seq>&limit=<n>` (default 200, max 1000), response `next_after`; the events of a scope also newest first with `?before=<scope_seq>` (excludes `after`; response `next_before`). Lists: newest first, `?before=<opaque>&limit=` (default 50, max 200), response `next_before`; the opaque cursor is the b64u of the canonical `{"at","id"}` of the row's sort key, ties ordered by the ID. No endpoint answers without a bound (ADR-063 §2, KOR-35); the lists that were complete before take `before`/`limit` optionally and answer without them as before, cut at a hard cap with `truncated: true`: `GET /v1/whiteboards/{entry}/history` (cap 10 000; paged: newest first, `before=<scope_seq>`), `GET /v1/orgs/{org}/invites`, `GET /v1/platform/invites` (cap 1 000), `GET /v1/orgs/{org}/devices`, `GET /v1/workgroups/{wg}/device-candidates` (cap 10 000; pages in the order `enrolled_at DESC, id DESC`), `GET /v1/platform/enrollments` (its log: cap 10 000; paged ascending with `after`/`limit`, default 200, max 1000, `next_after`), `GET /v1/monitoring/overview` (at most 2 000 sessions, the most recently active first, `sessions_total`, `truncated`). Key material (`/v1/wraps`, catch-up, device wraps) and the membership of `GET /v1/orgs/{org}` stay complete by design. A hub older than these parameters refuses them with `400 request_invalid`; a client then repeats the request once without them. |
 | Rights | Every endpoint lists its right (§3). Missing right → `403 forbidden` (never reveals existence of foreign objects: unknown and forbidden IDs both return `404 not_found` for reads, `403 forbidden` for writes on known scopes). |
 | Read log | Every authenticated `GET` appends an `audit` row `read.<resource>` (batched, written within 1 s). |
 | Rate limits | Anonymous endpoints: 30/min per source address; recovery as in `04-crypto.md` §5.5; signed endpoints: 600/min per browser session key and 6000/min per device key (runners start an outbox push at most every 100 ms and send a late push once more at most every 2 s; the outbox paces each device on its own, §6.1, ADR-048, ADR-050). `429 rate_limited` with `Retry-After`. |
@@ -91,10 +91,10 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | Endpoint | Right | Request → Response |
 |---|---|---|
 | `POST /v1/orgs/{org}/invites` | org:admin | `{entry` (log `invite` entry)`,package_ct}` → `{invite_id,seq}` (atomic with the log append) |
-| `GET /v1/orgs/{org}/invites` | org:admin | → open and recent invites (state `open|used|revoked|expired`) |
+| `GET /v1/orgs/{org}/invites` | org:admin | `?before=&limit=` (optional, §1 Pagination) → open and recent invites (state `open|used|revoked|expired`), newest first; without paging at most 1 000 (`truncated`) |
 | `POST /v1/orgs/{org}/invites/{id}/revoke` | org:admin | `{entry` (`invite_revoke`)`}` → `{seq}` |
 | `POST /v1/platform/invites` | platform:inviter | `{invite_id,kind:"user",expires_at,pk_inv}` → `{}` (code never sent; `pk_inv` not an Ed25519 public key → `400 params_invalid`; the same ID with other values → `409 id_conflict`; ADR-043) |
-| `GET /v1/platform/invites` / `POST /v1/platform/invites/{id}/revoke` | platform:inviter | list / revoke |
+| `GET /v1/platform/invites` / `POST /v1/platform/invites/{id}/revoke` | platform:inviter | list (`?before=&limit=` optional, §1 Pagination; without paging at most 1 000, `truncated`) / revoke |
 
 ### 4.3 Organizations, membership log, wraps
 
@@ -109,22 +109,22 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `GET /v1/orgs/{org}/catch-up` | org:member | → list of `{scope,scope_id,epoch,recipient_id}` without wrap that this caller may create (W2) |
 | `GET /v1/platform/log` | user | `?after=` → platform log entries |
 | `POST /v1/platform/log` | entry signed by the platform root (operator CLI `agent-hub platform …`; no session needed) | `{expected_seq,entries[]}` → `{head}`; types of `04-crypto.md` §4.8 incl. `device_decertify` (hub then refuses the device, sets `decertified`, marks affected scopes `rotation_pending`, sends `decertified` hint) |
-| `GET /v1/platform/enrollments` | root-signed request (§1) | → pending platform device enrollments with verified `inv_sig` (for `certify-pending`) |
+| `GET /v1/platform/enrollments` | root-signed request (§1) | `?after=&limit=` (optional) → pending platform device enrollments with verified `inv_sig` (for `certify-pending`) and the platform log: without paging from its start, at most 10 000 entries (`truncated`); with paging the entries after `after` and `next_after` (the operator CLI reads page by page) |
 
 ### 4.4 Events
 
 | Endpoint | Right | Request → Response |
 |---|---|---|
 | `POST /v1/events` | per kind (`04-crypto.md` §4.3) | `{events:[{event,notify?:bool}]}` (≤ 100) → `{results:[{id,scope_id,scope_seq,replayed}]}`; all-or-nothing |
-| `GET /v1/scopes/{scope_id}/events` | org:member (org scope) / wg:read (wg scope) | `?after=&limit=&kinds=a,b&task=&session=&ref=` → `{events:[{scope_seq,received_at,event}],next_after,head}`; `session.terminal` only when listed in `kinds` |
+| `GET /v1/scopes/{scope_id}/events` | org:member (org scope) / wg:read (wg scope) | `?after=&limit=&kinds=a,b&task=&session=&ref=` → `{events:[{scope_seq,received_at,event}],next_after,head}`; `session.terminal` only when listed in `kinds`. With `?before=<scope_seq>` instead of `after` (both: `400 request_invalid`): the matching events below it newest first → `{events,next_before,head}` (the newest page: `before` above `head`, e.g. 9999999999999999); every filter applies; both directions are read in index order |
 
 ### 4.5 Workgroups and devices
 
 | Endpoint | Right | Request → Response |
 |---|---|---|
 | `GET /v1/workgroups/{wg}` | wg:read | → `{wg_id,org_id,is_default,epoch,devices:[{device_id,kind,online,capacity}],members:[{user_id,access}]}` – `members` and `my_access` (of `GET /v1/orgs/{org}`) carry the effective access, so every admin appears with `read` unless it has explicit access (ADR-058); no marker, a client derives the source from the verified log |
-| `GET /v1/workgroups/{wg}/device-candidates` | wg:write | → platform devices `{device_id,platform_seq,pub,online,capacity}` ordered by free capacity (§4.6.2) |
-| `GET /v1/orgs/{org}/devices` | org:member | → devices of the org and platform devices assigned to its workgroups: `{device_id,kind,state,online,last_seen_at,agent_version,capacity,assigned_wgs}` |
+| `GET /v1/workgroups/{wg}/device-candidates` | wg:write | `?before=&limit=` (optional) → platform devices `{device_id,platform_seq,pub,online,capacity}` ordered by free capacity (§4.6.2); without paging at most 10 000 (the newest enrolments, `truncated`); a page keeps the order `enrolled_at DESC, id DESC` |
+| `GET /v1/orgs/{org}/devices` | org:member | `?before=&limit=` (optional) → devices of the org and platform devices assigned to its workgroups: `{device_id,kind,state,online,last_seen_at,agent_version,capacity,assigned_wgs}`, newest enrolment first; without paging at most 10 000 (`truncated`) |
 
 ### 4.6 Tasks and sessions
 
@@ -208,7 +208,7 @@ with transitions and the IDs of the `operation.params` / `operation.result` even
 |---|---|---|
 | (write) `POST /v1/events` with `whiteboard.*` | see `04-crypto.md` §4.3 | `notify:true` allowed only on `whiteboard.entry` |
 | `GET /v1/whiteboards` | org:member (org level) / wg:read | `?org=&wg=&task=&level=` → entries `{entry_id,author_id,created_at,updated_at,deleted,latest_event:{scope_id,scope_seq}}` newest first |
-| `GET /v1/whiteboards/{entry}/history` | same | → all events of the entry ascending |
+| `GET /v1/whiteboards/{entry}/history` | same | → all events of the entry ascending (at most 10 000, `truncated`); `?before=<scope_seq>&limit=` (optional): one page newest first `{events,next_before}` |
 | `GET /v1/notifications` | user | `?before=` → newest first |
 | `POST /v1/notifications/read` | user | `{ids:[…]}` or `{all:true}` → `{}` |
 
@@ -236,10 +236,12 @@ a response with header `final:true` arrives (success or error – the outcome is
 
 | Endpoint | Right | Request → Response |
 |---|---|---|
-| `GET /v1/monitoring/overview` | org:member | `?org=` → `{devices:[{device_id,online,capacity,latest}],vms:[{vm_id,device_id,wg_id,state,latest}] (only own wgs),sessions:[{session_id,task_id,wg_id,state,latest,usage}] (wg:read)}` |
+| `GET /v1/monitoring/overview` | org:member | `?org=` → `{devices:[{device_id,online,capacity,latest}],vms:[{vm_id,device_id,wg_id,state,latest}] (only own wgs),sessions:[{session_id,task_id,wg_id,state,latest,usage}] (wg:read),sessions_total,truncated}`; at most 2 000 sessions, the most recently active first |
 | `GET /v1/monitoring/series` | as overview for the entity | `?entity_kind=&entity_id=&metric=&from=&to=&step=` (`step` ≥ 15 s raw within 48 h, ≥ 300 s from rollups) → `{points:[[ts,value]]}` |
 | `GET /v1/orgs/{org}/audit` | org:admin (all), org:member (rows of wgs with wg:read and own actions) | `?before=&action=&actor=&task=&session=&wg=` → audit rows newest first |
 | `GET /v1/orgs/{org}/audit/verify` | org:admin | → `{ok,head:{seq,hash},checkpoint}` |
+| `POST /v1/telemetry/ui` | anon | `{version,views:{<view type>:{count,blocked_ms,max_bucket}}}` (≤ 64 views, body ≤ 8 KiB; view types `contracts/enums/ui-views.json`, an unknown one counts as `other`; values clamped) → `{}`; anonymous UI health report, stored only as daily counters per version and view type (`08-monitoring.md` §6.1, ADR-063 §5) |
+| `GET /v1/platform/ui-health` | platform:inviter | `?days=` (1–90, default 7) → `{from,rows:[{day,version,view,reports,count,blocked_ms,max_bucket}]}` newest day first, at most 10 000 rows (`truncated`) |
 
 ## 5. Browser live channel
 
@@ -361,9 +363,9 @@ JSON bodies except tar streams.
 | `session.state` | `{state,reason?,claude_session_id?,at}` incl. `prompt_accepted {prompt_id}`, `prompt_refused {prompt_id,reason}` |
 | `session.output` | `{message_id,role:"assistant",text,turn,stop_reason?}` (from the transcript) |
 | `session.tool` | `{tool_use_id,name,input_summary,input,result_summary,is_error,duration_ms}` (input/result truncated to 64 KiB each) |
-| `session.hook` | `{event,tool?,decision:"allow"|"deny"|"block"|"none",reason?,path?}` |
+| `session.hook` | `{event,tool?,decision:"allow"|"deny"|"block"|"none",reason?,path?}`; or the summary of routine calls `{event:"summary",decision:"allow",counts:{PreToolUse?,PostToolUse?},tools:{<tool>:n},from,to}` (`PreToolUse` allow and `PostToolUse` none counted per session, written at most every 10 s and before any other hook or state record; KOR-35, 05-runner.md §5.2) |
 | `session.file` | `{path,op:"write"|"edit"|"delete",sha256,size,patch?}` (patch ≤ 64 KiB); or a summary of many files `{path,op:"summary",files,deleted,bytes,paths,reason:"bulk"|"limit"}` (no patches, `paths` ≤ 20; HOT-06, 05-runner.md §6.4) |
-| `session.terminal` | `{offset_ms_start,frames:[[t_ms,"o",data]],cols,rows}` (asciicast v2 output events, ≤ 16 KiB per record, flushed every 100 ms) |
+| `session.terminal` | `{offset_ms_start,frames:[[t_ms,"o",data]],cols,rows}` (asciicast v2 output events, ≤ 16 KiB data per event, body JSON ≤ 60 KiB per record; written after 100 ms of quiet, under sustained output at the latest after 1 s; 05-runner.md §7) |
 | `usage` | `{request_id,model,provider?,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,thinking_tokens,cost_usd?,context_window_tokens,request_bytes,response_bytes,status}` |
 | `operation.request` | `{pending_id,operation_id,type,params,idempotency_key?,requested_at}` |
 | `platform.query` | `{pending_id,tool,arguments}` |
@@ -533,3 +535,5 @@ Operation codes (in operation results): `unknown_type`, `params_invalid`, `repo_
 | Session idle → suspend | 30 min (config `AGENT_RUNNER_SESSION_IDLE_SECONDS`) |
 | VM idle → stop | 30 min (config `AGENT_RUNNER_VM_IDLE_SECONDS`) |
 | Subagents | depth ≤ 2, running per task ≤ 3, total per task ≤ 10 (ADR-017) |
+| List reads (ADR-063 §2) | pages: events and logs ≤ 1000 (default 200), lists ≤ 200 (default 50); hard caps without paging: whiteboard history 10 000 events, invitations 1 000, device lists 10 000, the log of `GET /v1/platform/enrollments` 10 000 entries, monitoring overview 2 000 sessions; UI health read 10 000 rows |
+| UI health report | body ≤ 8 KiB, ≤ 64 views; per view `count` ≤ 100 000, `blocked_ms` ≤ 3 600 000, `max_bucket` ≤ 6; ≤ 20 versions per day; anonymous rate limit |

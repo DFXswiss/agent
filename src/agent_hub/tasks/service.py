@@ -144,7 +144,7 @@ def create_task(
             return Outcome(body=_replayed_create(connection, user, task_id, wg_id, events))
         decision = load.decide(connection, wg_id, now, context.config.device_online_seconds)
         if decision is None:
-            available = bool(workgroups.candidates(connection, wg_id, now, context.config.device_online_seconds))
+            available = workgroups.has_candidates(connection, wg_id, now, context.config.device_online_seconds)
             raise HubError("no_device", detail={"candidates_available": available})
         stored = append_events(connection, list(events), str(user), now=now, root_key=context.config.platform_root_key)
         if any(item.replayed for item in stored):

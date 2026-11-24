@@ -1,0 +1,54 @@
+{
+  "enrollments": [
+    {
+      "invite_id": "Dw8PDw8PDw8PDw8PDw8PDw",
+      "device_id": "01930014-0000-7000-8000-000000000014",
+      "pub": {
+        "kem": "SUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUk",
+        "sig": "SkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSko"
+      },
+      "enroll_sig": "S0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLSw",
+      "inv_sig": "TExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTA",
+      "agent_version": "0.1.0",
+      "os": "macOS 27.2",
+      "arch": "arm64",
+      "capacity": {
+        "vm_memory_budget_mib": 65536,
+        "vm_memory_used_mib": 0,
+        "vm_slots_total": 8,
+        "vm_slots_free": 8,
+        "pool_ready": 2
+      },
+      "created_at": "2026-11-21T12:00:00.000Z"
+    }
+  ],
+  "log": [
+    {
+      "body": {
+        "by": "platform-root",
+        "prev": "",
+        "pub": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI",
+        "seq": 0,
+        "ts": "2026-11-21T12:00:00.000Z",
+        "type": "root",
+        "v": 1
+      },
+      "sig": "0Wd1z6S-8qSwNwITOurQxKdWHIAbi2bbdEJH2EDtfSyQasRldGmbg2xLqrDyHOkzEKHZuDhIy1w48Ov1cM73AA"
+    },
+    {
+      "body": {
+        "by": "platform-root",
+        "expires": "2026-11-24T12:00:00.000Z",
+        "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+        "pk_inv": "xgYLebs9KmDWfLKLso5G0yQoiS3p0UwZInMoJ_LDHk4",
+        "prev": "pCpTj-mE9zgiHY_jfQ_pMYop4aFTD0ZhhQk-HlIJ_GY",
+        "seq": 1,
+        "ts": "2026-11-21T12:01:00.000Z",
+        "type": "device_invite",
+        "v": 1
+      },
+      "sig": "dq8YC4oOd9BLPytel1S6TxO5jV6IjGxBN6533o1bfZGoeNEKYmIyCFwmLem2RN3I5xROyuxBb51HOnkre6ZeCw"
+    }
+  ],
+  "truncated": true
+}

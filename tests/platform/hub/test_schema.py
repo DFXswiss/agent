@@ -449,6 +449,16 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     ],
     # platform spend per org and UTC day (HUB-14, migration 0006)
     "usage_daily": [("org_id", U), ("day", "date"), ("device_id", U), ("cost_micro_usd", BI)],
+    # anonymous UI health counters of the web clients (KOR-35, ADR-063 section 5, migration 0012): no identity
+    "ui_health_daily": [
+        ("day", "date"),
+        ("version", T),
+        ("view", T),
+        ("reports", BI),
+        ("blocks", BI),
+        ("blocked_ms", BI),
+        ("max_bucket", SI),
+    ],
     # 2.9
     "audit": [
         ("seq", BI),
@@ -511,6 +521,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "metric_rollup": ("entity_kind", "entity_id", "ts"),
     "quota_snapshot": ("owner_id", "window"),
     "usage_daily": ("org_id", "day", "device_id"),
+    "ui_health_daily": ("day", "version", "view"),
     "outbox_receipt": ("device_id", "origin_seq"),
     "audit_checkpoint": ("hub_key_id", "seq"),
 }
@@ -628,6 +639,7 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("event", "(session_id, kind, scope_seq)"),
         ("event", "(kind, ref)"),
         ("event", "(received_at)"),
+        ("event", "(session_id, scope_seq) WHERE (session_id IS NOT NULL)"),
         ("dedupe_slot", "(wg_id, epoch, tag)"),
         ("wg", "(org_id) WHERE is_default"),
     ],

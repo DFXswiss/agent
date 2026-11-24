@@ -1,7 +1,9 @@
 // The task list of a workgroup (06-web.md section 5.1, 03-api.md section 4.6): `GET /v1/workgroups/{wg}/tasks`
 // newest first by latest activity (`order=activity`, KOR-32) with an optional state filter, page by page (`before` = the previous page's `next_before`, infinite
 // scroll). Rows enter the `tasks` slice; later changes arrive as `task` frames and move rows between the loaded lists.
-// Titles are encrypted: `titles` pulls the `task.meta` events of tasks whose title is not in the store yet.
+// Titles are encrypted: `titles` pulls the `task.meta` events of tasks whose title is not in the store yet (newest
+// pages per workgroup, bounded per call).
+import { eventsBefore, NEWEST, PAGE_MAX } from '../net/pages';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import {
@@ -14,10 +16,9 @@ import {
   taskList,
   type TasksState,
 } from '../store/slices/tasks';
-import type { StoreState } from '../store/store';
+import type { Store, StoreState } from '../store/store';
 import type { TasksContext } from './pull';
 import { selectTitle, TITLE_KIND } from './directory';
-import { pullOnce } from './pull';
 import { sendErrorCode } from './send';
 
 /** Rows per page (the hub's default list size, 03-api.md section 1). */
@@ -86,21 +87,58 @@ export async function loadTasks(
   }
 }
 
+/** Older `task.meta` pages one `titles` call reads per workgroup at most (ADR-063: bounded, never every page). */
+export const TITLE_PAGES = 10;
+
+/** A task whose title is wanted. */
+export type TitleTarget = Pick<TaskRow, 'org_id' | 'wg_id' | 'task_id' | 'title_event_id'>;
+
+interface TitleCursor {
+  readonly generation: number;
+  /** `before` of the next older `task.meta` page of the workgroup; null when every page was read. */
+  before: number | null;
+  /** The running read (reads of one workgroup run one after another). */
+  tail: Promise<void>;
+}
+
+const titleCursors = new WeakMap<Store, Map<string, TitleCursor>>();
+
 /**
- * Pulls the title events of tasks whose title is not in the store: first all `task.meta` events of each workgroup
- * once (one pull per workgroup and session), then, for tasks still without a title (created after that pull and missed
- * by the channel), the task's own `task.meta` events. Failed pulls only leave titles missing.
+ * Pulls the title events of tasks whose title is not in the store, once per list (ADR-063 section 1): per workgroup
+ * the `task.meta` pages newest first, continuing where the previous call stopped, while a wanted title is missing –
+ * at most `TITLE_PAGES` pages per call, never a pull per row. Later titles arrive over the live channel. Failed pulls
+ * only leave titles missing (the deterministic title is shown).
  */
-export async function titles(context: TasksContext, rows: readonly TaskRow[]): Promise<void> {
-  const missing = () =>
-    rows.filter(
-      (row) => selectTitle(row.wg_id, row.task_id, row.title_event_id)(context.store.getState()).status === 'missing',
+export async function titles(context: TasksContext, rows: readonly TitleTarget[]): Promise<void> {
+  const { store } = context;
+  const missing = (wg: string) =>
+    rows.some(
+      (row) =>
+        row.wg_id === wg &&
+        selectTitle(row.wg_id, row.task_id, row.title_event_id)(store.getState()).status === 'missing',
     );
-  const scopes = new Map(missing().map((row) => [row.wg_id, row.org_id]));
-  await Promise.all([...scopes].map(([wg, org]) => pullOnce(context, org, wg, { kinds: [TITLE_KIND] }).catch(() => 0)));
+  const scopes = new Map(rows.filter((row) => missing(row.wg_id)).map((row) => [row.wg_id, row.org_id]));
+  const cursors = titleCursors.get(store) ?? new Map<string, TitleCursor>();
+  titleCursors.set(store, cursors);
   await Promise.all(
-    missing().map((row) =>
-      pullOnce(context, row.org_id, row.wg_id, { kinds: [TITLE_KIND], task: row.task_id }).catch(() => 0),
-    ),
+    [...scopes].map(([wg, org]) => {
+      let cursor = cursors.get(wg);
+      if (cursor === undefined || cursor.generation !== store.generation) {
+        cursor = { generation: store.generation, before: NEWEST, tail: Promise.resolve() };
+        cursors.set(wg, cursor);
+      }
+      const current = cursor;
+      current.tail = current.tail
+        .then(async () => {
+          for (let page = 0; page < TITLE_PAGES && current.before !== null && missing(wg); page += 1) {
+            const read = await eventsBefore(context.client, wg, { kinds: [TITLE_KIND] }, current.before, PAGE_MAX);
+            if (store.generation !== current.generation) return;
+            await context.ingest(org, wg, read.events);
+            current.before = read.nextBefore;
+          }
+        })
+        .catch(() => undefined);
+      return current.tail;
+    }),
   );
 }

@@ -4,6 +4,7 @@
 // `onFrame` (slices of later packages: tasks, sessions, notifications, …).
 import type { JobRunner } from '../jobs';
 import type { Persist } from '../persist';
+import { OTHER_KINDS } from '../store/focus';
 import type { EventReader } from '../store/reader';
 import { setLiveState } from '../store/slices/connection';
 import { orgEntry } from '../store/slices/orgs';
@@ -66,8 +67,9 @@ export async function connectLive(wiring: LiveWiring): Promise<LiveConnection> {
     org,
     cursors,
     timers,
+    resyncKinds: OTHER_KINDS,
     handlers: {
-      events: (scope, items) => wiring.reader.ingest(org, scope, items, { defer: true }),
+      events: (scope, items) => wiring.reader.ingest(org, scope, items, { defer: true, skipUnshown: true }),
       state: (state) => setLiveState(store, state),
       frame: (type, data) => {
         if (type === 'log') {

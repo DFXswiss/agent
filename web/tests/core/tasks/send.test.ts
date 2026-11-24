@@ -664,7 +664,7 @@ describe('follow-ups and Retry', () => {
       body: { text },
     });
     expect(latestPrompt(t.store, task)).toBeNull();
-    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_after: null, head: 0 }));
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_before: null, head: 0 }));
     expect(await rejects(retryPrompt(t.context, task))).toBe('decrypt_failed');
     t.context.ingest.mockImplementation(async () => {
       putEvents(t.store, t.wg, [

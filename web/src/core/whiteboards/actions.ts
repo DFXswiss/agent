@@ -1,7 +1,7 @@
 // What a board does (06-web.md section 6.1, 03-api.md sections 4.4 and 4.9, 04-crypto.md sections 4.3 and 5.12):
 //
 // - `loadBoard`: once per store generation the whiteboard events of the board's scope (`GET /v1/scopes/{scope}/events`,
-//   task boards filtered by `task`), then every page of the entry rows (`GET /v1/whiteboards?org|wg|task&level`). All
+//   task boards filtered by `task`; newest first, at most `BOARD_PAGES` pages, ADR-063), then every page of the entry rows (`GET /v1/whiteboards?org|wg|task&level`). All
 //   events of a board are held anyway (the texts and histories come from them), so the rows are not paged in the UI. The texts come only from those events, read by the event reader; live events arrive
 //   over the channel (03-api.md section 5, `event`), so a second browser sees new entries at once;
 // - `loadHistory`: `GET /v1/whiteboards/{entry}/history` into the reader (every version of an entry);
@@ -57,8 +57,11 @@ function highWater(context: TasksContext, scopeId: string): number {
   return Math.max(0, ...(scope === undefined ? [] : scope.entries.keys()));
 }
 
+/** Newest pages of whiteboard events a board reads (10 000 events: the hub's bound of one entry's history). */
+export const BOARD_PAGES = 10;
+
 /**
- * Loads a board: first its events (once per store generation), then every page of its rows, so that every entry the
+ * Loads a board: first its events (once per store generation, the newest `BOARD_PAGES` pages), then every page of its rows, so that every entry the
  * store held before the rows were listed is listed if the hub projected it (`checked`, `project.ts`).
  */
 export async function loadBoard(context: TasksContext, location: BoardLocation): Promise<void> {
@@ -70,6 +73,7 @@ export async function loadBoard(context: TasksContext, location: BoardLocation):
   try {
     await pullOnce(context, location.org, scopeId, {
       kinds: WHITEBOARD_KINDS,
+      pages: BOARD_PAGES,
       ...(location.task !== null && { task: location.task }),
     });
     const checked = highWater(context, scopeId);

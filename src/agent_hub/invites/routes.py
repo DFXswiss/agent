@@ -18,6 +18,7 @@ from pydantic import StringConstraints
 from agent_hub.auth.fields import Strict, decode
 from agent_hub.db.pool import transaction
 from agent_hub.errors import HubError
+from agent_hub.events import paging
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import HubRouter
 from agent_hub.invites import orgs
@@ -79,11 +80,14 @@ async def create_invite(org: str, body: CreateInvite, context: Context, principa
 
 
 @router.get("/v1/orgs/{org}/invites", auth="browser", right="org:admin", read_resource="org.invites")
-async def list_invites(org: str, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
+async def list_invites(
+    org: str, context: Context, principal: CurrentPrincipal, before: str | None = None, limit: str | None = None
+) -> dict[str, Any]:
     org_id = _org(org)
+    window = paging.window(before, limit, orgs.MAX_LISTED)
     now = context.clock()
-    found = await _in_transaction(context, lambda c: orgs.listing(c, org_id=org_id, user=user_id(principal), now=now))
-    return {"invites": found}
+    user = user_id(principal)
+    return await _in_transaction(context, lambda c: orgs.listing(c, org_id=org_id, user=user, now=now, window=window))
 
 
 @router.post("/v1/orgs/{org}/invites/{id}/revoke", auth="browser", right="org:admin")

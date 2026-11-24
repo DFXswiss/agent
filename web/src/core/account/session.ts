@@ -20,6 +20,7 @@ import { connectLive, type LiveConnection, type LiveWiring } from '../net/live';
 import { hostOf, type Session, type SessionNotice, SignedClient } from '../net/signedFetch';
 import type { Persist } from '../persist';
 import { isRecord } from '../registry';
+import { refreshShown } from '../store/focus';
 import { EventReader } from '../store/reader';
 import { noteSession, sessionRenewed } from '../store/slices/connection';
 import { setIdentity, setProfile, setSession } from '../store/slices/me';
@@ -323,6 +324,8 @@ export class AppSession {
       onFrame: (type, data) => {
         if (type === 'terminals_refused') this.#refused(data);
         applyFrame(this.store, type, data, this.#now());
+        // the bulk events of the open views were not pulled after `resync`: they read their newest page
+        if (type === 'resync') refreshShown(this.store);
       },
     }).catch(() => null);
     this.#live = { org, connection };

@@ -208,6 +208,34 @@ describe('AgentsSection', () => {
     expect(screen.queryByTestId('agents.disconnect-all')).toBeNull();
   });
 
+  it('windows a long account audit and pages with the cursor (ADR-063 section 1)', async () => {
+    let answer: (target: string) => unknown = (target) =>
+      target.includes('before=')
+        ? { rows: Array.from({ length: 30 }, (_, i) => auditRow(30 - i)), next_before: null }
+        : { rows: Array.from({ length: 120 }, (_, i) => auditRow(1000 - i)), next_before: 'c1' };
+    const w = await world({
+      'GET /v1/me/agents': () => ({ agents: [] }),
+      'GET /v1/me/audit': (_method, target) => answer(target),
+    });
+    mount(w, <AgentsSection />);
+    const rows = () => screen.getAllByTestId('agents.activity.row');
+    await waitFor(() => expect(rows()).toHaveLength(100));
+    const list = screen.getByTestId('agents.activity.rows');
+    expect(list.closest('[data-list]')).toHaveAttribute('data-list', 'settings.agents.activity');
+    expect(screen.queryByTestId('agents.activity.more')).toBeNull();
+    fireEvent.click(screen.getByTestId('agents.activity.rows.older'));
+    expect(rows()).toHaveLength(120);
+    // a page that is still on its way disables the button
+    const release: { done: () => void } = { done: () => undefined };
+    const first = answer;
+    answer = (target) => new Promise((resolve) => (release.done = () => resolve(first(target))));
+    fireEvent.click(screen.getByTestId('agents.activity.more'));
+    await waitFor(() => expect(screen.getByTestId('agents.activity.more')).toBeDisabled());
+    await act(async () => release.done());
+    await waitFor(() => expect(rows()).toHaveLength(150));
+    expect(screen.queryByTestId('agents.activity.more')).toBeNull();
+  });
+
   it('reports an account audit that does not load', async () => {
     const w = await world({ 'GET /v1/me/agents': () => ({ agents: [] }) });
     mount(w, <AgentsSection />, '/settings?agent=other');

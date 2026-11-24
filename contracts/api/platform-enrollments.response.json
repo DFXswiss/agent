@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/platform-enrollments.response.json",
   "title": "GET /v1/platform/enrollments response",
-  "description": "Body of a successful response to GET /v1/platform/enrollments (03-api.md section 4.3): the verified pending enrollments and the whole platform log, which the operator CLI verifies against its root key and extends (contract change HUB-04).",
+  "description": "Body of a successful response to GET /v1/platform/enrollments (03-api.md section 4.3): the verified pending enrollments and the platform log, which the operator CLI verifies against its root key and extends (contract change HUB-04). Without `after`/`limit` the log from its start, at most 10 000 entries (`truncated: true` when cut); with them the entries after `after` (default 200, max 1000) and next_after (ADR-063 section 2, KOR-35).",
   "type": "object",
   "properties": {
     "enrollments": {
@@ -65,6 +65,13 @@
       },
       "minItems": 0,
       "maxItems": 100000
+    },
+    "next_after": {
+      "$ref": "../common.json#/$defs/next_after"
+    },
+    "truncated": {
+      "type": "boolean",
+      "const": true
     }
   },
   "required": [

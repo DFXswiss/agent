@@ -12,6 +12,11 @@
 - `org_devices(org)`: every active device member of the org (org devices and assigned platform devices) with state,
   presence (`last_seen_at` = the last heartbeat while connected), agent version, capacity, `capacity_low` and the
   workgroups it is assigned to; newest enrolment first.
+
+Both lists are bounded (ADR-063 section 2, `agent_hub.events.paging`): without `before`/`limit` at most `DEVICES_MAX`
+devices (the newest enrolments; `truncated: true` when cut, the candidates are ranked within them), or one page in
+the stable order `enrolled_at DESC, id DESC` with `next_before` (a page of candidates keeps that order: presence and
+capacity change between two pages and would make a ranked page skip or repeat devices).
 """
 
 from __future__ import annotations
@@ -23,10 +28,25 @@ from uuid import UUID
 import psycopg
 
 from agent_hub.crypto.encoding import b64u_encode, format_time
+from agent_hub.events import paging
 from agent_hub.scheduler.core import Capacity
 from agent_hub.scheduler.load import online_after
 
 Connection = psycopg.Connection[Any]
+DEVICES_MAX = paging.CAP_LARGE
+
+
+def device_window(before: str | None, limit: str | None) -> paging.Window:
+    """The window of a device list request (device IDs are UUIDs)."""
+    return paging.window(before, limit, DEVICES_MAX, UUID)
+
+
+def _keyset(window: paging.Window, params: dict[str, Any]) -> str:
+    """The keyset condition of a page (empty without a cursor); adds its parameters."""
+    if window.before is None:
+        return ""
+    params["at"], params["id"] = window.before
+    return " AND (d.enrolled_at, d.id) < (%(at)s, %(id)s)"
 
 
 def _capacity(stored: Any) -> tuple[dict[str, int], bool]:
@@ -80,17 +100,24 @@ def workgroup(connection: Connection, wg_id: UUID, now: datetime, online_seconds
     }
 
 
-def candidates(connection: Connection, wg_id: UUID, now: datetime, online_seconds: int) -> list[dict[str, Any]]:
+def candidates(
+    connection: Connection, wg_id: UUID, now: datetime, online_seconds: int, window: paging.Window
+) -> dict[str, Any]:
     """The platform devices the browser may assign to the workgroup (module docstring)."""
-    found = connection.execute(
-        "SELECT d.id, d.certified_seq, d.kem_pub, d.sig_pub, COALESCE(p.last_heartbeat_at > %s, false), d.capacity"
-        " FROM hub.device d LEFT JOIN hub.device_presence p ON p.device_id = d.id"
-        " WHERE d.kind = 'platform' AND d.state = 'active' AND d.certified_seq IS NOT NULL"
-        " AND EXISTS (SELECT 1 FROM hub.wg w JOIN hub.org o ON o.id = w.org_id WHERE w.id = %s AND o.platform_access)"
-        " AND NOT EXISTS (SELECT 1 FROM hub.wg_device a WHERE a.wg_id = %s AND a.device_id = d.id"
-        " AND a.unassigned_seq IS NULL)",
-        (online_after(now, online_seconds), wg_id, wg_id),
-    ).fetchall()
+    params: dict[str, Any] = {"online": online_after(now, online_seconds), "wg": wg_id, "limit": window.limit + 1}
+    found, more = paging.cut(
+        connection.execute(
+            "SELECT d.id, d.certified_seq, d.kem_pub, d.sig_pub, COALESCE(p.last_heartbeat_at > %(online)s, false),"
+            " d.capacity, d.enrolled_at FROM hub.device d LEFT JOIN hub.device_presence p ON p.device_id = d.id"
+            " WHERE d.kind = 'platform' AND d.state = 'active' AND d.certified_seq IS NOT NULL"
+            " AND EXISTS (SELECT 1 FROM hub.wg w JOIN hub.org o ON o.id = w.org_id WHERE w.id = %(wg)s"
+            " AND o.platform_access) AND NOT EXISTS (SELECT 1 FROM hub.wg_device a WHERE a.wg_id = %(wg)s"
+            f" AND a.device_id = d.id AND a.unassigned_seq IS NULL){_keyset(window, params)}"
+            " ORDER BY d.enrolled_at DESC, d.id DESC LIMIT %(limit)s",
+            params,
+        ).fetchall(),
+        window.limit,
+    )
     items = []
     for row in found:
         capacity = Capacity.of(row[5])
@@ -107,21 +134,37 @@ def candidates(connection: Connection, wg_id: UUID, now: datetime, online_second
                 },
             )
         )
-    return [item for _key, item in sorted(items, key=lambda pair: pair[0])]
+    if not window.paged:
+        items.sort(key=lambda pair: pair[0])
+    last = (found[-1][6], str(found[-1][0])) if more else None
+    return {"candidates": [item for _key, item in items], **window.extra(last)}
 
 
-def org_devices(connection: Connection, org_id: UUID, now: datetime, online_seconds: int) -> list[dict[str, Any]]:
+def has_candidates(connection: Connection, wg_id: UUID, now: datetime, online_seconds: int) -> bool:
+    """Whether the workgroup has at least one candidate (`no_device` of `POST /v1/tasks`)."""
+    return bool(candidates(connection, wg_id, now, online_seconds, paging.Window(paged=True, limit=1))["candidates"])
+
+
+def org_devices(
+    connection: Connection, org_id: UUID, now: datetime, online_seconds: int, window: paging.Window
+) -> dict[str, Any]:
     """The devices of the org (module docstring); the caller checked `org:member`."""
+    params: dict[str, Any] = {"org": org_id, "limit": window.limit + 1}
+    rows, more = paging.cut(
+        connection.execute(
+            "SELECT d.id, d.kind, d.state, p.last_heartbeat_at, d.agent_version, d.capacity,"
+            " ARRAY(SELECT a.wg_id FROM hub.wg_device a JOIN hub.wg w ON w.id = a.wg_id WHERE w.org_id = m.org_id"
+            " AND a.device_id = d.id AND a.unassigned_seq IS NULL ORDER BY a.wg_id), d.enrolled_at"
+            " FROM hub.org_member m JOIN hub.device d ON d.id = m.principal_id"
+            " LEFT JOIN hub.device_presence p ON p.device_id = d.id"
+            f" WHERE m.org_id = %(org)s AND m.kind = 'device' AND m.removed_seq IS NULL{_keyset(window, params)}"
+            " ORDER BY d.enrolled_at DESC, d.id DESC LIMIT %(limit)s",
+            params,
+        ).fetchall(),
+        window.limit,
+    )
     devices = []
-    for row in connection.execute(
-        "SELECT d.id, d.kind, d.state, p.last_heartbeat_at, d.agent_version, d.capacity,"
-        " ARRAY(SELECT a.wg_id FROM hub.wg_device a JOIN hub.wg w ON w.id = a.wg_id WHERE w.org_id = m.org_id"
-        " AND a.device_id = d.id AND a.unassigned_seq IS NULL ORDER BY a.wg_id)"
-        " FROM hub.org_member m JOIN hub.device d ON d.id = m.principal_id"
-        " LEFT JOIN hub.device_presence p ON p.device_id = d.id"
-        " WHERE m.org_id = %s AND m.kind = 'device' AND m.removed_seq IS NULL ORDER BY d.enrolled_at DESC, d.id DESC",
-        (org_id,),
-    ):
+    for row in rows:
         capacity, low = _capacity(row[5])
         seen = row[3]
         devices.append(
@@ -137,4 +180,4 @@ def org_devices(connection: Connection, org_id: UUID, now: datetime, online_seco
                 "assigned_wgs": [str(wg) for wg in row[6]],
             }
         )
-    return devices
+    return {"devices": devices, **window.extra((rows[-1][7], str(rows[-1][0])) if more else None)}

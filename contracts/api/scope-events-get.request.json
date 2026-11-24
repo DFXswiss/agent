@@ -2,10 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/scope-events-get.request.json",
   "title": "GET /v1/scopes/{scope_id}/events request",
-  "description": "query parameters",
+  "description": "query parameters; `before` (ADR-063 section 2, KOR-35) reads newest first and excludes `after`",
   "type": "object",
   "properties": {
     "after": {
+      "$ref": "../common.json#/$defs/q_seq"
+    },
+    "before": {
       "$ref": "../common.json#/$defs/q_seq"
     },
     "limit": {

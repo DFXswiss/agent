@@ -301,6 +301,28 @@ def test_event_kind_matrix(contracts: Contracts) -> None:
             assert row["header"]["wg"] == "empty", row
 
 
+def test_ui_views() -> None:
+    """The view types of the UI health report (ADR-063 section 5): names of the report's pattern, every type with its
+    route patterns, the fallback last, increasing buckets and the limits the hub applies."""
+    document = enum_file("ui-views.json")
+    assert set(document) == {"description", "views", "fallback", "patterns", "buckets_ms", "limits"}
+    views = document["views"]
+    assert len(set(views)) == len(views) <= document["limits"]["views_per_report"]
+    for view in views:
+        assert re.fullmatch(r"[a-z]+(-[a-z]+)*(\.[a-z]+(-[a-z]+)*)?", view), view
+        assert len(view) <= 64, view
+    assert views[-1] == document["fallback"] == "other"
+    assert list(document["patterns"]) == views
+    patterns = [pattern for found in document["patterns"].values() for pattern in found]
+    assert len(set(patterns)) == len(patterns)
+    assert all(pattern == "*" or pattern.startswith("/") for pattern in patterns)
+    buckets = document["buckets_ms"]
+    assert buckets[0] == 200
+    assert buckets == sorted(set(buckets))
+    assert document["limits"]["max_bucket"] == len(buckets) - 1
+    assert document["limits"]["body_bytes"] == 8192
+
+
 def test_enum_files_are_described() -> None:
     names = sorted(path.name for path in ENUMS.glob("*.json"))
     assert names == [
@@ -313,6 +335,7 @@ def test_enum_files_are_described() -> None:
         "session-failure-reasons.json",
         "session-states.json",
         "task-states.json",
+        "ui-views.json",
     ]
     for name in names:
         assert enum_file(name)["description"]

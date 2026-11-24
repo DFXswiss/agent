@@ -1,8 +1,10 @@
 // Small parts of the monitoring screen: a labelled value, the freshness note (stale values greyed with their age,
-// 08-monitoring.md section 6) and the toggle buttons of the drill-down and the charts.
-import type { ReactNode } from 'react';
-import type { Freshness } from '../../../core/monitoring/overview';
+// 08-monitoring.md section 6) counted by the shared second clock, and the toggle buttons of the drill-down and the
+// charts.
+import { memo, type ReactNode } from 'react';
+import { type Freshness, freshness, type Sampled } from '../../../core/monitoring/overview';
 import { useI18n } from '../../i18n';
+import { useSecond } from './clock';
 import { useUnits } from './units';
 
 export function Metric(props: { readonly label: string; readonly testId: string; readonly children: ReactNode }) {
@@ -35,11 +37,18 @@ export function FreshnessNote(props: { readonly freshness: Freshness; readonly t
   );
 }
 
+/** The age of an entity's newest value: the only cell that re-renders every second. */
+export const Age = memo(function Age(props: { readonly item: Sampled; readonly testId: string }) {
+  const now = useSecond();
+  return <FreshnessNote freshness={freshness(props.item, now)} testId={props.testId} />;
+});
+
 export function Toggle(props: {
   readonly open: boolean;
   readonly onToggle: () => void;
   readonly testId: string;
-  readonly controls: string;
+  /** The panel the button shows (a chart panel); a drill-down adds rows to the list instead. */
+  readonly controls?: string;
   readonly children: ReactNode;
 }) {
   return (

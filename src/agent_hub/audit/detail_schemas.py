@@ -920,6 +920,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.platform.enrollments": {"properties": {}, "required": []},
     "read.platform.invites": {"properties": {}, "required": []},
     "read.platform.log": {"properties": {}, "required": []},
+    "read.platform.ui_health": {"properties": {}, "required": []},
     "read.scope.events": {"properties": {}, "required": []},
     "read.session.get_context": {
         "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},

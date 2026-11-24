@@ -7,6 +7,10 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
+import pytest
+
+from agent_hub.events.paging import encode_cursor
+from agent_hub.workgroups import read
 from tests.platform.hub.device.support import Fleet
 from tests.platform.hub.orgs.support import World, new_id
 from tests.platform.hub.tasks.support import CAPACITY, Desk
@@ -133,3 +137,48 @@ def test_org_devices(world: World, fleet: Fleet) -> None:
     assert found[desk.scene.device.id]["last_seen_at"] is None
     assert found[desk.scene.device.id]["assigned_wgs"] == [desk.wg]
     assert desk.scene.reader.browser.get(f"/v1/orgs/{desk.org}/devices").status_code == 200
+
+
+def test_org_devices_page_and_are_capped(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-063 section 2 (KOR-35): `before`/`limit` page in the order `enrolled_at DESC, id DESC`; without them at
+    most `DEVICES_MAX` devices (`truncated: true` when cut)."""
+    admin = desk.scene.admin.browser
+    url = f"/v1/orgs/{desk.org}/devices"
+    whole = admin.get(url).json()
+    order = [item["device_id"] for item in whole["devices"]]
+    assert (len(order), set(whole)) == (2, {"devices"})
+    first = admin.get(url, params={"limit": "1"}).json()
+    assert [item["device_id"] for item in first["devices"]] == order[:1]
+    rest = admin.get(url, params={"limit": "1", "before": first["next_before"]}).json()
+    assert ([item["device_id"] for item in rest["devices"]], rest["next_before"]) == (order[1:], None)
+    monkeypatch.setattr(read, "DEVICES_MAX", 1)
+    capped = admin.get(url).json()
+    assert ([item["device_id"] for item in capped["devices"]], capped["truncated"]) == (order[:1], True)
+    foreign = encode_cursor(desk.hub.clock(), "not-a-uuid")
+    response = admin.get(url, params={"before": foreign}, extensions={"contract": False})
+    assert (response.status_code, response.json()["error"]) == (400, "request_invalid")
+
+
+def test_candidates_page_in_enrolment_order_and_are_capped(
+    world: World, fleet: Fleet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    draft = world.private_org()
+    desk = Desk.build(world)
+    devices = [platform_ready(fleet, desk, free)[0].id for free in (1, 6, 3)]
+    founder = draft.founder.browser
+    url = f"/v1/workgroups/{draft.default_wg}/device-candidates"
+    ranked = [item["device_id"] for item in founder.get(url).json()["candidates"]]
+    assert ranked == [devices[1], devices[2], devices[0]]
+    with desk.hub.pool.connection() as connection:
+        rows = connection.execute(
+            "SELECT id::text FROM hub.device WHERE id = ANY(%s::uuid[]) ORDER BY enrolled_at DESC, id DESC", (devices,)
+        ).fetchall()
+    enrolled = [row[0] for row in rows]
+    first = founder.get(url, params={"limit": "2"}).json()
+    assert [item["device_id"] for item in first["candidates"]] == enrolled[:2]
+    rest = founder.get(url, params={"before": first["next_before"]}).json()
+    assert ([item["device_id"] for item in rest["candidates"]], rest["next_before"]) == (enrolled[2:], None)
+    monkeypatch.setattr(read, "DEVICES_MAX", 2)
+    capped = founder.get(url).json()
+    assert capped["truncated"] is True
+    assert sorted(item["device_id"] for item in capped["candidates"]) == sorted(enrolled[:2])

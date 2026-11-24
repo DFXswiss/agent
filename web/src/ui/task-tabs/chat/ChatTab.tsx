@@ -42,7 +42,11 @@ function ChatView({ task }: { readonly task: TaskRow }) {
           </button>
         </p>
       )}
-      <Timeline items={items} empty={t(load?.status === 'loading' ? 'task.chat.loading' : 'task.chat.empty')} />
+      <Timeline
+        listId="task.chat"
+        items={items}
+        empty={t(load?.status === 'loading' ? 'task.chat.loading' : 'task.chat.empty')}
+      />
       {writer ? (
         <ChatComposer task={task} main={main} />
       ) : (

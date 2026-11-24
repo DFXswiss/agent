@@ -4,6 +4,7 @@ import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createI18n } from '../../src/core/i18n';
 import { Chart } from '../../src/ui/charts/Chart';
+import { DataTable, TABLE_ROWS } from '../../src/ui/charts/DataTable';
 import { Sparkline, sparkPath } from '../../src/ui/charts/Sparkline';
 import { colorOf, SERIES_COLORS } from '../../src/ui/charts/types';
 import { I18nProvider } from '../../src/ui/i18n';
@@ -75,5 +76,27 @@ describe('sparkline', () => {
   it('cycles the series colors', () => {
     expect(colorOf(0)).toBe(SERIES_COLORS[0]);
     expect(colorOf(SERIES_COLORS.length + 1)).toBe(SERIES_COLORS[1]);
+  });
+});
+
+describe('data table', () => {
+  it('shows every bucket of a range, newest first', () => {
+    render(wrap(<DataTable {...props} timeLabel="Time" />));
+    const rows = screen.getAllByTestId('monitoring.chart.table.row');
+    expect(rows.map((row) => row.textContent)).toEqual(['t32 c', 't2–', 't11 c']);
+    expect(screen.queryByTestId('monitoring.chart.table.cut')).toBeNull();
+  });
+
+  it('renders at most the buckets of the longest range', () => {
+    expect(TABLE_ROWS).toBe(360);
+    const x = Array.from({ length: 20_000 }, (_, index) => index);
+    const data = { x, series: [{ metric: 'cpu_ratio' as const, values: x.map((value) => value) }] };
+    render(wrap(<DataTable {...props} data={data} timeLabel="Time" />));
+    const rows = screen.getAllByTestId('monitoring.chart.table.row');
+    expect(rows).toHaveLength(TABLE_ROWS);
+    expect(rows[0]).toHaveTextContent('t19999');
+    expect(screen.getByTestId('monitoring.chart.table.cut')).toHaveTextContent(
+      'Showing the newest 360 of 20,000 points.',
+    );
   });
 });

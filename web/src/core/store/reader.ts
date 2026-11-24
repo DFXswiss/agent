@@ -11,6 +11,9 @@
 // Writes are batched (HOT-05): settled entries are written to the store at most once per frame (`FRAME_MS`), so a burst
 // of thousands of events costs a few store updates (and timeline builds) instead of one per event. `ingest` and
 // `retry` write their last batch before they return; the live channel passes `defer` and leaves it to the frame timer.
+// The live channel also passes `skipUnshown` (ADR-063 section 1): an event of a bulk kind whose (unchecked) header
+// names a task and session no mounted view shows (`focus.ts`) is neither decrypted nor stored – the channel's cursor
+// moves on – and the registry notes it, so that the view that opens the task later reads its newest page.
 import { b64uDecode } from '../encoding/b64u';
 import { fromUtf8 } from '../encoding/bytes';
 import { CryptoError } from '../crypto/errors';
@@ -22,6 +25,7 @@ import { epochKey } from '../log/state';
 import { checkLh } from '../jobs/log-verify';
 import type { JobRunner } from '../jobs';
 import type { StoredEvent, Timers } from '../net/sse';
+import { noteSkipped, skips } from './focus';
 import { type EventEntry, findEvents, putEvents } from './slices/events';
 import { orgEntry } from './slices/orgs';
 import type { Store } from './store';
@@ -29,9 +33,13 @@ import type { Store } from './store';
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/** The raw (unchecked) header of an event, `{}` if it has none. */
+const rawHeader = (event: unknown): Record<string, unknown> =>
+  isRecord(event) && isRecord(event.header) ? event.header : {};
+
 /** `header.org`, `header.scope_id`, `header.id` and `header.lh` of a raw event, as far as they are well-formed. */
 function headerOf(event: unknown): { org: unknown; scopeId: unknown; id: unknown; lh: number | null } {
-  const header = isRecord(event) && isRecord(event.header) ? event.header : {};
+  const header = rawHeader(event);
   return {
     org: header.org,
     scopeId: header.scope_id,
@@ -70,6 +78,8 @@ interface Buffered {
 export interface IngestOptions {
   /** Leave the last batch to the frame timer (the live channel: many small deliveries in a row). */
   readonly defer?: boolean;
+  /** Skip bulk events no mounted view shows (the live channel, module comment). */
+  readonly skipUnshown?: boolean;
 }
 
 export class EventReader {
@@ -100,7 +110,16 @@ export class EventReader {
     items: readonly StoredEvent[],
     options: IngestOptions = {},
   ): Promise<void> {
-    const entries: EventEntry[] = items.map((item) => ({
+    const shown =
+      options.skipUnshown === true
+        ? items.filter((item) => {
+            const header = rawHeader(item.event);
+            if (!skips(this.#store, header.kind, header.task, header.session)) return true;
+            noteSkipped(this.#store, header.task, header.session);
+            return false;
+          })
+        : items;
+    const entries: EventEntry[] = shown.map((item) => ({
       org,
       scopeId,
       scopeSeq: item.scope_seq,
@@ -217,7 +236,8 @@ export class EventReader {
       const key = found.keys.get(epochKey(header.scope as string, header.scope_id as string, header.epoch as number));
       if (key === undefined) return { ...entry, status: 'locked', code: null, header, body: null };
       const plaintext = await openEvent(key, entry.event, b64uDecode(checked.authorSig));
-      return { ...entry, status: 'verified', code: null, header, body: parseBody(plaintext) };
+      const body = parseBody(plaintext);
+      return { ...entry, status: 'verified', code: null, header, body, bodyBytes: plaintext.length };
     } catch (error) {
       return unverifiable(entry, refusalCode(error));
     }

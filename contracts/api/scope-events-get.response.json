@@ -2,28 +2,64 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/scope-events-get.response.json",
   "title": "GET /v1/scopes/{scope_id}/events response",
-  "description": "Body of a successful response to GET /v1/scopes/{scope_id}/events (03-api.md section 4.4).",
-  "type": "object",
-  "properties": {
-    "events": {
-      "type": "array",
-      "items": {
-        "$ref": "../common.json#/$defs/stored_event"
+  "description": "Body of a successful response to GET /v1/scopes/{scope_id}/events (03-api.md section 4.4): ascending with next_after, or - with `before` (ADR-063 section 2, KOR-35) - newest first with next_before, the scope_seq of the last returned event when older matching events exist.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/stored_event"
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        },
+        "next_after": {
+          "$ref": "../common.json#/$defs/next_after"
+        },
+        "head": {
+          "$ref": "../common.json#/$defs/seq"
+        }
       },
-      "minItems": 0,
-      "maxItems": 1000
+      "required": [
+        "events",
+        "next_after",
+        "head"
+      ],
+      "additionalProperties": false
     },
-    "next_after": {
-      "$ref": "../common.json#/$defs/next_after"
-    },
-    "head": {
-      "$ref": "../common.json#/$defs/seq"
+    {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/stored_event"
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        },
+        "next_before": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/seq"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "head": {
+          "$ref": "../common.json#/$defs/seq"
+        }
+      },
+      "required": [
+        "events",
+        "next_before",
+        "head"
+      ],
+      "additionalProperties": false
     }
-  },
-  "required": [
-    "events",
-    "next_after",
-    "head"
-  ],
-  "additionalProperties": false
+  ]
 }

@@ -1,0 +1,11 @@
+{
+  "older": "{count} more entries – show",
+  "newer": "{count} newer entries – show",
+  "newest": "Jump to the newest",
+  "load-more": "Load more",
+  "loading": "Loading…",
+  "range": "Showing entries {from}–{to} of {total}",
+  "range.loaded": "Showing entries {from}–{to} of {total} loaded",
+  "clip.more": "Show more ({count} more characters)",
+  "clip.download": "Download the full text"
+}

@@ -8,9 +8,19 @@ import { putEvents } from '../../src/core/store/slices/events';
 import { setActiveOrg } from '../../src/core/store/slices/session';
 import { frames, RELOAD_MS } from '../../src/core/store/slices/monitoring';
 import { HubError } from '../../src/core/net/signedFetch';
-import { MonitoringScreen, POLL_MS } from '../../src/ui/screens/monitoring/MonitoringScreen';
+import {
+  MonitoringScreen,
+  POLL_MS,
+  selectTitles,
+  TREE_MAX_ROWS,
+  TREE_SIZE,
+} from '../../src/ui/screens/monitoring/MonitoringScreen';
+import { SECOND_MS } from '../../src/ui/screens/monitoring/clock';
+import { nextStaleAt, sameRow, type TreeRow } from '../../src/ui/screens/monitoring/tree';
+import type { MonitoredSession, Sampled } from '../../src/core/monitoring/overview';
 import { orgWorld, type OrgWorld } from '../core/org/world';
 import { CAPACITY, iso, sample, usage } from '../core/monitoring/fixtures';
+import { labelDevice } from './device-labels';
 import { mount, names } from './org-world';
 
 const DEV = '01930000-0000-7000-8000-00000000d001';
@@ -119,10 +129,13 @@ describe('monitoring screen', () => {
     expect(second.queryByTestId('monitoring.device.state')).toBeNull();
     expect(second.queryByTestId('monitoring.device.reachable')).toBeNull();
     expect(second.getByTestId('monitoring.device.cpu')).toHaveTextContent('–');
+    // a drill-down adds rows after its node (one flat windowed list)
     fireEvent.click(second.getByTestId('monitoring.device.vms-toggle'));
-    expect(second.getByTestId('monitoring.device.no-vms')).toBeInTheDocument();
+    expect(second.getByTestId('monitoring.device.vms-toggle')).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByTestId('monitoring.device.no-vms')).toHaveAttribute('data-device', DEV2);
+    expect(device(DEV2).nextElementSibling).toBe(screen.getByTestId('monitoring.device.no-vms'));
     fireEvent.click(second.getByTestId('monitoring.device.vms-toggle'));
-    expect(second.queryByTestId('monitoring.device.no-vms')).toBeNull();
+    expect(screen.queryByTestId('monitoring.device.no-vms')).toBeNull();
 
     // VMs of the first device; the session S1 is linked to vm-1 by its row, S2's row names no VM
     fireEvent.click(first.getByTestId('monitoring.device.vms-toggle'));
@@ -140,12 +153,20 @@ describe('monitoring screen', () => {
     expect(s1.getByTestId('monitoring.session.cost')).toHaveTextContent('$0.0123');
     expect(s1.getByTestId('monitoring.session.context')).toHaveTextContent('–');
     expect(s1.getByTestId('monitoring.session.task')).toHaveTextContent(`Task …${TASK.slice(-6)}`);
+    expect(vm('vm-00000001').nextElementSibling).toBe(session(S1));
     fireEvent.click(within(vm('vm-00000002')).getByTestId('monitoring.vm.sessions-toggle'));
-    expect(within(vm('vm-00000002')).getByTestId('monitoring.vm.no-sessions')).toBeInTheDocument();
+    expect(screen.getByTestId('monitoring.vm.no-sessions')).toHaveAttribute('data-vm', 'vm-00000002');
+    // closing a VM drops its session rows (and their age cells) while the others count on
+    fireEvent.click(vm1.getByTestId('monitoring.vm.sessions-toggle'));
+    expect(session(S1)).toBeUndefined();
 
-    // not linked: the VM of an unlisted device, S2 (no VM), S3 (no VM of its workgroup)
-    const other = within(screen.getByTestId('monitoring.other'));
-    expect(other.getByText('vm-00000003')).toBeInTheDocument();
+    // not linked, after the heading: the VM of an unlisted device, S2 (no VM), S3 (no VM of its workgroup)
+    const other = screen.getByTestId('monitoring.other');
+    expect(other).toHaveTextContent('Not linked to a listed device or VM');
+    const after = (node: Element) => other.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(after(vm('vm-00000003'))).toBeTruthy();
+    expect(after(session(S2))).toBeTruthy();
+    expect(after(session(S3))).toBeTruthy();
     expect(within(vm('vm-00000003')).getByTestId('monitoring.vm.wg')).toHaveTextContent('Workgroup');
     expect(within(session(S2)).getByTestId('monitoring.session.tokens')).toHaveTextContent('–');
     expect(within(session(S2)).getByTestId('monitoring.session.cost')).toHaveTextContent('–');
@@ -186,6 +207,9 @@ describe('monitoring screen', () => {
     await waitFor(() => expect(t.w.store.getState().monitoring.links[S1]).toBe('vm-00000001'));
     fireEvent.click(within(vm('vm-00000001')).getByTestId('monitoring.vm.sessions-toggle'));
     expect(within(session(S1)).getByTestId('monitoring.session.task')).toHaveTextContent('Build it');
+    // a device label renames the device row
+    act(() => labelDevice(t.w.store, t.w.org, DEV, 'Rack 1'));
+    expect(within(device(DEV)).getByTestId('monitoring.device.name')).toHaveTextContent('Rack 1');
   });
 
   it('reads the overview again for unknown entities and on the poll', async () => {
@@ -239,9 +263,10 @@ describe('monitoring screen', () => {
         return { ...body, vms: body.vms.slice(0, 1), sessions: body.sessions.slice(2) };
       },
     });
-    const other = within(await screen.findByTestId('monitoring.other'));
-    expect(other.getAllByTestId('monitoring.session')).toHaveLength(1);
-    expect(other.queryByTestId('monitoring.vm')).toBeNull();
+    await screen.findByTestId('monitoring.other');
+    expect(screen.getAllByTestId('monitoring.session')).toHaveLength(1);
+    expect(session(S3)).toBeDefined();
+    expect(screen.queryByTestId('monitoring.vm')).toBeNull();
   });
 
   it('works before the org log is verified', async () => {
@@ -318,5 +343,161 @@ describe('chart panel', () => {
     const disk = await waitFor(() => s3.getAllByTestId('monitoring.chart').find((n) => n.dataset.chart === 'disk')!);
     expect(within(disk).getByRole('heading')).toHaveTextContent('Workspace');
     expect(within(disk).getByTestId('monitoring.chart.sparkline')).toHaveTextContent('Used: 3.0 GiB');
+  });
+});
+
+describe('monitoring tree volume', () => {
+  const many = (count: number) => ({
+    devices: [],
+    vms: [],
+    sessions: Array.from({ length: count }, (_, index) => ({
+      session_id: `01930000-0000-7000-8000-${String(index).padStart(12, '0')}`,
+      task_id: TASK,
+      wg_id: 'other',
+      state: 'idle',
+      latest: null,
+      usage: null,
+    })),
+  });
+
+  it('renders only the window of a large tree', async () => {
+    await setup({ body: () => many(600) });
+    const list = await screen.findByTestId('monitoring.devices');
+    expect(list).toHaveAttribute('data-total', '601');
+    expect(list.children).toHaveLength(TREE_SIZE);
+    expect(screen.getByTestId('monitoring.other')).toBeInTheDocument();
+    expect(screen.getByTestId('monitoring.tree.more')).toHaveTextContent('501 more rows – show');
+    for (let move = 0; move < 3; move += 1) fireEvent.click(screen.getByTestId('monitoring.tree.more'));
+    expect(list.children).toHaveLength(TREE_MAX_ROWS);
+    expect(screen.queryByTestId('monitoring.other')).toBeNull();
+    expect(screen.getByTestId('monitoring.tree.above')).toHaveTextContent('50 rows above – show');
+    const scroll = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      fireEvent.click(screen.getByTestId('monitoring.tree.top'));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+    expect(scroll).toHaveBeenCalled();
+    expect(screen.getByTestId('monitoring.other')).toBeInTheDocument();
+    expect(screen.getByTestId('monitoring.tree.status')).toHaveTextContent('Showing entries 1–100 of 601');
+  });
+
+  it('says when the hub cut the sessions', async () => {
+    const t = await setup();
+    await screen.findAllByTestId('monitoring.device');
+    expect(screen.queryByTestId('monitoring.truncated')).toBeNull();
+    const cut = (extra: object) =>
+      act(() =>
+        t.w.store.update('monitoring', (state) => {
+          const entry = state.orgs[t.w.org]!;
+          return {
+            ...state,
+            orgs: { ...state.orgs, [t.w.org]: { ...entry, overview: { ...entry.overview!, ...extra } } },
+          };
+        }),
+      );
+    cut({ sessions_total: 5000, truncated: true });
+    expect(screen.getByTestId('monitoring.truncated')).toHaveTextContent(
+      'Showing the 3 most recently active of 5,000 sessions.',
+    );
+    cut({ sessions_total: null });
+    expect(screen.getByTestId('monitoring.truncated')).toHaveTextContent('Showing the 3 most recently active of 3');
+    cut({ truncated: false });
+    expect(screen.queryByTestId('monitoring.truncated')).toBeNull();
+  });
+
+  it('counts the ages in their cells every second', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false, toFake: ['Date'] });
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    const t = await setup();
+    await screen.findAllByTestId('monitoring.device');
+    const age = () => within(device(DEV)).getByTestId('monitoring.device.age');
+    expect(age()).toHaveTextContent('Updated 5 s ago');
+    const ticks = intervals.mock.calls.filter((call) => call[1] === SECOND_MS);
+    expect(ticks).toHaveLength(1);
+    vi.setSystemTime(t.now + 3000);
+    act(() => (ticks[0]![0] as () => void)());
+    expect(age()).toHaveTextContent('Updated 8 s ago');
+    // the clock stops with the screen and starts again with the time of then
+    await act(async () => {
+      t.router.navigate(`/o/${t.w.org}/elsewhere`);
+    });
+    vi.setSystemTime(t.now + 10_000);
+    await act(async () => {
+      t.router.navigate(`/o/${t.w.org}/monitoring`);
+    });
+    expect(age()).toHaveTextContent('Updated 15 s ago');
+  });
+
+  it('greys an entity when its value turns stale, without a tick per second', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false, toFake: ['Date'] });
+    const timeouts = vi.spyOn(globalThis, 'setTimeout');
+    const t = await setup();
+    await screen.findAllByTestId('monitoring.device');
+    expect(device(DEV)).toHaveAttribute('data-stale', 'false');
+    // the device's sample is 5 s old: it turns stale 55 s later
+    const timer = timeouts.mock.calls.find((call) => call[1] === 55_001)!;
+    vi.setSystemTime(t.now + 55_001);
+    act(() => (timer[0] as () => void)());
+    expect(device(DEV)).toHaveAttribute('data-stale', 'true');
+    expect(device(DEV)).toHaveClass('text-gray-600');
+  });
+
+  it('reads the task titles with one selector for the list', async () => {
+    const w = await orgWorld();
+    const wg = w.world.defaultWg;
+    const item = { session_id: S1, task_id: TASK, wg_id: wg } as MonitoredSession;
+    const select = selectTitles([item, { ...item, session_id: S2 }]);
+    const none = select(w.store.getState());
+    expect(none.size).toBe(0);
+    expect(select(w.store.getState())).toBe(none);
+    const put = (id: string, kind: string, body: object) =>
+      putEvents(w.store, wg, [
+        {
+          org: w.org,
+          scopeId: wg,
+          scopeSeq: Number(id.slice(-1)),
+          receivedAt: null,
+          event: {},
+          status: 'verified',
+          code: null,
+          header: { kind, id, task: TASK },
+          body,
+        },
+      ]);
+    put('e-1', 'whiteboard.entry', {});
+    expect(select(w.store.getState())).toBe(none);
+    put('e-2', 'task.meta', { title: 'Build it' });
+    const titled = select(w.store.getState());
+    expect(titled.get(TASK)).toBe('Build it');
+    put('e-3', 'whiteboard.entry', {});
+    expect(select(w.store.getState())).toBe(titled);
+  });
+});
+
+describe('monitoring tree rows', () => {
+  it('compares rows by their content', () => {
+    const other: TreeRow = { kind: 'other', key: 'other', level: 0 };
+    const none: TreeRow = { kind: 'none', key: 'nv d', level: 1, of: 'device', id: 'd' };
+    expect(sameRow(other, { ...other })).toBe(true);
+    expect(sameRow(none, { ...none, id: 'e' })).toBe(false);
+    expect(sameRow(other, none)).toBe(false);
+  });
+
+  it('finds the next entity to turn stale', () => {
+    const now = Date.parse('2026-11-22T12:00:00.000Z');
+    const at = (ms: number, stale = false): Sampled => ({ latest: sample(ms), previous: null, stale });
+    const items: Sampled[] = [
+      { latest: null, previous: null, stale: true },
+      at(now, true),
+      at(now - 120_000),
+      at(now - 10_000),
+      at(now - 20_000),
+      at(now - 5_000),
+    ];
+    expect(nextStaleAt(items, now)).toBe(now + 40_001);
+    expect(nextStaleAt(items.slice(0, 3), now)).toBeNull();
   });
 });

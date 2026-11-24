@@ -4,11 +4,11 @@
 // display name, action, result, the decrypted names of target, workgroup, task and device where the client has them,
 // and a link to the referenced event. "Load more" pages with the hub's cursor. Admins verify the chain
 // (`GET /v1/orgs/{org}/audit/verify`) and see the result: head, newest checkpoint, ok or not.
-import { type FormEvent, useEffect, useId, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { formatEventTime } from '../../../core/i18n';
+import { formatEventTime, localTimeZone } from '../../../core/i18n';
 import { loadAgents } from '../../../core/agents/list';
-import { agentName } from '../../../core/store/slices/agents';
+import type { ListPaging } from '../../../core/lists/paging';
 import {
   ACTION_GROUPS,
   actorName,
@@ -36,13 +36,15 @@ import {
   viewKey,
   visibleRows,
 } from '../../../core/store/slices/audit';
-import { selectTitle, TITLE_KIND } from '../../../core/tasks/directory';
+import { TITLE_KIND } from '../../../core/tasks/directory';
 import { pullOnce } from '../../../core/tasks/pull';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
+import { type RowAttributes, type RowProps, WindowedList } from '../../lists/WindowedList';
 import { useAppEnv } from '../../shell/context';
 import { BUTTON, PRIMARY } from '../members/ActionDialog';
 import { useDirectory, useOrgView } from '../tasks/hooks';
+import { agentNamesSelector, agentsOf, shallowSame, tasksOf, titlesSelector } from './select';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
@@ -228,7 +230,6 @@ function Verify({ org }: { readonly org: string }) {
   const { app } = useAppEnv();
   const { t, locale } = useI18n();
   const verify = useStore((state) => verifyState(state.audit, org), app.store);
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const result = verify.result;
   return (
     <div className="flex flex-col gap-2 rounded border border-gray-200 p-3" data-testid="audit.verify">
@@ -268,7 +269,7 @@ function Verify({ org }: { readonly org: string }) {
                   seq: result.checkpoint.seq,
                   time: formatEventTime(Date.parse(result.checkpoint.published_at), {
                     locale,
-                    timeZone,
+                    timeZone: localTimeZone(),
                     now: verify.at!,
                   }),
                   key: result.checkpoint.hub_key_id,
@@ -280,37 +281,49 @@ function Verify({ org }: { readonly org: string }) {
   );
 }
 
-function Row(props: {
+/** One row with everything it shows resolved by the list (one selector per list, none per row). */
+interface AuditItem {
   readonly org: string;
   readonly row: AuditRow;
-  readonly names: AuditNames & { wg: (id: string) => string };
-}) {
+  /** The actor's display name, null when not known. */
+  readonly actor: string | null;
+  /** The target's display name, null when not known. */
+  readonly target: string | null;
+  readonly wg: string | null;
+  readonly title: string | null;
+  readonly device: string | null;
+  /** `agentMarker`: undefined without agent, null for an agent that is not the user's. */
+  readonly agent: string | null | undefined;
+}
+
+/** Rows rendered at first, rows added by a move or a loaded page, the cap (ADR-063 section 1). */
+export const WINDOW = 100;
+export const PAGE = 50;
+export const MAX_ROWS = 200;
+
+const keyOf = (item: AuditItem): string => String(item.row.seq);
+
+const attributes = (item: AuditItem): RowAttributes => ({
+  'data-testid': 'audit.row',
+  'data-seq': item.row.seq,
+  'data-action': item.row.action,
+});
+
+function Row({ item }: RowProps<AuditItem>) {
   const { app } = useAppEnv();
   const { t, locale } = useI18n();
-  const { row, names, org } = props;
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const { row, org, agent } = item;
   const wg = row.wg_id;
   const task = row.task_id;
-  const title = useStore(selectTitle(wg ?? '', task ?? '', null), app.store);
-  useEffect(() => {
-    if (wg !== null && task !== null) pullOnce(app.tasks, org, wg, { kinds: [TITLE_KIND], task }).catch(() => 0);
-  }, [app, org, wg, task]);
-  const actor = actorName(row, names) ?? t(`audit.actor.${row.actor_kind}`, { id: (row.actor_id ?? '').slice(-6) });
-  const target =
-    row.target_kind === null ? null : (targetName(row, names) ?? `${row.target_kind} ${row.target_id ?? ''}`.trim());
+  const actor = item.actor ?? t(`audit.actor.${row.actor_kind}`, { id: (row.actor_id ?? '').slice(-6) });
+  const target = row.target_kind === null ? null : (item.target ?? `${row.target_kind} ${row.target_id ?? ''}`.trim());
   const link = eventLink(org, row);
   const detail = Object.entries(row.detail);
-  const agent = useStore((state) => agentMarker(row, (id) => agentName(state, id)), app.store);
   return (
-    <li
-      className="flex flex-col gap-1 border-b border-gray-200 py-2"
-      data-testid="audit.row"
-      data-seq={row.seq}
-      data-action={row.action}
-    >
+    <>
       <div className="flex flex-wrap items-center gap-2">
         <time className="text-xs text-gray-600 tabular-nums" dateTime={row.at} data-testid="audit.row.time">
-          {formatEventTime(Date.parse(row.at), { locale, timeZone, now: app.tasks.now() })}
+          {formatEventTime(Date.parse(row.at), { locale, timeZone: localTimeZone(), now: app.tasks.now() })}
         </time>
         <span className="font-medium" data-testid="audit.row.actor">
           {actor}
@@ -333,19 +346,23 @@ function Row(props: {
       </div>
       <div className="flex flex-wrap gap-3 text-sm text-gray-700">
         {target !== null && <span data-testid="audit.row.target">{t('audit.row.target', { name: target })}</span>}
-        {wg !== null && <span data-testid="audit.row.wg">{t('audit.row.wg', { name: names.wg(wg) })}</span>}
+        {wg !== null && (
+          <span data-testid="audit.row.wg">
+            {t('audit.row.wg', { name: item.wg ?? t('audit.wg.unnamed', { id: wg.slice(-6) }) })}
+          </span>
+        )}
         {task !== null && (
           <Link
             className="inline-flex min-h-11 items-center underline"
             to={`/o/${encodeURIComponent(org)}/t/${encodeURIComponent(task)}`}
             data-testid="audit.row.task"
           >
-            {title.status === 'verified' ? title.text : t('audit.row.task', { id: task.slice(-6) })}
+            {item.title ?? t('audit.row.task', { id: task.slice(-6) })}
           </Link>
         )}
         {row.device_id !== null && (
           <span data-testid="audit.row.device">
-            {t('audit.row.device', { name: names.device(row.device_id) ?? row.device_id.slice(-6) })}
+            {t('audit.row.device', { name: item.device ?? row.device_id.slice(-6) })}
           </span>
         )}
         {link !== null && (
@@ -359,11 +376,98 @@ function Row(props: {
           {detail.map(([name, value]) => `${name}=${String(value)}`).join(' · ')}
         </p>
       )}
-    </li>
+    </>
   );
 }
 
-export function AuditView({ org, task }: { readonly org: string; readonly task: string | null }) {
+/**
+ * The audit rows of a view: a `WindowedList` newest first (`WINDOW` rows at first, `PAGE` per move, at most `MAX_ROWS`
+ * rendered), server paging with the hub's cursor through "Load more". The titles of the rows' tasks are pulled once
+ * per list (one pull per distinct task) and read with one selector; so are the names of the agents.
+ */
+function AuditRows(props: {
+  readonly org: string;
+  readonly listId: 'audit' | 'task.audit';
+  readonly rows: readonly AuditRow[];
+  readonly names: AuditNames & { readonly wg: (id: string) => string | null };
+  readonly paging: ListPaging;
+}) {
+  const { app } = useAppEnv();
+  const { t } = useI18n();
+  const { org, rows, names, paging } = props;
+  const tasks = useMemo(() => tasksOf(rows), [rows]);
+  const tasksKey = tasks.map((ref) => `${ref.wg}/${ref.task}`).join(' ');
+  const titles = useStore(
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `tasksKey` names the tasks
+    useMemo(() => titlesSelector(tasks), [tasksKey]),
+    app.store,
+  );
+  useEffect(() => {
+    for (const ref of tasks) pullOnce(app.tasks, org, ref.wg, { kinds: [TITLE_KIND], task: ref.task }).catch(() => 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `tasksKey` names the tasks
+  }, [app, org, tasksKey]);
+  const agentIds = useMemo(() => agentsOf(rows), [rows]);
+  const agentsKey = agentIds.join(' ');
+  const agents = useStore(
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `agentsKey` names the agents
+    useMemo(() => agentNamesSelector(agentIds), [agentsKey]),
+    app.store,
+  );
+  const items = useMemo(
+    () =>
+      rows.map((row): AuditItem => ({
+        org,
+        row,
+        actor: actorName(row, names),
+        target: targetName(row, names),
+        wg: row.wg_id === null ? null : names.wg(row.wg_id),
+        title: row.task_id === null ? null : (titles.get(row.task_id) ?? null),
+        device: row.device_id === null ? null : names.device(row.device_id),
+        agent: agentMarker(row, (id) => agents.get(id)!),
+      })),
+    [org, rows, names, titles, agents],
+  );
+  return (
+    <WindowedList
+      listId={props.listId}
+      items={items}
+      getKey={keyOf}
+      Row={Row}
+      same={shallowSame}
+      newest="start"
+      size={WINDOW}
+      page={PAGE}
+      maxRows={MAX_ROWS}
+      as="ol"
+      className="flex flex-col"
+      rowClassName="flex flex-col gap-1 border-b border-gray-200 py-2"
+      rowAttributes={attributes}
+      testId="audit.rows"
+      testIds={{ loadMore: 'audit.more' }}
+      hasMore={paging.hasMore}
+      loading={paging.loading}
+      onLoadMore={paging.loadMore}
+      empty={
+        // a time filter can leave every loaded row out while older pages may still hold some
+        paging.hasMore && !paging.loading ? (
+          <button type="button" className={BUTTON} onClick={paging.loadMore} data-testid="audit.more">
+            {t('audit.more')}
+          </button>
+        ) : null
+      }
+    />
+  );
+}
+
+export function AuditView({
+  org,
+  task,
+  listId,
+}: {
+  readonly org: string;
+  readonly task: string | null;
+  readonly listId: 'audit' | 'task.audit';
+}) {
   const { app } = useAppEnv();
   const { t } = useI18n();
   const [search, setSearch] = useSearchParams();
@@ -392,11 +496,15 @@ export function AuditView({ org, task }: { readonly org: string; readonly task: 
     if (tab !== null) params.set('tab', tab);
     setSearch(params);
   };
-  const names = {
-    member: (id: string) => directory.members.get(id) ?? null,
-    device: (id: string) => labels.get(id) ?? null,
-    wg: (id: string) => directory.workgroups.get(id) ?? t('audit.wg.unnamed', { id: id.slice(-6) }),
-  };
+  const names = useMemo(
+    () => ({
+      member: (id: string) => directory.members.get(id) ?? null,
+      device: (id: string) => labels.get(id) ?? null,
+      wg: (id: string) => directory.workgroups.get(id) ?? null,
+    }),
+    [directory, labels],
+  );
+  const wgName = (id: string) => names.wg(id) ?? t('audit.wg.unnamed', { id: id.slice(-6) });
   const principals = state === null ? [] : [...state.principals.values()].filter((p) => p.removedSeq === null);
   const actors = principals
     .map((p) => ({
@@ -406,9 +514,15 @@ export function AuditView({ org, task }: { readonly org: string; readonly task: 
         t(p.role === DEVICE ? 'audit.actor.device' : 'audit.actor.user', { id: p.id.slice(-6) }),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const workgroups = state === null ? [] : [...state.workgroups.keys()].map((id) => ({ id, name: names.wg(id) }));
+  const workgroups = state === null ? [] : [...state.workgroups.keys()].map((id) => ({ id, name: wgName(id) }));
   const admin = state !== null && userId !== null && state.isAdmin(userId);
-  const rows = visibleRows(view, filters);
+  const rows = useMemo(() => visibleRows(view, filters), [view, query]); // eslint-disable-line react-hooks/exhaustive-deps -- `query` names the filters
+  const loading = view.status === 'loading';
+  const paging: ListPaging = {
+    hasMore: canLoadMore(view, filters),
+    loading,
+    loadMore: () => void loadAudit(app.tasks, org, filters, true),
+  };
   return (
     <div className="flex flex-col gap-4" data-testid="audit.view">
       <Filters filters={filters} fixedTask={task !== null} actors={actors} workgroups={workgroups} onApply={apply} />
@@ -418,33 +532,16 @@ export function AuditView({ org, task }: { readonly org: string; readonly task: 
           {t('audit.failed', { code: view.code! })}
         </p>
       )}
-      {rows.length === 0 ? (
-        view.status !== 'loading' && (
-          <p className="text-gray-600" data-testid="audit.empty">
-            {t('audit.empty')}
-          </p>
-        )
-      ) : (
-        <ol className="flex flex-col" data-testid="audit.rows">
-          {rows.map((row) => (
-            <Row key={row.seq} org={org} row={row} names={names} />
-          ))}
-        </ol>
+      {rows.length === 0 && !loading && (
+        <p className="text-gray-600" data-testid="audit.empty">
+          {t('audit.empty')}
+        </p>
       )}
-      {view.status === 'loading' && (
+      <AuditRows org={org} listId={listId} rows={rows} names={names} paging={paging} />
+      {rows.length === 0 && loading && (
         <p className="text-gray-600" role="status" data-testid="audit.loading">
           {t('audit.loading')}
         </p>
-      )}
-      {view.status !== 'loading' && canLoadMore(view, filters) && (
-        <button
-          type="button"
-          className={BUTTON}
-          onClick={() => void loadAudit(app.tasks, org, filters, true)}
-          data-testid="audit.more"
-        >
-          {t('audit.more')}
-        </button>
       )}
     </div>
   );

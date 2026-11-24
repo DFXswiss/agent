@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/platform-ui-health.request.json",
+  "title": "GET /v1/platform/ui-health request",
+  "description": "query parameters; `days`: the number of days back, today (UTC, hub clock) included, 1-90, default 7",
+  "type": "object",
+  "properties": {
+    "days": {
+      "type": "string",
+      "pattern": "^([1-9]|[1-8][0-9]|90)$"
+    }
+  },
+  "additionalProperties": false
+}

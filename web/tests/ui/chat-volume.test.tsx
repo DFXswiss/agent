@@ -4,11 +4,11 @@
 // The browser proof with 5 000 file events is `e2e/devices/chat-volume.spec.ts`.
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { PAGE, WINDOW } from '../../src/core/chat/files';
+import { PAGE, WINDOW } from '../../src/ui/task-tabs/chat/Timeline';
 import { type EventEntry, putEvents } from '../../src/core/store/slices/events';
 import { putTasks, type TaskRow } from '../../src/core/store/slices/tasks';
-import { FILES_PAGE } from '../../src/ui/chat-items/file-group';
-import { CLIP_CHARS as PATCH_CHARS } from '../../src/ui/chat-items/file/Clipped';
+import { FILES_MAX, FILES_PAGE } from '../../src/ui/chat-items/file-group';
+import { CLIP_CHARS as PATCH_CHARS } from '../../src/ui/lists/Clipped';
 import { LINE_CHARS } from '../../src/ui/chat-items/session.tool';
 import { ChatTab } from '../../src/ui/task-tabs/chat/ChatTab';
 import { taskRow, type TaskWorld, taskWorld } from '../core/tasks/world';
@@ -76,6 +76,25 @@ describe('file groups', () => {
     expect(screen.queryByTestId('chat.file.patch')).toBeNull();
     fireEvent.click(toggle);
     expect(screen.queryByTestId('chat.files.list')).toBeNull();
+  });
+
+  it('renders at most FILES_MAX files of a very long run', async () => {
+    const t = await chat();
+    put(
+      t,
+      Array.from({ length: FILES_MAX + 60 }, (_, index) => fileEvent(t, index)),
+    );
+    fireEvent.click(screen.getByTestId('chat.files.toggle'));
+    for (let step = 0; step < 4; step += 1) fireEvent.click(screen.getByTestId('chat.files.more'));
+    // past the cap the first files drop: "Show previous files" and "Back to the first files" at the start
+    expect(screen.getAllByTestId('chat.file')).toHaveLength(FILES_MAX);
+    expect(screen.getAllByTestId('chat.file.path')[0]).not.toHaveTextContent('src/f0.txt');
+    expect(screen.getByTestId('chat.files.previous')).toHaveTextContent(`Show previous files (${FILES_PAGE} more)`);
+    expect(screen.getByTestId('chat.files.more')).toHaveTextContent('Show more files (10 more)');
+    Element.prototype.scrollIntoView = vi.fn();
+    fireEvent.click(screen.getByTestId('chat.files.first'));
+    expect(screen.getAllByTestId('chat.file')).toHaveLength(FILES_PAGE);
+    expect(screen.getAllByTestId('chat.file.path')[0]).toHaveTextContent('src/f0.txt');
   });
 
   it('shows the German texts', async () => {

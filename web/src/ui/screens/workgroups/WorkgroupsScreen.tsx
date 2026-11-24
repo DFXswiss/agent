@@ -1,8 +1,9 @@
 // Workgroups (06-web.md section 7.2, route `/o/:org/workgroups`, right org:member, edit: admin): names (decrypted
 // `wg.profile`), my access, devices, archived flag. Admins create a workgroup (one batch: `wg_create`, grants for the
 // chosen members, assignments of chosen devices, WK_1 for every reader, `wg.profile`), rename it and archive it (never
-// the default workgroup). Controls the user's verified rights do not allow are not rendered (section 1.2).
-import { useId, useState } from 'react';
+// the default workgroup). Controls the user's verified rights do not allow are not rendered (section 1.2). The rows are a
+// `WindowedList` (ADR-063 section 1: at most `MAX_ROWS` rendered), built once per log change.
+import { useId, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { uuid7 } from '../../../core/encoding/ids';
 import { submitBatch } from '../../../core/org/batch';
@@ -20,12 +21,14 @@ import type { OrgState } from '../../../core/log/state';
 import type { Directory } from '../../../core/tasks/directory';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
+import { WindowedList } from '../../lists/WindowedList';
 import { useAppEnv } from '../../shell/context';
 import { ActionDialog, BUTTON, PRIMARY } from '../members/ActionDialog';
+import { MAX_ROWS, PAGE, sameValue } from '../members/lists';
 import { memberName } from '../members/MembersScreen';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 
-type Open =
+export type Open =
   | { readonly kind: 'create' }
   | { readonly kind: 'rename'; readonly row: WorkgroupRow }
   | { readonly kind: 'archive'; readonly row: WorkgroupRow };
@@ -48,8 +51,11 @@ function CreateDialog({ org, state, userId, directory, onClose }: CreateProps) {
   const [name, setName] = useState('');
   const [grants, setGrants] = useState<Record<string, Access>>({});
   const [devices, setDevices] = useState<string[]>([]);
-  const others = memberRows(state, userId, directory).filter((row) => !row.isMe);
-  const choices = assignableDevices(state, platform);
+  const others = useMemo(
+    () => memberRows(state, userId, directory).filter((row) => !row.isMe),
+    [state, userId, directory],
+  );
+  const choices = useMemo(() => assignableDevices(state, platform), [state, platform]);
   const choose = (user: string, value: string) => {
     const next = { ...grants };
     if (value === '') delete next[user];
@@ -166,21 +172,20 @@ function RenameDialog({
   );
 }
 
-function WorkgroupItem({
-  org,
-  row,
-  admin,
-  onOpen,
-}: {
+/** What a workgroup row shows: the row, the org (for the link) and the viewer's rights. */
+interface WorkgroupEntry {
   readonly org: string;
   readonly row: WorkgroupRow;
   readonly admin: boolean;
   readonly onOpen: (open: Open) => void;
-}) {
+}
+
+function WorkgroupRowView({ item }: { readonly item: WorkgroupEntry }) {
+  const { org, row, admin, onOpen } = item;
   const { t } = useI18n();
   const name = row.name ?? t('workgroups.unnamed');
   return (
-    <li className="flex flex-col gap-2 border-b border-gray-200 py-3" data-testid="workgroups.item" data-wg={row.id}>
+    <>
       <div className="flex flex-wrap items-center gap-2">
         {row.myAccess === null ? (
           <span className="font-medium" data-testid="workgroups.item.name">
@@ -229,7 +234,40 @@ function WorkgroupItem({
           )}
         </div>
       )}
-    </li>
+    </>
+  );
+}
+
+const workgroupKey = (entry: WorkgroupEntry) => entry.row.id;
+const workgroupAttributes = (entry: WorkgroupEntry) => ({ 'data-testid': 'workgroups.item', 'data-wg': entry.row.id });
+
+/** The workgroup rows in the order of `workgroupRows` (default first, archived last), windowed. */
+export function WorkgroupList(props: {
+  readonly org: string;
+  readonly rows: readonly WorkgroupRow[];
+  readonly admin: boolean;
+  readonly onOpen: (open: Open) => void;
+}) {
+  const { org, rows, admin, onOpen } = props;
+  const entries = useMemo(
+    () => rows.map((row): WorkgroupEntry => ({ org, row, admin, onOpen })),
+    [org, rows, admin, onOpen],
+  );
+  return (
+    <WindowedList
+      listId="workgroups"
+      items={entries}
+      getKey={workgroupKey}
+      Row={WorkgroupRowView}
+      same={sameValue}
+      newest="start"
+      page={PAGE}
+      maxRows={MAX_ROWS}
+      testId="workgroups.list"
+      labels={{ older: 'workgroups.list.more', newer: 'workgroups.list.above', newest: 'workgroups.list.top' }}
+      rowClassName="flex flex-col gap-2 border-b border-gray-200 py-3"
+      rowAttributes={workgroupAttributes}
+    />
   );
 }
 
@@ -240,6 +278,11 @@ export function WorkgroupsScreen() {
   const { state, userId } = useOrgView(org);
   const directory = useDirectory(org, state !== null);
   const [open, setOpen] = useState<Open | null>(null);
+  // rebuilt only when the verified log, the user or the names change, not on every render
+  const rows = useMemo(
+    () => (state === null || userId === null ? [] : workgroupRows(state, userId, directory)),
+    [state, userId, directory],
+  );
   if (state === null) {
     return (
       <p className="p-4" data-testid="workgroups.loading">
@@ -255,7 +298,6 @@ export function WorkgroupsScreen() {
     );
   }
   const admin = canManage(state, userId);
-  const rows = workgroupRows(state, userId, directory);
   const close = () => setOpen(null);
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" data-testid="workgroups.screen">
@@ -270,11 +312,7 @@ export function WorkgroupsScreen() {
           {t('workgroups.create.open')}
         </button>
       )}
-      <ul data-testid="workgroups.list">
-        {rows.map((row) => (
-          <WorkgroupItem key={row.id} org={org} row={row} admin={admin} onOpen={setOpen} />
-        ))}
-      </ul>
+      <WorkgroupList org={org} rows={rows} admin={admin} onOpen={setOpen} />
       {open?.kind === 'create' && (
         <CreateDialog org={org} state={state} userId={userId} directory={directory} onClose={close} />
       )}

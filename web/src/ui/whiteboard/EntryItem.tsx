@@ -2,11 +2,24 @@
 // "edited" marker, Edit/Delete only for writers (not rendered otherwise), History for everybody; a deleted entry as a
 // muted row that keeps its history; unverifiable, locked and not yet loaded entries as neutral rows with the reason –
 // never content.
-import { lazy, Suspense, useState } from 'react';
+//
+// The row content of the board's `WindowedList` (ADR-063 section 1): the list renders the `<li>` with `entryAttributes`
+// and memoizes the rows with `sameItem` (a projection builds new objects, the comparison is on the content); the
+// actions come from `EntryContext` (stable while the board's writer right and directory are unchanged). The Markdown
+// is parsed only once the row comes near the viewport (`Near`).
+import { createContext, lazy, Suspense, useContext, useState } from 'react';
 import { sendErrorCode } from '../../core/tasks/send';
-import { type BoardEntry, type BoardItem, neutralLabel } from '../../core/whiteboards/project';
+import {
+  type BoardEntry,
+  type BoardItem,
+  type BoardNeutral,
+  type BoardPlaceholder,
+  neutralLabel,
+} from '../../core/whiteboards/project';
 import { useI18n } from '../i18n';
 import { ChunkBoundary } from '../lazy/ChunkBoundary';
+import { Near } from '../lists/near';
+import type { RowAttributes } from '../lists/WindowedList';
 import { Editor } from './Editor';
 import { Time } from './Time';
 
@@ -20,19 +33,13 @@ export interface EntryActions {
   readonly onHistory: (entry: BoardEntry) => void;
 }
 
+/** The actions of the board's rows (provided by the board). */
+export const EntryContext = createContext<EntryActions | null>(null);
+
 function Neutral({ item }: { readonly item: Exclude<BoardItem, BoardEntry> }) {
   const { t } = useI18n();
   const label = neutralLabel(item);
-  return (
-    <li
-      className="rounded border border-dashed border-gray-300 p-3 text-sm text-gray-600"
-      data-testid="whiteboard.item"
-      data-type={item.type}
-      data-code={label.code}
-    >
-      {t(label.key, label.params)}
-    </li>
-  );
+  return <>{t(label.key, label.params)}</>;
 }
 
 function DeleteConfirm({
@@ -107,12 +114,7 @@ function Entry({ entry, actions }: { readonly entry: BoardEntry; readonly action
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   return (
-    <li
-      className={`flex flex-col gap-2 rounded border p-3 ${entry.deleted ? 'border-gray-200 bg-gray-50' : 'border-gray-300'}`}
-      data-testid="whiteboard.item"
-      data-type="entry"
-      data-entry={entry.id}
-    >
+    <>
       <div className="flex flex-wrap items-baseline gap-2 text-sm">
         <span className="font-medium" data-testid="whiteboard.item.author">
           {actions.name(entry.author)}
@@ -142,11 +144,13 @@ function Entry({ entry, actions }: { readonly entry: BoardEntry; readonly action
       )}
       {!entry.deleted && !editing && (
         <div data-testid="whiteboard.item.text">
-          <ChunkBoundary fallback={<p className="whitespace-pre-wrap">{entry.text}</p>}>
-            <Suspense fallback={<p className="whitespace-pre-wrap">{entry.text}</p>}>
-              <Markdown text={entry.text} />
-            </Suspense>
-          </ChunkBoundary>
+          <Near text={entry.text}>
+            <ChunkBoundary fallback={<p className="whitespace-pre-wrap">{entry.text}</p>}>
+              <Suspense fallback={<p className="whitespace-pre-wrap">{entry.text}</p>}>
+                <Markdown text={entry.text} />
+              </Suspense>
+            </ChunkBoundary>
+          </Near>
         </div>
       )}
       <div className="flex flex-wrap gap-3 text-sm">
@@ -162,10 +166,54 @@ function Entry({ entry, actions }: { readonly entry: BoardEntry; readonly action
           <Controls entry={entry} actions={actions} onEdit={() => setEditing(true)} />
         )}
       </div>
-    </li>
+    </>
   );
 }
 
-export function EntryItem({ item, actions }: { readonly item: BoardItem; readonly actions: EntryActions }) {
+/** The row content of a board item. */
+export function EntryItem({ item }: { readonly item: BoardItem }) {
+  const actions = useContext(EntryContext)!;
   return item.type === 'entry' ? <Entry entry={item} actions={actions} /> : <Neutral item={item} />;
+}
+
+/** The key of a board item (stable across projections). */
+export const itemKey = (item: BoardItem): string => item.key;
+
+const ENTRY = 'flex flex-col gap-2 rounded border p-3';
+const NEUTRAL = 'rounded border border-dashed border-gray-300 p-3 text-sm text-gray-600';
+
+/** The `<li>` attributes of a board item: its look and the test hooks `whiteboard.item` with type, entry and code. */
+export function entryAttributes(item: BoardItem): RowAttributes {
+  if (item.type === 'entry')
+    return {
+      className: `${ENTRY} ${item.deleted ? 'border-gray-200 bg-gray-50' : 'border-gray-300'}`,
+      'data-testid': 'whiteboard.item',
+      'data-type': 'entry',
+      'data-entry': item.id,
+    };
+  const { code } = neutralLabel(item);
+  return {
+    className: NEUTRAL,
+    'data-testid': 'whiteboard.item',
+    'data-type': item.type,
+    ...(code !== undefined && { 'data-code': code }),
+  };
+}
+
+/** Whether two builds of a board item render the same row (a projection builds new objects on every change). */
+export function sameItem(a: BoardItem, b: BoardItem): boolean {
+  if (a.type !== b.type || a.key !== b.key || a.seq !== b.seq) return false;
+  if (a.type === 'entry') {
+    const other = b as BoardEntry;
+    return (
+      a.text === other.text &&
+      a.author === other.author &&
+      a.updatedAt === other.updatedAt &&
+      a.edited === other.edited &&
+      a.deleted === other.deleted &&
+      a.latestEventId === other.latestEventId
+    );
+  }
+  if (a.type === 'missing') return a.ref === (b as BoardPlaceholder).ref;
+  return a.ref === (b as BoardNeutral).ref && a.code === (b as BoardNeutral).code;
 }

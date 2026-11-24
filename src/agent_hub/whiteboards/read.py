@@ -12,7 +12,10 @@ workgroup it does not read or a task of such a workgroup).
 
 **History** (`history`): exactly the events the projection applied, ascending: the creating `whiteboard.entry` and the
 `whiteboard.edit`/`whiteboard.delete` events of the entry in its scope and task up to the latest projected event
-(`agent_hub.whiteboards.projection`: unprojected events with the same `ref` are not part of the entry's history).
+(`agent_hub.whiteboards.projection`: unprojected events with the same `ref` are not part of the entry's history); at
+most `HISTORY_MAX` events, `truncated: true` when the cap cut the history. With `before=<scope_seq>` and/or `limit`
+(ADR-063 section 2) one page of these events **newest first** below `before` (default 50, max 200) with
+`next_before`, the `scope_seq` of the last returned event when older ones exist (else None).
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ Connection = psycopg.Connection[Any]
 LIST_DEFAULT = 50
 LIST_MAX = 200
 HISTORY_MAX = 10000
+MAX_SEQ = 10**16
+"""Above every `scope_seq` (the paged history without `before` starts at the newest event)."""
 _FIELDS = ("entry_id", "org_id", "level", "wg_id", "task_id", "author_id", "created_at", "updated_at", "deleted")
 _VISIBLE = (
     "w.org_id IN (SELECT org_id FROM hub.org_member WHERE principal_id = %(user)s AND kind = 'user'"
@@ -106,22 +111,32 @@ def entry(connection: Connection, entry_id: UUID) -> Entry | None:
     return None if found is None else Entry(*found)
 
 
-def history(connection: Connection, item: Entry) -> list[dict[str, Any]]:
-    """The projected events of the entry, ascending (module docstring)."""
+def history(
+    connection: Connection, item: Entry, *, before: int | None = None, limit: int | None = None
+) -> dict[str, Any]:
+    """The projected events of the entry: ascending and capped, or one page newest first (module docstring)."""
+    paged = before is not None or limit is not None
+    count = (LIST_DEFAULT if limit is None else limit) if paged else HISTORY_MAX
     rows = connection.execute(
         "SELECT e.scope_seq, e.received_at, e.header_text, e.ct, e.sig FROM hub.event e"
         " JOIN hub.event c ON c.id = %(created)s JOIN hub.event l ON l.id = %(latest)s"
         " WHERE e.scope_id = c.scope_id AND (e.id = c.id OR (e.kind = ANY(%(kinds)s) AND e.ref = c.ref"
         " AND e.task_id IS NOT DISTINCT FROM c.task_id AND e.scope_seq > c.scope_seq AND e.scope_seq <= l.scope_seq))"
-        " ORDER BY e.scope_seq LIMIT %(limit)s",
+        + (" AND e.scope_seq < %(before)s ORDER BY e.scope_seq DESC" if paged else " ORDER BY e.scope_seq")
+        + " LIMIT %(limit)s",
         {
             "created": item.created_event_id,
             "latest": item.latest_event_id,
             "kinds": [EDIT, DELETE],
-            "limit": HISTORY_MAX,
+            "before": MAX_SEQ if before is None else before,
+            "limit": count + 1,
         },
     ).fetchall()
-    return [stored_json(found) for found in rows]
+    events = [stored_json(found) for found in rows[:count]]
+    more = len(rows) > count
+    if paged:
+        return {"events": events, "next_before": events[-1]["scope_seq"] if more else None}
+    return {"events": events, "truncated": True} if more else {"events": events}
 
 
 def is_org_level(item: Entry) -> bool:

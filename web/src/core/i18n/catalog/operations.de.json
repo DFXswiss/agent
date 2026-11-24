@@ -4,7 +4,6 @@
   "empty": "Dieser Task hat noch keine Operationen.",
   "loading": "Operationen werden geladen …",
   "failed": "Die Operationen konnten nicht geladen werden: {reason}",
-  "more": "Ältere Operationen laden",
   "type.github.list_repositories": "Repositories auflisten",
   "type.github.checkout": "Auschecken",
   "type.github.get_pull_request": "Pull-Request lesen",

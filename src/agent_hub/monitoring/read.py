@@ -7,7 +7,9 @@ between orgs, but only the device sample is shown for it - VMs and sessions are 
 member reads (`wg:read`), so another org's VMs and sessions on a shared device never appear. VMs: every VM row of a
 readable workgroup except `deleted` ones (a pool VM has no workgroup and is not shown). Sessions: the sessions of
 readable workgroups that have not ended or ended less than `SESSION_GRACE` ago (the 15 minutes the Prometheus series
-of an ended session stay, 08-monitoring.md section 3), newest first.
+of an ended session stay, 08-monitoring.md section 3): at most `SESSIONS_MAX`, the most recently active first (the hub
+time of the session's newest state transition, else its creation; ties by ID), with `sessions_total` (all such
+sessions) and `truncated` (ADR-063 section 2). The devices are those of the org's device list (at most its cap).
 
 **Overview.** Every entity carries its newest raw sample (`latest`, null without one within the raw retention) and
 `stale`: true when there is no sample or the newest one is more than `STALE_SECONDS` (60 s) older than the hub clock
@@ -41,11 +43,12 @@ from agent_hub.errors import HubError
 from agent_hub.monitoring.rollup import BUCKET_SECONDS, GAUGES, RAW_RETENTION
 from agent_hub.orgs.rights import wg_access
 from agent_hub.stream.sse import readable_scopes
-from agent_hub.workgroups.read import org_devices
+from agent_hub.workgroups.read import device_window, org_devices
 
 Connection = psycopg.Connection[Any]
 STALE_SECONDS = 60
 SESSION_GRACE = timedelta(minutes=15)
+SESSIONS_MAX = 2000
 RAW_MIN_STEP = 15
 ROLLUP_MIN_STEP = BUCKET_SECONDS
 MAX_POINTS = 20000
@@ -126,7 +129,9 @@ class OrgView:
     vms: list[tuple[str, str, str, str]]
     """`(vm_id, device_id, wg_id, state)`, newest first."""
     sessions: list[tuple[str, str, str, str]]
-    """`(session_id, task_id, wg_id, state)`, newest first."""
+    """`(session_id, task_id, wg_id, state)`, the most recently active first (at most `SESSIONS_MAX`)."""
+    sessions_total: int
+    """The number of sessions shown without the cap."""
 
 
 def readable_wgs(connection: Connection, org: UUID, user: UUID) -> list[str]:
@@ -140,21 +145,24 @@ def readable_wgs(connection: Connection, org: UUID, user: UUID) -> list[str]:
 def org_view(connection: Connection, org: UUID, user: UUID, now: datetime, online_seconds: int) -> OrgView:
     """The devices, VMs and sessions of the org the member sees."""
     wgs = readable_wgs(connection, org, user)
-    devices = org_devices(connection, org, now, online_seconds)
+    devices = org_devices(connection, org, now, online_seconds, device_window(None, None))["devices"]
     vms = connection.execute(
         "SELECT id, device_id, wg_id, state FROM hub.vm WHERE wg_id = ANY(%s::uuid[]) AND state <> 'deleted'"
         " ORDER BY created_at DESC, id DESC",
         (wgs,),
     ).fetchall()
     sessions = connection.execute(
-        "SELECT id, task_id, wg_id, state FROM hub.session WHERE org_id = %s AND wg_id = ANY(%s::uuid[])"
-        " AND (ended_at IS NULL OR ended_at > %s) ORDER BY created_at DESC, id DESC",
-        (org, wgs, now - SESSION_GRACE),
+        "SELECT s.id, s.task_id, s.wg_id, s.state, count(*) OVER () FROM hub.session s WHERE s.org_id = %s"
+        " AND s.wg_id = ANY(%s::uuid[]) AND (s.ended_at IS NULL OR s.ended_at > %s)"
+        " ORDER BY COALESCE((SELECT t.received_at FROM hub.session_transition t WHERE t.session_id = s.id"
+        " ORDER BY t.seq DESC LIMIT 1), s.created_at) DESC, s.id DESC LIMIT %s",
+        (org, wgs, now - SESSION_GRACE, SESSIONS_MAX),
     ).fetchall()
     return OrgView(
         devices=devices,
         vms=[(str(row[0]), str(row[1]), str(row[2]), str(row[3])) for row in vms],
         sessions=[(str(row[0]), str(row[1]), str(row[2]), str(row[3])) for row in sessions],
+        sessions_total=int(sessions[0][4]) if sessions else 0,
     )
 
 
@@ -222,7 +230,13 @@ def overview(connection: Connection, org: UUID, user: UUID, now: datetime, onlin
                 "stale": is_stale(latest, now),
             }
         )
-    return {"devices": devices, "vms": vms, "sessions": sessions}
+    return {
+        "devices": devices,
+        "vms": vms,
+        "sessions": sessions,
+        "sessions_total": view.sessions_total,
+        "truncated": view.sessions_total > len(sessions),
+    }
 
 
 # --- series ---

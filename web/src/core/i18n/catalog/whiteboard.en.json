@@ -35,5 +35,11 @@
   "history.deleted": "Deleted",
   "history.close": "Close",
   "diff.stats": "+{added} / −{deleted} lines",
-  "reload": "Try again"
+  "reload": "Try again",
+  "history.diff.show": "Show changes",
+  "history.diff.hide": "Hide changes",
+  "history.older": "{count} older versions – show",
+  "history.newer": "{count} newer versions – show",
+  "history.newest": "Jump to the newest version",
+  "diff.none": "No lines changed."
 }
