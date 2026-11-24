@@ -1,0 +1,159 @@
+{
+  "name": "e2e-14-offline-reconnect",
+  "description": "E2E-14: one turn of six model steps 3 s apart (five file writes, six outputs), long enough to cut the runner's link to the hub and the browser's live stream in the middle of it.",
+  "steps": [
+    {
+      "id": "one",
+      "expect": {
+        "user_text_contains": "E2E14-OFFLINE",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Step one kz14-out-1-a7s2."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/one.txt",
+              "content": "kz14-file-one\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "two",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "one.txt"
+      },
+      "delay_ms": 3000,
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Step two kz14-out-2-a7s2."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/two.txt",
+              "content": "kz14-file-two\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "three",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "two.txt"
+      },
+      "delay_ms": 3000,
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Step three kz14-out-3-a7s2."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/three.txt",
+              "content": "kz14-file-three\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "four",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "three.txt"
+      },
+      "delay_ms": 3000,
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Step four kz14-out-4-a7s2."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/four.txt",
+              "content": "kz14-file-four\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "five",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "four.txt"
+      },
+      "delay_ms": 3000,
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Step five kz14-out-5-a7s2."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/five.txt",
+              "content": "kz14-file-five\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "done",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "five.txt"
+      },
+      "delay_ms": 3000,
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "All steps done kz14-answer-q1w9."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Offline"
+          }
+        ]
+      }
+    }
+  ]
+}

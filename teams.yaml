@@ -1,0 +1,23 @@
+# Team membership. Change this file with a pull request.
+# A logged-in GitHub user always sees their own store.
+# Being listed on a team additionally grants that team's stores.
+#
+# Logins are compared case-insensitively and stored lowercase.
+
+teams:
+  dfx:
+    members:
+      - taprootfreak
+      - davidleomay
+      - taprootfreakai
+      - marassteiner
+      - danswar
+      - joshuakrueger-dfx
+      - jonnyluca
+      - theo-vane
+
+agents:
+  jonnyluca:
+    owners:
+      - taprootfreak
+      - taprootfreakai

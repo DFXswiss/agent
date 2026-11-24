@@ -1,0 +1,12 @@
+{
+  "loading": "Session wird geladen …",
+  "failed": "Die Session konnte nicht geladen werden: {reason}",
+  "title": "Session",
+  "back": "Zurück zum Task",
+  "tabs.label": "Ansichten der Session",
+  "tab.terminal": "Terminal",
+  "tab.chat": "Chat",
+  "tab.children": "Subagents",
+  "chat.empty": "Diese Session hat noch keine Ausgabe.",
+  "children.empty": "Diese Session hat keine Subagents."
+}

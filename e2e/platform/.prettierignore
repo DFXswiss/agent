@@ -1,0 +1,5 @@
+node_modules/
+artifacts/
+artifacts-scratch/
+test-results/
+traceability.json

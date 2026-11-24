@@ -1,0 +1,8 @@
+{
+  "description": "Endpoint added by KOR-01 (AUD-01 B-06; 06-web.md section 3.2 'generate a new recovery code'): the ceremony whose passkey assertion lets a signed-in user replace the recovery code (decisions/KOR-01.md). 03-api.md section 4.1 is to be amended by DOC-01.",
+  "rights": ["user"],
+  "auth": ["browser"],
+  "endpoints": [
+    {"method": "POST", "path": "/v1/me/recovery/begin", "rights": ["user"], "section": "4.1"}
+  ]
+}

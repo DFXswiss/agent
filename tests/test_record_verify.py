@@ -1,0 +1,474 @@
+"""The fold and the verification of the record (RECORD-PROTOCOL.md sections 6.1, 11.6, 12.1 and 12.2).
+
+Pure functions over stored events, checkpoints and the keys file: every failure value of section
+12.1 except `file_invalid` (tested with the export format), with its position.
+"""
+
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from agent_core.keys import KeyRing
+from agent_core.record.checkpoint import (
+    Checkpoint,
+    checkpoint_due,
+    checkpoint_signature_valid,
+    checkpoint_text,
+    checkpoint_valid,
+    checkpoint_well_formed,
+    full_hour,
+)
+from agent_core.record.event import (
+    MAX_TIME,
+    MIN_TIME,
+    STORED_INFINITY,
+    Change,
+    build_event_text,
+    parse_event,
+    record_hash,
+)
+from agent_core.record.state import EMPTY_STATE, Head
+from agent_core.record.export import verify_export, write_export
+from agent_core.record.verify import RowCopies, StoredEvent, fold_events, verify_record
+from tests.test_record_reducer import (
+    ALICE,
+    BOB,
+    CAROL,
+    EVENTS,
+    SEEDS,
+    STANDARD,
+    T0,
+    World,
+    create_work,
+    new_id,
+    private,
+    public,
+)
+
+HUB = "hub-1"
+HUB_SEED = 30
+HUB_KEYS = {HUB: public(HUB_SEED)}
+
+
+def story() -> tuple[World, str]:
+    """Three events: alice creates a task, bob renames it, alice comments on it."""
+    world = World(STANDARD)
+    work = create_work(world, ALICE.id, [])
+    world.write(BOB.id, "task", work, [("title", "Fix login", "Fix it")], EVENTS)
+    world.write(ALICE.id, "comment", new_id(), [("task", None, work), ("body", None, "x")], EVENTS)
+    return world, work
+
+
+def rehash(events: list[StoredEvent]) -> list[StoredEvent]:
+    out: list[StoredEvent] = []
+    previous = None
+    for stored in events:
+        value = record_hash(stored.position, stored.received_at, stored.event_hash, previous)
+        out.append(replace(stored, record_hash=value))
+        previous = value
+    return out
+
+
+def forged(world: World, key_id: str, text: bytes, position: int, received_at: int) -> StoredEvent:
+    event = parse_event(text)
+    return StoredEvent(
+        position=position,
+        received_at=received_at,
+        event_hash=event.event_hash,
+        record_hash="0" * 64,
+        text=text,
+        signature=private(SEEDS[key_id]).sign(text),
+        copies=RowCopies(event.event_id, event.actor_key_id, event.prev_hash),
+    )
+
+
+def text_of(key_id: str, event_id: str, object_type: str, object_id: str, signed_at: int, prev_hash: str,
+            changes: list[Change], certificate: bytes | None = None) -> bytes:
+    return build_event_text(event_id=event_id, object_type=object_type, object_id=object_id, actor_key_id=key_id,
+                            signed_at=signed_at, prev_hash=prev_hash, changes=changes, key_certificate=certificate)
+
+
+def failure_of(events: list[StoredEvent], keys: KeyRing) -> tuple[str, int] | None:
+    result = verify_record(events, [], keys, {}, None)
+    return None if result.failure is None else (result.failure.failure, result.failure.position)
+
+
+def checkpoint(position: int, value: str, published_at: int, hub: str, seed: int) -> Checkpoint:
+    signature = private(seed).sign(checkpoint_text(hub, position, value, published_at))
+    return Checkpoint(hub_key_id=hub, position=position, record_hash=value, published_at=published_at,
+                      signature=signature)
+
+
+# --- sound records -----------------------------------------------------------------------------------
+
+
+def test_the_fold_of_the_stored_record_gives_the_state_of_the_hub() -> None:
+    world, _ = story()
+    result = fold_events(EMPTY_STATE, world.stored, world.keys, None)
+    assert result.failure is None
+    assert result.state == world.state
+    verified = verify_record(world.stored, [], world.keys, {}, None)
+    assert verified.failure is None
+    assert verified.state.head == world.state.head
+
+
+def test_an_empty_record_verifies() -> None:
+    result = verify_record([], [], KeyRing({}), HUB_KEYS, None)
+    assert result.failure is None
+    assert result.state.head is None
+
+
+def test_the_incremental_fold_continues_a_state() -> None:
+    world, _ = story()
+    first = fold_events(EMPTY_STATE, world.stored[:1], world.keys, None)
+    rest = fold_events(first.state, world.stored[1:], world.keys, None)
+    assert rest.failure is None
+    assert rest.state == world.state
+    # The first event it reads has the position after the head of the state.
+    again = fold_events(rest.state, world.stored[2:], world.keys, None)
+    assert again.failure is not None
+    assert (again.failure.failure, again.failure.position) == ("position_gap", 4)
+    assert again.state == world.state
+
+
+def test_a_verification_of_a_running_process_compares_its_head() -> None:
+    world, _ = story()
+    head = world.state.head
+    assert head is not None
+    assert verify_record(world.stored, [], world.keys, {}, head).failure is None
+    wrong = Head(position=2, received_at=0, record_hash="f" * 64)
+    result = verify_record(world.stored, [], world.keys, {}, wrong)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("record_hash_mismatch", 2)
+    beyond = Head(position=5, received_at=0, record_hash="f" * 64)
+    result = verify_record(world.stored, [], world.keys, {}, beyond)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("position_gap", 4)
+    empty = verify_record([], [], world.keys, {}, beyond)
+    assert empty.failure is not None
+    assert (empty.failure.failure, empty.failure.position) == ("position_gap", 1)
+
+
+# --- every failure of section 12.1 -----------------------------------------------------------------
+
+
+def test_position_gap() -> None:
+    world, _ = story()
+    events = world.stored
+    assert failure_of([events[0], events[2]], world.keys) == ("position_gap", 2)
+    assert failure_of([events[0], events[0]], world.keys) == ("position_gap", 2)
+    assert failure_of(events[1:], world.keys) == ("position_gap", 1)
+
+
+def test_event_invalid_for_a_text_and_for_a_value() -> None:
+    world, work = story()
+    broken = replace(world.stored[2], text=b"agent-event-v1")
+    result = verify_record([*world.stored[:2], broken], [], world.keys, {}, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("event_invalid", 3)
+    assert result.state.head is not None
+    assert result.state.head.position == 2
+    malformed = text_of(ALICE.id, new_id(), "task", work, world.now, world.prev(ALICE.id),
+                        [Change("title", b"Fix it", b" x")])
+    events = rehash([*world.stored, forged(world, ALICE.id, malformed, 4, world.now)])
+    result = verify_record(events, [], world.keys, {}, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("event_invalid", 4)
+
+
+@pytest.mark.parametrize("column", ["event_hash", "event_id", "actor_key_id", "prev_hash"])
+def test_row_mismatch(column: str) -> None:
+    world, _ = story()
+    stored = world.stored[1]
+    copies = stored.copies
+    assert copies is not None
+    if column == "event_hash":
+        changed = replace(stored, event_hash="0" * 64)
+    elif column == "event_id":
+        changed = replace(stored, copies=replace(copies, event_id=new_id()))
+    elif column == "actor_key_id":
+        changed = replace(stored, copies=replace(copies, actor_key_id=ALICE.id))
+    else:
+        changed = replace(stored, copies=replace(copies, prev_hash="a" * 64))
+    events = [world.stored[0], changed, world.stored[2]]
+    assert failure_of(events, world.keys) == ("row_mismatch", 2)
+
+
+def test_an_export_row_compares_only_the_event_hash() -> None:
+    world, _ = story()
+    events = [replace(stored, copies=None) for stored in world.stored]
+    assert failure_of(events, world.keys) is None
+
+
+def test_key_unknown_and_event_signature_invalid() -> None:
+    world, _ = story()
+    without_bob = KeyRing({entry_id: entry for entry_id, entry in world.keys.entries.items() if entry_id != BOB.id})
+    assert failure_of(world.stored, without_bob) == ("key_unknown", 2)
+    resigned = replace(world.stored[1], signature=private(1).sign(world.stored[1].text))
+    assert failure_of([world.stored[0], resigned, world.stored[2]], world.keys) == ("event_signature_invalid", 2)
+
+
+def certified(world: World, work: str) -> StoredEvent:
+    """Position 4 after the story: an event of the registered `ed25519` key of carol, validly signed
+    and chained (carol's first event), whose `key_certificate` is `=` followed by a value."""
+    text = text_of(CAROL.id, new_id(), "task", work, world.now, world.prev(CAROL.id),
+                   [Change("title", b"Fix it", b"Fix")], b"certificate")
+    assert parse_event(text).key_certificate == b"certificate"
+    return forged(world, CAROL.id, text, 4, world.now)
+
+
+def test_certificate_not_supported_in_every_fold() -> None:
+    world, work = story()
+    events = rehash([*world.stored, certified(world, work)])
+    # The full verification.
+    result = verify_record(events, [], world.keys, {}, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("certificate_not_supported", 4)
+    assert result.state == world.state
+    # The incremental fold, after the state of a running process.
+    incremental = fold_events(world.state, events[3:], world.keys, None)
+    assert incremental.failure is not None
+    assert (incremental.failure.failure, incremental.failure.position) == ("certificate_not_supported", 4)
+    assert incremental.state == world.state
+    # Offline `verify` of an export with the record hashes recomputed.
+    offline = verify_export(write_export(events, [], T0 + 86400), world.keys, {})
+    assert offline.failure is not None
+    assert (offline.failure.failure, offline.failure.position) == ("certificate_not_supported", 4)
+
+
+def test_certificate_not_supported_comes_after_event_invalid_and_before_row_mismatch() -> None:
+    world, work = story()
+    stored = certified(world, work)
+    copies = stored.copies
+    assert copies is not None
+    without_carol = KeyRing({entry_id: entry for entry_id, entry in world.keys.entries.items() if entry_id != CAROL.id})
+    for changed, keys in (
+        (replace(stored, copies=replace(copies, event_id=new_id())), world.keys),  # row_mismatch
+        (replace(stored, event_hash="0" * 64), world.keys),  # row_mismatch
+        (stored, without_carol),  # key_unknown
+        (replace(stored, signature=bytes(64)), world.keys),  # event_signature_invalid
+        (replace(stored, received_at=world.stored[-1].received_at - 1), world.keys),  # event_time_invalid
+    ):
+        assert failure_of(rehash([*world.stored, changed]), keys) == ("certificate_not_supported", 4)
+    # A value outside its form in the same event: `event_invalid` first.
+    malformed = text_of(CAROL.id, new_id(), "task", work, world.now, "-", [Change("title", b"Fix it", b" x")],
+                        b"certificate")
+    events = rehash([*world.stored, forged(world, CAROL.id, malformed, 4, world.now)])
+    assert failure_of(events, world.keys) == ("event_invalid", 4)
+
+
+def test_event_id_taken_for_two_events_of_two_keys() -> None:
+    world, work = story()
+    used = parse_event(world.stored[0].text).event_id
+    text = text_of(BOB.id, used, "task", work, world.now, world.prev(BOB.id), [Change("title", b"Fix it", b"Fix")])
+    events = rehash([*world.stored, forged(world, BOB.id, text, 4, world.now)])
+    assert failure_of(events, world.keys) == ("event_id_taken", 4)
+    # The same text twice fails here too.
+    twice = rehash([*world.stored, replace(world.stored[2], position=4)])
+    assert failure_of(twice, world.keys) == ("event_id_taken", 4)
+
+
+def test_chain_broken() -> None:
+    world, work = story()
+    first, _, third = world.stored
+    swapped = rehash([replace(third, position=1), replace(first, position=2)])
+    assert failure_of(swapped, world.keys) == ("chain_broken", 1)
+    fork = text_of(ALICE.id, new_id(), "task", work, world.now, parse_event(first.text).event_hash,
+                   [Change("title", b"Fix it", b"Fix")])
+    events = rehash([*world.stored, forged(world, ALICE.id, fork, 4, world.now)])
+    assert failure_of(events, world.keys) == ("chain_broken", 4)
+
+
+def test_event_time_invalid() -> None:
+    world, work = story()
+    first, second, third = world.stored
+    earlier = rehash([first, replace(second, received_at=first.received_at - 1), third])
+    assert failure_of(earlier, world.keys) == ("event_time_invalid", 2)
+    signed_at = parse_event(first.text).signed_at
+    ahead = rehash([replace(first, received_at=signed_at - 121), second, third])
+    assert failure_of(ahead, world.keys) == ("event_time_invalid", 1)
+    accepted = rehash([replace(first, received_at=signed_at - 120), second, third])
+    assert failure_of(accepted, world.keys) is None
+    back = text_of(ALICE.id, new_id(), "task", work, T0, world.prev(ALICE.id), [Change("title", b"Fix it", b"Fix")])
+    events = rehash([*world.stored, forged(world, ALICE.id, back, 4, world.now)])
+    assert failure_of(events, world.keys) == ("event_time_invalid", 4)
+    # A received_at outside the form of a time (a year after 9999) cannot enter a record hash: the
+    # row is `event_time_invalid`, decided before `record_hash_mismatch` (the stored record hash of
+    # `third` was computed from another received_at) and after `chain_broken`.
+    outside = [*world.stored[:2], replace(third, received_at=10**12)]
+    assert failure_of(outside, world.keys) == ("event_time_invalid", 3)
+    fork = text_of(ALICE.id, new_id(), "task", work, world.now, "-", [Change("title", b"Fix it", b"Fix")])
+    broken = [*world.stored, replace(forged(world, ALICE.id, fork, 4, world.now), received_at=10**12)]
+    assert failure_of(broken, world.keys) == ("chain_broken", 4)
+
+
+def test_record_hash_mismatch() -> None:
+    world, _ = story()
+    events = [world.stored[0], replace(world.stored[1], record_hash="0" * 64), world.stored[2]]
+    assert failure_of(events, world.keys) == ("record_hash_mismatch", 2)
+
+
+def test_event_refused_and_the_state_before_it() -> None:
+    world, work = story()
+    stale = text_of(ALICE.id, new_id(), "task", work, world.now, world.prev(ALICE.id),
+                    [Change("title", b"Fix login", b"Fix")])
+    events = rehash([*world.stored, forged(world, ALICE.id, stale, 4, world.now)])
+    result = verify_record(events, [], world.keys, {}, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("event_refused", 4)
+    assert result.state == world.state
+
+
+def test_actor_rules_are_not_checked_in_a_fold() -> None:
+    world, work = story()
+    # Bob's key is revoked later and loses its scopes: the stored events stay valid.
+    revoked = replace(BOB, revoked=T0, scopes=("device:executor",))
+    keys = KeyRing({**world.keys.entries, BOB.id: revoked})
+    assert failure_of(world.stored, keys) is None
+
+
+# --- checkpoints -----------------------------------------------------------------------------------
+
+
+def test_checkpoints_are_checked_for_the_given_hub_key_ids() -> None:
+    world, _ = story()
+    last = world.stored[2]
+    good = checkpoint(3, last.record_hash, T0 + 3600, HUB, HUB_SEED)
+    other_hub = checkpoint(9, "0" * 64, T0, "hub-2", 31)
+    result = verify_record(world.stored, [good, other_hub], world.keys, HUB_KEYS, None)
+    assert result.failure is None
+    for bad in (
+        checkpoint(9, last.record_hash, T0, HUB, HUB_SEED),
+        checkpoint(2, last.record_hash, T0, HUB, HUB_SEED),
+        checkpoint(3, last.record_hash, T0, HUB, 31),
+        replace(good, position=0),
+        replace(good, published_at=10**12),
+    ):
+        result = verify_record(world.stored, [good, bad], world.keys, HUB_KEYS, None)
+        assert result.failure is not None
+        assert (result.failure.failure, result.failure.position) == ("checkpoint_invalid", bad.position)
+    # Without the hub key id, the same checkpoint is skipped.
+    skipped = checkpoint(9, last.record_hash, T0, HUB, HUB_SEED)
+    assert verify_record(world.stored, [skipped], world.keys, {}, None).failure is None
+
+
+UNWRITABLE_TIMES = [MAX_TIME + 1, STORED_INFINITY, -STORED_INFINITY, MIN_TIME - 1]
+UNWRITABLE_TIME_IDS = ["year 10000", "infinity", "-infinity", "year 0"]
+KEY_IDS_OUTSIDE_THE_ID_RULE = ["Hub-2", 'hub"2', "h2", "-hub", "hub-", "", "hüb"]
+
+
+@pytest.mark.parametrize("published_at", UNWRITABLE_TIMES, ids=UNWRITABLE_TIME_IDS)
+@pytest.mark.parametrize("hub", [HUB, "hub-2"], ids=["own hub key id", "another hub key id"])
+@pytest.mark.parametrize("hub_keys", [HUB_KEYS, {}], ids=["hub key given", "no hub key given"])
+def test_checkpoint_invalid_for_a_published_at_that_is_no_time_also_unchecked(
+    published_at: int, hub: str, hub_keys: dict[str, bytes]
+) -> None:
+    """Section 12.1, row `checkpoint_invalid` (decision 103): the form of `published_at` is checked
+    for every stored checkpoint, also one whose signature is not checked, at the position it names."""
+    world, _ = story()
+    stored = checkpoint(2, world.stored[1].record_hash, T0, hub, 31)
+    bad = replace(stored, published_at=published_at)
+    result = verify_record(world.stored, [bad], world.keys, hub_keys, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("checkpoint_invalid", 2)
+    assert result.state == world.state
+
+
+@pytest.mark.parametrize("hub_key_id", KEY_IDS_OUTSIDE_THE_ID_RULE)
+@pytest.mark.parametrize("hub_keys", [HUB_KEYS, {}], ids=["hub key given", "no hub key given"])
+def test_checkpoint_invalid_for_a_hub_key_id_outside_the_id_rule(hub_key_id: str, hub_keys: dict[str, bytes]) -> None:
+    """Section 12.1, row `checkpoint_invalid` (decision 103): a stored hub key id outside the `id`
+    rule of KEY-PROTOCOL.md section 3 fails, whether or not any key is given for it."""
+    world, _ = story()
+    bad = replace(checkpoint(3, world.stored[2].record_hash, T0, HUB, HUB_SEED), hub_key_id=hub_key_id)
+    result = verify_record(world.stored, [bad], world.keys, {**hub_keys, hub_key_id: public(HUB_SEED)}, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("checkpoint_invalid", 3)
+    result = verify_record(world.stored, [bad], world.keys, hub_keys, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("checkpoint_invalid", 3)
+
+
+def test_checkpoint_form_is_decided_in_the_order_of_the_rows() -> None:
+    """Section 12.1: the events first, then the end of the snapshot against the head in memory,
+    then the checkpoints in the given order; the first failure ends the run."""
+    world, _ = story()
+    malformed = replace(checkpoint(1, world.stored[0].record_hash, T0, "hub-2", 31), published_at=STORED_INFINITY)
+    # An event failure comes first: an unwritable `received_at` fails `event_time_invalid`.
+    events = [*world.stored[:2], replace(world.stored[2], received_at=STORED_INFINITY)]
+    result = verify_record(events, [malformed], world.keys, HUB_KEYS, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("event_time_invalid", 3)
+    # The comparison with the head in memory comes before the checkpoints.
+    beyond = Head(position=5, received_at=0, record_hash="f" * 64)
+    result = verify_record(world.stored, [malformed], world.keys, HUB_KEYS, beyond)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("position_gap", 4)
+    # Among the checkpoints, the first that fails in the given order decides.
+    beyond_head = checkpoint(9, world.stored[2].record_hash, T0, HUB, HUB_SEED)
+    for order, position in (([beyond_head, malformed], 9), ([malformed, beyond_head], 1)):
+        result = verify_record(world.stored, order, world.keys, HUB_KEYS, None)
+        assert result.failure is not None
+        assert (result.failure.failure, result.failure.position) == ("checkpoint_invalid", position)
+    # A well-formed checkpoint of another hub key id is still skipped beyond its form.
+    skipped = checkpoint(9, "0" * 64, T0, "hub-2", 31)
+    assert verify_record(world.stored, [skipped], world.keys, HUB_KEYS, None).failure is None
+
+
+def test_the_newest_checkpoint_check_of_step_3_includes_the_form_of_published_at() -> None:
+    """Section 12.2 step 3: position, record hash, `published_at` as a time of section 2, signature."""
+    valid = checkpoint(2, "b" * 64, T0, HUB, HUB_SEED)
+    assert checkpoint_well_formed(valid)
+    for published_at in UNWRITABLE_TIMES:
+        unwritable = replace(valid, published_at=published_at)
+        assert not checkpoint_well_formed(unwritable)
+        assert not checkpoint_valid(unwritable, 2, "b" * 64, public(HUB_SEED))
+    for hub_key_id in KEY_IDS_OUTSIDE_THE_ID_RULE:
+        assert not checkpoint_well_formed(replace(valid, hub_key_id=hub_key_id))
+
+
+def test_a_checkpoint_of_an_empty_record_is_beyond_the_head() -> None:
+    result = verify_record([], [checkpoint(1, "a" * 64, T0, HUB, HUB_SEED)], KeyRing({}), HUB_KEYS, None)
+    assert result.failure is not None
+    assert (result.failure.failure, result.failure.position) == ("checkpoint_invalid", 1)
+
+
+def test_the_checkpoint_text() -> None:
+    text = checkpoint_text(HUB, 21, "a" * 64, 1795003200)
+    assert text == b"agent-record-head-v1\nhub-1\n21\n" + b"a" * 64 + b"\n2026-11-18T12:00:00Z"
+    for arguments in (("H", 1, "a" * 64, 0), (HUB, 0, "a" * 64, 0), (HUB, True, "a" * 64, 0),
+                      (HUB, 1, "A" * 64, 0), (HUB, 1, "a" * 64, 10**12)):
+        with pytest.raises(ValueError):
+            checkpoint_text(*arguments)  # type: ignore[arg-type]
+
+
+def test_a_checkpoint_signature_and_its_check() -> None:
+    valid = checkpoint(2, "b" * 64, T0, HUB, HUB_SEED)
+    assert checkpoint_signature_valid(public(HUB_SEED), valid)
+    assert not checkpoint_signature_valid(public(31), valid)
+    assert not checkpoint_signature_valid(public(HUB_SEED), replace(valid, published_at=T0 + 1))
+    assert not checkpoint_signature_valid(public(HUB_SEED), replace(valid, hub_key_id="X"))
+    assert checkpoint_valid(valid, 2, "b" * 64, public(HUB_SEED))
+    assert not checkpoint_valid(valid, 1, "b" * 64, public(HUB_SEED))
+    assert not checkpoint_valid(valid, 2, None, public(HUB_SEED))
+    assert not checkpoint_valid(valid, 2, "c" * 64, public(HUB_SEED))
+    assert repr(valid) == f"Checkpoint(hub_key_id='hub-1', position=2, record_hash='{'b' * 64}')"
+
+
+def test_full_hours_and_when_a_checkpoint_is_due() -> None:
+    hour = 1795003200
+    assert hour % 3600 == 0
+    assert full_hour(hour) == hour
+    assert full_hour(hour + 1799) == hour
+    assert full_hour(hour - 1) == hour - 3600
+    newest = checkpoint(20, "a" * 64, hour - 3600, HUB, HUB_SEED)
+    assert not checkpoint_due(0, None, hour)
+    assert checkpoint_due(1, None, hour)
+    assert checkpoint_due(21, newest, hour)
+    assert not checkpoint_due(20, newest, hour)
+    assert not checkpoint_due(21, replace(newest, published_at=hour), hour)
+    assert not checkpoint_due(21, replace(newest, published_at=hour + 5), hour)
+    # After the clock was set back, a full hour reached again writes nothing.
+    assert not checkpoint_due(21, replace(newest, published_at=hour + 3600), hour)

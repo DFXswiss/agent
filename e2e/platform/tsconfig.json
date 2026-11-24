@@ -1,0 +1,9 @@
+{
+  "extends": "../../web/tsconfig.base.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/e2e-platform.tsbuildinfo",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["playwright.config.ts", "fixtures", "specs", "perf", "live", "eslint.config.js"]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "e2e-06-first-task",
+  "description": "E2E-06: the first task of a new private org asks \"What is 2+2?\"; Claude Code's turn (with tools, streaming) gets one text answer. Background requests without tools (title and the like) get a short title and are not part of the conversation.",
+  "steps": [
+    {
+      "id": "answer",
+      "expect": { "user_text_contains": "What is 2+2?", "has_tools": true, "stream": true },
+      "reply": {
+        "content": [{ "type": "text", "text": "2+2 is 4." }],
+        "usage": {
+          "input_tokens": 900,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 8
+        }
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Simple arithmetic" }] }
+    }
+  ]
+}

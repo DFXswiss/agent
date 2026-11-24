@@ -1,0 +1,5 @@
+# Public keys the hub accepts on signed requests under /api/key/.
+# Change this file with a pull request. It holds public keys and never a secret.
+# An entry is revoked, never removed. Format and rules: KEY-PROTOCOL.md, section 3.
+
+keys: []

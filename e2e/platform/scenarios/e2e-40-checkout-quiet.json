@@ -1,0 +1,81 @@
+{
+  "name": "e2e-40-checkout-quiet",
+  "description": "E2E-40: the session checks out a repository of 3000 files from the GitHub double, then writes one new file inside the checked-out directory with the Write tool and answers. Each step waits for the previous tool result. Canary texts for the plaintext scan.",
+  "steps": [
+    {
+      "id": "checkout",
+      "expect": {
+        "user_text_contains": "E2E40-QUIET",
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Checking out the repository first."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "octo-org/quiet"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "write",
+      "expect": {
+        "tool_result_contains": "\"dir\":\"repos/octo-org/quiet\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/octo-org/quiet/NOTES.md",
+              "content": "# Notes\nkz40-file-r5t9w2b6\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "NOTES.md"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The notes are written kz40-answer-h8c3v6n1."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Quiet checkout"
+          }
+        ]
+      }
+    }
+  ]
+}

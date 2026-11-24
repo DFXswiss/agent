@@ -1,0 +1,23 @@
+{
+  "name": "e2e-37-workgroups-selection",
+  "description": "E2E-37: a task in the workgroup the user selected on the home screen, then a task sent without a selection (default workgroup).",
+  "steps": [
+    {
+      "id": "selected-wg",
+      "expect": { "user_text_contains": "E2E37-SELECTED", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": { "content": [{ "type": "text", "text": "Selected workgroup kz37-answer-s8d2f4." }] }
+    },
+    {
+      "id": "default-wg",
+      "expect": { "user_text_contains": "E2E37-DEFAULT", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": { "content": [{ "type": "text", "text": "Default workgroup kz37-answer-g6h8j1." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Workgroup selection" }] }
+    }
+  ]
+}

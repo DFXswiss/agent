@@ -1,0 +1,2001 @@
+{
+ "description": "Shared test vectors of PASSKEY-PROTOCOL.md section 13.10. Binary values are base64url without padding; times are YYYY-MM-DDTHH:MM:SSZ; texts are UTF-8 strings. A result is 'ok' or the error value of the specification; a bundle result is 'ok', 'check_2:<error of verify_certificate>' or 'check_<n>' for device checks 3 to 6 of section 9. 'signatures' lists the ECDSA signatures the generator reuses, because ECDSA signing is randomized; it is not a vector.",
+ "relying_party": {
+  "public_url": "https://hub.example",
+  "origin": "https://hub.example",
+  "rp_id": "hub.example"
+ },
+ "fingerprints": [
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "fingerprint": "ebdc 42d7 be6a a3bc a5d6 171c 51c5 bd26"
+  },
+  {
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "fingerprint": "85ba a969 05e3 ba6b b599 c4ad 5114 0d71"
+  },
+  {
+   "public_key": "BObf0u0gZxPjYuNnPeAQGf6sr5aDvq_Q2Y6PKmb4jQXN3qp7-7cdKCuCB1dgINnJkbod04dNVnqIr9gbY5qedt0",
+   "fingerprint": "2d80 cd11 ce5b c4fd c047 9e6c aee8 6a3b"
+  }
+ ],
+ "statements": [
+  {
+   "origin": "https://hub.example",
+   "session_public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "hub_value": "8-pPuiIJotG02RKGswHv1dOaHgmmT7h1CKlpzTHQwhs",
+   "expires": "2026-11-17T21:58:00Z",
+   "statement": "agent-session-v1\nhttps://hub.example\nBBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM\n8-pPuiIJotG02RKGswHv1dOaHgmmT7h1CKlpzTHQwhs\n2026-11-17T21:58:00Z",
+   "challenge": "o_ligXKJPfGaY5aQtGM9GAuKHjllXh_fng-WDCkJXHE",
+   "session_key_id": "session.a3f9628172893df19a639690b4633d18"
+  }
+ ],
+ "request_texts": [
+  {
+   "key_id": "session.a3f9628172893df19a639690b4633d18",
+   "method": "POST",
+   "host": "hub.example",
+   "target": "/api/key/commands",
+   "time": "2026-11-17T10:00:00Z",
+   "nonce": "9LmcqavqJSmCwmnugGcqLQ",
+   "body_hash": "bba2d36669004a3ef16764b0dfe370dfc0c22263976dfd3d896370b3fa39be0d",
+   "text": "agent-request-v1\nsession.a3f9628172893df19a639690b4633d18\nPOST\nhub.example\n/api/key/commands\n2026-11-17T10:00:00Z\n9LmcqavqJSmCwmnugGcqLQ\nbba2d36669004a3ef16764b0dfe370dfc0c22263976dfd3d896370b3fa39be0d"
+  }
+ ],
+ "command_texts": [
+  {
+   "sender": "session.a3f9628172893df19a639690b4633d18",
+   "target": "example-staff-laptop-1",
+   "action": "noop",
+   "sequence": 1,
+   "time": "2026-11-17T10:00:00Z",
+   "content_hash": "-",
+   "result": "ok",
+   "text": "agent-command-v1\nsession.a3f9628172893df19a639690b4633d18\nexample-staff-laptop-1\nnoop\n1\n2026-11-17T10:00:00Z\n-"
+  },
+  {
+   "sender": "session.a3f9628172893df19a639690b4633d18",
+   "target": "example-staff-laptop-1",
+   "action": "noop",
+   "sequence": 9007199254740991,
+   "time": "2026-11-17T10:00:00Z",
+   "content_hash": "-",
+   "result": "ok",
+   "text": "agent-command-v1\nsession.a3f9628172893df19a639690b4633d18\nexample-staff-laptop-1\nnoop\n9007199254740991\n2026-11-17T10:00:00Z\n-"
+  },
+  {
+   "sender": "session.a3f9628172893df19a639690b4633d18",
+   "target": "example-staff-laptop-1",
+   "action": "noop",
+   "sequence": 0,
+   "time": "2026-11-17T10:00:00Z",
+   "content_hash": "-",
+   "result": "command_invalid",
+   "text": null
+  },
+  {
+   "sender": "session.a3f9628172893df19a639690b4633d18",
+   "target": "example-staff-laptop-1",
+   "action": "noop",
+   "sequence": 9007199254740992,
+   "time": "2026-11-17T10:00:00Z",
+   "content_hash": "-",
+   "result": "command_invalid",
+   "text": null
+  },
+  {
+   "sender": "session.a3f9628172893df19a639690b4633d18",
+   "target": "example-staff-laptop-1",
+   "action": "grant",
+   "sequence": 1,
+   "time": "2026-11-17T10:00:00Z",
+   "content_hash": "-",
+   "result": "command_invalid",
+   "text": null
+  },
+  {
+   "sender": "session.a3f9628172893df19a639690b4633d18",
+   "target": "example-staff-laptop-1",
+   "action": "allowlist.add",
+   "sequence": 1,
+   "time": "2026-11-17T10:00:00Z",
+   "content_hash": "-",
+   "result": "command_invalid",
+   "text": null
+  },
+  {
+   "sender": "session.a3f9628172893df19a639690b4633d18",
+   "target": "example-staff-laptop-1",
+   "action": "noop",
+   "sequence": 1,
+   "time": "2026-11-17T10:00:00Z",
+   "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "result": "command_invalid",
+   "text": null
+  },
+  {
+   "sender": "session.a3f9628172893df19a639690b4633d18",
+   "target": "Example-Laptop",
+   "action": "noop",
+   "sequence": 1,
+   "time": "2026-11-17T10:00:00Z",
+   "content_hash": "-",
+   "result": "command_invalid",
+   "text": null
+  },
+  {
+   "sender": "session.ABC",
+   "target": "example-staff-laptop-1",
+   "action": "noop",
+   "sequence": 1,
+   "time": "2026-11-17T10:00:00Z",
+   "content_hash": "-",
+   "result": "command_invalid",
+   "text": null
+  },
+  {
+   "sender": "session.a3f9628172893df19a639690b4633d18",
+   "target": "example-staff-laptop-1",
+   "action": "noop",
+   "sequence": 1,
+   "time": "2026-11-17 10:00:00Z",
+   "content_hash": "-",
+   "result": "command_invalid",
+   "text": null
+  }
+ ],
+ "session_signatures": [
+  {
+   "name": "accepted low s",
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "text": "agent-request-v1\nsession.a3f9628172893df19a639690b4633d18\nPOST\nhub.example\n/api/key/commands\n2026-11-17T10:00:00Z\n9LmcqavqJSmCwmnugGcqLQ\nbba2d36669004a3ef16764b0dfe370dfc0c22263976dfd3d896370b3fa39be0d",
+   "signature": "QdwnwlzlIZQpxacYRjONACDlWc-RnS-2x1BgPvpPcwBqFgjXIr4R7nEsk4HutAwmqmePt7UooBhkI-u6sQMUWA",
+   "result": "ok"
+  },
+  {
+   "name": "accepted high s",
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "text": "agent-request-v1\nsession.a3f9628172893df19a639690b4633d18\nPOST\nhub.example\n/api/key/commands\n2026-11-17T10:00:00Z\n9LmcqavqJSmCwmnugGcqLQ\nbba2d36669004a3ef16764b0dfe370dfc0c22263976dfd3d896370b3fa39be0d",
+   "signature": "QdwnwlzlIZQpxacYRjONACDlWc-RnS-2x1BgPvpPcwCV6fcn3UHuEo7TbH4RS_PZEn9q9fHu_myPld8IS2AQ-Q",
+   "result": "ok"
+  },
+  {
+   "name": "r of 0",
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "text": "agent-request-v1\nsession.a3f9628172893df19a639690b4633d18\nPOST\nhub.example\n/api/key/commands\n2026-11-17T10:00:00Z\n9LmcqavqJSmCwmnugGcqLQ\nbba2d36669004a3ef16764b0dfe370dfc0c22263976dfd3d896370b3fa39be0d",
+   "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABqFgjXIr4R7nEsk4HutAwmqmePt7UooBhkI-u6sQMUWA",
+   "result": "signature_invalid"
+  },
+  {
+   "name": "s of 0",
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "text": "agent-request-v1\nsession.a3f9628172893df19a639690b4633d18\nPOST\nhub.example\n/api/key/commands\n2026-11-17T10:00:00Z\n9LmcqavqJSmCwmnugGcqLQ\nbba2d36669004a3ef16764b0dfe370dfc0c22263976dfd3d896370b3fa39be0d",
+   "signature": "QdwnwlzlIZQpxacYRjONACDlWc-RnS-2x1BgPvpPcwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+   "result": "signature_invalid"
+  },
+  {
+   "name": "r of n",
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "text": "agent-request-v1\nsession.a3f9628172893df19a639690b4633d18\nPOST\nhub.example\n/api/key/commands\n2026-11-17T10:00:00Z\n9LmcqavqJSmCwmnugGcqLQ\nbba2d36669004a3ef16764b0dfe370dfc0c22263976dfd3d896370b3fa39be0d",
+   "signature": "_____wAAAAD__________7zm-q2nF56E87nKwvxjJVFqFgjXIr4R7nEsk4HutAwmqmePt7UooBhkI-u6sQMUWA",
+   "result": "signature_invalid"
+  },
+  {
+   "name": "s of n",
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "text": "agent-request-v1\nsession.a3f9628172893df19a639690b4633d18\nPOST\nhub.example\n/api/key/commands\n2026-11-17T10:00:00Z\n9LmcqavqJSmCwmnugGcqLQ\nbba2d36669004a3ef16764b0dfe370dfc0c22263976dfd3d896370b3fa39be0d",
+   "signature": "QdwnwlzlIZQpxacYRjONACDlWc-RnS-2x1BgPvpPcwD_____AAAAAP__________vOb6racXnoTzucrC_GMlUQ",
+   "result": "signature_invalid"
+  },
+  {
+   "name": "another text",
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "text": "agent-request-v1\nsession.a3f9628172893df19a639690b4633d18\nPOST\nhub.example\n/api/key/commands\n2026-11-17T10:00:00Z\n9LmcqavqJSmCwmnugGcqLQ\nbba2d36669004a3ef16764b0dfe370dfc0c22263976dfd3d896370b3fa39be0dx",
+   "signature": "QdwnwlzlIZQpxacYRjONACDlWc-RnS-2x1BgPvpPcwBqFgjXIr4R7nEsk4HutAwmqmePt7UooBhkI-u6sQMUWA",
+   "result": "signature_invalid"
+  },
+  {
+   "name": "DER instead of r || s",
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "text": "agent-request-v1\nsession.a3f9628172893df19a639690b4633d18\nPOST\nhub.example\n/api/key/commands\n2026-11-17T10:00:00Z\n9LmcqavqJSmCwmnugGcqLQ\nbba2d36669004a3ef16764b0dfe370dfc0c22263976dfd3d896370b3fa39be0d",
+   "signature": "MEQCIEHcJ8Jc5SGUKcWnGEYzjQAg5VnPkZ0vtsdQYD76T3MAAiBqFgjXIr4R7nEsk4HutAwmqmePt7UooBhkI-u6sQMUWA",
+   "result": "signature_missing"
+  }
+ ],
+ "counters": [
+  {
+   "stored": null,
+   "received": 0,
+   "result": "ok"
+  },
+  {
+   "stored": null,
+   "received": 5,
+   "result": "ok"
+  },
+  {
+   "stored": 0,
+   "received": 0,
+   "result": "ok"
+  },
+  {
+   "stored": 0,
+   "received": 1,
+   "result": "ok"
+  },
+  {
+   "stored": 5,
+   "received": 6,
+   "result": "ok"
+  },
+  {
+   "stored": 6,
+   "received": 6,
+   "result": "counter_regressed"
+  },
+  {
+   "stored": 6,
+   "received": 3,
+   "result": "counter_regressed"
+  },
+  {
+   "stored": 6,
+   "received": 0,
+   "result": "counter_regressed"
+  },
+  {
+   "stored": 0,
+   "received": 4294967295,
+   "result": "ok"
+  }
+ ],
+ "registrations": [
+  {
+   "name": "accepted",
+   "credential_id": "sKlUG7FbTlCRKSYR-q_QwEJag91ee8XjMCW8BqL7tKkPOceK_A60BbKFum_nDjUG28S7yw5qiR-xK2Ct9o4",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjCvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAMC0BKAa7H_5VpEdFKlDcPQAPrCpVBuxW05QkSkmEfqv0MBCWoPdXnvF4zAlvAai-7SpDznHivwOtAWyhbpv5w41BtvEu8sOaokfsStgrfaOpQECAyYgASFYIBKDP2Gi1qtGV6VMhqufz95u_RCHmB7TyDYoIqGZMZswIlggHM9C9HdXF5pyX1_gaFUFmDvCvqbrDSMtLL7clpGXjPs",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "ok",
+   "public_key": "BBKDP2Gi1qtGV6VMhqufz95u_RCHmB7TyDYoIqGZMZswHM9C9HdXF5pyX1_gaFUFmDvCvqbrDSMtLL7clpGXjPs",
+   "sign_count": 0
+  },
+  {
+   "name": "accepted synced passkey with BE and BS",
+   "credential_id": "JiKBjQexSdpaHxVmoXYrpRduNA3vqqI",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVibvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5dAAAAAFmpMr5Gfvczr9OnBSncyZgAFyYigY0HsUnaWh8VZqF2K6UXbjQN76qipQECAyYgASFYIL_hN8AOusqUN6FgbRqvPXLdQv6cYoHHNtvwM1ml4cNqIlgg8obZcNEuah4psKWbVBGyz2Hk0Kknto9t0C5jqT07hzM",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "ok",
+   "public_key": "BL_hN8AOusqUN6FgbRqvPXLdQv6cYoHHNtvwM1ml4cNq8obZcNEuah4psKWbVBGyz2Hk0Kknto9t0C5jqT07hzM",
+   "sign_count": 0
+  },
+  {
+   "name": "accepted credential id of 16 bytes",
+   "credential_id": "xqhvFBj26WBHb5YYqDMABg",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViUvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAABF4idljhB-nYmT3-lI1-8IAEMaobxQY9ulgR2-WGKgzAAalAQIDJiABIVggpOEL6ewKctRsL03cDTycwzeX8QmvuRbNkdIQPxRIvQUiWCBm32sqRfGgu519JCX-Shp8soqGfpHXLF4SucBLj7GM-w",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "ok",
+   "public_key": "BKThC-nsCnLUbC9N3A08nMM3l_EJr7kWzZHSED8USL0FZt9rKkXxoLudfSQl_koafLKKhn6R1yxeErnAS4-xjPs",
+   "sign_count": 0
+  },
+  {
+   "name": "accepted credential id of 1023 bytes",
+   "credential_id": "66EU5IJKZVjVpHWH_uyIBNwy1QlfYUcQ3Ryql_sxxZglOlib0n69JCRd9stchtB6-svBVrWyCBXuim1mLbSCNrWGhLMm90j5i-PD9pmOIpXcAcQVmfrMBSmGzfkiAHrFA5PZpA6SdfyvVulyaNYjAVyHCbfJ4Mv0E90cbfY-9dN-qDV6UnaXlEyIJwY-qfGTzF__qa_icXDiQmmCbOdaD6Fj3L1YpmQIs2Qb70DMjLhhn9_sQuL_3TrTsNm5GxbMq8ss--bTeQY55Fl4u2vr69-mSgzvJNefsYbuxqsmS5aB9416TGae6qEr35sy50mA_HkZYJ9RdXAj4DvHVQn1ySX1fk65IbMNkNAXIDuzaerFG9j_A4xKFv251_xTH1f7N-lMog8v_c9i1kY_tv5hVIwpLR2rwso2kABTjJl5FAugiWmu-xQlpDbKAfq5P_RvlT34UgoXK3fwHXVrU89YZwCxIRZ4sRe76iw5L9S1byjf0zdI1asxxNdWSnecgwgAdE_lWjQ2dB7G6aNVIrVbqdF3TX6N9xPixUCpB0X0L_BYlqbU_hvziDIbvrjOgJtXuzddrsuqRo7kRvzmXp2ORIwdxrFajVtVi-DKIbfW3AHc42nZO16b6emogCKYdDEX8bvhGahZJOMh6oCDCI-UhuiZNefkQVAapOnsWWxXJFf1jhvqBHoOEVNbRTvx61UyDjFzOvWFocfu69NiZgA-LsJZx1eQ9LxkyfX49tRFuSrGzhqSpCVjxcg_i2BRAXbR1c-sjyeH02Nv47cJoEXyfiD13M4sVmnR1TQ34uzJECqSGPDpDPnKIjD3sV7hgqBYrybxHoL3WnFzZMktVZ-iuNRcdEB81U4wM82Iq7OPdCHg9R3M-WJM8doJwyg4HbI5M2ayV_BpSd0oJQ2id79cvepkBAer8VYOwoVrJTCOuZlcDiHLo7bt7rX7ETd9BGHu9t_3SG59RfT5hij3Fxg93iC8Ug0LcajupnrEkQjDEEn0Fp73TZBqmFYnCV99upUMGPx7mNBOG9m6-hZzEpr26EZesL3cU0NHWg3rRm7otcI5D1yHuOQMPfCzc1qrFm4SnUj0HhL1PQ5gaXbhmWdFEiaFJfLP-uS2Y4jV1nJ2eOwTuQAY4SEipv96Yx7kkFPBGcKGjiLsLl8wVrzFy9YQZCPO4UuoLovzj_Suk-mHHxUTa3wclvhQhCSb9-Zif84cMQukjS5iW3L09-_jVwHEWBddifisXZzWYP2ei7cxVTHfIzxYWERW893jzPtpRxH76xyQ6jXz6ZMfOebY2SMxg4s59laaRD4xX8je06tZzzwsiTu-G6Rbkt8d04OmImFCe-fPiAl7Iv8K_JPBEwAs",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkEg766PxGSLZRhgzqns_Q5-ldynWliaQAXKfpdTLQbAkguRQAAAAD6Vv_eSJCwu-Y1kEj1IfiiA__roRTkgkplWNWkdYf-7IgE3DLVCV9hRxDdHKqX-zHFmCU6WJvSfr0kJF32y1yG0Hr6y8FWtbIIFe6KbWYttII2tYaEsyb3SPmL48P2mY4ildwBxBWZ-swFKYbN-SIAesUDk9mkDpJ1_K9W6XJo1iMBXIcJt8ngy_QT3Rxt9j71036oNXpSdpeUTIgnBj6p8ZPMX_-pr-JxcOJCaYJs51oPoWPcvVimZAizZBvvQMyMuGGf3-xC4v_dOtOw2bkbFsyryyz75tN5BjnkWXi7a-vr36ZKDO8k15-xhu7GqyZLloH3jXpMZp7qoSvfmzLnSYD8eRlgn1F1cCPgO8dVCfXJJfV-Trkhsw2Q0BcgO7Np6sUb2P8DjEoW_bnX_FMfV_s36UyiDy_9z2LWRj-2_mFUjCktHavCyjaQAFOMmXkUC6CJaa77FCWkNsoB-rk_9G-VPfhSChcrd_AddWtTz1hnALEhFnixF7vqLDkv1LVvKN_TN0jVqzHE11ZKd5yDCAB0T-VaNDZ0Hsbpo1UitVup0XdNfo33E-LFQKkHRfQv8FiWptT-G_OIMhu-uM6Am1e7N12uy6pGjuRG_OZenY5EjB3GsVqNW1WL4Moht9bcAdzjadk7Xpvp6aiAIph0MRfxu-EZqFkk4yHqgIMIj5SG6Jk15-RBUBqk6exZbFckV_WOG-oEeg4RU1tFO_HrVTIOMXM69YWhx-7r02JmAD4uwlnHV5D0vGTJ9fj21EW5KsbOGpKkJWPFyD-LYFEBdtHVz6yPJ4fTY2_jtwmgRfJ-IPXczixWadHVNDfi7MkQKpIY8OkM-coiMPexXuGCoFivJvEegvdacXNkyS1Vn6K41Fx0QHzVTjAzzYirs490IeD1Hcz5Ykzx2gnDKDgdsjkzZrJX8GlJ3SglDaJ3v1y96mQEB6vxVg7ChWslMI65mVwOIcujtu3utfsRN30EYe723_dIbn1F9PmGKPcXGD3eILxSDQtxqO6mesSRCMMQSfQWnvdNkGqYVicJX326lQwY_HuY0E4b2br6FnMSmvboRl6wvdxTQ0daDetGbui1wjkPXIe45Aw98LNzWqsWbhKdSPQeEvU9DmBpduGZZ0USJoUl8s_65LZjiNXWcnZ47BO5ABjhISKm_3pjHuSQU8EZwoaOIuwuXzBWvMXL1hBkI87hS6gui_OP9K6T6YcfFRNrfByW-FCEJJv35mJ_zhwxC6SNLmJbcvT37-NXAcRYF12J-KxdnNZg_Z6LtzFVMd8jPFhYRFbz3ePM-2lHEfvrHJDqNfPpkx855tjZIzGDizn2VppEPjFfyN7Tq1nPPCyJO74bpFuS3x3Tg6YiYUJ758-ICXsi_wr8k8ETACylAQIDJiABIVggJJqapJY3pY-k36qMNjUSnABXyyM0Npl98mnQb5GioCAiWCDo9kTuYkJAOKHrAGeCn_qFUfEnS_lYmnjUejLyyvMmbA",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "ok",
+   "public_key": "BCSamqSWN6WPpN-qjDY1EpwAV8sjNDaZffJp0G-RoqAg6PZE7mJCQDih6wBngp_6hVHxJ0v5WJp41Hoy8srzJmw",
+   "sign_count": 0
+  },
+  {
+   "name": "accepted extensions map with a boolean value",
+   "credential_id": "qbkFZ8hY5ncx6ILIsrH7ee0ydOUIsvel4D4hDw",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVisvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC7FAAAAACqIuPjNnAc4AmX6dTFZsrcAHKm5BWfIWOZ3MeiCyLKx-3ntMnTlCLL3peA-IQ-lAQIDJiABIVgga5HiJiox4W_yCNvLfmXRTZQ2HnUGj_hIbr20cCuIyiUiWCBRL_2qWb3oigDqU56Yfwo8WJ8XQaL2-dm5KyWDjeyyH6FpY3JlZFByb3Bz9Q",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "ok",
+   "public_key": "BGuR4iYqMeFv8gjby35l0U2UNh51Bo_4SG69tHAriMolUS_9qlm96IoA6lOemH8KPFifF0Gi9vnZuSslg43ssh8",
+   "sign_count": 0
+  },
+  {
+   "name": "accepted extensions map with false",
+   "credential_id": "hJLSAejUjldQrMIn_DyObaJmlrMcVJc-ewJsiaqKHeZHuhtAi7X_Sh6P9x-VcW7xK11N6w",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjEvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC7FAAAAAAfPsGSO_u_SUKf8DUNPCAsANISS0gHo1I5XUKzCJ_w8jm2iZpazHFSXPnsCbImqih3mR7obQIu1_0oej_cflXFu8StdTeulAQIDJiABIVggNfAJq_IHpBMciDw4-rHduK8kkvFwNX_hCiFFh0LkR5kiWCA4KBnSx55e9jZL4Su_awMUGKlGJ5yrOM0yzn6dWI-2gaFpY3JlZFByb3Bz9A",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "ok",
+   "public_key": "BDXwCavyB6QTHIg8OPqx3bivJJLxcDV_4QohRYdC5EeZOCgZ0seeXvY2S-Erv2sDFBipRiecqzjNMs5-nViPtoE",
+   "sign_count": 0
+  },
+  {
+   "name": "R4 type webauthn.get",
+   "credential_id": "RigHdwmhUudbZsEWfqjrGqtCVZWA5oCU4yhXXFKjxYID3iYMvtjp2GI",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVitvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAJXq1qWr0LK_8gg_W3xEEMUAKUYoB3cJoVLnW2bBFn6o6xqrQlWVgOaAlOMoV1xSo8WCA94mDL7Y6dhipQECAyYgASFYILcjtA9U3dXuevU9yEY7eOD77Pp-wtYG3l76M2051wWhIlggtYBsuMJBX5953b2o65pBwXpcu8B7EUEUDYoSUjbi_Jk",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "client_data_invalid"
+  },
+  {
+   "name": "R4 client data not JSON",
+   "credential_id": "HQ6FWui1ISMtNqcNSkFEVDL_dOE",
+   "client_data_json": "e25vdCBqc29u",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViYvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAIFj_pLTJWdF51K9mJ8Gdj0AFB0OhVrotSEjLTanDUpBRFQy_3ThpQECAyYgASFYIMJmeQYVGViye-IkEIfGyDP5JYhhz4exFaVmEXfqcT3bIlggR8WjeROhLvyB7Z_sGyWuSN_2FjRiwfYm47oHJJ1DQfg",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "client_data_invalid"
+  },
+  {
+   "name": "R4 client data not UTF-8",
+   "credential_id": "Dq5dqVgvB_viOL6avdiCw_H5mtXYS4FNF8sA2b-PVlZndNinu5NhiT-eDOp3avxxUiLG",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9_w",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVi3vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAFAnOqkl3sGWuf16PxmbVsEAMw6uXalYLwf74ji-mr3YgsPx-ZrV2EuBTRfLANm_j1ZWZ3TYp7uTYYk_ngzqd2r8cVIixqUBAgMmIAEhWCAzOBHI2ata5w6n9glqJV9OBe1GwrJDng652fRo7UKFbSJYIFphvzandPllDk6HJMVAM0qJETccckQY5ZsMO98Waxk8",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "client_data_invalid"
+  },
+  {
+   "name": "R4 client data with a key written twice",
+   "credential_id": "CvuIGDgf0ysIqci0dHjJzaym-fPvMDdQXFPL5Sb1T6h5cIulyrfoj1PPNw",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2UsInR5cGUiOiJ3ZWJhdXRobi5jcmVhdGUifQ",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVivvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAK8d1KODF63DcQjZuxJYsR4AKwr7iBg4H9MrCKnItHR4yc2spvnz7zA3UFxTy-Um9U-oeXCLpcq36I9TzzelAQIDJiABIVggX65x7KWqwLfQ7ZmMKb_3GA5Y34WoPV7_LHy8XwEATewiWCBamfezrlnA10V7Ohy3rBwNVUsSsRxdqKq5G1edjRp06g",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "client_data_invalid"
+  },
+  {
+   "name": "R4 client data with NaN",
+   "credential_id": "0nvi1xkn_CFPClziRpFmPSR1PHwhmPr52FRmPrn0hHdgIB4",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6TmFOfQ",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVinvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAFAi8Pyu6oji8HnWhYG_VQAAI9J74tcZJ_whTwpc4kaRZj0kdTx8IZj6-dhUZj659IR3YCAepQECAyYgASFYIOe4x1aIsqI5jQYh8oCFfCJT02XugNbvg93m-UghTJD1IlggFsiVKS--mh7gsxckN7niBbxDhxW8h-6KlF8VUqq63qE",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "client_data_invalid"
+  },
+  {
+   "name": "R4 client data with Infinity",
+   "credential_id": "p_5saO-92gOrX2MNc-bbrFc2b9p6Dexvm4o0L_-Qg1BGrEYsW22vOFw",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6SW5maW5pdHl9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVitvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAFaW8I-04EfR-MmYZITEjpwAKaf-bGjvvdoDq19jDXPm26xXNm_aeg3sb5uKNC__kINQRqxGLFttrzhcpQECAyYgASFYIBgFraFtFzRIpdLphiDywBZqDMF2GXnjdWbtoSFzM_YMIlggrDktV6G850_dQVSB3115b4SkxHbk7s8Asp59Obrpl4g",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "client_data_invalid"
+  },
+  {
+   "name": "R4 client data with -Infinity",
+   "credential_id": "AqkZvJvvx6ceBJhrGv5UeKP6x6PxyUzLuhf27KJb",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6LUluZmluaXR5fQ",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViivro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAACHSA8SlYR5D75fr9llOLvgAHgKpGbyb78enHgSYaxr-VHij-sej8clMy7oX9uyiW6UBAgMmIAEhWCAbP74lu2oGrhXaaSOA_cIqg4092XDtG9HffQ8L29bNgCJYIOrfKvFEFGPeHH2HPaErKbC5ZBdHNzDKH0bz_AzE80sF",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "client_data_invalid"
+  },
+  {
+   "name": "R4 client data not an object",
+   "credential_id": "mM9wb06RfQPmrZIEVuL_TcYnQh-ULNZrn0CHzZg00UxhuE1H1jKV5n2RkA",
+   "client_data_json": "W3sidHlwZSI6IndlYmF1dGhuLmNyZWF0ZSIsImNoYWxsZW5nZSI6IlZzTmh0X1o2Zi1icFk5RXhCSVNpbmkzaDZYZ3J5bzdHVVBLcUxmQ1AxT2siLCJvcmlnaW4iOiJodHRwczovL2h1Yi5leGFtcGxlIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfV0",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVivvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAGzw5h2BFoDrVnRRcmFnRAgAK5jPcG9OkX0D5q2SBFbi_03GJ0IflCzWa59Ah82YNNFMYbhNR9YyleZ9kZClAQIDJiABIVgg3y_w6EIYGIzb-ddeC8j_t9kwqLR8j1CYr5MRUg45od8iWCDeJ64dJiZnGpUa08dR3yqfn5wrPZI97_ViJ51yoa_9xQ",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "client_data_invalid"
+  },
+  {
+   "name": "R5 another challenge",
+   "credential_id": "fv7C8mVjooESS-14SjzXiHfB",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiSDU3SWNtQThGNlRjbE1uMVdrcE9xUWNyd1ZaQTVKMjkyelhFUFFrTzQzYyIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViWvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAFreQWXxcLwu_zkWKcmC4ssAEn7-wvJlY6KBEkvteEo814h3waUBAgMmIAEhWCAoPmAP3dOpO5AHWocgJ8aS5w6C9o7-wlVaNLIhTO_wYyJYIMPOriXt7aRHESV2UV9th19SIG96ksnT6Gx3OZIBsDBU",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "challenge_mismatch"
+  },
+  {
+   "name": "R5 challenge not canonical base64url",
+   "credential_id": "CP10zL5WafFMiug_5r4X3Fqetok",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPbCIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViYvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAABgsdTqnacRjoNZasByXYUEAFAj9dMy-VmnxTIroP-a-F9xanraJpQECAyYgASFYIN8dzzuLvenKKgy-bPkTPraYOgYnsmU-XKhmS7Al0rJoIlggsRDURqr9WusVzHsUDzuD4apWmh9j15RSRvg6K3diqCc",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "challenge_mismatch"
+  },
+  {
+   "name": "R6 another origin",
+   "credential_id": "wGHzjFZfxXa27mS0vMQzSGxlkOF-8mI7MZ9VRL-czVcUThKKOga1ZCLRAJsV52IfMajGterPKkG8",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vb3RoZXIuZXhhbXBsZSIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVi9vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAGjoCKXS3WlKdvj-5snCVyAAOcBh84xWX8V2tu5ktLzEM0hsZZDhfvJiOzGfVUS_nM1XFE4SijoGtWQi0QCbFediHzGoxrXqzypBvKUBAgMmIAEhWCAzlB7TleCgRBpFxFpuiiJyR7g0vZWmY0JygcHE9AcXoyJYIO2sKHLqw1W3ut-Gjtcgmi7jvdIYwsNlG_YhECke8eey",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "origin_mismatch"
+  },
+  {
+   "name": "R6 crossOrigin true",
+   "credential_id": "iywqMTDRgRDBaVmpVp-iie4QQvvXzOg2EY8",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6dHJ1ZX0",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVievro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAOfZCYnPyY8a2mSp__g2JoEAGossKjEw0YEQwWlZqVafoonuEEL718zoNhGPpQECAyYgASFYIFYhmjJwxujT3cb3t2nPTriZ7DmINuOa8BD5QCDk2NaMIlggjXvkMhoEdqmTRpSxjOa0pFIuA6OArMocq7g9u4Se1T8",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "origin_mismatch"
+  },
+  {
+   "name": "R6 topOrigin present",
+   "credential_id": "eAZxldjkgMS4wiUAm9PPmViIdeA2XWo5-VtWRxJB-LDu5ojthytiUUo0zm1ZCA",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2UsInRvcE9yaWdpbiI6Imh0dHBzOi8vb3RoZXIuZXhhbXBsZSJ9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViyvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAMeNYEFGrayJiDbu_JEcwdoALngGcZXY5IDEuMIlAJvTz5lYiHXgNl1qOflbVkcSQfiw7uaI7YcrYlFKNM5tWQilAQIDJiABIVggqUBTVi7fhxFXjf6InxfsP2O2hENtCvqxtGZboqFoTB8iWCAswIdA0HN8deLd6SYwdB7pjYtlXoBhuwaKzmtPTBKnng",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "origin_mismatch"
+  },
+  {
+   "name": "R7 extra key",
+   "credential_id": "YMTf5ln2GU1C5M7KtTieoTM",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "pGNmbXRkbm9uZWVleHRyYQFnYXR0U3RtdKBoYXV0aERhdGFYlb66PxGSLZRhgzqns_Q5-ldynWliaQAXKfpdTLQbAkguRQAAAAAAwARlrW2RkqMUYRNpzUjVABFgxN_mWfYZTULkzsq1OJ6hM6UBAgMmIAEhWCBFwVbJrvk4xaEhl3_RjpejTI1c3pVx-AjpeUqf7kKBMiJYIGaN_aPcK2t4ibjFv-zKQjJRTChg-650zQZFIzR_GBZZ",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 missing authData",
+   "credential_id": "9bsrBdVpPENF3PANgKvc0rrwWhpuRV1S9dGQL6X9mDRd-ReXAGUThkJ5VCmhDIzS86uH-oloH4CEIXohYKY",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "omNmbXRkbm9uZWdhdHRTdG10oA",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 trailing bytes",
+   "credential_id": "U9wFsyTN2K4VXTCjIhaxlRFTM1jpJdqgONEpDIPwOMzOHVn6DL_wAhRz2AAIynQkQxqceWNeCK2P0lMU3iGt",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjDvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAJOMH1lv4aFfv8Lkxap0unIAP1PcBbMkzdiuFV0woyIWsZURUzNY6SXaoDjRKQyD8DjMzh1Z-gy_8AIUc9gACMp0JEManHljXgitj9JTFN4hraUBAgMmIAEhWCAJhbLAv-1dY9YTFA2mYMAMz6dxdSqgTcrNHkXrk4xsWyJYIFnl0q0i-wvAsdlJdV3bMZYYb9h5s83-pA3TijSF-3doAA",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 key written twice",
+   "credential_id": "_YIkVvZ4Tsa_KeNMlYq9jZFM41DUbE4DuidDF3Mt",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "pGNmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViivro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAF67E3IG5VHnPyK9aszTPbcAHv2CJFb2eE7GvynjTJWKvY2RTONQ1GxOA7onQxdzLaUBAgMmIAEhWCDriIIw7qX5b-cLJZRm-R0uKFbk1bx2L-eZlYe_tYsdLyJYIMBnhQZ3UcJ1VwH6J212VE-Hla-NRTX3qeE1ZKi1mn7uY2ZtdGRub25l",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 non-canonical map length",
+   "credential_id": "Rc9FV9KC4GfdnAQDLQXHiDqkAayW76iJb96fNAFRcVv_WoMEdztF7vv9ZJp6d0ON3RGY7nlA8HjBuoOEN24U0w",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "uANjZm10ZG5vbmVnYXR0U3RtdKBoYXV0aERhdGFYxL66PxGSLZRhgzqns_Q5-ldynWliaQAXKfpdTLQbAkguRQAAAACWJZ0ekYhZnWHKQOtfgpGAAEBFz0VX0oLgZ92cBAMtBceIOqQBrJbvqIlv3p80AVFxW_9agwR3O0Xu-_1kmnp3Q43dEZjueUDweMG6g4Q3bhTTpQECAyYgASFYIPu8jEQ6RNWch0ZlzFlmqS_nuz9kv2nUhk7qOXA5YN2sIlgg3SZkLRr5aqyGzPjjF0yjUoM6Dfz7uXZLV5KI_6x1MlQ",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 unknown tag in attStmt",
+   "credential_id": "XGVL_X776imgSSxOV-laUaa7MKJXq-IzqpwDce0vzIpEkHtNBu4qqq0JHdrUMa4TKX_FE7vUhx0",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oWF42f3oAWhhdXRoRGF0YVi8vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAGsc-sEGlE7QL9fCZrVbZ44AOFxlS_1---opoEksTlfpWlGmuzCiV6viM6qcA3HtL8yKRJB7TQbuKqqtCR3a1DGuEyl_xRO71IcdpQECAyYgASFYILB28coKTiW0iQadvMfGFlEAAsFi6xZoyFsBn27DlP_DIlggLNMi29CLHRCtxEzQJ9oLKd2aX2-nkZI3zLy91M4v4QY",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 float in attStmt",
+   "credential_id": "xFB3r_8-s9y09WrirKnxTnngmcjCL4nNEMB_WmNd5vXja345cihsPhDZKnFVhBYKTyGO",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oWF4-TwAaGF1dGhEYXRhWLe-uj8Rki2UYYM6p7P0OfpXcp1pYmkAFyn6XUy0GwJILkUAAAAAtMpAnpusfUMSqv3bjsd8DQAzxFB3r_8-s9y09WrirKnxTnngmcjCL4nNEMB_WmNd5vXja345cihsPhDZKnFVhBYKTyGOpQECAyYgASFYIDOudQK27CIDUWekEWeD3BhEuId9ffMIuK2sPJZoBTOqIlggg_6EPJtP9QEjxTu1eobyII0YjH_pJEgptNzxE3Avc24",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 simple value in attStmt",
+   "credential_id": "Lcoz94d4T7PYIFQn9qKrVsaloHxRwS4iuDdvrNslHzkJxAoJePs",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oWF48GhhdXRoRGF0YViqvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAANLTR11Qq2qDClT97DhDUV4AJi3KM_eHeE-z2CBUJ_aiq1bGpaB8UcEuIrg3b6zbJR85CcQKCXj7pQECAyYgASFYIBPiuiOapU9CHfV5SthhC-oWu7IT4C8akmLp4M890djUIlggEifNAWI1tAFoMWh-TaibxqNLcVR6AxOMHKqL8Bae1nc",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 true in attStmt",
+   "credential_id": "2FsU5U2uIjP7-r1FirjMAZrahmoJ9544fJjTStJCi3A_pc-_V6Nv6gkOvxQHTgx79g",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oWF49WhhdXRoRGF0YVi1vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAADRJZBd-_jY9pJ8de_Vq_MAAMdhbFOVNriIz-_q9RYq4zAGa2oZqCfeeOHyY00rSQotwP6XPv1ejb-oJDr8UB04Me_alAQIDJiABIVgg_U89Ea7s_PrHD9467_75wClhkurzKnYthLH8lZThX00iWCDgnpgnrJtnWWgapKNlavVAsioLKYwh62cniszmnLQPAw",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 null in attStmt",
+   "credential_id": "fTt_kwiNgAMPaS1Egh-UEXcKavoj",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oWF49mhhdXRoRGF0YViZvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAE6Ukm7EhLd40dJIH6Am7skAFX07f5MIjYADD2ktRIIflBF3Cmr6I6UBAgMmIAEhWCBxkFex3KfBbc58wNs14MfhBAIQZ_49nY-JOwQbXZQ_yiJYILDekgHZTQ4E8LanrPycKe-QWa0xU7UzN6DLIByutOJp",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 undefined in attStmt",
+   "credential_id": "gWGFcQ10pmlxV5EvkN54puXvlImAzF4Cywjjfs5w71os63mHtBuptcM",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oWF492hhdXRoRGF0YVitvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAPVm5KquIy_tlzCNCOtCpYIAKYFhhXENdKZpcVeRL5DeeKbl75SJgMxeAssI437OcO9aLOt5h7QbqbXDpQECAyYgASFYIJKXbROOa71g2LivYqnU58SKg-IicAJAsaPgILczhNXEIlggENH3u0m8oGMD8Y9IdfuJv-QLX4HcveyXorWyaJMrQVQ",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 array that holds itself in attStmt (tags 28 and 29)",
+   "credential_id": "uscWQNAkxABLBFy-5ZFpiEDRbM1cX8aQA64ujJ1sP91jK3USm_gcNWXCaO1mcv4FHPX5sUF602cstL6S",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oWF42ByB2B0AaGF1dGhEYXRhWMC-uj8Rki2UYYM6p7P0OfpXcp1pYmkAFyn6XUy0GwJILkUAAAAAaz7n5VkpD832AOSUifysdQA8uscWQNAkxABLBFy-5ZFpiEDRbM1cX8aQA64ujJ1sP91jK3USm_gcNWXCaO1mcv4FHPX5sUF602cstL6SpQECAyYgASFYIHCRlm4w4ju1oCIMoEeZKAiyiDJBSZc5GjyTXb9RjQL6IlgghnGoej3x5lKU0TVZvl67cVV01UTzaJVVA2IvZc_jpxE",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 shared array in attStmt (tags 28 and 29)",
+   "credential_id": "59fGx6xo04uRFyn8P1CxhL2B_SOefDeSe-PRqipzPPFmgSpuMQaE8N4O3sM",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oWF4gtgcgNgdAGhhdXRoRGF0YViwvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAHCA4vBicQvRtKWmx6zaVT8ALOfXxsesaNOLkRcp_D9QsYS9gf0jnnw3knvj0aoqczzxZoEqbjEGhPDeDt7DpQECAyYgASFYIF45-z0wHbEDeIYUTTKBtzbB34LBnGPV5FUCf2QWfQgnIlggC5NtP7wVRR7T03ABtCh9gY1nrCX19SQjos2JCVfKFbw",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R7 authData not bytes",
+   "credential_id": "35rYlyewC_7rAQF6R88JqxUu4v-0bxo",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YWR0ZXh0",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "attestation_invalid"
+  },
+  {
+   "name": "R8 authenticator data of 36 bytes",
+   "credential_id": "fZ7DVxdSFpxKEN--cDPClxvHnJtFroQGFpPAS0720xjnoa67cicHGzA",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVgkvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAA",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R9 another rp id",
+   "credential_id": "cfvEmwByTlFhhVfbWV2CNrK21tncksmh9bs9uzusI5HsjY-etz5_8EXceOMwcYL3",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVi06e-yH3QOSH9Sm0SbsRl8QPNuRD-r_Y8AFKDl7FGoxYxFAAAAADNntfR0sTcYNl_6iFM9w2EAMHH7xJsAck5RYYVX21ldgjayttbZ3JLJofW7Pbs7rCOR7I2Pnrc-f_BF3HjjMHGC96UBAgMmIAEhWCBYzao5cXnx_FoAVhh5EPpgNDH4vwB674mHQstOwvtuSCJYIFrbYUUkQHmEtjClffi1y6EbK0UT7Va8oJ3Otr5l2R7d",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "rp_id_mismatch"
+  },
+  {
+   "name": "R10 UP not set",
+   "credential_id": "TzMRgQwdR4JixJQyOUq5X6b8JZtYlJVGxAIdBruoLXVq8C9B",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViovro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5EAAAAAOlobqlVVLpi3ByFeoMNzVgAJE8zEYEMHUeCYsSUMjlKuV-m_CWbWJSVRsQCHQa7qC11avAvQaUBAgMmIAEhWCDwqOF3ef6T_jrE2i-_XzmCly-adgpNkVgcNxbxc7ntFSJYIGhxqA79sZqsmvnS7Fz775U01c93lUsrwvagfOWfh6uk",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "user_presence_missing"
+  },
+  {
+   "name": "R11 UV not set",
+   "credential_id": "1z_uFjzJNs-YQyN3Gl9dOwu2bZdvTg0CN0l9oHzz3MV8ntui0rABjhXH8VS1aGUVjtRvXDj4YoGiT45LFGUs",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjDvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5BAAAAAF9vgFyzGnwF_fQ9DUPdUJ4AP9c_7hY8yTbPmEMjdxpfXTsLtm2Xb04NAjdJfaB889zFfJ7botKwAY4Vx_FUtWhlFY7Ub1w4-GKBok-OSxRlLKUBAgMmIAEhWCA8cYi7jm5nqIzNoAfOq2mrc4Wt3ldFc6Ly05eHFWosMyJYIOPxg8oKX-0yRtB8ShpCmvsgoTq15kxFf0rFIIe2G6kB",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "user_verification_missing"
+  },
+  {
+   "name": "R12 BS without BE",
+   "credential_id": "0vI09P4-SVlucnpAMh_1Zmi8GCTmxFgVckdcvjkdsdPSOzqyMsotS1QSAL5oNg-YlWX3flfxb__YuK-nQT9K",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjDvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5VAAAAAKHUOUHZU-o8-iJxPPWJADoAP9LyNPT-PklZbnJ6QDIf9WZovBgk5sRYFXJHXL45HbHT0js6sjLKLUtUEgC-aDYPmJVl935X8W__2Livp0E_SqUBAgMmIAEhWCC4cV4IvVzcIPaxpDmTUMK7JEKPXjd2OckqdWcieMTp8yJYIHC2uB2E_E7qnwBv0eQzKnD2D8IY1BsNHruyPv16bAxI",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 AT not set",
+   "credential_id": "rX9IRioSaIYj3lR3h_6Ftf4beNdnGfwcDfrQuub5-qkTWkQ5eM2UbPqishwq5MQmP7Wk",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVglvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAAAA",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 trailing bytes without ED",
+   "credential_id": "mHeEEeG_ujtpwtIVrgRVHsVJNz--YqvyYvPZUpvYjS4gAmcF",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVipvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAACnF0EGBTueZDVFeDKsWfI4AJJh3hBHhv7o7acLSFa4EVR7FSTc_vmKr8mLz2VKb2I0uIAJnBaUBAgMmIAEhWCATDucxubgmWBsCz4RJ79HBuGOLdxaYNDbitetDGQ1gNyJYINNAe5g-ufM7_ctiekIabtm-9xfYrPq1sMvfii5uMANvAA",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 data ends inside the credential id",
+   "credential_id": "Og0EBvgy1WrXAG98Zx_LpesrS3g",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVhGvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAADY9ptHxmcJWZz1cj5wdoQMAFDoNBAb4MtVq1wBvfGcfyw",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 non-canonical credential public key",
+   "credential_id": "2muYPVbHXGRpYSb0JJ14RYI2gQ",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViYvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAACspyO_UcaD9CUvyykqgr-4AE9prmD1Wx1xkaWEm9CSdeEWCNoG4BQECAyYgASFYIIPgKJCdc3HcZ7Cc2h7S1YiafpqpS3WOH_kriMgm5xiUIlgg_zEVnYFQUC6TuT_L8roYN8_BuwYXnmQcEEuq25c8gaE",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 credential public key with a key written twice",
+   "credential_id": "wZBzlPLF2-jm0-nxbUCaaMEd-FSeJF8oGsa1JZ41EK09R5_CC5N4-kKqn1zEP1D4lf4",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVi4vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAACKjkmVniQ_mpx8Qh2IeFMwAMsGQc5Tyxdvo5tPp8W1AmmjBHfhUniRfKBrGtSWeNRCtPUefwguTePpCqp9cxD9Q-JX-pgECAyYgASFYINgRSt9hwEgbXsNlOOt-lgbz45RleOrP5QLjrJ9E90l0IlggN6DWdDL8e5liiEf1uzftSMrSNHRrOncEU1j2lSIpv1ABAg",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 credential public key 3: -7.0",
+   "credential_id": "TOxIkz12sfn4fvOBU7xFog",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViWvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAALdxNh_vTXUTjb5Xs3VdLE8AEEzsSJM9drH5-H7zgVO8RaKlAQID-ccAIAEhWCCZtPF8uM897jNcEiG8471Np6nfXFwLj1SrgFrnGfiH-iJYIJmGK2aVoyMA1Fpw-hyDaEVM-HLgLEa4j6Oh4HnbVA7I",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 credential public key -1: true",
+   "credential_id": "ggQ9bGm_OPyzi9wbLeUeyX6P3bannQFdtQLkT9Y",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVihvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAABjTh6jQSYKd3t85_y2StXAAHYIEPWxpvzj8s4vcGy3lHsl-j922p50BXbUC5E_WpQECAyYg9SFYIBftvRQobPDWq9VI84oQ4952jq5iWB5FSN2Zocz_yPlCIlggWa-H0cHXpBDSzYQz7itRh7h3DLF68_5Hl3Gc5hI8VrQ",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 credential public key with the key 1.0",
+   "credential_id": "JM2PNKuKf5jdAkOvkhyiQZQPG_Uu4MlW0TonLkW_NgrFCpT1c40Pbw",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViuvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAImkkgtDrUQjtieUlEpLllwAKCTNjzSrin-Y3QJDr5IcokGUDxv1LuDJVtE6Jy5FvzYKxQqU9XOND2-l-TwAAgMmIAEhWCCIMCLRsriHvQma35B5Ia1gpKSUB_uuPig8kl7kLAt8xCJYIKxtEl-FbhGMoRz1bqoFNUFTWSBDpXvrm6S03nX3uYe1",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 credential public key with a tag",
+   "credential_id": "VEBShvSkVthQD_tXsBrntaLkIT8wPeq2Vuxgzfz46cLyxgoaI3kO",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViuvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAJ1qZg89upm3oAgFUZU4VhEAJ1RAUob0pFbYUA_7V7Aa57Wi5CE_MD3qtlbsYM38-OnC8sYKGiN5DqUBAgPZ_egBIAEhWCAf3QkvUU-eEbHgmiYhHxca4Iybtc7rKmyuLwT-9OugzCJYIJZI0gqTOA5vrUtOJ9iPdf4lWXs5ZWc2G2W2D1BokK6-",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 credential public key with a bignum",
+   "credential_id": "mw8096TyCBBsxkA9ZlaIBEqeart7PExr1vZPnVde436-QGB3oXNygdC1YGkiaW0asyffc25How_eJ3w",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjJvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAACgjuOVEY_Gw0-dq8gootwUAO5sPNPek8ggQbMZAPWZWiARKnmq7ezxMa9b2T51XXuN-vkBgd6FzcoHQtWBpImltGrMn33NuR6MP3id8pQECA8JJAQAAAAAAAAAAIAEhWCDUWWW_caz7_6HkZIFOM1T5qMaRx6QFwZWAT5adv1avlCJYIFVY16nESeDvlvHqyYPFJNNmvOFNotnKm6F6hMd32vQ5",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 credential public key with null",
+   "credential_id": "EQf9bn3NQeGozvknZRv_b2FMqH2tloEHb9nWPIaLeq-nSh-zD6AEhDX6h4Ma2p6rtXdPhg",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVi4vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAIyDl23-PyEUQTfhAvrXgu4ANBEH_W59zUHhqM75J2Ub_29hTKh9rZaBB2_Z1jyGi3qvp0ofsw-gBIQ1-oeDGtqeq7V3T4alAQIDJiD2IVggoTnN32NQClN-unLL7IvjgGwBZNh3pAGlw-4f1jHlgSEiWCBOWzWSC6v-M68i7H1dow2MH6-4Yngqu0jZBDIu9_Hsnw",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 extensions map with a float value",
+   "credential_id": "IrJn-hpGeLNukVkzVryvAC3SuoXmDd-YWysDDmIzEl_Lc7Ti7tFKm_qjdxBJ7nMwCa6TodPsGSTeNQ",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjMvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC7FAAAAAH1giTWs-9dqq7J3_-z8g-EAOiKyZ_oaRnizbpFZM1a8rwAt0rqF5g3fmFsrAw5iMxJfy3O04u7RSpv6o3cQSe5zMAmuk6HT7Bkk3jWlAQIDJiABIVggDOfpn-uMTcysrFKfDXUlO8YewOOb2R4KoOBT5WGQ3tEiWCABuXHA0jTAHOx4xsebpbAekf_nIEbAKAqspzogxARPDqFpY3JlZFByb3Bz-TwA",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 extensions map with a boolean key",
+   "credential_id": "G0am70udUGonolwd5cIfd-6uibb0LRiUehc33Vd_aCGSn4k8LJWZvyI",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViwvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC7FAAAAAJw4ii0-AduEEMeltdXi7E8AKRtGpu9LnVBqJ6JcHeXCH3furom29C0YlHoXN91Xf2ghkp-JPCyVmb8ipQECAyYgASFYIOl2c6MrH3Mt3mFB3U32Ln_JuQzuTmJLzJMUvKTZmV_XIlgg4cfw-MZ82yoiwdhXr1YyVpddNG3XpYuxqgByeX3UUeqh9QE",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 extensions map that holds itself (tags 28 and 29)",
+   "credential_id": "IxVLCaHXXQBE1mkcNQOYheK4W2AmAiAPPgexIqN-QxR3ax9ps2hehQOQk5_yoE0KnxUK_J-B",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVjCvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC7FAAAAAJaR1GGhzGFQg-IRFwhQQqYANiMVSwmh110ARNZpHDUDmIXiuFtgJgIgDz4HsSKjfkMUd2sfabNoXoUDkJOf8qBNCp8VCvyfgaUBAgMmIAEhWCBa-itzvS3P_dMGwdGnJ5_bpA6E2F2uV3TMWkN6_Bn3cSJYIEiBzU39Q49oNYCTkzExsLajYbRCebCGEbSGZowcaKxB2ByhYWHYHQA",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 extensions item not a map",
+   "credential_id": "d_OyitUtL7Z8FrDY_XumrUXum5ObOJuR4TI",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVigvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC7FAAAAAKeYle372hI6zRc9nWc-fwgAGnfzsorVLS-2fBaw2P17pq1F7puTmzibkeEypQECAyYgASFYIKrVWuJmb9iKZmUEbv3mfTKIeeICdaQLkBJPD6nEuJOdIlggloVd0I6gsjGom2Ys3VmL5YSAeQ37HS9qVdOdRA8AC5OBAQ",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R12 ED set without an extensions map",
+   "credential_id": "UIn3AqrULbJcgBlClhUaC3YmgQxdbA",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViavro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC7FAAAAAIfdI2YHJn2uAZwVJSqh-mwAFlCJ9wKq1C2yXIAZQpYVGgt2JoEMXWylAQIDJiABIVggO4ORseVI94S6Wu6lT5W7WGZuCiEce6oOCq_PkoAZihgiWCAICZWuMoKKmYYYPHsHFxlF1oQMY_vIIKEZn5aIT-glrA",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "R13 credential id differs from the body",
+   "credential_id": "-jKRdpGE1Z-2uUSO5bqy9aA4",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViWvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAM4Q8OVEmMEuK41Gh40KboYAEvsykXaRhNWftrlEjuW6svWgOKUBAgMmIAEhWCB5xxABTCZUKGWw_OgwaAbYQw2J1QnbMb6gDKMCM6lC5iJYILehECWDTnu2BLnm7DO0l6Sf4aOvCDZ7ppF25rXlVOIQ",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "credential_invalid"
+  },
+  {
+   "name": "R13 credential id of 15 bytes",
+   "credential_id": "uLbWi5C8N1G9P0cf1F1J",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViTvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAPY0J0EnUU4sQOFFxHXQHSMAD7i21ouQvDdRvT9HH9RdSaUBAgMmIAEhWCBs4vpVswN2Ht2rtH6n712EsFby1V_bgDFYPpAdiuxMZiJYIP_AFOKRuvVScC8IyHQZW531dMPmn4t66diHQFhBolWB",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "credential_invalid"
+  },
+  {
+   "name": "R13 credential id of 1024 bytes",
+   "credential_id": "-SwVDbN_Xa9UElgQEsogSyRJFP-mIjCqb731jvZCdKdBKNPb4Nj5051pVv-83H5IpInArPEmdKNMdX-lHZU-kSJcoh6VM9JqN3zndDqA2YwjxFmWtXtCV8N9Gp6SEgG7ltwZUmdk8mxxgEfw8ivWQZSewQkMvbemCPHBdoJZ4weuVgmh1M3yamsRO4cWvknduImU8lBKwGJmRSVa4nQ8LA3eEY73OjbOen_CO6Srg5-3IxfXrO75RUB6s7okR6GAHuJJe_hug9HWpJyYtx9DQx-dAoBdDxzUcmArnkAFc6J51RVwsincu1Ei1LyHNMHHlR4La1p6SzPLoFpKI0rmhLwmgKCgTB7XSgy-RoqgTzJuZmp7SSYxBpaoZlTPHYuXCmYI-hBJcDMlXUGswFZciVb6gXjeJfXZar_sk7GPHBHsQKCmXZRt5hjQrkg1vSck9c7Ewthyd7bSmdC8KFp1EbwQ7ugM7ByPC5s3-ZCPvEYv9t5zX6u2fYq4Ek9bz2C8_srjnK_zrdKl08tX_1YmWsegpXGRnS-R8HgJquTvTNv7zQL_eaCVrue01XMBOPbPdw8sqnNIilS-Qt-yu57X_VbLwKwKi7-4tQvt6fL5FbDBOGS_ALK9YIz9i9RWmQyXDjQqgd6H5ThTwXM754YQJU8QworrbE-phcl4_VK8tgxLpxnRZnZC5ep-Fd3bCqTB8okdT5lRDavRLWRTwGUGNnHGiFfxD8gs1KevwIMnm1XfUbvQ4wuyFpwzX0d5k-Opq85GHm4fduaWrcqX3wVMqw5oIQGtnpLyPSLw4mijjfQu_Uy2CA8XEalVzaREnWXpRIOTj5iJ7SothvlIG3uHB9aRyLYMcea9D-f6inflwfa-pR8g84ccnYq0hFBnRcdb_PLHJkC2B0Bsmcgz--1cpiZRAd7OPFfR6_rWsa7VWTGBerYmSpfZnYtCJMFBvNaN50aPL7jHzjGck_9XclICsueCCabMeml6WHZlE-RPJYxhVxQWok1lkc5ZIqBcu-EXMbPnnIdbejLe0eljEWdlzkbYe7rrwTb2uUCzDqDKjKsBBa-R9XEgNXGhKc-sESPYnUl14NJGrDVZL5ALuV-Evq1g1Sso4zKs_EtYajVs7QP9dVU57v5ReztVeQloS8Czm4Kh_5Q3fnj7eR6Uov8OboLE3BKG1gRtai7RlzW1Za6TdTNpyQBMcqKk90AybnJimLSWtPrzcM0F9RQGhOpbDuseFKq0GZZdOWWEOF1Puu6zK-Hw4PbZW8PUVoEe81jHS9IWPusSJQqwsyfffXrokEyzYFydORh7DbXPYdTT6R_060q5JZM-k85BDoHAg7X_o_zsFMhBglRJ53fuVLojhw",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkEhL66PxGSLZRhgzqns_Q5-ldynWliaQAXKfpdTLQbAkguRQAAAAD79PXWeLarLNXnRglWB_JKBAD5LBUNs39dr1QSWBASyiBLJEkU_6YiMKpvvfWO9kJ0p0Eo09vg2PnTnWlW_7zcfkikicCs8SZ0o0x1f6UdlT6RIlyiHpUz0mo3fOd0OoDZjCPEWZa1e0JXw30anpISAbuW3BlSZ2TybHGAR_DyK9ZBlJ7BCQy9t6YI8cF2glnjB65WCaHUzfJqaxE7hxa-Sd24iZTyUErAYmZFJVridDwsDd4Rjvc6Ns56f8I7pKuDn7cjF9es7vlFQHqzuiRHoYAe4kl7-G6D0daknJi3H0NDH50CgF0PHNRyYCueQAVzonnVFXCyKdy7USLUvIc0wceVHgtrWnpLM8ugWkojSuaEvCaAoKBMHtdKDL5GiqBPMm5mantJJjEGlqhmVM8di5cKZgj6EElwMyVdQazAVlyJVvqBeN4l9dlqv-yTsY8cEexAoKZdlG3mGNCuSDW9JyT1zsTC2HJ3ttKZ0LwoWnURvBDu6AzsHI8Lmzf5kI-8Ri_23nNfq7Z9irgST1vPYLz-yuOcr_Ot0qXTy1f_ViZax6ClcZGdL5HweAmq5O9M2_vNAv95oJWu57TVcwE49s93Dyyqc0iKVL5C37K7ntf9VsvArAqLv7i1C-3p8vkVsME4ZL8Asr1gjP2L1FaZDJcONCqB3oflOFPBczvnhhAlTxDCiutsT6mFyXj9Ury2DEunGdFmdkLl6n4V3dsKpMHyiR1PmVENq9EtZFPAZQY2ccaIV_EPyCzUp6_AgyebVd9Ru9DjC7IWnDNfR3mT46mrzkYebh925patypffBUyrDmghAa2ekvI9IvDiaKON9C79TLYIDxcRqVXNpESdZelEg5OPmIntKi2G-Ugbe4cH1pHItgxx5r0P5_qKd-XB9r6lHyDzhxydirSEUGdFx1v88scmQLYHQGyZyDP77VymJlEB3s48V9Hr-taxrtVZMYF6tiZKl9mdi0IkwUG81o3nRo8vuMfOMZyT_1dyUgKy54IJpsx6aXpYdmUT5E8ljGFXFBaiTWWRzlkioFy74Rcxs-ech1t6Mt7R6WMRZ2XORth7uuvBNva5QLMOoMqMqwEFr5H1cSA1caEpz6wRI9idSXXg0kasNVkvkAu5X4S-rWDVKyjjMqz8S1hqNWztA_11VTnu_lF7O1V5CWhLwLObgqH_lDd-ePt5HpSi_w5ugsTcEobWBG1qLtGXNbVlrpN1M2nJAExyoqT3QDJucmKYtJa0-vNwzQX1FAaE6lsO6x4UqrQZll05ZYQ4XU-67rMr4fDg9tlbw9RWgR7zWMdL0hY-6xIlCrCzJ999euiQTLNgXJ05GHsNtc9h1NPpH_TrSrklkz6TzkEOgcCDtf-j_OwUyEGCVEnnd-5UuiOHpQECAyYgASFYIMZbRbuklCQQdLijs58Gurqq6DWrH09iIm4QqStZ2YBAIlggx3x49iF7jg60_ySdwBEMcXlnYqSdaoimWMJwKD_ZC0o",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "credential_invalid"
+  },
+  {
+   "name": "R13 RS256 credential key",
+   "credential_id": "wmsPSl2JynvS15wBrmVo8WprKQ3rT__MDVnPjU8T6CmSqqZMpE9ezkucmfSpW0nOjHXAlCKN",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVkBfb66PxGSLZRhgzqns_Q5-ldynWliaQAXKfpdTLQbAkguRQAAAADrvnnccK09V2SPFPyIEknBADbCaw9KXYnKe9LXnAGuZWjxamspDetP_8wNWc-NTxPoKZKqpkykT17OS5yZ9KlbSc6MdcCUIo2kAQMDOQEAIFkBAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEhQwEAAQ",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "credential_invalid"
+  },
+  {
+   "name": "R13 Ed25519 credential key",
+   "credential_id": "i42XvKqb3bBpLZbF8t1Vlx68mNFeOMtqHW6JRftHyg",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViAvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAJmiTINqfFaDNvHlgEI6bnYAH4uNl7yqm92waS2WxfLdVZcevJjRXjjLah1uiUX7R8qkAQEDJyAGIVgg5IFH8Ki4yqbzbn3nn9neCtIGttru88D3HrfG_uOTuyg",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "credential_invalid"
+  },
+  {
+   "name": "R13 point not on the curve",
+   "credential_id": "cJvIeT_EJzkGqg2xD-zpaDMHetHQfPSycQ",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVidvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAABACNYiMOl2iPF7B76N9H3cAGXCbyHk_xCc5BqoNsQ_s6WgzB3rR0Hz0snGlAQIDJiABIVgg0DfVY4dXLMPRnH4nGviYDqterU4YEJ_pT8_KY5XSsL8iWCDAaGX-2DLv7HMocycFKyBWiFdF1qHTb41bRQP36KH1sA",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "credential_invalid"
+  },
+  {
+   "name": "R13 credential public key not a map",
+   "credential_id": "8ur75RJrCIqBUyF0PH41_Lv4VH_V2Ag_Y2xZgEN_URFiMBq1soRXh85JAC7kdyOKv0iKIw",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVhtvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAANr7Fn3fgLkAwrN3V96LxUAANPLq--USawiKgVMhdDx-Nfy7-FR_1dgIP2NsWYBDf1ERYjAatbKEV4fOSQAu5Hcjir9IiiOBAQ",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "credential_invalid"
+  },
+  {
+   "name": "R13 coordinate of 31 bytes",
+   "credential_id": "1SB6OlbUYkgPB3IUN9_00Blv",
+   "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiVnNOaHRfWjZmLWJwWTlFeEJJU2luaTNoNlhncnlvN0dVUEtxTGZDUDFPayIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+   "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViVvro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAAAM50PHGqhAJfB0UCgbkzxaEAEtUgejpW1GJIDwdyFDff9NAZb6UBAgMmIAEhWB8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIlgg2Qn3JA5MyO1Uwh1cHt5f_lzjIv3jWSqZakf9Y9yG6Sk",
+   "challenge": "VsNht_Z6f-bpY9ExBISini3h6Xgryo7GUPKqLfCP1Ok",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "result": "credential_invalid"
+  }
+ ],
+ "certificates": [
+  {
+   "name": "accepted",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "ok",
+   "session_key_id": "session.a3f9628172893df19a639690b4633d18",
+   "session_public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "expires": "2026-11-17T21:58:00Z",
+   "sign_count": 7
+  },
+  {
+   "name": "accepted synced passkey with BE and BS",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4dAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIDw0WqMQVcaEdtvtivU2tQ_7fGFlZ2AIArpYq1FMRUGQAiEA1w4q1ORay318aM50H6x6ZYEkAQBaJoFEGcJ6rKHAmcE"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "ok",
+   "session_key_id": "session.a3f9628172893df19a639690b4633d18",
+   "session_public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "expires": "2026-11-17T21:58:00Z",
+   "sign_count": 7
+  },
+  {
+   "name": "accepted bytes after the first 37 with ED",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC6FAAAAB6FheAE",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIQCqZJSm_SFXM3GiNhVEQd78ufOwVueuISw3AJAoCr0DHgIgDx1j7B7Wrcj2JZbQPFsjtCgMHwvHm8qQ0Q_vsp19Hvc"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "ok",
+   "session_key_id": "session.a3f9628172893df19a639690b4633d18",
+   "session_public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "expires": "2026-11-17T21:58:00Z",
+   "sign_count": 7
+  },
+  {
+   "name": "accepted high s",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "ok",
+   "session_key_id": "session.a3f9628172893df19a639690b4633d18",
+   "session_public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "expires": "2026-11-17T21:58:00Z",
+   "sign_count": 7
+  },
+  {
+   "name": "accepted expiry exactly now + 43200",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T09:58:00Z",
+   "max_lifetime": 43200,
+   "result": "ok",
+   "session_key_id": "session.a3f9628172893df19a639690b4633d18",
+   "session_public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "expires": "2026-11-17T21:58:00Z",
+   "sign_count": 7
+  },
+  {
+   "name": "accepted expiry exactly now + 3600",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T20:58:00Z",
+   "max_lifetime": 3600,
+   "result": "ok",
+   "session_key_id": "session.a3f9628172893df19a639690b4633d18",
+   "session_public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "expires": "2026-11-17T21:58:00Z",
+   "sign_count": 7
+  },
+  {
+   "name": "accepted expiry one second after now",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T21:57:59Z",
+   "max_lifetime": 43200,
+   "result": "ok",
+   "session_key_id": "session.a3f9628172893df19a639690b4633d18",
+   "session_public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "expires": "2026-11-17T21:58:00Z",
+   "sign_count": 7
+  },
+  {
+   "name": "V1 four lines",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hz",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoia0NKY0xPN1BfXzEyN2VXc1k4RFk0UVFlM1BqcGJHRXVicXpYSThTQUZBVSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIQDfye2yhTyQMGqL5onrspLGc6Q2J2GMHmRV8ryuwuXhggIgO2Gu0HwsSg8ZNkx6Sye8BXGa3seCx84-V_Nm5vn_9kI"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "statement_invalid"
+  },
+  {
+   "name": "V1 six lines",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBaCmV4dHJh",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiUWhfN2hPOFBRTTdNMXg3WUpreGRXMTBRcGRXbEVhRk5ES0h0SndIQW80OCIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIQCaZ1IEODVCRXhFyQnTmYSaxuu0HYTxbDGpMK4NsSgrVAIgSvJotpzWwYAgIAaANPEC7YL5AYigYu7o2omuJDxnrjM"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "statement_invalid"
+  },
+  {
+   "name": "V1 trailing line feed",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBaCg",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoieHhlbmU0MmpuOEFLaUVmbDFnRGNBMzk3Mmg3Z1NVLWt4Q0FXVzEzeGxDYyIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIQCCynWBogoFXcqVMlzqP-PgbB__aWb9qOgJ6y4KmFWOqgIgc-whwjAGuaYJivnUdtFrZGUGJjG9FpZ1xP6Z_FMRCuo"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "statement_invalid"
+  },
+  {
+   "name": "V1 another label",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MgpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoibjBVa210S3I2bktmTGdRWDE0RThJZDZBYzFQNlIyS0RCSnJ0RnBSaVBzZyIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCID7mErHR15s3IXLlpmUc8mfW3fxgC-VvF7i3oCXtGEDoAiEAtkit4lPJwPF_lLA02QyvE1_j0qOKvQPwk7v4UTsxv1Q"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "statement_invalid"
+  },
+  {
+   "name": "V1 another origin",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL290aGVyLmV4YW1wbGUKQkJTdjl3NXg4SnFvSWpOQzMtYWVjdnlXeUhCblRweHJPUUtDTTBlelhOekpvVEhkVGNDc3JaZllhdzFudE5yV2Z3NUpwWXlmajIzV1dBS092RVZBVlNNCjgtcFB1aUlKb3RHMDJSS0dzd0h2MWRPYUhnbW1UN2gxQ0tscHpUSFF3aHMKMjAyNi0xMS0xN1QyMTo1ODowMFo",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoicC1NNHhoNmRnOXZCS0dxQlFRU01VVDVtM3puX1JxY1JhdjFSdER3bkdzSSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIQCYYhJyluq3YsW8dJamk01epFS2VrT9ACneYC3funWEpQIgU7lzy0dBguWYqPj-hXbeRBeEFNLlvmM1hTkZH5DUvvQ"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "statement_invalid"
+  },
+  {
+   "name": "V1 key not a point",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoid1QtM29QMjAwbWhSSG1VcnYxX2piQm9pNHV0amQ3S0ROb1h5dkp6NDhkcyIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIQCrSrZOJ-mfT7e4jqVWojHW77lto_poe6sKews-y_EnPQIgNrg2fpXjr06ehrlbDz9TI4Q4U2i5o7RgkmLDN-COxSw"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "statement_invalid"
+  },
+  {
+   "name": "V1 key not canonical base64url",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTgo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZGNULThZbE9pZEpJakRyY05qdGpQMXRSNlpSYWJpT1ByOFRvak5nazY0MCIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIQDDdSEQ2Mb_l0XQdTfBslriKrAPbKJVoZwzN9smBr-5DQIgdAlnMhQXana6HMv8Lxt0kA-zg6CXp07OV_2ka0TLoQ8"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "statement_invalid"
+  },
+  {
+   "name": "V1 hub value of 31 bytes",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2cKMjAyNi0xMS0xN1QyMTo1ODowMFo",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiUXE1X0wtMGlYMktETVJUWjFsbXktSWd2U1ZZWm9qMEFHMm5aM3hhYWNLcyIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIQC0qICp7Fddxqkb9krDkwAj_f4AF_VuxXrn3FEmnOlcnwIgaSA_e1U2ansz4ePANu_H0Jg5gp2xWYPNynK5bznRafE"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "statement_invalid"
+  },
+  {
+   "name": "V1 expiry not in the time form",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTcgMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiTlZycmFFWnlleERrT1Z5dkExbFdsOEt4X3B3RXhkbFQzTkFmaGpabXVtZyIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEYCIQD51065eRgCH_tneeml2YH-Tg-K2O7Dw44Puqu8yy1yRwIhALz7xjowuYCVklRJaoJqp2y9c5KBF4h-6TxEV3F5BDEO"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "statement_invalid"
+  },
+  {
+   "name": "V1 not UTF-8",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDD_",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoieFRMTXpsQi1SVTBpMzA4VnF4NEVMUS1GZEZnZzRKOHczZDFidHRnMkp6NCIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEYCIQCZHmfEwxRzwE571ii82zl0zLUO3m4hACOhMylvpwpicAIhAPrjgzcHZ0VdzdFwGBcwniV3AY84KVUA0xEeBrJbUuRJ"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "statement_invalid"
+  },
+  {
+   "name": "V2 type webauthn.create",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEQCIFEwpxWE7v9wEtMiq-ah0WgrZQFyko_Lw_xWd02tRmI5AiABSQLHy_ydHE_nbSCK6VEYbr_sejuDuqQ8rfp8KXai2A"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "client_data_invalid"
+  },
+  {
+   "name": "V2 client data with a key written twice",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2UsInR5cGUiOiJ3ZWJhdXRobi5nZXQifQ",
+    "signature": "MEUCIBs_-JCRrAi4rlJkOoFZhgu65qjB7DwLy-b-2lHENERbAiEAymeJbYv6kro5OLQ1InAlcg4ECjScNnBYfqooC53sCAg"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "client_data_invalid"
+  },
+  {
+   "name": "V3 valid assertion for another statement",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiSldoMlU4RW9hSXp0ZlFHMV95ZXFUcHc1eUpTNmJ3R0tDTFhJQ3RsVDd2VSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIEz9_pZtykJ0mnM1L6Iac-rBcyGi375_57fnbV-LyryAAiEAycmgihhy6Ik9RJboOND6FhxUUWAVK1_Dpiwlgicr_vc"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "challenge_mismatch"
+  },
+  {
+   "name": "V4 another origin",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vb3RoZXIuZXhhbXBsZSIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
+    "signature": "MEUCIDCTpGXOW5lWsG2gAFllsqdevPk6fZtUSEBZaFrLMfJyAiEAgzg-_nSLgV0j2A3e6kizw3CiC6hfO0ndaDO-mTs1WcA"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "origin_mismatch"
+  },
+  {
+   "name": "V4 crossOrigin true",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6dHJ1ZX0",
+    "signature": "MEYCIQCfYsRUoWb7OkiihIJ04ayZbsqe7_H4F9uQtP7HkEdZFgIhAOVIX9WIhW6L36AgR3KJGTTvXhEu7x4txTdxJ8h9GSlH"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "origin_mismatch"
+  },
+  {
+   "name": "V4 topOrigin present",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2UsInRvcE9yaWdpbiI6Imh0dHBzOi8vb3RoZXIuZXhhbXBsZSJ9",
+    "signature": "MEUCIQDVrZ_FWHJHZYTNN1H1iLvIg1hBFsmRx7UxvJu_IldmlgIgBde-g77BnSFpMEWclyFI_aFwdyhYpm9WQ4eQJcw-g9E"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "origin_mismatch"
+  },
+  {
+   "name": "V4 crossOrigin absent is accepted",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUifQ",
+    "signature": "MEQCIGRkAKRjzR9-6h22Nf7gIY9TTTd91WnIgH3Ikoqj63tzAiBdPYH21foEhYiIINLLNFfWMT8iNghGT8aY8drr6hCPnw"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "ok",
+   "session_key_id": "session.a3f9628172893df19a639690b4633d18",
+   "session_public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "expires": "2026-11-17T21:58:00Z",
+   "sign_count": 7
+  },
+  {
+   "name": "V5 authenticator data of 36 bytes",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAA",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEQCIGdxgkjx5gpDIWptSr-4vaF-1G_Yq1eOgC1X3NxlgJkWAiBWcm03o2pEIqW6bq6JEplZFEQ0wB28flslmBPsi7MF_A"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "V6 another rp id",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "6e-yH3QOSH9Sm0SbsRl8QPNuRD-r_Y8AFKDl7FGoxYwFAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEYCIQCSPSGbRWo1ccYz879XlV2jIBB70OrTYELI3uvQFz0BDQIhANFC1h51ItJ0Hr9otOvVkUVQWsr4hO6zcl5bF5scjuTI"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "rp_id_mismatch"
+  },
+  {
+   "name": "V7 UP not set",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4EAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEQCICR3iOw08B33UuNl95jGz7a0dYHu1tEZvn9EIVkQuxy6AiANPVBnuHcqB22ruSfpNRgyk5Yf67Tz7C27fawIwunxng"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "user_presence_missing"
+  },
+  {
+   "name": "V8 UV not set",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4BAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCICdNcvrXM3DwP2kWrFLDzHFEk79SgIzogwa1o-ZlEWOLAiEAqa1TwDtK2aHFOJ0BlEkUPYCYw2As8h9NfUTe3H0jb4c"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "user_verification_missing"
+  },
+  {
+   "name": "V9 BS without BE",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4VAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIQChqQPFhG7ycNvQ6igFlgZ6pc7cLJ1Tbq6tZjjE_eWEgwIgd0hGN7S24fV7Gw_-VZgJlUOz-u8czG-EWdl1DouV7yw"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "V9 AT set",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC5FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEYCIQCtTj1372q3pYnI41OnOK9NNqQUtJrVkl2joW2hZt9DeAIhANEvqTA8hpl3DscN89ECdqfghQCMh9hp2v7zeTuwDBsn"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "V9 trailing bytes without ED",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABwA",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEYCIQD3eQ3qFKmq0Cs6suSYN1Qi4lT1Mkijdh8a89wP3KgRAgIhANKq1GfAo-3wOwsPrhHE9b_0PY8Hary0W8STD54VbcKS"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "authenticator_data_invalid"
+  },
+  {
+   "name": "V10 corrupted signature",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsto"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "signature_invalid"
+  },
+  {
+   "name": "V10 signature not canonical DER",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEYCIQB8_u5OR0mTjIBLLROpNVMZlGKuxN7zM_ewWkw3axr7xQIhAJ4YvWHD1-CNPLQIWhrk0TeCWLKLGNCN6rop-QU0VbLb"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "signature_invalid"
+  },
+  {
+   "name": "V10 signature with a trailing byte",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVstsA"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "signature_invalid"
+  },
+  {
+   "name": "V10 signature in r || s form",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "fP7uTkdJk4yASy0TqTVTGZRirsTe8zP3sFpMN2sa-8WeGL1hw9fgjTy0CFoa5NE3gliyixjQjeq6KfkFNFWy2w"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "signature_invalid"
+  },
+  {
+   "name": "V10 another public key",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+   },
+   "passkey_public_key": "BObf0u0gZxPjYuNnPeAQGf6sr5aDvq_Q2Y6PKmb4jQXN3qp7-7cdKCuCB1dgINnJkbod04dNVnqIr9gbY5qedt0",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "result": "signature_invalid"
+  },
+  {
+   "name": "V11 expiry beyond now + 43200",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T09:57:59Z",
+   "max_lifetime": 43200,
+   "result": "certificate_expiry_invalid"
+  },
+  {
+   "name": "V11 expiry beyond now + 3600",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T20:57:59Z",
+   "max_lifetime": 3600,
+   "result": "certificate_expiry_invalid"
+  },
+  {
+   "name": "V11 expiry at now, 43200",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T21:58:00Z",
+   "max_lifetime": 43200,
+   "result": "certificate_expiry_invalid"
+  },
+  {
+   "name": "V11 expiry at now, 3600",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T21:58:00Z",
+   "max_lifetime": 3600,
+   "result": "certificate_expiry_invalid"
+  },
+  {
+   "name": "V11 expiry before now",
+   "certificate": {
+    "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+    "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+    "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+    "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+    "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+   },
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T21:58:01Z",
+   "max_lifetime": 43200,
+   "result": "certificate_expiry_invalid"
+  }
+ ],
+ "bundles": [
+  {
+   "name": "accepted",
+   "bundle": {
+    "sender": "session.a3f9628172893df19a639690b4633d18",
+    "certificate": {
+     "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+     "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+     "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+     "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+     "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+    },
+    "command": {
+     "target": "example-staff-laptop-1",
+     "action": "noop",
+     "sequence": 1,
+     "time": "2026-11-17T10:00:00Z",
+     "content_hash": "-"
+    },
+    "signature": "6AAg68HJhRxVsOeT8Hg3BTluwAVCdtvst52fTiYgL1hBLdGPJRHudtUrJ0_f4FlcB02i7RO5QLUzvObJRO0NFA",
+    "content": null,
+    "content_random": null
+   },
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "device_key_id": "example-staff-laptop-1",
+   "time_window": 120,
+   "last_sequence": null,
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "result": "ok"
+  },
+  {
+   "name": "check 2 certificate signature invalid",
+   "bundle": {
+    "sender": "session.a3f9628172893df19a639690b4633d18",
+    "certificate": {
+     "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+     "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+     "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+     "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+     "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsto"
+    },
+    "command": {
+     "target": "example-staff-laptop-1",
+     "action": "noop",
+     "sequence": 1,
+     "time": "2026-11-17T10:00:00Z",
+     "content_hash": "-"
+    },
+    "signature": "6AAg68HJhRxVsOeT8Hg3BTluwAVCdtvst52fTiYgL1hBLdGPJRHudtUrJ0_f4FlcB02i7RO5QLUzvObJRO0NFA",
+    "content": null,
+    "content_random": null
+   },
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "device_key_id": "example-staff-laptop-1",
+   "time_window": 120,
+   "last_sequence": null,
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "result": "check_2:signature_invalid"
+  },
+  {
+   "name": "check 3 another sender",
+   "bundle": {
+    "sender": "session.00000000000000000000000000000000",
+    "certificate": {
+     "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+     "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+     "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+     "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+     "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+    },
+    "command": {
+     "target": "example-staff-laptop-1",
+     "action": "noop",
+     "sequence": 1,
+     "time": "2026-11-17T10:00:00Z",
+     "content_hash": "-"
+    },
+    "signature": "TmXOv3FtySCeU9hZAsbDg9rLqEQpwMLNHuev6dZ-sCq47FVV1SdF1ZrHIR-w5cV7kKf2y2gdpfgD5sYcZaDD9w",
+    "content": null,
+    "content_random": null
+   },
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "device_key_id": "example-staff-laptop-1",
+   "time_window": 120,
+   "last_sequence": null,
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "result": "check_3"
+  },
+  {
+   "name": "check 4 signature over another target",
+   "bundle": {
+    "sender": "session.a3f9628172893df19a639690b4633d18",
+    "certificate": {
+     "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+     "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+     "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+     "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+     "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+    },
+    "command": {
+     "target": "example-staff-laptop-1",
+     "action": "noop",
+     "sequence": 1,
+     "time": "2026-11-17T10:00:00Z",
+     "content_hash": "-"
+    },
+    "signature": "5X-IhgyZHdhtLL_dYWzj_AJXAF9JV4WkAPKk30jRhI7wg6U1mQLuvuRFL9HveRgiuj1V8v6A_oMlqtiaytXyLw",
+    "content": null,
+    "content_random": null
+   },
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "device_key_id": "example-staff-laptop-1",
+   "time_window": 120,
+   "last_sequence": null,
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "result": "check_4"
+  },
+  {
+   "name": "check 5 content for -",
+   "bundle": {
+    "sender": "session.a3f9628172893df19a639690b4633d18",
+    "certificate": {
+     "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+     "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+     "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+     "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+     "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+    },
+    "command": {
+     "target": "example-staff-laptop-1",
+     "action": "noop",
+     "sequence": 1,
+     "time": "2026-11-17T10:00:00Z",
+     "content_hash": "-"
+    },
+    "signature": "6AAg68HJhRxVsOeT8Hg3BTluwAVCdtvst52fTiYgL1hBLdGPJRHudtUrJ0_f4FlcB02i7RO5QLUzvObJRO0NFA",
+    "content": "x",
+    "content_random": null
+   },
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "device_key_id": "example-staff-laptop-1",
+   "time_window": 120,
+   "last_sequence": null,
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "result": "check_5"
+  },
+  {
+   "name": "check 6 program key as target",
+   "bundle": {
+    "sender": "session.a3f9628172893df19a639690b4633d18",
+    "certificate": {
+     "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+     "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+     "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+     "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+     "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+    },
+    "command": {
+     "target": "example-staff-laptop-1-cli",
+     "action": "noop",
+     "sequence": 1,
+     "time": "2026-11-17T10:00:00Z",
+     "content_hash": "-"
+    },
+    "signature": "G78_J9Duh3G0j2nkOoZREUoB8BBi8PbQz1ARnlM8JhLWNm7FtEsquWrkL4mTVUkOKoMBoHlg04tI9uQ96zTjVA",
+    "content": null,
+    "content_random": null
+   },
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "device_key_id": "example-staff-laptop-1",
+   "time_window": 120,
+   "last_sequence": null,
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "result": "check_6"
+  },
+  {
+   "name": "check 6 time outside the window",
+   "bundle": {
+    "sender": "session.a3f9628172893df19a639690b4633d18",
+    "certificate": {
+     "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+     "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+     "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+     "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+     "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+    },
+    "command": {
+     "target": "example-staff-laptop-1",
+     "action": "noop",
+     "sequence": 1,
+     "time": "2026-11-17T09:57:59Z",
+     "content_hash": "-"
+    },
+    "signature": "v9QdGXuD84eSAP-K1cJkcZ5agcieV2A0IyYOrxYrA1ckIxAhs0fvy6Lw3lkofdOMjh3yvy1M79U1HPtHrj4dAA",
+    "content": null,
+    "content_random": null
+   },
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "device_key_id": "example-staff-laptop-1",
+   "time_window": 120,
+   "last_sequence": null,
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "result": "check_6"
+  },
+  {
+   "name": "check 6 sequence not higher",
+   "bundle": {
+    "sender": "session.a3f9628172893df19a639690b4633d18",
+    "certificate": {
+     "statement": "YWdlbnQtc2Vzc2lvbi12MQpodHRwczovL2h1Yi5leGFtcGxlCkJCU3Y5dzV4OEpxb0lqTkMzLWFlY3Z5V3lIQm5UcHhyT1FLQ00wZXpYTnpKb1RIZFRjQ3NyWmZZYXcxbnROcldmdzVKcFl5ZmoyM1dXQUtPdkVWQVZTTQo4LXBQdWlJSm90RzAyUktHc3dIdjFkT2FIZ21tVDdoMUNLbHB6VEhRd2hzCjIwMjYtMTEtMTdUMjE6NTg6MDBa",
+     "credential_id": "7pS6ElD_h0bewwCprCsRsCFtANHllmJ4LDnR5HXNubSpXuz0IuJdl1AY_U1BnPEDnmZ9HG8U5Q",
+     "authenticator_data": "vro_EZItlGGDOqez9Dn6V3KdaWJpABcp-l1MtBsCSC4FAAAABw",
+     "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoib19saWdYS0pQZkdhWTVhUXRHTTlHQXVLSGpsbFhoX2ZuZy1XRENrSlhIRSIsIm9yaWdpbiI6Imh0dHBzOi8vaHViLmV4YW1wbGUiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+     "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+    },
+    "command": {
+     "target": "example-staff-laptop-1",
+     "action": "noop",
+     "sequence": 1,
+     "time": "2026-11-17T10:00:00Z",
+     "content_hash": "-"
+    },
+    "signature": "6AAg68HJhRxVsOeT8Hg3BTluwAVCdtvst52fTiYgL1hBLdGPJRHudtUrJ0_f4FlcB02i7RO5QLUzvObJRO0NFA",
+    "content": null,
+    "content_random": null
+   },
+   "origin": "https://hub.example",
+   "rp_id": "hub.example",
+   "now": "2026-11-17T10:00:00Z",
+   "max_lifetime": 43200,
+   "device_key_id": "example-staff-laptop-1",
+   "time_window": 120,
+   "last_sequence": 1,
+   "passkey_public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "result": "check_6"
+  }
+ ],
+ "signatures": [
+  {
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "message_sha256": "1ba16ab167977cf69160e311f6bba5e869cce6b41d6187608a52d8e7acfad86b",
+   "signature": "MEUCIE5lzr9xbckgnlPYWQLGw4Pay6hEKcDCzR7nr-nWfrAqAiEAuOxVVdUnRdWaxyEfsOXFe5Cn9stoHaX4A-bGHGWgw_c"
+  },
+  {
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "message_sha256": "1dab7c17b502c3e6f9068ae226dc5b4bba499fe5adf1f00cdc812971981ef48b",
+   "signature": "MEUCIQC_1B0Ze4Pzh5IA_4rVwmRxnlqByJ5XYDQjJg6vFisDVwIgJCMQIbNH78ui8N5ZKH3TjI4d8r8tTO_VNRz7R64-HQA"
+  },
+  {
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "message_sha256": "4bfe783a9197093deccd14a57a703be54bb2ea6329a4c1570b3297499b403fb5",
+   "signature": "MEUCIBu_PyfQ7odxtI9p5DqGURFKAfAQYvD20M9QEZ5TPCYSAiEA1jZuxbRLKrlq5C-Jk1VJDiqDAaB5YNOLSPbkPes041Q"
+  },
+  {
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "message_sha256": "746dc96fd963a57817506ff57fe1a67f601843bfd3d5fe6be2cac34a2d6c5505",
+   "signature": "MEQCIEHcJ8Jc5SGUKcWnGEYzjQAg5VnPkZ0vtsdQYD76T3MAAiBqFgjXIr4R7nEsk4HutAwmqmePt7UooBhkI-u6sQMUWA"
+  },
+  {
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "message_sha256": "b1aebd14191d8aaaf8dcdd0352e6885c999027a4886a907a906f42ca8d2b7e64",
+   "signature": "MEUCIQDoACDrwcmFHFWw55PweDcFOW7ABUJ22-y3nZ9OJiAvWAIgQS3RjyUR7nbVKydP3-BZXAdNou0TuUC1M7zmyUTtDRQ"
+  },
+  {
+   "public_key": "BBSv9w5x8JqoIjNC3-aecvyWyHBnTpxrOQKCM0ezXNzJoTHdTcCsrZfYaw1ntNrWfw5JpYyfj23WWAKOvEVAVSM",
+   "message_sha256": "bd1999ae1bafe47add2ac39f498374dd0d5c9cc3fc0a9c918eb4f39624bb560a",
+   "signature": "MEYCIQDlf4iGDJkd2G0sv91hbOP8AlcAX0lXhaQA8qTfSNGEjgIhAPCDpTWZAu6-5EUv0e95GCK6PVXy_oD-gyWq2JrK1fIv"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "007f1b9e56ea30325da87ecce2597c970a05027468d108306d69004769dc5a37",
+   "signature": "MEYCIQCSPSGbRWo1ccYz879XlV2jIBB70OrTYELI3uvQFz0BDQIhANFC1h51ItJ0Hr9otOvVkUVQWsr4hO6zcl5bF5scjuTI"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "06d4345fdf0e1252727abeeaad2a2f51fa9a30b615944400b1b52ad4afc6ac05",
+   "signature": "MEYCIQCZHmfEwxRzwE571ii82zl0zLUO3m4hACOhMylvpwpicAIhAPrjgzcHZ0VdzdFwGBcwniV3AY84KVUA0xEeBrJbUuRJ"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "088b8bf9946964c8b54f29f715a14137e847bc23d9bf8415448cf7b14f971aab",
+   "signature": "MEUCIQCqZJSm_SFXM3GiNhVEQd78ufOwVueuISw3AJAoCr0DHgIgDx1j7B7Wrcj2JZbQPFsjtCgMHwvHm8qQ0Q_vsp19Hvc"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "2854094341eaa62157e2bf950c86c79c2f39ca73f71046f6c39e5081aa23e52d",
+   "signature": "MEUCIQC0qICp7Fddxqkb9krDkwAj_f4AF_VuxXrn3FEmnOlcnwIgaSA_e1U2ansz4ePANu_H0Jg5gp2xWYPNynK5bznRafE"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "35a5e45bc9d5a17736759d3c20f4bcdf98c9bff8f449d7dd0d0c59164af86409",
+   "signature": "MEUCIQDDdSEQ2Mb_l0XQdTfBslriKrAPbKJVoZwzN9smBr-5DQIgdAlnMhQXana6HMv8Lxt0kA-zg6CXp07OV_2ka0TLoQ8"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "3cba6b6d5b514fa147b8a4b8c067072f779f8c66808543c12b756b344187a09b",
+   "signature": "MEUCIDCTpGXOW5lWsG2gAFllsqdevPk6fZtUSEBZaFrLMfJyAiEAgzg-_nSLgV0j2A3e6kizw3CiC6hfO0ndaDO-mTs1WcA"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "3d24ddf86dc01d7fe023286003bd8327e31604eb06f5eebfba358a6489c4c6e0",
+   "signature": "MEUCICdNcvrXM3DwP2kWrFLDzHFEk79SgIzogwa1o-ZlEWOLAiEAqa1TwDtK2aHFOJ0BlEkUPYCYw2As8h9NfUTe3H0jb4c"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "4ac857ad1f0070c5dedf842174bf31335019c297cadf921015c8ae35d0613ada",
+   "signature": "MEUCIQCaZ1IEODVCRXhFyQnTmYSaxuu0HYTxbDGpMK4NsSgrVAIgSvJotpzWwYAgIAaANPEC7YL5AYigYu7o2omuJDxnrjM"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "4d2080ac2f90506b5cc7cf7bdc3d88ecdf80f156b93043ef8dc961fe6dfabf9c",
+   "signature": "MEQCIFEwpxWE7v9wEtMiq-ah0WgrZQFyko_Lw_xWd02tRmI5AiABSQLHy_ydHE_nbSCK6VEYbr_sejuDuqQ8rfp8KXai2A"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "52c47cf02cf3c47d3cc577df8fbd9345409fec9a6a5df8fd9ec5e975ff50bfc6",
+   "signature": "MEUCIDw0WqMQVcaEdtvtivU2tQ_7fGFlZ2AIArpYq1FMRUGQAiEA1w4q1ORay318aM50H6x6ZYEkAQBaJoFEGcJ6rKHAmcE"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "7837557e3eadbc52a3bb24cdb9613981c4557f1818ffb45bb01a8ebef014ef7a",
+   "signature": "MEUCIEz9_pZtykJ0mnM1L6Iac-rBcyGi375_57fnbV-LyryAAiEAycmgihhy6Ik9RJboOND6FhxUUWAVK1_Dpiwlgicr_vc"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "838417505737cee9b505c8188143b6334ecda98e8f1956a29bf2d58361fec79b",
+   "signature": "MEUCIHz-7k5HSZOMgEstE6k1UxmUYq7E3vMz97BaTDdrGvvFAiEAnhi9YcPX4I08tAhaGuTRN4JYsosY0I3quin5BTRVsts"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "9a610473424bff10683b8583cb0aa92a27078290ba776d68290a99ef591f92ca",
+   "signature": "MEUCIBs_-JCRrAi4rlJkOoFZhgu65qjB7DwLy-b-2lHENERbAiEAymeJbYv6kro5OLQ1InAlcg4ECjScNnBYfqooC53sCAg"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "a32b64b924e800e90c35794eb18ff720824dbda1232ec3037fda0b02d4c2f27e",
+   "signature": "MEUCIQChqQPFhG7ycNvQ6igFlgZ6pc7cLJ1Tbq6tZjjE_eWEgwIgd0hGN7S24fV7Gw_-VZgJlUOz-u8czG-EWdl1DouV7yw"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "aaed06206d7afb235b9daa489b55011a1a61f6546a0c4b5d373ac2e75544627f",
+   "signature": "MEYCIQD51065eRgCH_tneeml2YH-Tg-K2O7Dw44Puqu8yy1yRwIhALz7xjowuYCVklRJaoJqp2y9c5KBF4h-6TxEV3F5BDEO"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "ae1fd88ffe485919f46eaa26c52869456ed860fdd2da8ecbd9f871a571d26bac",
+   "signature": "MEUCIQCCynWBogoFXcqVMlzqP-PgbB__aWb9qOgJ6y4KmFWOqgIgc-whwjAGuaYJivnUdtFrZGUGJjG9FpZ1xP6Z_FMRCuo"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "ba9ccb6719da9164354e44702b6befafccd110e35e9aa2fb1a82fcddcef10bfe",
+   "signature": "MEUCIQCrSrZOJ-mfT7e4jqVWojHW77lto_poe6sKews-y_EnPQIgNrg2fpXjr06ehrlbDz9TI4Q4U2i5o7RgkmLDN-COxSw"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "bb8fe3b6ecaa8f71379b05e08bb4186d1ff0311cbe5a66725714fe62ff27ba71",
+   "signature": "MEQCIGRkAKRjzR9-6h22Nf7gIY9TTTd91WnIgH3Ikoqj63tzAiBdPYH21foEhYiIINLLNFfWMT8iNghGT8aY8drr6hCPnw"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "cc95d34c2cd04f039cfee07165fce3f838a375e2d07f787a2abec1567fd6215e",
+   "signature": "MEUCIQDfye2yhTyQMGqL5onrspLGc6Q2J2GMHmRV8ryuwuXhggIgO2Gu0HwsSg8ZNkx6Sye8BXGa3seCx84-V_Nm5vn_9kI"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "cd0f08882520d37d8bc7b0973f8dd75f937dd1664517ceae79847426a774c1c0",
+   "signature": "MEYCIQCfYsRUoWb7OkiihIJ04ayZbsqe7_H4F9uQtP7HkEdZFgIhAOVIX9WIhW6L36AgR3KJGTTvXhEu7x4txTdxJ8h9GSlH"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "cf91bd067220539202789a04d4b881982ccb3965caac91c51d9ee77adc9c93c2",
+   "signature": "MEUCIQCYYhJyluq3YsW8dJamk01epFS2VrT9ACneYC3funWEpQIgU7lzy0dBguWYqPj-hXbeRBeEFNLlvmM1hTkZH5DUvvQ"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "d6cda0d7c9a2cc6526e27829b715632d06d30d43be9c7d32439209b83fbc7287",
+   "signature": "MEUCIQDVrZ_FWHJHZYTNN1H1iLvIg1hBFsmRx7UxvJu_IldmlgIgBde-g77BnSFpMEWclyFI_aFwdyhYpm9WQ4eQJcw-g9E"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "dbee9cf6cb0c2fd9c635e2b3fb3534e9211acade62007ec087a3c14b152f1387",
+   "signature": "MEQCIGdxgkjx5gpDIWptSr-4vaF-1G_Yq1eOgC1X3NxlgJkWAiBWcm03o2pEIqW6bq6JEplZFEQ0wB28flslmBPsi7MF_A"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "e078888c3259364c09b0429e56d1364637e60fd06135ddcfa1aafa66819027dc",
+   "signature": "MEUCID7mErHR15s3IXLlpmUc8mfW3fxgC-VvF7i3oCXtGEDoAiEAtkit4lPJwPF_lLA02QyvE1_j0qOKvQPwk7v4UTsxv1Q"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "f29b5dfcf665c0b55f3e67bba7235d1681b77a2dcf33ccaf2f2762b6127db36f",
+   "signature": "MEYCIQCtTj1372q3pYnI41OnOK9NNqQUtJrVkl2joW2hZt9DeAIhANEvqTA8hpl3DscN89ECdqfghQCMh9hp2v7zeTuwDBsn"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "f3b1fcdbe11c0af9f43635c112c50532adeb722ac4a9fce53ddc5c195f2939e6",
+   "signature": "MEQCICR3iOw08B33UuNl95jGz7a0dYHu1tEZvn9EIVkQuxy6AiANPVBnuHcqB22ruSfpNRgyk5Yf67Tz7C27fawIwunxng"
+  },
+  {
+   "public_key": "BIDPC3h3lEPjvhr6NGOPKCe7DD4S0kG_Dv3hqUULDQkI30spmZbjt2lk201i3yQreAeHb4at6notyDzogHdm9zA",
+   "message_sha256": "fbd7d68b12dc3356ddb87433d4ac2387d0036a2467c377ff5033fd8d75d5d438",
+   "signature": "MEYCIQD3eQ3qFKmq0Cs6suSYN1Qi4lT1Mkijdh8a89wP3KgRAgIhANKq1GfAo-3wOwsPrhHE9b_0PY8Hary0W8STD54VbcKS"
+  }
+ ]
+}

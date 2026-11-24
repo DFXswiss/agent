@@ -1,0 +1,19 @@
+{
+  "name": "e2e-00-smoke",
+  "description": "Smoke of the orchestrator: one non-streaming Messages request sent by the spec through the control API proves the model double is up, reachable on its device and consumes its scenario.",
+  "steps": [
+    {
+      "id": "probe",
+      "expect": { "user_text_contains": "orchestrator smoke probe", "stream": false },
+      "reply": {
+        "content": [{ "type": "text", "text": "smoke ok" }],
+        "usage": {
+          "input_tokens": 12,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 2
+        }
+      }
+    }
+  ]
+}

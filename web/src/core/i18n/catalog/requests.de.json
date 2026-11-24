@@ -1,0 +1,12 @@
+{
+  "failure.timeout": "Die Anfrage ist abgelaufen.",
+  "failure.busy": "Das Gerät bearbeitet bereits eine Anfrage dieser Art.",
+  "failure.credential_missing": "Dem Gerät fehlt eine benötigte Zugangsangabe.",
+  "failure.code_invalid": "Der Code wurde nicht akzeptiert.",
+  "failure.login_cli_failed": "Das Anmeldeprogramm auf dem Gerät ist fehlgeschlagen.",
+  "failure.token_invalid": "Der Dienst hat ein Token in unerwartetem Format geliefert.",
+  "failure.upstream_error": "Der Dienst hat die Anfrage abgelehnt.",
+  "failure.upstream_unreachable": "Der Dienst war nicht erreichbar.",
+  "failure.device_shutdown": "Das Gerät wurde heruntergefahren.",
+  "failure.request_failed": "Das Gerät konnte die Anfrage nicht übernehmen: Es ist nicht mehr berechtigt, oder eine neuere Anfrage derselben Art hat sie ersetzt."
+}

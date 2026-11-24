@@ -1,0 +1,51 @@
+{
+  "name": "e2e-27-access-api-key",
+  "description": "E2E-27 step 2: the user's Anthropic API key; the double accepts only that key as x-api-key without an authorization header, and the chosen model.",
+  "steps": [
+    {
+      "id": "e2e-27-access-api-key-answer",
+      "expect": {
+        "user_text_contains": "E2E27-APIKEY",
+        "has_tools": true,
+        "has_tool_result": false,
+        "model": "claude-sonnet-5-5"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "API key answer kz27-apikey-d2f6k3."
+          }
+        ],
+        "usage": {
+          "input_tokens": 52000,
+          "cache_read_input_tokens": 10000,
+          "cache_creation_input_tokens": 2000,
+          "output_tokens": 800
+        }
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "e2e-27-access-api-key-title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Usage"
+          }
+        ],
+        "usage": {
+          "input_tokens": 52000,
+          "cache_read_input_tokens": 10000,
+          "cache_creation_input_tokens": 2000,
+          "output_tokens": 800
+        }
+      }
+    }
+  ]
+}

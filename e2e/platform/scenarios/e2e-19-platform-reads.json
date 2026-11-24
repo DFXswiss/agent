@@ -1,0 +1,212 @@
+{
+  "name": "e2e-19-platform-reads",
+  "description": "E2E-19: the session calls every MCP read tool (context, workgroups, members of org and workgroup, tasks, its task and messages, the three whiteboard levels, notifications, operations and one operation it requested itself), then asks for a task, its messages and its whiteboard in another workgroup of the org by the task's ID (not_found). ${foreign_task} is set by the spec.",
+  "variables": {
+    "foreign_task": "00000000-0000-7000-8000-000000000000"
+  },
+  "steps": [
+    {
+      "id": "context",
+      "expect": {
+        "user_text_contains": "E2E19-READ",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Reading the platform."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_context",
+            "input": {}
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_workgroups",
+            "input": {}
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_members",
+            "input": {
+              "scope": "org"
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_members",
+            "input": {
+              "scope": "workgroup"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "tasks",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "\"api_version\":1"
+      },
+      "capture": {
+        "task": {
+          "regex": "Task ID: `([0-9a-f-]{36})`",
+          "source": "system"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_tasks",
+            "input": {}
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_task",
+            "input": {
+              "task_id": "${task}"
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_task_messages",
+            "input": {
+              "task_id": "${task}"
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_whiteboard",
+            "input": {
+              "level": "org"
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_whiteboard",
+            "input": {
+              "level": "workgroup"
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_whiteboard",
+            "input": {
+              "level": "task",
+              "task_id": "${task}"
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_notifications",
+            "input": {}
+          }
+        ]
+      }
+    },
+    {
+      "id": "title",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "E2E19-READ"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "task.set_title",
+              "params": {
+                "title": "Platform reads kz19-title-n5b2v8c4"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "operations",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "capture": {
+        "operation": {
+          "regex": "\"operation_id\":\"([0-9a-f-]{36})\",\"result\":\\{\\},\"status\":\"succeeded\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_operations",
+            "input": {}
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${operation}"
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_task",
+            "input": {
+              "task_id": "${foreign_task}"
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_task_messages",
+            "input": {
+              "task_id": "${foreign_task}"
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_whiteboard",
+            "input": {
+              "level": "task",
+              "task_id": "${foreign_task}"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "done",
+      "expect": {
+        "tool_result_contains": "\"not_found\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Platform read kz19-answer-s7d3g1h8."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Reads"
+          }
+        ]
+      }
+    }
+  ]
+}

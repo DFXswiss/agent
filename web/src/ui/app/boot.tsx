@@ -1,0 +1,76 @@
+// Start of the client (06-web.md sections 2.2, 2.6, 10.4, 12.6): locale, configuration check against the hub, browser
+// support, the persistence and the stored session (a reload is `locked`: the passkey is needed again), then the app
+// with its router – or the blocking error page / the unsupported-browser page.
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import type { Credentials } from '../../core/account/ceremony';
+import { Prefs, type PrefStorage } from '../../core/account/prefs';
+import { AppSession } from '../../core/account/session';
+import { checkConfig, type ConfigResult } from '../../core/config/check';
+import { createI18n, pickLocale } from '../../core/i18n';
+import { Persist } from '../../core/persist';
+import { appStore, type Store } from '../../core/store';
+import { setConfig } from '../../core/store/slices/config';
+import { I18nProvider } from '../i18n';
+import { App } from '../shell/App';
+import { type Feature, missingFeatures } from '../shell/support';
+import { Unsupported } from '../screens/errors/Unsupported';
+import { ErrorPage } from './ErrorPage';
+
+export interface BootInput {
+  readonly container: Element;
+  readonly fetch: typeof globalThis.fetch;
+  readonly rootKey: string;
+  readonly origin: string;
+  readonly languages: readonly string[];
+  /** `navigator.credentials`. */
+  readonly credentials: Credentials;
+  /** IndexedDB of the page. */
+  readonly indexedDB: IDBFactory;
+  /** `localStorage` of the page (null if unavailable). */
+  readonly storage: PrefStorage | null;
+  /** What the browser lacks (default: `missingFeatures` of the page). */
+  readonly missing?: () => Promise<readonly Feature[]>;
+  readonly store?: Store;
+}
+
+export async function boot(input: BootInput): Promise<ConfigResult> {
+  const { container, fetch, rootKey, origin, languages } = input;
+  const i18n = createI18n(pickLocale(null, languages));
+  document.documentElement.lang = i18n.locale;
+  const root = createRoot(container);
+  const page = (content: React.ReactNode) =>
+    root.render(
+      <StrictMode>
+        <I18nProvider value={i18n}>{content}</I18nProvider>
+      </StrictMode>,
+    );
+  const result = await checkConfig({ fetch, rootKey, origin });
+  if (!result.ok) {
+    page(<ErrorPage code={result.code} />);
+    return result;
+  }
+  const missing = await (input.missing ?? missingFeatures)();
+  const persist = missing.length === 0 ? await Persist.open(input.indexedDB).catch(() => null) : null;
+  if (persist === null) {
+    page(<Unsupported missing={missing.length === 0 ? ['indexeddb'] : missing} />);
+    return result;
+  }
+  const store = input.store ?? appStore;
+  setConfig(store, result.config);
+  const app = new AppSession({
+    store,
+    fetch,
+    config: result.config,
+    rootKey,
+    persist,
+    prefs: new Prefs(input.storage),
+  });
+  await app.restore();
+  root.render(
+    <StrictMode>
+      <App env={{ app, credentials: input.credentials, origin }} languages={languages} />
+    </StrictMode>,
+  );
+  return result;
+}

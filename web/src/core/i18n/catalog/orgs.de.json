@@ -1,0 +1,11 @@
+{
+  "switcher.label": "Organisationen",
+  "unnamed": "Organisation",
+  "private": "privat",
+  "create.open": "Organisation anlegen",
+  "create.title": "Organisation anlegen",
+  "create.confirm": "Anlegen",
+  "create.name": "Name der Organisation",
+  "create.display-name": "Dein Anzeigename",
+  "create.platform-note": "Eine neue Organisation nutzt deine eigenen Geräte. Plattform-Geräte von DFX stehen bereit, sobald der Betreiber Plattformzugang gewährt."
+}

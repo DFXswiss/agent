@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Section 12.3: the keyboard focus is always visible. */
+  :focus-visible {
+    outline: 2px solid #1d4ed8;
+    outline-offset: 2px;
+  }
+
+  /* Section 12.3: `prefers-reduced-motion` – no animation, transition or smooth scrolling anywhere. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

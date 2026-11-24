@@ -1,0 +1,284 @@
+{
+  "name": "e2e-33-export-restore",
+  "description": "E2E-33: the flows of E2E-06 (a first answer) and E2E-21 (the GitHub operation chain, prompt E2E33-CHAIN) fill the hub before it is exported and restored; then a follow-up after the restore and one after the runner's store wipe. Each prompt is delivered once: a prompt delivered again would not match the next step.",
+  "steps": [
+    {
+      "id": "first-answer",
+      "expect": {
+        "user_text_contains": "E2E33-FIRST What is 2+2?",
+        "has_tools": true,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "2+2 is 4 kz33-answer-f4w8."
+          }
+        ]
+      }
+    },
+    {
+      "id": "list",
+      "expect": {
+        "user_text_contains": "E2E33-CHAIN",
+        "has_tool_result": false,
+        "tools_include": ["Write"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Looking at the repositories first."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_repositories",
+              "params": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "checkout",
+      "expect": {
+        "tool_result_contains": "\"repo\":\"octo-org/hello\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "octo-org/hello"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "branch",
+      "expect": {
+        "tool_result_contains": "\"dir\":\"repos/octo-org/hello\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_branch",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e21/notes",
+                "from": "main"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "write",
+      "expect": {
+        "tool_result_contains": "\"branch\":\"e2e21/notes\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/octo-org/hello/NOTES.md",
+              "content": "Notes kz33-file-g3w8n5c1\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "commit",
+      "expect": {
+        "tool_result_is_error": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e21/notes",
+                "message": "Add the notes."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push",
+      "expect": {
+        "tool_result_contains": "\"files_changed\":1"
+      },
+      "capture": {
+        "commit": {
+          "regex": "\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e21/notes",
+                "commit_sha": "${commit}"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "pull-request",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/octo-org/hello/tree/e2e21/notes\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_pull_request",
+              "params": {
+                "repo": "octo-org/hello",
+                "head": "e2e21/notes",
+                "base": "main",
+                "title": "Add the notes kz33-title-p9d4r7v2",
+                "body": "Written by the session.",
+                "draft": true
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "comment",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/octo-org/hello/pull/1\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1,
+                "body": "Ready for review kz33-comment-t6j2h8q4"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "get-pull-request",
+      "expect": {
+        "tool_result_contains": "issuecomment-"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.get_pull_request",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "done",
+      "expect": {
+        "tool_result_contains": "Ready for review kz33-comment-t6j2h8q4"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Draft pull request #1 is open: https://github.example/octo-org/hello/pull/1 kz33-answer-z1f5k9m3."
+          }
+        ]
+      }
+    },
+    {
+      "id": "after-restore",
+      "expect": {
+        "user_text_contains": "E2E33-AFTER-RESTORE",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Still here after the restore kz33-answer-r6t2."
+          }
+        ]
+      }
+    },
+    {
+      "id": "after-wipe",
+      "expect": {
+        "user_text_contains": "E2E33-AFTER-WIPE",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Still here after the store wipe kz33-answer-w9p3."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Recovery"
+          }
+        ]
+      }
+    }
+  ]
+}

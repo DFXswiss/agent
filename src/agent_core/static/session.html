@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent session timeline</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 24px; max-width: 1200px; }
+    a { color: inherit; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid #8886; }
+    th { position: sticky; top: 0; background: Canvas; }
+    code { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .error { color: #c33; font-weight: 600; }
+    .muted { opacity: .7; }
+  </style>
+</head>
+<body>
+  <p><a href="/">← Dashboard</a></p>
+  <h1>Session <span id="session-id"></span></h1>
+  <p id="notice" class="muted">Loading timeline…</p>
+  <table id="timeline"><thead><tr><th>Time</th><th>Type</th><th>Details</th></tr></thead><tbody></tbody></table>
+  <script>
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[char]));
+    }
+    function safeHref(url) {
+      try {
+        const parsed = new URL(url);
+        return parsed.protocol === "https:" && parsed.host === "github.com" ? parsed.href : null;
+      } catch (e) {
+        return null;
+      }
+    }
+    // The hub normalises the tool list (row.tools); the page only escapes and lists it.
+    function toolCalls(view) {
+      const rows = view && Array.isArray(view.calls) ? view : {calls: [], truncated: false};
+      const truncated = rows.truncated
+        ? '<p class="muted">Tool list truncated.</p>'
+        : "";
+      if (!rows.calls.length) return truncated;
+      return "<ul>" + rows.calls.map(call => {
+        const error = call.error;
+        return `<li class="${error ? "error" : ""}">${esc(call.tool)} ${esc(call.target)}${error ? " — " + esc(error) : ""}</li>`;
+      }).join("") + "</ul>" + truncated;
+    }
+
+    function describe(row) {
+      const payload = row.payload || {};
+      const inner = payload.payload && typeof payload.payload === "object" ? payload.payload : {};
+      if (payload.type === "lane.run") {
+        const usage = inner.usage || payload.usage || {};
+        return `role=${esc(inner.role || payload.role)} provider=${esc(inner.vendor || inner.provider || payload.vendor)} ` +
+          `model=${esc(inner.model || payload.model)} status=${esc(inner.status || payload.status)} ` +
+          `tokens=${esc(usage.input_tokens || 0)}/${esc(usage.output_tokens || 0)}` + toolCalls(row.tools);
+      }
+      if (row.table === "task") {
+        const coordinator = payload.coordinator || {};
+        const a38 = payload.a38 || {};
+        return `state=${esc(payload.state)} phase=${esc(coordinator.phase || payload.phase)} ` +
+          `blocker=${esc(coordinator.blocker || payload.blocker)} guard=${esc(a38.guard_status || payload.guard_status)}`;
+      }
+      if (["local_check", "review_gate", "checklist_item"].includes(row.table)) {
+        return `result=${esc(payload.result || payload.status || payload.state)} head=${esc(payload.head || payload.head_sha || payload.commit)}`;
+      }
+      if (payload.type === "assignment.created" || payload.type === "assignment.reply") {
+        const label = `${inner.repo || "issue"}${inner.number ? "#" + inner.number : ""}`;
+        const href = safeHref(inner.url);
+        return `${href ? `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label)} — ${esc(payload.type)}`;
+      }
+      return `<code>${esc(JSON.stringify(payload))}</code>`;
+    }
+
+    function showSignedOut() {
+      const notice = document.getElementById("notice");
+      notice.classList.add("error");
+      const link = document.createElement("a");
+      link.href = "/";
+      link.textContent = "sign in on the dashboard";
+      notice.replaceChildren("Signed out — ", link);
+    }
+
+    async function load() {
+      const notice = document.getElementById("notice");
+      try {
+        const sessionId = new URLSearchParams(location.search).get("id");
+        if (!sessionId) throw new Error("Invalid session id.");
+        document.getElementById("session-id").textContent = sessionId;
+        const response = await fetch(`/api/session-timeline?id=${encodeURIComponent(sessionId)}`);
+        if (response.status === 401) {
+          showSignedOut();
+          return;
+        }
+        if (!response.ok) throw new Error(response.status === 404 ? "Session not found." : "HTTP " + response.status);
+        const data = await response.json();
+        const rows = data.timeline || [];
+        document.querySelector("#timeline tbody").innerHTML = rows.map(row => `<tr>
+          <td>${esc(row.at)}</td><td>${esc(row.table)}</td><td>${describe(row)}</td>
+        </tr>`).join("") || "<tr><td colspan='3'>No timeline rows.</td></tr>";
+        notice.classList.remove("error");
+        notice.textContent = data.truncated
+          ? "Showing the newest 5,000 rows (oldest first)"
+          : `${rows.length} rows, oldest first.`;
+      } catch (error) {
+        notice.classList.add("error");
+        notice.textContent = String(error);
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

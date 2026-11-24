@@ -1,0 +1,51 @@
+{
+  "name": "e2e-16-usage-api-key",
+  "description": "E2E-16 step 2: an API-key session with model claude-sonnet-5-5 (Anthropic-shaped answers without cost: the runner prices the tokens at the catalog list price).",
+  "steps": [
+    {
+      "id": "e2e-16-usage-api-key-answer",
+      "expect": {
+        "user_text_contains": "E2E16-APIKEY",
+        "has_tools": true,
+        "has_tool_result": false,
+        "model": "claude-sonnet-5-5"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "API key answer kz16-apikey-h3m9q5."
+          }
+        ],
+        "usage": {
+          "input_tokens": 52000,
+          "cache_read_input_tokens": 10000,
+          "cache_creation_input_tokens": 2000,
+          "output_tokens": 800
+        }
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "e2e-16-usage-api-key-title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Usage"
+          }
+        ],
+        "usage": {
+          "input_tokens": 52000,
+          "cache_read_input_tokens": 10000,
+          "cache_creation_input_tokens": 2000,
+          "output_tokens": 800
+        }
+      }
+    }
+  ]
+}

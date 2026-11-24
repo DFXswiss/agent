@@ -1,0 +1,479 @@
+{
+  "name": "e2e-22-formal-checks",
+  "description": "E2E-22: formal checks and duplicates of operations against the GitHub double: the same comment twice (duplicate, one POST), the same comment again with a new idempotency key (duplicate), an idempotency key reused with another body (rejected, params_invalid), an unknown type, a repository outside the allow-list, a protected branch, a repository the GitHub connection cannot reach, a branch whose ref creation first meets a 502 (retried inside the operation), two commits on one parent and the push of the older one after the newer (non_fast_forward), a commit with a token-shaped secret and a pull request that is already open. Each step checks the previous result.",
+  "steps": [
+    {
+      "id": "comment",
+      "expect": {
+        "user_text_contains": "E2E22-CHECKS",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Commenting once, then again."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1,
+                "body": "Looks good kz22-comment-a"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "comment-again",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1,
+                "body": "Looks good kz22-comment-a"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "rekeyed",
+      "expect": {
+        "tool_result_contains": "\"status\":\"duplicate\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1,
+                "body": "Looks good kz22-comment-a"
+              },
+              "idempotency_key": "kz22-idem-0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "keyed",
+      "expect": {
+        "tool_result_contains": "\"status\":\"duplicate\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1,
+                "body": "First keyed kz22-key-a"
+              },
+              "idempotency_key": "kz22-idem-1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "keyed-again",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "octo-org/hello",
+                "number": 1,
+                "body": "Second keyed kz22-key-b"
+              },
+              "idempotency_key": "kz22-idem-1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-type",
+      "expect": {
+        "tool_result_contains": "\"params_invalid\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "shell.exec",
+              "params": {
+                "command": "git push --force"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "not-allowed",
+      "expect": {
+        "tool_result_contains": "\"unknown_type\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_branch",
+              "params": {
+                "repo": "octo-org/other",
+                "branch": "e2e22/x",
+                "from": "main"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "protected",
+      "expect": {
+        "tool_result_contains": "\"repo_not_allowed\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_branch",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "release/9",
+                "from": "main"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "not-accessible",
+      "expect": {
+        "tool_result_contains": "\"branch_protected\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "octo-org/hidden"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "checkout",
+      "expect": {
+        "tool_result_contains": "\"repo_not_accessible\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "octo-org/hello"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "branch-after-5xx",
+      "expect": {
+        "tool_result_contains": "\"dir\":\"repos/octo-org/hello\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_branch",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e22/work",
+                "from": "main"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "write-first",
+      "expect": {
+        "tool_result_contains": "\"branch\":\"e2e22/work\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/octo-org/hello/NOTES.md",
+              "content": "First notes kz22-file-a\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "commit-first",
+      "expect": {
+        "tool_result_is_error": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e22/work",
+                "message": "Add the first notes."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "write-second",
+      "expect": {
+        "tool_result_contains": "\"files_changed\":1"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/octo-org/hello/NOTES.md",
+              "content": "Second notes kz22-file-b\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "commit-second",
+      "expect": {
+        "tool_result_is_error": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e22/work",
+                "message": "Add the second notes."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push-second",
+      "expect": {
+        "tool_result_contains": "\"files_changed\":1"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e22/work",
+                "commit_sha": "${second}"
+              }
+            }
+          }
+        ]
+      },
+      "capture": {
+        "second": {
+          "regex": "\"commit_sha\":\"[0-9a-f]{40}\",\"files_changed\"[\\s\\S]*\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"",
+          "source": "messages"
+        }
+      }
+    },
+    {
+      "id": "push-first",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/octo-org/hello/tree/e2e22/work\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e22/work",
+                "commit_sha": "${first}"
+              }
+            }
+          }
+        ]
+      },
+      "capture": {
+        "first": {
+          "regex": "\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"",
+          "source": "messages"
+        }
+      }
+    },
+    {
+      "id": "write-secret",
+      "expect": {
+        "tool_result_contains": "\"non_fast_forward\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/octo-org/hello/deploy.env",
+              "content": "TOKEN=ghp_kz22Fake00000000\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "commit-secret",
+      "expect": {
+        "tool_result_is_error": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "e2e22/work",
+                "message": "Add the deployment settings."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "existing-pr",
+      "expect": {
+        "tool_result_contains": "\"secret_detected\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_pull_request",
+              "params": {
+                "repo": "octo-org/hello",
+                "head": "feature",
+                "base": "main",
+                "title": "Feature kz22-title-a"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "done",
+      "expect": {
+        "tool_result_contains": "\"existing\":true"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "All checks ran kz22-answer-q5w9e3r7."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Checks"
+          }
+        ]
+      }
+    }
+  ]
+}

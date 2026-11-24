@@ -1,0 +1,42 @@
+{
+  "name": "e2e-13-chat-follow-ups",
+  "description": "E2E-13: one turn with Write and Read in the workspace and an answer, then (after the session was suspended for idleness) a follow-up that Claude Code answers from the resumed conversation (--resume: the earlier turn is in the request). Canary texts for the plaintext scan.",
+  "steps": [
+    {
+      "id": "write",
+      "expect": { "user_text_contains": "E2E13-NOTES", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "I will write the notes file first." },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": { "file_path": "${cwd}/notes.md", "content": "# Notes\nkz13-file-q8v2r6t1\n" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "read",
+      "expect": { "tool_result_is_error": false, "tool_result_contains": "notes.md" },
+      "reply": { "content": [{ "type": "tool_use", "name": "Read", "input": { "file_path": "${cwd}/notes.md" } }] }
+    },
+    {
+      "id": "answer",
+      "expect": { "tool_result_is_error": false, "tool_result_contains": "kz13-file-q8v2r6t1" },
+      "reply": { "content": [{ "type": "text", "text": "The notes file holds kz13-answer-m4k7w2c9." }] }
+    },
+    {
+      "id": "follow-up",
+      "expect": { "user_text_contains": "E2E13-FOLLOW", "has_tool_result": false, "min_messages": 7 },
+      "reply": { "content": [{ "type": "text", "text": "Resumed: notes.md still holds kz13-file-q8v2r6t1." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Notes" }] }
+    }
+  ]
+}

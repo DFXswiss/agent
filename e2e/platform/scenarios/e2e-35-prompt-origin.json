@@ -1,0 +1,23 @@
+{
+  "name": "e2e-35-prompt-origin",
+  "description": "E2E-35: two platform prompts of one session reach the model; text typed straight into the pane and a repeat of the already used first prompt are refused by the prompt-origin hook and never reach the model (no step for them).",
+  "steps": [
+    {
+      "id": "first",
+      "expect": { "user_text_contains": "E2E35-FIRST", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": { "content": [{ "type": "text", "text": "First platform prompt kz35-answer-a1f6u3e8." }] }
+    },
+    {
+      "id": "second",
+      "expect": { "user_text_contains": "E2E35-SECOND", "has_tool_result": false, "min_messages": 3 },
+      "reply": { "content": [{ "type": "text", "text": "Second platform prompt kz35-answer-z9k2o5i7." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Origin" }] }
+    }
+  ]
+}

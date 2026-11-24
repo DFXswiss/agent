@@ -1,0 +1,676 @@
+{
+  "description": "Endpoint tables of 03-api.md quoted by CTR-01: section 4 (browser, anonymous, root-signed), section 5 (/v1/stream), section 6.1 (device API; '/v1/device/pull' is 'device:wg / org') and 6.2 (/v1/device/ws). Rights: the vocabulary of 03-api.md section 3 plus the special cases of the tables. Further packages add their own file spec/endpoints-<package>.json; tests/platform/contracts/test_index.py checks INDEX.json against the union.",
+  "rights": [
+    "anon",
+    "device",
+    "device:any",
+    "device:org",
+    "device:session",
+    "device:wg",
+    "device_addressed",
+    "device_eligible",
+    "invite_proof",
+    "org:admin",
+    "org:member",
+    "owner",
+    "per_entry_type",
+    "per_event_kind",
+    "platform:inviter",
+    "root",
+    "task:read",
+    "task:write",
+    "user",
+    "wg:read",
+    "wg:write"
+  ],
+  "auth": [
+    "anon",
+    "anon_or_browser",
+    "browser",
+    "device",
+    "device_enroll",
+    "root"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/health",
+      "rights": [
+        "anon"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/config",
+      "rights": [
+        "anon"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/invites/lookup",
+      "rights": [
+        "anon"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/passkeys/register/begin",
+      "rights": [
+        "anon",
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/passkeys/register/finish",
+      "rights": [
+        "anon",
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/passkeys/login/begin",
+      "rights": [
+        "anon"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/passkeys/login/finish",
+      "rights": [
+        "anon"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/recovery/begin",
+      "rights": [
+        "anon"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/recovery/finish",
+      "rights": [
+        "anon"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/session/end",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/bundles/recovery",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/me/bundles/{slot}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/passkeys/{credential_id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/me/settings",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/devices",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/quotas",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/orgs/{org}/invites",
+      "rights": [
+        "org:admin"
+      ],
+      "section": "4.2"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/invites",
+      "rights": [
+        "org:admin"
+      ],
+      "section": "4.2"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/orgs/{org}/invites/{id}/revoke",
+      "rights": [
+        "org:admin"
+      ],
+      "section": "4.2"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/platform/invites",
+      "rights": [
+        "platform:inviter"
+      ],
+      "section": "4.2"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/invites",
+      "rights": [
+        "platform:inviter"
+      ],
+      "section": "4.2"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/platform/invites/{id}/revoke",
+      "rights": [
+        "platform:inviter"
+      ],
+      "section": "4.2"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/orgs",
+      "rights": [
+        "user"
+      ],
+      "section": "4.3"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.3"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/log",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.3"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/orgs/{org}/log",
+      "rights": [
+        "per_entry_type"
+      ],
+      "section": "4.3"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/wraps",
+      "rights": [
+        "user"
+      ],
+      "section": "4.3"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/wraps",
+      "rights": [
+        "user"
+      ],
+      "section": "4.3"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/catch-up",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.3"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/log",
+      "rights": [
+        "user"
+      ],
+      "section": "4.3"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/platform/log",
+      "rights": [
+        "root"
+      ],
+      "section": "4.3"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/enrollments",
+      "rights": [
+        "root"
+      ],
+      "section": "4.3"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/events",
+      "rights": [
+        "per_event_kind"
+      ],
+      "section": "4.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/scopes/{scope_id}/events",
+      "rights": [
+        "org:member",
+        "wg:read"
+      ],
+      "section": "4.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}",
+      "rights": [
+        "wg:read"
+      ],
+      "section": "4.5"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/device-candidates",
+      "rights": [
+        "wg:write"
+      ],
+      "section": "4.5"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/devices",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.5"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks",
+      "rights": [
+        "wg:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/tasks",
+      "rights": [
+        "wg:read"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task}",
+      "rights": [
+        "task:read"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{task}/prompts",
+      "rights": [
+        "task:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{task}/close",
+      "rights": [
+        "task:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session}/control",
+      "rights": [
+        "task:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session}",
+      "rights": [
+        "task:read"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task}/operations",
+      "rights": [
+        "task:read"
+      ],
+      "section": "4.7"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/operations/{id}",
+      "rights": [
+        "task:read"
+      ],
+      "section": "4.7"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/credentials",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/credentials/{kind}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/me/credentials/{kind}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/me/credentials/{kind}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/me/credentials/rotate",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/whiteboards",
+      "rights": [
+        "org:member",
+        "wg:read"
+      ],
+      "section": "4.9"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/whiteboards/{entry}/history",
+      "rights": [
+        "org:member",
+        "wg:read"
+      ],
+      "section": "4.9"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notifications",
+      "rights": [
+        "user"
+      ],
+      "section": "4.9"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/notifications/read",
+      "rights": [
+        "user"
+      ],
+      "section": "4.9"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device-requests",
+      "rights": [
+        "user"
+      ],
+      "section": "4.10"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device-requests/{id}",
+      "rights": [
+        "owner"
+      ],
+      "section": "4.10"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/monitoring/overview",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.11"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/monitoring/series",
+      "rights": [
+        "org:member",
+        "wg:read"
+      ],
+      "section": "4.11"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/audit",
+      "rights": [
+        "org:admin",
+        "org:member"
+      ],
+      "section": "4.11"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/audit/verify",
+      "rights": [
+        "org:admin"
+      ],
+      "section": "4.11"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/stream",
+      "rights": [
+        "org:member"
+      ],
+      "section": "5"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/enroll",
+      "rights": [
+        "invite_proof"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/state",
+      "rights": [
+        "device:any"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/outbox",
+      "rights": [
+        "device"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/pull",
+      "rights": [
+        "device:wg",
+        "device:org"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/workgroups/{wg}/tasks",
+      "rights": [
+        "device:wg"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/tasks/{task}",
+      "rights": [
+        "device:wg"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/logs",
+      "rights": [
+        "device"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/platform-log",
+      "rights": [
+        "device"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/wraps",
+      "rights": [
+        "device"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/wraps",
+      "rights": [
+        "device"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/operations",
+      "rights": [
+        "device:session"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/credentials/{owner}/{kind}",
+      "rights": [
+        "device_eligible"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/device/credentials/{owner}/{kind}",
+      "rights": [
+        "device_eligible"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/requests/{id}",
+      "rights": [
+        "device_addressed"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/requests/{id}/responses",
+      "rights": [
+        "device_addressed"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/ws",
+      "rights": [
+        "device"
+      ],
+      "section": "6.2"
+    }
+  ]
+}

@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent</title>
+  <meta name="description" content="Team session store. Sign in with GitHub.">
+  <meta name="theme-color" content="#f4f1ea">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem("agent-theme") === "dark") {
+          document.documentElement.setAttribute("data-theme", "dark");
+          var m = document.querySelector('meta[name="theme-color"]');
+          if (m) m.setAttribute("content", "#161513");
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="canonical" href="__PUBLIC_URL__/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="DFX">
+  <meta property="og:title" content="Agent">
+  <meta property="og:description" content="Team session store. Sign in with GitHub.">
+  <meta property="og:url" content="__PUBLIC_URL__/">
+  <meta property="og:image" content="__PUBLIC_URL__/og.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="DFX Agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@DFX_Swiss">
+  <meta name="twitter:title" content="Agent">
+  <meta name="twitter:description" content="Team session store. Sign in with GitHub.">
+  <meta name="twitter:image" content="__PUBLIC_URL__/og.png">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f1ea; --fg: #1a1a1a; --muted: #555;
+      --btn-bg: #1a1a1a; --btn-fg: #fff;
+      --btn-secondary-bg: #fff; --btn-secondary-fg: #1a1a1a; --btn-secondary-border: #ccc;
+      --surface: #fff; --surface-border: #ddd; --table-rule: #eee; --th: #efeae0; --hover: #f8f4ec;
+      --ok: #0b5; --warn: #c60; --bad: #c00;
+      --input-bg: #fff; --input-border: #ccc; --input-fg: #1a1a1a;
+      --term-bg: #1a1a1a; --term-fg: #e8e6e1; --meta: #444;
+      --switch-track: #ddd; --switch-border: #ccc; --switch-thumb: #1a1a1a;
+      font-family: ui-sans-serif, system-ui, sans-serif; color: var(--fg); background: var(--bg);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #161513; --fg: #eceae4; --muted: #a8a39a;
+      --btn-bg: #eceae4; --btn-fg: #161513;
+      --btn-secondary-bg: transparent; --btn-secondary-fg: #eceae4; --btn-secondary-border: #716d64;
+      --surface: #1f1e1b; --surface-border: #716d64; --table-rule: #716d64; --th: #1a1916; --hover: #2a2824;
+      --ok: #7dce9a; --warn: #e6b35c; --bad: #f5516c;
+      --input-bg: #1f1e1b; --input-border: #716d64; --input-fg: #eceae4;
+      --term-bg: #0e0d0b; --term-fg: #eceae4; --meta: #a8a39a;
+      --switch-track: #2a2824; --switch-border: #716d64; --switch-thumb: #eceae4;
+    }
+    body { margin: 24px; max-width: 1100px; }
+    h1 { font-size: 1.4rem; margin: 0 0 4px; }
+    .title-bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 4px; }
+    .title-bar h1 { margin: 0; }
+    button.theme-switch {
+      margin-left: auto; background: transparent; color: inherit; border: 0;
+      padding: 0; width: 46px; height: 26px; border-radius: 999px; position: relative;
+    }
+    button.theme-switch:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
+    .theme-switch-track {
+      display: block; width: 46px; height: 26px; border-radius: 999px;
+      background: var(--switch-track); border: 1px solid var(--switch-border);
+      position: relative; transition: background 0.2s, border-color 0.2s;
+    }
+    .theme-switch-icon {
+      position: absolute; top: 5px; width: 14px; height: 14px; color: var(--muted);
+    }
+    .theme-switch-sun { left: 6px; }
+    .theme-switch-moon { right: 6px; }
+    .theme-switch-thumb {
+      position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%;
+      background: var(--switch-thumb); box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+      transition: transform 0.2s ease;
+    }
+    html[data-theme="dark"] .theme-switch-thumb { transform: translateX(20px); }
+    .sub { color: var(--muted); margin-bottom: 16px; }
+    .bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 20px; }
+    button, a.btn { background: var(--btn-bg); color: var(--btn-fg); border: 0; border-radius: 6px; padding: 8px 14px; text-decoration: none; cursor: pointer; font-size: 0.95rem; }
+    button.secondary { background: var(--btn-secondary-bg); color: var(--btn-secondary-fg); border: 1px solid var(--btn-secondary-border); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .kpis { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+    .kpi { background: var(--surface); border: 1px solid var(--surface-border); border-radius: 8px; padding: 12px 16px; min-width: 140px; }
+    .kpi b { display: block; font-size: 1.6rem; }
+    table { width: 100%; border-collapse: collapse; background: var(--surface); margin-bottom: 24px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--table-rule); font-size: 0.92rem; }
+    th { background: var(--th); }
+    tr.session-row { cursor: pointer; }
+    tr.session-row:hover { background: var(--hover); }
+    .working, .implementing { color: var(--ok); font-weight: 600; }
+    .reviewing, .pr-review { color: var(--warn); font-weight: 600; }
+    .failed { color: var(--bad); font-weight: 600; }
+    .draft { color: var(--warn); font-weight: 600; }
+    .open { color: var(--ok); font-weight: 600; }
+    #err, #action-err { color: var(--bad); }
+    .hidden { display: none; }
+    input, select, textarea { padding: 6px 8px; border: 1px solid var(--input-border); border-radius: 4px; font: inherit; background: var(--input-bg); color: var(--input-fg); }
+    label { display: block; margin: 8px 0; }
+    #term {
+      background: var(--term-bg); color: var(--term-fg); padding: 12px; border-radius: 8px;
+      min-height: 200px; max-height: 400px; overflow: auto; white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem;
+    }
+    #session-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+    #session-meta { color: var(--meta); font-size: 0.92rem; }
+    #device-offline { color: var(--warn); font-weight: 600; margin: 0; }
+    .agent-card { background: var(--surface); border: 1px solid var(--surface-border); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+    .agent-card h3 { margin-top: 0; }
+    .agent-card textarea { width: min(100%, 760px); min-height: 100px; box-sizing: border-box; }
+    .assignment { border-top: 1px solid var(--table-rule); margin-top: 12px; padding-top: 12px; }
+    .comments { margin: 8px 0; padding-left: 20px; }
+    .assignment-failure { background: var(--surface); border: 2px solid var(--bad); border-radius: 6px; padding: 12px; font-weight: 700; }
+    .assignment-failure a { color: var(--bad); }
+  </style>
+</head>
+<body>
+  <div class="title-bar">
+    <h1>Agent</h1>
+    <button type="button" class="theme-switch" id="theme-toggle" role="switch" aria-checked="false" aria-label="Dark mode">
+      <span class="theme-switch-track" aria-hidden="true">
+        <svg class="theme-switch-icon theme-switch-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+        </svg>
+        <svg class="theme-switch-icon theme-switch-moon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M16.5 3.1A9 9 0 1 0 21 14.4 7 7 0 0 1 16.5 3.1z"/>
+        </svg>
+        <span class="theme-switch-thumb"></span>
+      </span>
+    </button>
+  </div>
+  <p class="sub">Team session store. Sign in with GitHub. <span id="stamp"></span></p>
+
+  <div id="signed-out" class="bar">
+    <a class="btn" id="signin" href="/auth/github">Sign in with GitHub</a>
+  </div>
+  <p id="err" hidden></p>
+
+  <div id="signed-in" class="hidden">
+    <p id="action-err" hidden></p>
+    <div class="bar">
+      <span>Signed in as <b id="who"></b></span>
+      <span>Teams: <span id="team-list">—</span></span>
+      <button class="secondary" id="logout" type="button">Sign out</button>
+    </div>
+    <div id="pair-box" class="hidden">
+      <p>Confirm pairing this device.</p>
+      <label>Pair as <select id="pair-as"></select></label>
+      <button type="button" id="confirm-pair">Pair this device</button>
+      <p id="pair-msg"></p>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><span>Open PRs</span><b id="k-prs">–</b></div>
+      <div class="kpi"><span>Visible people</span><b id="k-people">–</b></div>
+      <div class="kpi"><span>Open tasks</span><b id="k-tasks">–</b></div>
+      <div class="kpi"><span>Working agents</span><b id="k-agents">–</b></div>
+      <div class="kpi"><span>Open pings</span><b id="k-pings">–</b></div>
+      <div class="kpi"><span>Total tokens (input + output + cache read + cache create)</span><b id="k-usage">–</b></div>
+    </div>
+    <h2>Pull requests</h2>
+    <p class="sub" id="prs-sub">Open PRs authored or assigned to people you can see.</p>
+    <table id="prs"><thead><tr><th>Author</th><th>Org</th><th>Repo</th><th>PR</th><th>Description</th><th>Status</th></tr></thead><tbody></tbody></table>
+    <h2>Usage</h2>
+    <h3>Lane tokens</h3>
+    <table id="lane-usage">
+      <thead>
+        <tr>
+          <th>Owner</th><th>Session</th><th>Provider</th><th>Model</th><th>Runs</th>
+          <th>Input</th><th>Output</th><th>Cache read</th><th>Cache create</th><th>Last</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <h3>OpenRouter accounts</h3>
+    <table id="account-usage"><thead><tr><th>Owner</th><th>Account</th><th>Used</th><th>Daily</th><th>Weekly</th><th>Monthly</th><th>Limit</th><th>Remaining</th><th>Fetched</th></tr></thead><tbody></tbody></table>
+    <h3>Grok</h3>
+    <table id="usage"><thead><tr><th>Owner</th><th>Email</th><th>Provider</th><th>Tier</th><th>Used</th><th>Reset</th><th>Fetched</th></tr></thead><tbody></tbody></table>
+    <section id="agents-section" class="hidden">
+      <h2>Agents</h2>
+      <div id="agents-list"></div>
+    </section>
+    <h2>Sessions</h2>
+    <table id="sessions"><thead><tr><th>Owner</th><th>Id</th><th>Kind</th><th>Status</th><th>Host</th><th>Last seen</th><th>Control</th></tr></thead><tbody></tbody></table>
+    <div id="session-detail" class="hidden">
+      <div class="bar">
+        <h2 style="margin:0">Session</h2>
+        <button type="button" class="secondary" id="session-close">Close</button>
+      </div>
+      <p id="session-meta"></p>
+      <pre id="term"></pre>
+      <p id="session-watch-msg" class="hidden">Watching — this session is on another device.</p>
+      <p id="device-offline" class="hidden">device offline</p>
+      <div id="session-controls" class="hidden">
+        <button type="button" id="ctrl-start">Start</button>
+        <button type="button" id="ctrl-start-grok">Start Grok</button>
+        <button type="button" id="ctrl-stop">Stop</button>
+        <input id="ctrl-input" type="text" placeholder="type input" autocomplete="off">
+        <button type="button" id="ctrl-send">Send</button>
+        <button type="button" id="ctrl-c">Ctrl-C</button>
+      </div>
+    </div>
+    <h2>Send a ping</h2>
+    <form id="ping-form">
+      <label>To <input name="to" required placeholder="github-login"></label>
+      <label>Kind
+        <select name="kind">
+          <option value="review-request">review-request</option>
+          <option value="ping">ping</option>
+          <option value="question">question</option>
+        </select>
+      </label>
+      <label>Task id <input name="task_id" placeholder="optional uuid"></label>
+      <label>Note <input name="body" placeholder="optional"></label>
+      <button type="submit">Send</button>
+    </form>
+    <h2>Tasks</h2>
+    <table id="tasks"><thead><tr><th>Owner</th><th>Title</th><th>State</th><th>Round</th><th>Workflow</th></tr></thead><tbody></tbody></table>
+    <h2>Pings</h2>
+    <table id="pings"><thead><tr><th>From</th><th>To</th><th>Kind</th><th>Task</th><th>Acked</th><th></th></tr></thead><tbody></tbody></table>
+    <h2>Devices</h2>
+    <table id="devices"><thead><tr><th>Owner</th><th>Name</th><th>Id</th><th>Created</th><th>Confirmed by</th></tr></thead><tbody></tbody></table>
+  </div>
+  <script>
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+    }
+    function safeHref(url) {
+      try {
+        const parsed = new URL(url);
+        return parsed.protocol === "https:" && parsed.host === "github.com" ? parsed.href : null;
+      } catch (e) {
+        return null;
+      }
+    }
+    (function themeToggle() {
+      const KEY = "agent-theme";
+      const root = document.documentElement;
+      const btn = document.getElementById("theme-toggle");
+      const meta = document.querySelector('meta[name="theme-color"]');
+      function current() {
+        return root.getAttribute("data-theme") === "dark" ? "dark" : "light";
+      }
+      function apply(t) {
+        if (t === "dark") root.setAttribute("data-theme", "dark");
+        else root.removeAttribute("data-theme");
+        if (meta) meta.setAttribute("content", t === "dark" ? "#161513" : "#f4f1ea");
+        if (btn) btn.setAttribute("aria-checked", t === "dark" ? "true" : "false");
+      }
+      apply(current());
+      if (btn) {
+        btn.addEventListener("click", function () {
+          const next = current() === "dark" ? "light" : "dark";
+          try { localStorage.setItem(KEY, next); } catch (e) {}
+          apply(next);
+        });
+      }
+    })();
+    const params = new URLSearchParams(location.search);
+    const challenge = params.get("challenge");
+    if (challenge) {
+      document.getElementById("signin").href = "/auth/github?next=" + encodeURIComponent("/pair?challenge=" + challenge);
+    }
+
+    let openSessionId = null;
+    let sessionOpenGeneration = 0;
+    let termEs = null;
+    let openCanControl = false;
+    let renderGen = 0;
+    let stateInflight = null;
+    let stateGen = 0;
+    let prsInflight = null;
+    let prsGen = 0;
+    let usageInflight = null;
+    let usageGen = 0;
+    let usageLastStartedAt = 0;
+    let agentRenderGen = 0;
+    let agentSessionEpoch = 0;
+    let latestAgentState = {};
+    let assignmentOwnersKey = "";
+    const ASSIGNMENT_REFRESH_MS = 15000;
+    const ASSIGNMENT_LOAD_TIMEOUT_MS = 20000;
+    const assignmentLoads = new Map();
+    const assignmentResults = new Map();
+    const assignmentCompletedAt = new Map();
+    const assignmentInvalidations = new Map();
+    const agentPostControllers = new Set();
+    const agentFormsInFlight = new Set();
+    const partialAssignmentLocks = new Map();
+
+    async function me() {
+      const res = await fetch("/auth/me");
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    }
+
+    function abortHubFetches() {
+      const s = stateInflight; stateInflight = null;
+      const p = prsInflight; prsInflight = null;
+      const u = usageInflight; usageInflight = null;
+      if (s) s.ctl.abort();
+      if (p) p.ctl.abort();
+      if (u) u.ctl.abort();
+    }
+
+    function abortAssignmentLoads() {
+      assignmentLoads.forEach(load => load.controller.abort());
+      assignmentLoads.clear();
+      assignmentResults.clear();
+      assignmentCompletedAt.clear();
+      assignmentInvalidations.clear();
+      partialAssignmentLocks.clear();
+      ++agentRenderGen;
+    }
+
+    // Pair selector: the signed-in login first, then the owned agents (sorted by the hub).
+    function pairChoices(user) {
+      return [user.login].concat(user.owned_agents || []);
+    }
+
+    function fillPairSelect(select, user) {
+      const choices = pairChoices(user);
+      const selected = select.value;
+      select.innerHTML = choices.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join("");
+      if (choices.includes(selected)) select.value = selected;
+    }
+
+    function pairConfirmPayload(challenge, selected, login) {
+      const payload = { challenge };
+      if (selected && selected !== login) payload.as_login = selected;
+      return payload;
+    }
+
+    function clearError() {
+      const err = document.getElementById("err");
+      err.hidden = true;
+      err.textContent = "";
+    }
+
+    // Assignment and reply errors live in their own element: a successful state poll
+    // clears only #err, so an action error stays until the next action succeeds.
+    function clearActionError() {
+      const err = document.getElementById("action-err");
+      err.hidden = true;
+      err.textContent = "";
+    }
+
+    function expireAssignmentLoad(agent) {
+      const current = assignmentLoads.get(agent);
+      if (current) {
+        current.controller.abort();
+        assignmentLoads.delete(agent);
+      }
+      assignmentResults.delete(agent);
+      assignmentCompletedAt.delete(agent);
+      assignmentInvalidations.set(agent, (assignmentInvalidations.get(agent) || 0) + 1);
+    }
+
+    function assignmentOwnerSetKey(agents) {
+      return Array.from(new Set(Array.isArray(agents) ? agents : [])).sort().join("\u0000");
+    }
+
+    function agentCardOrder(agents) {
+      return Array.isArray(agents) ? agents.slice() : [];
+    }
+
+    function agentCardState(result) {
+      if (!result || result.loading) return { kind: "loading", message: "Loading assignments…" };
+      if (result.error) {
+        return {
+          kind: result.error === "Timed out loading assignments." ? "timeout" : "error",
+          message: "Could not load assignments: " + result.error,
+        };
+      }
+      return { kind: "success", message: "" };
+    }
+
+    function clearHubTables() {
+      ++agentRenderGen;
+      ++agentSessionEpoch;
+      clearActionError();
+      agentPostControllers.forEach(ctl => ctl.abort());
+      agentPostControllers.clear();
+      agentFormsInFlight.clear();
+      usageLastStartedAt = 0;
+      latestAgentState = {};
+      window.__ownedAgents = [];
+      assignmentOwnersKey = "";
+      partialAssignmentLocks.clear();
+      document.getElementById("k-tasks").textContent = "–";
+      document.getElementById("k-agents").textContent = "–";
+      document.getElementById("k-pings").textContent = "–";
+      document.getElementById("k-prs").textContent = "–";
+      document.getElementById("k-usage").textContent = "–";
+      document.getElementById("prs-sub").textContent = "Open PRs authored or assigned to people you can see.";
+      document.getElementById("stamp").textContent = "";
+      fillSessions([]);
+      fillUsage([]);
+      fillLaneUsage([]);
+      fillAccountUsage([]);
+      fill("tasks", [], ["_github_login", "title", "state", "current_round", "workflow"]);
+      fill("pings", [], ["from_login", "to_login", "kind", "task_id", "acked_at", "_ack"]);
+      fill("devices", [], ["github_login", "name", "id", "created_at", "confirmed_by"]);
+      document.getElementById("agents-section").classList.add("hidden");
+      document.getElementById("agents-list").innerHTML = "";
+      document.querySelector("#prs tbody").innerHTML = "<tr><td colspan='6'>—</td></tr>";
+      closeSessionDetail();
+    }
+
+    function jsonGet(url, ctl, ms) {
+      const t = setTimeout(() => ctl.abort(), ms);
+      return fetch(url, { signal: ctl.signal }).then(res => {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      }).finally(() => clearTimeout(t));
+    }
+
+    function fillPrs(rows, source) {
+      const tb = document.querySelector("#prs tbody");
+      const sub = document.getElementById("prs-sub");
+      if (source === "none") {
+        sub.innerHTML = 'GitHub access is missing. <a href="/auth/github">Sign in with GitHub</a> again to load PRs.';
+        tb.innerHTML = "<tr><td colspan='6'>—</td></tr>";
+        return;
+      }
+      sub.textContent = "Open PRs authored or assigned to people you can see.";
+      const list = rows || [];
+      tb.innerHTML = list.map(r => {
+        const safeUrl = safeHref(r.url);
+        const href = safeUrl ? `<a href="${esc(safeUrl)}" target="_blank" rel="noopener">#${esc(r.number)}</a>` : esc(r.number);
+        return `<tr>
+          <td>${esc(r.author)}</td>
+          <td>${esc(r.org)}</td>
+          <td>${esc(r.repo)}</td>
+          <td>${href}</td>
+          <td>${esc(r.title)}</td>
+          <td class="${esc(r.status)}">${esc(r.status)}</td>
+        </tr>`;
+      }).join("") || "<tr><td colspan='6'>No open PRs for visible people.</td></tr>";
+    }
+
+    // Tables render GET /api/state as-is (newest first). Do not reverse or append.
+    function fill(id, rows, cols) {
+      const tb = document.querySelector("#" + id + " tbody");
+      tb.innerHTML = rows.map(r => "<tr>" + cols.map(c => {
+        if (c === "_ack") {
+          if (r.acked_at || r.to_login !== window.__login) return "<td></td>";
+          return `<td><button type="button" data-ack="${esc(r.id)}">Ack</button></td>`;
+        }
+        const v = r[c];
+        const cls = (c === "state" || c === "status") ? ` class="${esc(v)}"` : "";
+        return `<td${cls}>${esc(v)}</td>`;
+      }).join("") + "</tr>").join("") || "<tr><td colspan='" + cols.length + "'>—</td></tr>";
+    }
+
+    function sessionLink(value) {
+      const sessionId = typeof value === "string" ? value : "";
+      return sessionId
+        ? `<a href="/session?id=${encodeURIComponent(sessionId)}">${esc(sessionId)}</a>`
+        : esc(sessionId);
+    }
+
+    function fillSessions(sessions) {
+      const tb = document.querySelector("#sessions tbody");
+      const rows = sessions || [];
+      tb.innerHTML = rows.map(s => {
+        const ctrl = s.can_control ? "control" : "watch";
+        const status = s.status ?? "";
+        return `<tr class="session-row" data-session-id="${esc(s.id)}">
+          <td>${esc(s._github_login)}</td>
+          <td>${sessionLink(s.id)}</td>
+          <td>${esc(s.kind)}</td>
+          <td class="${esc(status)}">${esc(status)}</td>
+          <td>${esc(s.host)}</td>
+          <td>${esc(s.last_seen_at ?? s.last_seen)}</td>
+          <td>${ctrl}</td>
+        </tr>`;
+      }).join("") || "<tr><td colspan='7'>—</td></tr>";
+    }
+
+    function latestUsageRows(activities) {
+      const rows = Array.isArray(activities) ? activities : [];
+      const seen = new Set();
+      const out = [];
+      for (const row of rows) {
+        if (!row || typeof row !== "object" || row.type !== "usage.snapshot") continue;
+        const payload = row.payload || {};
+        const provider = payload.provider || payload.vendor || "";
+        const email = payload.account_email || "";
+        const key = (row._github_login || "") + "\0" + provider + "\0" + email;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(row);
+      }
+      return out;
+    }
+
+    function fillUsage(activities) {
+      const tb = document.querySelector("#usage tbody");
+      const rows = latestUsageRows(activities);
+      tb.innerHTML = rows.map(row => {
+        const payload = row.payload || {};
+        const used = typeof payload.used_percent === "number"
+          ? payload.used_percent + "%"
+          : payload.used_percent;
+        return "<tr>" +
+          "<td>" + esc(row._github_login) + "</td>" +
+          "<td>" + esc(payload.account_email) + "</td>" +
+          "<td>" + esc(payload.provider || payload.vendor) + "</td>" +
+          "<td>" + esc(payload.tier) + "</td>" +
+          "<td>" + esc(used) + "</td>" +
+          "<td>" + esc(payload.period_end) + "</td>" +
+          "<td>" + esc(payload.fetched_at) + "</td>" +
+          "</tr>";
+      }).join("") || "<tr><td colspan='7'>—</td></tr>";
+    }
+
+    function fillLaneUsage(rows) {
+      const tb = document.querySelector("#lane-usage tbody");
+      tb.innerHTML = (rows || []).map(row => {
+        return `<tr>
+        <td>${esc(row.login)}</td><td>${sessionLink(row.session_id)}</td>
+        <td>${esc(row.provider)}</td><td>${esc(row.model)}</td><td>${esc(row.runs)}</td>
+        <td>${esc(row.input_tokens)}</td><td>${esc(row.output_tokens)}</td>
+        <td>${esc(row.cache_read_input_tokens)}</td><td>${esc(row.cache_creation_input_tokens)}</td><td>${esc(row.last_at)}</td>
+      </tr>`;
+      }).join("") || "<tr><td colspan='10'>—</td></tr>";
+    }
+
+    function usd(value) {
+      return typeof value === "number" ? "$" + value.toFixed(4) : (value ?? "");
+    }
+
+    function fillAccountUsage(rows) {
+      const tb = document.querySelector("#account-usage tbody");
+      tb.innerHTML = (rows || []).map(row => `<tr>
+        <td>${esc(row.login)}</td><td>${esc(row.account)}</td><td>${esc(usd(row.usage_usd))}</td>
+        <td>${esc(usd(row.usage_daily_usd))}</td><td>${esc(usd(row.usage_weekly_usd))}</td>
+        <td>${esc(usd(row.usage_monthly_usd))}</td><td>${esc(usd(row.limit_usd))}</td>
+        <td>${esc(usd(row.limit_remaining_usd))}</td><td>${esc(row.fetched_at)}</td>
+      </tr>`).join("") || "<tr><td colspan='9'>—</td></tr>";
+    }
+
+    function agentTaskSummary(agent, state) {
+      return (state.task || []).filter(task => task._github_login === agent && task.state !== "done" && task.state !== "failed").map(task => {
+        const coordinator = task.coordinator || {};
+        const phase = coordinator.phase || task.phase || "";
+        const blocker = coordinator.blocker || task.blocker || "";
+        return `<li>${esc(task.title || task.id)} — ${esc(task.state)} / ${esc(phase)}${blocker ? " — " + esc(blocker) : ""}</li>`;
+      }).join("") || "<li>No current coordinator tasks.</li>";
+    }
+
+    function agentFormKey(form) {
+      if (form.classList.contains("assign-form")) return JSON.stringify(["assign", form.dataset.agent || ""]);
+      return JSON.stringify(["reply", form.dataset.agent || "", form.dataset.repo || "", form.dataset.number || ""]);
+    }
+
+    function pendingRequestKey(login, formKey) {
+      return "agent-core:pending:" + login + ":" + formKey;
+    }
+
+    function pendingRequestStorage() {
+      try { return sessionStorage; } catch (e) { return null; }
+    }
+
+    // Without usable storage the id already on the form is kept, so a retry in the
+    // same page still reuses it; the hub's fingerprint check refuses changed content.
+    function pendingRequestId(storage, key, payloadJson, formRequestId) {
+      const requestId = crypto.randomUUID();
+      try {
+        const raw = storage.getItem(key);
+        if (raw) {
+          let entry = null;
+          try { entry = JSON.parse(raw); } catch (e) { /* replace invalid entries */ }
+          if (entry && typeof entry.request_id === "string" && entry.request_id && entry.payload === payloadJson) return entry.request_id;
+        }
+        storage.setItem(key, JSON.stringify({ request_id: requestId, payload: payloadJson }));
+        return requestId;
+      } catch (e) {
+        return formRequestId || requestId;
+      }
+    }
+
+    function forgetPendingRequest(storage, key) {
+      try { storage.removeItem(key); } catch (e) { /* storage is optional */ }
+    }
+
+    function clearRenderedRequestIds(formKey) {
+      document.querySelectorAll("#agents-list .assign-form, #agents-list .reply-form").forEach(form => {
+        if (agentFormKey(form) === formKey) delete form.dataset.requestId;
+      });
+    }
+
+    function captureAgentDraft(drafts, key, values, requestId) {
+      return { ...drafts, [key]: { ...values, __requestId: requestId || "" } };
+    }
+
+    function restoreAgentDraft(drafts, key) {
+      const values = drafts && drafts[key];
+      return values && typeof values === "object" ? { ...values } : {};
+    }
+
+    function agentDraftFieldValue(field) {
+      return field.type === "checkbox" ? field.checked : field.value;
+    }
+
+    function restoreAgentDraftField(field, value) {
+      if (field.type === "checkbox") field.checked = value === true;
+      else field.value = value;
+    }
+
+    function captureAgentDrafts() {
+      let drafts = {};
+      document.querySelectorAll("#agents-list .assign-form, #agents-list .reply-form").forEach(form => {
+        const values = {};
+        form.querySelectorAll("input[name], textarea[name]").forEach(field => { values[field.name] = agentDraftFieldValue(field); });
+        drafts = captureAgentDraft(drafts, agentFormKey(form), values, form.dataset.requestId);
+      });
+      return drafts;
+    }
+
+    function captureAgentFocus() {
+      const field = document.activeElement;
+      const form = field && field.closest ? field.closest("#agents-list .assign-form, #agents-list .reply-form") : null;
+      if (!form || !field.name) return null;
+      return {
+        formKey: agentFormKey(form),
+        name: field.name,
+        selectionStart: typeof field.selectionStart === "number" ? field.selectionStart : null,
+        selectionEnd: typeof field.selectionEnd === "number" ? field.selectionEnd : null,
+        selectionDirection: field.selectionDirection || "none",
+      };
+    }
+
+    function restoreAgentFocus(focus) {
+      if (!focus) return;
+      const form = Array.from(document.querySelectorAll("#agents-list .assign-form, #agents-list .reply-form"))
+        .find(candidate => agentFormKey(candidate) === focus.formKey);
+      if (!form) return;
+      const field = Array.from(form.querySelectorAll("input[name], textarea[name]"))
+        .find(candidate => candidate.name === focus.name);
+      if (!field) return;
+      field.focus({ preventScroll: true });
+      if (typeof field.setSelectionRange === "function" && focus.selectionStart !== null && focus.selectionEnd !== null) {
+        field.setSelectionRange(focus.selectionStart, focus.selectionEnd, focus.selectionDirection);
+      }
+    }
+
+    function setFormBusy(form, busy) {
+      form.dataset.submitting = busy ? "true" : "false";
+      form.setAttribute("aria-disabled", busy ? "true" : "false");
+      form.inert = busy;
+      form.querySelectorAll("input, textarea, select, button").forEach(control => { control.disabled = busy; });
+    }
+
+    function applyPartialAssignmentLock(form, key, url) {
+      const result = form.querySelector(".assignment-failure");
+      const submit = form.querySelector('button[type="submit"]');
+      const message = "Issue was created but the agent assignment failed — open it instead of submitting again";
+      const href = safeHref(url);
+      if (href) {
+        const link = document.createElement("a");
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.textContent = message;
+        result.replaceChildren(link);
+      } else {
+        result.textContent = message;
+      }
+      result.hidden = false;
+      submit.disabled = true;
+      const unlock = () => {
+        partialAssignmentLocks.delete(key);
+        submit.disabled = false;
+        result.hidden = true;
+        result.replaceChildren();
+        form.removeEventListener("input", unlock);
+        form.removeEventListener("change", unlock);
+      };
+      form.addEventListener("input", unlock);
+      form.addEventListener("change", unlock);
+    }
+
+    function partialAssignmentLockUrl(failure) {
+      // Only a created issue that lost its assignee is final for this form; other
+      // failures with an issue link expect the same request id to be sent again.
+      return failure && failure.assignee_missing === true && typeof failure.url === "string" && failure.url
+        ? failure.url : null;
+    }
+
+    function assignmentCommentsHtml(a) {
+      // Without enrichment the comments were never read, so "No comments." would be wrong.
+      if (!a || a.enriched !== true) return "<li>Comments not loaded.</li>";
+      return (a.comments || []).map(c => {
+        const commentUrl = safeHref(c.url);
+        const heading = `<b>${esc(c.author)}</b> ${esc(c.created_at)}`;
+        return `<li>${commentUrl ? `<a href="${esc(commentUrl)}" target="_blank" rel="noopener">${heading}</a>` : heading}<br>${esc(c.body)}</li>`;
+      }).join("") || "<li>No comments.</li>";
+    }
+
+    function assignmentFailureText(failure) {
+      const detail = (failure && failure.detail) || "assignment failed";
+      return failure && typeof failure.url === "string" && failure.url
+        ? detail + " (" + failure.url + ")" : detail;
+    }
+
+    function restoreAgentFormState(drafts) {
+      document.querySelectorAll("#agents-list .assign-form, #agents-list .reply-form").forEach(form => {
+        const key = agentFormKey(form);
+        const values = restoreAgentDraft(drafts, key);
+        form.querySelectorAll("input[name], textarea[name]").forEach(field => {
+          if (Object.prototype.hasOwnProperty.call(values, field.name)) restoreAgentDraftField(field, values[field.name]);
+        });
+        if (values.__requestId) form.dataset.requestId = values.__requestId;
+        if (agentFormsInFlight.has(key)) setFormBusy(form, true);
+        const partialUrl = partialAssignmentLocks.get(key);
+        if (partialUrl) applyPartialAssignmentLock(form, key, partialUrl);
+      });
+    }
+
+    async function responseJson(res) {
+      try {
+        return await res.json();
+      } catch (e) {
+        return {};
+      }
+    }
+
+    function requestIdIsFinal(status, failure) {
+      if (status >= 200 && status < 300) return true;
+      return Boolean(failure && failure.request_id_final === true);
+    }
+
+    function loadAssignmentsForAgent(agent) {
+      const current = assignmentLoads.get(agent);
+      if (current) return current.promise;
+      const now = Date.now();
+      const completedAt = assignmentCompletedAt.get(agent) || 0;
+      if (assignmentResults.has(agent) && now - completedAt < ASSIGNMENT_REFRESH_MS) {
+        return Promise.resolve(assignmentResults.get(agent));
+      }
+      const controller = new AbortController();
+      const invalidation = assignmentInvalidations.get(agent) || 0;
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, ASSIGNMENT_LOAD_TIMEOUT_MS);
+      const promise = (async () => {
+        try {
+          const res = await fetch("/api/assignments?agent=" + encodeURIComponent(agent), { signal: controller.signal });
+          if (!res.ok) {
+            const failure = await responseJson(res);
+            return { assignments: [], error: failure.detail || "HTTP " + res.status };
+          }
+          let body;
+          try { body = await res.json(); } catch (e) {
+            return { assignments: [], error: String(e) };
+          }
+          if (!body || !Array.isArray(body.assignments)) {
+            return { assignments: [], error: "invalid response" };
+          }
+          return { assignments: body.assignments, error: null };
+        } catch (e) {
+          return {
+            assignments: [],
+            error: timedOut ? "Timed out loading assignments." : (e.name === "AbortError" ? "request aborted" : String(e)),
+          };
+        } finally {
+          clearTimeout(timeout);
+        }
+      })();
+      assignmentLoads.set(agent, { controller, promise });
+      promise.then(result => {
+        const active = assignmentLoads.get(agent);
+        if (!active || active.promise !== promise) return;
+        assignmentLoads.delete(agent);
+        if ((assignmentInvalidations.get(agent) || 0) !== invalidation) return;
+        if (result.error) {
+          assignmentResults.delete(agent);
+          assignmentCompletedAt.delete(agent);
+          return;
+        }
+        assignmentResults.set(agent, result);
+        assignmentCompletedAt.set(agent, Date.now());
+      });
+      return promise;
+    }
+
+    function renderAgentCards(owned, state, assignmentSets) {
+      const list = document.getElementById("agents-list");
+      const drafts = captureAgentDrafts();
+      const focus = captureAgentFocus();
+      list.innerHTML = owned.map((agent, index) => {
+        const sessions = (state.session || []).filter(s => s._github_login === agent).map(s =>
+          `<li>${sessionLink(s.id)} — ${esc(s.status)}</li>`
+        ).join("") || "<li>No sessions.</li>";
+        const assignmentResult = assignmentSets[index];
+        const cardState = agentCardState(assignmentResult);
+        const assignments = cardState.kind === "loading"
+          ? '<p class="assignment-load-state">Loading assignments…</p>'
+          : cardState.kind === "error" || cardState.kind === "timeout"
+          ? `<p class="assignment-load-error">${esc(cardState.message)}</p>`
+          : assignmentResult.assignments.map(a => {
+          const comments = assignmentCommentsHtml(a);
+          const assignmentUrl = safeHref(a.url);
+          const assignmentLabel = `${esc(a.repo)}#${esc(a.number)} — ${esc(a.title)}`;
+          return `<div class="assignment">
+            ${assignmentUrl ? `<a href="${esc(assignmentUrl)}" target="_blank" rel="noopener">${assignmentLabel}</a>` : assignmentLabel}
+            <span>${esc(a.state)}</span><ul class="comments">${comments}</ul>
+            <form class="reply-form" data-agent="${esc(agent)}" data-repo="${esc(a.repo)}" data-number="${esc(a.number)}">
+              <input name="body" required maxlength="60000" placeholder="Reply as yourself"><button type="submit">Reply</button>
+            </form>
+          </div>`;
+        }).join("") || "<p>No assignments.</p>";
+        return `<div class="agent-card"><h3>@${esc(agent)}</h3>
+          <h4>Sessions</h4><ul>${sessions}</ul><h4>Coordinator tasks</h4><ul>${agentTaskSummary(agent, state)}</ul>
+          <h4>Assign task</h4><form class="assign-form" data-agent="${esc(agent)}">
+            <label>Repository <input name="repo" required placeholder="Owner/Name"></label>
+            <label>Title <input name="title" required maxlength="256"></label>
+            <label>Body <textarea name="body" required maxlength="60000"></textarea></label>
+            <label><input type="checkbox" name="deviation" required> I authorize no deviation from the repository's contribution rules</label>
+            <button type="submit">Assign</button>
+            <p class="assignment-failure" hidden></p>
+          </form><h4>Assignments</h4>${assignments}</div>`;
+      }).join("");
+      restoreAgentFormState(drafts);
+      restoreAgentFocus(focus);
+    }
+
+    async function renderAgents(agents, state) {
+      const generation = ++agentRenderGen;
+      latestAgentState = state || {};
+      const section = document.getElementById("agents-section");
+      const list = document.getElementById("agents-list");
+      const owned = agentCardOrder(agents);
+      section.classList.toggle("hidden", owned.length === 0);
+      if (!owned.length) { list.innerHTML = ""; return; }
+      renderAgentCards(owned, latestAgentState, owned.map(agent =>
+        assignmentResults.get(agent) || { assignments: [], error: null, loading: true }
+      ));
+      const assignmentSets = await Promise.all(owned.map(loadAssignmentsForAgent));
+      if (generation !== agentRenderGen) return;
+      renderAgentCards(owned, latestAgentState, assignmentSets);
+    }
+
+    function repaintAgents() {
+      return renderAgents(window.__ownedAgents || [], latestAgentState);
+    }
+
+    function setControlEnabled(online) {
+      document.getElementById("device-offline").classList.toggle("hidden", online);
+      ["ctrl-start", "ctrl-start-grok", "ctrl-stop", "ctrl-send", "ctrl-c", "ctrl-input"].forEach(id => {
+        document.getElementById(id).disabled = !online;
+      });
+    }
+
+    function closeSessionDetail() {
+      sessionOpenGeneration += 1;
+      openSessionId = null;
+      openCanControl = false;
+      document.getElementById("session-detail").classList.add("hidden");
+      if (termEs) {
+        termEs.close();
+        termEs = null;
+      }
+      document.getElementById("term").textContent = "";
+    }
+
+    function appendTermChunk(data) {
+      try {
+        document.getElementById("term").textContent += atob(data);
+      } catch (e) { /* skip undecodable chunk */ }
+    }
+
+    async function openSession(id) {
+      // A later open or close supersedes this one; its late answer must not
+      // repaint the detail or open a second terminal stream.
+      const generation = ++sessionOpenGeneration;
+      if (termEs) {
+        termEs.close();
+        termEs = null;
+      }
+      openSessionId = id;
+      document.getElementById("term").textContent = "";
+      const res = await fetch("/api/session?id=" + encodeURIComponent(id));
+      if (generation !== sessionOpenGeneration) return;
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const s = await res.json();
+      if (generation !== sessionOpenGeneration) return;
+      document.getElementById("session-detail").classList.remove("hidden");
+      const p = s.payload || {};
+      document.getElementById("session-meta").textContent =
+        "id=" + s.id +
+        " owner=" + (s._github_login || "") +
+        " host=" + (p.host || "") +
+        " status=" + (p.status || "") +
+        " control_connected=" + s.control_connected;
+      openCanControl = !!s.can_control;
+      document.getElementById("session-watch-msg").classList.toggle("hidden", openCanControl);
+      document.getElementById("session-controls").classList.toggle("hidden", !openCanControl);
+      if (openCanControl) {
+        setControlEnabled(!!s.control_connected);
+      } else {
+        document.getElementById("device-offline").classList.add("hidden");
+      }
+      termEs = new EventSource("/api/session/terminal?id=" + encodeURIComponent(id));
+      termEs.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === "terminal" && typeof msg.data === "string") {
+            appendTermChunk(msg.data);
+          }
+        } catch (e) { /* ignore bad SSE payloads */ }
+      };
+    }
+
+    function updateOpenSessionFromState(sessions) {
+      if (!openSessionId) return;
+      const s = (sessions || []).find(x => x.id === openSessionId);
+      if (!s) return;
+      document.getElementById("session-meta").textContent =
+        "id=" + s.id +
+        " owner=" + (s._github_login || "") +
+        " host=" + (s.host || "") +
+        " status=" + (s.status || "") +
+        " control_connected=" + s.control_connected;
+      openCanControl = !!s.can_control;
+      document.getElementById("session-watch-msg").classList.toggle("hidden", openCanControl);
+      document.getElementById("session-controls").classList.toggle("hidden", !openCanControl);
+      if (openCanControl) setControlEnabled(!!s.control_connected);
+    }
+
+    async function postControl(body) {
+      if (!openSessionId) return;
+      const res = await fetch("/api/session/control?id=" + encodeURIComponent(openSessionId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        let detail = "HTTP " + res.status;
+        try {
+          const j = await res.json();
+          if (j.detail) detail = j.detail;
+        } catch (e) { /* keep status text */ }
+        const err = document.getElementById("err");
+        err.hidden = false;
+        err.textContent = detail;
+      }
+    }
+
+    async function render() {
+      const gen = ++renderGen;
+      const err = document.getElementById("err");
+      try {
+        const user = await me();
+        if (gen !== renderGen) return;
+        document.getElementById("signed-out").classList.toggle("hidden", !!user);
+        document.getElementById("signed-in").classList.toggle("hidden", !user);
+        if (!user) {
+          abortHubFetches();
+          abortAssignmentLoads();
+          clearHubTables();
+          err.hidden = true;
+          return;
+        }
+        if (window.__login && window.__login !== user.login) {
+          abortHubFetches();
+          abortAssignmentLoads();
+          clearHubTables();
+        }
+        const nextOwnerKey = assignmentOwnerSetKey(user.owned_agents || []);
+        if (assignmentOwnersKey !== nextOwnerKey) abortAssignmentLoads();
+        assignmentOwnersKey = nextOwnerKey;
+        window.__login = user.login;
+        window.__ownedAgents = user.owned_agents || [];
+        document.getElementById("who").textContent = user.login;
+        document.getElementById("team-list").textContent = user.teams.length ? user.teams.join(", ") : "none (self only)";
+        document.getElementById("k-people").textContent = (user.visible || []).length;
+        if (challenge) {
+          document.getElementById("pair-box").classList.remove("hidden");
+          fillPairSelect(document.getElementById("pair-as"), user);
+        }
+      } catch (e) {
+        if (gen !== renderGen) return;
+        abortHubFetches();
+        err.hidden = false;
+        err.textContent = String(e);
+        return;
+      }
+      kickState();
+      kickPrs();
+    }
+
+    function kickState() {
+      if (stateInflight) return stateInflight.p;
+      const stateCtl = new AbortController();
+      const gen = ++stateGen;
+      const p = jsonGet("/api/state", stateCtl, 15000);
+      stateInflight = { ctl: stateCtl, p, gen };
+      p.then(data => {
+        if (!stateInflight || stateInflight.gen !== gen) return;
+        clearError();
+        document.getElementById("stamp").textContent = data.generated_at;
+        const tasks = (data.task || []).filter(t => t.state !== "done" && t.state !== "failed");
+        const working = (data.agent || []).filter(a => a.status === "working");
+        const pings = (data.pings || []).filter(p => !p.acked_at);
+        document.getElementById("k-people").textContent = (data.visible || []).length;
+        document.getElementById("k-tasks").textContent = tasks.length;
+        document.getElementById("k-agents").textContent = working.length;
+        document.getElementById("k-pings").textContent = pings.length;
+        fillSessions(data.session || []);
+        updateOpenSessionFromState(data.session || []);
+        fill("tasks", data.task || [], ["_github_login", "title", "state", "current_round", "workflow"]);
+        fill("pings", data.pings || [], ["from_login", "to_login", "kind", "task_id", "acked_at", "_ack"]);
+        fill("devices", (data.devices || []).filter(d => !d.revoked_at), ["github_login", "name", "id", "created_at", "confirmed_by"]);
+        renderAgents(window.__ownedAgents || [], data);
+        kickUsage();
+        stateInflight = null;
+      }).catch(e => {
+        if (!stateInflight || stateInflight.gen !== gen) return;
+        const err = document.getElementById("err");
+        err.hidden = false;
+        err.textContent = e.name === "AbortError" ? "Timed out loading sessions." : String(e);
+        stateInflight = null;
+      });
+      return p;
+    }
+
+    function kickUsage() {
+      if (usageInflight) return usageInflight.p;
+      const now = Date.now();
+      if (now - usageLastStartedAt < 15000) return null;
+      usageLastStartedAt = now;
+      const usageCtl = new AbortController();
+      const gen = ++usageGen;
+      const p = jsonGet("/api/usage", usageCtl, 15000);
+      usageInflight = { ctl: usageCtl, p, gen };
+      p.then(data => {
+        if (!usageInflight || usageInflight.gen !== gen) return;
+        fillLaneUsage(data.lanes || []);
+        fillAccountUsage(data.accounts || []);
+        fillUsage(data.grok || []);
+        const tokenTotal = (data.lanes || []).reduce((sum, row) => sum +
+          (row.input_tokens || 0) + (row.output_tokens || 0) +
+          (row.cache_read_input_tokens || 0) + (row.cache_creation_input_tokens || 0), 0);
+        document.getElementById("k-usage").textContent = tokenTotal;
+        usageInflight = null;
+      }).catch(e => {
+        if (!usageInflight || usageInflight.gen !== gen) return;
+        usageInflight = null;
+      });
+      return p;
+    }
+
+    function kickPrs() {
+      if (prsInflight) return prsInflight.p;
+      const prsCtl = new AbortController();
+      const gen = ++prsGen;
+      const p = jsonGet("/api/prs", prsCtl, 25000);
+      prsInflight = { ctl: prsCtl, p, gen };
+      p.then(prData => {
+        if (!prsInflight || prsInflight.gen !== gen) return;
+        const openPrs = prData.prs || [];
+        document.getElementById("k-prs").textContent = openPrs.length;
+        fillPrs(openPrs, prData.source);
+        prsInflight = null;
+      }).catch(e => {
+        if (!prsInflight || prsInflight.gen !== gen) return;
+        document.getElementById("k-prs").textContent = "–";
+        document.getElementById("prs-sub").textContent = e.name === "AbortError" ? "Timed out loading PRs." : String(e);
+        document.querySelector("#prs tbody").innerHTML = "<tr><td colspan='6'>—</td></tr>";
+        prsInflight = null;
+      });
+      return p;
+    }
+
+    document.getElementById("logout").onclick = async () => {
+      await fetch("/auth/logout", { method: "POST" });
+      location.href = "/";
+    };
+    document.getElementById("confirm-pair").onclick = async () => {
+      const payload = pairConfirmPayload(challenge, document.getElementById("pair-as").value, window.__login);
+      const res = await fetch("/pair/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json();
+      document.getElementById("pair-msg").textContent = res.ok
+        ? "Paired as " + body.login
+        : (body.detail || "pair failed");
+    };
+    document.getElementById("ping-form").onsubmit = async (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      const payload = { to: fd.get("to"), kind: fd.get("kind"), body: fd.get("body") || "" };
+      if (fd.get("task_id")) payload.task_id = fd.get("task_id");
+      const res = await fetch("/api/pings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        document.getElementById("err").hidden = false;
+        document.getElementById("err").textContent = (await res.json()).detail || "ping failed";
+        return;
+      }
+      ev.target.reset();
+      render();
+    };
+    document.getElementById("session-close").onclick = () => closeSessionDetail();
+    document.getElementById("ctrl-start").onclick = () => postControl({ action: "start" });
+    document.getElementById("ctrl-start-grok").onclick = () => postControl({ action: "start", provider: "grok" });
+    document.getElementById("ctrl-stop").onclick = () => postControl({ action: "stop" });
+    document.getElementById("ctrl-send").onclick = () => {
+      const data = document.getElementById("ctrl-input").value;
+      if (!data) return;
+      postControl({ action: "input", data });
+    };
+    document.getElementById("ctrl-c").onclick = () => postControl({ action: "input", key: "ctrl-c" });
+    document.addEventListener("submit", async (ev) => {
+      const form = ev.target;
+      if (!form || !form.classList) return;
+      if (form.classList.contains("assign-form")) {
+        ev.preventDefault();
+        const formKey = agentFormKey(form);
+        if (agentFormsInFlight.has(formKey)) return;
+        const sessionEpoch = agentSessionEpoch;
+        const login = window.__login;
+        const deviation = form.querySelector('input[name="deviation"]');
+        if (!deviation || !deviation.checked) {
+          document.getElementById("action-err").hidden = false;
+          document.getElementById("action-err").textContent = "Authorize no deviation from the repository's contribution rules before assigning.";
+          return;
+        }
+        const fd = new FormData(form);
+        const requestPayload = {
+          agent: form.dataset.agent,
+          repo: fd.get("repo"),
+          title: fd.get("title"),
+          body: fd.get("body"),
+          deviation: { declared: false },
+        };
+        const payloadJson = JSON.stringify(requestPayload);
+        const pendingKey = pendingRequestKey(login, formKey);
+        const pendingStorage = pendingRequestStorage();
+        form.dataset.requestId = pendingRequestId(pendingStorage, pendingKey, payloadJson, form.dataset.requestId);
+        const payload = { ...requestPayload, request_id: form.dataset.requestId };
+        let succeeded = false;
+        const postCtl = new AbortController();
+        const postTimeout = setTimeout(() => postCtl.abort(), 30000);
+        agentPostControllers.add(postCtl);
+        agentFormsInFlight.add(formKey);
+        setFormBusy(form, true);
+        try {
+          const res = await fetch("/api/assignments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: postCtl.signal });
+          if (!res.ok) {
+            const failure = await responseJson(res);
+            if (requestIdIsFinal(res.status, failure)) {
+              forgetPendingRequest(pendingStorage, pendingKey);
+              delete form.dataset.requestId;
+              clearRenderedRequestIds(formKey);
+            }
+            if (sessionEpoch !== agentSessionEpoch || login !== window.__login) return;
+            const partialUrl = partialAssignmentLockUrl(failure);
+            if (partialUrl) {
+              partialAssignmentLocks.set(formKey, partialUrl);
+              applyPartialAssignmentLock(form, formKey, partialUrl);
+            } else {
+              document.getElementById("action-err").hidden = false;
+              document.getElementById("action-err").textContent = assignmentFailureText(failure);
+            }
+            return;
+          }
+          if (requestIdIsFinal(res.status, {})) {
+            forgetPendingRequest(pendingStorage, pendingKey);
+            delete form.dataset.requestId;
+            clearRenderedRequestIds(formKey);
+          }
+          if (sessionEpoch !== agentSessionEpoch || login !== window.__login) return;
+          form.reset();
+          clearActionError();
+          succeeded = true;
+        } catch (e) {
+          if (sessionEpoch !== agentSessionEpoch || login !== window.__login) return;
+          document.getElementById("action-err").hidden = false;
+          document.getElementById("action-err").textContent = e.name === "AbortError"
+            ? "Request did not complete — check the assignment list before submitting again"
+            : String(e);
+          if (e.name === "AbortError") {
+            expireAssignmentLoad(form.dataset.agent);
+            await repaintAgents();
+          }
+        } finally {
+          clearTimeout(postTimeout);
+          agentPostControllers.delete(postCtl);
+          if (sessionEpoch === agentSessionEpoch && login === window.__login) {
+            agentFormsInFlight.delete(formKey);
+            setFormBusy(form, false);
+            document.querySelectorAll("#agents-list .assign-form").forEach(current => {
+              if (agentFormKey(current) === formKey) setFormBusy(current, false);
+            });
+            const partialUrl = partialAssignmentLocks.get(formKey);
+            if (partialUrl) {
+              const current = Array.from(document.querySelectorAll("#agents-list .assign-form")).find(item => agentFormKey(item) === formKey);
+              if (current && !current.querySelector(".assignment-failure a")) {
+                applyPartialAssignmentLock(current, formKey, partialUrl);
+              } else if (current) {
+                current.querySelector('button[type="submit"]').disabled = true;
+              }
+            }
+          }
+        }
+        if (succeeded) {
+          if (sessionEpoch !== agentSessionEpoch || login !== window.__login) return;
+          partialAssignmentLocks.delete(formKey);
+          expireAssignmentLoad(form.dataset.agent);
+          document.querySelectorAll("#agents-list .assign-form").forEach(current => {
+            if (agentFormKey(current) === formKey) current.reset();
+          });
+          await repaintAgents();
+        }
+        return;
+      }
+      if (form.classList.contains("reply-form")) {
+        ev.preventDefault();
+        const formKey = agentFormKey(form);
+        if (agentFormsInFlight.has(formKey)) return;
+        const sessionEpoch = agentSessionEpoch;
+        const login = window.__login;
+        const fd = new FormData(form);
+        const requestPayload = { body: fd.get("body") };
+        const payloadJson = JSON.stringify(requestPayload);
+        const pendingKey = pendingRequestKey(login, formKey);
+        const pendingStorage = pendingRequestStorage();
+        form.dataset.requestId = pendingRequestId(pendingStorage, pendingKey, payloadJson, form.dataset.requestId);
+        const parts = (form.dataset.repo || "").split("/");
+        const url = "/api/assignments/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/" + encodeURIComponent(form.dataset.number) + "/comments";
+        let succeeded = false;
+        const postCtl = new AbortController();
+        const postTimeout = setTimeout(() => postCtl.abort(), 30000);
+        agentPostControllers.add(postCtl);
+        agentFormsInFlight.add(formKey);
+        setFormBusy(form, true);
+        try {
+          const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...requestPayload, request_id: form.dataset.requestId }), signal: postCtl.signal });
+          if (!res.ok) {
+            const failure = await responseJson(res);
+            if (requestIdIsFinal(res.status, failure)) {
+              forgetPendingRequest(pendingStorage, pendingKey);
+              delete form.dataset.requestId;
+              clearRenderedRequestIds(formKey);
+            }
+            if (sessionEpoch !== agentSessionEpoch || login !== window.__login) return;
+            document.getElementById("action-err").hidden = false;
+            document.getElementById("action-err").textContent = failure.detail || "reply failed";
+            return;
+          }
+          if (requestIdIsFinal(res.status, {})) {
+            forgetPendingRequest(pendingStorage, pendingKey);
+            delete form.dataset.requestId;
+            clearRenderedRequestIds(formKey);
+          }
+          if (sessionEpoch !== agentSessionEpoch || login !== window.__login) return;
+          form.reset();
+          clearActionError();
+          succeeded = true;
+        } catch (e) {
+          if (sessionEpoch !== agentSessionEpoch || login !== window.__login) return;
+          document.getElementById("action-err").hidden = false;
+          document.getElementById("action-err").textContent = e.name === "AbortError"
+            ? "Request did not complete — check the assignment list before submitting again"
+            : String(e);
+          if (e.name === "AbortError") {
+            expireAssignmentLoad(form.dataset.agent);
+            await repaintAgents();
+          }
+        } finally {
+          clearTimeout(postTimeout);
+          agentPostControllers.delete(postCtl);
+          if (sessionEpoch === agentSessionEpoch && login === window.__login) {
+            agentFormsInFlight.delete(formKey);
+            setFormBusy(form, false);
+            document.querySelectorAll("#agents-list .reply-form").forEach(current => {
+              if (agentFormKey(current) === formKey) setFormBusy(current, false);
+            });
+          }
+        }
+        if (succeeded) {
+          if (sessionEpoch !== agentSessionEpoch || login !== window.__login) return;
+          expireAssignmentLoad(form.dataset.agent);
+          document.querySelectorAll("#agents-list .reply-form").forEach(current => {
+            if (current !== form && agentFormKey(current) === formKey) current.reset();
+          });
+          await repaintAgents();
+        }
+      }
+    });
+    document.addEventListener("click", async (ev) => {
+      const t = ev.target;
+      if (!t || !t.getAttribute) return;
+      const ack = t.getAttribute("data-ack");
+      if (ack) {
+        await fetch("/api/pings/" + ack + "/ack", { method: "POST" });
+        render();
+        return;
+      }
+      const row = t.closest && t.closest("tr.session-row");
+      if (row && row.getAttribute("data-session-id") && !(t.closest && t.closest("a"))) {
+        try {
+          await openSession(row.getAttribute("data-session-id"));
+        } catch (e) {
+          document.getElementById("err").hidden = false;
+          document.getElementById("err").textContent = String(e);
+        }
+      }
+    });
+    render();
+    setInterval(render, 2000);
+    try {
+      const es = new EventSource("/api/stream");
+      es.onmessage = () => render();
+    } catch (e) { /* dashboard still polls */ }
+  </script>
+</body>
+</html>

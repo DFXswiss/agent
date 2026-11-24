@@ -1,0 +1,21 @@
+{
+  "verifying": "Organisation wird geprüft…",
+  "blocked.title": "Dieser Einladung kann nicht vertraut werden",
+  "blocked.body": "Der Server hat eine Organisationsgeschichte geliefert, die nicht zur Einladung passt. Die Einladung wurde nicht angenommen. Bitten Sie die einladende Person um eine neue Einladung.",
+  "org-unnamed": "einer Organisation",
+  "intro.title": "Sie sind zu {org} eingeladen",
+  "intro.role": "Ihre Rolle: {role}",
+  "intro.workgroups": "Sie erhalten Zugriff auf diese Arbeitsgruppen:",
+  "role.admin": "Admin",
+  "role.member": "Mitglied",
+  "access.read": "lesen",
+  "access.write": "lesen und schreiben",
+  "workgroup.unnamed": "Arbeitsgruppe ohne Namen",
+  "existing": "Ich habe bereits ein Konto",
+  "existing.title": "Mit Ihrem bestehenden Konto {org} beitreten",
+  "existing.explain": "Melden Sie sich mit Ihrem Passkey an. Ihr bestehendes Konto tritt der Organisation bei; es wird kein neues Konto angelegt.",
+  "existing.cancelled": "Die Anmeldung wurde abgebrochen – bitte erneut versuchen.",
+  "join": "{org} beitreten",
+  "back": "Zurück",
+  "accept.working": "Beitritt zu {org}…"
+}

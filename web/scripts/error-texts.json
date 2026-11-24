@@ -1,0 +1,1382 @@
+{
+  "agent_exited": {
+    "en": {
+      "title": "Agent stopped",
+      "body": "Claude Code ended unexpectedly.",
+      "action": "Retry the task."
+    },
+    "de": {
+      "title": "Agent beendet",
+      "body": "Claude Code wurde unerwartet beendet.",
+      "action": "Starte den Task noch einmal."
+    }
+  },
+  "agent_start_failed": {
+    "en": {
+      "title": "Agent did not start",
+      "body": "Claude Code could not be started.",
+      "action": "Retry the task."
+    },
+    "de": {
+      "title": "Agent nicht gestartet",
+      "body": "Claude Code konnte nicht gestartet werden.",
+      "action": "Starte den Task noch einmal."
+    }
+  },
+  "already_assigned": {
+    "en": {
+      "title": "Already assigned",
+      "body": "The device is already assigned.",
+      "action": "No action needed."
+    },
+    "de": {
+      "title": "Bereits zugewiesen",
+      "body": "Das Gerät ist bereits zugewiesen.",
+      "action": "Keine Aktion nötig."
+    }
+  },
+  "attestation_invalid": {
+    "en": {
+      "title": "Passkey not accepted",
+      "body": "The new passkey could not be verified.",
+      "action": "Try again, or use another authenticator."
+    },
+    "de": {
+      "title": "Passkey nicht akzeptiert",
+      "body": "Der neue Passkey konnte nicht geprüft werden.",
+      "action": "Versuche es noch einmal oder verwende einen anderen Authenticator."
+    }
+  },
+  "authenticator_data_invalid": {
+    "en": {
+      "title": "Passkey response invalid",
+      "body": "The authenticator returned invalid data.",
+      "action": "Try again, or use another authenticator."
+    },
+    "de": {
+      "title": "Passkey-Antwort ungültig",
+      "body": "Der Authenticator hat ungültige Daten geliefert.",
+      "action": "Versuche es noch einmal oder verwende einen anderen Authenticator."
+    }
+  },
+  "author_not_writer": {
+    "en": {
+      "title": "Author without write access",
+      "body": "The entry was written by someone without write access and was not shown.",
+      "action": "No action needed."
+    },
+    "de": {
+      "title": "Autor ohne Schreibrecht",
+      "body": "Der Eintrag stammt von jemandem ohne Schreibrecht und wird nicht angezeigt.",
+      "action": "Keine Aktion nötig."
+    }
+  },
+  "branch_exists": {
+    "en": {
+      "title": "Branch exists",
+      "body": "A branch with this name already exists.",
+      "action": "Use another branch name."
+    },
+    "de": {
+      "title": "Branch existiert",
+      "body": "Ein Branch mit diesem Namen existiert bereits.",
+      "action": "Verwende einen anderen Branch-Namen."
+    }
+  },
+  "branch_protected": {
+    "en": {
+      "title": "Protected branch",
+      "body": "The branch is protected and cannot be written by the platform.",
+      "action": "Use another branch."
+    },
+    "de": {
+      "title": "Geschützter Branch",
+      "body": "Der Branch ist geschützt und kann von der Plattform nicht beschrieben werden.",
+      "action": "Verwende einen anderen Branch."
+    }
+  },
+  "budget_exceeded": {
+    "en": {
+      "title": "Budget used up",
+      "body": "The configured budget is used up.",
+      "action": "Raise the budget or wait for the next period."
+    },
+    "de": {
+      "title": "Budget aufgebraucht",
+      "body": "Das eingestellte Budget ist aufgebraucht.",
+      "action": "Erhöhe das Budget oder warte auf die nächste Periode."
+    }
+  },
+  "capacity_exhausted": {
+    "en": {
+      "title": "All slots busy",
+      "body": "All execution slots are busy – the task starts as soon as one is free.",
+      "action": "No action needed."
+    },
+    "de": {
+      "title": "Alle Plätze belegt",
+      "body": "Alle Ausführungsplätze sind belegt – der Task startet, sobald einer frei ist.",
+      "action": "Keine Aktion nötig."
+    }
+  },
+  "ceremony_invalid": {
+    "en": {
+      "title": "Passkey step expired",
+      "body": "The passkey step is no longer valid.",
+      "action": "Start the passkey step again."
+    },
+    "de": {
+      "title": "Passkey-Schritt abgelaufen",
+      "body": "Der Passkey-Schritt ist nicht mehr gültig.",
+      "action": "Starte den Passkey-Schritt noch einmal."
+    }
+  },
+  "certificate_expiry_invalid": {
+    "en": {
+      "title": "Invalid session duration",
+      "body": "The requested session duration is not allowed.",
+      "action": "Start the sign-in again."
+    },
+    "de": {
+      "title": "Ungültige Sitzungsdauer",
+      "body": "Die angeforderte Sitzungsdauer ist nicht erlaubt.",
+      "action": "Starte die Anmeldung noch einmal."
+    }
+  },
+  "challenge_mismatch": {
+    "en": {
+      "title": "Passkey step mismatch",
+      "body": "The passkey response does not belong to this sign-in step.",
+      "action": "Start the passkey step again."
+    },
+    "de": {
+      "title": "Passkey-Schritt passt nicht",
+      "body": "Die Passkey-Antwort gehört nicht zu diesem Anmeldeschritt.",
+      "action": "Starte den Passkey-Schritt noch einmal."
+    }
+  },
+  "client_data_invalid": {
+    "en": {
+      "title": "Passkey response invalid",
+      "body": "The browser returned an invalid passkey response.",
+      "action": "Try again, or use another browser."
+    },
+    "de": {
+      "title": "Passkey-Antwort ungültig",
+      "body": "Der Browser hat eine ungültige Passkey-Antwort geliefert.",
+      "action": "Versuche es noch einmal oder verwende einen anderen Browser."
+    }
+  },
+  "counter_regressed": {
+    "en": {
+      "title": "Passkey possibly cloned",
+      "body": "The passkey's signature counter went backwards, which can indicate a cloned authenticator.",
+      "action": "Use another passkey and contact support."
+    },
+    "de": {
+      "title": "Passkey möglicherweise kopiert",
+      "body": "Der Signaturzähler des Passkeys ist zurückgegangen; das kann auf einen kopierten Authenticator hinweisen.",
+      "action": "Verwende einen anderen Passkey und melde dich beim Support."
+    }
+  },
+  "credential_invalid": {
+    "en": {
+      "title": "Passkey not accepted",
+      "body": "This passkey is not registered for your account.",
+      "action": "Use another passkey or the recovery code."
+    },
+    "de": {
+      "title": "Passkey nicht akzeptiert",
+      "body": "Dieser Passkey ist für dein Konto nicht registriert.",
+      "action": "Verwende einen anderen Passkey oder den Wiederherstellungscode."
+    }
+  },
+  "decrypt_failed": {
+    "en": {
+      "title": "Cannot be opened",
+      "body": "This content cannot be opened on this device.",
+      "action": "Unlock with another passkey or your recovery code."
+    },
+    "de": {
+      "title": "Nicht lesbar",
+      "body": "Dieser Inhalt lässt sich auf diesem Gerät nicht öffnen.",
+      "action": "Entsperre mit einem anderen Passkey oder deinem Wiederherstellungscode."
+    }
+  },
+  "delivery_failed": {
+    "en": {
+      "title": "Prompt not delivered",
+      "body": "The prompt could not be delivered to the session.",
+      "action": "Send the prompt again."
+    },
+    "de": {
+      "title": "Prompt nicht zugestellt",
+      "body": "Der Prompt konnte der Session nicht zugestellt werden.",
+      "action": "Sende den Prompt noch einmal."
+    }
+  },
+  "device_not_assigned": {
+    "en": {
+      "title": "Device not assigned",
+      "body": "The execution device is not assigned to this workgroup.",
+      "action": "Assign the device to the workgroup."
+    },
+    "de": {
+      "title": "Gerät nicht zugewiesen",
+      "body": "Das Ausführungsgerät ist dieser Workgroup nicht zugewiesen.",
+      "action": "Weise das Gerät der Workgroup zu."
+    }
+  },
+  "device_offline": {
+    "en": {
+      "title": "Execution device offline",
+      "body": "The execution device is offline – the task starts as soon as it is back.",
+      "action": "No action needed."
+    },
+    "de": {
+      "title": "Ausführungsgerät offline",
+      "body": "Das Ausführungsgerät ist offline – der Task startet, sobald es wieder da ist.",
+      "action": "Keine Aktion nötig."
+    }
+  },
+  "device_shutdown": {
+    "en": {
+      "title": "Execution device shut down",
+      "body": "The execution device was shut down while the session was running.",
+      "action": "Retry the task."
+    },
+    "de": {
+      "title": "Ausführungsgerät heruntergefahren",
+      "body": "Das Ausführungsgerät wurde heruntergefahren, während die Session lief.",
+      "action": "Starte den Task noch einmal."
+    }
+  },
+  "epoch_stale": {
+    "en": {
+      "title": "Outdated content",
+      "body": "This content was saved in an outdated way and was not accepted.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Veralteter Inhalt",
+      "body": "Dieser Inhalt wurde veraltet gespeichert und nicht angenommen.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "event_conflict": {
+    "en": {
+      "title": "Conflicting entry",
+      "body": "An entry with this ID already exists with different content.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Widersprüchlicher Eintrag",
+      "body": "Ein Eintrag mit dieser ID existiert bereits mit anderem Inhalt.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "forbidden": {
+    "en": {
+      "title": "No access",
+      "body": "You do not have the rights for this.",
+      "action": "Ask an administrator for access."
+    },
+    "de": {
+      "title": "Kein Zugriff",
+      "body": "Dafür hast du keine Berechtigung.",
+      "action": "Bitte eine Administratorin oder einen Administrator um Zugriff."
+    }
+  },
+  "github_not_connected": {
+    "en": {
+      "title": "GitHub not connected",
+      "body": "Your GitHub account is not connected.",
+      "action": "Connect GitHub in the settings."
+    },
+    "de": {
+      "title": "GitHub nicht verbunden",
+      "body": "Dein GitHub-Konto ist nicht verbunden.",
+      "action": "Verbinde GitHub in den Einstellungen."
+    }
+  },
+  "guest_unreachable": {
+    "en": {
+      "title": "VM unreachable",
+      "body": "The virtual machine stopped responding.",
+      "action": "Retry the task."
+    },
+    "de": {
+      "title": "VM nicht erreichbar",
+      "body": "Die virtuelle Maschine antwortet nicht mehr.",
+      "action": "Starte den Task noch einmal."
+    }
+  },
+  "header_invalid": {
+    "en": {
+      "title": "Invalid header",
+      "body": "A request or record header is malformed.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Ungültiger Header",
+      "body": "Ein Anfrage- oder Datensatz-Header ist fehlerhaft.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "hpke_short": {
+    "en": {
+      "title": "Damaged data",
+      "body": "Protected data is damaged.",
+      "action": "If it happens again, contact support with the error code."
+    },
+    "de": {
+      "title": "Beschädigte Daten",
+      "body": "Geschützte Daten sind beschädigt.",
+      "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "hub_unreachable": {
+    "en": {
+      "title": "Platform unreachable",
+      "body": "The execution device could not reach the platform.",
+      "action": "The device retries automatically."
+    },
+    "de": {
+      "title": "Plattform nicht erreichbar",
+      "body": "Das Ausführungsgerät konnte die Plattform nicht erreichen.",
+      "action": "Das Gerät versucht es automatisch erneut."
+    }
+  },
+  "id_conflict": {
+    "en": {
+      "title": "Already exists",
+      "body": "An item with this ID already exists with different content.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Existiert bereits",
+      "body": "Ein Eintrag mit dieser ID existiert bereits mit anderem Inhalt.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "invite_code_invalid": {
+    "en": {
+      "title": "Invalid invitation code",
+      "body": "The invitation code is not valid.",
+      "action": "Check the code and try again."
+    },
+    "de": {
+      "title": "Ungültiger Einladungscode",
+      "body": "Der Einladungscode ist nicht gültig.",
+      "action": "Prüfe den Code und versuche es noch einmal."
+    }
+  },
+  "invite_code_length": {
+    "en": {
+      "title": "Invitation code incomplete",
+      "body": "The invitation code has the wrong length.",
+      "action": "Check the code and try again."
+    },
+    "de": {
+      "title": "Einladungscode unvollständig",
+      "body": "Der Einladungscode hat die falsche Länge.",
+      "action": "Prüfe den Code und versuche es noch einmal."
+    }
+  },
+  "invite_consumed": {
+    "en": {
+      "title": "Invitation already used",
+      "body": "This invitation was already accepted.",
+      "action": "Ask for a new invitation."
+    },
+    "de": {
+      "title": "Einladung bereits verwendet",
+      "body": "Diese Einladung wurde bereits angenommen.",
+      "action": "Bitte um eine neue Einladung."
+    }
+  },
+  "invite_expired": {
+    "en": {
+      "title": "Invitation expired",
+      "body": "This invitation has expired.",
+      "action": "Ask for a new invitation."
+    },
+    "de": {
+      "title": "Einladung abgelaufen",
+      "body": "Diese Einladung ist abgelaufen.",
+      "action": "Bitte um eine neue Einladung."
+    }
+  },
+  "invite_not_in_log": {
+    "en": {
+      "title": "Invitation not confirmed",
+      "body": "The invitation is not part of the organization's membership history.",
+      "action": "Ask for a new invitation."
+    },
+    "de": {
+      "title": "Einladung nicht bestätigt",
+      "body": "Die Einladung ist nicht Teil der Mitgliederhistorie der Organisation.",
+      "action": "Bitte um eine neue Einladung."
+    }
+  },
+  "invite_registered": {
+    "en": {
+      "title": "Invitation already used",
+      "body": "This invitation already belongs to another account.",
+      "action": "Ask for a new invitation."
+    },
+    "de": {
+      "title": "Einladung bereits verwendet",
+      "body": "Diese Einladung gehört bereits zu einem anderen Konto.",
+      "action": "Bitte um eine neue Einladung."
+    }
+  },
+  "invite_revoked": {
+    "en": {
+      "title": "Invitation revoked",
+      "body": "This invitation was revoked.",
+      "action": "Ask for a new invitation."
+    },
+    "de": {
+      "title": "Einladung widerrufen",
+      "body": "Diese Einladung wurde widerrufen.",
+      "action": "Bitte um eine neue Einladung."
+    }
+  },
+  "invite_unknown": {
+    "en": {
+      "title": "Invitation not valid",
+      "body": "This invitation does not exist, was already used or revoked, or has expired.",
+      "action": "Ask for a new invitation."
+    },
+    "de": {
+      "title": "Einladung nicht gültig",
+      "body": "Diese Einladung existiert nicht, wurde bereits verwendet oder widerrufen oder ist abgelaufen.",
+      "action": "Bitte um eine neue Einladung."
+    }
+  },
+  "key_revoked": {
+    "en": {
+      "title": "Key revoked",
+      "body": "The key of this session or device was revoked.",
+      "action": "Sign in again."
+    },
+    "de": {
+      "title": "Schlüssel widerrufen",
+      "body": "Der Schlüssel dieser Sitzung oder dieses Geräts wurde widerrufen.",
+      "action": "Melde dich erneut an."
+    }
+  },
+  "key_unknown": {
+    "en": {
+      "title": "Unknown key",
+      "body": "The server does not know the key of this session or device.",
+      "action": "Sign in again."
+    },
+    "de": {
+      "title": "Unbekannter Schlüssel",
+      "body": "Der Server kennt den Schlüssel dieser Sitzung oder dieses Geräts nicht.",
+      "action": "Melde dich erneut an."
+    }
+  },
+  "kind_not_allowed": {
+    "en": {
+      "title": "Action not allowed here",
+      "body": "This kind of entry is not allowed for this author or place.",
+      "action": "If it happens again, contact support with the error code."
+    },
+    "de": {
+      "title": "Aktion hier nicht erlaubt",
+      "body": "Diese Art von Eintrag ist für diesen Autor oder an diesem Ort nicht erlaubt.",
+      "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "last_admin": {
+    "en": {
+      "title": "Last administrator",
+      "body": "The organization needs at least one administrator.",
+      "action": "Make another member administrator first."
+    },
+    "de": {
+      "title": "Letzte Administration",
+      "body": "Die Organisation braucht mindestens eine Administratorin oder einen Administrator.",
+      "action": "Ernenne zuerst ein anderes Mitglied zur Administration."
+    }
+  },
+  "last_passkey": {
+    "en": {
+      "title": "Last passkey",
+      "body": "Your last passkey cannot be removed.",
+      "action": "Add another passkey first."
+    },
+    "de": {
+      "title": "Letzter Passkey",
+      "body": "Dein letzter Passkey kann nicht entfernt werden.",
+      "action": "Füge zuerst einen weiteren Passkey hinzu."
+    }
+  },
+  "limit_exceeded": {
+    "en": {
+      "title": "Limit reached",
+      "body": "A platform limit was reached.",
+      "action": "Wait until running work finishes, then try again."
+    },
+    "de": {
+      "title": "Limit erreicht",
+      "body": "Ein Plattform-Limit wurde erreicht.",
+      "action": "Warte, bis laufende Arbeiten beendet sind, und versuche es dann noch einmal."
+    }
+  },
+  "log_accept": {
+    "en": {
+      "title": "Invalid acceptance",
+      "body": "An invitation acceptance in the membership history is invalid.",
+      "action": "If it happens again, contact support with the error code."
+    },
+    "de": {
+      "title": "Ungültige Annahme",
+      "body": "Eine Einladungsannahme in der Mitgliederhistorie ist ungültig.",
+      "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "log_chain": {
+    "en": {
+      "title": "Membership history broken",
+      "body": "The membership history is not a continuous chain.",
+      "action": "If it happens again, contact support with the error code."
+    },
+    "de": {
+      "title": "Mitgliederhistorie unterbrochen",
+      "body": "Die Mitgliederhistorie ist keine durchgehende Kette.",
+      "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "log_empty": {
+    "en": {
+      "title": "Membership history missing",
+      "body": "The membership history of this organization is empty.",
+      "action": "If it happens again, contact support with the error code."
+    },
+    "de": {
+      "title": "Mitgliederhistorie fehlt",
+      "body": "Die Mitgliederhistorie dieser Organisation ist leer.",
+      "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "log_epoch": {
+    "en": {
+      "title": "Invalid change",
+      "body": "A change in the membership history is invalid.",
+      "action": "If it happens again, contact support with the error code."
+    },
+    "de": {
+      "title": "Ungültige Änderung",
+      "body": "Eine Änderung in der Mitgliederhistorie ist ungültig.",
+      "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "log_fork": {
+    "en": {
+      "title": "Inconsistent history",
+      "body": "The server presented an inconsistent membership history.",
+      "action": "Do not continue in this organization and contact support with the error code."
+    },
+    "de": {
+      "title": "Inkonsistente Historie",
+      "body": "Der Server hat eine widersprüchliche Mitgliederhistorie geliefert.",
+      "action": "Arbeite in dieser Organisation nicht weiter und melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "log_genesis": {
+    "en": {
+      "title": "Invalid organization start",
+      "body": "The first entry of the membership history is invalid.",
+      "action": "If it happens again, contact support with the error code."
+    },
+    "de": {
+      "title": "Ungültiger Organisationsbeginn",
+      "body": "Der erste Eintrag der Mitgliederhistorie ist ungültig.",
+      "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "log_rights": {
+    "en": {
+      "title": "Change without rights",
+      "body": "An entry of the membership history was made without the required rights.",
+      "action": "If it happens again, contact support with the error code."
+    },
+    "de": {
+      "title": "Änderung ohne Berechtigung",
+      "body": "Ein Eintrag der Mitgliederhistorie wurde ohne die nötige Berechtigung erstellt.",
+      "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "log_rollback": {
+    "en": {
+      "title": "Inconsistent history",
+      "body": "The server presented an older membership history than before.",
+      "action": "Do not continue in this organization and contact support with the error code."
+    },
+    "de": {
+      "title": "Inkonsistente Historie",
+      "body": "Der Server hat eine ältere Mitgliederhistorie als zuvor geliefert.",
+      "action": "Arbeite in dieser Organisation nicht weiter und melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "log_signature": {
+    "en": {
+      "title": "Invalid membership signature",
+      "body": "An entry of the membership history has an invalid signature.",
+      "action": "If it happens again, contact support with the error code."
+    },
+    "de": {
+      "title": "Ungültige Mitgliedssignatur",
+      "body": "Ein Eintrag der Mitgliederhistorie hat eine ungültige Signatur.",
+      "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "log_type": {
+    "en": {
+      "title": "Unknown membership entry",
+      "body": "The membership history contains an unknown entry type.",
+      "action": "If it happens again, contact support with the error code."
+    },
+    "de": {
+      "title": "Unbekannter Mitgliedseintrag",
+      "body": "Die Mitgliederhistorie enthält einen unbekannten Eintragstyp.",
+      "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "login_automation_failed": {
+    "en": {
+      "title": "Automatic login failed",
+      "body": "The automatic Claude login via your mailbox did not succeed.",
+      "action": "Use the manual login instead."
+    },
+    "de": {
+      "title": "Automatische Anmeldung fehlgeschlagen",
+      "body": "Die automatische Claude-Anmeldung über dein Postfach hat nicht funktioniert.",
+      "action": "Verwende stattdessen die manuelle Anmeldung."
+    }
+  },
+  "model_access_unavailable": {
+    "en": {
+      "title": "No model access",
+      "body": "No usable model access is configured for this task.",
+      "action": "Add model access in the settings."
+    },
+    "de": {
+      "title": "Kein Modellzugang",
+      "body": "Für diesen Task ist kein nutzbarer Modellzugang eingerichtet.",
+      "action": "Richte in den Einstellungen einen Modellzugang ein."
+    }
+  },
+  "model_not_allowed": {
+    "en": {
+      "title": "Model not allowed",
+      "body": "The chosen model is not allowed for this access kind.",
+      "action": "Choose another model in the settings."
+    },
+    "de": {
+      "title": "Modell nicht erlaubt",
+      "body": "Das gewählte Modell ist für diese Zugangsart nicht erlaubt.",
+      "action": "Wähle in den Einstellungen ein anderes Modell."
+    }
+  },
+  "no_device": {
+    "en": {
+      "title": "No execution device",
+      "body": "No execution device is available for this workgroup.",
+      "action": "Assign a device in the device settings."
+    },
+    "de": {
+      "title": "Kein Ausführungsgerät",
+      "body": "Für diese Workgroup ist kein Ausführungsgerät verfügbar.",
+      "action": "Weise in den Geräteeinstellungen ein Gerät zu."
+    }
+  },
+  "no_device_available": {
+    "en": {
+      "title": "No execution device available",
+      "body": "No execution device can be assigned to this workgroup.",
+      "action": "Open the device settings to add or assign a device."
+    },
+    "de": {
+      "title": "Kein Ausführungsgerät verfügbar",
+      "body": "Dieser Workgroup kann kein Ausführungsgerät zugewiesen werden.",
+      "action": "Öffne die Geräteeinstellungen, um ein Gerät hinzuzufügen oder zuzuweisen."
+    }
+  },
+  "non_ascii": {
+    "en": {
+      "title": "Unsupported characters",
+      "body": "A field that must contain plain ASCII contains other characters.",
+      "action": "Remove special characters and try again."
+    },
+    "de": {
+      "title": "Nicht unterstützte Zeichen",
+      "body": "Ein Feld, das nur ASCII-Zeichen enthalten darf, enthält andere Zeichen.",
+      "action": "Entferne Sonderzeichen und versuche es noch einmal."
+    }
+  },
+  "non_fast_forward": {
+    "en": {
+      "title": "Branch moved",
+      "body": "The branch changed meanwhile, so the update would overwrite commits.",
+      "action": "Update from the latest state and try again."
+    },
+    "de": {
+      "title": "Branch verändert",
+      "body": "Der Branch hat sich inzwischen geändert; die Aktualisierung würde Commits überschreiben.",
+      "action": "Aktualisiere vom neuesten Stand und versuche es noch einmal."
+    }
+  },
+  "nonce_replayed": {
+    "en": {
+      "title": "Request repeated",
+      "body": "The same signed request was sent twice.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Anfrage wiederholt",
+      "body": "Dieselbe signierte Anfrage wurde zweimal gesendet.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "not_found": {
+    "en": {
+      "title": "Not found",
+      "body": "The requested item does not exist or you cannot see it.",
+      "action": "Go back to the start page."
+    },
+    "de": {
+      "title": "Nicht gefunden",
+      "body": "Das Gesuchte existiert nicht oder ist für dich nicht sichtbar.",
+      "action": "Gehe zurück zur Startseite."
+    }
+  },
+  "oom": {
+    "en": {
+      "title": "Out of memory",
+      "body": "The session ran out of memory.",
+      "action": "Retry the task with a smaller job."
+    },
+    "de": {
+      "title": "Speicher erschöpft",
+      "body": "Der Session ist der Arbeitsspeicher ausgegangen.",
+      "action": "Starte den Task mit einer kleineren Aufgabe noch einmal."
+    }
+  },
+  "origin_mismatch": {
+    "en": {
+      "title": "Wrong address",
+      "body": "This page was opened under an address the platform does not accept.",
+      "action": "Open the platform under its official address."
+    },
+    "de": {
+      "title": "Falsche Adresse",
+      "body": "Diese Seite wurde unter einer Adresse geöffnet, welche die Plattform nicht akzeptiert.",
+      "action": "Öffne die Plattform unter ihrer offiziellen Adresse."
+    }
+  },
+  "origin_seq_conflict": {
+    "en": {
+      "title": "Sync conflict",
+      "body": "The device sent a different entry for an existing position.",
+      "action": "If it happens again, contact support with the error code."
+    },
+    "de": {
+      "title": "Synchronisierungskonflikt",
+      "body": "Das Gerät hat für eine bestehende Position einen anderen Eintrag gesendet.",
+      "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "origin_seq_gap": {
+    "en": {
+      "title": "Sync gap",
+      "body": "The device sent entries with a gap.",
+      "action": "The device resends them automatically."
+    },
+    "de": {
+      "title": "Synchronisierungslücke",
+      "body": "Das Gerät hat Einträge mit einer Lücke gesendet.",
+      "action": "Das Gerät sendet sie automatisch erneut."
+    }
+  },
+  "params_invalid": {
+    "en": {
+      "title": "Invalid parameters",
+      "body": "Some parameters are missing or not allowed.",
+      "action": "Check your input and try again."
+    },
+    "de": {
+      "title": "Ungültige Parameter",
+      "body": "Einige Parameter fehlen oder sind nicht erlaubt.",
+      "action": "Prüfe deine Eingabe und versuche es noch einmal."
+    }
+  },
+  "path_invalid": {
+    "en": {
+      "title": "Invalid path",
+      "body": "A file path is not allowed.",
+      "action": "Use a path inside the repository."
+    },
+    "de": {
+      "title": "Ungültiger Pfad",
+      "body": "Ein Dateipfad ist nicht erlaubt.",
+      "action": "Verwende einen Pfad innerhalb des Repositorys."
+    }
+  },
+  "platform_access_denied": {
+    "en": {
+      "title": "No platform devices",
+      "body": "This organization may not use platform execution devices.",
+      "action": "Add your own device or ask the operator for platform access."
+    },
+    "de": {
+      "title": "Keine Plattform-Geräte",
+      "body": "Diese Organisation darf keine Ausführungsgeräte der Plattform verwenden.",
+      "action": "Füge ein eigenes Gerät hinzu oder bitte den Betreiber um Plattformzugang."
+    }
+  },
+  "platform_invite_required": {
+    "en": {
+      "title": "Invitation required",
+      "body": "Creating a private organization requires a platform invitation.",
+      "action": "Use the link of your invitation."
+    },
+    "de": {
+      "title": "Einladung erforderlich",
+      "body": "Für eine private Organisation ist eine Plattform-Einladung nötig.",
+      "action": "Verwende den Link deiner Einladung."
+    }
+  },
+  "platform_root_mismatch": {
+    "en": {
+      "title": "Untrusted server",
+      "body": "The server does not present the platform key built into this app. Your data stays protected, but you cannot continue.",
+      "action": "Open the platform under its official address and contact support."
+    },
+    "de": {
+      "title": "Nicht vertrauenswürdiger Server",
+      "body": "Der Server weist nicht den Plattformschlüssel vor, der in diese App eingebaut ist. Deine Daten bleiben geschützt, aber du kannst nicht fortfahren.",
+      "action": "Öffne die Plattform unter ihrer offiziellen Adresse und melde dich beim Support."
+    }
+  },
+  "prf_length": {
+    "en": {
+      "title": "Passkey answer invalid",
+      "body": "The passkey returned an invalid answer.",
+      "action": "Use another passkey or your recovery code."
+    },
+    "de": {
+      "title": "Passkey-Antwort ungültig",
+      "body": "Der Passkey hat eine ungültige Antwort geliefert.",
+      "action": "Verwende einen anderen Passkey oder deinen Wiederherstellungscode."
+    }
+  },
+  "prf_missing": {
+    "en": {
+      "title": "Passkey cannot unlock",
+      "body": "This passkey cannot open your data on this device.",
+      "action": "Use your recovery code, remember this browser or add another passkey."
+    },
+    "de": {
+      "title": "Passkey kann nicht entsperren",
+      "body": "Dieser Passkey kann deine Daten auf diesem Gerät nicht öffnen.",
+      "action": "Verwende deinen Wiederherstellungscode, merke dir diesen Browser oder füge einen anderen Passkey hinzu."
+    }
+  },
+  "prompt_refused": {
+    "en": {
+      "title": "Prompt refused",
+      "body": "The prompt could not be verified and was not delivered.",
+      "action": "Send the prompt again."
+    },
+    "de": {
+      "title": "Prompt abgelehnt",
+      "body": "Der Prompt konnte nicht geprüft werden und wurde nicht zugestellt.",
+      "action": "Sende den Prompt noch einmal."
+    }
+  },
+  "rate_limited": {
+    "en": {
+      "title": "Too many attempts",
+      "body": "Too many requests in a short time.",
+      "action": "Wait a moment and try again."
+    },
+    "de": {
+      "title": "Zu viele Versuche",
+      "body": "Zu viele Anfragen in kurzer Zeit.",
+      "action": "Warte einen Moment und versuche es noch einmal."
+    }
+  },
+  "recovery_code_length": {
+    "en": {
+      "title": "Recovery code incomplete",
+      "body": "The recovery code has the wrong length.",
+      "action": "Check the code and try again."
+    },
+    "de": {
+      "title": "Wiederherstellungscode unvollständig",
+      "body": "Der Wiederherstellungscode hat die falsche Länge.",
+      "action": "Prüfe den Code und versuche es noch einmal."
+    }
+  },
+  "repo_not_accessible": {
+    "en": {
+      "title": "Repository not accessible",
+      "body": "Your GitHub connection cannot access this repository.",
+      "action": "Grant the GitHub App access to the repository."
+    },
+    "de": {
+      "title": "Repository nicht zugänglich",
+      "body": "Deine GitHub-Verbindung hat keinen Zugriff auf dieses Repository.",
+      "action": "Gib der GitHub-App Zugriff auf das Repository."
+    }
+  },
+  "repo_not_allowed": {
+    "en": {
+      "title": "Repository not allowed",
+      "body": "This workgroup is limited to specific repositories, and this one is not among them.",
+      "action": "Add it in the workgroup settings, or clear the list to allow every repository of the GitHub connection."
+    },
+    "de": {
+      "title": "Repository nicht erlaubt",
+      "body": "Diese Workgroup ist auf bestimmte Repositories begrenzt, und dieses gehört nicht dazu.",
+      "action": "Füge es in den Workgroup-Einstellungen hinzu oder leere die Liste, um alle Repositories der GitHub-Verbindung zu erlauben."
+    }
+  },
+  "request_invalid": {
+    "en": {
+      "title": "Invalid request",
+      "body": "The server refused a request that does not match the expected format.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Ungültige Anfrage",
+      "body": "Der Server hat eine Anfrage abgelehnt, die nicht dem erwarteten Format entspricht.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "rights_denied": {
+    "en": {
+      "title": "Not permitted",
+      "body": "The requesting person does not have the required rights.",
+      "action": "Ask an administrator for write access."
+    },
+    "de": {
+      "title": "Nicht erlaubt",
+      "body": "Die anfragende Person hat nicht die nötigen Rechte.",
+      "action": "Bitte die Administration um Schreibrecht."
+    }
+  },
+  "rotation_required": {
+    "en": {
+      "title": "Change not possible yet",
+      "body": "The organization changed in the meantime.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Änderung noch nicht möglich",
+      "body": "Die Organisation hat sich inzwischen geändert.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "rp_id_mismatch": {
+    "en": {
+      "title": "Passkey for another site",
+      "body": "The passkey belongs to another site.",
+      "action": "Use a passkey created for this platform."
+    },
+    "de": {
+      "title": "Passkey einer anderen Website",
+      "body": "Der Passkey gehört zu einer anderen Website.",
+      "action": "Verwende einen Passkey, der für diese Plattform erstellt wurde."
+    }
+  },
+  "runtime_exceeded": {
+    "en": {
+      "title": "Time limit reached",
+      "body": "The session reached its maximum run time.",
+      "action": "Start a follow-up task if needed."
+    },
+    "de": {
+      "title": "Zeitlimit erreicht",
+      "body": "Die Session hat ihre maximale Laufzeit erreicht.",
+      "action": "Starte bei Bedarf einen Folge-Task."
+    }
+  },
+  "sandbox_failed": {
+    "en": {
+      "title": "Sandbox failed",
+      "body": "The isolated environment of the session could not be prepared.",
+      "action": "Retry the task."
+    },
+    "de": {
+      "title": "Sandbox fehlgeschlagen",
+      "body": "Die isolierte Umgebung der Session konnte nicht vorbereitet werden.",
+      "action": "Starte den Task noch einmal."
+    }
+  },
+  "secret_detected": {
+    "en": {
+      "title": "Secret detected",
+      "body": "The content looks like it contains a secret and was not published.",
+      "action": "Remove the secret and try again."
+    },
+    "de": {
+      "title": "Geheimnis erkannt",
+      "body": "Der Inhalt scheint ein Geheimnis zu enthalten und wurde nicht veröffentlicht.",
+      "action": "Entferne das Geheimnis und versuche es noch einmal."
+    }
+  },
+  "seq_conflict": {
+    "en": {
+      "title": "Changed meanwhile",
+      "body": "Someone else changed the membership meanwhile.",
+      "action": "Try again; the latest state will be loaded."
+    },
+    "de": {
+      "title": "Zwischenzeitlich geändert",
+      "body": "Jemand anderes hat die Mitgliedschaften inzwischen geändert.",
+      "action": "Versuche es noch einmal; der neueste Stand wird geladen."
+    }
+  },
+  "session_expired": {
+    "en": {
+      "title": "Session expired",
+      "body": "Your session has expired.",
+      "action": "Sign in again."
+    },
+    "de": {
+      "title": "Sitzung abgelaufen",
+      "body": "Deine Sitzung ist abgelaufen.",
+      "action": "Melde dich erneut an."
+    }
+  },
+  "signature_invalid": {
+    "en": {
+      "title": "Invalid signature",
+      "body": "A signature could not be verified.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Ungültige Signatur",
+      "body": "Eine Signatur konnte nicht geprüft werden.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "signature_missing": {
+    "en": {
+      "title": "Not signed in",
+      "body": "The request was not signed.",
+      "action": "Sign in again."
+    },
+    "de": {
+      "title": "Nicht angemeldet",
+      "body": "Die Anfrage war nicht signiert.",
+      "action": "Melde dich erneut an."
+    }
+  },
+  "size_exceeded": {
+    "en": {
+      "title": "Too large",
+      "body": "The content is larger than allowed.",
+      "action": "Shorten the content and try again."
+    },
+    "de": {
+      "title": "Zu gross",
+      "body": "Der Inhalt ist grösser als erlaubt.",
+      "action": "Kürze den Inhalt und versuche es noch einmal."
+    }
+  },
+  "statement_invalid": {
+    "en": {
+      "title": "Sign-in statement invalid",
+      "body": "The sign-in statement could not be verified.",
+      "action": "Start the sign-in again."
+    },
+    "de": {
+      "title": "Anmeldeerklärung ungültig",
+      "body": "Die Anmeldeerklärung konnte nicht geprüft werden.",
+      "action": "Starte die Anmeldung noch einmal."
+    }
+  },
+  "time_skew": {
+    "en": {
+      "title": "Clock out of sync",
+      "body": "The clock of this device differs too much from the server.",
+      "action": "Set your device clock to automatic and try again."
+    },
+    "de": {
+      "title": "Uhr nicht synchron",
+      "body": "Die Uhr dieses Geräts weicht zu stark vom Server ab.",
+      "action": "Stelle die Uhr deines Geräts auf automatisch und versuche es noch einmal."
+    }
+  },
+  "timeout": {
+    "en": {
+      "title": "Timed out",
+      "body": "The action did not finish in time.",
+      "action": "Try again."
+    },
+    "de": {
+      "title": "Zeitüberschreitung",
+      "body": "Die Aktion wurde nicht rechtzeitig abgeschlossen.",
+      "action": "Versuche es noch einmal."
+    }
+  },
+  "tree_mismatch": {
+    "en": {
+      "title": "Files changed meanwhile",
+      "body": "The repository files changed meanwhile.",
+      "action": "Update from the latest state and try again."
+    },
+    "de": {
+      "title": "Dateien inzwischen geändert",
+      "body": "Die Dateien des Repositorys haben sich inzwischen geändert.",
+      "action": "Aktualisiere vom neuesten Stand und versuche es noch einmal."
+    }
+  },
+  "unassigned": {
+    "en": {
+      "title": "Device removed",
+      "body": "The execution device was removed from this workgroup.",
+      "action": "Assign a device and retry the task."
+    },
+    "de": {
+      "title": "Gerät entfernt",
+      "body": "Das Ausführungsgerät wurde aus dieser Workgroup entfernt.",
+      "action": "Weise ein Gerät zu und starte den Task noch einmal."
+    }
+  },
+  "unauthorized": {
+    "en": {
+      "title": "Not signed in",
+      "body": "You need to sign in for this.",
+      "action": "Sign in again."
+    },
+    "de": {
+      "title": "Nicht angemeldet",
+      "body": "Dafür musst du angemeldet sein.",
+      "action": "Melde dich erneut an."
+    }
+  },
+  "unavailable": {
+    "en": {
+      "title": "Service unavailable",
+      "body": "The platform cannot be reached right now.",
+      "action": "Try again in a few minutes."
+    },
+    "de": {
+      "title": "Dienst nicht verfügbar",
+      "body": "Die Plattform ist gerade nicht erreichbar.",
+      "action": "Versuche es in ein paar Minuten noch einmal."
+    }
+  },
+  "unknown_type": {
+    "en": {
+      "title": "Unknown operation",
+      "body": "The session requested an operation type that does not exist.",
+      "action": "No action needed."
+    },
+    "de": {
+      "title": "Unbekannte Operation",
+      "body": "Die Session hat einen Operationstyp angefordert, den es nicht gibt.",
+      "action": "Keine Aktion nötig."
+    }
+  },
+  "upstream_error": {
+    "en": {
+      "title": "External service error",
+      "body": "An external service such as GitHub returned an error.",
+      "action": "Try again later."
+    },
+    "de": {
+      "title": "Fehler eines externen Dienstes",
+      "body": "Ein externer Dienst wie GitHub hat einen Fehler gemeldet.",
+      "action": "Versuche es später noch einmal."
+    }
+  },
+  "user_presence_missing": {
+    "en": {
+      "title": "Confirmation missing",
+      "body": "The authenticator did not confirm that you are present.",
+      "action": "Try again and confirm on your device."
+    },
+    "de": {
+      "title": "Bestätigung fehlt",
+      "body": "Der Authenticator hat deine Anwesenheit nicht bestätigt.",
+      "action": "Versuche es noch einmal und bestätige auf deinem Gerät."
+    }
+  },
+  "user_verification_missing": {
+    "en": {
+      "title": "Verification missing",
+      "body": "The authenticator did not verify you (PIN, fingerprint or face).",
+      "action": "Try again and unlock your authenticator."
+    },
+    "de": {
+      "title": "Verifizierung fehlt",
+      "body": "Der Authenticator hat dich nicht verifiziert (PIN, Fingerabdruck oder Gesicht).",
+      "action": "Versuche es noch einmal und entsperre deinen Authenticator."
+    }
+  },
+  "version_conflict": {
+    "en": {
+      "title": "Changed meanwhile",
+      "body": "This item was changed meanwhile.",
+      "action": "Reload and apply your change again."
+    },
+    "de": {
+      "title": "Zwischenzeitlich geändert",
+      "body": "Dieser Eintrag wurde inzwischen geändert.",
+      "action": "Lade neu und wende deine Änderung noch einmal an."
+    }
+  },
+  "vm_start_failed": {
+    "en": {
+      "title": "VM did not start",
+      "body": "The virtual machine for this workgroup could not be started.",
+      "action": "Retry the task."
+    },
+    "de": {
+      "title": "VM nicht gestartet",
+      "body": "Die virtuelle Maschine dieser Workgroup konnte nicht gestartet werden.",
+      "action": "Starte den Task noch einmal."
+    }
+  },
+  "workvm_unavailable": {
+    "en": {
+      "title": "Work VM unavailable",
+      "body": "This device cannot start a work VM right now (no slot configured, no work image, or the network boundary check failed).",
+      "action": "Try again later or ask the operator to check the device."
+    },
+    "de": {
+      "title": "Arbeits-VM nicht verfügbar",
+      "body": "Dieses Gerät kann gerade keine Arbeits-VM starten (kein Platz eingerichtet, kein Arbeits-Image oder die Prüfung der Netzgrenze ist fehlgeschlagen).",
+      "action": "Versuche es später noch einmal oder bitte den Betreiber, das Gerät zu prüfen."
+    }
+  },
+  "wrap_unauthorized": {
+    "en": {
+      "title": "Unauthorized share",
+      "body": "Something was shared by a person without the right to do so and was ignored.",
+      "action": "No action needed."
+    },
+    "de": {
+      "title": "Unberechtigte Freigabe",
+      "body": "Etwas wurde von einer Person ohne Berechtigung freigegeben und ignoriert.",
+      "action": "Keine Aktion nötig."
+    }
+  },
+  "no_changes": {
+    "en": {
+      "title": "Nothing to commit",
+      "body": "The workspace has no changes against the branch.",
+      "action": "Change files first, then commit."
+    },
+    "de": {
+      "title": "Nichts zu committen",
+      "body": "Der Arbeitsbereich hat keine Änderungen gegenüber dem Branch.",
+      "action": "Ändere zuerst Dateien und committe dann."
+    }
+  },
+  "pairing_unknown": {
+    "en": {
+      "title": "Connection request expired",
+      "body": "This agent connection request does not exist any more: it expired, was already used or was cancelled.",
+      "action": "Ask your AI agent to connect again."
+    },
+    "de": {
+      "title": "Verbindungsanfrage abgelaufen",
+      "body": "Diese Verbindungsanfrage des Agenten gibt es nicht mehr: Sie ist abgelaufen, wurde schon verwendet oder abgebrochen.",
+      "action": "Bitte deinen KI-Agenten, sich neu zu verbinden."
+    }
+  },
+  "pairing_gesture_required": {
+    "en": {
+      "title": "Confirm again",
+      "body": "The confirmation took too long.",
+      "action": "Confirm once more with your passkey."
+    },
+    "de": {
+      "title": "Erneut bestätigen",
+      "body": "Die Bestätigung hat zu lange gedauert.",
+      "action": "Bestätige noch einmal mit deinem Passkey."
+    }
+  },
+  "claim_invalid": {
+    "en": {
+      "title": "Agent connection refused",
+      "body": "The agent could not prove that it received the connection.",
+      "action": "Ask your AI agent to connect again."
+    },
+    "de": {
+      "title": "Agentenverbindung abgelehnt",
+      "body": "Der Agent konnte nicht nachweisen, dass er die Verbindung erhalten hat.",
+      "action": "Bitte deinen KI-Agenten, sich neu zu verbinden."
+    }
+  },
+  "pairing_mismatch": {
+    "en": {
+      "title": "This link is not valid",
+      "body": "The agent connection link does not match the request at the server.",
+      "action": "Do not confirm. Ask your AI agent to connect again."
+    },
+    "de": {
+      "title": "Dieser Link ist nicht gültig",
+      "body": "Der Verbindungslink des Agenten passt nicht zur Anfrage beim Server.",
+      "action": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden."
+    }
+  },
+  "log_admit": {
+    "en": {
+      "title": "Admission refused",
+      "body": "The account could not be admitted: its identity could not be confirmed.",
+      "action": "Check the account and try again, or send an invitation link."
+    },
+    "de": {
+      "title": "Aufnahme abgelehnt",
+      "body": "Das Konto konnte nicht aufgenommen werden: Seine Identität ließ sich nicht bestätigen.",
+      "action": "Prüfe das Konto und versuche es erneut, oder sende einen Einladungslink."
+    }
+  },
+  "identity_unproven": {
+    "en": {
+      "title": "Account not found",
+      "body": "There is no account with this code or ID that can be admitted directly.",
+      "action": "Check the code, or send an invitation link instead."
+    },
+    "de": {
+      "title": "Konto nicht gefunden",
+      "body": "Es gibt kein Konto mit dieser Kennung oder ID, das direkt aufgenommen werden kann.",
+      "action": "Prüfe die Kennung oder sende stattdessen einen Einladungslink."
+    }
+  },
+  "peer_outdated": {
+    "en": {
+      "title": "A device needs an update",
+      "body": "A device of this organization runs an older version and would not understand the change.",
+      "action": "Update the device, then try again."
+    },
+    "de": {
+      "title": "Ein Gerät braucht ein Update",
+      "body": "Ein Gerät dieser Organisation läuft mit einer älteren Version und würde die Änderung nicht verstehen.",
+      "action": "Aktualisiere das Gerät und versuche es dann erneut."
+    }
+  },
+  "account_code_invalid": {
+    "en": {
+      "title": "Code not valid",
+      "body": "An account code has 12 characters (letters and the digits 2–7).",
+      "action": "Check the code and enter it again."
+    },
+    "de": {
+      "title": "Kennung ungültig",
+      "body": "Eine Kontokennung hat 12 Zeichen (Buchstaben und die Ziffern 2–7).",
+      "action": "Prüfe die Kennung und gib sie erneut ein."
+    }
+  }
+}

@@ -1,0 +1,77 @@
+services:
+  # The record database (RECORD-PROTOCOL.md sections 11.2 and 15): a server that holds only the
+  # database `record`, owned by the owner role. It serves TLS, because the other services reach it
+  # by its service name, which `sslmode=disable` does not allow.
+  record-db:
+    image: postgres:16
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
+      - -c
+      - ssl_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+    environment:
+      POSTGRES_PASSWORD: ${AGENT_CORE_RECORD_ADMIN_PASSWORD}
+    secrets:
+      - record_owner_password
+      - record_writer_password
+    volumes:
+      - record-data:/var/lib/postgresql/data
+      - ./deploy/record-init.sh:/docker-entrypoint-initdb.d/record-init.sh:ro
+    healthcheck:
+      # Over TCP: the server of the initialisation step listens only on its socket, so this
+      # passes only once the initialisation is complete.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Section 11.4: the migration alone holds the owner's connection string and runs to completion
+  # before every start of the hub.
+  migrate:
+    build: .
+    command: ["python", "-m", "agent_core.record", "migrate"]
+    environment:
+      AGENT_CORE_RECORD_OWNER_DATABASE: postgresql://record_owner:${AGENT_CORE_RECORD_OWNER_PASSWORD}@record-db:5432/record?sslmode=require
+      AGENT_CORE_RECORD_DATABASE: postgresql://record_writer:${AGENT_CORE_RECORD_WRITER_PASSWORD}@record-db:5432/record?sslmode=require
+    depends_on:
+      record-db:
+        condition: service_healthy
+
+  hub:
+    build: .
+    ports:
+      - "8787:8787"
+    environment:
+      AGENT_CORE_PUBLIC_URL: http://localhost:8787
+      AGENT_CORE_SESSION_SECRET: ${AGENT_CORE_SESSION_SECRET}
+      AGENT_CORE_GITHUB_CLIENT_ID: ${AGENT_CORE_GITHUB_CLIENT_ID}
+      AGENT_CORE_GITHUB_CLIENT_SECRET: ${AGENT_CORE_GITHUB_CLIENT_SECRET}
+      AGENT_CORE_GITHUB_AUTHORIZE_URL: https://github.com/login/oauth/authorize
+      AGENT_CORE_GITHUB_TOKEN_URL: https://github.com/login/oauth/access_token
+      AGENT_CORE_GITHUB_USER_URL: https://api.github.com/user
+      AGENT_CORE_DATABASE: /data/hub.sqlite
+      AGENT_CORE_TEAMS: /app/teams.yaml
+      AGENT_CORE_KEYS: /app/keys.yaml
+      AGENT_CORE_SIGNING_KEY: ${AGENT_CORE_SIGNING_KEY}
+      AGENT_CORE_HUB_KEY_ID: hub-local-1
+      AGENT_CORE_HOST: 0.0.0.0
+      AGENT_CORE_PORT: "8787"
+      AGENT_CORE_RECORD_DATABASE: postgresql://record_writer:${AGENT_CORE_RECORD_WRITER_PASSWORD}@record-db:5432/record?sslmode=require
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - hub-data:/data
+
+secrets:
+  record_owner_password:
+    environment: AGENT_CORE_RECORD_OWNER_PASSWORD
+  record_writer_password:
+    environment: AGENT_CORE_RECORD_WRITER_PASSWORD
+
+volumes:
+  hub-data:
+  record-data:

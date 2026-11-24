@@ -1,0 +1,73 @@
+# WCR-01 – TypeScript crypto core: primitives and formats against the vectors
+
+Decisions taken where `04-crypto.md` sections 1-4, `06-web.md` sections 2.2/2.3/4.2 and the package text were silent
+or ambiguous. The TypeScript core lives in `web/src/core/{encoding,crypto,passkey,tasks}`.
+
+1. **API mirrors the Python reference, in camelCase.** Every function of `agent_hub.crypto` that the clients need has
+   a twin with the same name in camelCase (`kek_from_prf` → `kekFromPrf`, `open_bundle` → `openBundle`, …) and the
+   same check order and error codes (`contracts/vectors/README.md`). Keyword arguments of the wrap functions become
+   one `WrapTarget` object (`{scope, scope_id, epoch, recipient}`), the vector-only parameters (`ephemeral`, `nonce`,
+   `fixedSaltNonce`) stay optional trailing parameters. `parse_time` returns Unix milliseconds instead of a
+   `datetime`.
+2. **Keys are non-extractable `CryptoKey`s; raw secret bytes live only in `Secret`.** Derived keys (`KEK_i`,
+   `KEK_rec`, `package_key`, `k_event`, `k_cred`, `dk_e`, runner storage key) are returned as non-extractable AES-GCM
+   or HMAC keys (the Python twins return bytes). Scope keys (OK/WK/CK), PRF outputs and the `sk_inv` seed are
+   `Secret` objects: bytes in a private class field, reachable only as a copy inside `reveal()`, serialised as
+   `[secret]`. This is needed because scope keys are re-wrapped for other recipients (catch-up, rotation) and the
+   identity bundle is re-sealed (new passkey, recovery). Private X25519/Ed25519 keys are imported as non-extractable
+   `CryptoKey`s; the public key is read once from a short-lived extractable copy (WebCrypto has no "public from
+   private" for these curves). `Identity` keeps the raw private bytes in a `Secret` for re-sealing the bundle.
+   The vector tests prove byte-identity of non-extractable keys by encrypting (AES) or MACing (HMAC) a probe with
+   the derived key and with the vector's raw key and comparing the outputs.
+3. **JSON compatibility with Python.** Canonical JSON and body JSON use one serialiser: keys sorted by Unicode code
+   point (not UTF-16 code unit), `JSON.stringify` escapes for strings (identical to Python for well-formed text),
+   integers only within ±(2^53-1). Body JSON writes non-integer numbers in Python's `repr` form (scientific notation
+   below 1e-4 with a two-digit exponent); integral values beyond the safe range are refused because JavaScript cannot
+   tell `3` from `3.0` or represent them exactly (Python would accept both). `parseJson` is a strict parser
+   (`parse_json`): no repeated keys, no byte order mark, no NaN/Infinity, no raw control characters in strings,
+   integer literals beyond the safe range and nesting deeper than 64 are refused (`header_invalid`); a key
+   `__proto__` stays an own property.
+4. **Times.** Header times accept years 0001-9999 and refuse impossible dates and leap seconds like Python's
+   `strptime` + `datetime`. The second-precision form (`formatSeconds`/`parseSeconds`) serves the `agent-session-v1`
+   statement and later `agent-request-v1`.
+5. **Passkey options are checked, not passed through.** `creationOptions`/`requestOptions` refuse hub JSON that
+   weakens the ceremony (other algorithms than ES256, resident key or user verification not required, other
+   timeout, attestation other than `none`) and require `extensions.prf.eval.first` to equal the locally computed
+   PRF input; the options handed to WebAuthn always carry the local value. `requestOptions` takes the challenge
+   (`SHA-256(statement)`) and an optional single credential for the `get()` after adding a passkey (04 §5.6).
+   Malformed options are `header_invalid` (section 8 has no more specific code).
+6. **Session statement.** The browser builds the statement (04 §5.4 step 2) exactly as
+   `agent_core.passkey.certificate.build_statement` (test values computed with it) with the expiry "browser clock +
+   43080 s" (`sessionExpiry`); the session key is a non-extractable P-256 ECDSA key (`generateSessionKey`).
+7. **PRF extraction** returns the 32-byte output as `Secret` and zeroes the caller's buffer; an absent output is
+   `null` (`prfOutput`, for the `prf_missing` guidance) or `prf_missing` (`requirePrf`); another length is
+   `prf_length`.
+8. **Title derivation sets** (`06-web.md` §4.2 says only "Unicode whitespace" and "first non-empty line"):
+   whitespace = Unicode `White_Space`, line breaks = CR LF, LF, CR, U+000B, U+000C, U+0085, U+2028, U+2029, a line
+   counts if it is not empty after collapsing; the cut is literal (79 code points + `…`, also after a space).
+   Recorded in the new contract file `contracts/tasks/title.json` (ADR-027 §3, `contracts/changes/WCR-01.md`) so
+   that the runner's `task.set_title` check uses the same cases; the expected titles come from an independent
+   Python implementation. The file lives in `contracts/tasks/`, not in `contracts/vectors/` as the package text
+   suggests: every file in `vectors/` must be regenerated by the crypto generators of both repositories (the
+   runner's `test_every_vector_file_has_a_runner_section`), and the title rule is no crypto.
+9. **Vector-file consumption test.** `web/tests/core/crypto/vectors.test.ts` lists the files on disk and fails for a
+   file that neither this package consumes nor belongs to the log area (`log*.json`, `platform-log.json`, consumed
+   by `src/core/log`); the log consumer narrows the pattern when it lands. It also requires that the TypeScript
+   `OPS` table names exactly the operations of the consumed negative vectors.
+10. **One suite for Node and Chromium.** `web/tests/core/crypto/vector-suite.ts` is framework-free; Vitest registers
+    each check as a test, and `web/e2e/core-interop.spec.ts` bundles the same file with Vite and runs it in Chromium
+    on an intercepted https origin (secure context), so both runtimes run identical checks.
+11. **No JavaScript crypto dependency** is enforced by `web/tests/core/crypto/imports.test.ts`: the four areas import
+    only relative modules of `src/core`, never the Node crypto module, `require` or `Math.random`, and
+    `package.json` contains no known JavaScript crypto package.
+12. **Review follow-up.** Fixed: `parseJson` refuses float literals with an integral value (`3.0`, `1e1`, `-0.0`) by
+    default, because they would silently become integers that canonical JSON accepts while the reference refuses the
+    float (`integralFloats: 'number'` opts out for bodies); the vector suite reads every vector file through the
+    strict parser; `creationOptions` requires the user handle to be the bytes of `user_id` (contract fixtures
+    corrected, `contracts/changes/WCR-01.md`); `buildStatement` refuses points that are not on P-256; the browser
+    interop spec asserts exactly the Node check count. Not changed: the vector-only parameters (`nonce`,
+    `fixedSaltNonce`, `ephemeral`) stay optional trailing parameters as in the reference (renaming would break the
+    mirrored API; production callers never pass them); temporary raw buffers (HKDF/HPKE intermediates, the JWK `d`
+    of `importPrivate`) are not zeroed, since WebCrypto copies inputs and JavaScript strings cannot be zeroed; Ed25519
+    edge vectors (non-canonical `S`, small-order keys) and a Python consumer test of `title.json` belong to the
+    vector owner and the runner package.

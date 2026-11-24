@@ -1,0 +1,117 @@
+{
+  "name": "e2e-15-audit",
+  "description": "E2E-15: one turn with operations, a denied hook and a whiteboard read. The session renames its task (task.set_title: succeeded, device-authored task.meta event), reads the organization whiteboard the admin wrote (platform read: read.session.get_whiteboard), tries to read a file outside its workspace (PreToolUse deny: hook.denied) and requests an unknown operation type (recorded and rejected: unknown_type), then answers.",
+  "steps": [
+    {
+      "id": "rename",
+      "expect": {
+        "user_text_contains": "E2E15-AUDIT",
+        "has_tool_result": false,
+        "tools_include": ["Read"],
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Naming the task first."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "task.set_title",
+              "params": {
+                "title": "Audit trail kz15-title-r4m8w2"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "whiteboard",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_whiteboard",
+            "input": {
+              "level": "org"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "denied-read",
+      "expect": {
+        "tool_result_contains": "kz15-board-p3x9q6"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "/usr/bin/git"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-operation",
+      "expect": {
+        "tool_result_is_error": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "shell.run",
+              "params": {
+                "command": "id"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": {
+        "tool_result_contains": "\"status\":\"rejected\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The audit trail is complete kz15-answer-h7c2n5."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Audit"
+          }
+        ]
+      }
+    }
+  ]
+}

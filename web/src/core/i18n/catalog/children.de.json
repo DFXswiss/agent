@@ -1,0 +1,7 @@
+{
+  "label": "Subagenten dieser Session",
+  "empty": "Diese Session hat keine Subagenten.",
+  "purpose": "Zweck: {purpose}",
+  "purpose.unverifiable": "Nicht prüfbarer Zweck ({code})",
+  "depth": "Ebene {depth}"
+}
