@@ -1,9 +1,9 @@
-"""Copy the reference crypto of agent-core into `agent_runner.crypto` (ADR-027 section 2, decisions/CRY-03.md).
+"""Copy the reference crypto of the hub into `agent_runner.crypto` (ADR-027 section 2, decisions/CRY-03.md, HOT-08).
 
 `agent` must not import `agent_hub` (00-overview.md section 5), so the runner keeps a copy of the reference packages
 `agent_hub.crypto` and `agent_hub.log` and of their unit tests:
 
-| Reference (agent-core)           | Copy (agent)                                  |
+| Reference                        | Copy                                          |
 |----------------------------------|-----------------------------------------------|
 | `src/agent_hub/crypto/<m>.py`    | `src/agent_runner/crypto/<m>.py`              |
 | `src/agent_hub/log/<m>.py`       | `src/agent_runner/crypto/log/<m>.py`          |
@@ -13,7 +13,7 @@
 
 A copied module differs from its reference only by
 
-1. a first docstring paragraph `Copied from agent-core <source> at <commit12>.`,
+1. a first docstring paragraph `Copied from <source>.` (the reference path in this repository),
 2. its import lines (`agent_hub.crypto` -> `agent_runner.crypto`, `agent_hub.log` -> `agent_runner.crypto.log`), and
 3. the explicit `SOURCE_ADAPTATIONS` below (exact text blocks), which are recorded in `ORIGIN.json`.
 
@@ -22,10 +22,14 @@ copy (`normalize`) and compares the hash, so any edit of a copy that is not an a
 copied with renamed import lines and `TEST_ADAPTATIONS`; `ORIGIN.json` records the hash of the reference test and
 of the copied test (`copy_sha256`), so a hand edit of a copied test is visible as well.
 
-Usage (from the agent repository root):
+The reference is the working tree of this repository (ADR-061: reference and copy live in one tree), committed or
+not. Nothing that changes from run to run without a reference change (commit, date, host) enters a copy or
+`ORIGIN.json`, so writing twice changes nothing and a package changes exactly the copies of the references it
+changed, plus their entries in `ORIGIN.json` (decisions/HOT-08.md).
 
-    python tests/platform/runner/crypto/copy_tool.py --agent-core ../agent-core --rev origin/ad5f2026-agent-platform
-    python tests/platform/runner/crypto/copy_tool.py --agent-core ../agent-core --rev <commit> --check
+Usage (from the repository root): `make runner-crypto-copy` writes, `make runner-crypto-copy-check` only reports, or
+
+    python tests/platform/runner/crypto/copy_tool.py [--check]
 """
 
 from __future__ import annotations
@@ -34,7 +38,6 @@ import argparse
 import hashlib
 import json
 import re
-import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -61,7 +64,7 @@ MODULE_NAMES = (
     ("agent_hub.crypto", "agent_runner.crypto"),
 )
 _IMPORT_LINE = re.compile(r"^(?:from|import) ", re.MULTILINE)
-_ORIGIN_LINE = re.compile(r'^"""Copied from agent-core (?P<source>\S+) at (?P<commit>[0-9a-f]{12})\.(?:"""\n$|\n\n)')
+_ORIGIN_LINE = re.compile(r'^"""Copied from (?P<source>\S+)\.(?:"""\n$|\n\n)')
 
 # Exact text blocks of a reference module and their replacement in the copy (vector discovery of the copied areas).
 SOURCE_ADAPTATIONS: dict[str, list[tuple[str, str]]] = {
@@ -114,7 +117,7 @@ TEST_ADAPTATIONS: dict[str, list[tuple[str, str]]] = {
         ),
     ],
     "tests/platform/hub/crypto/test_vectors.py": [
-        # contracts/tools/make_vectors.py of the agent copy imports agent_hub and runs only in agent-core.
+        # contracts/tools/make_vectors.py imports agent_hub; the hub suite runs it, the runner copy must not.
         ("import subprocess\n", ""),
         (
             "\n\ndef test_make_vectors_script_is_a_thin_caller() -> None:\n"
@@ -156,35 +159,22 @@ class CopyError(Exception):
 
 @dataclass(frozen=True)
 class Reference:
-    """Read access to one commit of agent-core."""
+    """Read access to the reference files by repository path."""
 
-    commit: str
     list_dir: Callable[[str], list[str]]
     read: Callable[[str], str]
 
 
-def git_reference(agent_core: Path, rev: str) -> Reference:
-    """The copied files of `rev` in the agent-core clone at `agent_core` (through `git`, nothing is checked out).
-
-    The reference commit is the last commit up to `rev` that changed one of the copied directories.
-    """
-
-    def git(*args: str) -> str:
-        return subprocess.run(["git", "-C", str(agent_core), *args], check=True, capture_output=True, text=True).stdout
-
-    head = git("rev-parse", "--verify", f"{rev}^{{commit}}").strip()
-    # The last commit that changed a copied path, so unrelated agent-core merges leave the copy unchanged.
-    paths = [directory for directory, _copy in (*SOURCE_DIRS, *SOURCE_FILES, *TEST_DIRS)]
-    commit = git("log", "-1", "--format=%H", head, "--", *paths).strip()
+def tree_reference(root: Path) -> Reference:
+    """The reference files in the working tree at `root` (committed or not)."""
 
     def list_dir(directory: str) -> list[str]:
-        names = git("ls-tree", "--name-only", f"{commit}:{directory}").split()
-        return sorted(f"{directory}/{name}" for name in names)
+        return sorted(f"{directory}/{path.name}" for path in (root / directory).iterdir())
 
     def read(path: str) -> str:
-        return git("show", f"{commit}:{path}")
+        return (root / path).read_text(encoding="utf-8")
 
-    return Reference(commit, list_dir, read)
+    return Reference(list_dir, read)
 
 
 def rename_imports(text: str, names: Sequence[tuple[str, str]]) -> str:
@@ -206,13 +196,13 @@ def replace_block(text: str, old: str, new: str, where: str) -> str:
     return text.replace(old, new)
 
 
-def origin_line(source: str, commit: str) -> str:
-    return f"Copied from agent-core {source} at {commit[:12]}."
+def origin_line(source: str) -> str:
+    return f"Copied from {source}."
 
 
-def add_origin(text: str, source: str, commit: str) -> str:
+def add_origin(text: str, source: str) -> str:
     """Prepend the origin paragraph to the module docstring (an empty module gets a one-line docstring)."""
-    line = origin_line(source, commit)
+    line = origin_line(source)
     if not text:
         return f'"""{line}"""\n'
     if not text.startswith('"""'):
@@ -220,35 +210,35 @@ def add_origin(text: str, source: str, commit: str) -> str:
     return f'"""{line}\n\n{text[3:]}'
 
 
-def strip_origin(text: str, copy: str) -> tuple[str, str, str]:
-    """`(text without the origin paragraph, source, commit12)`."""
+def strip_origin(text: str, copy: str) -> tuple[str, str]:
+    """`(text without the origin paragraph, source)`."""
     match = _ORIGIN_LINE.match(text)
     if match is None:
         raise CopyError(f"{copy}: the module docstring does not start with the origin")
     rest = '"""' + text[match.end() :] if match.group(0).endswith("\n\n") else text[match.end() :]
-    return rest, match["source"], match["commit"]
+    return rest, match["source"]
 
 
-def copy_module(text: str, source: str, commit: str, adaptations: Sequence[tuple[str, str]]) -> str:
+def copy_module(text: str, source: str, adaptations: Sequence[tuple[str, str]]) -> str:
     """The copy of one reference module."""
     for old, new in adaptations:
         text = replace_block(text, old, new, source)
     text = rename_imports(text, MODULE_NAMES)
     if re.search(r"^(?:from|import) agent_hub\b", text, re.MULTILINE):
         raise CopyError(f"{source}: an import of agent_hub is left")
-    return add_origin(text, source, commit)
+    return add_origin(text, source)
 
 
-def normalize(copy_text: str, copy: str, adaptations: Sequence[tuple[str, str]]) -> tuple[str, str, str]:
-    """Undo `copy_module`: `(reference text, source, commit12)`."""
-    text, source, commit = strip_origin(copy_text, copy)
+def normalize(copy_text: str, copy: str, adaptations: Sequence[tuple[str, str]]) -> tuple[str, str]:
+    """Undo `copy_module`: `(reference text, source)`."""
+    text, source = strip_origin(copy_text, copy)
     text = rename_imports(text, [(new, old) for old, new in MODULE_NAMES])
     for old, new in reversed(adaptations):
         text = replace_block(text, rename_imports(new, [(n, o) for o, n in MODULE_NAMES]), old, copy)
-    return text, source, commit
+    return text, source
 
 
-def copy_test(text: str, source: str, commit: str, adaptations: Sequence[tuple[str, str]]) -> str:
+def copy_test(text: str, source: str, adaptations: Sequence[tuple[str, str]]) -> str:
     """The copy of one reference test file: the adaptations, then the import lines renamed.
 
     Prose (docstrings, comments) keeps naming the reference modules; module names inside code strings are
@@ -259,7 +249,7 @@ def copy_test(text: str, source: str, commit: str, adaptations: Sequence[tuple[s
     text = rename_imports(text, MODULE_NAMES)
     if re.search(r"^(?:from|import) agent_hub\b|[\"']agent_hub\.|[\"']from agent_hub\b", text, re.MULTILINE):
         raise CopyError(f"{source}: agent_hub is left in code")
-    return add_origin(text, source, commit)
+    return add_origin(text, source)
 
 
 def sha256(text: str) -> str:
@@ -298,7 +288,7 @@ def build(reference: Reference) -> tuple[dict[str, str], dict[str, object]]:
         text = reference.read(path)
         adaptations = SOURCE_ADAPTATIONS.get(path, [])
         copy = target(path, SOURCE_DIRS)
-        files[copy] = copy_module(text, path, reference.commit, adaptations)
+        files[copy] = copy_module(text, path, adaptations)
         entries.append(
             {
                 "adaptations": [{"copy": new, "reference": old} for old, new in adaptations],
@@ -312,19 +302,13 @@ def build(reference: Reference) -> tuple[dict[str, str], dict[str, object]]:
         for path in _walk(reference, reference_dir):
             text = reference.read(path)
             copy = target(path, TEST_DIRS)
-            files[copy] = (
-                copy_test(text, path, reference.commit, TEST_ADAPTATIONS.get(path, []))
-                if path.endswith(".py")
-                else text
-            )
+            files[copy] = copy_test(text, path, TEST_ADAPTATIONS.get(path, [])) if path.endswith(".py") else text
             tests.append({"copy": copy, "copy_sha256": sha256(files[copy]), "sha256": sha256(text), "source": path})
     origin: dict[str, object] = {
-        "about": "Copies of agent-core src/agent_hub/{crypto,log} and of their tests (ADR-027 section 2). sha256 is "
-        "the hash of the reference file, copy_sha256 the hash of a copied test file; "
-        "tests/platform/runner/crypto/copy_tool.py writes and checks the copies.",
-        "commit": reference.commit,
+        "about": "Copies of src/agent_hub/{crypto,log}, src/agent_hub/agents/vectors.py and of their tests "
+        "(ADR-027 section 2). sha256 is the hash of the reference file, copy_sha256 the hash of a copied test file; "
+        "tests/platform/runner/crypto/copy_tool.py (make runner-crypto-copy) writes and checks the copies.",
         "files": entries,
-        "repository": "agent-core",
         "tests": tests,
     }
     return files, origin
@@ -336,11 +320,9 @@ def render_origin(origin: dict[str, object]) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
-    parser.add_argument("--agent-core", type=Path, required=True, help="path of an agent-core clone")
-    parser.add_argument("--rev", required=True, help="commit or ref of agent-core to copy")
     parser.add_argument("--check", action="store_true", help="report differences, write nothing")
     args = parser.parse_args(argv)
-    files, origin = build(git_reference(args.agent_core, args.rev))
+    files, origin = build(tree_reference(REPO_ROOT))
     files[ORIGIN_FILE] = render_origin(origin)
     differing = []
     for path, text in sorted(files.items()):

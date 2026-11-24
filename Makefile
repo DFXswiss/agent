@@ -22,7 +22,7 @@ RUNNER_TESTS = tests/platform/runner tests/platform/guest tests/platform/guest_l
 TOP_TESTS = $(sort $(wildcard tests/platform/test_*.py))
 
 .PHONY: platform-ci platform-ci-steps platform-ci-concurrent $(PLATFORM_CI_STEPS) platform-ci-linux \
-	platform-test-hub platform-test-runner contracts-version
+	platform-test-hub platform-test-runner contracts-version runner-crypto-copy runner-crypto-copy-check
 
 platform-ci: $(PLATFORM_CI_STEPS)
 
@@ -88,6 +88,14 @@ platform-web:
 
 contracts-version:
 	$(PYTHON) scripts/contracts_version.py --write
+
+# The runner copy of the reference crypto (decisions/CRY-03.md, HOT-08): write it after a change of
+# src/agent_hub/{crypto,log}, src/agent_hub/agents/vectors.py or their tests; the check only reports differing files.
+runner-crypto-copy:
+	$(PYTHON) tests/platform/runner/crypto/copy_tool.py
+
+runner-crypto-copy-check:
+	$(PYTHON) tests/platform/runner/crypto/copy_tool.py --check
 
 # E2E orchestrator and specs (07-testing.md section 5): lint, types, unit tests with 100 % coverage, traceability.
 platform-e2e:

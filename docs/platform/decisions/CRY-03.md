@@ -10,16 +10,16 @@ ADR-027 §2).
    compares byte for byte (`test_vectors_file_is_current`, `test_every_vector_file_has_a_runner_section`), and the
    negative vectors are replayed through the runner code.
 2. A copy differs from its reference only by (a) a first docstring paragraph
-   `Copied from agent-core <source> at <commit12>.` (the last agent-core commit that changed a copied directory,
-   so unrelated agent-core merges leave the copy unchanged), (b) renamed module names on import lines and (c) explicit
+   `Copied from <source>.` (until HOT-08: `Copied from agent-core <source> at <commit12>.`; see
+   decisions/HOT-08.md), (b) renamed module names on import lines and (c) explicit
    text-block adaptations kept in `tests/platform/runner/crypto/copy_tool.py` (`SOURCE_ADAPTATIONS`) and recorded
    per file in `src/agent_runner/crypto/ORIGIN.json`. There are two adapted modules: `vectors.py` (area discovery
    imports `agent_runner.crypto.<area>.vectors` below the crypto package; docstring wording) and `log/vectors.py`
    (import order after renaming, required by ruff's isort). No rule or format differs.
-3. `ORIGIN.json` stores, per module, the sha256 of the **reference file bytes** at the named agent-core commit
+3. `ORIGIN.json` stores, per module, the sha256 of the **reference file bytes** (no commit since HOT-08)
    ("normalisation of the import lines" = undoing (a)–(c)). `test_copy_matches_reference` normalises every copy and
-   compares the hash, so any other edit of a copy fails; the hash can also be checked directly against agent-core
-   with `git show <commit>:<source> | shasum -a 256`. `test_origin_lists_every_copied_module` refuses an unlisted
+   compares the hash, so any other edit of a copy fails; the hash can also be checked directly with
+   `shasum -a 256 <source>`. `test_origin_lists_every_copied_module` refuses an unlisted
    module; `storage.py` is the only runner-only module.
 4. The reference unit tests are copied too (`tests/platform/runner/crypto/` and `…/crypto/log/`), with renamed
    import lines and `TEST_ADAPTATIONS`: `test_make_vectors_script_is_a_thin_caller` is dropped (the synced
@@ -34,12 +34,10 @@ ADR-027 §2).
    code – `test_every_vector_file_has_a_runner_section` makes the gap visible.
 
 ## Updating the copy
-6. After an agent-core merge that changes `src/agent_hub/{crypto,log}/` or their tests, from the agent worktree:
-   `python tests/platform/runner/crypto/copy_tool.py --agent-core <agent-core clone> --rev
-   origin/ad5f2026-agent-platform` (reads through `git show`, checks nothing out), then `make platform-ci`.
-   `--check` only reports differing files. A failing adaptation block (`found 0 times`) means the reference changed
-   at that place: update the block in `copy_tool.py`, never edit a copied module by hand. Commit the result in one
-   signed commit (`Update the runner copy of the reference crypto.`).
+6. After a change of `src/agent_hub/{crypto,log}/`, `src/agent_hub/agents/vectors.py` or their tests:
+   `make runner-crypto-copy` (reads the working tree; `make runner-crypto-copy-check` only reports differing files),
+   then commit the result with the change (decisions/HOT-08.md). A failing adaptation block (`found 0 times`) means
+   the reference changed at that place: update the block in `copy_tool.py`, never edit a copied module by hand.
 
 ## Storage key and local sealing (`storage.py`)
 7. The storage key is `kdf.storage_key(device_sig_seed)` (04 §3), already part of the shared vectors

@@ -1,14 +1,15 @@
-"""U-RUN-crypto (copy part): `agent_runner.crypto` is an unchanged copy of agent-core's reference crypto.
+"""U-RUN-crypto (copy part): `agent_runner.crypto` is an unchanged copy of the hub's reference crypto.
 
-`src/agent_runner/crypto/ORIGIN.json` names the reference commit and the sha256 of every reference module;
-`copy_tool.normalize` undoes the origin paragraph, the renamed import lines and the recorded adaptations, so any
-other edit of a copy fails `test_copy_matches_reference` (decisions/CRY-03.md describes the update). Since the
-repositories were unified (INF-06) the reference lives in the same tree: `test_reference_in_this_tree_is_the_copied_one`
-fails as soon as a reference module changes without a new copy (`copy_tool.py --agent-core . --rev HEAD`).
+`src/agent_runner/crypto/ORIGIN.json` names the sha256 of every reference module; `copy_tool.normalize` undoes the
+origin paragraph, the renamed import lines and the recorded adaptations, so any other edit of a copy fails
+`test_copy_matches_reference` (decisions/CRY-03.md). The reference lives in the same tree (ADR-061):
+`test_copies_are_current` fails as soon as a reference changes without a new copy (`make runner-crypto-copy`), and
+`test_nothing_in_the_copy_varies_without_a_reference_change` keeps commits, dates and hosts out of the copy (HOT-08).
 """
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
@@ -69,34 +70,71 @@ def reference_from_copies() -> Any:
     def list_dir(directory: str) -> list[str]:
         return sorted(path for path in files if path.rsplit("/", 1)[0] == directory)
 
-    return tool.Reference(data["commit"], list_dir, files.__getitem__)
+    return tool.Reference(list_dir, files.__getitem__)
 
 
 @pytest.mark.parametrize("entry", origin()["files"], ids=lambda entry: entry["copy"])
 def test_copy_matches_reference(entry: dict[str, Any]) -> None:
     text = (REPO_ROOT / entry["copy"]).read_text(encoding="utf-8")
-    reference, source, commit = tool.normalize(text, entry["copy"], adaptations(entry))
+    reference, source = tool.normalize(text, entry["copy"], adaptations(entry))
     assert tool.sha256(reference) == entry["sha256"], f"{entry['copy']} differs from {entry['source']}"
     assert source == entry["source"]
-    assert commit == origin()["commit"][:12]
     assert adaptations(entry) == tool.SOURCE_ADAPTATIONS.get(entry["source"], [])
 
 
-def test_reference_in_this_tree_is_the_copied_one() -> None:
-    """The reference modules and tests in `src/agent_hub` and `tests/platform/hub` are the ones the copy was made of."""
+def test_copies_are_current() -> None:
+    """The copies and `ORIGIN.json` are what the tool writes from the references in this tree."""
+    files, document = tool.build(tool.tree_reference(REPO_ROOT))
+    files[tool.ORIGIN_FILE] = tool.render_origin(document)
+    differing = [path for path, text in sorted(files.items()) if (REPO_ROOT / path).read_text(encoding="utf-8") != text]
+    assert differing == [], "reference changed: copy again with make runner-crypto-copy"
+    assert tool.build(tool.tree_reference(REPO_ROOT)) == (
+        {path: text for path, text in files.items() if path != tool.ORIGIN_FILE},
+        document,
+    )
+
+
+# Modules the tool may import: none of them reads a commit, a clock, the host or the environment.
+TOOL_IMPORTS = {"__future__", "argparse", "collections.abc", "dataclasses", "hashlib", "json", "pathlib", "re", "sys"}
+# Values that change from run to run without a reference change.
+VARYING = re.compile(
+    r"\bcommit\b|\bat [0-9a-f]{7,40}\b|\b[0-9a-f]{40}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{2}:\d{2}:\d{2}\b|\.local\b"
+    r"|agent-core|/Users/|/home/",
+    re.IGNORECASE,
+)
+
+
+def test_nothing_in_the_copy_varies_without_a_reference_change() -> None:
+    """No commit, date, time or host in an origin line or in `ORIGIN.json`, and none the tool could read."""
     data = origin()
-    changed = [
-        entry["source"]
-        for entry in data["files"] + data["tests"]
-        if tool.sha256((REPO_ROOT / entry["source"]).read_text(encoding="utf-8")) != entry["sha256"]
-    ]
-    assert changed == [], "reference changed: copy again with copy_tool.py --agent-core . --rev HEAD"
+    assert set(data) == {"about", "files", "tests"}
+    assert all(set(entry) == {"adaptations", "copy", "sha256", "source"} for entry in data["files"])
+    assert all(set(entry) == {"copy", "copy_sha256", "sha256", "source"} for entry in data["tests"])
+    without_adaptations = {**data, "files": [{**entry, "adaptations": []} for entry in data["files"]]}
+    assert not VARYING.search(json.dumps(without_adaptations)), "ORIGIN.json carries a varying value"
+    for entry in data["files"] + [item for item in data["tests"] if item["copy"].endswith(".py")]:
+        first = (REPO_ROOT / entry["copy"]).read_text(encoding="utf-8").split("\n", 1)[0]
+        assert first in {f'"""Copied from {entry["source"]}.', f'"""Copied from {entry["source"]}."""'}, entry["copy"]
+    imported: set[str] = set()
+    for node in ast.walk(ast.parse((HERE / "copy_tool.py").read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            imported |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            imported.add(node.module or "")
+    assert imported == TOOL_IMPORTS
+    for found in (
+        "commit 0123456789ab",
+        "at 0123456789ab",
+        "2026-11-24",
+        "12:00:00",
+        "runner" + ".local",
+        "agent-core",
+    ):
+        assert VARYING.search(found), found
 
 
 def test_origin_lists_every_copied_module() -> None:
     data = origin()
-    assert re.fullmatch(r"[0-9a-f]{40}", data["commit"])
-    assert data["repository"] == "agent-core"
     listed = [entry["copy"] for entry in data["files"]]
     present = {str(path.relative_to(REPO_ROOT)) for path in PACKAGE.rglob("*.py")} - RUNNER_ONLY
     assert sorted(listed) == sorted(present)
@@ -166,21 +204,21 @@ def test_copy_module_round_trip_with_adaptations() -> None:
         ("import agent_hub\n", "import agent_runner.crypto\n"),
         ("ROOT = agent_hub", "ROOT = agent_runner.crypto"),
     ]
-    copy = tool.copy_module(MODULE, "src/agent_hub/crypto/m.py", "a" * 40, blocks)
-    assert copy.startswith('"""Copied from agent-core src/agent_hub/crypto/m.py at aaaaaaaaaaaa.\n\nDoc of m.\n')
+    copy = tool.copy_module(MODULE, "src/agent_hub/crypto/m.py", blocks)
+    assert copy.startswith('"""Copied from src/agent_hub/crypto/m.py.\n\nDoc of m.\n')
     assert "from agent_runner.crypto import aead\n" in copy
     assert "from agent_runner.crypto.log.state import ORG\n" in copy
     assert "`agent_hub.log` stays prose." in copy
-    assert tool.normalize(copy, "c", blocks) == (MODULE, "src/agent_hub/crypto/m.py", "aaaaaaaaaaaa")
+    assert tool.normalize(copy, "c", blocks) == (MODULE, "src/agent_hub/crypto/m.py")
 
 
 def test_copy_module_refusals() -> None:
     with pytest.raises(tool.CopyError, match="found 0 times"):
-        tool.copy_module(MODULE, "m.py", "a" * 40, [("missing", "x")])
+        tool.copy_module(MODULE, "m.py", [("missing", "x")])
     with pytest.raises(tool.CopyError, match="import of agent_hub is left"):
-        tool.copy_module(MODULE, "m.py", "a" * 40, [])
+        tool.copy_module(MODULE, "m.py", [])
     with pytest.raises(tool.CopyError, match="no module docstring"):
-        tool.copy_module("X = 1\n", "m.py", "a" * 40, [])
+        tool.copy_module("X = 1\n", "m.py", [])
     with pytest.raises(tool.CopyError, match="outside the copied directories"):
         tool.target("src/agent_hub/db/x.py", tool.SOURCE_DIRS)
     with pytest.raises(tool.CopyError, match="outside the copied directories"):
@@ -191,31 +229,45 @@ def test_copy_module_refusals() -> None:
 
 
 def test_empty_module_round_trip() -> None:
-    copy = tool.copy_module("", "src/agent_hub/log/__init__.py", "b" * 40, [])
-    assert copy == '"""Copied from agent-core src/agent_hub/log/__init__.py at bbbbbbbbbbbb."""\n'
-    assert tool.normalize(copy, "c", []) == ("", "src/agent_hub/log/__init__.py", "bbbbbbbbbbbb")
+    copy = tool.copy_module("", "src/agent_hub/log/__init__.py", [])
+    assert copy == '"""Copied from src/agent_hub/log/__init__.py."""\n'
+    assert tool.normalize(copy, "c", []) == ("", "src/agent_hub/log/__init__.py")
 
 
 def test_copy_test_renames_imports_and_refuses_leftovers() -> None:
     test = '"""T (agent_hub.log)."""\n\nfrom agent_hub.log import verify\n\nX = verify\n'
-    copy = tool.copy_test(test, "tests/platform/hub/log/test_x.py", "c" * 40, [])
+    copy = tool.copy_test(test, "tests/platform/hub/log/test_x.py", [])
     assert "from agent_runner.crypto.log import verify\n" in copy
     assert "T (agent_hub.log)." in copy
     with pytest.raises(tool.CopyError, match="left in code"):
-        tool.copy_test('"""T."""\nX = "agent_hub.zarea"\n', "t.py", "c" * 40, [])
+        tool.copy_test('"""T."""\nX = "agent_hub.zarea"\n', "t.py", [])
 
 
 def test_main_check_and_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     reference = reference_from_copies()
-    monkeypatch.setattr(tool, "git_reference", lambda _path, _rev: reference)
+    monkeypatch.setattr(tool, "tree_reference", lambda _root: reference)
     # The rebuilt reference has no tests, so only their list in ORIGIN.json differs from the repository.
-    assert tool.main(["--agent-core", "unused", "--rev", "HEAD", "--check"]) == 1
+    assert tool.main(["--check"]) == 1
     assert capsys.readouterr().out == "differs: src/agent_runner/crypto/ORIGIN.json\n"
     monkeypatch.setattr(tool, "REPO_ROOT", tmp_path)
-    assert tool.main(["--agent-core", "unused", "--rev", "HEAD", "--check"]) == 1
+    assert tool.main(["--check"]) == 1
     assert "differs: src/agent_runner/crypto/ORIGIN.json" in capsys.readouterr().out
-    assert tool.main(["--agent-core", "unused", "--rev", "HEAD"]) == 0
+    assert tool.main([]) == 0
     assert "wrote: src/agent_runner/crypto/aead.py" in capsys.readouterr().out
-    assert tool.main(["--agent-core", "unused", "--rev", "HEAD", "--check"]) == 0
+    assert tool.main(["--check"]) == 0
+    # Writing again changes nothing.
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    assert tool.main([]) == 0
+    assert capsys.readouterr().out == ""
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+def test_tree_reference_reads_the_working_tree(tmp_path: Path) -> None:
+    (tmp_path / "d" / "__pycache__").mkdir(parents=True)
+    (tmp_path / "d" / "b.py").write_text("B\n", encoding="utf-8")
+    (tmp_path / "d" / "a.py").write_text("A\n", encoding="utf-8")
+    reference = tool.tree_reference(tmp_path)
+    assert reference.list_dir("d") == ["d/__pycache__", "d/a.py", "d/b.py"]
+    assert reference.read("d/a.py") == "A\n"
