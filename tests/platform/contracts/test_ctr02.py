@@ -647,7 +647,7 @@ SPEC_TEXT_LIMITS = [
     ("human.question", "question", 4000),
     ("human.approval", "question", 4000),
 ]
-SPEC_PROTECTED_DEFAULT = ["main", "master", "develop", "release/*"]
+SPEC_PROTECTED_DEFAULT: list[str] = []
 
 
 @pytest.fixture(scope="module")

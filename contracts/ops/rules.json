@@ -100,12 +100,7 @@
     ]
   },
   "protected_branches": {
-    "default": [
-      "main",
-      "master",
-      "develop",
-      "release/*"
-    ],
+    "default": [],
     "matching": "fnmatch-style on the normalised branch name: * matches any characters except /, everything else literally; the head of a pull request, the branch of create_branch, commit and push must not match (branch_protected)",
     "examples": [
       {

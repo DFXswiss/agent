@@ -523,13 +523,12 @@ def _key_file(value: str) -> Path:
 def _operator(
     raw: Callable[[str], str], require: frozenset[str], device_kind: DeviceKind | None
 ) -> tuple[Path | None, frozenset[str]]:
-    """`OPERATOR_SUBSCRIPTION_DIR` and `OPERATOR_SUBSCRIPTION_ORGS` (KOR-23): both or neither, platform devices only."""
+    """`OPERATOR_SUBSCRIPTION_DIR` and `OPERATOR_SUBSCRIPTION_ORGS` (KOR-23): platform devices only; the list needs the
+    directory, the directory alone is valid (the organizations come from the platform log, ADR-077)."""
     directory = _optional(raw("OPERATOR_SUBSCRIPTION_DIR"), "OPERATOR_SUBSCRIPTION_DIR", require, _operator_dir)
     orgs = _org_ids(raw("OPERATOR_SUBSCRIPTION_ORGS"))
     if directory is not None and device_kind == "org":
         raise RunnerError("config_invalid", "OPERATOR_SUBSCRIPTION_DIR")
-    if directory is not None and not orgs:
-        raise RunnerError("config_invalid", "OPERATOR_SUBSCRIPTION_ORGS")
     if orgs and directory is None:
         raise RunnerError("config_invalid", "OPERATOR_SUBSCRIPTION_DIR")
     return directory, orgs

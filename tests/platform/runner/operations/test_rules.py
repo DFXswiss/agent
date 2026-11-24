@@ -93,7 +93,8 @@ def test_protected_branch_examples(example: dict[str, Any]) -> None:
 
 
 def test_protected_branches_match_literally_and_after_refs_heads() -> None:
-    assert rules.protected("refs/heads/main", rules.DEFAULT_PROTECTED)
+    assert rules.protected("refs/heads/main", ["main"])
+    assert not rules.protected("main", rules.DEFAULT_PROTECTED)  # ADR-077: no platform-side default
     assert not rules.protected("mainXline", ["main.line"])  # "." is literal
     assert rules.protected("v1+2", ["v1+2"])
     assert not rules.protected("anything", [])

@@ -571,7 +571,8 @@ General: `params` schema in `contracts/ops/<type>.json`; violations → `params_
 no leading `-` or `/`, no trailing `/` or `.lock`, no `@{`, ≤ 200 chars). Workgroup settings (`settings.workgroup`
 event): `repositories` allow-list (exact `owner/name`, lowercased; optional: empty, the default, allows every
 repository the acting user's GitHub connection reaches, ADR-054), `protected_branches` patterns (default
-`["main","master","develop","release/*"]`), `pr_draft_default` (true). Repository-level checks: `repo` in the
+`[]`: the platform protects no branch on its own, GitHub's branch protection of the repository applies, ADR-077 §3,
+interpretation A17), `pr_draft_default` (true). Repository-level checks: `repo` in the
 allow-list when the list is not empty (`repo_not_allowed`) and accessible with the GitHub connection of the acting
 user - the person whose instruction started the session's turn, never the task owner as such (HOT-14, ADR-070,
 `05-runner.md` §12 step 3; `github_not_connected`, `repo_not_accessible` - the latter is held with one next step,

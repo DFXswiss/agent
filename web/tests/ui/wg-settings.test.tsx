@@ -45,7 +45,7 @@ describe('workgroup settings', () => {
     serve(t);
     open(t);
     expect(await screen.findByTestId('wg-settings.defaults')).toBeVisible();
-    expect(screen.getByTestId('wg-settings.protected')).toHaveValue('main\nmaster\ndevelop\nrelease/*');
+    expect(screen.getByTestId('wg-settings.protected')).toHaveValue('');
     expect(screen.getByTestId('wg-settings.draft')).toBeChecked();
     expect(screen.getByTestId('wg-settings.back')).toHaveAttribute('href', `/o/${t.org}/w/${t.wg}`);
     fireEvent.change(screen.getByTestId('wg-settings.repositories'), { target: { value: 'DFX/Agent\nnot a repo' } });

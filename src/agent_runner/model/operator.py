@@ -3,9 +3,13 @@
 
 The operator puts access tokens of Claude subscriptions into `AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR`, one file
 `<name>.token` per subscription holding one line. The files are replaced from outside (atomically, `rename`) whenever
-the token is renewed. Sessions of the organizations in `AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS` may use this pool;
-for every other organization nothing changes. Towards the hub and the web client the access kind is
-`claude_subscription` (`subscription`); that the operator's pool was used is only in the runner log and the metrics.
+the token is renewed. Sessions of the organizations the verified platform log grants the operator's subscriptions
+(`org_operator_subscriptions`, root-signed, ADR-077) may use this pool; an organization without such an entry may use
+it while it is listed in `AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS` (the list of ADR-052, kept for the move into the
+log; an explicit entry of the log wins over it). A change of the log takes effect at the runner's next refresh of
+the platform log, without a restart; for every other organization nothing changes. Towards the hub and the web
+client the access kind is `claude_subscription` (`subscription`); that the operator's pool was used is only in the
+runner log and the metrics.
 
 - **Files** (`Pool.scan`): the directory must be a directory of the runner account, not a symbolic link, with no
   rights for group and others (0700); otherwise the whole pool is unusable. A token file must be a regular file of the
@@ -46,6 +50,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent_runner.crypto.log.platform import PlatformState
+from agent_runner.orgs.book import book_for
 from agent_runner.orgs.db import session as store_session
 
 ATTRIBUTE = "model_operator_pool"
@@ -148,12 +154,21 @@ class Pool:
     acted_at: dict[str, float] = field(default_factory=dict)
     """Session ID -> time a refusal of its requests last blocked or deferred a file."""
     reported: dict[str, object] = field(default_factory=dict)
+    platform: Callable[[], PlatformState | None] = lambda: None
+    """The verified platform state of the daemon (`orgs.book`), None before the first verification."""
 
     def __repr__(self) -> str:
         return f"Pool(files={sorted(self.files)!r}, problem={self.problem!r})"
 
     def allows(self, org_id: str | None) -> bool:
-        return org_id is not None and org_id in self.orgs
+        """The organization may use the pool: by its latest `org_operator_subscriptions` in the verified platform log,
+        and without one by the environment list (ADR-077 section 3)."""
+        if org_id is None:
+            return False
+        state = self.platform()
+        if state is not None and org_id in state.operator_subscriptions:
+            return state.operator_subscribed(org_id)
+        return org_id in self.orgs
 
     def note(self, key: str, value: object, text: str) -> None:
         """Log `text` when `key` changes to `value` (one line per change, not per scan)."""
@@ -291,12 +306,19 @@ class Pool:
 
 
 def configured(config: Any) -> tuple[Path, frozenset[str]] | None:
-    """The directory and organizations of a configuration with the pool on, else None."""
+    """The directory and the environment's organizations of a configuration with the pool on (a directory), else
+    None."""
     directory = getattr(config, "operator_subscription_dir", None)
-    orgs = getattr(config, "operator_subscription_orgs", None)
-    if not isinstance(directory, Path) or not orgs:
+    if not isinstance(directory, Path):
         return None
-    return directory, frozenset(orgs)
+    return directory, frozenset(getattr(config, "operator_subscription_orgs", None) or ())
+
+
+def platform_of(context: Any) -> Callable[[], PlatformState | None]:
+    """The verified platform state of the daemon's book (`orgs.book`); always None for a context without identity."""
+    if getattr(context, "identity", None) is None:
+        return lambda: None
+    return lambda: book_for(context).platform_state
 
 
 def pool_for(context: Any) -> Pool | None:
@@ -314,7 +336,7 @@ def pool_for(context: Any) -> Pool | None:
         context.log.write(text + "\n")
         context.log.flush()
 
-    created = Pool(directory=settings[0], orgs=settings[1], log=log)
+    created = Pool(directory=settings[0], orgs=settings[1], log=log, platform=platform_of(context))
     setattr(context, ATTRIBUTE, created)
     return created
 

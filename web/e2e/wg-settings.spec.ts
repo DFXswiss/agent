@@ -23,7 +23,7 @@ test('a writer edits and saves the workgroup settings, with the concurrent-edit 
   await page.getByTestId('tasks.settings').click();
   await expect(page).toHaveURL(new RegExp(`/o/${ada.org}/w/${wg}/settings$`));
   await expect(page.getByTestId('wg-settings.defaults')).toBeVisible();
-  await expect(page.getByTestId('wg-settings.protected')).toHaveValue('main\nmaster\ndevelop\nrelease/*');
+  await expect(page.getByTestId('wg-settings.protected')).toHaveValue('');
   await expect(page.getByTestId('wg-settings.draft')).toBeChecked();
   await page.getByTestId('wg-settings.repositories').fill('DFXswiss/agent\nnot-a-repo');
   await page.getByTestId('wg-settings.save').click();
@@ -68,7 +68,9 @@ test('a reader sees the settings without controls; an unknown workgroup is not f
   await expect(page.getByTestId('wg-settings.view.repositories')).toHaveText(
     'Every repository of the GitHub connection is allowed.',
   );
-  await expect(page.getByTestId('wg-settings.view.protected')).toContainText('release/*');
+  await expect(page.getByTestId('wg-settings.view.protected')).toHaveText(
+    'No branch is protected here; the branch protection of the repository at GitHub applies.',
+  );
   await expect(page.getByTestId('wg-settings.view.draft')).toHaveText('Pull requests are drafts by default.');
   await expect(page.getByTestId('wg-settings.form')).toHaveCount(0);
   await expect(page.locator('textarea')).toHaveCount(0);

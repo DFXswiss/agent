@@ -1,7 +1,7 @@
 // Workgroup settings (06-web.md section 8.1, 03-api.md sections 9 and 10, ADR-015, ADR-054): the optional
 // repository allow-list (empty = every repository of the GitHub connection; `owner/name`, the regex of section 9,
-// stored lower case), the protected branch patterns (defaults
-// `main`, `master`, `develop`, `release/*`) and the PR draft default (true). They are a `settings.workgroup` event of
+// stored lower case), the protected branch patterns (no default since ADR-077: GitHub's own branch protection
+// applies) and the PR draft default (true). They are a `settings.workgroup` event of
 // the workgroup scope, written by users with `wg:write`; the newest verified one wins (by `scope_seq`).
 //
 // - `parseSettings`: the form input (one repository and one pattern per line) → the event body, or the errors per
@@ -28,7 +28,8 @@ import type { StoreState } from '../store/store';
 import type { TasksContext } from '../tasks/pull';
 
 export const KIND = 'settings.workgroup';
-export const DEFAULT_PROTECTED = ['main', 'master', 'develop', 'release/*'] as const;
+/** No default (ADR-077 section 3, A17): GitHub's own branch protection applies; a workgroup may set its own list. */
+export const DEFAULT_PROTECTED: readonly string[] = [];
 export const MAX_REPOSITORIES = 500;
 export const MAX_PATTERNS = 100;
 /** `owner/name` of 03-api.md section 9 (any case; stored lower case). */

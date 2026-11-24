@@ -25,7 +25,8 @@ from agent_platform.orgs import display_name, find_org
 from agent_runner.crypto.log.state import ORG, WG
 
 KIND = "settings.workgroup"
-DEFAULT_PROTECTED = ("main", "master", "develop", "release/*")
+DEFAULT_PROTECTED: tuple[str, ...] = ()
+"""No default (ADR-077 section 3): GitHub's own branch protection applies."""
 MAX_REPOSITORIES = 500
 MAX_PATTERNS = 100
 REPO_RE = re.compile(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}")

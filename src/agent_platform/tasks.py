@@ -20,7 +20,9 @@ tool does not resend on its own.
 
 ADR-075: `task create --device [--vm]` sends the chosen device and VM (`placement`; without one the workgroup's
 default or the automatic choice applies), and the task is created even when no device has room (it waits
-`scheduling` with a reason). `task show` prints the device and VM of the main session and, while the task waits, its
+`scheduling` with a reason). Without a choice, an admin's task in a workgroup without an assigned device first
+assigns the first certified platform candidate (`ensure_device`, rule E-05, ADR-077; `assigned_device` in the answer),
+as the web client does. `task show` prints the device and VM of the main session and, while the task waits, its
 reason (`waiting`, a code of the closed list of `diagnose`).
 """
 
@@ -36,7 +38,7 @@ from agent_platform.diagnose import WAITING
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import open_item, seal
 from agent_platform.hub import segment
-from agent_platform.orgs import VM_ID, find_org
+from agent_platform.orgs import VM_ID, device_assign, find_org
 from agent_platform.reader import scope_events
 from agent_platform.sessions import runtime_seconds
 from agent_platform.waiting import annotate
@@ -117,6 +119,21 @@ def _placement(device: str | None, vm: str | None) -> dict[str, str] | None:
     return {"device_id": device} if vm is None else {"device_id": device, "vm_id": vm}
 
 
+def ensure_device(account: Account, org: str, wg: str) -> str | None:
+    """Rule E-05 (ADR-077 section 4): an admin's task in a workgroup without an assigned device first assigns the first
+    certified platform candidate, as the web client does before sending (`ensureDevice`); the device, or None when one
+    is assigned already, the user is no admin or none can be assigned (the task then waits and the admins are asked)."""
+    state = account.org_log(org).state
+    if any(state.assigned(principal, wg) for principal in state.principals) or not state.is_admin(account.user_id):
+        return None
+    try:
+        return str(device_assign(account, wg)["device_id"])
+    except PlatformError as error:
+        if error.code in ("no_device", "hub_refused"):
+            return None
+        raise
+
+
 def task_create(
     account: Account,
     wg: str,
@@ -127,11 +144,12 @@ def task_create(
     github_identity: str | None = None,
 ) -> dict[str, Any]:
     """A new task with its first prompt in workgroup `wg` (on the chosen device and VM and with the chosen GitHub
-    identity, if any)."""
+    identity, if any; without a device choice an admin's workgroup without a device gets one first, `ensure_device`)."""
     org = find_org(account, _id(wg))
     prompt = _prompt(text)
     placement = _placement(device, vm)
     chosen = {} if github_identity is None else {"github_identity": _id(github_identity)}
+    assigned = ensure_device(account, org, wg) if placement is None else None
     task = uuid7()
     events = [
         _seal(account, (org, wg, task), "task.meta", {"title": derive_title(prompt)}),
@@ -155,6 +173,7 @@ def task_create(
         "session_id": session.get("session_id") if isinstance(session, dict) else None,
         "placement": placement,
         **chosen,
+        "assigned_device": assigned,
     }
 
 

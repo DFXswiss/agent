@@ -67,11 +67,15 @@ function ReadOnly({ settings }: { readonly settings: WorkgroupSettings }) {
       </dd>
       <dt className="font-medium">{t('wg-settings.protected.label')}</dt>
       <dd data-testid="wg-settings.view.protected">
-        <ul className="font-mono text-sm">
-          {settings.protected_branches.map((pattern) => (
-            <li key={pattern}>{pattern}</li>
-          ))}
-        </ul>
+        {settings.protected_branches.length === 0 ? (
+          t('wg-settings.protected.none')
+        ) : (
+          <ul className="font-mono text-sm">
+            {settings.protected_branches.map((pattern) => (
+              <li key={pattern}>{pattern}</li>
+            ))}
+          </ul>
+        )}
       </dd>
       <dd data-testid="wg-settings.view.draft">
         {settings.pr_draft_default ? t('wg-settings.draft.yes') : t('wg-settings.draft.no')}

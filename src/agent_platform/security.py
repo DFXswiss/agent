@@ -12,9 +12,12 @@
 - `agents list`: `GET /v1/me/agents`, each label opened with the identity (an unknown agent when it does not open);
   `agents revoke --id|--all`: `DELETE /v1/me/agents/{id}` or `DELETE /v1/me/agents`. Revoking this agent removes its
   local state.
-- `platform invite|list|revoke`: platform user invitations of users with the platform role `inviter` (read from the
-  verified platform log, never from the hub's word): the code is drawn here, only `invite_id`, `pk_inv` and the expiry
-  go to the hub; the link is printed once.
+- `platform invite|list|revoke`: platform user invitations of users with the platform role `inviter`, or of every
+  user while the switch `open_platform_invites` is on (both read from the verified platform log, never from the hub's
+  word; ADR-077): the code is drawn here, only `invite_id`, `pk_inv` and the expiry go to the hub; the link is printed
+  once. Without the role the hub lists and revokes only the user's own invitations.
+- `platform settings` (ADR-077): the switches, the organizations granted the operator's subscriptions and the caller's
+  platform roles of the verified platform log.
 - `security`: what the security page shows: the hash of the delivered `build-manifest.json`, its version and commit,
   whether its root key fingerprint is the pinned platform root key's, and the pinned hub key.
 """
@@ -41,11 +44,13 @@ from agent_runner.crypto.encoding import P, b64u_decode, format_time, is_b64u
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.kdf import hkdf, kek_from_recovery_code
 from agent_runner.crypto.keys import ed25519_seed
+from agent_runner.crypto.log.entries import PLATFORM_POLICIES, PLATFORM_ROLES
 from agent_runner.crypto.recovery import format_recovery_code, generate_recovery_code, recovery_id
 
 NONCE_BYTES = 12
 RECOVERY_UNSET = b"recovery-unset\x00"
 INVITER = "inviter"
+OPEN_INVITES = "open_platform_invites"
 INVITE_HOURS = 72
 INVITE_HOURS_MAX = 720
 INVITE_SKEW = timedelta(seconds=120)
@@ -169,8 +174,24 @@ def agents_revoke(account: Account, agent: str | None, every: bool) -> dict[str,
 
 
 def _inviter(account: Account) -> None:
-    if not account.platform().has_role(account.user_id, INVITER):
+    """The role `inviter`, or anybody while the switch `open_platform_invites` is on (ADR-077), as the verified
+    platform log says."""
+    platform = account.platform()
+    if not (platform.has_role(account.user_id, INVITER) or platform.policy(OPEN_INVITES)):
         raise PlatformError("not_inviter")
+
+
+def platform_settings(account: Account) -> dict[str, Any]:
+    """The switches, the organizations granted the operator's subscriptions and the caller's platform roles of the
+    verified platform log (ADR-077); `may_invite` as `platform invite` decides."""
+    platform = account.platform()
+    roles = [role for role in PLATFORM_ROLES if platform.has_role(account.user_id, role)]
+    return {
+        "policies": {name: platform.policy(name) for name in PLATFORM_POLICIES},
+        "operator_subscriptions": sorted(org for org, granted in platform.operator_subscriptions.items() if granted),
+        "roles": roles,
+        "may_invite": INVITER in roles or platform.policy(OPEN_INVITES),
+    }
 
 
 def platform_invite(account: Account, hours: int) -> dict[str, Any]:
@@ -280,6 +301,10 @@ def _platform_revoke(account: Account, args: Any, context: Context) -> dict[str,
     return platform_revoke(account, args.id)
 
 
+def _platform_settings(account: Account, args: Any, context: Context) -> dict[str, Any]:
+    return platform_settings(account)
+
+
 def _security(account: Account, args: Any, context: Context) -> dict[str, Any]:
     return security(account)
 
@@ -342,7 +367,7 @@ def register(tree: Tree) -> None:
     )
     sub.add_argument("--id")
     sub.add_argument("--all", action="store_true")
-    group = tree.group("platform", "platform invitations (platform role inviter)")
+    group = tree.group("platform", "platform invitations and the platform's switches")
     sub = tree.command(
         group,
         "invite",
@@ -371,6 +396,15 @@ def register(tree: Tree) -> None:
         words="plattformeinladung widerrufen zurückziehen cancel invitation withdraw",
     )
     sub.add_argument("--id", required=True)
+    tree.command(
+        group,
+        "settings",
+        _platform_settings,
+        "the platform's switches, the organizations using the operator's subscriptions and your platform roles",
+        example="agent-platform platform settings",
+        words="plattform schalter freigaben einstellungen rollen betreiber abos switches policies roles operator",
+        trim="first",
+    )
     tree.command(
         tree.commands,
         "security",
