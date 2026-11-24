@@ -1,5 +1,5 @@
 """Work VMs and run VMs in the VM runtime meter (`<area>/billing_vms.py:VMS` of `agent_runner.billing.meter`, KOR-31;
-KOR-43, ADR-078 section 4; concept idea 46).
+KOR-43, ADR-079 section 4; concept idea 46).
 
 Every `running` work VM of this device is billed to the second as `vm_kind` `work` with its size (`standard`, `large`,
 `xlarge` of the price list). Who bears the interval:

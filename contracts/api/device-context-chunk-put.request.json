@@ -20,7 +20,7 @@
         "context",
         "log"
       ],
-      "description": "kind of the object, read with its first chunk (absent: context); a log is the output of a test run or a work VM job (ADR-078 section 3)"
+      "description": "kind of the object, read with its first chunk (absent: context); a log is the output of a test run or a work VM job (ADR-079 section 3)"
     }
   },
   "required": [

@@ -1,4 +1,4 @@
-// The state of an open log viewer (ADR-078 section 3, rule "lists must not break with any data size"): the viewer
+// The state of an open log viewer (ADR-079 section 3, rule "lists must not break with any data size"): the viewer
 // never holds the whole log as text, only one page (one chunk of at most 256 KiB, `reader.ts`). `open` reads and
 // checks the manifest and shows the first page, `go` moves to another page (a late answer for a page the user left is
 // dropped), `download` reads every chunk for a file. After `close` nothing is reported any more. React reads the

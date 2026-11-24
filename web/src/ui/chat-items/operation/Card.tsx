@@ -2,7 +2,7 @@
 // `operation.result` and the Operations tab: type, live state badge (from the `operation` frames), a short subject
 // from the decrypted parameters, the result links and values (PR URL, commit SHA, comment URL, branch, subagent
 // session, issue, login), "Renamed by session" for `task.set_title`, a test run's summary with "Open log"
-// (`test.run`, ADR-078), the error code, and "Duplicate of …" linking the original. Listed issues and pull requests show number (linked), title, state and labels; a read issue shows its text
+// (`test.run`, ADR-079), the error code, and "Duplicate of …" linking the original. Listed issues and pull requests show number (linked), title, state and labels; a read issue shows its text
 // and its page of comments. Text from GitHub is untrusted: it is only rendered as React text (never as HTML or
 // Markdown), links are https only (`httpsUrl`). Unverifiable parameters or results are shown as such with their code,
 // never as content.

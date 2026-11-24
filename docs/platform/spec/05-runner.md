@@ -617,7 +617,7 @@ Prompts for a session are delivered strictly in event order; a prompt arriving w
   route) or any other refusal (`quota_exceeded`, …) keeps the object local (`refused`); `404` after accepted chunks
   or a commit refused for missing chunks (the hub expired the upload) makes the checkpoint due again as a new object.
   Tables `runner.context_session`, `runner.context_object`, `runner.context_pr_link` (migration `0017_context.sql`).
-  KOR-43 (migration `0020_test_runs.sql`): `runner.context_object.kind` (`context`, `log`), `runner.test_run` (one row
+  KOR-43 (migration `0022_test_runs.sql`): `runner.context_object.kind` (`context`, `log`), `runner.test_run` (one row
   per test run, 13-work-vm.md §12.2), `runner.workvm` scope `run` and the teardown reasons `run_ended`,
   `credit_exhausted`, `session_paused`.
 - Restore (request amender `contexts.restore`, also for a resume whose VM changed; the session's `vm_id` changes only

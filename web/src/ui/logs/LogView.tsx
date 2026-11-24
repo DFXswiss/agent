@@ -1,4 +1,4 @@
-// The log of a test run or a work VM job (ADR-078 section 3): a button opens the log panel below it. The panel shows
+// The log of a test run or a work VM job (ADR-079 section 3): a button opens the log panel below it. The panel shows
 // one page (one chunk of at most 256 KiB of output) at a time – never the whole log in the DOM – with "Start",
 // "Previous part", "Next part" and "Jump to end", the note when only the last part was kept, and "Download", which
 // reads every chunk and saves a `.log` file. Reading, checking and decrypting is `core/logs`.

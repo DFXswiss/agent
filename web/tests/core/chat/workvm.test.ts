@@ -1,4 +1,4 @@
-// The work VM events (13-work-vm.md sections 8 and 10, ADR-078): the body checks of `workvm.run` (with its optional
+// The work VM events (13-work-vm.md sections 8 and 10, ADR-079): the body checks of `workvm.run` (with its optional
 // `log`) and `workvm.state` (also `starting` and `stopped`) against the contract, the latest item per job and per test
 // run, the truncated output, the runtime sum of a session and a task (a stopped VM ends its running time), its h/min/s
 // text, the memoized selectors and the panel phases (also an implicit start and a stopped VM).

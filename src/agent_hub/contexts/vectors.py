@@ -1,5 +1,5 @@
 """Vectors of the context checkpoints and pull-request links (`contracts/vectors/context.json`, 04-crypto.md
-sections 3 and 4.11, ADR-072) and of the logs (`contracts/vectors/runlog.json`, section 4.12, ADR-078, below),
+sections 3 and 4.11, ADR-072) and of the logs (`contracts/vectors/runlog.json`, section 4.12, ADR-079, below),
 discovered by the generator of `agent_hub.crypto.vectors` through `SECTIONS`.
 
 Positive part of `context`: one checkpoint of one chunk (workgroup key, salt, `k_ctx`, the compressed archive, the
@@ -216,7 +216,7 @@ def build() -> Json:
     }
 
 
-# -- logs of test runs and work VM jobs (`contracts/vectors/runlog.json`, 04-crypto.md section 4.12, ADR-078) ---------
+# -- logs of test runs and work VM jobs (`contracts/vectors/runlog.json`, 04-crypto.md section 4.12, ADR-079) ---------
 #
 # Positive part: one log of two chunks (the first `CHUNK_BYTES` long) with workgroup key, salt, `k_log`, the kept
 # output, the sealed chunks, manifest, signature and digest; one standalone chunk with its AAD. Negative vectors include
@@ -289,7 +289,7 @@ def build_runlog() -> Json:
     base = {"manifest": manifest, "sig": sig, "author_sig_pk": pk}
     ctx_key = context.context_key(wk, salt, LOG_IDS["object"])
     return {
-        "about": "Logs of test runs and work VM jobs of 04-crypto.md section 4.12 (ADR-078): k_log from WK and the "
+        "about": "Logs of test runs and work VM jobs of 04-crypto.md section 4.12 (ADR-079): k_log from WK and the "
         "manifest salt, uncompressed sealed chunks, the signed manifest with kind and ref, the digest.",
         "workgroup_key": b64u_encode(wk),
         "author_sig_pk": pk,

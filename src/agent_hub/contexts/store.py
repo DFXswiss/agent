@@ -35,7 +35,7 @@ device state and decides what the pruning keeps.
 workgroup the device is assigned to - a restore may run on any device of the workgroup; anything else (a log too) is
 `404`.
 
-**Logs** (KOR-43, ADR-078 section 3): an object whose first chunk names `kind: "log"` is the output of a test run or
+**Logs** (KOR-43, ADR-079 section 3): an object whose first chunk names `kind: "log"` is the output of a test run or
 of a long work VM job of a session (a subagent's too), sealed like a checkpoint. It is never listed as a checkpoint,
 never chosen as the `context` of the device state, and pruned on its own: complete logs of the task beyond the newest
 `AGENT_HUB_LOG_KEEP` (by creation time, then ID) go at the commit. A later chunk of another kind than the object's is
@@ -100,7 +100,7 @@ class Limits:
     org_bytes: int
     keep: int
     log_org_bytes: int = 0
-    """The sealed bytes of every log of the organisation (`AGENT_HUB_LOG_ORG_BYTES`, ADR-078 section 3): logs have a
+    """The sealed bytes of every log of the organisation (`AGENT_HUB_LOG_ORG_BYTES`, ADR-079 section 3): logs have a
     quota of their own, so they never crowd out the checkpoints a resume needs."""
 
 

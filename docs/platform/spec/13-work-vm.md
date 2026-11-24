@@ -245,7 +245,7 @@ machine-id at first boot (cloud-init new instance-id).
   state `lost`. The teardown is shielded from cancellation and waits (at most 300 s) for the log captures of the VM.
   When Lima fails to delete, the row stays `deleting` (its slot is not given back) and the daemon task's sweep deletes
   it again every minute; the sweep also deletes own `wvm-` instances without a live row or pool entry.
-- **Paused sessions** (KOR-43, ADR-078 §4): a session the guest reports `suspended` stops the VMs it works in
+- **Paused sessions** (KOR-43, ADR-079 §4): a session the guest reports `suspended` stops the VMs it works in
   (`limactl stop`, state `stopped`, `workvm.state` `stopped` with reason `session_paused`) – its session VM, and the
   task VM when no other session of the task is active – unless a job still runs in it. On a platform device the
   reconcile step `workvm` stops every running work VM of an organization whose credit is used up (reason
@@ -347,7 +347,7 @@ session puts there itself is its own business (addendum 1).
   fill bounded by the volume quota), request abuse (size, count, foreign task), egress address = Cloudflare, never the
   site address.
 
-## 12. Test runs (KOR-43, ADR-078)
+## 12. Test runs (KOR-43, ADR-079)
 Concept idea 27, interpretations A6, A8, A9: every test run is its own operation in its own throw-away VM; result, log
 and exit code are kept outside the VM. The work VM stays unrestricted (E-08).
 
@@ -379,7 +379,7 @@ and exit code are kept outside the VM. The work VM stays unrestricted (E-08).
   (`task_closed`) and credit that runs out (`credit_exhausted`) end the run `cancelled` within one poll.
 - Always, in a `finally` shielded from cancellation: the tail is read, the complete output stored as a log (§12.3,
   at most 300 s), the VM deleted (`run_ended`, or the cancel reason), then the row and the final event written.
-- `runner.test_run` (migration 0020) keeps every run (`running` until it ended, then its result). After a restart every
+- `runner.test_run` (migration 0022) keeps every run (`running` until it ended, then its result). After a restart every
   run still `running` ends `error` (`restart`) with its final event; the VM goes with the work VM reconciliation and
   the pipeline fails the operation found `executing` (`timeout`): a run is never executed twice.
 - Log line `runner.testrun ready run_id= ready_ms= workvm_id=` (the start time of a run VM, A9) and `runner.testrun

@@ -191,7 +191,7 @@
               },
               "task_closed": {
                 "type": "boolean",
-                "description": "the session's task is closed: its work VMs go at once (ADR-078 section 5); absent means false"
+                "description": "the session's task is closed: its work VMs go at once (ADR-079 section 5); absent means false"
               }
             },
             "required": [

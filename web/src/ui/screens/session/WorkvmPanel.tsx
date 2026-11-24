@@ -1,4 +1,4 @@
-// The work VM panel of a session (13-work-vm.md section 10, KONZEPT ideas 27, 28 and 46, ADR-078): the state of the
+// The work VM panel of a session (13-work-vm.md section 10, KONZEPT ideas 27, 28 and 46, ADR-079): the state of the
 // session's work VM – none, starting (countdown to the 10 s target while its `workvm.request` operation is open or
 // an implicit start wrote `starting`), running, stopped (paused session; it starts again on the next use) or deleted
 // with the reason –, its size, the runtime of this VM (ticking every second while it runs), the runs of the session

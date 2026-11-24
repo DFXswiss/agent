@@ -111,7 +111,7 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "WORKVM_MAX_PER_ORG": (16, 1, 100),
     "WORKVM_MAX_PER_OWNER": (8, 1, 100),
     "WORKVM_SSH_PORT_BASE": (47200, 1024, 65_435),
-    # KOR-43 logs of test runs and long work VM jobs (ADR-078 section 3): the kept bytes of one log (its last part).
+    # KOR-43 logs of test runs and long work VM jobs (ADR-079 section 3): the kept bytes of one log (its last part).
     "LOG_MAX_MIB": (256, 1, 1_000_000),
     # KOR-33 context checkpoints (ADR-072 sections 4 and 6): generous defaults, never a precondition.
     "CONTEXT_INTERVAL_SECONDS": (600, 30, 86_400),

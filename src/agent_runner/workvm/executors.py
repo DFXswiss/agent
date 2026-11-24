@@ -1,5 +1,5 @@
 """Executors of `workvm.request`, `workvm.release` and `test.run` (`<area>/executors.py:EXECUTORS`, ADR-027 section 4,
-ADR-041; docs/platform/spec/13-work-vm.md sections 2 and 12, ADR-078).
+ADR-041; docs/platform/spec/13-work-vm.md sections 2 and 12, ADR-079).
 
 They run after the hub accepted the operation (the request is audited there). Without work VMs on this device the
 operation fails `workvm_unavailable`.

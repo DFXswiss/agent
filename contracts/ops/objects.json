@@ -809,7 +809,7 @@
     },
     "test_run_id": {
       "type": "string",
-      "description": "ID of a test run (ADR-078)",
+      "description": "ID of a test run (ADR-079)",
       "pattern": "^tr-[0-9a-f]{12}$"
     },
     "test_run_kind": {
@@ -822,7 +822,7 @@
         "security",
         "custom"
       ],
-      "description": "what the run checks; a label for people and lists (ADR-078 section 1)"
+      "description": "what the run checks; a label for people and lists (ADR-079 section 1)"
     },
     "test_run_state": {
       "type": "string",

@@ -185,7 +185,7 @@ SPEC_EVENT_MATRIX = [
     # 13-work-vm.md section 8 (contracts/changes/KOR-29.md)
     ("workvm.run", "wg", "device", "device_assigned_wg_session"),
     ("workvm.state", "wg", "device", "device_assigned_wg_session"),
-    # ADR-078 section 1 (contracts/changes/KOR-43.md)
+    # ADR-079 section 1 (contracts/changes/KOR-43.md)
     ("test.run", "wg", "device", "device_assigned_wg_session"),
 ]
 # 03-api.md section 10 (event bodies): every kind.

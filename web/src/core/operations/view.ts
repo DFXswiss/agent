@@ -13,7 +13,7 @@
 // `github.list_issues` / `github.list_pull_requests` (`listing`) and the issue of `github.get_issue` with one page of
 // comments (`issue`) are read entry by entry: an entry without a number or title is left out. Text from GitHub is
 // untrusted and only ever rendered as text; URLs pass `httpsUrl` (`safeUrl` and https only, as the contracts allow).
-// A `test.run` (ADR-078) has its kind and the start of its command as subject, run ID and exit code as facts, and
+// A `test.run` (ADR-079) has its kind and the start of its command as subject, run ID and exit code as facts, and
 // its checked result (`testRun`: state, summary, log) for the card's "Tests: 3 failed – open log".
 import { safeUrl } from '../chat/links';
 import { parseTestRunResult, TEST_RUN_TYPE, type TestRunResult } from '../chat/testrun';

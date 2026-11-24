@@ -69,7 +69,7 @@ export interface WorkvmRun {
   readonly duration_ms: number;
   readonly output: string;
   readonly output_bytes: number;
-  /** The complete output as an encrypted log object when it was longer than `output` (optional, ADR-078 §3). */
+  /** The complete output as an encrypted log object when it was longer than `output` (optional, ADR-079 §3). */
   readonly log?: LogRef | null;
 }
 
@@ -323,7 +323,7 @@ export interface WorkvmPanel {
  * The state of the session's work VM: `states` are the session's `workvm.state` bodies (`selectWorkvmStates`),
  * `requests` its `workvm.request` operations, `now` the browser time. A VM runs while its current event is
  * `created`; it starts while a request is open or its current event is `starting` (an implicit start writes it before
- * the VM exists, ADR-078 section 5); else the last VM is `stopped` (a paused session, it starts again on the next use)
+ * the VM exists, ADR-079 section 5); else the last VM is `stopped` (a paused session, it starts again on the next use)
  * or `deleted`.
  */
 export function workvmPanel(

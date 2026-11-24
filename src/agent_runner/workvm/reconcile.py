@@ -1,5 +1,5 @@
 """Reconcile step `workvm` (order 45: before the sessions step, so a closed task's VMs go before its sessions stop and
-the teardown reason is always `task_closed`; KOR-43, ADR-078 sections 4 and 5).
+the teardown reason is always `task_closed`; KOR-43, ADR-079 sections 4 and 5).
 
 On every desired state of the hub:
 

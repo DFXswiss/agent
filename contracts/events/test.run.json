@@ -2,6 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/events/test.run.json",
   "title": "event body test.run",
-  "description": "Plaintext body of the event kind test.run inside the ciphertext (13-work-vm.md section 12, ADR-078).",
+  "description": "Plaintext body of the event kind test.run inside the ciphertext (13-work-vm.md section 12, ADR-079).",
   "$ref": "objects.json#/$defs/body_test_run"
 }

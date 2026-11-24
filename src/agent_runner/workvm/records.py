@@ -1,7 +1,7 @@
 """Work VM rows of the runner store (docs/platform/spec/13-work-vm.md section 8, migration 0012).
 
 `runner.workvm` holds one row per work VM the runner created (scope `task`, `session`, or `run` for the fresh VM of one
-test run, migration 0020); the partial unique indexes make "one live task VM per
+test run, migration 0022); the partial unique indexes make "one live task VM per
 task", "one live session VM per session" and "one live VM per slot" database rules. `runner.workvm_mirror` keeps the
 SHA-256 manifest of the workspace files last mirrored into a VM (per VM, session and root directory), so the next
 mirror sends only changed files. `runner.workvm_image` lists the work images (`ready`: the newest one is cloned).
@@ -102,7 +102,7 @@ async def live(db: Any, *states: str) -> list[WorkVm]:
 
 async def counts(db: Any, *, task_id: str, org_id: str, owner_id: str | None) -> tuple[int, int, int]:
     """Live VMs of the task (without its run VMs), of the organization and of the owner (spec 11 section 2 limits,
-    ADR-078 section 2)."""
+    ADR-079 section 2)."""
     rows = await _rows(
         db,
         "SELECT count(*) FILTER (WHERE task_id = %s AND scope <> 'run') AS task,"

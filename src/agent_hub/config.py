@@ -101,7 +101,7 @@ DEFAULT_CONTEXT_KEEP = 3
 MAX_CONTEXT_KEEP = 1000
 DEFAULT_CONTEXT_ORG_BYTES = 200 * GIB
 DEFAULT_LOG_KEEP = 500
-"""Complete logs kept per task (ADR-078 section 3)."""
+"""Complete logs kept per task (ADR-079 section 3)."""
 MAX_LOG_KEEP = 999_999
 DEFAULT_LOG_ORG_BYTES = 100 * GIB
 MAX_CONTEXT_BYTES = 2**53 - 1
@@ -200,7 +200,7 @@ class HubConfig:
     context_org_bytes: int = DEFAULT_CONTEXT_ORG_BYTES
     """`AGENT_HUB_CONTEXT_ORG_BYTES`: the sealed checkpoint bytes of all tasks of one organisation."""
     log_keep: int = DEFAULT_LOG_KEEP
-    """`AGENT_HUB_LOG_KEEP`: complete logs kept per task; older ones are deleted on a commit (ADR-078 section 3)."""
+    """`AGENT_HUB_LOG_KEEP`: complete logs kept per task; older ones are deleted on a commit (ADR-079 section 3)."""
     log_org_bytes: int = DEFAULT_LOG_ORG_BYTES
     """`AGENT_HUB_LOG_ORG_BYTES`: the sealed log bytes of all tasks of one organisation (apart from the checkpoints)."""
     downloads_dir: Path | None = None

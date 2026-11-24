@@ -54,7 +54,7 @@ has no account).
 - `usage` (existing) gains optional `model` (model ID), `access_origin` (`own`, `operator`, `platform`; AUD-04 W10) and `at` (time of the request). Without
   them the hub uses the session's `model_id`, DFX access = `model_access = platform` or (`model_access` unknown and
   `cost_basis = provider`), and its receive time.
-- Work and test VMs (KOR-43, ADR-078 §4): `workvm/billing_vms.py:VMS` gives every `running` work VM and run VM to the
+- Work and test VMs (KOR-43, ADR-079 §4): `workvm/billing_vms.py:VMS` gives every `running` work VM and run VM to the
   meter as `vm_kind` `work` with its size (`standard`, `large`, `xlarge` of the price list); a task VM is split evenly
   between the task's sessions in a holding state on the device (its requester when none holds it), a session VM and
   a run VM go to their session. A stopped VM (paused session) costs nothing. Without credit no new work or run VM

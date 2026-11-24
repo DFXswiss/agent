@@ -56,7 +56,7 @@ export function matches(
   });
 }
 
-/** `log_ref` of `contracts/ops/objects.json`: the complete output as an encrypted log object (ADR-078 section 3). */
+/** `log_ref` of `contracts/ops/objects.json`: the complete output as an encrypted log object (ADR-079 section 3). */
 export interface LogRef {
   readonly object_id: string;
   /** The full output length. */

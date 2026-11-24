@@ -1,4 +1,4 @@
-"""Test runs (docs/platform/spec/13-work-vm.md section 12, ADR-078) against a migrated store, a fake Lima, a fake job
+"""Test runs (docs/platform/spec/13-work-vm.md section 12, ADR-079) against a migrated store, a fake Lima, a fake job
 helper and a fake guest: a fresh VM per run, the result, the log, the teardown on every path, duplicates, the host
 time limit, credit, cancellation and the restart."""
 

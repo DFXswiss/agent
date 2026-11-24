@@ -1,4 +1,4 @@
-"""Test runs of a session (ADR-078, KOR-43): `test list|show|log` against the hub fake with `test.run` events written
+"""Test runs of a session (ADR-079, KOR-43): `test list|show|log` against the hub fake with `test.run` events written
 by the device and logs sealed like the runner's, the contract check of the `test.run` body, and the refusals of a log
 that does not belong to its run."""
 

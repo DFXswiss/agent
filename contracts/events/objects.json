@@ -1669,7 +1669,7 @@
     },
     "body_test_run": {
       "type": "object",
-      "description": "a test run of the operation test.run, written when it starts and when it ends (13-work-vm.md section 12, ADR-078)",
+      "description": "a test run of the operation test.run, written when it starts and when it ends (13-work-vm.md section 12, ADR-079)",
       "properties": {
         "run_id": {
           "$ref": "../ops/objects.json#/$defs/test_run_id"

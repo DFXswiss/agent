@@ -1,4 +1,4 @@
-// Reading an encrypted log (ADR-078 section 3): the manifest must be well formed, name what the event named and be
+// Reading an encrypted log (ADR-079 section 3): the manifest must be well formed, name what the event named and be
 // signed by an org device; the chunks are opened with the workgroup key of the manifest's epoch, have fixed sizes,
 // and the download checks size and digest. The pages decode UTF-8 across chunk borders and keep a small cache.
 import { describe, expect, it } from 'vitest';

@@ -1,5 +1,5 @@
 """Observer of the guest's `session.state` records (`sessions.extensions` `OBSERVERS`, ADR-032; ADR-059 decision 8,
-ADR-078 section 4). Runs in the journal page's transaction, so the work itself runs in the background:
+ADR-079 section 4). Runs in the journal page's transaction, so the work itself runs in the background:
 
 - a session in a final state: its session work VM is torn down, and the task work VM when no other session of the
   task is active; its test runs end `cancelled` (`session_ended`);

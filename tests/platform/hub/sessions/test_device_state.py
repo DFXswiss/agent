@@ -250,7 +250,7 @@ def test_a_refused_prompt_is_consumed(world: World, fleet: Fleet) -> None:
 
 
 def test_a_session_of_a_closed_task_says_so(world: World, fleet: Fleet) -> None:
-    """ADR-078 section 5: the runner deletes the work VMs of a closed task at once; absent means open."""
+    """ADR-079 section 5: the runner deletes the work VMs of a closed task at once; absent means open."""
     desk = org_desk(world)
     task, session = desk.started()
     _other, open_session = desk.started()

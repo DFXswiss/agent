@@ -1,5 +1,5 @@
 """Logs of test runs and work VM jobs at the hub fake as the hub serves them (`agent_hub.contexts.routes`
-`get_task_log`, `get_task_log_chunk`; ADR-078 section 3): `GET /v1/tasks/{task}/logs/{object}` answers `{manifest,
+`get_task_log`, `get_task_log_chunk`; ADR-079 section 3): `GET /v1/tasks/{task}/logs/{object}` answers `{manifest,
 sig, created_at, completed_at}` of a complete log of the task, `.../chunks/{index}` `{ct}`; a reader of the task's
 workgroup only (`404` otherwise, also for a log of another task or an unknown chunk).
 

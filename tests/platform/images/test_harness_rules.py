@@ -82,7 +82,7 @@ MANDATORY = [
     "after 30 minutes without use and when the session ends",
     "Request a new one any time",
     "Files that must survive belong in your workspace",
-    # ADR-078: tests, lint and formatting go through `test.run`; everything else stays free in the work VM
+    # ADR-079: tests, lint and formatting go through `test.run`; everything else stays free in the work VM
     "Run tests, lint and formatting checks with the operation `test.run`",
     "its result, complete log and exit code are kept and visible to the user.",
     "bring them into your workspace with `workvm_sync` direction `from_vm` first.",

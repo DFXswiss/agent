@@ -1,4 +1,4 @@
--- Test runs as platform operations (KOR-43, ADR-078; docs/platform/spec/13-work-vm.md section 12).
+-- Test runs as platform operations (KOR-43, ADR-079; docs/platform/spec/13-work-vm.md section 12).
 --
 -- A run VM is a `runner.workvm` row of scope `run`: a fresh VM of the requesting session (`session_id`) for one
 -- `test.run`, deleted when the run ends (`run_ended`). New teardown reasons: `run_ended`, `credit_exhausted` (the
@@ -37,7 +37,7 @@ CREATE TABLE runner.test_run (
 );
 CREATE INDEX test_run_running ON runner.test_run (session_id) WHERE state = 'running';
 
--- Logs (ADR-078 section 3): the complete output of a test run or of a long work VM job, sealed and uploaded like a
+-- Logs (ADR-079 section 3): the complete output of a test run or of a long work VM job, sealed and uploaded like a
 -- context checkpoint. Restores and the newest-object rule of the cache see only `context`; a log leaves the cache once
 -- the hub holds it.
 ALTER TABLE runner.context_object

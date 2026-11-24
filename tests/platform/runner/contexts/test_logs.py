@@ -1,4 +1,4 @@
-"""U-RUN-contexts (logs): logs of test runs and long work VM jobs as encrypted objects of kind `log` (KOR-43, ADR-078
+"""U-RUN-contexts (logs): logs of test runs and long work VM jobs as encrypted objects of kind `log` (KOR-43, ADR-079
 section 3; 04-crypto.md section 4.12): sealing, upload with `kind`, a re-upload after the hub expired it, the cache
 and the restore candidates, which never see a log."""
 

@@ -3414,7 +3414,7 @@
     },
     "log_manifest": {
       "type": "object",
-      "description": "manifest of a log of a test run or work VM job (04-crypto.md section 4.12, ADR-078 section 3): canonical JSON, signed by the author device; ref = the run_id or job_id, bytes = the full output length, stored = the kept bytes",
+      "description": "manifest of a log of a test run or work VM job (04-crypto.md section 4.12, ADR-079 section 3): canonical JSON, signed by the author device; ref = the run_id or job_id, bytes = the full output length, stored = the kept bytes",
       "properties": {
         "v": {
           "type": "integer",
