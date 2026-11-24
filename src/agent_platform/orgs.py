@@ -145,6 +145,8 @@ def org_show(account: Account, org: str) -> dict[str, Any]:
             "archived": wg.archived_seq is not None,
             "epoch": state.epoch(WG, wg.id),
             "my_access": state.wg_access(account.user_id, wg.id),
+            # read only because the user is an admin of the org (ADR-058), not by an own grant
+            "my_access_inherited": state.inherited(account.user_id, wg.id),
             "devices": sorted(device for device, assigned in state.assignments if assigned == wg.id),
         }
         for wg in sorted(state.workgroups.values(), key=lambda wg: wg.created_seq)
@@ -512,6 +514,41 @@ def org_admit(account: Account, org: str, who: str, role: str, wgs: dict[str, st
         "wgs": dict(sorted(cast(dict[str, str], cast(dict[str, Any], built.entries[0]["body"])["wgs"]).items())),
         "seq": built.log.head.seq,
     }
+
+
+def org_invitees(account: Account, org: str | None) -> dict[str, Any]:
+    """The accounts registered through the user's own platform invitations (`GET /v1/me/invitees`, `loadInvitees`),
+    newest first, each identity verified against the platform log like `org admit` (`admissible` false and no account
+    code when it is missing or does not verify). With `--org` only the accounts that can be admitted there: proven and
+    not a member yet (the list of the web's "Add an existing account")."""
+    if org is not None and not is_uuid7(org):
+        raise PlatformError("invalid_argument")
+    state = None if org is None else account.org_log(org).state
+    platform = account.platform()
+    items = account.call("GET", "/v1/me/invitees").get("invitees")
+    rows = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("user_id"), str):
+            continue
+        if not isinstance(item.get("registered_at"), str):
+            continue
+        user = item["user_id"]
+        try:
+            proven: dict[str, Any] | None = _proven(platform, item["identity"], user, None)
+        except (PlatformError, KeyError, TypeError):
+            proven = None
+        if state is not None and (proven is None or state.member(user) is not None):
+            continue
+        code = None if proven is None else identity_format.account_code(user, proven["pub"])
+        rows.append(
+            {
+                "user_id": user,
+                "registered_at": item["registered_at"],
+                "admissible": proven is not None,
+                "account_code": None if code is None else identity_format.format_account_code(code),
+            }
+        )
+    return {"org_id": org, "invitees": rows}
 
 
 # --- workgroups ---

@@ -90,10 +90,18 @@ def test_quotas(tool: Tool, hub: HubFake, account: User) -> None:
 
 def test_monitoring(tool: Tool, hub: HubFake, account: User, monkeypatch: pytest.MonkeyPatch) -> None:
     org = private_org(hub, account)
-    views(hub).overview[org] = {"devices": [{"device_id": "d"}, "x"], "vms": [], "sessions": []}
+    workvm = {"workvm_id": "wvm-0a1b2c3d", "device_id": "d", "session_id": "s", "task_id": "t", "wg_id": "w"}
+    views(hub).overview[org] = {"devices": [{"device_id": "d"}, "x"], "vms": [], "sessions": [], "workvms": [workvm]}
     code, shown = tool.run("monitoring", "--org", org)
     assert code == 0, shown
-    assert shown["devices"] == [{"device_id": "d"}]
+    assert (shown["devices"], shown["workvms"]) == ([{"device_id": "d"}], [workvm])
+    # a hub of before KOR-29 sends no work VMs; a list that is no list is refused
+    views(hub).overview[org] = {"devices": [], "vms": [], "sessions": []}
+    assert tool.run("monitoring", "--org", org)[1]["workvms"] == []
+    views(hub).overview[org] = {"devices": [], "vms": [], "sessions": [], "workvms": "x"}
+    assert tool.run("monitoring", "--org", org)[1]["reason"] == "response_invalid"
+    del views(hub).overview[org]
+    assert tool.run("monitoring", "--org", org)[1]["workvms"] == []
     assert tool.run("monitoring", "--org", uuid7())[1]["hub_error"] == "not_found"
     views(hub).points = [
         ["2026-11-24T08:00:00.000Z", 0.5],
@@ -115,8 +123,12 @@ def test_monitoring(tool: Tool, hub: HubFake, account: User, monkeypatch: pytest
         "monitoring", "--org", org, "--entity-kind", "vm", "--entity-id", "vm-0a1b2c3d", "--metric", "net_rx_bytes"
     )
     assert vm[1]["entity_id"] == "vm-0a1b2c3d"
+    work = ("--entity-kind", "workvm", "--entity-id", "wvm-0a1b2c3d", "--metric", "mem_used_bytes")
+    assert tool.run("monitoring", "--org", org, *work)[1]["entity_kind"] == "workvm"
+    assert views(hub).series_queries[-1]["entity_id"] == "wvm-0a1b2c3d"
     for argv in (
         ("--entity-kind", "vm", "--entity-id", "vm-x", "--metric", "cpu_ratio"),
+        ("--entity-kind", "workvm", "--entity-id", "vm-0a1b2c3d", "--metric", "cpu_ratio"),
         ("--entity-kind", "device", "--entity-id", "x", "--metric", "cpu_ratio"),
         ("--entity-kind", "device"),
     ):

@@ -1,6 +1,8 @@
 """Direct admission of an existing account (04-crypto.md sections 4.7, 4.8 and 5.13, ADR-060): `org admit` proves the
 identities of both sides against the platform log (never trusting the hub's identity answer), appends `admit` with the
-wraps of the keys the admin holds, and the admitted user's own agent then trusts and shows the org."""
+wraps of the keys the admin holds, and the admitted user's own agent then trusts and shows the org. `org invitees`
+lists the accounts of the user's own platform invitations with their verified identities. Admins read every workgroup
+by inheritance (ADR-058): the lists show it, and `wg ungrant` touches the explicit access only."""
 
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ from agent_runner.crypto.keys import Identity
 from agent_runner.crypto.log.state import ORG, WG
 
 from .conftest import Tool, make_tool, pair_user
+from .fakes.admission import add_invitee
 from .hubfake import HubFake, Json, Request, User
 
 
@@ -240,3 +243,86 @@ def test_admit_refused_by_the_log_rules(tool: Tool, hub: HubFake, account: User,
     hub.wraps = [w for w in hub.wraps if not (w["scope_id"] == default_wg and w["recipient_id"] == account.id)]
     result = tool.run("org", "admit", "--org", org, "--user", bob.id)[1]
     assert (result["error"], result["reason"]) == ("hub_refused", "epoch_stale")
+
+
+def test_invitees(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
+    hub.anchor_user(account)
+    org = team(tool)
+    carol, _ = paired(hub, tmp_path, "Carol", anchor="invite")
+    dave, _ = paired(hub, tmp_path, "Dave", anchor=None)
+    erin, _ = paired(hub, tmp_path, "Erin")
+    frank, _ = paired(hub, tmp_path, "Frank")
+    add_invitee(hub, account, carol, minutes_ago=3)
+    add_invitee(hub, account, dave, minutes_ago=2)
+    add_invitee(hub, account, erin, minutes_ago=1)
+    add_invitee(hub, frank, account)  # not the user's invitation
+    code, listed = tool.run("org", "invitees")
+    assert code == 0, listed
+    rows = listed["invitees"]
+    assert [row["user_id"] for row in rows] == [erin.id, dave.id, carol.id]
+    assert [row["admissible"] for row in rows] == [True, False, True]
+    assert rows[2]["account_code"] == format_account_code(account_code(carol.id, carol.identity.public()))
+    assert rows[1]["account_code"] is None
+    assert listed["org_id"] is None
+    # for an org: only the proven accounts that are no member yet; an admitted one leaves the list
+    assert tool.run("org", "admit", "--org", org, "--user", erin.id)[1]["ok"] is True
+    scoped = tool.run("org", "invitees", "--org", org)[1]
+    assert [row["user_id"] for row in scoped["invitees"]] == [carol.id]
+    assert tool.run("org", "invitees", "--org", "x")[1]["error"] == "invalid_argument"
+
+
+def test_invitees_answers_are_verified(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
+    carol, _ = paired(hub, tmp_path, "Carol", anchor="invite")
+    bob, _ = paired(hub, tmp_path, "Bob")
+    proven = hub.identity_answer(carol)
+    rows: list[Any] = [
+        {"user_id": carol.id, "registered_at": "t", "identity": proven},
+        {"user_id": bob.id, "registered_at": "t", "identity": proven},  # Carol's identity for Bob
+        {"user_id": bob.id, "registered_at": "t", "identity": {**proven, "user_id": bob.id}},
+        {"user_id": bob.id, "registered_at": "t"},
+        {"user_id": bob.id, "registered_at": 5, "identity": None},
+        {"user_id": None, "registered_at": "t", "identity": None},
+        "x",
+    ]
+    hub.hooks[("GET", "/v1/me/invitees")] = lambda body, request: (200, {"invitees": rows})
+    listed = tool.run("org", "invitees")[1]["invitees"]
+    assert [(row["user_id"], row["admissible"]) for row in listed] == [
+        (carol.id, True),
+        (bob.id, False),
+        (bob.id, False),
+        (bob.id, False),
+    ]
+    hub.hooks[("GET", "/v1/me/invitees")] = lambda body, request: (200, {"invitees": None})
+    assert tool.run("org", "invitees")[1]["invitees"] == []
+
+
+def test_admins_read_every_workgroup_by_inheritance(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
+    hub.anchor_user(account)
+    org = team(tool)
+    research = tool.run("wg", "create", "--org", org, "--name", "Research")[1]["wg_id"]
+    bob, bob_tool = paired(hub, tmp_path, "Bob")
+    assert tool.run("org", "admit", "--org", org, "--user", bob.id, "--role", "admin")[1]["ok"] is True
+    # Bob reads Research only as admin: shown as inherited, as the web's member list does
+    members = {row["user_id"]: row for row in tool.run("member", "list", "--org", org)[1]["members"]}
+    access = {item["wg_id"]: item for item in members[bob.id]["access"]}
+    assert (access[research]["access"], access[research]["inherited"]) == ("read", True)
+    default = hub.orgs[org].log.state.default_wg
+    assert (access[default]["access"], access[default]["inherited"]) == ("write", False)
+    mine = {item["wg_id"]: item for item in members[account.id]["access"]}
+    assert mine[research]["inherited"] is False
+    workgroups = {row["wg_id"]: row for row in bob_tool.run("wg", "list", "--org", org)[1]["workgroups"]}
+    assert (workgroups[research]["my_access"], workgroups[research]["my_access_inherited"]) == ("read", True)
+    shown = {row["wg_id"]: row for row in tool.run("org", "show", "--org", org)[1]["workgroups"]}
+    assert shown[research]["my_access_inherited"] is False
+    # ungrant acts on the explicit access only: nothing to take from an inherited read
+    head = hub.orgs[org].log.head
+    assert tool.run("wg", "ungrant", "--wg", research, "--user", bob.id)[1]["changed"] is False
+    assert hub.orgs[org].log.head == head
+    # an explicit grant makes it explicit; ungranting it leaves the inherited read
+    assert tool.run("wg", "grant", "--wg", research, "--user", bob.id, "--access", "write")[1]["ok"] is True
+    members = {row["user_id"]: row for row in tool.run("member", "list", "--org", org)[1]["members"]}
+    access = {item["wg_id"]: item for item in members[bob.id]["access"]}
+    assert (access[research]["access"], access[research]["inherited"]) == ("write", False)
+    assert tool.run("wg", "ungrant", "--wg", research, "--user", bob.id)[1]["changed"] is True
+    state = hub.orgs[org].log.state
+    assert (state.wg_access(bob.id, research), state.inherited(bob.id, research)) == ("read", True)

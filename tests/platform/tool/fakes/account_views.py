@@ -5,8 +5,8 @@ section 4):
   newest first, account rows only with `account=1`; `POST /v1/notifications/read` with `{ids}` (1-200 UUIDv7) or
   `{all: true[, account]}`, unknown and foreign IDs ignored;
 - `GET /v1/me/quotas`;
-- `GET /v1/monitoring/overview?org` (member, else `404`; missing `org` `400`), `GET /v1/monitoring/series`
-  (every parameter required, `step` at least 15);
+- `GET /v1/monitoring/overview?org` (member, else `404`; missing `org` `400`; with the work VMs of KOR-29),
+  `GET /v1/monitoring/series` (every parameter required, `step` at least 15);
 - `GET /v1/orgs/{org}/audit` (member: own rows and rows of readable workgroups; admin: all) with the filters,
   `GET /v1/orgs/{org}/audit/verify` (admins, else `404`), `GET /v1/me/audit`;
 - `GET /v1/me` with `passkeys`, `platform_roles` and `unread_notifications`; `DELETE /v1/passkeys/{id}` (`404`
@@ -155,7 +155,7 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
             return 400, {"error": "request_invalid"}
         if not member_org(request, org):
             return 404, {"error": "not_found"}
-        return 200, found.overview.get(org, {"devices": [], "vms": [], "sessions": []})
+        return 200, found.overview.get(org, {"devices": [], "vms": [], "sessions": [], "workvms": []})
 
     def series(request: Request, body: Any) -> tuple[int, Any]:
         query = request.query

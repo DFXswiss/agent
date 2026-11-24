@@ -20,6 +20,7 @@ from agent_platform import (
     sessions,
     wgsettings,
     whiteboards,
+    workvm,
 )
 
 MODULES: tuple[Callable[[Any], None], ...] = (
@@ -33,4 +34,5 @@ MODULES: tuple[Callable[[Any], None], ...] = (
     security.register,
     creds.register,
     keywraps.register,
+    workvm.register,
 )

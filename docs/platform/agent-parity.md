@@ -5,17 +5,19 @@ and every view of the web client (`web/src/ui/`) has its own command of `agent-p
 runs the same client-side checks, including the client's crypto. `agent-platform api <METHOD> <path>` (the generic
 signed call) stays as a fallback, but it is the only way for no action.
 
-The two tables are data for two tests. The parity test of the `agent` repository (`tests/platform/tool/test_parity.py`)
-checks the Actions table against the tool: every row has a known state; every command of a `done` row exists in the
-tool with the options it names; a `pending` row names the package that delivers it; an `n/a` row gives its reason. The
-test of `agent-core` (`tests/platform/test_agent_parity.py`) checks both tables against the web source: every directory
-under `web/src/ui/screens/` must be named as `screens/<directory>` and every directory under
-`web/src/ui/settings/sections/` as `settings/<directory>` in the Screen column (the screen `settings` only hosts the
-sections), and the Routes table must list exactly the hub routes the web client calls – every route of a
-`request(METHOD, path)` or `anon(METHOD, path)` call and every `/v1/` path the client builds (also the stream and the
-paths built by helpers), with `{param}` for template parts and without query strings – each with the action rows that
-cover it. A new screen, section or route of the web client therefore fails a test until it has a row; a new button
-inside an existing screen that calls no new route needs a new row by review.
+The two tables are data for one test, `tests/platform/test_agent_parity.py`, which reads the three sources of this
+checkout: the web client (`web/src`), the hub's registered routes (`agent_hub`, with their authentication class) and
+the argparse tree of the tool. It requires: every directory under `web/src/ui/screens/` is named as
+`screens/<directory>` and every directory under `web/src/ui/settings/sections/` as `settings/<directory>` in the
+Screen column (the screen `settings` only hosts the sections); the Routes table lists every hub route the web client
+calls – every route of a `request(METHOD, path)` or `anon(METHOD, path)` call and every `/v1/` path the client builds
+(also the stream and the paths built by helpers), with `{param}` for template parts and without query strings – each
+with the action rows that cover it; every route the client calls is registered at the hub; the table names no route
+that neither the client nor the hub has; every route of the table that a person's browser calls at the hub has a
+`done` row (its own command) or only `n/a`/`pending` rows with their reason; every command of a `done` row exists in
+the tool with the options it names; and the agent guide (`agents.md`) has an example of every command of the tool. A
+new screen, section or route of the web client therefore fails the test until it has a row and a command; a new
+button inside an existing screen that calls no new route needs a new row by review.
 
 States: `done` – the command exists, does what the web client does, and is tested; `pending` – another package
 delivers the action in the web client and the tool (the row names it: "package KOR-xx delivers"); `n/a` – no action
@@ -59,10 +61,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | org-list | shell (org switcher) | `org list` | done |
 | org-create | screens/home | `org create` | done |
 | org-join | screens/invite (existing user) | `org join` | done |
-| members-list | screens/members | `member list` | done |
+| members-list | screens/members (explicit and inherited access, ADR-058) | `member list` | done |
 | members-invite | screens/members | `org invite --role admin\|member` | done |
 | members-admit | screens/members | `org admit --user <id\|account code> --role admin\|member --wg` | done |
-| members-invitees | screens/members | `org invitees` | done |
+| members-invitees | screens/members (accounts of the admin's own platform invitations) | `org invitees --org` | done |
 | account-code | settings/passkeys | `status` (prints the account code) | done |
 | members-invite-revoke | screens/members | `org invite-revoke` | done |
 | members-role | screens/members | `member role` | done |
@@ -70,7 +72,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | members-leave | screens/members | `org leave` | done |
 | key-rotation | jobs (owed rotations) | `org rotate` | done |
 | key-catch-up | jobs (catch-up wrapping) | `org catch-up --org` | done |
-| workgroups-list | screens/workgroups | `wg list` | done |
+| workgroups-list | screens/workgroups (my access, also an admin's inherited read, ADR-058) | `wg list` | done |
 | workgroups-create | screens/workgroups | `wg create` | done |
 | workgroups-rename | screens/workgroups | `wg rename --wg --name` | done |
 | workgroups-grant | screens/workgroups | `wg grant` | done |
@@ -89,6 +91,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | task-prompt | screens/task (composer) | `task prompt` | done |
 | task-close | screens/task | `task close --task` | done |
 | session-view | screens/session | `session show --session` | done |
+| session-workvm | screens/session (work VM panel and runtime, KOR-29) | `session workvm --session` | done |
+| task-workvm-items | screens/task (work VM runs and states in the chat) | `task show`, `task follow` | done |
 | session-terminal | screens/session (terminal) | `session terminal --session --after` | done |
 | session-control | screens/session | `session stop\|interrupt --session` | done |
 | session-follow | screens/task, screens/session (live stream) | `task follow` | done |
@@ -97,7 +101,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | whiteboard-write | screens/whiteboard | `whiteboard add\|edit\|delete --notify` | done |
 | notifications-list | screens/notifications | `notifications list --unread --before` | done |
 | notifications-read | screens/notifications | `notifications read --id --all` | done |
-| monitoring | screens/monitoring | `monitoring --org --entity-kind --entity-id --metric --range` | done |
+| monitoring | screens/monitoring (devices, VMs, sessions, work VMs) | `monitoring --org --entity-kind --entity-id --metric --range` | done |
 | audit | screens/audit | `audit --org --verify --action --actor --wg --task --session --before` | done |
 | platform-invites | screens/platform-invites | `platform invite\|list\|revoke` | done |
 | security | screens/security | `security` | done |
@@ -131,6 +135,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/me/credentials/{kind}` | credential-list, github-status |
 | `PUT /v1/me/credentials/{kind}` | credential-api-key, credential-mailbox, credential-claude-login |
 | `DELETE /v1/me/credentials/{kind}` | credential-delete, github-disconnect |
+| `GET /v1/me/invitees` | members-invitees |
 | `GET /v1/me/devices` | github-connect, credential-claude-relay, credential-check |
 | `GET /v1/me/quotas` | quotas |
 | `POST /v1/me/recovery/begin` | recovery-new |
@@ -162,16 +167,18 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/platform/log` | devices-assign, platform-invites |
 | `POST /v1/recovery/begin` | recover |
 | `POST /v1/recovery/finish` | recover |
-| `GET /v1/scopes/{scope}/events` | task-view, session-follow, session-terminal, operations, wg-settings, tasks-overview |
+| `GET /v1/scopes/{scope}/events` | task-view, session-follow, session-terminal, operations, wg-settings, tasks-overview, session-workvm, task-workvm-items |
 | `POST /v1/session/end` | sign-out |
-| `GET /v1/sessions/{session}` | session-view, monitoring |
+| `GET /v1/sessions/{session}` | session-view, monitoring, session-workvm |
 | `POST /v1/sessions/{session}/control` | session-control |
 | `GET /v1/stream` | session-follow |
 | `POST /v1/tasks` | task-create |
 | `GET /v1/tasks/{task}` | task-view |
 | `POST /v1/tasks/{task}/close` | task-close |
-| `GET /v1/tasks/{task}/operations` | operations |
+| `GET /v1/tasks/{task}/operations` | operations, session-workvm |
 | `POST /v1/tasks/{task}/prompts` | task-prompt |
+| `GET /v1/users/lookup` | members-admit |
+| `GET /v1/users/{user}/identity` | members-admit |
 | `GET /v1/whiteboards` | whiteboard-list |
 | `GET /v1/whiteboards/{entry}/history` | whiteboard-list |
 | `GET /v1/workgroups/{wg}` | task-create |

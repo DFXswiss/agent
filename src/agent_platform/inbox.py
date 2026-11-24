@@ -7,8 +7,9 @@
 - `notifications read`: `POST /v1/notifications/read` with `{ids}` (at most 200) or `{all: true}`.
 - `quotas`: `GET /v1/me/quotas`, the newest row per window (`five_hour`, `seven_day`, `weekly:<model>`), malformed rows
   left out, ordered five hours, week, then by model; no rows: not available.
-- `monitoring --org`: `GET /v1/monitoring/overview?org=`; with `--entity-kind/--entity-id/--metric` one series of a
-  range of the web's charts (`GET /v1/monitoring/series`, the window aligned to the step like the web).
+- `monitoring --org`: `GET /v1/monitoring/overview?org=` (devices, VMs, sessions and their work VMs); with
+  `--entity-kind/--entity-id/--metric` one series of a range of the web's charts (`GET /v1/monitoring/series`, the
+  window aligned to the step like the web).
 - `audit`: the account audit (`GET /v1/me/audit`) or with `--org` the org audit with the hub's filters
   (`GET /v1/orgs/{org}/audit`); `--verify` asks the hub to verify the org's audit chain
   (`GET /v1/orgs/{org}/audit/verify`, org admins). Malformed rows are left out.
@@ -54,8 +55,8 @@ METRICS = (
     "net_rx_bytes",
     "net_tx_bytes",
 )
-ENTITY_KINDS = ("device", "vm", "session")
-VM_ID_RE = re.compile(r"vm-[0-9a-f]{8}")
+ENTITY_KINDS = ("device", "vm", "session", "workvm")
+ENTITY_ID_RES = {"vm": re.compile(r"vm-[0-9a-f]{8}"), "workvm": re.compile(r"wvm-[0-9a-f]{8}")}
 AUDIT_NULLABLE = (
     "actor_id",
     "org_id",
@@ -167,11 +168,15 @@ def monitoring(account: Account, org: str, series: tuple[str, str, str] | None, 
     uuid_argument(org)
     if series is None:
         answer = account.call("GET", f"/v1/monitoring/overview?{urlencode({'org': org})}")
-        return {"org_id": org, **{key: rows_of(answer, key) for key in ("devices", "vms", "sessions")}}
+        listed = {key: rows_of(answer, key) for key in ("devices", "vms", "sessions")}
+        # the work VMs (KOR-29) below their sessions; a hub of before KOR-29 sends no list
+        workvms = [] if answer.get("workvms") is None else rows_of(answer, "workvms")
+        return {"org_id": org, **listed, "workvms": workvms}
     kind, entity, metric = series
-    if kind != "vm":
+    pattern = ENTITY_ID_RES.get(kind)
+    if pattern is None:
         uuid_argument(entity)
-    elif not VM_ID_RE.fullmatch(entity):
+    elif not pattern.fullmatch(entity):
         raise PlatformError("invalid_argument")
     start, end, step = series_window(range_id, now_ms())
     query = {
@@ -289,7 +294,8 @@ def register(tree: Tree) -> None:
     sub.add_argument("--id", action="append", default=[], help="notification ID, repeatable")
     sub.add_argument("--all", action="store_true", help="every notification")
     tree.command(tree.commands, "quotas", _quotas, "the subscription quotas of the user")
-    sub = tree.command(tree.commands, "monitoring", _monitoring, "devices, VMs and sessions of an org, or a series")
+    text = "devices, VMs, sessions and work VMs of an org, or a series"
+    sub = tree.command(tree.commands, "monitoring", _monitoring, text)
     sub.add_argument("--org", required=True)
     sub.add_argument("--entity-kind", choices=list(ENTITY_KINDS))
     sub.add_argument("--entity-id")

@@ -4,4 +4,4 @@ named in `INSTALLERS` (by name, so a module may import `hubfake` at its top). A 
 
 from __future__ import annotations
 
-INSTALLERS: tuple[str, ...] = ("membership", "credkey", "boards", "sessions", "account_views", "relay")
+INSTALLERS: tuple[str, ...] = ("membership", "credkey", "boards", "sessions", "account_views", "relay", "admission")

@@ -214,6 +214,10 @@ def cmd_org_admit(account: Account, args: argparse.Namespace, context: Context) 
     return orgs.org_admit(account, args.org, args.user, args.role, orgs.parse_wgs(args.wg))
 
 
+def cmd_org_invitees(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return orgs.org_invitees(account, args.org)
+
+
 def cmd_wg_grant(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
     return orgs.wg_grant(account, args.wg, args.user, args.access, args.history)
 
@@ -341,6 +345,10 @@ def _org_commands(tree: Tree) -> None:
     sub.add_argument("--user", required=True, help="user ID or account code (XXXX-XXXX-XXXX)")
     sub.add_argument("--role", choices=["admin", "member"], default="member")
     sub.add_argument("--wg", action="append", default=[], help="<wg_id>[:read|write], repeatable")
+    sub = tree.add(
+        group, "invitees", with_account(cmd_org_invitees), "accounts registered through your platform invitations"
+    )
+    sub.add_argument("--org", help="only those that can be admitted to this organization")
     sub = tree.add(group, "join", with_account(cmd_org_join), "accept an org invitation (link on stdin)")
     sub.add_argument("--display-name")
     group = tree.group("wg", "workgroups")

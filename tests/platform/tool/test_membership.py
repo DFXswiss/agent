@@ -124,11 +124,11 @@ def test_member_list_role_and_last_admin(tool: Tool, hub: HubFake, account: User
         True,
     )
     assert ada["access"] == [
-        {"wg_id": default, "access": "write", "default": True},
-        {"wg_id": wg, "access": "write", "default": False},
+        {"wg_id": default, "access": "write", "default": True, "inherited": False},
+        {"wg_id": wg, "access": "write", "default": False, "inherited": False},
     ]
     assert (second["user_id"], second["name"], second["role"], second["last_admin"]) == (bob.id, "Bob", "member", False)
-    assert second["access"][1] == {"wg_id": wg, "access": "read", "default": False}
+    assert second["access"][1] == {"wg_id": wg, "access": "read", "default": False, "inherited": False}
     assert bob_tool.run("member", "list", "--org", org)[1]["can_manage"] is False
     # the only admin can neither be demoted nor leave
     assert (

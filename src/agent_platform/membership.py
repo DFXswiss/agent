@@ -192,7 +192,12 @@ def member_rows(state: OrgState, me: str, names: dict[str, str]) -> list[dict[st
         if principal.kind != USER or not principal.active:
             continue
         access = [
-            {"wg_id": wg, "access": found, "default": wg == state.default_wg}
+            {
+                "wg_id": wg,
+                "access": found,
+                "default": wg == state.default_wg,
+                "inherited": state.inherited(principal.id, wg),
+            }
             for wg in order
             if (found := state.wg_access(principal.id, wg)) is not None
         ]
@@ -327,7 +332,8 @@ def ungrant_plan(subject: str, wg: str) -> Planner:
         require_admin(state, me)
         if wg == state.default_wg:
             raise PlatformError("invalid_argument", reason="default_workgroup")
-        if state.member(subject) is None or state.wg_access(subject, wg) is None:
+        # only the explicit access: an admin's inherited read stays (ADR-058), so there is nothing to ungrant
+        if state.member(subject) is None or state.explicit_access(subject, wg) is None:
             return None
         return [{"type": "ungrant", "subject": subject, "wg": wg}]
 

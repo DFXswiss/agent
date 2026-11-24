@@ -7,8 +7,9 @@ derived from the prompt as `web/src/core/tasks/title.ts`, vectors `contracts/tas
 workgroup under its current epoch (the key from the user's own wraps, checked against the verified org log) and
 signed by the user's identity. Reading opens the task's events of the workgroup scope after the reader checks of
 `check_event` (author, kind rule, signature, write right); an event whose key the user does not hold is `locked`, one
-that does not verify is left out and counted. After a lost answer (`hub_unreachable`) `task list` shows whether the task
-exists; the tool does not resend on its own.
+that does not verify is left out and counted. The chat includes the work VM events of the task's sessions
+(`workvm.run`, `workvm.state`); `task show` keeps only the latest `workvm.run` of a job, as the web's timeline. After
+a lost answer (`hub_unreachable`) `task list` shows whether the task exists; the tool does not resend on its own.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from agent_platform.account import Account
 from agent_platform.errors import PlatformError
 from agent_platform.hub import segment
 from agent_platform.orgs import find_org, now_text
+from agent_platform.workvm import latest_runs
 from agent_runner.crypto.encoding import b64u_decode, body_json, parse_json
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.event import new_header, open_event, seal_event
@@ -44,6 +46,8 @@ CHAT_KINDS = (
     "session.status",
     "operation.params",
     "operation.result",
+    "workvm.run",
+    "workvm.state",
 )
 _WHITESPACE = "\t\n\x0b\x0c\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"
 _LINE_BREAK = re.compile("\r\n|[\n\r\x0b\x0c\x85\u2028\u2029]")
@@ -193,7 +197,7 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
             continue
         events.append(opened)
     titles = [e["body"].get("title") for e in events if e["kind"] == "task.meta" and isinstance(e.get("body"), dict)]
-    chat = [e for e in events if e["kind"] != "task.meta"]
+    chat = latest_runs([e for e in events if e["kind"] != "task.meta"])
     return {
         "task": {key: row.get(key) for key in ("task_id", "org_id", "wg_id", "owner_id", "state", "state_reason")},
         "title": titles[-1] if titles else None,

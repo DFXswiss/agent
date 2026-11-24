@@ -158,6 +158,7 @@ agent-platform session show --session <session_id>
 agent-platform session interrupt --session <session_id>        # stop the current turn
 agent-platform session stop --session <session_id>
 agent-platform session terminal --session <session_id> [--after <next_after>]   # the terminal output as text
+agent-platform session workvm --session <session_id>          # its work VM: state, size, runtime, command runs
 ```
 
 **Whiteboards** (one per organization, workgroup and task; `--wg` and `--task` choose the level):
@@ -173,14 +174,18 @@ agent-platform whiteboard history --org <org_id> --wg <wg_id> --entry <entry_id>
 **Members, workgroups, invitations** (admin rights where the browser needs them):
 
 ```sh
-agent-platform member list --org <org_id>
+agent-platform member list --org <org_id>                        # "inherited": an admin reads every workgroup
 agent-platform member role --org <org_id> --user <user_id> --role admin
 agent-platform member remove --org <org_id> --user <user_id>     # changes the keys: the person reads nothing new
 agent-platform org show --org <org_id>                           # also the open invitations
+agent-platform org invitees [--org <org_id>]                     # who registered through your platform invitations
+agent-platform org admit --org <org_id> --user <account_code> [--role admin] [--wg <wg_id>:read]  # adds at once
+printf '%s' "<invitation link>" | agent-platform org join         # accept an invitation to an organization
 agent-platform org invite-revoke --org <org_id> --invite <invite_id>
 agent-platform org leave --org <org_id>
 agent-platform org rotate --org <org_id>                         # key changes still owed (member list shows them)
 agent-platform org catch-up --org <org_id>                       # give members keys they are still missing
+agent-platform wg list --org <org_id>                            # my_access, my_access_inherited
 agent-platform wg grant --wg <wg_id> --user <user_id> [--access read] [--history]
 agent-platform wg ungrant --wg <wg_id> --user <user_id>          # changes the workgroup's key
 agent-platform wg rename --wg <wg_id> --name "Research"
@@ -209,6 +214,9 @@ printf '%s' "$PASSWORD" | agent-platform credentials set-mailbox --imap-host ima
 agent-platform credentials check --kind claude_subscription      # the device tests it; repeat with --request <id>
 agent-platform credentials delete --kind mailbox
 agent-platform credentials rotate                                # only when owed; --force always
+agent-platform claude sync                                       # store the local Claude login again if it changed
+agent-platform claude watch [--interval 300]                     # sync in a loop (the service runs this)
+agent-platform claude service remove                             # stop the background sync
 agent-platform claude login                                      # Claude login through a device; then
 printf '%s' "<code>" | agent-platform claude login --request <request_id> --code
 agent-platform github status
