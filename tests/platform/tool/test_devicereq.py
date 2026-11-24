@@ -5,6 +5,7 @@ checks them like the web client."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -69,9 +70,10 @@ def test_github_connect_flow(tool: Tool, hub: HubFake, account: User) -> None:
     status = tool.run("github", "status")[1]
     assert (status["status"], status["login"], status["author"]) == ("connected", "octo", device)
     assert "token" not in json.dumps(status)
-    assert (status["source"], status["scopes"], status["revocable"]) == ("device_flow", ["repo"], False)
+    # a token of a device flow (here the OAuth App's, KOR-65) is revoked by the devices on disconnect
+    assert (status["source"], status["scopes"], status["revocable"]) == ("device_flow", ["repo"], True)
     gone = tool.run("github", "disconnect")[1]
-    assert (gone["status"], gone["revoke_at"]) == ("disconnected", "https://github.com/settings/applications")
+    assert (gone["status"], gone["revoked_at_github"]) == ("disconnected", True)
     assert tool.run("github", "disconnect")[1]["status"] == "disconnected"
     assert tool.run("github", "status")[1]["status"] == "disconnected"
 
@@ -421,3 +423,74 @@ def test_contract_checks() -> None:
         "step": "done",
         "valid": False,
     }
+
+
+def fake_gh(tmp_path: Path, script: str) -> str:
+    """A stand-in for the GitHub CLI: a shell script that answers `gh auth token --hostname github.com`."""
+    program = tmp_path / "gh"
+    program.write_text(f"#!/bin/sh\n{script}\n")
+    program.chmod(0o755)
+    return str(program)
+
+
+def test_github_connect_from_the_github_cli_login(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
+    _org, _wg, _device = assign_device(tool, hub, account)
+    done = {"step": "done", "login": "octo", "scopes": ["repo", "workflow"], "source": "token"}
+    relay(hub).script["github.connect"] = [[(done, True)]]
+    gh = fake_gh(tmp_path, 'test "$*" = "auth token --hostname github.com" && printf "gho_fromcli\\n"')
+    code, connected = tool.run("github", "connect", "--from-gh", "--wait", "5", env={"AGENT_PLATFORM_GH": gh})
+    assert code == 0, connected
+    assert (connected["step"], connected["login"]) == ("done", "octo")
+    # the token of the login goes only into the request sealed to the device; nothing is opened in a browser
+    assert opened(hub, connected["request_id"]) == {"token": "gho_fromcli"}
+    assert "gho_fromcli" not in json.dumps(connected)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [(None, "gh_missing"), ("echo 'not logged in' >&2; exit 1", "gh_not_logged_in"), ("printf ''", "gh_not_logged_in")],
+)
+def test_github_connect_from_gh_without_a_login(
+    tool: Tool, hub: HubFake, account: User, tmp_path: Path, case: tuple[str | None, str]
+) -> None:
+    script, reason = case
+    assign_device(tool, hub, account)
+    if script is None:  # a file that is not a program
+        (tmp_path / "gh").write_text("")
+        program = str(tmp_path / "gh")
+    else:
+        program = fake_gh(tmp_path, script)
+    code, failed = tool.run("github", "connect", "--from-gh", env={"AGENT_PLATFORM_GH": program})
+    assert code != 0
+    assert (failed["error"], failed["reason"]) == ("github_login_missing", reason)
+    assert "gh auth login" in failed["next"]
+
+
+def test_github_connect_from_gh_that_cannot_start(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
+    assign_device(tool, hub, account)
+    broken = tmp_path / "gh"
+    broken.write_text("#!/nonexistent/interpreter\n")
+    broken.chmod(0o755)
+    failed = tool.run("github", "connect", "--from-gh", env={"AGENT_PLATFORM_GH": str(broken)})[1]
+    assert (failed["error"], failed["reason"]) == ("github_login_missing", "gh_failed")
+
+
+def test_github_connect_names_the_device_flow(tool: Tool, hub: HubFake, account: User) -> None:
+    assign_device(tool, hub, account)
+    relay(hub).script["github.connect"] = [[(DEVICE_CODE, False)]]
+    started = tool.run("github", "connect", "--app", "github_app", "--wait", "5")[1]
+    assert opened(hub, started["request_id"]) == {"app": "github_app"}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("--from-gh", "--token", "-"),
+        ("--from-gh", "--app", "oauth_app"),
+        ("--app", "oauth_app", "--request", "0193002d-0000-7000-8000-000000000001"),
+        ("--token", "x"),
+    ],
+)
+def test_github_connect_takes_one_way(tool: Tool, hub: HubFake, account: User, argv: tuple[str, ...]) -> None:
+    assign_device(tool, hub, account)
+    assert tool.run("github", "connect", *argv)[1]["error"] == "invalid_argument"

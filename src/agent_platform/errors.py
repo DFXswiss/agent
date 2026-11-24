@@ -41,6 +41,11 @@ NEXT: dict[str, str] = {
         "Use Claude Code once, then run `agent-platform claude sync`, or run `agent-platform claude setup-token`."
     ),
     "claude_cli_missing": "Install Claude Code (the `claude` program) or set AGENT_PLATFORM_CLAUDE.",
+    "github_login_missing": (
+        "This computer has no GitHub CLI login: run `gh auth login` (or set AGENT_PLATFORM_GH to the `gh` program), "
+        "then `agent-platform github connect --from-gh` again; or pipe a token: "
+        "`printf '%s' \"$TOKEN\" | agent-platform github connect --token -`."
+    ),
     "setup_token_failed": (
         "Run `agent-platform claude setup-token` again and ask the user to authorize in the browser. Without a person: "
         "`agent-platform claude connect` takes this computer's Claude Code login, or store an API key "

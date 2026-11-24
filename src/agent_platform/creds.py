@@ -10,13 +10,17 @@
 - `credentials check --kind`: the device request `credential.check` (API key, subscription) or `mailbox.check`.
 - `github status|connect|disconnect`: the GitHub connection (the `github` record, written by the device that made the
   connection): its login, scopes, source (`device_flow` or `token`; records without it came from the device flow),
-  creation time and whether the token is one the platform minted (`revocable`, a GitHub App user token `ghu_`), never
+  creation time and whether the token is one the platform minted (`revocable`: made by a device flow), never
   the token. `connect` sends `github.connect` and opens the verification page in the user's browser with the user
   code; `connect --token -` (ADR-065) reads an existing token (a GitHub CLI login, `gh auth token`, or a personal
   access token) from stdin (never from the command line), trims it like the web's field and sends it only inside the
   request sealed with HPKE to the device, which checks it at GitHub and stores it (`done` with login, scopes and
   source, or a failure such as `token_refused`, `scope_missing`, `sso_required`). `disconnect` deletes the record; a
   revocable token is revoked at GitHub by the devices, any other stays valid there (`revoke_at` names the page).
+- `github connect --from-gh` (KOR-65, rule E-29): the same as `--token -` with the token of this computer's GitHub CLI
+  login (`gh auth token --hostname github.com`, `AGENT_PLATFORM_GH` names another `gh`); it reaches every repository
+  the account can reach. No login is `github_login_missing`. `github connect --app oauth_app|github_app` asks for that
+  device flow (default: the device's preferred one, the OAuth App when set up).
 - `claude login`: the relay of the web (`claude.login {mode}`): the device answers the authorization link (opened in
   the user's browser), the code the user receives goes back as a follow-up request (stdin), the device stores the
   subscription record itself.
@@ -24,6 +28,10 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+from collections.abc import Mapping
 from typing import Any
 
 from agent_platform import devicereq
@@ -39,8 +47,11 @@ from agent_runner.crypto.errors import CryptoError
 
 CHECK_KINDS = ("anthropic_api_key", "claude_subscription", "mailbox")
 GITHUB_SETTINGS_URL = "https://github.com/settings/applications"
-REVOCABLE_PREFIX = "ghu_"
 DEFAULT_WAIT_S = 60
+MINTED = ("ghu_", "gho_")
+"""Prefixes of the tokens a device flow mints (GitHub App user token, OAuth App token; KOR-65)."""
+GH_HOST = "github.com"
+GH_TIMEOUT_S = 30
 
 
 def summary(kind: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -51,7 +62,8 @@ def summary(kind: str, body: dict[str, Any]) -> dict[str, Any]:
             "scopes": body["scopes"],
             "source": body.get("source", SOURCES[0]),
             "created_at": body["created_at"],
-            "revocable": str(body["token"]).startswith(REVOCABLE_PREFIX),
+            # minted by a device flow (the GitHub App's `ghu_` or the OAuth App's `gho_`, KOR-65): revoked on disconnect
+            "revocable": body.get("source", SOURCES[0]) == SOURCES[0] and str(body["token"]).startswith(MINTED),
         }
     if kind == "claude_subscription":
         return {"email": body["email"], "origin": body["kind"], "expires_at": body.get("expires_at")}
@@ -182,17 +194,41 @@ def token_input(text: str) -> str:
     return token
 
 
+def gh_token(environ: Mapping[str, str]) -> str:
+    """The token of this computer's GitHub CLI login (`gh auth token`), never printed or logged."""
+    program = environ.get("AGENT_PLATFORM_GH", "") or shutil.which("gh", path=environ.get("PATH"))
+    if not program or not os.access(program, os.X_OK):
+        raise PlatformError("github_login_missing", reason="gh_missing")
+    try:
+        done = subprocess.run(
+            [program, "auth", "token", "--hostname", GH_HOST],
+            capture_output=True,
+            text=True,
+            timeout=GH_TIMEOUT_S,
+            env=dict(environ),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise PlatformError("github_login_missing", reason="gh_failed") from None
+    token = done.stdout.strip()
+    if done.returncode != 0 or not PRINTABLE_RE.fullmatch(token):
+        raise PlatformError("github_login_missing", reason="gh_not_logged_in")
+    return token
+
+
 def github_connect(account: Account, args: Any, context: Context) -> dict[str, Any]:
-    if args.token is not None and (args.token != "-" or args.request is not None):
+    ways = [args.token is not None, args.from_gh, args.app is not None]
+    if (args.token is not None and args.token != "-") or sum(ways) > 1 or (any(ways) and args.request is not None):
         raise PlatformError("invalid_argument")
     if args.request is not None:
         prepared = resume(account, args.request, ("github.connect",))
         return finish(prepared, wait(account, prepared, args.wait, frozenset({"done", "failed"})))
-    if args.token is not None:
-        token = token_input(context.read_stdin())
+    if args.token is not None or args.from_gh:
+        token = gh_token(context.environ) if args.from_gh else token_input(context.read_stdin())
         prepared = submit(account, choose_device(account, args.device), "github.connect", {"token": token})
         return finish(prepared, wait(account, prepared, args.wait, frozenset({"done", "failed"})))
-    prepared = submit(account, choose_device(account, args.device), "github.connect", {})
+    body = {} if args.app is None else {"app": args.app}
+    prepared = submit(account, choose_device(account, args.device), "github.connect", body)
     found = wait(account, prepared, args.wait, frozenset({"device_code", "done", "failed"}))
     if found["step"] == "device_code":
         show_in_browser(context.environ, found["verification_uri"], f"enter the code {found['user_code']} at")
@@ -336,6 +372,12 @@ def register(tree: Tree) -> None:
         then="agent-platform github connect --request <request_id> --wait 120",
     )
     sub.add_argument("--token", help="- : store an existing GitHub token read from stdin (checked by the device)")
+    sub.add_argument(
+        "--from-gh", action="store_true", help="store the token of this computer's GitHub CLI login (`gh auth token`)"
+    )
+    sub.add_argument(
+        "--app", choices=["oauth_app", "github_app"], help="the device flow to use (default: the device's preferred)"
+    )
     _flow_options(sub)
     tree.command(
         group,

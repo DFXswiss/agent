@@ -238,3 +238,70 @@ def test_runtime_of_tasks_and_sessions(tool: Tool, hub: HubFake, account: User) 
 )
 def test_runtime_seconds(start: str, end: str | None, running: bool, expected: int | None) -> None:
     assert sessions.runtime_seconds(start, end, running, 0.0) == expected
+
+
+def access(operation: str, step: dict[str, str], *, for_user: str | None = None) -> dict[str, Any]:
+    """A `github_access` waiting body (KOR-65) with its next step."""
+    body = {**held(operation, repo="third-org/app"), "waiting_for": "github_access", "next": step}
+    return body if for_user is None else {**body, "for_user": for_user}
+
+
+APPROVE = {"action": "approve_app", "owner": "third-org", "url": "https://github.com/settings/applications"}
+
+
+def test_access_cards_name_the_one_next_step(tool: Tool, hub: HubFake, account: User) -> None:
+    _org, wg, device = assign_device(tool, hub, account)
+    task = new_task(tool, wg)
+    session = add_session(hub, task, device=device)
+    place = {"wg": wg, "task": task, "session": session}
+    first = uuid7()
+    device_event(hub, account, device, "session.status", access(first, APPROVE, for_user=account.id), **place)
+    (card,) = cards(tool.run("task", "show", "--task", task)[1])
+    assert (card["reason"], card["for_user"], card["owner_id"], card["is_owner"]) == (
+        "github_access",
+        account.id,
+        account.id,
+        True,
+    )
+    assert (card["action"], card["url"], card["next"]) == ("approve_app", APPROVE["url"], APPROVE["url"])
+    # a new connection does not end an access card: the runner checks the repository again
+    device_record(hub, account, device, "github", {**GITHUB_BODY, "created_at": now_ms_text(timedelta(seconds=5))})
+    assert cards(tool.run("task", "show", "--task", task)[1])[0]["status"] == "open"
+    # the step of the newest item counts; "connect" is the command, a token step names the link and the command
+    connect = {"action": "connect", "owner": "third-org"}
+    device_event(hub, account, device, "session.status", access(uuid7(), connect, for_user=account.id), **place)
+    (card,) = cards(tool.run("task", "show", "--task", task)[1])
+    assert (card["action"], card["next"], "url" in card) == ("connect", "github connect", False)
+    token = {"action": "new_token", "owner": "third-org", "url": "https://github.com/settings/tokens/new"}
+    device_event(hub, account, device, "session.status", access(uuid7(), token, for_user=account.id), **place)
+    (card,) = cards(tool.run("task", "show", "--task", task)[1])
+    assert card["next"].startswith("create a token at https://github.com/settings/tokens/new, then: printf")
+
+
+def test_an_access_card_for_another_person_shows_no_step(tool: Tool, hub: HubFake, account: User) -> None:
+    _org, wg, device = assign_device(tool, hub, account)
+    task = new_task(tool, wg)
+    session = add_session(hub, task, device=device)
+    someone = uuid7()
+    body = access(uuid7(), APPROVE, for_user=someone)
+    device_event(hub, account, device, "session.status", body, wg=wg, task=task, session=session)
+    (card,) = cards(tool.run("task", "show", "--task", task)[1])
+    assert (card["owner_id"], card["is_owner"], "next" in card, "action" in card) == (someone, False, False, False)
+
+
+def test_parse_waiting_checks_the_next_step() -> None:
+    good = access(uuid7(), APPROVE, for_user=uuid7())
+    assert waiting.parse_waiting(good) is not None
+    assert waiting.parse_waiting({**good, "next": {"action": "connect", "owner": "o"}}) is not None
+    for broken in (
+        {**good, "for_user": "x"},
+        {**good, "next": "connect"},
+        {**good, "next": {"action": "connect"}},
+        {**good, "next": {**APPROVE, "extra": 1}},
+        {**good, "next": {**APPROVE, "action": "ask"}},
+        {**good, "next": {**APPROVE, "owner": "bad owner"}},
+        {**good, "next": {**APPROVE, "owner": 5}},
+        {**good, "next": {**APPROVE, "url": "javascript:alert(1)"}},
+        {**good, "next": {**APPROVE, "url": 5}},
+    ):
+        assert waiting.parse_waiting(broken) is None, broken
