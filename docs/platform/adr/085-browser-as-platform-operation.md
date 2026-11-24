@@ -96,9 +96,11 @@ Status: Accepted (2026-11-25)
 - `browser.action` is a **watched kind** like `session.terminal`: it is stored like every event (encrypted, signed,
   in order, readable by `task:read` after the teardown) but it is not in the general live fan-out, not in device
   pulls and not in a default event read; a browser receives it only while it watches the session's browser, and
-  reads history with `kinds=browser.action`. One place lists the watched kinds and their frame types (E-19: the next
-  heavy kind cannot leak into every stream by forgetting a filter).
-- Event `browser.state` (same scope and author): `{browser_id, operation_id, state: starting|open|restarted|closed,
+  reads history with `kinds=browser.action`. Unlike terminal output it is not replayed on a reconnecting stream (its
+  pictures would fill the stream buffer); the viewer reads the record page by page. One place lists the watched
+  kinds, their frame types, stream parameters and replay rule, and it drives reads, pulls, hints and the bus (E-19:
+  the next heavy kind cannot leak into every stream by forgetting a filter).
+- Event `browser.state` (same scope and author): `{browser_id, operation_id, implicit, state: starting|open|restarted|closed,
   workvm_id, reason, url, actions, ready_ms, idle_seconds, opened_at, closed_at}` – in the general fan-out, the chat
   card of the browser session.
 
@@ -111,24 +113,31 @@ Status: Accepted (2026-11-25)
 
 ### 6. Live picture, end to end encrypted, only while someone watches
 - **Watching**: a browser adds `browser=<session_id>` (at most 3) and `browser_kbps` to its stream (`GET /v1/stream`,
-  rights as `terminal=`, audit `read.stream.browser`). Each hub process renews a lease row per watched session
-  (`hub.browser_watch`, 30 s, renewed every 10 s while a stream watches) and sends the session's device the hint
-  `browser {session_id}` when a watch starts.
+  rights as `terminal=`, audit `read.stream.browser`). Each hub process holds a lease row per watched session
+  (`hub.browser_watch`, 30 s, renewed every 10 s while a stream watches, deleted when its last watching stream
+  ends) and sends the session's device the hint `browser {session_id}` with each lease write.
 - **Frames**: on the hint the runner starts the screencast of the session's open browser (Chromium's screencast
   sends a frame only when the page changed) and posts frames to `POST /v1/device/sessions/{session}/browser/live`
-  `{frame?}`; the answer `{until, kbps}` keeps it streaming, `409 not_watched` stops it (also within 10 s of the last
-  viewer leaving: the runner checks with an empty post when no frame came). A frame is
+  `{frame?}`; the answer `{until, kbps}` keeps it streaming, `409 not_watched` stops it – at most 10 s after the last
+  viewer left, because the runner posts at least every 10 s (an empty post when nothing changed). A frame is
   `{v, browser_id, session, wg, epoch, seq, ts, salt, ct}` with `ct = nonce‖AES-256-GCM(k_frame, jpeg, AAD)`,
   `k_frame = HKDF(WK_e, salt, P‖"browser-frame\0"‖browser_id)`, AAD binding browser, session, workgroup, epoch, seq
   and time (04-crypto.md §4.13). The hub stores only the **latest** frame per session (unlogged table, overwritten,
   dropped with the watch) to hand it to every process's streams (`NOTIFY` cannot carry it) and as the first picture of
-  a new viewer; it never sees a picture or a URL in clear.
+  a new viewer; it never sees a picture or a URL in clear. Frames do not queue at the hub: each stream holds one slot
+  per watched session (a newer frame replaces an unsent one, outside the stream buffer) and sends within its own
+  `browser_kbps`, so a slow phone neither overflows its stream nor receives more than it asked for.
 - **Bandwidth as a setting**: the viewer chooses "economical" (250 kbit/s), "standard" (1000) or "sharp" (3000) in
-  the browser view (stored in the browser); the hub hands the largest wish of the current viewers to the device,
-  which caps it at `BROWSER_LIVE_MAX_KBPS` (default 3000) and paces frames by a byte budget (at most 5 per second,
-  JPEG quality 60, at most 1280 px wide). **Without a viewer no frame leaves the device** and no screencast runs.
+  the browser view (stored in the browser); the hub hands the largest wish of the current viewers to the device and
+  holds each stream to its own wish; the device caps at `BROWSER_LIVE_MAX_KBPS` (default 3000) and paces frames by a
+  byte budget (at most 5 per second, JPEG quality 60, at most 1280 px wide), keeping the newest frame that did not
+  fit and sending it when the budget allows. **Without a viewer no frame leaves the device** and no screencast runs.
+  The action record (§4) is not part of this: it is the stored protocol the package asks for, sent with or without
+  a viewer.
 - No signature per frame (E-25): only the device that runs the session can post to the route, and the hub cannot
-  make a frame without `WK_e`; the viewer drops a frame whose `seq` is not newer than the last.
+  make a frame without `WK_e`; the viewer drops a frame whose `seq` is not newer than the last or whose `browser` is
+  not the newest open browser session, and shows the age of an old frame. A holder of `WK_e` working with the hub
+  could make a frame; accepted (the record is signed).
 - Watch only: the live view has no input path (like the terminal, §6 point 7).
 
 ### 7. Agent access (E-04) and the web
@@ -152,8 +161,8 @@ Status: Accepted (2026-11-25)
 - The hub learns no picture, URL, typed text or page content: actions and frames are encrypted under the
   workgroup key. It sees that a browser session exists (operation record), when frames flow (sizes, rate) and who
   watches.
-- Stored volume: one event of up to about 200 KiB per action; a browser session of 500 actions is about 60 MB at the
-  hub. The record view loads pages on demand and never holds the whole record.
+- Stored volume: one event of up to about 140 KiB per action (typically 60–90 KiB); a browser session of 500 actions
+  is about 40 MB at the hub. The record view loads pages on demand and never holds the whole record.
 - A browser VM costs a VM start (warm pool: about 0.1 s; cold: about 8 s) and is billed like a work VM.
 - Out of scope: tests (ADR-080), billing logic beyond the VM extension point, a resume on another device (KOR-58),
   input into the live picture, JavaScript evaluation, uploads.

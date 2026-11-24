@@ -36,12 +36,17 @@ about the VM boundary holds for a browser VM, which is a work VM of scope `brows
 | B11 | A3 makes a device stream (bandwidth abuse) | Watching needs `task:read`; a lease is per watched session and bounded to 3 per stream; the device caps the rate (`BROWSER_LIVE_MAX_KBPS`, 5 frames per second) | hub and runner tests |
 | B12 | A device posts frames of a session it does not run, or into another workgroup | The live route takes only sessions running on the calling device in a workgroup it is assigned to, and `frame.session`/`frame.wg` must name the path's session and its workgroup | hub tests |
 | B13 | A4 reads frames in transit | TLS to the hub plus end-to-end encryption of every frame and event | — |
-| B14 | The record leaks a password typed into a sign-in form | The runner replaces the typed text of a password field by `••••`; the picture shows the field masked as the page does | runner tests, E2E-66 |
-| B15 | Bandwidth without a viewer | The device starts the screencast only on the hint of a valid lease and stops on `409 not_watched` or 10 s after the last frame without a renewed lease | runner tests, E2E-66 (no frame without a viewer) |
+| B14 | The record shows a password typed into a sign-in form to every reader of the browser view | The runner replaces the typed text of a password field by `••••` in `browser.action`; the picture shows the field masked as the page does. Not a protection against readers of the workgroup in general: the session's `session.tool` record holds the tool input like every input of the session (its own content, ADR-016) | runner tests, E2E-66 |
+| B15 | Bandwidth without a viewer | The device starts the screencast only on the hint of a lease; a process deletes its lease when its last watching stream ends; the device posts at least every 10 s and stops on `409 not_watched`, so at most 10 s after the last viewer left | runner and hub tests, E2E-66 (no frame without a viewer) |
+| B16 | A slow viewer is flooded (or makes other viewers resync) | Frames do not queue at the hub: one slot per stream and watched session, outside the stream buffer, sent within the stream's own `browser_kbps`; `browser.action` is not replayed on reconnect | hub tests |
 
 ## Not covered (accepted)
 - A viewer with `task:read` sees the pictures of sites the session signed in to, including what those sites show
   (account pages). That is the purpose of the live view (idea 28).
 - The browser VM shares the known limit of the per-account host filter (13-work-vm.md §6.6).
+- A holder of the workgroup key (a member or device of the workgroup) working together with the hub could make a live
+  frame (frames are not signed, ADR-085 §6); the stored record is signed by the device.
+- The browser VM cannot reach the session's own work VM (outside boundary); looking at an app in the work VM goes
+  through the unwatched `workvm_browse` (E-09).
 - Web JavaScript is delivered by the hub (06-web.md §12): a taken-over hub that ships changed JavaScript can read what
   the browser decrypts; the same limit as every web end-to-end encryption.
