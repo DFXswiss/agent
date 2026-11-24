@@ -424,6 +424,10 @@ use. The work VM and its free browser (`workvm_browse`) stay as they are and unw
 | `browser.close` | `{}` | `{closed, browser_id (null when none), actions, reason}` | none (idempotent: nothing open is `closed:false`) |
 
 - `browser_id` = `br-<12 hex>`. One open browser session per session; a subagent gets its own (its session).
+- **Implicit open** (E-05): a browser tool of a session without an open browser session opens one first with the
+  same checks (`browser.state` `starting` then `open` with `implicit: true` and `operation_id` null, like the implicit
+  work VM of §7); its answer carries the notice "A browser was opened for this call (browser.open)." A failure is the
+  tool error `unavailable` with the reason.
 - `idle_seconds` default `BROWSER_IDLE_SECONDS` (600). `ready_ms`: request to a browser that answers.
 - The operation fails only when no browser came up: `credit_exhausted`, `limit_exceeded` (organization and owner VM
   limits; a browser VM does not count against the per-task limit), `workvm_unavailable`, `timeout` (capacity queue),
@@ -438,12 +442,17 @@ use. The work VM and its free browser (`workvm_browse`) stay as they are and unw
   per session (unique partial index).
 - Teardown reasons (new): `browser_closed` (`browser.close`), `browser_idle` (no browser call for `idle_seconds`),
   `vm_lost` (the VM stopped answering; a new one follows on the next call); and the existing `session_ended`,
-  `task_closed`, `credit_exhausted`, `restart`, `failed`. The session's end, the task's close and the credit stop
-  close the browser session with that reason; a restart closes every open browser session (`restart`, no resume). The
-  VM is deleted in a `finally` shielded from cancellation; a failed deletion stays `deleting` for the sweep.
-- Failure (idea 44): a call whose helper does not answer (or whose VM is gone) deletes the VM (`vm_lost`), writes
-  `browser.state` `restarted`, obtains a fresh VM, and runs the call there; its answer carries the `notice` "The browser
-  VM failed and was started again; open pages, cookies and sign-ins are gone." `seq` continues.
+  `task_closed`, `credit_exhausted`, `restart`, `failed`. The session's end, the task's close, the credit stop, close
+  and idle **close the browser session** with that reason. The VM is deleted in a `finally` shielded from
+  cancellation; a failed deletion stays `deleting` for the sweep.
+- **Failure and restart** (idea 44): a call that runs into its time limit answers `ok:false` with `error` "timeout"
+  and keeps the VM (a slow page is not a failure). Only when the helper then does not answer a probe (`selftest`, 10 s)
+  or the VM is gone, the VM is deleted (`vm_lost`). A runner restart deletes every VM (`restart`, §7) but keeps the
+  browser sessions open. The next call of an open browser session without a live VM obtains a fresh VM, writes
+  `browser.state` `restarted` (reason `vm_lost` or `restart`) and answers with the `notice` "The browser VM failed and
+  was started again; open pages, cookies and sign-ins are gone." – `browser_navigate {url}` runs on the fresh VM, any
+  other tool answers `ok:false` with that notice and the blank page. `seq` continues; idle still closes such a
+  session after `idle_seconds`.
 - Log lines `runner.browser opened browser_id= ready_ms= workvm_id=`, `runner.browser restarted browser_id=`,
   `runner.browser closed browser_id= reason= actions=`, `runner.browser live browser_id= frames= bytes=`.
 
@@ -454,12 +463,14 @@ Node with the image's Playwright; the runner runs it over Lima's SSH as `sudo /u
   `/var/lib/workvm-browser/downloads`), dialogs accepted and reported, listening on `/run/workvm-browser.sock` (root,
   0600).
 - `call` – reads one JSON request `{tool, arguments}` on stdin (`browser_navigate` never carries `query`: the runner
-  turns it into `url`; `path` arguments are not passed), prints one JSON line, at most 30 s: `{ok, error, notice, url,
-  title, tab, tabs: [{index, url, title, active}], snapshot, masked, image, file}` – `masked` true when the typed
-  target was a password field; `image` `{width, height, jpeg}` (standard base64 of the viewport JPEG after the action,
-  already at most 160 KiB: quality 60, 40, 25, then half the size) or null; `file` `{path, name, bytes}` (a regular
-  file below `/var/lib/workvm-browser/` the runner brings into the workspace: the download, or the PNG of
-  `browser_screenshot`) or null.
+  turns it into `url`; `path` arguments are not passed; `browser_upload` carries `files`, the VM paths the runner
+  copied the workspace files to, instead of `paths`), prints one JSON line, at most 25 s: `{ok, error, notice, url,
+  title, tab, tabs: [{index, url, title, active}], snapshot, masked, result, image, file}` – `masked` true when the
+  typed target was a password field; `result` the JSON text of `browser_evaluate` (≤ 24000 characters) or null;
+  `image` `{width, height, jpeg}` (standard base64 of the viewport JPEG after the action, at most 960 px wide and
+  100 KiB: quality 60, 45, 30, then 640 px) or null; `file` `{path, name, bytes}` (a regular file below
+  `/var/lib/workvm-browser/` the runner brings into the workspace: the download, or the PNG of `browser_screenshot`)
+  or null. Snapshots cover the main frame and its frames (refs unique across frames); a popup becomes a new tab.
 - `stream FPS QUALITY WIDTH` – prints the screencast of the active tab (Chromium `Page.startScreencast`, a frame only
   when the page changed): per frame one header line `{"bytes":N,"width":W,"height":H}` and N JPEG bytes; ends with
   stdin.
@@ -468,26 +479,31 @@ The runner caps every answer (header line ≤ 4 KiB, call answer ≤ 4 MiB, fram
 closed schema and treats anything else as a failed helper (`vm_lost`).
 
 ### 13.4 Tools (03-api.md §8.1)
-Forwarded like the work VM tools (§3: journal `workvm.call`, no read audit, visible as `session.tool`). Each needs an
-open browser session (else tool error `not_found`: "No browser open: request one with request_operation type
-browser.open."). `target` is a `ref` of the last snapshot (`e12`) or a Playwright selector (1–1024 characters).
+Forwarded like the work VM tools (§3: journal `workvm.call`, no read audit, visible as `session.tool`). Without an
+open browser session the first call opens one (§13.1). `target` is a `ref` of the last snapshot (`e12`, `f1e3` in a
+frame) or a Playwright selector (1–1024 characters). `browser_type` fills the field at once (no per-key timing).
 
 | Tool | Input |
 |---|---|
 | `browser_navigate` | `{url?, history?: "back"\|"forward"\|"reload", query?: 1–512, wait_until?: "load"\|"domcontentloaded"\|"networkidle"}` – exactly one of `url`, `history`, `query` |
 | `browser_snapshot` | `{}` |
-| `browser_click` | `{target, double?: bool, button?: "left"\|"right"\|"middle"}` |
+| `browser_click` | `{target?, x?, y?, double?: bool, button?: "left"\|"right"\|"middle"}` – `target`, or the viewport point `x` 0–1279, `y` 0–799 |
+| `browser_hover` | `{target}` |
 | `browser_type` | `{target, text: 0–65536, submit?: bool, clear?: bool (default true)}` |
 | `browser_select` | `{target, values: 1–64 strings ≤ 1024}` |
 | `browser_press` | `{key: 1–64}` (`Enter`, `Control+A`, …) |
 | `browser_scroll` | `{target?, dy?: −100000…100000 (default 600)}` (with `target`: into view) |
-| `browser_wait` | `{text?: 1–1024, gone?: 1–1024, ms?: 0–30000, timeout_ms?: 0–30000 (default 10000)}` – at least one of `text`, `gone`, `ms` |
+| `browser_wait` | `{text?: 1–1024, gone?: 1–1024, url?: 1–4096 (substring of the URL), ms?: 0–20000, timeout_ms?: 0–20000 (default 10000)}` – at least one of `text`, `gone`, `url`, `ms` |
+| `browser_evaluate` | `{expression: 1–65536}` – JavaScript run in the page (`page.evaluate`), its JSON result in `result` |
+| `browser_upload` | `{target, paths: 1–16 workspace paths}` – the files of the workspace into a file input |
+| `browser_dialog` | `{action: "accept"\|"dismiss", text?: ≤ 4096}` – how the next dialogs are answered (default accept; `text` for `prompt`) until changed |
 | `browser_tabs` | `{action: "list"\|"new"\|"select"\|"close", index?: 0–63, url?}` |
 | `browser_download` | `{target?, url?, path?: workspace path}` – exactly one of `target`, `url`; default path `.browser/downloads/<file name>` |
 | `browser_screenshot` | `{path?: workspace path, full_page?: bool}` – PNG, default `.browser/screenshots/<browser_id>-<seq>.png` |
 
-Answer of every tool: `{browser_id, seq, ok, error, notice, url, title, tab, tabs: [{index, url, title, active}],
-snapshot, file}` – `error` and `notice` text or null; `snapshot` the accessibility snapshot of the page after the
+Every tool but `browser_snapshot` also takes `snapshot?: bool` (default true; false leaves `snapshot` empty to save
+tokens). Answer of every tool: `{browser_id, seq, ok, error, notice, url, title, tab, tabs: [{index, url, title,
+active}], snapshot, result, file}` – `error` and `notice` text or null; `snapshot` the accessibility snapshot of the page after the
 action (lines `- <role> "<name>" [ref=eN]` with `value=`, `checked`, `href=` and headings and visible text, at most
 24000 characters, `[…truncated]` at the end when cut); `file` `{path, name, bytes}` or null (download, screenshot).
 A failed action is `ok:false` with `error` (not a tool error). `browser_navigate {query}` needs the switch
@@ -499,33 +515,56 @@ search is not switched on: open a search page with url, like a person."
   set), one per tool call: `{browser_id, seq, tool, action (≤ 64), target (≤ 1024, or null), text (≤ 1024, or null;
   `"••••"` for a password field), url (≤ 8192), title (≤ 1024), tab, ok, error (≤ 2048 or null), notice (≤ 1024 or
   null), at, duration_ms, image, image_omitted}`; `image` `{type: "image/jpeg", width, height, data (b64u, ≤ 160
-  KiB decoded)}` or null; `image_omitted` `"too_large"`, `"unavailable"` or null. A **watched kind** (§13.6).
-- `browser.state` (same scope, author, right): `{browser_id, operation_id, state: "starting"|"open"|"restarted"|
-  "closed", workvm_id, reason, url, actions, ready_ms, idle_seconds, opened_at, closed_at}`; `starting` before the VM
+  KiB decoded, at most 960 px wide)}` or null; `image_omitted` `"too_large"`, `"unavailable"` or null. A **watched kind** (§13.6).
+- `browser.state` (same scope, author, right): `{browser_id, operation_id (null when implicit), implicit, state:
+  "starting"|"open"|"restarted"|"closed", workvm_id, reason, url, actions, ready_ms, idle_seconds, opened_at,
+  closed_at}`; `starting` before the VM
   is obtained (countdown), `open` when the browser answers, `restarted` after a failure, `closed` with its reason.
 
 ### 13.6 Watched kinds and the live picture
 - **Watched kinds** (one list at the hub, `agent_hub.events.watched`): `session.terminal` (frame `terminal`, stream
   parameter `terminal`) and `browser.action` (frame `browser_action`, parameter `browser`). A watched kind is stored
-  like any event but returned by `GET /v1/scopes/{scope}/events` only when `kinds` lists it, never by device pulls,
-  and sent live only to streams that watch the event's session with that parameter (replay included).
+  like any event but returned by `GET /v1/scopes/{scope}/events` only when `kinds` lists it, never by device pulls
+  or device hints, and sent live only to streams that watch the event's session with that parameter. Terminal output
+  is replayed after the stream's cursors as before; `browser.action` is **not** replayed on the stream (its pictures
+  would fill the stream buffer): a viewer reads the record with the events route and gets new entries live. The bus
+  message of a new event names its kind and session, so a hub process reads a watched-kind event only when one of its
+  streams watches that session.
 - **Watching**: `GET /v1/stream?browser=<session_id>` (repeatable, at most 3, `task:read` of the session, audit
   `read.stream.browser` once per stream) with `browser_kbps` 100–10000 (default 1000). Per hub process and watched
   session the lease `hub.browser_watch (session_id, instance, until, kbps)` is written when the first local stream
-  starts watching and renewed every 10 s (`until` = now + 30 s); the first lease of a session sends the session's
-  device the hint `browser {session_id}`, and the renewal sends it again every 10 s while the device has not
-  posted. A stream that starts watching gets the stored latest frame at once (frame `browser_live`).
+  starts watching, renewed every 10 s (`until` = now + 30 s, `kbps` the largest wish of the local streams) and
+  **deleted when the last local stream stops watching** (a process that dies leaves a lease that ends with its
+  `until`). The first lease of a session sends the session's device the hint `browser {session_id}`, and every renewal
+  sends it again (a runner that already streams ignores it). A stream that starts watching gets the stored latest
+  frame at once (frame `browser_live`).
+- **Per stream**: `browser_live` frames do not queue. Each stream has one slot per watched session: a newer frame
+  replaces one not sent yet, frames do not count towards the stream buffer's overflow, and a stream sends a frame
+  only within its own `browser_kbps` (byte budget; a held frame goes out when the budget allows).
 - **Frames**: `POST /v1/device/sessions/{session}/browser/live` (device signed; the session runs on the calling device
   in a workgroup it is assigned to, else `403 forbidden`) `{frame?}` → `{until, kbps}` (the latest lease and the
   largest `kbps` among valid leases) or `409 not_watched` (no valid lease; the runner stops streaming). A frame (≤ 512
-  KiB ciphertext, 04-crypto.md §4.13) replaces `hub.browser_live` of the session (one row, unlogged) and is published
+  KiB ciphertext, 04-crypto.md §4.13; `epoch` an epoch of the workgroup, else `400`) replaces `hub.browser_live` of
+  the session (one row, unlogged) and is published
   as `browser_live {session_id, wg_id, frame}` through the bus as a reference (`{session_id, seq}`); every hub process
   reads the row and sends the frame to its streams watching that session. The hub keeps no other frame.
 - **Runner**: on the hint it starts `workvm-browser stream` for the session's open browser session (none open: it
   ignores the hint), seals each frame, posts it when the byte budget allows (`kbps`, capped by
-  `BROWSER_LIVE_MAX_KBPS`, at most 5 frames per second, JPEG quality 60, at most 1280 px wide), drops frames that do
-  not fit the budget (the next change brings a new one) and posts an empty body when no frame came for 10 s. `409
-  not_watched`, a closed browser session or a lost VM end the stream. No viewer: no stream, no frame, no bandwidth.
+  `BROWSER_LIVE_MAX_KBPS`, at most 5 frames per second, JPEG quality 60, at most 1280 px wide), keeps the newest frame
+  that did not fit the budget and posts it as soon as the budget allows (a page that stops changing still shows its
+  last state), and posts an empty body when it posted nothing for 10 s. `409 not_watched`, a closed browser session
+  or a lost VM end the stream: at most 10 s after the last viewer left. No viewer: no stream, no frame, no bandwidth.
+  The frame `seq` is a counter of its own per browser session (not the action `seq`).
+- **Viewer**: shows only frames of the `browser_id` of the session's newest open `browser.state`, only with a `seq`
+  above the last shown, and labels a frame older than 30 s with its age.
+
+### 13.6a Limits of the platform browser
+- The browser VM is a work VM with the outside boundary: it reaches the internet, not the session's own work VM. To
+  look at an app running in the work VM, the session uses `workvm_browse` or a Playwright script there (not recorded,
+  not live, E-09).
+- Watch only: a captcha or a second factor that needs a person goes through `human.question`.
+- The record keeps every action and its picture like every event of the task (no own quota; a session of 500
+  actions is about 40 MB at the hub).
 
 ### 13.7 Web search (KOR-29 stage c)
 Claude Code's own `WebSearch` (run by the model provider) is allowed for sessions whose model access is `api_key` or

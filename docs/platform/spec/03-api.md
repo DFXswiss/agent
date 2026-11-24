@@ -581,8 +581,9 @@ All argument objects have `additionalProperties:false`. Integers reject booleans
 | `get_subagent_result` | `{session_id,wait_seconds?≤30}` | `{session_id,state,final_text?,finished_at?}` – only for child sessions of the calling session; `final_text` = last assistant message of the child (≤ 64 KiB) once the child is `stopped`; empty when read an hour or more after the child ended (watch window and outbox retention, `05-runner.md` §2.3) |
 
 The work VM tools (`workvm_*`, `13-work-vm.md` §3) and the platform browser tools (`browser_navigate`,
-`browser_snapshot`, `browser_click`, `browser_type`, `browser_select`, `browser_press`, `browser_scroll`,
-`browser_wait`, `browser_tabs`, `browser_download`, `browser_screenshot`; KOR-44, `13-work-vm.md` §13.4) are forwarded
+`browser_snapshot`, `browser_click`, `browser_hover`, `browser_type`, `browser_select`, `browser_press`,
+`browser_scroll`, `browser_wait`, `browser_evaluate`, `browser_upload`, `browser_dialog`, `browser_tabs`,
+`browser_download`, `browser_screenshot`; KOR-44, `13-work-vm.md` §13.4) are forwarded
 as `workvm.call` and are not reads (no `platform.read`, no read audit).
 
 Read scope (ADR-024): own org (workgroup names, members, org whiteboard) and own workgroup (tasks, messages,

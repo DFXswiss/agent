@@ -467,7 +467,8 @@ of its VM and **"Watch live"**, which opens the session's **Browser** tab. The o
 `browser.close` show the browser ID and the result. The Browser tab of the session detail (§5.5) shows:
 - the **live picture**: while the tab is open the stream watches the session (`browser=<session>`, `browser_kbps`);
   each `browser_live` frame is opened with the workgroup key of its epoch (`src/core/crypto/browserframe.ts`,
-  `04-crypto.md` §4.13), older or foreign frames are dropped, the picture is scaled to the width (phones included)
+  `04-crypto.md` §4.13); frames of another browser session than the newest open one, older ones and foreign ones are
+  dropped, a frame older than 30 s shows its age, the picture is scaled to the width (phones included)
   and labelled "Live" with its age; without a live frame the newest recorded picture is shown, labelled with its time;
   watch only – no input of any kind reaches the page;
 - the **bandwidth choice** "Economical" (250 kbit/s), "Standard" (1000, default) and "Sharp" (3000), kept in the
@@ -475,7 +476,8 @@ of its VM and **"Watch live"**, which opens the session's **Browser** tab. The o
 - the **action record**: the session's `browser.action` events, newest first, loaded page by page
   (`GET /v1/scopes/{wg}/events?session=…&kinds=browser.action`) and shown in a window (never the whole record in the
   page): time, tool and action, target, typed text (masked for passwords), URL, title, result or error, notice, and the
-  picture after the action (decoded only for rows in view); live entries arrive as `browser_action` frames;
+  picture after the action (decoded only for rows in view); live entries arrive as `browser_action` frames (not
+  replayed on reconnect: the tab pulls the newest page again);
 - the note that the free browser of the work VM (`workvm_browse` and scripts) is neither recorded nor live (E-09).
 
 

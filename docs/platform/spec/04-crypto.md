@@ -390,13 +390,17 @@ watches and never stored beyond the latest frame per session:
 - `ct = b64u(nonce12‖AES-256-GCM(k_frame, jpeg, AAD))`, `AAD = P‖"browser-frame\0"‖canonical({"browser":browser_id,
   "epoch":e,"seq":n,"session":session_id,"ts":ts,"wg":wg_id})`;
 - frame (JSON, in clear except `ct`): exactly `{"v":1,"browser","session","wg","epoch","seq","ts","salt","ct"}`;
-  `browser` = `br-<12 hex>`, `seq` 0…2^53−1 increasing per browser session, `ts` the device time of the picture,
-  `ct` 29 B to 512 KiB + 28 B decoded.
+  `browser` = `br-<12 hex>`, `seq` 0…2^53−1 increasing per browser session (a counter of the frames, not the action
+  `seq`), `ts` the device time of the picture in the time format of §1 (`YYYY-MM-DDTHH:MM:SS.mmmZ`, the same text in
+  the AAD), `ct` 29 B to 512 KiB + 28 B decoded. The hub checks the format, the IDs against the route and that `epoch`
+  is an epoch of the workgroup.
 
 No signature (ADR-085 §6, E-25): only the session's device can post a frame, and the hub cannot make or change one
 without `WK_e`. A viewer checks the key set (`header_invalid`), the formats (`header_invalid`), that `session` and
 `wg` are the watched session's, the size (`size_exceeded`), opens it (`decrypt_failed`) and drops a frame whose `seq`
-is not above the last shown one of that browser session. The label is its own, so a frame can never pass for an
+is not above the last shown one of that browser session, or whose `browser` is not the session's newest open browser
+session. A holder of `WK_e` (a member or device of the workgroup) working together with the hub could make a frame
+(no signature): accepted, the record (`browser.action`) is signed by the device. The label is its own, so a frame can never pass for an
 event, a log chunk or a checkpoint chunk. Implementations: `agent_hub.crypto.browserframe`, the runner's copy
 `agent_runner.crypto.browserframe`, the web's `src/core/crypto/browserframe.ts`; vectors
 `contracts/vectors/browserframe.json`.

@@ -30,6 +30,10 @@ Status: Accepted (2026-11-25)
   state and result. The single clicks are not operations – a record, a hub round trip and a pipeline pass per click
   would make the browser unusably slow – but every one of them is an encrypted entry of the browser session (§3), so
   idea 28's "traceable" holds per action.
+- **Implicit open** (E-05, like the implicit work VM): a browser tool of a session without an open browser session
+  opens one first (`browser.state` with `implicit: true`, no operation record of its own – the tool call is recorded
+  as `session.tool` and the browser session by its events) and says so in its answer; `browser.open` stays the
+  explicit request (with `idle_seconds`).
 - The operation fails only when no browser came up (`credit_exhausted`, `limit_exceeded`, `workvm_unavailable`,
   `timeout` of the capacity queue, `upstream_error` when the VM or the browser did not start; retryable). A `url` that
   does not load still opens the browser (the result says so in `title`/`url`, the action entry carries the error).
@@ -46,30 +50,38 @@ Status: Accepted (2026-11-25)
   task's close (`task_closed`), credit used up (`credit_exhausted`), a runner restart (`restart`, no resume, idea 44),
   a failed boundary check (`failed`). The teardown deletes the VM in a `finally` shielded from cancellation; a failed
   Lima deletion stays `deleting` and the sweep of ADR-080 deletes it again.
-- **Failure** (idea 44): when the browser or its VM stops answering, the browser session stays open and the next
-  call starts a fresh VM (`browser.state` `restarted`, reason `vm_lost`); the call's answer carries
-  `notice: "The browser VM failed and was started again; open pages, cookies and sign-ins are gone."` and the record
-  continues with the next `seq`. Nothing of the old VM is resumed.
+- **Failure and restart** (idea 44, design review H3/M12): a call that runs into its time limit answers `ok:false`
+  (`timeout`) and keeps the VM – a slow page is no failure. Only a helper that then fails a probe, or a VM that is
+  gone, counts as lost (`vm_lost`). A runner restart deletes the VMs (`restart`) but keeps the browser sessions open.
+  The next call of an open browser session without a VM starts a fresh one (`browser.state` `restarted`); the answer
+  carries `notice: "The browser VM failed and was started again; open pages, cookies and sign-ins are gone."`,
+  `browser_navigate {url}` runs on the fresh VM and any other action answers `ok:false` with that notice, so a model
+  never submits a form twice by accident. The record continues with the next `seq`; nothing of the old VM is
+  resumed.
 - Countdown: `browser.state` `starting` is written before the VM is obtained, so the chat card counts down to the
   10 s target like the work VM panel and shows "delayed" with the real step after it.
 
 ### 3. Controlled tools (MCP, forwarded like the work VM tools)
-- Eleven tools of the `platform` MCP server, journaled as `workvm.call` like the work VM tools (one forwarding path,
+- Fifteen tools of the `platform` MCP server, journaled as `workvm.call` like the work VM tools (one forwarding path,
   no read audit; each call is visible as `session.tool` in the chat and terminal): `browser_navigate` (url, or
-  `history` back/forward/reload), `browser_snapshot`, `browser_click`, `browser_type` (with `submit`),
-  `browser_select`, `browser_press` (a key or chord), `browser_scroll`, `browser_wait` (text appears, text goes, or
-  milliseconds), `browser_tabs` (list/new/select/close), `browser_download` (a link or URL into the workspace),
-  `browser_screenshot` (a PNG into the workspace for `Read`).
+  `history` back/forward/reload), `browser_snapshot`, `browser_click` (a target or a viewport point),
+  `browser_hover`, `browser_type` (with `submit`), `browser_select`, `browser_press` (a key or chord),
+  `browser_scroll`, `browser_wait` (text appears, text goes, URL, or milliseconds), `browser_evaluate` (JavaScript in
+  the page), `browser_upload` (workspace files into a file input), `browser_dialog` (accept or dismiss the next
+  dialogs, text for `prompt`), `browser_tabs` (list/new/select/close; popups become tabs), `browser_download` (a link
+  or URL into the workspace), `browser_screenshot` (a PNG into the workspace for `Read`).
 - **Built for a model, after the common agent browser tools**: every answer is the page after the action – URL,
   title, tabs and a compact accessibility snapshot (`role "name" [ref=eN]` lines with values, links and headings,
   at most 24 000 characters) – so the model reads and acts in one step. `target` is a `ref` from the last snapshot or
   a Playwright selector (`text=Sign in`, `#user`). A failed action (no such element, navigation error, timeout) is
   **not** a tool error: `ok: false` with the reason and the snapshot, so the model can correct itself. Tool errors
   are reserved for "no browser open" (`not_found`, naming `browser.open`) and platform states (`unavailable`).
-  Dialogs (`alert`, `confirm`, `beforeunload`) are accepted and reported in `notice`.
-- Not built, with the reason: JavaScript evaluation and file upload (scripted work belongs in the work VM, which runs
-  any Playwright script, E-08; an upload needs a workspace-to-browser transfer that no use case has asked for yet,
-  E-25), hover and drag (rare; a later addition is one tool each), PDF printing, network interception.
+  Dialogs are accepted unless `browser_dialog` said otherwise, and reported in `notice`. Every action takes
+  `snapshot: false` when the model does not need the page text (tokens). Frames of the page are part of the snapshot.
+- Not built, with the reason (E-25, no use case yet; each is one tool later): drag and drop, PDF printing, network
+  interception, pictures inline in the tool answer (the screenshot goes into the workspace and is read with `Read`).
+- The browser VM reaches the internet, not the session's work VM (outside boundary): an app the session runs in its
+  work VM is looked at with `workvm_browse` there. A captcha or second factor goes to a person with `human.question`.
 - `workvm_browse` stays for the work VM and stays unwatched (E-09); its description and the harness say that only
   the platform browser is live and recorded.
 
@@ -77,9 +89,10 @@ Status: Accepted (2026-11-25)
 - Event `browser.action` (scope `wg`, author the device, header `session`/`task`) per tool call: `{browser_id, seq,
   tool, action, target, text, url, title, tab, ok, error, notice, at, duration_ms, image}`. `text` is what was typed,
   replaced by `"••••"` for password fields (a sign-in must not put the password into the record, the picture shows
-  the field masked as well). `image` is the viewport after the action: JPEG `{type, width, height, data}` (at most
-  160 KiB, quality lowered and size halved until it fits, else null with `image_omitted`), so an event stays below
-  the 256 KiB limit (E8).
+  the field masked as well; the session's own `session.tool` record still holds the tool input, like every input of
+  the session). `image` is the viewport after the action: JPEG `{type, width, height, data}` (at most 960 px wide and
+  100 KiB, quality lowered and then 640 px until it fits, else null with `image_omitted`), so an event stays well below
+  the 256 KiB limit (E8). The record is kept like every event of the task (no quota of its own).
 - `browser.action` is a **watched kind** like `session.terminal`: it is stored like every event (encrypted, signed,
   in order, readable by `task:read` after the teardown) but it is not in the general live fan-out, not in device
   pulls and not in a default event read; a browser receives it only while it watches the session's browser, and
