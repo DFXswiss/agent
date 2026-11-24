@@ -40,13 +40,14 @@ Status: Accepted (2026-11-24)
    (HOT-14) sees it as a card with one button or link (one card per owner of the step); types that write to the
    repository itself (`create_branch`, `commit`, `push`) also need the right to push in the pre-check (a public
    repository is readable with nearly any token), and a `403` access refusal that only the execution meets ends
-   `repo_not_accessible` with the same step in its message (it is already registered and cannot be held). The person an agent sees `next` (command or link) in `task show`, and the
-   session the same step in the error message. The runner checks the access again every 30 s and at once when a new
+   `repo_not_accessible` with the same step in its message (it is already registered and cannot be held). An agent
+   sees `next` (command or link) in `task show`, and the session the same step in the error message. The runner checks the access again every 30 s and at once when a new
    credential arrives, so an installation, an approval or an authorisation at GitHub lets the operation go on by
    itself; after 15 minutes it is rejected with the step in the message.
 3. **No dead button.** A runner announces its GitHub ways on the live channel (`github.ways`, `github.device_flow`,
-   `github.oauth_app`, `github.operator`); the card's "connect" signs in through the OAuth App on such a device; the hub lists them in `GET /v1/me/devices`. The web offers "Connect GitHub" only when a device
-   runs a sign-in and otherwise says so and offers the token with a pre-filled link to create one.
+   `github.oauth_app`, `github.operator`); the hub lists them in `GET /v1/me/devices`. The web offers "Connect
+   GitHub" only when a device runs a sign-in and otherwise says so and offers the token with a pre-filled link to
+   create one; the card's "connect" signs in through the OAuth App on a device that announces it.
 4. **Without a browser.** `agent-platform github connect --from-gh` stores the token of the computer's GitHub CLI
    login (sealed to the device like `--token -`).
 
