@@ -94,7 +94,7 @@ community_wrap: community | epoch:number user_id:uuid wrap:bytes@ciphertext sig:
 context_chunk: contexts | object_id:uuid chunk_index:number ct:bytes@ciphertext sha256:bytes
 context_object: contexts | id:uuid@ids org_id:uuid@ids wg_id:uuid@ids task_id:uuid@ids session_id:uuid@ids
   author_id:uuid@ids state:code chunks:number size:number epoch:number digest:code manifest_text:json sig:bytes
-  created_at:time updated_at:time completed_at:time
+  created_at:time updated_at:time completed_at:time kind:code
 credential: credentials | id:uuid owner_id:uuid kind:code version:number epoch:number header_text:json
   ct:bytes@ciphertext sig:bytes updated_at:time owner_kind:code created_at:time is_primary:flag
 credential_notice: credentials | device_id:uuid owner_id:uuid kind:code changed_at:time
