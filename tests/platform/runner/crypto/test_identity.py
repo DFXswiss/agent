@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/crypto/test_identity.py at 56db2db59b0e.
+"""Copied from agent-core tests/platform/hub/crypto/test_identity.py at 952bb156fc9c.
 
 CRY-01 (ADR-060): identity proof, derived user ID and account code (agent_hub.crypto.identity) against
 `contracts/vectors/identity.json`, and the edges the vectors leave out."""

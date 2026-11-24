@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/entries.py at 56db2db59b0e.
+"""Copied from agent-core src/agent_hub/log/entries.py at 952bb156fc9c.
 
 Log entries of the membership log (04-crypto.md section 4.7) and the platform log (section 4.8): exact body
 formats, signing texts, signatures and entry hashes.

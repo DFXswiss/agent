@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/identity.py at 56db2db59b0e.
+"""Copied from agent-core src/agent_hub/crypto/identity.py at 952bb156fc9c.
 
 Identity proof and account code of a user (04-crypto.md sections 3 and 5.13, ADR-060).
 

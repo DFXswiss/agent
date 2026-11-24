@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/crypto/test_formats.py at 56db2db59b0e.
+"""Copied from agent-core tests/platform/hub/crypto/test_formats.py at 952bb156fc9c.
 
 U-HUB-crypto: bundle, wrap, event, credential, device request/response, invitation, recovery, enrollment and dedupe
 formats (04-crypto.md sections 3, 4.1-4.6, 4.10, 5.5, 6.4 E1/E2/E4/E8)."""

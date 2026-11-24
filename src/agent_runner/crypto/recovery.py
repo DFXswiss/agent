@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/recovery.py at 56db2db59b0e.
+"""Copied from agent-core src/agent_hub/crypto/recovery.py at 952bb156fc9c.
 
 Recovery codes (04-crypto.md sections 3, 4.1 and 5.5).
 

@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/vectors.py at 56db2db59b0e.
+"""Copied from agent-core src/agent_hub/log/vectors.py at 952bb156fc9c.
 
 Log vectors of 04-crypto.md section 10 (`contracts/vectors/log*.json`, `platform-log.json`), discovered by the
 generator of `agent_hub.crypto.vectors` through `SECTIONS`.
@@ -1046,6 +1046,21 @@ def _admit_negatives(ctx: Context, admit: LogBuilder) -> list[Json]:
             },
             "log_admit",
         ),
+        # Key model KM-15: bob was admitted again without consent (29), so pdev, assigned to W1 where bob writes,
+        # is no recipient of bob's credential key (ADR-060).
+        neg(
+            "cred_device_of_org_without_consent",
+            "check_cred_wrap",
+            {
+                "log": _ref("admit", ADMIT_COUNT - 1),
+                "founder": sig_pk("alice"),
+                "platform": full,
+                "wrap": make_wrap("bob", "cred", pid("bob"), 1, "pdev"),
+                "wrapped_by": pid("bob"),
+                "current_epoch": 1,
+            },
+            "wrap_unauthorized",
+        ),
     ]
 
 
@@ -1604,6 +1619,20 @@ def build_wraps() -> Json:
             "cred_wrapper_not_eligible",
             "check_cred_wrap",
             {**args("carol", "cred", pid("alice"), 2, "device"), "current_epoch": 2},
+            "wrap_unauthorized",
+        ),
+        # Key model (docs/platform/key-model.md): KM-10, a device without a workgroup is no reader of the org key
+        # (ADR-007); KM-06, only principals of the log receive wraps (an agent key is none, KOR-57 changes this).
+        neg(
+            "org_key_for_device_without_workgroup",
+            "check_wrap",
+            edge_args("alice", "org", ORG, 1, "device"),
+            "wrap_unauthorized",
+        ),
+        neg(
+            "principal_outside_log_is_no_recipient",
+            "check_wrap",
+            args("alice", "wg", W1, 2, "agent"),
             "wrap_unauthorized",
         ),
     ]
