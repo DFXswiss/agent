@@ -7,6 +7,7 @@ inside the unit what it sees; the launcher test runs the real session command ar
 from __future__ import annotations
 
 import json
+import os
 import pwd
 import shlex
 import subprocess
@@ -155,9 +156,22 @@ def test_session_command_runs_claude_inside_the_launcher(spec: unit.SessionSpec)
 
 def test_build_runs_with_a_pty_like_in_the_tmux_window(spec: unit.SessionSpec) -> None:
     argv = unit.build(spec, ["from", "the", "pty"])
-    result = subprocess.run(
-        ["script", "-qec", shlex.join(argv), "/dev/null"], capture_output=True, text=True, timeout=120, check=False
-    )
+    # The input stays open, as in the tmux window. With the runner's stdin (/dev/null in the gates) `script` reads EOF
+    # at once and writes it into the pty while `systemd-run --pty` is still starting; now and then systemd-run then
+    # never ends (only "^@" in the output; HOT-15).
+    reading, writing = os.pipe()
+    try:
+        result = subprocess.run(
+            ["script", "-qec", shlex.join(argv), "/dev/null"],
+            stdin=reading,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    finally:
+        os.close(reading)
+        os.close(writing)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "from the pty" in result.stdout
 
