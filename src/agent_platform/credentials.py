@@ -32,6 +32,9 @@ HOST_RE = re.compile(r"[A-Za-z0-9.-]{1,253}")
 IMAP_USER_RE = re.compile(r"[ -~]{1,256}")
 SCOPE_RE = re.compile(r"[a-z0-9:_-]{1,64}")
 ORIGINS = ("setup_token", "login_token")
+SOURCES = ("device_flow", "token")
+"""How a GitHub connection was made: the GitHub App's device flow or an existing token (KOR-25); records written
+before carry no `source` and came from the device flow."""
 
 Guard = Callable[[Mapping[str, Any], object, Mapping[str, Any] | None], dict[str, Any] | None]
 """`guard(new body, stored record or None, stored body or None)`: a result to return instead of writing, or None."""
@@ -60,16 +63,19 @@ def _count(value: object, low: int, high: int) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
 
 
+def valid_scopes(value: object) -> bool:
+    """At most 64 scopes of the contract's form."""
+    return isinstance(value, list) and len(value) <= 64 and all(_text(scope, SCOPE_RE) for scope in value)
+
+
 def _github(body: dict[str, Any]) -> bool:
-    scopes = body.get("scopes")
     return (
-        set(body) == {"token", "login", "user_id", "scopes", "created_at"}
+        set(body) - {"source"} == {"token", "login", "user_id", "scopes", "created_at"}
         and _text(body["token"], PRINTABLE_RE)
         and _text(body["login"], LOGIN_RE)
         and _count(body["user_id"], 1, 2**53 - 1)
-        and isinstance(scopes, list)
-        and len(scopes) <= 64
-        and all(_text(scope, SCOPE_RE) for scope in scopes)
+        and valid_scopes(body["scopes"])
+        and body.get("source", SOURCES[0]) in SOURCES
         and _time(body["created_at"])
     )
 

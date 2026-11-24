@@ -4,7 +4,7 @@ section 4):
 - `GET /v1/notifications?before&limit&account` (`account` must be `1`; no other parameter, `400 request_invalid`)
   newest first, account rows only with `account=1`; `POST /v1/notifications/read` with `{ids}` (1-200 UUIDv7) or
   `{all: true[, account]}`, unknown and foreign IDs ignored;
-- `GET /v1/me/quotas`;
+- `GET /v1/me/quotas` with `unreadable` (`{since}` while the subscription refuses the read, else null; KOR-40);
 - `GET /v1/monitoring/overview?org` (member, else `404`; missing `org` `400`; with the work VMs of KOR-29),
   `GET /v1/monitoring/series` (every parameter required, `step` at least 15);
 - `GET /v1/orgs/{org}/audit` (member: own rows and rows of readable workgroups; admin: all) with the filters,
@@ -44,6 +44,7 @@ B64U_ID = re.compile(r"[A-Za-z0-9_-]{21}[AQgw]")
 class Views:
     notifications: list[Json] = field(default_factory=list)
     quotas: dict[str, list[Any]] = field(default_factory=dict)
+    unreadable: dict[str, str] = field(default_factory=dict)
     overview: dict[str, Json] = field(default_factory=dict)
     points: list[Any] = field(default_factory=list)
     audit: list[Json] = field(default_factory=list)
@@ -143,7 +144,11 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
         return 200, {}
 
     def quotas(request: Request, body: Any) -> tuple[int, Any]:
-        return 200, {"quotas": found.quotas.get(cast(str, request.user), [])}
+        since = found.unreadable.get(cast(str, request.user))
+        return 200, {
+            "quotas": found.quotas.get(cast(str, request.user), []),
+            "unreadable": None if since is None else {"since": since},
+        }
 
     def member_org(request: Request, org: str) -> bool:
         stored = hub.orgs.get(org)

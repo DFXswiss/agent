@@ -23,7 +23,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from agent_platform.account import Account, unverified
-from agent_platform.credentials import EMAIL_RE, LOGIN_RE
+from agent_platform.credentials import EMAIL_RE, LOGIN_RE, SOURCES, valid_scopes
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import rows_of, uuid_argument
 from agent_platform.hub import segment
@@ -50,6 +50,9 @@ FAILURE_CODES = frozenset(
         "upstream_error",
         "upstream_unreachable",
         "device_shutdown",
+        "token_refused",
+        "scope_missing",
+        "sso_required",
     }
 )
 REQUEST_FAILED = "request_failed"
@@ -82,7 +85,14 @@ def _github(body: dict[str, Any]) -> bool:
             and not isinstance(seconds, bool)
             and 1 <= seconds <= 3600
         )
-    return body.get("step") == "done" and _keys(body, {"step", "login"}) and _match(body.get("login"), LOGIN_RE)
+    # with an existing token (KOR-25) `done` names the token's scopes and the source
+    return (
+        body.get("step") == "done"
+        and _keys(body, {"step", "login"}, frozenset({"scopes", "source"}))
+        and _match(body.get("login"), LOGIN_RE)
+        and ("scopes" not in body or valid_scopes(body["scopes"]))
+        and body.get("source", SOURCES[0]) in SOURCES
+    )
 
 
 def _login(body: dict[str, Any]) -> bool:

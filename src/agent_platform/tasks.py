@@ -7,9 +7,13 @@ derived from the prompt as `web/src/core/tasks/title.ts`, vectors `contracts/tas
 workgroup under its current epoch (`eventio.seal`: the key from the user's own wraps, checked against the verified
 org log; refused while the workgroup's rotation is owed) and signed by the user's identity. Reading opens the task's
 events of the workgroup scope with the one reader (`reader.settle`); an event whose key the user does not hold is
-`locked`, one that does not verify is left out and counted. The chat includes the work VM events of the task's sessions
-(`workvm.run`, `workvm.state`); `task show` keeps only the latest `workvm.run` of a job, as the web's timeline. After
-a lost answer (`hub_unreachable`) `task list` shows whether the task exists; the tool does not resend on its own.
+`locked`, one that does not verify is left out and counted. The chat includes the work VM events of the task's
+sessions (`workvm.run`, `workvm.state`) and the errors the guest reported (`session.error`); `task show` keeps only
+the latest `workvm.run` of a job, as the web's timeline, and both `task show` and `task follow` fold the waiting events
+of held operations into one card per reason with its state (`waiting`). `task show` gives the task's runtime (from its
+creation to its close, or to now while it is open). After a lost answer (`hub_unreachable`) `task list` shows whether
+the task exists; the
+tool does not resend on its own.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ from agent_platform.eventio import open_item, seal
 from agent_platform.hub import segment
 from agent_platform.orgs import find_org
 from agent_platform.reader import scope_events
+from agent_platform.sessions import runtime_seconds
+from agent_platform.waiting import annotate
 from agent_platform.workvm import latest_runs
 from agent_runner.crypto.ids import is_uuid7, uuid7
 from agent_runner.crypto.log.state import WG
@@ -41,6 +47,7 @@ CHAT_KINDS = (
     "session.file",
     "session.hook",
     "session.status",
+    "session.error",
     "operation.params",
     "operation.result",
     "workvm.run",
@@ -147,12 +154,15 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
             skipped += 1
             continue
         events.append(opened)
-    titles = [e["body"].get("title") for e in events if e["kind"] == "task.meta" and isinstance(e.get("body"), dict)]
+    metas = [e for e in events if e["kind"] == "task.meta"]
+    titles = [e["body"].get("title") for e in metas if isinstance(e.get("body"), dict)]
     chat = latest_runs([e for e in events if e["kind"] != "task.meta"])
+    keys = ("task_id", "org_id", "wg_id", "owner_id", "state", "state_reason", "created_at", "closed_at")
     return {
-        "task": {key: row.get(key) for key in ("task_id", "org_id", "wg_id", "owner_id", "state", "state_reason")},
+        "task": {key: row.get(key) for key in keys},
+        "runtime_s": runtime_seconds(row.get("created_at"), row.get("closed_at"), True, time.time()),
         "title": titles[-1] if titles else None,
-        "events": chat,
+        "events": annotate(account, (org, wg, task), chat, metas),
         "unverified": skipped,
     }
 
@@ -218,4 +228,5 @@ def task_follow(account: Account, task: str, after: int, wait: int) -> dict[str,
             continue
         events.append(opened)
     state = _task_row(account, task).get("state")
-    return {"task_id": task, "state": state, "events": events, "next_after": last, "unverified": skipped}
+    chat = annotate(account, (org, wg, task), events, None)
+    return {"task_id": task, "state": state, "events": chat, "next_after": last, "unverified": skipped}

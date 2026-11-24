@@ -160,12 +160,20 @@ the text from stdin. Ids are the `*_id` values other commands return.
 agent-platform task overview --org <org_id> [--state working] [--mine] [--search "deploy"]   # all workgroups
 agent-platform task close --task <task_id>
 agent-platform task operations --task <task_id> [--operation <operation_id>]                 # pushes, PRs, results
+agent-platform task charges --task <task_id>                    # its costs per session (tokens, VM runtime), total
 agent-platform session show --session <session_id>
 agent-platform session interrupt --session <session_id>        # stop the current turn
 agent-platform session stop --session <session_id>
 agent-platform session terminal --session <session_id> [--after <next_after>]   # the terminal output as text
 agent-platform session workvm --session <session_id>          # its work VM: state, size, runtime, command runs
 ```
+
+When an operation of a session needs GitHub and your user has no usable GitHub connection, the platform holds it and
+the chat of `task show` and `task follow` carries one event with a `waiting` card (`operation_type`, `repo`,
+`operations`, `until_ms`, `status`: `open`, `done` or `expired`). If your user owns the task and the card is `open`,
+its `next` is `github connect`: connect GitHub (below) and the task goes on by itself; `reconnect: true` means the
+stored connection could not be used (expired or revoked). `task show` also gives the task's `runtime_s`, `session show`
+the session's `runtime_s` and whether the hub reaches its device (`device_reachable`).
 
 **Whiteboards** (one per organization, workgroup and task; `--wg` and `--task` choose the level):
 
@@ -183,11 +191,11 @@ agent-platform whiteboard history --org <org_id> --wg <wg_id> --entry <entry_id>
 agent-platform member list --org <org_id>                        # "inherited": an admin reads every workgroup
 agent-platform member role --org <org_id> --user <user_id> --role admin
 agent-platform member remove --org <org_id> --user <user_id>     # changes the keys: the person reads nothing new
-agent-platform org show --org <org_id>                           # also the open invitations
+agent-platform org show --org <org_id>                           # also the invitations: open, opened, registered, accepted
 agent-platform org invitees [--org <org_id>]                     # who registered through your platform invitations
 agent-platform org admit --org <org_id> --user <account_code> [--role admin] [--wg <wg_id>:read]  # adds at once
 printf '%s' "<invitation link>" | agent-platform org join         # accept an invitation to an organization
-agent-platform org invite-revoke --org <org_id> --invite <invite_id>
+agent-platform org invite-revoke --org <org_id> --invite=<invite_id>   # "=": an ID may start with "-"
 agent-platform org leave --org <org_id>
 agent-platform org rotate --org <org_id>                         # key changes still owed (member list shows them)
 agent-platform org catch-up --org <org_id>                       # give members keys they are still missing
@@ -228,15 +236,27 @@ printf '%s' "<code>" | agent-platform claude login --request <request_id> --code
 agent-platform github status
 agent-platform github connect              # opens GitHub's device page for your user; returns request_id, user_code
 agent-platform github connect --request <request_id> --wait 120  # until done
+printf '%s' "$GITHUB_TOKEN" | agent-platform github connect --token -  # an existing token instead (see below)
 agent-platform github disconnect
 ```
+
+**GitHub with an existing token.** Instead of the device page, `github connect --token -` stores a token your user
+already has: the GitHub CLI login (`gh auth token | agent-platform github connect --token -`) or a personal access
+token (a fine-grained one limited to the repositories the agents need is recommended). The token is read from stdin
+only, never from the command line; it goes only into the request sealed to the execution device, which checks it at
+GitHub and stores it encrypted. The result names the login, the scopes and `source: token`, or a `failure` such as
+`token_refused` (revoked, expired or unknown), `scope_missing` (no `repo` scope) or `sso_required` (authorize the token
+for the organization's SSO at GitHub first). Use a token only when your user asks for it. `github disconnect` says
+whether the devices revoke the token at GitHub (`revoked_at_github`); a token the platform did not mint stays valid
+there (`revoke_at` names the page).
 
 **Account**
 
 ```sh
 agent-platform notifications list [--unread]
 agent-platform notifications read --all                          # or --id <id> (repeatable)
-agent-platform quotas
+agent-platform quotas                                            # unreadable_since: the login may not read them
+agent-platform billing --org <org_id>                            # credit balance, prices, credit history, usage
 agent-platform monitoring --org <org_id>
 agent-platform audit                                             # your user's security activity
 agent-platform audit --org <org_id> [--verify]                   # the org's audit log and its chain check
@@ -251,6 +271,11 @@ agent-platform platform list
 agent-platform platform revoke --id <invite_id>
 agent-platform security                                          # checks the web build against its manifest
 ```
+
+Amounts of `billing` and `task charges` are micro-USD. Credit is added by the operator; there is no payment and no
+top-up. With `exhausted: true` the organization's credit is used up: paid resources (DFX devices and DFX model access)
+are paused until credit is added, then paused tasks continue; own devices with own model access keep working.
+`billing_active: false` means usage is not billed yet.
 
 **Key changes the tool makes by itself.** A browser keeps the account's keys in order in the background; the tool
 does the same around its commands, so you never need to ask for it:

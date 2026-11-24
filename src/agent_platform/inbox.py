@@ -6,7 +6,9 @@
   the hub has no unread filter, so `--unread` filters here; `unread` is the count of `GET /v1/me`.
 - `notifications read`: `POST /v1/notifications/read` with `{ids}` (at most 200) or `{all: true}`.
 - `quotas`: `GET /v1/me/quotas`, the newest row per window (`five_hour`, `seven_day`, `weekly:<model>`), malformed rows
-  left out, ordered five hours, week, then by model; no rows: not available.
+  left out, ordered five hours, week, then by model; no rows: not available. `unreadable_since` (KOR-40): since when
+  the subscription refuses the read (a long-lived token of `claude setup-token` may not read quotas; sessions still
+  run), else null.
 - `monitoring --org`: `GET /v1/monitoring/overview?org=` (devices, VMs, sessions and their work VMs); with
   `--entity-kind/--entity-id/--metric` one series of a range of the web's charts (`GET /v1/monitoring/series`, the
   window aligned to the step like the web).
@@ -130,7 +132,10 @@ def quota_bar(value: dict[str, Any]) -> dict[str, Any] | None:
 
 def quotas(account: Account) -> dict[str, Any]:
     newest: dict[str, dict[str, Any]] = {}
-    for row in rows_of(account.call("GET", "/v1/me/quotas"), "quotas"):
+    answer = account.call("GET", "/v1/me/quotas")
+    unreadable = answer.get("unreadable")
+    since = unreadable.get("since") if isinstance(unreadable, dict) else None
+    for row in rows_of(answer, "quotas"):
         bar = quota_bar(row)
         if bar is None:
             continue
@@ -143,7 +148,7 @@ def quotas(account: Account) -> dict[str, Any]:
         return order.get(bar["window"], 2), bar["window"]
 
     bars = [{k: v for k, v in bar.items() if k != "_fetched"} for bar in sorted(newest.values(), key=rank)]
-    return {"available": bool(bars), "quotas": bars}
+    return {"available": bool(bars), "quotas": bars, "unreadable_since": since if _time(since) is not None else None}
 
 
 # --- monitoring ---

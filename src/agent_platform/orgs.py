@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from agent_platform.account import Account, check_package_head, unverified
+from agent_platform.account import Account, check_package_head, needs_platform, unverified
 from agent_platform.batch import Built, build_batch, make_wrap
 from agent_platform.errors import PlatformError
 from agent_platform.hub import anon_request, segment
@@ -351,7 +351,7 @@ def org_join(account: Account, link: str, given_display_name: str | None) -> dic
             if not isinstance(entries, list):
                 raise CryptoError("log_empty")
             check_package_head(cast(dict[str, Any], package["head"]), entries)
-            platform = account.platform() if _platform_needed(entries) else None
+            platform = account.platform() if needs_platform(entries) else None
             log = verify_log(entries, str(package["founder"]), platform=platform)
             if log.state.org != org or lookup.get("log_head") != log.head.to_json():
                 raise CryptoError("log_chain")
@@ -402,21 +402,44 @@ def org_join(account: Account, link: str, given_display_name: str | None) -> dic
                 )
             ]
         )
-        answer = account.call("POST", f"/v1/orgs/{segment(org)}/log", built.body(events))
-        require_head(answer, built.log)
+        result = {"org_id": org, "role": found.role, "org_name": package.get("org_name") or None}
+        try:
+            answer = account.call("POST", f"/v1/orgs/{segment(org)}/log", built.body(events))
+            require_head(answer, built.log)
+        except PlatformError:
+            # an `accept` the hub stored although its answer got lost (also of an earlier attempt) or that won a
+            # race: the membership says so and the verified log must hold this invitation accepted by this user
+            if not _member(account, org):
+                raise
+            joined_log(account, org, secrets.invite_id, cast(dict[str, Any], package["head"]))
+            return result
         account.remember(org, built.log)
-        return {"org_id": org, "role": found.role, "org_name": package.get("org_name") or None}
+        return result
 
     return with_retry(account, "", attempt)
 
 
-def _platform_needed(entries: list[dict[str, object]]) -> bool:
-    return any(
-        isinstance(entry.get("body"), dict)
-        and cast(dict[str, object], entry["body"]).get("type") == "device_assign"
-        and "platform_seq" in cast(dict[str, object], entry["body"])
-        for entry in entries
-    )
+def _member(account: Account, org: str) -> bool:
+    try:
+        return any(isinstance(item, dict) and item.get("org_id") == org for item in account.me().get("orgs", []))
+    except PlatformError:
+        return False
+
+
+def joined_log(account: Account, org: str, invite: str, package_head: dict[str, Any]) -> VerifiedLog:
+    """The org's log read as a member, extending the package head, with `invite` accepted by this user (`log_accept`
+    otherwise), as the web's `joinedLog`."""
+    account.forget(org)
+    log = account.org_log(org)
+    try:
+        check_package_head(package_head, log.entries)
+    except CryptoError as error:
+        raise crypto_refusal(error) from None
+    accepted = log.state.invites[invite].accepted_seq if invite in log.state.invites else None
+    entry = None if accepted is None else cast(dict[str, Any], log.entries[accepted]["body"])
+    if entry is None or entry.get("subject") != account.user_id or log.state.member(account.user_id) is None:
+        raise PlatformError("hub_refused", reason="log_accept")
+    return log
 
 
 # --- direct admission (ADR-060) ---

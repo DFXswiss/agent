@@ -41,7 +41,7 @@ def test_session_show_and_control(tool: Tool, hub: HubFake, account: User) -> No
     code, shown = tool.run("session", "show", "--session", session)
     assert code == 0, shown
     assert (shown["session"]["session_id"], shown["children"]) == (session, [child])
-    assert set(shown) == {"ok", "session", "transitions", "usage", "vm", "children"}
+    assert set(shown) == {"ok", "session", "transitions", "usage", "vm", "children", "runtime_s", "device_reachable"}
     assert tool.run("session", "interrupt", "--session", session)[1]["action"] == "interrupt"
     assert state_of(hub).rows[session]["state"] == "working"
     assert tool.run("session", "stop", "--session", session)[1] == {"ok": True, "session_id": session, "action": "stop"}

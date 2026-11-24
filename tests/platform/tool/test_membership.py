@@ -250,12 +250,12 @@ def test_invite_revoke(tool: Tool, hub: HubFake, account: User, tmp_path: Path) 
 
     path = f"/v1/orgs/{org}/invites/{invite}/revoke"
     hub.hooks[("POST", path)] = conflict
-    code, revoked = tool.run("org", "invite-revoke", "--org", org, "--invite", invite)
+    code, revoked = tool.run("org", "invite-revoke", "--org", org, f"--invite={invite}")
     assert code == 0, revoked
     assert (revoked["changed"], revoked["seq"], len(calls)) == (True, hub.orgs[org].log.head.seq, 2)
     del hub.hooks[("POST", path)]
     assert tool.run("org", "show", "--org", org)[1]["open_invites"] == []
-    assert tool.run("org", "invite-revoke", "--org", org, "--invite", invite)[1]["changed"] is False
+    assert tool.run("org", "invite-revoke", "--org", org, f"--invite={invite}")[1]["changed"] is False
     assert (
         tool.run("org", "invite-revoke", "--org", org, "--invite", "AAAAAAAAAAAAAAAAAAAAAA")[1]["error"] == "not_found"
     )
@@ -263,10 +263,12 @@ def test_invite_revoke(tool: Tool, hub: HubFake, account: User, tmp_path: Path) 
     other = tool.run("org", "invite", "--org", org)[1]
     bob_tool, _ = join(hub, tool, org, tmp_path, "Bob")
     hub.hooks[("POST", f"/v1/orgs/{org}/invites/{other['invite_id']}/revoke")] = lambda b, r: (200, {"seq": 0})
-    assert tool.run("org", "invite-revoke", "--org", org, "--invite", other["invite_id"])[1]["reason"] == (
+    assert tool.run("org", "invite-revoke", "--org", org, f"--invite={other['invite_id']}")[1]["reason"] == (
         "response_invalid"
     )
-    assert bob_tool.run("org", "invite-revoke", "--org", org, "--invite", other["invite_id"])[1]["error"] == "not_admin"
+    assert (
+        bob_tool.run("org", "invite-revoke", "--org", org, f"--invite={other['invite_id']}")[1]["error"] == "not_admin"
+    )
 
 
 def test_seq_conflict_is_retried_on_a_reread_log(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:

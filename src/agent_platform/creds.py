@@ -8,9 +8,15 @@
 - `credentials set-mailbox`: the mailbox of the login automation; the password comes from stdin.
 - `credentials delete --kind`: `DELETE /v1/me/credentials/{kind}` (`404` counts as done).
 - `credentials check --kind`: the device request `credential.check` (API key, subscription) or `mailbox.check`.
-- `github status|connect|disconnect`: the GitHub connection (the `github` record, written by the device that ran the
-  device flow); `connect` sends `github.connect` and opens the verification page in the user's browser with the user
-  code; `disconnect` deletes the record (the authorization at GitHub is revoked on its settings page).
+- `github status|connect|disconnect`: the GitHub connection (the `github` record, written by the device that made the
+  connection): its login, scopes, source (`device_flow` or `token`; records without it came from the device flow),
+  creation time and whether the token is one the platform minted (`revocable`, a GitHub App user token `ghu_`), never
+  the token. `connect` sends `github.connect` and opens the verification page in the user's browser with the user
+  code; `connect --token -` (ADR-065) reads an existing token (a GitHub CLI login, `gh auth token`, or a personal
+  access token) from stdin (never from the command line), trims it like the web's field and sends it only inside the
+  request sealed with HPKE to the device, which checks it at GitHub and stores it (`done` with login, scopes and
+  source, or a failure such as `token_refused`, `scope_missing`, `sso_required`). `disconnect` deletes the record; a
+  revocable token is revoked at GitHub by the devices, any other stays valid there (`revoke_at` names the page).
 - `claude login`: the relay of the web (`claude.login {mode}`): the device answers the authorization link (opened in
   the user's browser), the code the user receives goes back as a follow-up request (stdin), the device stores the
   subscription record itself.
@@ -23,7 +29,7 @@ from typing import Any
 from agent_platform import devicereq
 from agent_platform.account import Account
 from agent_platform.commands import Context, Tree
-from agent_platform.credentials import KINDS, put_record, valid_body, valid_mailbox
+from agent_platform.credentials import KINDS, PRINTABLE_RE, SOURCES, put_record, valid_body, valid_mailbox
 from agent_platform.devicereq import choose_device, finish, resume, show_in_browser, submit, wait
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import rows_of
@@ -33,13 +39,20 @@ from agent_runner.crypto.errors import CryptoError
 
 CHECK_KINDS = ("anthropic_api_key", "claude_subscription", "mailbox")
 GITHUB_SETTINGS_URL = "https://github.com/settings/applications"
+REVOCABLE_PREFIX = "ghu_"
 DEFAULT_WAIT_S = 60
 
 
 def summary(kind: str, body: dict[str, Any]) -> dict[str, Any]:
     """What of a checked body may be shown: never a token, key or password."""
     if kind == "github":
-        return {"login": body["login"], "created_at": body["created_at"]}
+        return {
+            "login": body["login"],
+            "scopes": body["scopes"],
+            "source": body.get("source", SOURCES[0]),
+            "created_at": body["created_at"],
+            "revocable": str(body["token"]).startswith(REVOCABLE_PREFIX),
+        }
     if kind == "claude_subscription":
         return {"email": body["email"], "origin": body["kind"], "expires_at": body.get("expires_at")}
     if kind == "mailbox":
@@ -161,20 +174,39 @@ def github_status(account: Account) -> dict[str, Any]:
         return {"status": "unverifiable", "code": error.code}
 
 
-def github_connect(account: Account, args: Any, environ: Any) -> dict[str, Any]:
+def token_input(text: str) -> str:
+    """The token without surrounding white space (a copied line ends in a newline), as the web's `tokenInput`."""
+    token = text.strip()
+    if not PRINTABLE_RE.fullmatch(token):
+        raise PlatformError("invalid_argument", reason="token_missing")
+    return token
+
+
+def github_connect(account: Account, args: Any, context: Context) -> dict[str, Any]:
+    if args.token is not None and (args.token != "-" or args.request is not None):
+        raise PlatformError("invalid_argument")
     if args.request is not None:
         prepared = resume(account, args.request, ("github.connect",))
+        return finish(prepared, wait(account, prepared, args.wait, frozenset({"done", "failed"})))
+    if args.token is not None:
+        token = token_input(context.read_stdin())
+        prepared = submit(account, choose_device(account, args.device), "github.connect", {"token": token})
         return finish(prepared, wait(account, prepared, args.wait, frozenset({"done", "failed"})))
     prepared = submit(account, choose_device(account, args.device), "github.connect", {})
     found = wait(account, prepared, args.wait, frozenset({"device_code", "done", "failed"}))
     if found["step"] == "device_code":
-        show_in_browser(environ, found["verification_uri"], f"enter the code {found['user_code']} at")
+        show_in_browser(context.environ, found["verification_uri"], f"enter the code {found['user_code']} at")
     return finish(prepared, found)
 
 
 def github_disconnect(account: Account) -> dict[str, Any]:
+    """Like the web's section: whether the devices revoke the token at GitHub follows from the connection as it was
+    read before; a token the platform did not mint stays valid at GitHub (`revoke_at`)."""
+    revocable = github_status(account).get("revocable") is True
     credentials_delete(account, "github")
-    return {"status": "disconnected", "revoke_at": GITHUB_SETTINGS_URL}
+    if revocable:
+        return {"status": "disconnected", "revoked_at_github": True}
+    return {"status": "disconnected", "revoked_at_github": False, "revoke_at": GITHUB_SETTINGS_URL}
 
 
 def claude_login(account: Account, args: Any, context: Context) -> dict[str, Any]:
@@ -221,7 +253,7 @@ def _github_status(account: Account, args: Any, context: Context) -> dict[str, A
 
 
 def _github_connect(account: Account, args: Any, context: Context) -> dict[str, Any]:
-    return github_connect(account, args, context.environ)
+    return github_connect(account, args, context)
 
 
 def _github_disconnect(account: Account, args: Any, context: Context) -> dict[str, Any]:
@@ -258,6 +290,7 @@ def register(tree: Tree) -> None:
     sub = tree.command(
         group, "connect", _github_connect, "connect GitHub through a device (opens the browser)", writes=True
     )
+    sub.add_argument("--token", help="- : store an existing GitHub token read from stdin (checked by the device)")
     _flow_options(sub)
     tree.command(group, "disconnect", _github_disconnect, "remove the GitHub connection", writes=True)
     group = tree.group("claude", "the Claude subscription")

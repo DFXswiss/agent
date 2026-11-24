@@ -187,7 +187,7 @@ class Account:
             founder = str(genesis["pub"]["sig"])
         except (IndexError, KeyError, TypeError):
             raise LogUnverifiable("hub_refused", reason="log_genesis") from None
-        platform = self.platform() if _needs_platform(entries) else None
+        platform = self.platform() if needs_platform(entries) else None
         try:
             log = verify_log(entries, founder, platform=platform)
         except CryptoError as error:
@@ -336,7 +336,7 @@ class Account:
         return None
 
 
-def _needs_platform(entries: Sequence[object]) -> bool:
+def needs_platform(entries: Sequence[object]) -> bool:
     """A platform device is assigned, or an `admit` anchors identities in the platform log (ADR-060)."""
     for entry in entries:
         body = entry.get("body") if isinstance(entry, dict) else None

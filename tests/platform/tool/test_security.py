@@ -131,7 +131,7 @@ def test_platform_invitations(tool: Tool, hub: HubFake, account: User) -> None:
     assert all(secret.encode() not in body for body in hub.bodies)
     listed = tool.run("platform", "list")[1]["invites"]
     assert [(row["invite_id"], row["state"]) for row in listed] == [(invited["invite_id"], "open")]
-    assert tool.run("platform", "revoke", "--id", invited["invite_id"])[1]["revoked"] == invited["invite_id"]
+    assert tool.run("platform", "revoke", f"--id={invited['invite_id']}")[1]["revoked"] == invited["invite_id"]
     assert tool.run("platform", "list")[1]["invites"][0]["state"] == "revoked"
     assert tool.run("platform", "revoke", "--id", "AAAAAAAAAAAAAAAAAAAAAA")[1]["hub_error"] == "not_found"
     used = tool.run("platform", "invite")[1]["invite_id"]

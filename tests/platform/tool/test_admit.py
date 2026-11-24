@@ -101,6 +101,22 @@ def test_admit_by_user_id_with_workgroups(tool: Tool, hub: HubFake, account: Use
     assert {member["principal_id"] for member in shown["members"]} == {account.id, bob.id}
 
 
+def test_an_invitation_into_an_org_with_an_admitted_member(
+    tool: Tool, hub: HubFake, account: User, tmp_path: Path
+) -> None:
+    """The log of the lookup holds an `admit`, whose identities are anchored in the platform log: the joining agent
+    reads the platform log to verify it, as the web's `needsPlatform` does."""
+    hub.anchor_user(account)
+    org = team(tool)
+    bob, _bob_tool = paired(hub, tmp_path, "Bob")
+    assert tool.run("org", "admit", "--org", org, "--user", bob.id)[1]["ok"] is True
+    invited = tool.run("org", "invite", "--org", org)[1]
+    carol, carol_tool = paired(hub, tmp_path, "Carol", anchor=None)
+    joined = carol_tool.run("org", "join", stdin=invited["invite_link"])[1]
+    assert (joined["ok"], joined["org_id"]) == (True, org)
+    assert hub.orgs[org].log.state.member(carol.id) is not None
+
+
 def test_admit_by_account_code_as_admin(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
     hub.anchor_user(account)
     org = team(tool)

@@ -383,6 +383,69 @@ def test_join_seq_conflict_is_retried(tool: Tool, hub: HubFake, account: User, t
     assert carol_tool.run("org", "join", stdin=third["invite_link"])[1]["hub_error"] == "seq_conflict"
 
 
+def test_join_whose_answer_got_lost(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
+    """KOR-36: the hub stored the `accept` but its answer got lost; the membership and the verified log say joined."""
+    org = team(tool)
+    invited = tool.run("org", "invite", "--org", org)[1]
+    other_tool = make_tool(tmp_path / "other")
+    bob = hub.add_user(display_name="Bob")
+    pair_user(other_tool, hub, bob)
+    path = ("POST", f"/v1/orgs/{org}/log")
+    sent: list[int] = []
+
+    def refused(body: Any, request: Any) -> tuple[int, Any]:
+        sent.append(1)
+        return 503, {"error": "unavailable"}
+
+    # not stored, and the membership cannot be read either: the failure is reported
+    hub.hooks[path] = refused
+    hub.hooks[("GET", "/v1/me")] = lambda body, request: (503, {"error": "unavailable"}) if sent else None
+    failed = other_tool.run("org", "join", "--display-name", "Bob", stdin=invited["invite_link"])[1]
+    assert failed["hub_error"] == "unavailable"
+    del hub.hooks[("GET", "/v1/me")]
+    # not stored, and no member: the failure is reported
+    assert other_tool.run("org", "join", stdin=invited["invite_link"])[1]["hub_error"] == "unavailable"
+
+    def stored_but_lost(body: Any, request: Any) -> tuple[int, Any]:
+        hub.r_log_append(request, body, org)
+        return 503, {"error": "unavailable"}
+
+    hub.hooks[path] = stored_but_lost
+    joined = other_tool.run("org", "join", stdin=invited["invite_link"])[1]
+    assert (joined["ok"], joined["org_id"], joined["role"]) == (True, org, "member")
+    assert hub.orgs[org].log.state.member(bob.id) is not None
+
+
+def test_joined_log_checks_the_accept(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
+    org = team(tool)
+    invited = tool.run("org", "invite", "--org", org)[1]
+    unused = tool.run("org", "invite", "--org", org)[1]
+    other_tool = make_tool(tmp_path / "other")
+    bob = hub.add_user(display_name="Bob")
+    pair_user(other_tool, hub, bob)
+    assert other_tool.run("org", "join", stdin=invited["invite_link"])[1]["ok"] is True
+    log = hub.orgs[org].log
+    head = log.head.to_json()
+
+    def joined(user: str, invite: str, package_head: dict[str, Any]) -> Any:
+        stub: Any = type(
+            "Stub", (), {"user_id": user, "forget": lambda self, o: None, "org_log": lambda self, o: log}
+        )()
+        return orgs.joined_log(stub, org, invite, package_head)
+
+    assert joined(bob.id, invited["invite_id"], head) is log
+    for user, invite, package_head, reason in (
+        (bob.id, unused["invite_id"], head, "log_accept"),
+        (bob.id, "unknown", head, "log_accept"),
+        (account.id, invited["invite_id"], head, "log_accept"),
+        (uuid7(), invited["invite_id"], head, "log_accept"),
+        (bob.id, invited["invite_id"], {"seq": 1, "hash": "x"}, "log_rollback"),
+    ):
+        with pytest.raises(PlatformError) as refused:
+            joined(user, invite, package_head)
+        assert refused.value.fields["reason"] == reason, (user, invite)
+
+
 def test_join_without_the_org_key_sends_no_profile(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
     org = team(tool)
     invited = tool.run("org", "invite", "--org", org)[1]

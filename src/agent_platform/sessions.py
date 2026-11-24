@@ -5,7 +5,9 @@
 - `task operations`: the task's operations newest first (`GET /v1/tasks/{task}/operations`, a hub must not slip in
   another task's row) with their `operation.params`/`operation.result` events opened and verified; with
   `--operation` one operation with its transitions (`GET /v1/operations/{id}`) and its events (`ref=<operation>`).
-- `session show`: `GET /v1/sessions/{id}` (row, transitions, usage, VM, children).
+- `session show`: `GET /v1/sessions/{id}` (row, transitions, usage, VM, children), the runtime (from the first
+  `working` or the creation to the end, or to now while the session runs) and whether the hub reaches its device
+  (`online` of `GET /v1/orgs/{org}/devices`; null without a device, when the device is not listed or the read fails).
 - `session stop|interrupt`: `POST /v1/sessions/{id}/control {action}` ("End session" and "Stop" of the web).
 - `session terminal`: the `session.terminal` chunks of the session (`kinds=session.terminal&session=<id>`), checked
   with the session's device as author (E7), as text: the output frames (`o`) in order, raw and without terminal
@@ -18,7 +20,9 @@
 
 from __future__ import annotations
 
+import math
 import re
+import time
 import unicodedata
 from typing import Any, cast
 from urllib.parse import urlencode
@@ -29,6 +33,8 @@ from agent_platform.errors import PlatformError
 from agent_platform.eventio import open_all, pull, rows_of, uuid_argument
 from agent_platform.hub import segment
 from agent_platform.orgs import find_org
+from agent_runner.crypto.encoding import parse_time
+from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.log.state import USER, WG
 
 ACTIONS = ("stop", "interrupt")
@@ -36,6 +42,7 @@ OPERATION_KINDS = "operation.params,operation.result"
 TERMINAL_KIND = "session.terminal"
 OPERATIONS_LIMIT = 50
 TASK_PAGE = 50
+ENDED_STATES = frozenset({"stopped", "failed", "suspended"})
 TASK_STATES = ("scheduling", "starting", "working", "idle", "failed", "closed")
 OVERVIEW_PAGES = 20
 # The terminal's view without its control sequences: CSI, OSC (BEL or ST terminated), character set designations,
@@ -115,9 +122,41 @@ def session_row(account: Account, session: str) -> dict[str, Any]:
     return answer
 
 
+def runtime_seconds(start: object, end: object, running: bool, now: float) -> int | None:
+    """Whole seconds from `start` to `end`, or to `now` while the object runs and has no end; None when a time is
+    malformed or the end of an ended object is unknown (`sessions/runtime.ts`)."""
+    if end is None and not running:
+        return None
+    try:
+        begun = parse_time(start).timestamp()
+        ended = now if end is None else parse_time(end).timestamp()
+    except CryptoError:
+        return None
+    return max(0, math.floor(ended - begun))
+
+
+def device_reachable(account: Account, org: object, device: object) -> bool | None:
+    """Whether the hub reaches `device` (`online` of the org's device list), None when it is not known."""
+    if not isinstance(org, str) or not isinstance(device, str):
+        return None
+    try:
+        rows = rows_of(account.call("GET", f"/v1/orgs/{segment(org)}/devices"), "devices")
+    except PlatformError:
+        return None
+    found = [row["online"] for row in rows if row.get("device_id") == device and isinstance(row.get("online"), bool)]
+    return found[0] if found else None
+
+
 def session_show(account: Account, session: str) -> dict[str, Any]:
     answer = session_row(account, session)
-    return {key: answer.get(key) for key in ("session", "transitions", "usage", "vm", "children")}
+    row = answer["session"]
+    started = row.get("first_working_at") if row.get("first_working_at") is not None else row.get("created_at")
+    running = row.get("state") not in ENDED_STATES
+    return {
+        **{key: answer.get(key) for key in ("session", "transitions", "usage", "vm", "children")},
+        "runtime_s": runtime_seconds(started, row.get("ended_at"), running, time.time()),
+        "device_reachable": device_reachable(account, row.get("org_id"), row.get("device_id")),
+    }
 
 
 def session_control(account: Account, session: str, action: str) -> dict[str, Any]:

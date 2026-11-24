@@ -60,6 +60,7 @@ def add_session(hub: HubFake, task: str, device: str | None = None, state: str =
         "state": state,
         "state_reason": None,
         "created_at": now_ms_text(),
+        "first_working_at": None,
         "ended_at": None,
     }
     return session

@@ -56,7 +56,13 @@ def test_notifications(tool: Tool, hub: HubFake, account: User) -> None:
 
 
 def test_quotas(tool: Tool, hub: HubFake, account: User) -> None:
-    assert tool.run("quotas")[1] == {"ok": True, "available": False, "quotas": []}
+    assert tool.run("quotas")[1] == {"ok": True, "available": False, "quotas": [], "unreadable_since": None}
+    # the subscription refuses the read (a long-lived setup token, KOR-40); a malformed time is no such state
+    views(hub).unreadable[account.id] = "2026-11-24T07:00:00.000Z"
+    assert tool.run("quotas")[1]["unreadable_since"] == "2026-11-24T07:00:00.000Z"
+    views(hub).unreadable[account.id] = "yesterday"
+    assert tool.run("quotas")[1]["unreadable_since"] is None
+    del views(hub).unreadable[account.id]
     older, newer = "2026-11-24T08:00:00.000Z", "2026-11-24T09:00:00.000Z"
     base = {"severity": "ok", "device_id": uuid7(), "resets_at": None}
     views(hub).quotas[account.id] = [

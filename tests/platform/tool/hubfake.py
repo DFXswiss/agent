@@ -853,7 +853,7 @@ class HubFake:
         for event in body["events"]:
             self.store_event(wg, event)
         row = {"task_id": task, "org_id": org, "wg_id": wg, "owner_id": request.user, "state": "queued"}
-        row |= {"state_reason": None, "created_at": now_ms_text(), "last_activity_at": now_ms_text()}
+        row |= {"state_reason": None, "created_at": now_ms_text(), "last_activity_at": now_ms_text(), "closed_at": None}
         created = {"task": row, "session": {"session_id": uuid7()}, "events": []}
         self.tasks[task] = {"task": row, "sessions": [], "transitions": [], "created": created}
         return 200, created

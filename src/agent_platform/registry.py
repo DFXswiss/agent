@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import Any
 
 from agent_platform import (
+    billing,
     credkey,
     creds,
     devices,
@@ -35,4 +36,5 @@ MODULES: tuple[Callable[[Any], None], ...] = (
     creds.register,
     keywraps.register,
     workvm.register,
+    billing.register,
 )

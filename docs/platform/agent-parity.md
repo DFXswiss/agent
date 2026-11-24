@@ -36,7 +36,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | me-view | shell | `status` | done |
 | settings-language | settings/language | `settings set --locale` | done |
 | settings-model | settings/model | `settings set --model-access --model` | done |
-| settings-billing | settings/billing | `api GET /v1/orgs/{org}/billing`, `api GET /v1/tasks/{task}/charges` (task tab "Costs") | api |
+| settings-billing | settings/billing (credit balance, prices, credit history, consumption per day and workgroup, KOR-31) | `billing --org` | done |
+| task-charges | screens/task (tab "Costs": charges per session and the total, KOR-31) | `task charges --task` | done |
 | credential-list | settings/credentials | `credentials list` | done |
 | credential-claude-login | settings/credentials | `claude connect`, `claude setup-token` | done |
 | credential-claude-relay | settings/credentials | `claude login --device --mode --request --code --wait` | done |
@@ -48,6 +49,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | quotas | settings/quotas | `quotas` | done |
 | github-status | settings/github | `github status` | done |
 | github-connect | settings/github | `github connect --device --request --wait` | done |
+| github-token | settings/github (an existing token, a GitHub CLI login or a personal access token, checked by the device, ADR-065) | `github connect --token --device --wait` | done |
 | github-disconnect | settings/github | `github disconnect` | done |
 | passkey-list | settings/passkeys | `passkey list` | done |
 | passkey-add | settings/passkeys | `passkey add` (opens the settings page in the user's browser: a passkey needs the user's authenticator) | done |
@@ -67,6 +69,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | members-invitees | screens/members (accounts of the admin's own platform invitations) | `org invitees --org` | done |
 | account-code | settings/passkeys | `status` (prints the account code) | done |
 | members-invite-revoke | screens/members | `org invite-revoke` | done |
+| members-invite-states | screens/members (the inviter's view: open, opened, registered, accepted, KOR-36) | `org show --org` | done |
 | members-role | screens/members | `member role` | done |
 | members-remove | screens/members | `member remove` | done |
 | members-leave | screens/members | `org leave` | done |
@@ -93,6 +96,9 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | session-view | screens/session | `session show --session` | done |
 | session-workvm | screens/session (work VM panel and runtime, KOR-29) | `session workvm --session` | done |
 | task-workvm-items | screens/task (work VM runs and states in the chat) | `task show`, `task follow` | done |
+| task-waiting | screens/task (held operations: the waiting card that asks the owner to connect GitHub, ADR-066) | `task show`, `task follow`, `github connect` | done |
+| task-guest-errors | screens/task (errors the guest reported, `session.error`, ADR-064) | `task show`, `task follow` | done |
+| task-runtime | screens/task (runtime of the task and its sessions, reachability of the session's device, KOR-40) | `task show`, `session show --session` | done |
 | session-terminal | screens/session (terminal) | `session terminal --session --after` | done |
 | session-control | screens/session | `session stop\|interrupt --session` | done |
 | session-follow | screens/task, screens/session (live stream) | `task follow` | done |
@@ -107,7 +113,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | security | screens/security | `security` | done |
 | community | – (not in the web client yet) | package KOR-26 delivers (community area with a group chat of all users) | pending |
 | situation-view | – (not in the web client yet) | package KOR-39 delivers (situation view) | pending |
-| credit-balance | – (not in the web client yet) | package KOR-31 delivers (prepaid credit balance) | pending |
+| credit-balance | shell (header item "Credit": the balance, "Credit used up") | `billing --org` | done |
 | diagnose | – (agent only) | `diagnose` | done |
 | error-pages | screens/errors, screens/notfound | (no action: every failure of the tool is one JSON object with error and next) | n/a |
 
@@ -117,8 +123,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 |---|---|
 | `GET /v1/agent-pairings/{pairing}` | agents-pair |
 | `GET /v1/config` | connect-agent, settings-model |
-| `POST /v1/device-requests` | github-connect, credential-claude-relay, credential-check |
-| `GET /v1/device-requests/{request}` | github-connect, credential-claude-relay, credential-check |
+| `POST /v1/device-requests` | github-connect, github-token, credential-claude-relay, credential-check |
+| `GET /v1/device-requests/{request}` | github-connect, github-token, credential-claude-relay, credential-check |
 | `POST /v1/events` | wg-settings, workgroups-rename, whiteboard-write, devices-profile, org-join |
 | `POST /v1/invites/lookup` | register, org-join |
 | `GET /v1/me` | me-view, passkey-list, notifications-list, credential-rotate |
@@ -132,11 +138,11 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `PUT /v1/me/bundles/{slot}` | login-unlock, passkey-add |
 | `GET /v1/me/credentials` | credential-list, github-status |
 | `POST /v1/me/credentials/rotate` | credential-rotate |
-| `GET /v1/me/credentials/{kind}` | credential-list, github-status |
+| `GET /v1/me/credentials/{kind}` | credential-list, github-status, task-waiting |
 | `PUT /v1/me/credentials/{kind}` | credential-api-key, credential-mailbox, credential-claude-login |
 | `DELETE /v1/me/credentials/{kind}` | credential-delete, github-disconnect |
 | `GET /v1/me/invitees` | members-invitees |
-| `GET /v1/me/devices` | github-connect, credential-claude-relay, credential-check |
+| `GET /v1/me/devices` | github-connect, github-token, credential-claude-relay, credential-check |
 | `GET /v1/me/quotas` | quotas |
 | `POST /v1/me/recovery/begin` | recovery-new |
 | `DELETE /v1/me/registration` | register |
@@ -149,9 +155,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/orgs` | org-create |
 | `GET /v1/orgs/{org}/audit` | audit |
 | `GET /v1/orgs/{org}/audit/verify` | audit |
+| `GET /v1/orgs/{org}/billing` | settings-billing, credit-balance |
 | `GET /v1/orgs/{org}/catch-up` | key-catch-up |
-| `GET /v1/orgs/{org}/devices` | devices-list |
-| `GET /v1/orgs/{org}/invites` | members-list, members-invite-revoke |
+| `GET /v1/orgs/{org}/devices` | devices-list, task-runtime |
+| `GET /v1/orgs/{org}/invites` | members-list, members-invite-revoke, members-invite-states |
 | `POST /v1/orgs/{org}/invites` | members-invite, devices-invite |
 | `POST /v1/orgs/{org}/invites/{invite}/revoke` | members-invite-revoke |
 | `GET /v1/orgs/{org}/log` | org-list, members-list |
@@ -167,15 +174,16 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/platform/log` | devices-assign, platform-invites |
 | `POST /v1/recovery/begin` | recover |
 | `POST /v1/recovery/finish` | recover |
-| `GET /v1/scopes/{scope}/events` | task-view, session-follow, session-terminal, operations, wg-settings, tasks-overview, session-workvm, task-workvm-items |
+| `GET /v1/scopes/{scope}/events` | task-view, session-follow, session-terminal, operations, wg-settings, tasks-overview, session-workvm, task-workvm-items, task-waiting, task-guest-errors |
 | `POST /v1/session/end` | sign-out |
-| `GET /v1/sessions/{session}` | session-view, monitoring, session-workvm |
+| `GET /v1/sessions/{session}` | session-view, monitoring, session-workvm, task-runtime |
 | `POST /v1/sessions/{session}/control` | session-control |
 | `GET /v1/stream` | session-follow |
 | `POST /v1/tasks` | task-create |
-| `GET /v1/tasks/{task}` | task-view |
+| `GET /v1/tasks/{task}` | task-view, task-runtime |
+| `GET /v1/tasks/{task}/charges` | task-charges |
 | `POST /v1/tasks/{task}/close` | task-close |
-| `GET /v1/tasks/{task}/operations` | operations, session-workvm |
+| `GET /v1/tasks/{task}/operations` | operations, session-workvm, task-waiting |
 | `POST /v1/tasks/{task}/prompts` | task-prompt |
 | `GET /v1/users/lookup` | members-admit |
 | `GET /v1/users/{user}/identity` | members-admit |

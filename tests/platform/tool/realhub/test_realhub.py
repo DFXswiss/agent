@@ -105,6 +105,11 @@ def test_tasks_and_credentials(real: RealHub) -> None:
     prompt = run_ok(ada.tool, "task", "prompt", "--task", task, "--text", "Also the logout")
     assert prompt["task_id"] == task
     assert "Also the logout" in str(run_ok(ada.tool, "task", "show", "--task", task))
+    # the credit and the task's costs as the hub's billing routes answer them (no price list in force yet)
+    credit = run_ok(ada.tool, "billing", "--org", org)
+    assert (credit["org_id"], credit["billing_active"], credit["exhausted"]) == (org, False, False)
+    assert (credit["price_list_version"], credit["token_prices"], credit["days"]) == (None, [], [])
+    assert run_ok(ada.tool, "task", "charges", "--task", task)["total_micro_usd"] == 0
     # a credential stored as the user, then the credential key rotated for the user and the device
     assert run_ok(ada.tool, "credentials", "set-api-key", stdin="sk-test-" + "k" * 20)["stored"] is True
     rotated = run_ok(ada.tool, "credentials", "rotate", "--force")

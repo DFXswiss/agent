@@ -69,10 +69,60 @@ def test_github_connect_flow(tool: Tool, hub: HubFake, account: User) -> None:
     status = tool.run("github", "status")[1]
     assert (status["status"], status["login"], status["author"]) == ("connected", "octo", device)
     assert "token" not in json.dumps(status)
+    assert (status["source"], status["scopes"], status["revocable"]) == ("device_flow", ["repo"], False)
     gone = tool.run("github", "disconnect")[1]
     assert (gone["status"], gone["revoke_at"]) == ("disconnected", "https://github.com/settings/applications")
     assert tool.run("github", "disconnect")[1]["status"] == "disconnected"
     assert tool.run("github", "status")[1]["status"] == "disconnected"
+
+
+def test_github_connect_with_an_existing_token(tool: Tool, hub: HubFake, account: User) -> None:
+    _org, _wg, device = assign_device(tool, hub, account)
+    done = {"step": "done", "login": "octo", "scopes": ["repo", "read:org"], "source": "token"}
+    relay(hub).script["github.connect"] = [[(done, True)]]
+    seen = len(tool.opened())
+    code, connected = tool.run("github", "connect", "--token", "-", "--wait", "5", stdin="  ghp_secret123\n")
+    assert code == 0, connected
+    assert (connected["step"], connected["login"], connected["scopes"], connected["source"]) == (
+        "done",
+        "octo",
+        ["repo", "read:org"],
+        "token",
+    )
+    # the token goes only into the request sealed to the device, trimmed like the web's field; no page is opened
+    assert opened(hub, connected["request_id"]) == {"token": "ghp_secret123"}
+    assert "ghp_secret123" not in json.dumps(connected)
+    assert all(b"ghp_secret123" not in body for body in hub.bodies)
+    assert tool.opened()[seen:] == []
+    device_record(hub, account, device, "github", {**GITHUB_BODY, "token": "ghp_secret123", "source": "token"})
+    status = tool.run("github", "status")[1]
+    assert (status["source"], status["scopes"], status["revocable"]) == ("token", ["repo"], False)
+    assert "ghp_secret123" not in json.dumps(status)
+    # a token the platform did not mint stays valid at GitHub: the result names the page to revoke it
+    assert tool.run("github", "disconnect")[1] == {
+        "ok": True,
+        "status": "disconnected",
+        "revoked_at_github": False,
+        "revoke_at": "https://github.com/settings/applications",
+    }
+    # a token of the device flow (GitHub App user token) is revoked by the devices
+    device_record(hub, account, device, "github", {**GITHUB_BODY, "token": "ghu_x", "source": "device_flow"})
+    assert tool.run("github", "status")[1]["revocable"] is True
+    assert tool.run("github", "disconnect")[1] == {"ok": True, "status": "disconnected", "revoked_at_github": True}
+    # what GitHub refused comes back as the device's failure code
+    for failure in ("token_refused", "scope_missing", "sso_required"):
+        relay(hub).script["github.connect"] = [[({"step": "failed", "code": failure}, True)]]
+        refused = tool.run("github", "connect", "--token", "-", "--wait", "5", stdin="ghp_x")[1]
+        assert (refused["error"], refused["failure"]) == ("device_request_failed", failure)
+    # never from the command line, never empty, never with spaces; not together with --request
+    for argv, stdin in (
+        (("--token", "ghp_x"), ""),
+        (("--token", "-", "--request", uuid7()), "ghp_x"),
+    ):
+        assert tool.run("github", "connect", *argv, stdin=stdin)[1]["error"] == "invalid_argument", argv
+    for stdin in ("", "  \n", "ghp x", "x" * 4097):
+        missing = tool.run("github", "connect", "--token", "-", stdin=stdin)[1]
+        assert (missing["error"], missing["reason"]) == ("invalid_argument", "token_missing"), stdin
 
 
 def test_flows_that_fail_or_wait(tool: Tool, hub: HubFake, account: User) -> None:
@@ -297,6 +347,8 @@ def test_credentials_list_and_records(tool: Tool, hub: HubFake, account: User) -
         ({**GITHUB_BODY, "login": "bad login"}, 1, "params_invalid"),
         ({"key": "x"}, 1, "params_invalid"),
         ({**GITHUB_BODY, "created_at": "yesterday"}, 1, "params_invalid"),
+        ({**GITHUB_BODY, "source": "other"}, 1, "params_invalid"),
+        ({**GITHUB_BODY, "extra": 1}, 1, "params_invalid"),
         (GITHUB_BODY, 9, "epoch_stale"),
     ):
         device_record(hub, account, device, "github", body, epoch=epoch)
@@ -354,6 +406,12 @@ def test_mailbox_input(tool: Tool, hub: HubFake, account: User) -> None:
 
 def test_contract_checks() -> None:
     assert devicereq.response_body("github.connect", "x") is None
+    done = {"step": "done", "login": "octo"}
+    assert devicereq.response_body("github.connect", {**done, "scopes": [], "source": "device_flow"}) is not None
+    assert devicereq.response_body("github.connect", {**done, "source": "other"}) is None
+    assert devicereq.response_body("github.connect", {**done, "scopes": ["Repo"]}) is None
+    assert devicereq.response_body("github.connect", {**done, "scopes": "repo"}) is None
+    assert devicereq.response_body("github.connect", {**done, "extra": 1}) is None
     assert devicereq.response_body("github.connect", {**DEVICE_CODE, "expires_in": 0}) is None
     assert devicereq.response_body("github.connect", {**DEVICE_CODE, "verification_uri": "ftp://x"}) is None
     assert devicereq.response_body("claude.login", {"step": "authorize", "url": "https://x", "automation": "x"}) is None
