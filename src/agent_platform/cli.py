@@ -396,7 +396,10 @@ def _account_commands(tree: Tree) -> None:
         common=False,
         example='printf \'%s\' "<invitation link>" | agent-platform register --display-name "<your user\'s name>" '
         '--name "Claude Code"',
-        words="registrieren konto einladungslink allein ohne mensch eigenes signup sign up new account invitation own alone",
+        words=(
+            "registrieren konto einladungslink allein ohne mensch eigenes signup sign up new account invitation own "
+            "alone"
+        ),
         then="agent-platform status",
     )
     sub.add_argument("--display-name", required=True)
