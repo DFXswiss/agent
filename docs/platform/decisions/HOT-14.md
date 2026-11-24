@@ -40,3 +40,7 @@ A personal connection must never be used on behalf of another person (KONZEPT A1
     `tests/platform/runner/github/test_acting_user.py` against the GitHub double with the real pipeline, store,
     hub double and credential records, tokens told apart per request. A browser E2E with two signed-in people and a
     running VM needs a second user in the E2E fixtures that no scenario provides yet; it is left to KOR-46.
+13. **Prompts stored before the upgrade.** Migration 0016 fills `author_id` from the stored event's header: the inbox
+    verified the event with the author's key and the signature covers the header. Operations received before the
+    upgrade have no acting user and use no connection; a turn that started before the upgrade gets its acting user
+    with its next accepted prompt.

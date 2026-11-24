@@ -6,8 +6,11 @@ the turn without an acting user; a child session inherits the acting user of its
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+from psycopg.types.json import Jsonb
 
 from agent_runner.credentials import acting
 from agent_runner.credentials import session_state as acting_state
@@ -185,5 +188,30 @@ def test_the_stamp_of_an_unknown_session_is_nobody(rig: Rig) -> None:
     async def body(env: Any) -> None:
         async with env.pool.connection() as conn:
             assert await acting.stamp(conn, SimpleNamespace(id=session_id(42), depth=0)) is None
+
+    run(rig, body)
+
+
+def test_the_migration_takes_the_verified_author_of_prompts_stored_before(rig: Rig) -> None:
+    import agent_runner.store  # noqa: PLC0415
+
+    migration = Path(agent_runner.store.__file__).parent / "migrations" / "0016_acting_user.sql"
+    backfill = next(part for part in migration.read_text().split(";") if "UPDATE runner.prompt_event" in part)
+
+    async def body(env: Any) -> None:
+        rows = [(uuid7(), {"header": {"author": BOB}}), (uuid7(), {"header": {"author": "bob"}}), (uuid7(), {})]
+        async with env.pool.connection() as conn:
+            for n, (event_id, sealed) in enumerate(rows):
+                await conn.execute(
+                    "INSERT INTO runner.prompt_event (event_id, org_id, wg_id, task_id, scope_seq, author_sig, sealed)"
+                    " VALUES (%s, %s, %s, %s, %s, 'sig', %s)",
+                    (event_id, ORG, WG, TASK, 900 + n, Jsonb(sealed)),
+                )
+            await conn.execute(backfill)
+            cur = await conn.execute(
+                "SELECT author_id::text FROM runner.prompt_event WHERE event_id = ANY(%s) ORDER BY scope_seq",
+                ([event_id for event_id, _sealed in rows],),
+            )
+            assert [row[0] for row in await cur.fetchall()] == [BOB, None, None]
 
     run(rig, body)
