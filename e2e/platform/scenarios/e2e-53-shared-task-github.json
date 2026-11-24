@@ -1,6 +1,6 @@
 {
-  "name": "e2e-51-shared-task-github",
-  "description": "E2E-51 (HOT-14): Ada's task, Wendy writes in it. Ada's plain first prompt is answered with text. Wendy's prompt asks for a comment: the session requests github.comment at once; the runner holds it for Wendy (who has no GitHub) and the session waits with get_operation until Wendy connected her own account from the card, then answers. Ada's next prompt asks for another comment, which runs at once with Ada's account.",
+  "name": "e2e-53-shared-task-github",
+  "description": "E2E-53 (HOT-14): Ada's task, Wendy writes in it. Ada's plain first prompt is answered with text. Wendy's prompt asks for a comment: the session requests github.comment at once; the runner holds it for Wendy (who has no GitHub) and the session waits with get_operation until Wendy connected her own account from the card, then answers. Ada's next prompt asks for another comment, which runs at once with Ada's account.",
   "steps": [
     {
       "id": "first",
@@ -12,7 +12,7 @@
         "content": [
           {
             "type": "text",
-            "text": "Ready for the shared work kz51-answer-a-q4m8."
+            "text": "Ready for the shared work kz53-answer-a-q4m8."
           }
         ]
       }
@@ -34,7 +34,7 @@
               "params": {
                 "repo": "octo-org/shared",
                 "number": 1,
-                "body": "Reviewed by Wendy kz51-comment-w-t6r2"
+                "body": "Reviewed by Wendy kz53-comment-w-t6r2"
               }
             }
           }
@@ -91,7 +91,7 @@
         "content": [
           {
             "type": "text",
-            "text": "Wendy's comment is posted kz51-answer-w-c9j3."
+            "text": "Wendy's comment is posted kz53-answer-w-c9j3."
           }
         ]
       }
@@ -112,7 +112,7 @@
               "params": {
                 "repo": "octo-org/shared",
                 "number": 1,
-                "body": "Approved by Ada kz51-comment-a-b5n7"
+                "body": "Approved by Ada kz53-comment-a-b5n7"
               }
             }
           }
@@ -128,7 +128,7 @@
         "content": [
           {
             "type": "text",
-            "text": "Ada's comment is posted kz51-answer-d-x2k6."
+            "text": "Ada's comment is posted kz53-answer-d-x2k6."
           }
         ]
       }

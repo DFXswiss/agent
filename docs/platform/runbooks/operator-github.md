@@ -5,7 +5,7 @@ settings answers "Connected as …" (the account's login) without a device code 
 other user keeps the device flow of the GitHub App (ADR-015) or an existing token of their own (ADR-065). Only
 platform devices accept the settings; an org device refuses to start with `config_invalid OPERATOR_GITHUB_TOKEN_FILE`.
 
-**Exactly one user: the operator.** A personal connection is never shared (ADR-068). `OPERATOR_GITHUB_USERS` names
+**Exactly one user: the operator.** A personal connection is never shared (ADR-070). `OPERATOR_GITHUB_USERS` names
 one user; with more the runner does not start and `agent-runner doctor` reports
 `config_invalid name=OPERATOR_GITHUB_USERS:one_user_only`. The connection is stored like every GitHub connection,
 sealed for the user, and operations use it only for that user's own instructions: whoever writes in the operator's
@@ -59,7 +59,7 @@ operations with `github_not_connected` until the user connects again.
 
 ## 3. Change the user, withdraw earlier approvals
 
-Only one user is accepted. A configuration from before ADR-068 that names several users stops the runner at its
+Only one user is accepted. A configuration from before ADR-070 that names several users stops the runner at its
 start (`config_invalid name=OPERATOR_GITHUB_USERS:one_user_only`): set the operator's user ID alone and install the
 service again. Every other user that connected through the operator's token before still holds a copy of it: **revoke
 the token at GitHub and place a new one** (section 2); those users then connect their own accounts. Changing

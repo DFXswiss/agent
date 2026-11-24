@@ -467,7 +467,7 @@ event): `repositories` allow-list (exact `owner/name`, lowercased; optional: emp
 repository the acting user's GitHub connection reaches, ADR-054), `protected_branches` patterns (default
 `["main","master","develop","release/*"]`), `pr_draft_default` (true). Repository-level checks: `repo` in the
 allow-list when the list is not empty (`repo_not_allowed`) and accessible with the GitHub connection of the acting
-user - the person whose instruction started the session's turn, never the task owner as such (HOT-14, ADR-068,
+user - the person whose instruction started the session's turn, never the task owner as such (HOT-14, ADR-070,
 `05-runner.md` §12 step 3; `github_not_connected`, `repo_not_accessible`). `github.list_repositories` marks every entry `allowed` when the
 list is empty. Retry: retryable failures (network, GitHub 5xx, 429, secondary rate limit) are retried
 by the runner inside the same operation: 3 attempts, delays 2 s, 8 s, 30 s (respecting `Retry-After`); then
@@ -549,7 +549,7 @@ operation's result (decrypted from its `operation.result` event) with `status:"d
 | `session.output` | journal body of `session.output` |
 | `session.tool` / `session.hook` / `session.file` / `session.terminal` / `session.status` | journal bodies (§7.2); `session.status` = `{state,reason,details?}` for errors and states, or `{state:"waiting",waiting_for,operation_id,operation_type,repo?,for_user?,until}` while the runner holds an operation of the session for the person who gave the instruction (§9, KOR-25, HOT-14): `waiting_for` `github_connection` (that person has no usable GitHub connection); `for_user` = that person, the acting user (05-runner.md §12 step 3; a body without it, from an older runner, means the task owner); `repo` is left out for types without one; `until` = receipt + 15 min; only platform-checked values, never text of the session |
 | `operation.params` | `{operation_id,type,params,idempotency_key?}` |
-| `operation.result` | `{operation_id,status,connection_of?,result?,error?}`; `connection_of` = the user whose own personal connection (GitHub) the executed operation used - the acting user, never anybody else (HOT-14, ADR-068) |
+| `operation.result` | `{operation_id,status,connection_of?,result?,error?}`; `connection_of` = the user whose own personal connection (GitHub) the executed operation used - the acting user, never anybody else (HOT-14, ADR-070) |
 | `platform.read` | `{tool,arguments,result_count}` |
 
 ## 11. Error codes (HTTP status)

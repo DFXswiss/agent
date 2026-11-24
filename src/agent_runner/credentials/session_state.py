@@ -1,5 +1,5 @@
 """Observer of the guest's `session.state` records for the acting user of a turn (`sessions.extensions` `OBSERVERS`,
-ADR-032; HOT-14, ADR-068): `prompt_accepted {prompt_id}` of a main session -> `acting.prompt_accepted`, `idle` ->
+ADR-032; HOT-14, ADR-070): `prompt_accepted {prompt_id}` of a main session -> `acting.prompt_accepted`, `idle` ->
 `acting.turn_ended`. It runs in the journal page's transaction, so a turn's acting user is set before any operation
 request the guest journaled after the prompt is stamped. A child session's acting user comes from its
 `subagent.request` (`acting.stamp`), never from its own prompt.

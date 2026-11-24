@@ -785,7 +785,7 @@ Pipeline for every `request_operation`:
    ADR-054), repository list when set, GitHub credential of the acting user present, sizes, secret patterns. For `github.commit` the runner takes **one** workspace export
    snapshot into the scratch directory `tmp/op-<id>` here, before registration; scan, local tree SHA and the later
    commit all use exactly this snapshot (`03-api.md` §9).
-   **Acting user (HOT-14, ADR-068).** A personal connection must never be used on behalf of another person. Several
+   **Acting user (HOT-14, ADR-070).** A personal connection must never be used on behalf of another person. Several
    people may write in one task (shared sessions), so an operation that needs a personal connection (today every
    `github.*` type) uses the connection of the **acting user** - the verified author of the prompt that started the
    session's current turn - and never the task owner's as such. The runner keeps the author of every verified prompt

@@ -1,4 +1,4 @@
--- Whose personal connection an operation uses (HOT-14, ADR-068): a personal connection must never be used on behalf
+-- Whose personal connection an operation uses (HOT-14, ADR-070): a personal connection must never be used on behalf
 -- of another person. `prompt_event.author_id` is the verified author of a prompt (the inbox checked its signature and
 -- `wg:write`); `session.turn_actor` the author of the prompts of the session's current turn (NULL: unknown, or prompts
 -- of more than one person in one turn) and `session.turn_open` whether the turn is still running (no `idle` since its

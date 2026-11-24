@@ -1,4 +1,4 @@
-"""U-RUN-operations: the acting user of a turn (HOT-14, ADR-068; `credentials/acting.py`,
+"""U-RUN-operations: the acting user of a turn (HOT-14, ADR-070; `credentials/acting.py`,
 `credentials/session_state.py`), through the real journal handlers in the guest's order: `session.state
 prompt_accepted` names the verified author of the prompt, `operation.request` is stamped with the turn's acting user,
 `idle` closes the turn; prompts of two people in one turn, an unknown prompt and a prompt of another session leave

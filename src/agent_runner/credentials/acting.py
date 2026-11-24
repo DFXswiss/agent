@@ -1,4 +1,4 @@
-"""Whose personal connection an operation uses (KONZEPT A15 and E-19, ADR-068; 05-runner.md section 12 step 3).
+"""Whose personal connection an operation uses (KONZEPT A15 and E-19, ADR-070; 05-runner.md section 12 step 3).
 
 A personal connection must never be used on behalf of another person. Several people may write in one task (shared
 sessions), so an operation never uses the task owner's connection as such: it uses the connection of the person

@@ -1,4 +1,4 @@
-// E2E-51 (HOT-14, ADR-068; 05-runner.md section 12 step 3; 03-api.md sections 9, 10): a personal connection is never
+// E2E-53 (HOT-14, ADR-070; 05-runner.md section 12 step 3; 03-api.md sections 9, 10): a personal connection is never
 // used on behalf of another person. Ada owns a task and has connected her own GitHub account; Wendy (member, write
 // access to the default workgroup, no GitHub) writes in Ada's task and asks for a comment. The runner holds the
 // operation for Wendy: the waiting card offers the connect controls to Wendy only and shows Ada whom it waits for,
@@ -32,20 +32,20 @@ import { navigateInApp } from '../../../web/e2e/helpers/whiteboard.ts';
 import { PageUser } from '../../../web/e2e/helpers/user.ts';
 
 const scenario: unknown = JSON.parse(
-  readFileSync(new URL('../scenarios/e2e-51-shared-task-github.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../scenarios/e2e-53-shared-task-github.json', import.meta.url), 'utf8'),
 );
 const SHARED = 'octo-org/shared';
-const ADA_LOGIN = 'kz51-ada-h3v8';
-const WENDY_LOGIN = 'kz51-wendy-p8d2';
+const ADA_LOGIN = 'kz53-ada-h3v8';
+const WENDY_LOGIN = 'kz53-wendy-p8d2';
 /** Not GitHub-shaped on purpose: tokens of the double only. */
-const ADA_TOKEN = ['kz51', 'ada', 'tok', 'm4q7z1c9'].join('-');
-const WENDY_TOKEN = ['kz51', 'wendy', 'tok', 'r6e2u8b3'].join('-');
-const WENDY_NAME = 'Wendy kz51-name-w4';
-const FIRST = 'E2E51-ADA-FIRST kz51-prompt-a-g2s5: get ready for the review of the shared issue';
-const WENDY_PROMPT = `E2E51-WENDY kz51-prompt-w-n7f3: comment on issue 1 in ${SHARED} that I reviewed it`;
-const AGAIN = `E2E51-ADA-AGAIN kz51-prompt-d-y1h4: comment on issue 1 in ${SHARED} that I approve it`;
-const WENDY_COMMENT = 'Reviewed by Wendy kz51-comment-w-t6r2';
-const ADA_COMMENT = 'Approved by Ada kz51-comment-a-b5n7';
+const ADA_TOKEN = ['kz53', 'ada', 'tok', 'm4q7z1c9'].join('-');
+const WENDY_TOKEN = ['kz53', 'wendy', 'tok', 'r6e2u8b3'].join('-');
+const WENDY_NAME = 'Wendy kz53-name-w4';
+const FIRST = 'E2E51-ADA-FIRST kz53-prompt-a-g2s5: get ready for the review of the shared issue';
+const WENDY_PROMPT = `E2E51-WENDY kz53-prompt-w-n7f3: comment on issue 1 in ${SHARED} that I reviewed it`;
+const AGAIN = `E2E51-ADA-AGAIN kz53-prompt-d-y1h4: comment on issue 1 in ${SHARED} that I approve it`;
+const WENDY_COMMENT = 'Reviewed by Wendy kz53-comment-w-t6r2';
+const ADA_COMMENT = 'Approved by Ada kz53-comment-a-b5n7';
 
 const classic = (login: string, id: number, token: string) => ({
   login,
@@ -57,7 +57,7 @@ const classic = (login: string, id: number, token: string) => ({
 
 test.describe.configure({ mode: 'serial' });
 
-test("@E2E-51 @needs-vm in a shared task every GitHub operation runs with the account of the person who asked for it, never the owner's for someone else", async ({
+test("@E2E-53 @needs-vm in a shared task every GitHub operation runs with the account of the person who asked for it, never the owner's for someone else", async ({
   page,
   browser,
   e2e,
@@ -68,12 +68,12 @@ test("@E2E-51 @needs-vm in a shared task every GitHub operation runs with the ac
   await orchestrator.loadScenario('model', scenario);
   await seedGitHub(orchestrator, {
     users: [classic(ADA_LOGIN, 7001, ADA_TOKEN), classic(WENDY_LOGIN, 7002, WENDY_TOKEN)],
-    repositories: [repository(SHARED, { issues: [{ title: 'Shared issue kz51-issue-k3w9', user: ADA_LOGIN }] })],
+    repositories: [repository(SHARED, { issues: [{ title: 'Shared issue kz53-issue-k3w9', user: ADA_LOGIN }] })],
   });
   await platformDevice(orchestrator);
   await poolReady(orchestrator);
   await authenticator('platform');
-  const onboarded = await onboard(page, orchestrator, 'Ada kz51-name-a1');
+  const onboarded = await onboard(page, orchestrator, 'Ada kz53-name-a1');
   const org = onboarded.org;
   const ada = await PageUser.open(page, onboarded.recoveryCode);
 
@@ -85,7 +85,7 @@ test("@E2E-51 @needs-vm in a shared task every GitHub operation runs with the ac
   // Ada's task, answered with text.
   await home(page);
   const task = await sendPrompt(page, FIRST);
-  await expectAnswerInChat(page, 'Ready for the shared work kz51-answer-a-q4m8.');
+  await expectAnswerInChat(page, 'Ready for the shared work kz53-answer-a-q4m8.');
   const beforeWendy = (await githubRoutes(orchestrator)).length;
 
   // Wendy writes in Ada's task and asks for a comment: held for Wendy, not run with Ada's account.
@@ -110,7 +110,7 @@ test("@E2E-51 @needs-vm in a shared task every GitHub operation runs with the ac
   // Wendy connects her own account right in the card: the held comment runs with it.
   await storeGitHubToken(wendyCard, WENDY_TOKEN);
   await expect(wendyCard).toHaveAttribute('data-status', 'done', { timeout: 60_000 });
-  await expectAnswerInChat(wendy.page, "Wendy's comment is posted kz51-answer-w-c9j3.");
+  await expectAnswerInChat(wendy.page, "Wendy's comment is posted kz53-answer-w-c9j3.");
   const commentsBy = async (body: string) =>
     (await githubRepo(orchestrator, SHARED)).comments.filter((comment) => comment.body === body).map((c) => c.user);
   expect(await commentsBy(WENDY_COMMENT)).toEqual([WENDY_LOGIN]);
@@ -118,7 +118,7 @@ test("@E2E-51 @needs-vm in a shared task every GitHub operation runs with the ac
   // Ada writes again and asks for a comment: it runs at once with Ada's account.
   await page.getByTestId('chat.composer.prompt').fill(AGAIN);
   await page.getByTestId('chat.composer.send').click();
-  await expectAnswerInChat(page, "Ada's comment is posted kz51-answer-d-x2k6.");
+  await expectAnswerInChat(page, "Ada's comment is posted kz53-answer-d-x2k6.");
   await expect.poll(async () => (await orchestrator.doubleState('model')).ok, { timeout: 60_000 }).toBe(true);
   expect(await commentsBy(ADA_COMMENT)).toEqual([ADA_LOGIN]);
 
@@ -135,6 +135,6 @@ test("@E2E-51 @needs-vm in a shared task every GitHub operation runs with the ac
   ]);
 
   await expectGitHubOk(orchestrator);
-  await expectNoPlaintext(orchestrator, [ADA_TOKEN, WENDY_TOKEN, WENDY_COMMENT, ADA_COMMENT, 'kz51-prompt-w-n7f3']);
+  await expectNoPlaintext(orchestrator, [ADA_TOKEN, WENDY_TOKEN, WENDY_COMMENT, ADA_COMMENT, 'kz53-prompt-w-n7f3']);
   await wendy.page.context().close();
 });

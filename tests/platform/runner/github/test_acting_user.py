@@ -1,4 +1,4 @@
-"""U-RUN-github: a personal connection is never used on behalf of another person (HOT-14, ADR-068, KONZEPT A15 and
+"""U-RUN-github: a personal connection is never used on behalf of another person (HOT-14, ADR-070, KONZEPT A15 and
 E-19; 05-runner.md section 12 step 3).
 
 The class, not the single case:

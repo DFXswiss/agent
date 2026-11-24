@@ -1,6 +1,6 @@
 # HOT-14 – decisions
 
-A personal connection must never be used on behalf of another person (KONZEPT A15, Idee 36, E-19; ADR-068).
+A personal connection must never be used on behalf of another person (KONZEPT A15, Idee 36, E-19; ADR-070).
 
 1. **Who instructs a turn.** The verified author of the accepted prompt (`event.author` of the signed `prompt`
    event, stored as `runner.prompt_event.author_id`), taken over by the guest's `session.state prompt_accepted` in
@@ -36,7 +36,7 @@ A personal connection must never be used on behalf of another person (KONZEPT A1
 11. **"Connected as …" (goal 3).** Checked, nothing built: the operator path answers `{step:"done", login}` with the
     login GitHub returns for the token (`GET /user`), stored in the credential; settings and card show it
     ("Connected as {login}"); `tests/platform/runner/github/test_operator_github.py` covers it.
-12. **E2E.** E2E-51 (`e2e/platform/specs/e2e-51-shared-task-github.spec.ts`, T1, green): Ada owns and is connected,
+12. **E2E.** E2E-53 (`e2e/platform/specs/e2e-53-shared-task-github.spec.ts`, T1, green): Ada owns and is connected,
     Wendy (no GitHub) writes and asks for a comment → held, card only for Wendy, no GitHub request at all; Wendy
     connects in the card → comment by Wendy's login; Ada writes again → Ada's login; `for_user` and `connection_of`
     checked. The runner-level test `tests/platform/runner/github/test_acting_user.py` covers the same with tokens

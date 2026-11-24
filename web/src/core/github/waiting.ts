@@ -1,6 +1,6 @@
 // Held operations in the task's chat (KOR-25, ADR-066, `contracts/events/objects.json` `body_session_status`, third
 // variant): the runner holds a `github.*` operation of a session instead of refusing it when the person who gave the
-// instruction (the acting user, HOT-14, ADR-068) has no usable GitHub connection (`github_connection`, the only
+// instruction (the acting user, HOT-14, ADR-070) has no usable GitHub connection (`github_connection`, the only
 // reason) and writes one `session.status` event `{state:"waiting", waiting_for, operation_id, operation_type, repo?,
 // for_user?, until}`. `for_user` is that person: a personal connection is never used on behalf of another person, so
 // only this person is asked to connect (a body without it, from an older runner, is addressed to the task owner). A repository outside a workgroup's

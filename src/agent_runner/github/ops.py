@@ -2,7 +2,7 @@
 
 - `actor_client(context, operation)`: a client with the token of the operation's **acting user** - the person whose
   instruction started the turn (`credentials.acting`, the only place that decides it and opens the credential;
-  HOT-14, ADR-068, replacing the task owner's credential of ADR-015) - decrypted from the credential cache only for
+  HOT-14, ADR-070, replacing the task owner's credential of ADR-015) - decrypted from the credential cache only for
   the duration of the block. No acting user, no cached or fetchable record, a record that does not open or a body
   without a usable token is `NotConnected`; a hub that cannot be asked for a missing record is
   `GitHubError("unreachable")` (retryable).

@@ -1,4 +1,4 @@
-# ADR-068: A personal connection follows the person who gave the instruction
+# ADR-070: A personal connection follows the person who gave the instruction
 
 Status: Accepted (2026-11-24)
 
