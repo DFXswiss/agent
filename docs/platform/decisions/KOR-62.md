@@ -42,3 +42,10 @@ Architecture in ADR-068; small decisions here.
     derived ID can be adopted later).
 12. **Audit.** A new action `agent.register` instead of widening `auth.register` (whose detail requires a passkey ID
     and whose meaning is a passkey registration); the recovery keeps `auth.recovery {step: finish}` as for a person.
+13. **Research note RES-02 (immediate points).** Adopted as built: the proof stays in the body with a named method,
+    checked strictly (an unknown value is `400 request_invalid` with the pointer `/proof/method`, never a fallback);
+    the agent key stays raw Ed25519 (a JWK thumbprint for RFC 9421 or DPoP can be computed from it later); the
+    invitation is one string on stdin or in the environment; account identity and agent key stay separate. Binding to
+    the hub: the signed texts carry the `invite_id` (registration) or the challenge of `recovery/begin` (recovery),
+    both random and known to exactly one hub, so a proof cannot be replayed at another hub; the origin is not added
+    to the text. A dedicated error code with the list of accepted methods comes with the second method.
