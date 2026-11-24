@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/agent.py at 3d02f01a237c.
+"""Copied from agent-core src/agent_hub/crypto/agent.py at 5016e752bda4.
 
 Delegated agent access (11-agent-access.md section 3, ADR-056).
 
@@ -18,6 +18,21 @@ Delegated agent access (11-agent-access.md section 3, ADR-056).
 - `seal_label`/`open_label`: the label `{"host", "name"}` (body JSON) sealed with HPKE to the user's identity X25519
   key, `info = P || "agent-label\\0" || canonical({"agent", "user"})`.
 
+Pairing from another computer (ADR-067, 11-agent-access.md sections 3 and 5.4):
+
+- `agent_code`: the code the agent shows and the user types on the page,
+  `crockford32(SHA-256(P || "agent-code\\0" || canonical({"fp", "mode": "remote", "nonce", "origin",
+  "pairing_id"})))[:10]` with the hub's 16-byte nonce of the pairing (b64u in the input). It binds the confirmed
+  pairing to the one the user's own agent shows; it is not a secret.
+- `seal_handover`/`open_handover`: `r` and the platform root key `k` of the web build, sealed by the confirming
+  browser to the agent's X25519 key, `info = P || "agent-handover\\0" || canonical({"agent", "user"})`, plaintext
+  `canonical({"k", "r"})`; the hub only relays it.
+- `return_code`: `crockford32(HKDF(r, P || "agent-return\\0" || canonical({"agent", "user"})))[:8]`, shown by the
+  page after the confirmation and given by the user to the agent, which accepts the handover only when it matches:
+  HPKE base mode lets anyone seal to the agent, and only the browser knows `r`.
+- `parse_code`: the typed form of either code (lower case, spaces and dashes allowed, `I`/`L` read as `1`, `O` as
+  `0`); `format_code` shows it in two groups (`XXXXX-XXXXX`, `XXXX-XXXX`).
+
 The hub uses only `verify_pop`, `claim_hash` and the format checks; sealing and opening belong to the browser and the
 agent tool (this module is the reference for the vectors).
 """
@@ -25,6 +40,7 @@ agent tool (this module is the reference for the vectors).
 from __future__ import annotations
 
 import hashlib
+import hmac
 import unicodedata
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -42,7 +58,7 @@ from agent_runner.crypto.encoding import (
     require_bytes,
     require_keys,
 )
-from agent_runner.crypto.errors import fail
+from agent_runner.crypto.errors import CryptoError, fail
 from agent_runner.crypto.kdf import hkdf
 from agent_runner.crypto.keys import RAW_KEY_BYTES, Identity, ed25519_sign, ed25519_verify_b64u
 
@@ -53,6 +69,16 @@ LABEL_AGENT_BUNDLE_KEY = b"agent-bundle-key\x00"
 LABEL_AGENT_LABEL = b"agent-label\x00"
 LABEL_AGENT_CLAIM = b"agent-claim\x00"
 LABEL_AGENT_CLAIM_HASH = b"agent-claim-hash\x00"
+LABEL_AGENT_CODE = b"agent-code\x00"
+LABEL_AGENT_HANDOVER = b"agent-handover\x00"
+LABEL_AGENT_RETURN = b"agent-return\x00"
+MODE_REMOTE = "remote"
+NONCE_BYTES = 16
+AGENT_CODE_LENGTH = 10
+RETURN_CODE_LENGTH = 8
+CROCKFORD32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_CODE_ALIASES = str.maketrans({"I": "1", "L": "1", "O": "0"})
+_HANDOVER_KEYS = frozenset({"k", "r"})
 FINGERPRINT_BYTES = 16
 SECRET_BYTES = 32
 LABEL_TEXT_MAX = 64
@@ -180,6 +206,97 @@ def open_label(user_kem: X25519PrivateKey, agent_id: str, user_id: str, sealed: 
     if body_json(label) != plaintext:
         fail("header_invalid")
     return label
+
+
+def crockford32(raw: bytes) -> str:
+    """Crockford base32 of `raw` (big-endian bit string, 5 bits per character, the last one padded with zeros)."""
+    bits = "".join(f"{byte:08b}" for byte in raw)
+    return "".join(CROCKFORD32[int(bits[at : at + 5].ljust(5, "0"), 2)] for at in range(0, len(bits), 5))
+
+
+def code_input(pairing_id: str, fp: str, nonce: bytes, origin: str) -> bytes:
+    """The SHA-256 input of the agent code."""
+    require_bytes(nonce, NONCE_BYTES)
+    fields = {"fp": fp, "mode": MODE_REMOTE, "nonce": b64u_encode(nonce), "origin": origin, "pairing_id": pairing_id}
+    return P + LABEL_AGENT_CODE + canonical(fields)
+
+
+def agent_code(pairing_id: str, fp: str, nonce: bytes, origin: str) -> str:
+    """The 10-character agent code of a remote pairing (the user types it on the page)."""
+    return crockford32(hashlib.sha256(code_input(pairing_id, fp, nonce, origin)).digest())[:AGENT_CODE_LENGTH]
+
+
+def return_info(agent_id: str, user_id: str) -> bytes:
+    """The HKDF `info` of the return code."""
+    return P + LABEL_AGENT_RETURN + _ids(agent_id, user_id)
+
+
+def return_code(secret: bytes, agent_id: str, user_id: str) -> str:
+    """The 8-character return code the page shows after the confirmation (the user gives it to the agent)."""
+    require_bytes(secret, SECRET_BYTES)
+    return crockford32(hkdf(secret, return_info(agent_id, user_id)))[:RETURN_CODE_LENGTH]
+
+
+def parse_code(text: object, length: int) -> str:
+    """The canonical code of a typed text: upper case, spaces and dashes removed, `I`/`L` → `1`, `O` → `0`; exactly
+    `length` characters of the Crockford alphabet, else `header_invalid`."""
+    if not isinstance(text, str):
+        fail("header_invalid")
+    code = text.upper().replace(" ", "").replace("-", "").translate(_CODE_ALIASES)
+    if len(code) != length or any(char not in CROCKFORD32 for char in code):
+        fail("header_invalid")
+    return code
+
+
+def format_code(code: str) -> str:
+    """Two groups separated by a dash (`XXXXX-XXXXX`, `XXXX-XXXX`)."""
+    half = len(code) // 2
+    return f"{code[:half]}-{code[half:]}"
+
+
+def return_code_matches(secret: bytes, agent_id: str, user_id: str, typed: object) -> bool:
+    """Whether the code the user typed is the return code of `r` (constant-time comparison)."""
+    try:
+        code = parse_code(typed, RETURN_CODE_LENGTH)
+    except CryptoError:
+        return False
+    return hmac.compare_digest(code.encode(), return_code(secret, agent_id, user_id).encode())
+
+
+def handover_info(agent_id: str, user_id: str) -> bytes:
+    """The HPKE `info` of the handover sealed to the agent."""
+    return P + LABEL_AGENT_HANDOVER + _ids(agent_id, user_id)
+
+
+def handover_plaintext(secret: bytes, root_key: str) -> bytes:
+    """`canonical({"k", "r"})`: the plaintext of `handover_ct`."""
+    require_bytes(secret, SECRET_BYTES)
+    return canonical({"k": b64u_encode(b64u_decode(root_key, RAW_KEY_BYTES)), "r": b64u_encode(secret)})
+
+
+def seal_handover(
+    agent_kem_pub: bytes,
+    agent_id: str,
+    user_id: str,
+    secret: bytes,
+    root_key: str,
+    *,
+    ephemeral: X25519PrivateKey | None = None,
+) -> str:
+    """`handover_ct`: `r` and the platform root key sealed to the agent (`ephemeral` only for test vectors)."""
+    plaintext = handover_plaintext(secret, root_key)
+    return b64u_encode(hpke.seal(agent_kem_pub, handover_info(agent_id, user_id), plaintext, ephemeral))
+
+
+def open_handover(agent_kem: X25519PrivateKey, agent_id: str, user_id: str, sealed: str) -> tuple[bytes, str]:
+    """The inverse of `seal_handover`: `(r, platform root key)`; the plaintext must be exactly canonical."""
+    plaintext = hpke.open_(agent_kem, handover_info(agent_id, user_id), b64u_decode(sealed))
+    value = require_keys(parse_json(plaintext), _HANDOVER_KEYS)
+    secret = b64u_decode(value["r"], SECRET_BYTES)
+    root_key = str(value["k"])
+    if handover_plaintext(secret, root_key) != plaintext:
+        fail("header_invalid")
+    return secret, root_key
 
 
 def new_agent() -> Identity:

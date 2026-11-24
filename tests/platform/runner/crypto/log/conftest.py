@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/conftest.py at 3d02f01a237c.
+"""Copied from agent-core tests/platform/hub/log/conftest.py at 5016e752bda4.
 
 Fixtures of the log suites (U-HUB-log, U-HUB-rights, U-HUB-wraps): the signed logs of the vectors."""
 

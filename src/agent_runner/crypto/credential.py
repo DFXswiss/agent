@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/credential.py at 3d02f01a237c.
+"""Copied from agent-core src/agent_hub/crypto/credential.py at 5016e752bda4.
 
 Credential records (04-crypto.md section 4.4, new).
 

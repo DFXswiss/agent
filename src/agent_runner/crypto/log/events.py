@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/events.py at 3d02f01a237c.
+"""Copied from agent-core src/agent_hub/log/events.py at 5016e752bda4.
 
 Event rules E1-E9 (04-crypto.md sections 4.3, 5.12, 6.4) and the kind matrix (CON-03).
 

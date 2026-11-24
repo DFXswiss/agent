@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/kdf.py at 3d02f01a237c.
+"""Copied from agent-core src/agent_hub/crypto/kdf.py at 5016e752bda4.
 
 Derivations and labels of 04-crypto.md section 3 (HKDF-SHA256, 32-byte output, empty salt unless stated).
 
