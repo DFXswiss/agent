@@ -352,6 +352,10 @@ async def bind(context: Any, pool: Pool, session_id: str, name: str) -> None:
             "ON CONFLICT (session_id) DO UPDATE SET file_name = EXCLUDED.file_name, bound_at = now()",
             (session_id, name),
         )
+        # the origin outlives the binding: usage processed after the session ended is still charged (KOR-31)
+        await conn.execute(
+            "INSERT INTO runner.operator_origin (session_id) VALUES (%s) ON CONFLICT DO NOTHING", (session_id,)
+        )
 
 
 def delivered(context: Any, session_id: str) -> None:

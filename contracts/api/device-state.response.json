@@ -345,6 +345,43 @@
             }
           ]
         },
+        "billing": {
+          "type": "object",
+          "description": "billing state (12-billing.md section 5; KOR-31): always sent by a hub of this release, optional in the schema for older hubs; api tells the runner that the hub accepts the runtime item and the billing fields of usage",
+          "properties": {
+            "api": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "billing interface version; a runner of this release needs at least 1"
+            },
+            "active": {
+              "type": "boolean",
+              "description": "a price list is in force"
+            },
+            "orgs": {
+              "type": "object",
+              "description": "org ID -> credit state, for every org with a workgroup assigned to the device",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "exhausted": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "exhausted"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "api",
+            "active",
+            "orgs"
+          ],
+          "additionalProperties": false
+        },
         "hub_time": {
           "$ref": "../common.json#/$defs/time"
         }

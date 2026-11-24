@@ -44,6 +44,7 @@ SECTION_FIELDS: Mapping[str, Callable[[], Any]] = {
     "credentials_changed": list,
     "quota_poll_owners": list,
     "platform_budget": lambda: None,
+    "billing": lambda: {"api": 1, "active": False, "orgs": {}},
 }
 """The fields sections provide, with the value of a field no area provides."""
 

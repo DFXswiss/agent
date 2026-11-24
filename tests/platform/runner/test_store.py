@@ -179,6 +179,9 @@ TABLES = {
     ],
     # 0011 (KOR-23, ADR-052): the operator's token file a session is bound to
     "operator_binding": ["session_id", "file_name", "bound_at"],
+    "billing_meter": ["vm_id", "measured_through"],
+    "operator_origin": ["session_id", "bound_at"],
+    "credit_pause": ["session_id", "org_id", "interrupted", "paused_at", "resumed_at"],
     "schema_version": ["version", "name", "checksum", "applied_at"],
 }
 OUTBOX_KINDS = [

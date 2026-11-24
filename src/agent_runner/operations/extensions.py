@@ -57,6 +57,7 @@ OPERATION_ERROR_CODES = frozenset(
         "not_found",
         "limit_exceeded",
         "budget_exceeded",
+        "credit_exhausted",
         "rights_denied",
         "hub_unreachable",
         "upstream_error",

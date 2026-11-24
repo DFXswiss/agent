@@ -1,5 +1,5 @@
 {
-  "description": "Task states (02-data-model.md section 2.4): derived from the sessions except closed (user action). Reasons while scheduling: device_offline, capacity_exhausted (03-api.md section 4.6.2).",
+  "description": "Task states (02-data-model.md section 2.4): derived from the sessions except closed (user action). Reasons while scheduling: device_offline, capacity_exhausted (03-api.md section 4.6.2), credit_exhausted (12-billing.md section 7).",
   "states": [
     "scheduling",
     "starting",
@@ -13,6 +13,7 @@
   ],
   "scheduling_reasons": [
     "device_offline",
-    "capacity_exhausted"
+    "capacity_exhausted",
+    "credit_exhausted"
   ]
 }

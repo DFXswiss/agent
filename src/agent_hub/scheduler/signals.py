@@ -2,7 +2,8 @@
 
 Subscribers of `device.presence` (`device_id`, `online`) and `device.capacity` (`device_id`) from the stream area
 (HUB-07) re-run the scheduler for the waiting sessions of the device's workgroups; `log.appended` (`org_id`, `seq`)
-from the orgs area does it for the org's workgroups (a `device_assign` makes a device a candidate). Signals carry
+from the orgs area does it for the org's workgroups (a `device_assign` makes a device a candidate), and so does
+`credit.changed` (`org_id`) from the billing area (credit used up or added, KOR-31, ADR-062). Signals carry
 identifiers only and no app context: like the reconcile hints of the device area, the subscribers read with the pool
 of a bound hub context (bound by the tasks routes and by the job `scheduler.reschedule`, `agent_hub.scheduler.jobs`)
 and send nothing before one is bound - the job's sweep places those sessions at its next run. A subscriber only queues
@@ -71,4 +72,5 @@ SUBSCRIBERS: Mapping[str, Sequence[signals.Subscriber]] = {
     "device.presence": [on_device],
     "device.capacity": [on_device],
     "log.appended": [on_log],
+    "credit.changed": [on_log],
 }

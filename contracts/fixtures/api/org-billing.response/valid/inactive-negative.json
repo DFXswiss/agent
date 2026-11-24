@@ -1,0 +1,10 @@
+{
+  "currency": "USD",
+  "balance_micro_usd": -2500,
+  "exhausted": true,
+  "billing_active": false,
+  "price_list": null,
+  "credits": [],
+  "days": [],
+  "workgroups": []
+}

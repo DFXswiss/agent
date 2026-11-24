@@ -31,7 +31,7 @@ STEPS = [ReconcileStep({order}, "{name}", run)]
 def test_real_package_registries() -> None:
     # Areas register as they land; every lookup of the real package must succeed (no half registry). The sync
     # area's own registrations are checked in tests/platform/runner/sync/test_tasks.py.
-    assert {spec.name for spec in registry.tasks()} >= {"sync", "ws", "vm-pool", "vm-idle"}
+    assert {spec.name for spec in registry.tasks()} >= {"sync", "ws", "vm-pool", "vm-idle", "billing_meter"}
     assert {hook.name for hook in registry.shutdown_hooks()} >= {"outbox-flush"}
     assert isinstance(registry.reconcile_steps(), list)
     assert "vm-instances" in [cleaner.name for cleaner in registry.cleaners()]

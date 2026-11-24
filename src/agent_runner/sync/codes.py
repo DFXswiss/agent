@@ -99,5 +99,6 @@ ITEM_KINDS = (
     "metrics",
     "audit",
     "wrap",
+    "runtime",
 )
 """Outbox item kinds in the order of `contracts/enums/outbox-item-kinds.json` (= the CHECK of `runner.outbox`)."""

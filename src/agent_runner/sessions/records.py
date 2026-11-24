@@ -57,6 +57,7 @@ FAILURE_REASONS = frozenset(
         "capacity_exhausted",
         "runtime_exceeded",
         "budget_exceeded",
+        "credit_exhausted",
         "oom",
         "unassigned",
     }

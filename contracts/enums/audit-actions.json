@@ -322,6 +322,18 @@
       "group": "outbox"
     },
     {
+      "action": "credit.changed",
+      "group": "credit"
+    },
+    {
+      "action": "billing.fx_set",
+      "group": "credit"
+    },
+    {
+      "action": "billing.export",
+      "group": "credit"
+    },
+    {
       "action": "platform.root",
       "group": "platform"
     },
@@ -482,6 +494,10 @@
       "group": "read"
     },
     {
+      "action": "read.org.billing",
+      "group": "read"
+    },
+    {
       "action": "read.org.catch_up",
       "group": "read"
     },
@@ -522,6 +538,10 @@
       "group": "read"
     },
     {
+      "action": "read.task.charges",
+      "group": "read"
+    },
+    {
       "action": "read.task.operations",
       "group": "read"
     },
@@ -535,6 +555,10 @@
     },
     {
       "action": "read.workgroup",
+      "group": "read"
+    },
+    {
+      "action": "read.workgroup.charges",
       "group": "read"
     },
     {

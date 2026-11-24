@@ -51,6 +51,7 @@ from typing import Any, cast
 
 from psycopg import AsyncConnection
 
+from agent_runner.billing import pause
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.inbox.pull import load_cursors
@@ -366,6 +367,9 @@ class Deliverer:
         return False
 
     async def _resume_then_send(self, session: LocalSession, head: queue.Delivery, text: str | None = None) -> None:
+        if pause.deferred(self.env, session):
+            # the organization's credit is used up: the prompt waits until it is back (KOR-31, ADR-062 section 6)
+            return
         outcome = await self.resumer.resume(session)
         if outcome != RESUMED:
             # `retry`: backoff; `ended`: stopped meanwhile; a failure reason: the session failed
@@ -380,6 +384,9 @@ class Deliverer:
     async def _send(self, session: LocalSession, head: queue.Delivery, text: str | None = None) -> None:
         """Write-ahead `registered`, `POST /v1/sessions/{id}/prompts`, then `typed` (see the module docstring)."""
         env = self.env
+        if pause.deferred(env, session):
+            # the organization's credit is used up: the prompt waits until it is back (KOR-31, ADR-062 section 6)
+            return
         async with env.transaction() as conn:
             if text is None:
                 prompt = await queue.event(conn, head.event_id)

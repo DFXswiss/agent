@@ -43,7 +43,8 @@ class BudgetRequest:
     now: datetime
 
 
-BudgetCheck = Callable[[BudgetRequest], bool]
+BudgetCheck = Callable[[BudgetRequest], bool | str]
+"""`True` = available; `False` = `budget_exceeded`; a string = that denial code (`credit_exhausted`, KOR-31)."""
 
 
 def unlimited(_request: BudgetRequest) -> bool:
@@ -76,7 +77,7 @@ def configure(check: BudgetCheck | None = None) -> BudgetCheck:
     return found
 
 
-def budget_check(request: BudgetRequest) -> bool:
+def budget_check(request: BudgetRequest) -> bool | str:
     """True while the org may start more model work (module docstring)."""
     current = _state.get("check")
     return (current if current is not None else configure())(request)

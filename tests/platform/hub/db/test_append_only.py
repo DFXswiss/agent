@@ -109,6 +109,41 @@ def _row(table: str) -> dict[str, Any]:
             "published_at": NOW,
             "signature": bytes(64),
         },
+        # billing (KOR-31, ADR-062)
+        "price_list": {"version": 1, "valid_from": NOW, "document": "{}", "created_at": NOW},
+        "fx_rate": {
+            "n": 1,
+            "day": NOW.date(),
+            "chf_per_usd_e8": 84_860_000,
+            "source": "BAZG",
+            "set_at": NOW,
+            "actor": "operator",
+            "reason": None,
+        },
+        "credit_entry": {
+            "org_id": new(),
+            "n": 1,
+            "at": NOW,
+            "kind": "start",
+            "amount_micro_usd": 1,
+            "balance_micro_usd": 1,
+            "reason": None,
+            "actor": "hub",
+        },
+        "charge": {
+            "id": new(),
+            "org_id": new(),
+            "wg_id": new(),
+            "task_id": new(),
+            "session_id": new(),
+            "device_id": new(),
+            "origin_seq": 1,
+            "kind": "runtime",
+            "at": NOW,
+            "amount_micro_usd": 1,
+            "price_version": 1,
+            "quantity": "{}",
+        },
     }
     return rows[table]
 

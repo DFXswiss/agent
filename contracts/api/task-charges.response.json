@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-charges.response.json",
+  "title": "GET /v1/tasks/{task}/charges response",
+  "description": "Body of a successful response to GET /v1/tasks/{task}/charges (03-api.md section 4.11, 12-billing.md section 6). Amounts in micro-USD.",
+  "type": "object",
+  "properties": {
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "tokens_micro_usd": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "runtime_micro_usd": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "tokens": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "runtime_ms": {
+            "$ref": "../common.json#/$defs/count"
+          }
+        },
+        "required": [
+          "session_id",
+          "tokens_micro_usd",
+          "runtime_micro_usd",
+          "tokens",
+          "runtime_ms"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    },
+    "total_micro_usd": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "sessions",
+    "total_micro_usd"
+  ],
+  "additionalProperties": false
+}

@@ -19,6 +19,10 @@ handler writes one outbox item `usage` in the journal page's transaction:
   per session of the daemon's lifetime; updated before the page commits, so a rolled-back page can leave a figure
   that the replayed page writes again).
 - `last_provider`: the record's `provider` (OpenRouter only).
+- Billing (KOR-31, ADR-062, AUD-04 W10), only towards a hub whose device state has `billing.api`: `model` (the
+  record's model), `access_origin` (`platform`, `operator` or `own`, `agent_runner.billing.state.origin`) and `at` (the
+  record's time) - the hub charges `platform` and `operator`. An older hub refuses unknown fields, so they are left
+  out there.
 
 For a session bound to a token file of the operator's subscriptions the record's `status` is handed to the pool
 (`model.operator.observed`: `401`/`403` block the file the session was provisioned from, `429` defers it; KOR-23).
@@ -42,6 +46,7 @@ from typing import Any
 
 from psycopg import AsyncConnection
 
+from agent_runner.billing import state as billing
 from agent_runner.guestlink.client import JournalRecord
 from agent_runner.model import access, operator
 from agent_runner.sessions.journal import MAX_COUNT, JournalRecordInvalid
@@ -53,6 +58,7 @@ OUTSIDE_COUNTER = "provider_outside_allowlist"
 ATTRIBUTE = "model_context_memory"
 COUNTERS_ATTRIBUTE = "model_counters"
 _LABEL_RE = re.compile(r"^[ -~]{1,64}$")
+_TIME_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$")
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$")
 
 
@@ -138,6 +144,10 @@ async def handle(journal: Any, conn: AsyncConnection[Any], record: JournalRecord
     remembered = memory(journal)
     body = record.body
     item = usage_item(session, body, journal.env.catalog, remembered.last.get(session.id))
+    if billing.api(journal.env.desired):
+        item.update(model=body["model"], access_origin=await billing.origin(conn, session))
+        if _TIME_RE.fullmatch(record.ts):
+            item["at"] = record.ts
     await journal.env.outbox.enqueue(conn, "usage", item)
     remembered.last[session.id] = (item["context_used_tokens"], item["context_window_tokens"])
     if session.model_access == "subscription":

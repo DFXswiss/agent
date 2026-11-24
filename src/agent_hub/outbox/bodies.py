@@ -34,6 +34,7 @@ ITEM_KINDS = (
     "metrics",
     "audit",
     "wrap",
+    "runtime",
 )
 """A copy of `contracts/enums/outbox-item-kinds.json` (a test compares them)."""
 OUTBOX_AUDIT_ACTIONS = (
@@ -73,6 +74,7 @@ OPERATION_ERROR_CODES = (
     "not_found",
     "limit_exceeded",
     "budget_exceeded",
+    "credit_exhausted",
     "rights_denied",
     "hub_unreachable",
     "upstream_error",
@@ -94,6 +96,7 @@ ItemKind = Literal[
     "metrics",
     "audit",
     "wrap",
+    "runtime",
 ]
 Time = Annotated[
     str,
@@ -126,6 +129,7 @@ OperationErrorCode = Literal[
     "not_found",
     "limit_exceeded",
     "budget_exceeded",
+    "credit_exhausted",
     "rights_denied",
     "hub_unreachable",
     "upstream_error",
@@ -264,6 +268,25 @@ class UsageBody(Strict):
     context_used_tokens: Count
     context_window_tokens: Count
     last_provider: LabelText | None
+    model: ModelId | None = None
+    """The model of the request (KOR-31; an older runner omits it: the session's model counts)."""
+    access_origin: Literal["own", "operator", "platform"] | None = None
+    """Whose model access the request used (KOR-31, ADR-062, AUD-04 W10): `own` (the user's own subscription or API
+    key), `operator` (an operator subscription, ADR-052) or `platform` (the platform key); an older runner omits it."""
+    at: Time | None = None
+    """When the request was made (selects the price list version; an older runner omits it)."""
+
+
+class RuntimeBody(Strict):
+    """`runtime` (KOR-31, ADR-062): VM runtime of a platform device attributed to one session."""
+
+    session_id: Uuid7
+    vm_id: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{1,62}$")]
+    vm_kind: Literal["session", "work"]
+    size: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
+    from_: Time = Field(alias="from")
+    to: Time
+    runtime_ms: Annotated[int, Field(ge=1, le=3_600_000)]
 
 
 class QuotaWindow(Strict):
@@ -450,6 +473,7 @@ BODIES: dict[str, type[Strict]] = {
     "metrics": MetricsBody,
     "audit": AuditBody,
     "wrap": WrapBody,
+    "runtime": RuntimeBody,
 }
 
 

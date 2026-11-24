@@ -240,7 +240,10 @@ def _limits(
     if exceeded is not None:
         return exceeded
     budget = limits.BudgetRequest(connection=connection, org_id=task.org_id, session_id=parent.id, now=now)
-    return None if limits.budget_check(budget) else "budget_exceeded"
+    verdict = limits.budget_check(budget)
+    if verdict is True:
+        return None
+    return verdict if isinstance(verdict, str) else "budget_exceeded"
 
 
 def _refusal(

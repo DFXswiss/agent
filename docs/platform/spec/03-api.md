@@ -245,6 +245,10 @@ a response with header `final:true` arrives (success or error – the outcome is
 | `GET /v1/orgs/{org}/audit` | org:admin (all), org:member (rows of wgs with wg:read and own actions) | `?before=&action=&actor=&task=&session=&wg=` → audit rows newest first |
 | `GET /v1/orgs/{org}/audit/verify` | org:admin | → `{ok,head:{seq,hash},checkpoint}` |
 
+Usage billing and prepaid credit (KOR-31) are specified in `12-billing.md`: the endpoints `GET /v1/orgs/{org}/billing`
+(org:member), `GET /v1/workgroups/{wg}/charges` (wg:read) and `GET /v1/tasks/{task}/charges` (task:read) (section
+6), the `billing` object of `GET /v1/device/state` (section 5) and the outbox item `runtime` (section 4).
+
 ## 5. Browser live channel
 
 `GET /v1/stream` (signed, read with `fetch` streaming; `Accept: text/event-stream`). Query: `org=<id>` (one
@@ -298,11 +302,12 @@ Outbox item kinds and their effect at the hub (closed list `contracts/enums/outb
 | `session_transition` | `{session_id,state,reason,at,agent_version?,model_access?,model_id?,claude_session_id_present?}` | session row + transition + task derivation + SSE |
 | `vm_state` | `{vm_id,wg_id,state,golden_version,cpus,memory_mib,disk_gib,at}` | `vm` row; `assigning`/`running` with a wg: `session.vm_id` of the device's open sessions of that wg (one VM per wg and device; a `session_transition` of an open session without VM takes it too) |
 | `operation_transition` | `{operation_id,state:"executing"|"succeeded"|"failed"|"expired",error_code?,retryable?,result_event_id?,at}` | operation row + transition + dedupe slot release on failure |
-| `usage` | `{session_id,delta:{requests,input_tokens,…,cost_micro_usd},cost_basis,context_used_tokens,context_window_tokens,last_provider}` | `usage_counter` += delta |
+| `usage` | `{session_id,delta:{requests,input_tokens,…,cost_micro_usd},cost_basis,context_used_tokens,context_window_tokens,last_provider,model?,access_origin?,at?}` | `usage_counter` += delta; token charge (`12-billing.md` §4) |
 | `quota` | `{owner_id,windows:[{window,used_percent,resets_at,severity}],fetched_at}` or `{owner_id,unavailable:true,fetched_at}` (the usage endpoint refused the token, KOR-05) | `quota_snapshot` (an `unavailable` report deletes the owner's rows with `fetched_at` ≤ its own) |
 | `metrics` | `{samples:[metric sample]}` | `metric_sample` |
 | `audit` | `{action,result,task_id?,session_id?,target_kind,target_id,detail}` (closed list `contracts/enums/outbox-audit-actions.json`: `hook.denied`, `read.session.<tool>`, `ping.delivered` (for a hub ping, `whiteboard.entry`, also marks the `session_ping` row delivered; the runner's own `subagent.finished`/`operation.finished` pings are audited without a hub row, KOR-07), `session.prompt_refused`, `model.provider_outside_allowlist`, `runner.inbound_rejected`, `runner.log_rollback`, `runner.log_fork`, `runner.alert`) | audit row |
 | `wrap` | `{wrap}` | as `POST /v1/device/wraps` |
+| `runtime` | `{session_id,vm_id,vm_kind:"session"|"work",size,from,to,runtime_ms}` | runtime charge of a platform device (`12-billing.md` §4) |
 
 Processing is strictly in `origin_seq` order. Rule set (pattern of the legacy `/sync/push`): `origin_seq` must
 be `last+1` (`409 origin_seq_gap` with `detail.expected`; a runner that no longer holds `detail.expected` – it
@@ -519,10 +524,10 @@ All enumerations of this section are closed lists in `contracts/enums/` (`error-
 Operation codes (in operation results): `unknown_type`, `params_invalid`, `repo_not_allowed`,
 `repo_not_accessible`, `branch_protected`, `branch_exists`, `non_fast_forward`, `path_invalid`, `secret_detected`,
 `size_exceeded`, `github_not_connected`, `not_found`, `limit_exceeded`, `budget_exceeded`, `rights_denied`,
-`hub_unreachable`, `upstream_error`, `timeout`, `model_not_allowed`. Session failure reasons (in `session.state_reason`):
+`hub_unreachable`, `upstream_error`, `timeout`, `model_not_allowed`, `credit_exhausted` (`12-billing.md` §7). Session failure reasons (in `session.state_reason`):
 `model_access_unavailable`, `vm_start_failed`, `guest_unreachable`, `sandbox_failed`, `agent_start_failed`,
 `agent_exited`, `prompt_refused`, `delivery_failed`, `device_offline`, `device_shutdown`, `capacity_exhausted`,
-`runtime_exceeded`, `budget_exceeded`, `oom`, `unassigned`. Additional operation codes: `tree_mismatch`, `no_changes`.
+`runtime_exceeded`, `budget_exceeded`, `credit_exhausted` (also a task's `scheduling` reason, `12-billing.md` §7), `oom`, `unassigned`. Additional operation codes: `tree_mismatch`, `no_changes`.
 
 ## 12. Limits and timeouts (defaults; configurable only where marked)
 

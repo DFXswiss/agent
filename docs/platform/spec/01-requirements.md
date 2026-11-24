@@ -318,6 +318,7 @@ Younger than the concept; where they contradict it, the rule holds. Wording, dat
 | R-P.11 | Work on integration branches with draft PRs; no merge into `develop`, no force push. | all | 00 §6 | M3 acceptance (branch protection check) |
 | R-P.12 | Platform devices and the platform model budget only for entitled orgs (private orgs from a platform invitation, or operator-granted `org_platform_access`). | HUB, WEB | ADR-026, 03 §4.3 | E2E-01 (private org gets platform device), E2E-05 (non-private org refused with `platform_access_denied` until granted) |
 | R-P.13 | Platform model budget per org and day (`PLATFORM_BUDGET_USD_PER_ORG_DAY`, `budget_exceeded`). | HUB, RUN | 03 §2, §9, 05 §10 | E2E-27 (budget step) |
+| R-P.14 | Usage billing with prepaid credit (concept ideas 45–47): DFX tokens and DFX VM runtime charged by a versioned price list, credit per organization set by the operator, no new paid start and paused sessions while the credit is used up, continuation after a credit; own resources free. | HUB, RUN, WEB | ADR-062, 12-billing.md | E2E-46 |
 
 ## Coverage check
 

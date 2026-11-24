@@ -27,6 +27,7 @@ AREAS: dict[ModuleType, list[str]] = {
         "audit",
         "auth",
         "backup",
+        "billing",
         "config_api",
         "credentials",
         "crypto",
@@ -58,6 +59,7 @@ AREAS: dict[ModuleType, list[str]] = {
     ],
     agent_runner: [
         "assignments",
+        "billing",
         "catchup",
         "credentials",
         "crypto",

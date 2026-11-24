@@ -119,6 +119,13 @@ RULES: tuple[TableRule, ...] = (
     TableRule("usage_counter", "session_id = ANY(%(sessions)s)"),
     TableRule("quota_snapshot", "owner_id = ANY(%(users)s)"),
     TableRule("usage_daily", ORG_ROWS),
+    TableRule("price_list", ALL_ROWS, append_only=True),
+    TableRule("fx_rate", ALL_ROWS, append_only=True),
+    TableRule("credit_account", ORG_ROWS),
+    TableRule("credit_entry", ORG_ROWS, append_only=True),
+    TableRule("charge", ORG_ROWS, append_only=True),
+    TableRule("charge_pending", ORG_ROWS),
+    TableRule("charge_daily", ORG_ROWS),
     TableRule("audit", ALL_ROWS, append_only=True),
     TableRule("audit_checkpoint", ALL_ROWS, append_only=True),
 )

@@ -356,6 +356,23 @@
               "type": "null"
             }
           ]
+        },
+        "model": {
+          "$ref": "../common.json#/$defs/model_id",
+          "description": "model of the requests of this delta (KOR-31, 12-billing.md section 4); without it the session's model_id counts"
+        },
+        "access_origin": {
+          "type": "string",
+          "enum": [
+            "own",
+            "operator",
+            "platform"
+          ],
+          "description": "whose model access the requests used: own (the user's subscription or API key, free), operator (an operator subscription of DFX, ADR-052) or platform (the platform's OpenRouter key); the last two are charged; read only from platform devices (12-billing.md section 4, AUD-04 W10)"
+        },
+        "at": {
+          "$ref": "../common.json#/$defs/time",
+          "description": "time of the request (selects the price list version); without it the hub's receive time"
         }
       },
       "required": [
@@ -646,6 +663,51 @@
       },
       "required": [
         "wrap"
+      ],
+      "additionalProperties": false
+    },
+    "body_runtime": {
+      "type": "object",
+      "description": "VM runtime of a platform device attributed to one session (12-billing.md section 4): 0 < runtime_ms <= to - from, at most one hour per item",
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "vm_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{1,62}$"
+        },
+        "vm_kind": {
+          "type": "string",
+          "enum": [
+            "session",
+            "work"
+          ]
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,31}$"
+        },
+        "from": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "to": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "runtime_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        }
+      },
+      "required": [
+        "session_id",
+        "vm_id",
+        "vm_kind",
+        "size",
+        "from",
+        "to",
+        "runtime_ms"
       ],
       "additionalProperties": false
     },
@@ -1957,6 +2019,27 @@
             },
             "body": {
               "$ref": "#/$defs/body_wrap"
+            }
+          },
+          "required": [
+            "origin_seq",
+            "item_kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "origin_seq": {
+              "$ref": "../common.json#/$defs/positive"
+            },
+            "item_kind": {
+              "type": "string",
+              "const": "runtime"
+            },
+            "body": {
+              "$ref": "#/$defs/body_runtime"
             }
           },
           "required": [

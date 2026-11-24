@@ -63,6 +63,7 @@ GUEST_FAILURES = frozenset(
         "delivery_failed",
         "runtime_exceeded",
         "budget_exceeded",
+        "credit_exhausted",
         "oom",
     }
 )

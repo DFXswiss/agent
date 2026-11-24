@@ -264,7 +264,11 @@ def test_state_helpers(harness: Harness) -> None:
 
 
 def test_item_kinds_match_the_table_check() -> None:
-    sql = (Path(__file__).resolve().parents[4] / "src/agent_runner/store/migrations/0001_runner.sql").read_text()
+    folder = Path(__file__).resolve().parents[4] / "src/agent_runner/store/migrations"
+    sql = (folder / "0001_runner.sql").read_text()
     table = sql.split("CREATE TABLE runner.outbox", 1)[1].split(");", 1)[0]
+    # the newest form of the check: `runtime` was added by the billing migration (KOR-31)
+    widened = (folder / "0013_billing.sql").read_text().split("ADD CONSTRAINT outbox_item_kind_check", 1)[1]
     for kind in ITEM_KINDS:
-        assert f"'{kind}'" in table
+        assert f"'{kind}'" in widened
+        assert f"'{kind}'" in table or kind == "runtime"

@@ -25,6 +25,7 @@ alone cannot do). Alternatives in a command are written `a\|b` (an escaped bar, 
 | me-view | shell | `status` | done |
 | settings-language | settings/language | `settings set --locale` | done |
 | settings-model | settings/model | `settings set --model-access --model` | done |
+| settings-billing | settings/billing | `api GET /v1/orgs/{org}/billing`, `api GET /v1/tasks/{task}/charges` (task tab "Costs") | api |
 | credential-claude-login | settings/credentials | `claude connect`, `claude setup-token` | done |
 | credential-claude-relay | settings/credentials | `claude login --device` (device request `claude.login`) | api |
 | credential-api-key | settings/credentials | `credentials set-api-key` | done |

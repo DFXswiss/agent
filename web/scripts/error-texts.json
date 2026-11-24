@@ -191,6 +191,18 @@
       "action": "Verwende einen anderen Passkey oder den Wiederherstellungscode."
     }
   },
+  "credit_exhausted": {
+    "en": {
+      "title": "Credit used up",
+      "body": "Paid resources are paused until the operator adds credit. Own devices with own model access keep working.",
+      "action": "Ask the operator to add credit."
+    },
+    "de": {
+      "title": "Guthaben aufgebraucht",
+      "body": "Bezahlte Ressourcen sind pausiert, bis der Betreiber Guthaben auflädt. Eigene Geräte mit eigenem Modellzugang arbeiten weiter.",
+      "action": "Bitte den Betreiber, Guthaben aufzuladen."
+    }
+  },
   "decrypt_failed": {
     "en": {
       "title": "Cannot be opened",

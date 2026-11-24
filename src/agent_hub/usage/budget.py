@@ -7,7 +7,9 @@ sessions with `model_access = platform` cost one organization per day of the hub
 - `spent_micro_usd(connection, org_id, now)`: the spend of the org on the UTC day of `now`.
 - `available(connection, org_id, now, limit)`: True while the spend is **below** the limit. Reaching the limit
   exactly exhausts it (the gateway answers 429 from then on as well); a limit of 0 allows nothing.
-- `CHECK(request)`: the budget hook of the operation registration (`agent_hub.operations.limits`, ADR-031). It asks
+- `CHECK(request)`: the budget hook of the operation registration (`agent_hub.operations.limits`, ADR-031). First the
+  prepaid credit (KOR-31, ADR-062 section 6): a requesting session on a platform device of an org whose credit is
+  used up is denied with `credit_exhausted` (every session of DFX hardware is charged for runtime). Then it asks
   `available` for the org of the requesting session, unless that session runs with its own credentials
   (`subscription`, `api_key`): a child session uses the access of its parent (05-runner.md section 13), so only
   platform work - or work whose access is not reported yet - spends the platform budget.
@@ -26,6 +28,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.billing import credit
 from agent_hub.errors import HubError
 from agent_hub.operations.limits import BudgetRequest
 from agent_hub.usage import binding
@@ -33,6 +36,7 @@ from agent_hub.usage import binding
 Connection = psycopg.Connection[Any]
 MICRO = Decimal(1_000_000)
 OWN_CREDENTIALS = frozenset({"subscription", "api_key"})
+CREDIT_EXHAUSTED = "credit_exhausted"
 
 
 def utc_day(now: datetime) -> date:
@@ -59,10 +63,23 @@ def available(connection: Connection, org_id: UUID | str, now: datetime, limit: 
     return within(spent_micro_usd(connection, org_id, now), limit)
 
 
-def check(request: BudgetRequest) -> bool:
+def unpaid(request: BudgetRequest) -> bool:
+    """The requesting session runs on a platform device of an org whose credit is used up."""
+    row = request.connection.execute(
+        "SELECT d.kind FROM hub.session s JOIN hub.device d ON d.id = s.device_id WHERE s.id = %s",
+        (request.session_id,),
+    ).fetchone()
+    return (
+        row is not None and row[0] == "platform" and credit.exhausted(request.connection, request.org_id, request.now)
+    )
+
+
+def check(request: BudgetRequest) -> bool | str:
     """The budget hook H4 (module docstring)."""
     if not binding.bound():
         raise HubError("unavailable")
+    if unpaid(request):
+        return CREDIT_EXHAUSTED
     limit = binding.budget_limit()
     if limit is None:
         return True

@@ -1,0 +1,12 @@
+{
+  "sessions": [
+    {
+      "session_id": "01930028-0000-7000-8000-000000000028",
+      "tokens_micro_usd": 1250000,
+      "runtime_micro_usd": 200000,
+      "tokens": 840000,
+      "runtime_ms": 3600000
+    }
+  ],
+  "total_micro_usd": 1450000
+}

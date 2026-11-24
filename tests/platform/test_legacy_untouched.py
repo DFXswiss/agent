@@ -122,6 +122,25 @@ def core_base(root: Path = REPO_ROOT, ref: str = CORE_BASE) -> str:
     return done.stdout.strip()
 
 
+def is_ancestor(older: str, newer: str, root: Path = REPO_ROOT) -> bool:
+    done = subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", older, newer], check=False)
+    return done.returncode == 0
+
+
+def agent_origin(agent_base: str, core: str, root: Path = REPO_ROOT) -> str:
+    """The agent side of the legacy files: `agent_base`, or - once `origin/develop` holds the unification (`core` is
+    an ancestor of `agent_base`) - the first parent of the merge that brought `core` in (agent's own `develop` before
+    INF-06). The united files were checked against both origins when they were united."""
+    if not is_ancestor(core, agent_base, root):
+        return agent_base
+    merges = git("rev-list", "--merges", "--ancestry-path", "--reverse", f"{core}..{agent_base}", root=root).split()
+    return next(
+        first
+        for first in (git("rev-parse", f"{merge}^1", root=root).strip() for merge in merges)
+        if not is_ancestor(core, first, root)
+    )
+
+
 def changes(root: Path = REPO_ROOT, base: str | None = None) -> dict[str, str]:
     """{path: status letter} of every committed, staged, unstaged and untracked change against `base`."""
     base = base or merge_base(root)
@@ -277,8 +296,11 @@ def united_problems(path: str, agent_base: str, core: str, root: Path) -> list[s
 
 def problems(root: Path = REPO_ROOT, core_ref: str = CORE_BASE) -> list[str]:
     agent_base, core = merge_base(root), core_base(root, core_ref)
-    agent_rows, core_rows = changes(root, agent_base), changes(root, core)
-    agent_paths, core_paths = paths_of(agent_base, root), paths_of(core, root)
+    origin = agent_origin(agent_base, core, root)
+    agent_rows = changes(root, agent_base)
+    # once `origin/develop` is united, its state is the reviewed one: only what this branch changes counts
+    core_rows = changes(root, core) if origin == agent_base else agent_rows
+    agent_paths, core_paths = paths_of(origin, root), paths_of(core, root)
     found = []
     for path in sorted(set(agent_rows) | set(core_rows)):
         if is_platform_path(path):
@@ -355,6 +377,28 @@ def repo(tmp_path: Path) -> Path:
 
 def test_clean_repository_has_no_problems(repo: Path) -> None:
     assert problems(repo, CORE) == []
+
+
+def test_a_united_develop_counts_only_the_changes_of_the_branch(repo: Path) -> None:
+    """After the unification `origin/develop` holds both histories: the legacy files of either origin that develop
+    changed are its reviewed state, a change on the branch is still found."""
+    united, agent = (git("rev-parse", ref, root=repo).strip() for ref in ("HEAD", "origin/develop"))
+    (repo / "core_legacy.py").write_text("y = 2\n")
+    run(repo, "commit", "-q", "-am", "Develop changes a legacy file.")
+    run(repo, "checkout", "-q", "-b", "side")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "note.md").write_text("n\n")
+    run(repo, "add", ".")
+    run(repo, "commit", "-q", "-m", "Side.")
+    run(repo, "checkout", "-q", "develop")
+    run(repo, "merge", "-q", "--no-ff", "-m", "A later merge.", "side")  # its first parent holds `core` already
+    run(repo, "push", "-q", "origin", "develop")
+    run(repo, "fetch", "-q", "origin")
+    assert agent_origin(merge_base(repo), core_base(repo, CORE), repo) == agent
+    assert agent_origin(united, core_base(repo, CORE), repo) == agent
+    assert problems(repo, CORE) == []
+    (repo / "legacy.py").write_text("x = 2\n")
+    assert problems(repo, CORE) == ["legacy.py: M outside the platform areas"]
 
 
 def test_repository_without_the_core_history_fails(repo: Path) -> None:
@@ -482,7 +526,8 @@ def test_guarded_workflow(repo: Path) -> None:
 
 def test_merged_files_cover_the_files_of_both_origins() -> None:
     """Every legacy file the two origins share is one of the united files (checked against the real bases)."""
-    agent_base, core = merge_base(), core_base()
+    core = core_base()
+    agent_base = agent_origin(merge_base(), core)
     shared = {path for path in paths_of(agent_base) & paths_of(core) if not is_platform_path(path)}
     assert shared - {"LICENSE", ".github/pr-guard.json"} == set(MERGED_FILES) | {"pyproject.toml", ".gitignore"}
     for path in ("LICENSE", ".github/pr-guard.json"):

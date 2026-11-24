@@ -24,6 +24,7 @@ EMPTY_SECTIONS: dict[str, Any] = {
     "credentials_changed": [],
     "quota_poll_owners": [],
     "platform_budget": None,
+    "billing": {"api": 1, "active": False, "orgs": {}},
 }
 
 

@@ -195,7 +195,7 @@ def test_a_failing_reschedule_is_logged(
 
 def test_registrations_are_discovered() -> None:
     subscribers = dict(discover(SIGNAL_SUBSCRIBERS))["scheduler"]
-    assert set(subscribers) == {"device.presence", "device.capacity", "log.appended"}
+    assert set(subscribers) == {"device.presence", "device.capacity", "log.appended", "credit.changed"}
     names = [job.name for job in check_jobs(concat_sequences(JOBS))]
     assert "scheduler.reschedule" in names
     assert jobs.JOBS[0].interval_seconds == 15.0

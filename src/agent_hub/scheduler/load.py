@@ -16,6 +16,9 @@ Refusals for lack of capacity (KOR-14, ADR-049; a session the device ended `fail
   signal, so a waiting attempt is then placed by the 15 s sweep;
 - `Candidate.refused`: the newest session of the workgroup on the device was refused (no later session of the
   workgroup was placed there), so a stopped VM of the workgroup does not exempt it from needing a free slot.
+
+Credit (KOR-31, ADR-062): while the org of the workgroup is exhausted (`agent_hub.billing.credit.exhausted`), its
+platform devices are `Candidate.unpaid`.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.billing import credit
 from agent_hub.scheduler.core import OTHER, RUNNING, STOPPED, Candidate, Capacity, Decision, choose
 
 Connection = psycopg.Connection[Any]
@@ -62,7 +66,7 @@ def candidates(connection: Connection, wg_id: UUID | str, now: datetime, online_
         " THEN p.last_heartbeat_at ELSE p.connected_at - make_interval(secs => %s) END),"
         " COALESCE((SELECT r.state = 'failed' AND r.state_reason IS NOT DISTINCT FROM 'capacity_exhausted'"
         " FROM hub.session r WHERE r.device_id = d.id AND r.wg_id = a.wg_id"
-        " ORDER BY r.created_at DESC, r.id DESC LIMIT 1), false)"
+        " ORDER BY r.created_at DESC, r.id DESC LIMIT 1), false), d.kind, w.org_id"
         " FROM hub.wg_device a JOIN hub.wg w ON w.id = a.wg_id"
         " JOIN hub.org_member m ON m.org_id = w.org_id AND m.principal_id = a.device_id AND m.removed_seq IS NULL"
         " JOIN hub.device d ON d.id = a.device_id AND d.state = 'active'"
@@ -70,6 +74,7 @@ def candidates(connection: Connection, wg_id: UUID | str, now: datetime, online_
         " WHERE a.wg_id = %s AND a.unassigned_seq IS NULL ORDER BY d.id",
         (online_after(now, online_seconds), online_seconds, wg_id),
     ).fetchall()
+    unpaid = bool(found) and credit.exhausted(connection, found[0][7], now)
     return [
         Candidate(
             device_id=str(row[0]),
@@ -77,6 +82,7 @@ def candidates(connection: Connection, wg_id: UUID | str, now: datetime, online_
             capacity=_capacity(row[1], stale=bool(row[4])),
             wg_vm=_wg_vm(row[3]),
             refused=bool(row[5]),
+            unpaid=unpaid and row[6] == "platform",
         )
         for row in found
     ]
