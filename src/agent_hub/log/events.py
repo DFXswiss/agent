@@ -141,10 +141,9 @@ def kind_rule(kind: str, scope: str, author_kind: str) -> KindRule:
 
 def _is_subject(value: object, state: OrgState) -> bool:
     """A user of the org (`principals`, active or not) or a user invitation of its log, in the state at `lh`."""
-    if not isinstance(value, str):
-        return False
-    principal = state.principals.get(value)
-    invite = state.invites.get(value)
+    # the header format (E1) makes `ref` a string
+    principal = state.principals.get(cast(str, value))
+    invite = state.invites.get(cast(str, value))
     return (principal is not None and principal.kind == USER) or (invite is not None and invite.kind == USER)
 
 
