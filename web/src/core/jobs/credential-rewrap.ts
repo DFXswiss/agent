@@ -50,10 +50,10 @@
 //
 // GitHub identities (ADR-078 section 1): the rotation body holds the primary records only (`/v1/me/credentials` lists
 // one record per kind, the contract allows four records); right after the rotation the user's further `github` records
-// are re-sealed under the new epoch (`rewrapOwnIdentities`, same ID, version + 1). Should that fail, the job
-// `github-rewrap` does it on its next run.
+// are re-sealed under the new epoch (`rewrapOwnIdentities`, same ID, version + 1; the identity module is imported only
+// then, so it stays out of the first load, 06-web.md section 12.2). Should that fail, the job `github-rewrap` does it
+// on its next run.
 import { formatTime } from '../encoding/time';
-import { rewrapOwnIdentities } from '../github/identities';
 import { Secret } from '../crypto/secret';
 import {
   deleteCredential,
@@ -331,7 +331,7 @@ export async function rotateCredentialKey(
   for (const loss of losses.values()) handled.add(loss.key);
   try {
     // the further GitHub identities follow at once (module comment); a failure is left to the job `github-rewrap`
-    await rewrapOwnIdentities(context);
+    await import('../github/identities').then((identities) => identities.rewrapOwnIdentities(context));
   } catch {
     // the rotation itself is done
   }
