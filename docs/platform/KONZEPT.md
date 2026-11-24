@@ -698,7 +698,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** verschärft [E-04](#e-04); [E-12](#e-12) gilt weiter für die Registrierung eines Menschen im Browser;
   ändert [A3](#a-3) (Koppeln und Ersetzen nur mit Passkey-Geste gilt für das Konto eines Menschen) und ergänzt
   [Idee 34](#k-idee-34).
-- **Umsetzung:** offen – KOR-62.
+- **Umsetzung:** gebaut – [ADR-068](adr/068-agent-own-account.md) (KOR-62).
 
 <a id="e-28"></a>
 
@@ -839,6 +839,7 @@ Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
 | [E-26](#e-26) Bedienung durch KI-Agenten | Eine lange Anleitung, kein Nachschlagen, kein Anschluss für KI-Programme ohne Befehlszeile | KOR-63 |
 | [E-27](#e-27) Agent ohne Mensch | Ein Konto entsteht nur mit dem Passkey eines Menschen | KOR-62 |
+| [E-28](#e-28) Persönliche Nachricht | Keine Nachricht des Anfragenden an der Stelle der Zustimmung | KOR-64 |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
