@@ -478,14 +478,36 @@ def test_the_lookup_uses_the_path_of_the_installed_daemon(case: Case) -> None:
         assert login_cli(case) == (0, [("ok", "version", PIN)])
 
 
-def test_a_version_that_does_not_come_in_time_warns_and_the_command_is_killed(case: Case) -> None:
+def running_before_the_deadline(monkeypatch: pytest.MonkeyPatch, ready: Path) -> list[float]:
+    """The deadline of the version check counts only once the command is running: ``communicate`` of the login
+    command waits until it has written ``ready`` (a loaded machine may need seconds to start a shell), so the test
+    checks the expiry, not how fast a process starts. The returned list holds the monotonic instant the wait ended."""
+    released: list[float] = []
+
+    class Started(subprocess.Popen[bytes]):
+        def communicate(self, *args: Any, **kwargs: Any) -> tuple[Any, Any]:
+            if not released and isinstance(self.args, list) and self.args[0] == str(ready.parent / "claude"):
+                limit = time.monotonic() + 60
+                while not ready.exists() or not ready.read_text().strip():
+                    assert time.monotonic() < limit, "the login command never started"
+                    time.sleep(0.01)
+                released.append(time.monotonic())
+            return super().communicate(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", Started)  # `checks` starts the command with `subprocess.Popen`
+    return released
+
+
+def test_a_version_that_does_not_come_in_time_warns_and_the_command_is_killed(
+    case: Case, monkeypatch: pytest.MonkeyPatch
+) -> None:
     pids = case.bin / "pids"
-    case.claude(f"sleep 30 &\necho $$ $! > {pids}\nwait")
+    case.claude(f"sleep 30 &\necho $$ $! > {pids}.new\nmv {pids}.new {pids}\nwait")
     case.login_timeout = 0.3
-    started = time.monotonic()
+    released = running_before_the_deadline(monkeypatch, pids)
     assert login_cli(case) == (0, [("warn", "version_unknown", None)])
-    assert time.monotonic() - started < 10
-    deadline = time.monotonic() + 5
+    assert time.monotonic() - released[0] < 10
+    deadline = time.monotonic() + 30
     for found in pids.read_text().split():  # the command and its child: the whole process group is gone
         while True:
             try:
@@ -496,15 +518,15 @@ def test_a_version_that_does_not_come_in_time_warns_and_the_command_is_killed(ca
             time.sleep(0.05)
 
 
-def test_a_descendant_that_left_the_group_does_not_hold_the_check(case: Case) -> None:
+def test_a_descendant_that_left_the_group_does_not_hold_the_check(case: Case, monkeypatch: pytest.MonkeyPatch) -> None:
     pids = case.bin / "pids"
     # perl's setsid moves the child into a session of its own: killing the group misses it, and it keeps stdout open
     case.claude(f"perl -MPOSIX -e 'setsid(); print STDERR $$; sleep 30' 2> {pids} &\nsleep 30")
     case.login_timeout = 0.5
-    started = time.monotonic()
+    released = running_before_the_deadline(monkeypatch, pids)
     try:
         assert login_cli(case) == (0, [("warn", "version_unknown", None)])
-        assert time.monotonic() - started < 10
+        assert time.monotonic() - released[0] < 10
     finally:
         os.kill(int(pids.read_text()), signal.SIGKILL)
 
