@@ -103,7 +103,7 @@ def interpretation_problems(text: str) -> list[str]:
         return [*problems, "part C has no interpretation"]
     if numbers != list(range(1, len(numbers) + 1)):
         problems.append(f"interpretations {numbers} are not gapless from A1")
-    entries = len(re.findall(r"^- \*\*A\d+ ", part_c, re.MULTILINE))
+    entries = len(re.findall(r"^- \*\*A\d+\b", part_c, re.MULTILINE))
     if entries != len(numbers):
         problems.append(f"{entries - len(numbers)} interpretation(s) without anchor line")
     contents = CONTENTS_C_RE.findall(text)
@@ -275,6 +275,11 @@ def test_interpretation_problems_name_every_kind() -> None:
     assert interpretation_problems(_part_c(_entry(1, 1), _entry(1, 2), contents=2)) == ["A2: anchor a-1 does not match"]
     unanchored = _part_c(_entry(1, 1), f"- **A2 {DASH} Name:** x\n", contents=1)
     assert interpretation_problems(unanchored) == ["1 interpretation(s) without anchor line"]
+    undashed = _part_c(_entry(1, 1), '<a id="a-2"></a>\n- **A2:** x\n', contents=2)
+    assert interpretation_problems(undashed) == [
+        "1 interpretation(s) without anchor line",
+        f"table of contents does not name A1{DASH}A1 for part C",
+    ]
     assert interpretation_problems(_part_c(contents=1)) == ["part C has no interpretation"]
     assert interpretation_problems("no part C") == ["part C has no interpretation"]
 

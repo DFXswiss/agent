@@ -578,7 +578,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** ergänzt [§1 Punkt 1](#k-1-b1) und [§8 Punkt 1](#k-8-b1): Die Einladung bleibt der einzige Weg auf die
   Plattform, aber nicht der einzige Weg in eine weitere Organization.
 - **Umsetzung:** gebaut – [ADR-060](adr/060-direct-admission-of-existing-accounts.md) (KOR-37, direkte Aufnahme);
-  Einladung mit einem Klick KOR-36.
+  Einladung mit einem Klick gebaut (KOR-36).
 
 <a id="e-19"></a>
 
@@ -651,10 +651,10 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
-**Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln
-und offene Fragen nach dem Wortlaut des Konzepts: A1–A7 aus dem Abgleich der vollständigen Fassung vom 2026-11-23
-(dem Auftraggeber am selben Abend mitgeteilt), A8–A18 aus dem Restplan vom 2026-11-24. Sie gelten für alle Arbeiten, bis er anders entscheidet; dahinter steht die Rangfolge (die jüngere
-ausdrückliche Aussage gilt, [E-01](#e-01)).
+**Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und
+offene Fragen nach dem Wortlaut des Konzepts: A1–A7 aus dem Abgleich der vollständigen Fassung vom 2026-11-23 (dem
+Auftraggeber am selben Abend mitgeteilt), A8–A18 aus dem Restplan vom 2026-11-24. Sie gelten für alle Arbeiten, bis er
+anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Aussage gilt, [E-01](#e-01)).
 
 <a id="a-1"></a>
 - **A1 – Hilfs-KIs:** Subagenten dürfen dasselbe wie ihr Hauptagent ([E-11](#e-11) ist jünger als
@@ -710,8 +710,9 @@ ausdrückliche Aussage gilt, [E-01](#e-01)).
 - **A14 – Keine festen Grenzen:** Alle verbleibenden festen Werte werden Einstellungen; Meldegrenzen dürfen die
   Überwachung nie blind machen (ergänzt [A5](#a-5), [E-02](#e-02)).
 <a id="a-15"></a>
-- **A15 – Gemeinsame Sessions:** Jede Anweisung trägt den verifizierten Menschen, der sie gegeben hat; die Folgen
-  gehören dem Anweisenden ([Idee 36](#k-idee-36), [Idee 37](#k-idee-37)). GitHub-Aktionen laufen nur mit
+- **A15 – Gemeinsame Sessions:** Jede Anweisung trägt den verifizierten Menschen, der sie gegeben hat, und ihre
+  Folgen gehören ihm: Jede Operation daraus nennt ihn im Audit („ausgelöst durch“), der Verbrauch wird weiter der
+  Organization belastet ([Idee 36](#k-idee-36), [Idee 37](#k-idee-37)). GitHub-Aktionen laufen nur mit
   Identitäten, die der Anweisende nutzen darf ([§9 Punkt 3](#k-9-b3)).
 <a id="a-16"></a>
 - **A16 – Mittelbare Ausführung:** Workflow-Dateien im Ziel-Repository werden nicht gesperrt; ein Workflow läuft mit
@@ -767,7 +768,7 @@ Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | Regel / Stelle | Gebauter Stand heute | Schließt |
 |---|---|---|
 | [E-05](#e-05), [E-06](#e-06) allgemeiner GitHub-Weg | Fehlende GitHub-Verbindung wird gemeldet, nicht angestoßen (außer bei freigegebenen Nutzern); andere fehlende Voraussetzungen (Modellzugang, Guthaben, Gerät) werden nur angezeigt | KOR-25; übrige Voraussetzungen KOR-49 |
-| [E-11](#e-11) übrige Freigaben | Freigabe von Team-Organisationen für DFX-Geräte, Freigabe der Betreiber-Abos je Organization, Plattform-Einladung nur mit eigener Rolle und Workgroup-Rechte sind noch Voraussetzungen | KOR-49 |
+| [E-11](#e-11) übrige Freigaben | Freigabe von Team-Organisationen für DFX-Geräte, Freigabe der Betreiber-Abos je Organization, Plattform-Einladung nur mit eigener Rolle und die festen Betreiber-Listen sind noch Voraussetzungen | KOR-49 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |

@@ -23,3 +23,9 @@ integration branch ([`../KONZEPT.md`](../KONZEPT.md), part D rule 3).
 5. **The test knows the interpretation anchors.** `interpretation_problems` in `tests/platform/test_konzept.py`
    checks that part C numbers its interpretations gaplessly from A1, each right under its anchor `a-N`, and that the
    table of contents names the range.
+6. **Review findings taken over:** A15 says what "the consequences belong to the instructing human" means (audit
+   "triggered by", usage still charged to the organization); E-18 marks the one-click invitation as built (KOR-36);
+   the part D row of E-11 no longer lists workgroup rights (they are the concept's rights model, not a release) but
+   the fixed operator lists; R-16 rows K-30 (ADR-058), K-16 (ADR-062), K-37 (KOR-47) and K-42 (KOR-51) updated.
+   Not taken over: A18 keeps "gezählt" although kernel refusals may not be observable on every guest kernel
+   (ADR-063 §5) – the interpretation states the target, KOR-60 checks what can be counted.
