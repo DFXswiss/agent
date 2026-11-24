@@ -136,10 +136,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | notifications-read | screens/notifications | `notifications read --id --all` | done |
 | monitoring | screens/monitoring (devices, VMs, sessions, work VMs) | `monitoring --org --entity-kind --entity-id --metric --range` | done |
 | audit | screens/audit | `audit --org --verify --action --actor --wg --task --session --before` | done |
-| platform-invites | screens/platform-invites (every user while the switch `open_platform_invites` is on, ADR-077) | `platform invite\|list\|revoke` | done |
-| platform-settings | screens/platform-invites (whether the user may invite: role or switch of the verified platform log, ADR-077) | `platform settings` | done |
-| task-model-access | screens/task (the card that connects the Claude subscription after `model_access_unavailable`; the hub continues the task, ADR-077) | `task show`, `claude connect` | done |
-| task-auto-assign | screens/home (an admin's first task in a workgroup without a device assigns a platform device, ADR-077) | `task create` | done |
+| platform-invites | screens/platform-invites (every user while the switch `open_platform_invites` is on, ADR-078) | `platform invite\|list\|revoke` | done |
+| platform-settings | screens/platform-invites (whether the user may invite: role or switch of the verified platform log, ADR-078) | `platform settings` | done |
+| task-model-access | screens/task (the card that connects the Claude subscription after `model_access_unavailable`; the hub continues the task, ADR-078) | `task show`, `claude connect` | done |
+| task-auto-assign | screens/home (an admin's first task in a workgroup without a device assigns a platform device, ADR-078) | `task create` | done |
 | security | screens/security | `security` | done |
 | community-read | screens/community (messages, key, unread count) | `community status`, `community messages --before --after --limit --mark-read` | done |
 | community-post | screens/community | `community post --text --name` | done |

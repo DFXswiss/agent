@@ -43,7 +43,7 @@ PATH_FORBIDDEN_SEGMENTS = ("", ".", "..")
 PATH_FORBIDDEN_SEGMENTS_CASEFOLD = (".git",)
 TITLE_RE = re.compile("^[^\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]{1,120}$")
 DEFAULT_PROTECTED: tuple[str, ...] = ()
-"""No platform-side default (ADR-077 section 3, A17): GitHub's own branch protection applies; a workgroup may set
+"""No platform-side default (ADR-078 section 3, A17): GitHub's own branch protection applies; a workgroup may set
 its own list."""
 COMMIT_LIMITS = {"file_bytes": 10485760, "files": 500, "total_bytes": 52428800, "message_max_length": 4096}
 CHECKOUT_LIMITS = {"archive_bytes": 536870912}

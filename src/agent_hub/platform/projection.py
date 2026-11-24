@@ -12,9 +12,9 @@ rebuilt state agree:
 - `device_decertify`: device state `decertified` (the gate refuses the device with `key_revoked`, HUB-08);
 - `role_grant` / `role_revoke`: `platform_role` (`granted_seq`, `revoked_seq`);
 - `org_platform_access`: `org.platform_access_grant` and `org.platform_access` (a private org keeps `true`, ADR-026);
-- `platform_policy` (ADR-077): `platform_policy`; the switch `open_platform_access` derives `org.platform_access` of
+- `platform_policy` (ADR-078): `platform_policy`; the switch `open_platform_access` derives `org.platform_access` of
   every org again (`private OR COALESCE(platform_access_grant, on)`: an explicit `org_platform_access` wins);
-- `org_operator_subscriptions`: nothing (the runner and the clients read it from the verified platform log, ADR-077);
+- `org_operator_subscriptions`: nothing (the runner and the clients read it from the verified platform log, ADR-078);
 - `root`, `user_certify`, `user_decertify`: nothing (the certifications of users are read from the verified platform
   log, ADR-060).
 

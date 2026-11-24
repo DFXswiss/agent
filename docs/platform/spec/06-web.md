@@ -359,7 +359,7 @@ user).
 
 - When the main session failed with `model_access_unavailable`, the task's owner sees a card "Connect your Claude
   subscription – the task continues by itself once it is connected" that leads to the connection (§8.2); others see
-  that the owner was asked. The hub continues the task when a model credential is stored (ADR-077 §4, E-05).
+  that the owner was asked. The hub continues the task when a model credential is stored (ADR-078 §4, E-05).
 
 - Timeline from events of the wg scope filtered by `task` (`GET /v1/scopes/{wg}/events?task=…` + SSE), ordered by
   `(ts, scope_seq)`:
@@ -453,7 +453,7 @@ the same readable views of issue and pull request lists and of a read issue as t
   "Access in X is being updated"; `task.attention`: "Task Y needs your decision" / "Task Y is stuck" with the reason
   from `ref`, KOR-39; `device.needed` to admins: "Workgroup X in Y needs a computer – assign one", to the devices
   screen; `operator.request` to operators, account level: "Organization <id> has used up its credit and requests
-  more" / "… waits for access to the platform's computers", ADR-077); click marks read and navigates
+  more" / "… waits for access to the platform's computers", ADR-078); click marks read and navigates
   (`task.attention`: to the situation view entry); "Mark all read".
 - Toasts for live notifications (auto-dismiss 6 s, accessible live region).
 
@@ -537,7 +537,7 @@ event); the note says "Every admin of the organization can read it. You can writ
 ### 7.4 Platform invitations (`/platform/invites`, `platform:inviter`)
 
 Shown to users with the role `inviter` and, while the root-signed switch `open_platform_invites` is on, to every user
-(both read from the verified platform log, ADR-077); a user without the role sees only its own invitations. Create (code generated client-side, `POST /v1/platform/invites` with `invite_id` and expiry), show link/code once,
+(both read from the verified platform log, ADR-078); a user without the role sees only its own invitations. Create (code generated client-side, `POST /v1/platform/invites` with `invite_id` and expiry), show link/code once,
 list open/used/revoked/expired, revoke.
 
 ### 7.5 Org switcher

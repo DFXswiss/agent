@@ -198,7 +198,7 @@ export async function allowRepositories(
   }, `/o/${org}/w/${wg}/settings`);
   await expect(page.getByTestId('wg-settings.repositories')).toBeVisible({ timeout: 30_000 });
   await page.getByTestId('wg-settings.repositories').fill(repositories.join('\n'));
-  // the platform protects no branch by default (ADR-077); a workgroup sets its own list
+  // the platform protects no branch by default (ADR-078); a workgroup sets its own list
   if (protectedBranches !== undefined)
     await page.getByTestId('wg-settings.protected').fill(protectedBranches.join('\n'));
   await page.getByTestId('wg-settings.save').click();

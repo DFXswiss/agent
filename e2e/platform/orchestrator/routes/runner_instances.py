@@ -14,7 +14,7 @@ runner instances with separate `AGENT_RUNNER_HOME`").
   `max_vms` set `AGENT_RUNNER_SESSIONS_PER_VM` / `AGENT_RUNNER_MAX_VMS` (E2E-57: a full VM, a second VM, a full
   device; ADR-075). `operator_subscriptions: true` gives it a pool of the operator's subscriptions
   (`AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR`, a 0700 directory beside its home with one 0600 token file of the
-  subscription token shape, random per spawn; E2E-59: which organizations use it comes from the platform log, ADR-077).
+  subscription token shape, random per spawn; E2E-60: which organizations use it comes from the platform log, ADR-078).
   Answers `{name, state, vm_prefix, home}`.
 - `POST /runners/{name}/remove`: stops a spawned runner, deletes its VMs (names with its prefix), its home and its
   operator-subscription directory and forgets it, so the final checks do not expect it running (a decertified or

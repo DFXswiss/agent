@@ -12,8 +12,8 @@
 // | `rotation.required` | "Access in X is being updated" (neutral; the hub no longer creates it, ADR-058) | the org's members |
 // | `org.admitted` | "Z admitted you to X" (`ref` = the admitting admin, ADR-060) | the org |
 // | `operator.request` | "Organization <id> needs credit" / "… waits for access to the platform's computers" (to
-//   operators, no org, `ref` = `<reason>:<org id>`, ADR-077) | the settings |
-// | `device.needed` | "Workgroup X in Y needs a computer – assign one" (to admins, ADR-077) | the org's devices |
+//   operators, no org, `ref` = `<reason>:<org id>`, ADR-078) | the settings |
+// | `device.needed` | "Workgroup X in Y needs a computer – assign one" (to admins, ADR-078) | the org's devices |
 // | `agent.account_change` | "Agent A removed a passkey" (replaced the recovery code, disconnected an agent, …;
 //   `ref` = `<action>:<acting agent id>:<target>`, no org; `agent_paired_remote` (ADR-067): a pairing from another
 //   computer was confirmed, named by the new agent, the target) | the settings |
@@ -70,7 +70,7 @@ export interface Message {
   readonly reason?: string;
 }
 
-/** The reasons of an `operator.request` (ADR-077 section 4). */
+/** The reasons of an `operator.request` (ADR-078 section 4). */
 export const OPERATOR_REASONS = ['credit_exhausted', 'platform_access_required'];
 
 /** Category and reason of a `task.attention` row (`ref` = `<category>:<reason>:<seq|wg>`); null when malformed. */

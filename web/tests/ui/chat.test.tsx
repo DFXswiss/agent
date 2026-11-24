@@ -363,7 +363,7 @@ describe('chat timeline and items', () => {
     expect(screen.queryAllByTestId('countdown.panel')).toHaveLength(1);
   });
 
-  it('shows the owner the card that connects model access, others that the owner was asked (ADR-077)', async () => {
+  it('shows the owner the card that connects model access, others that the owner was asked (ADR-078)', async () => {
     const { t } = await taskPage({
       session: { state: 'failed', state_reason: 'model_access_unavailable' },
       task: { state: 'failed' },

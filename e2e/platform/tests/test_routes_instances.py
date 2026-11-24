@@ -320,7 +320,7 @@ def test_forge_event_refusals(ctx: Context, body: Any, detail: str) -> None:
 
 
 def test_spawn_with_the_operators_subscription_pool(ctx: Context) -> None:
-    """KOR-49 (E2E-59): a platform runner with an operator-subscription directory (one token file, 0700/0600); the
+    """KOR-49 (E2E-60): a platform runner with an operator-subscription directory (one token file, 0700/0600); the
     directory is removed with the runner; organization devices and non-boolean options are refused."""
     node = node_of(ctx)
     assert call(ctx, "POST", "/runners/runner-2/spawn", {"operator_subscriptions": False})[0] == 200

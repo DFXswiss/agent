@@ -1,4 +1,4 @@
-"""The switches and lists of the platform log at the hub (KOR-49, ADR-077 sections 2 and 3): `platform_policy`,
+"""The switches and lists of the platform log at the hub (KOR-49, ADR-078 sections 2 and 3): `platform_policy`,
 `org_operator_subscriptions` and the role `operator` are appended only after every active device - platform and
 organization devices - announced `log.policy` (`409 peer_outdated`); a list entry needs a known organization; the
 switch `open_platform_access` derives `org.platform_access` of every organization without an explicit
@@ -73,7 +73,7 @@ def _features(hub: HubHarness, device: str, features: list[str]) -> None:
 
 
 def test_new_entries_wait_until_every_active_device_announced_the_feature(plat: Platform, hub: HubHarness) -> None:
-    """ADR-077 section 2: an older runner would stop at the new types; organization devices verify the platform log
+    """ADR-078 section 2: an older runner would stop at the new types; organization devices verify the platform log
     too, so they count as well. `role_grant` of `inviter` and `user_certify` are not held back by this feature."""
     device = plat.enroll()
     plat.append("device_certify", **device.certify_fields())

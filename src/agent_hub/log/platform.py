@@ -14,7 +14,7 @@ Every entry is signed by the platform root (label `platform-log\\0`); the root p
    user to its identity keys (ADR-060): the user has no valid certification and its ID was never certified as a
    device (and a device ID never as a user); `user_decertify` ends the user's valid certification;
    `platform_policy` sets a switch and `org_operator_subscriptions` an organization's use of the operator's
-   subscriptions (ADR-077; the latest entry counts, any value is allowed).
+   subscriptions (ADR-078; the latest entry counts, any value is allowed).
 
 Identity anchors of users (ADR-060, `identity_anchored`): the entry `seq` is a `user_certify` of `(user, pub)` and
 the identity proof is `""`, or a `user_invite` for which `user` is the ID derived from the invitation
@@ -100,9 +100,9 @@ class PlatformState:
     user_invites: Mapping[int, str] = field(default_factory=dict)
     """`seq -> invite_id` of every `user_invite`."""
     policies: Mapping[str, bool] = field(default_factory=dict)
-    """`name -> on` of the latest `platform_policy` of each switch (ADR-077 §2; a switch without one is off)."""
+    """`name -> on` of the latest `platform_policy` of each switch (ADR-078 §2; a switch without one is off)."""
     operator_subscriptions: Mapping[str, bool] = field(default_factory=dict)
-    """`org -> granted` of the latest `org_operator_subscriptions` of each organization (ADR-077 §2)."""
+    """`org -> granted` of the latest `org_operator_subscriptions` of each organization (ADR-078 §2)."""
 
     def identity_anchored(
         self, seq: int, user: str, pub: Mapping[str, str], id_sig: object, *, current: bool = False
@@ -153,16 +153,16 @@ class PlatformState:
         return (user, role) in self.roles
 
     def platform_access(self, org: str, private: bool) -> bool:
-        """ADR-026, ADR-077 §3: a private org has platform access; any other org by its latest `org_platform_access`,
+        """ADR-026, ADR-078 §3: a private org has platform access; any other org by its latest `org_platform_access`,
         and without one by the switch `open_platform_access`."""
         return private or self.org_access.get(org, self.policy("open_platform_access"))
 
     def policy(self, name: str) -> bool:
-        """The switch `name` (ADR-077 §2): on only after a `platform_policy` turned it on."""
+        """The switch `name` (ADR-078 §2): on only after a `platform_policy` turned it on."""
         return self.policies.get(name, False)
 
     def operator_subscribed(self, org: str) -> bool:
-        """ADR-077 §3: the latest `org_operator_subscriptions` of the org grants the operator's subscriptions."""
+        """ADR-078 §3: the latest `org_operator_subscriptions` of the org grants the operator's subscriptions."""
         return self.operator_subscriptions.get(org, False)
 
     def head_value(self) -> Head:

@@ -22,7 +22,7 @@ The concept in full (47 ideas) and the client's binding rules, which take preced
 | `08-monitoring.md` | metrics device → VM → session, reuse of the existing monitoring stack, display |
 | `09-milestones.md` | milestones and acceptance criteria |
 | `14-community.md` | the community: one group chat of all users (data, API, crypto, web; KOR-26, ADR-069) |
-| `15-prerequisites.md` | the register of every code a task can wait for or be refused for, with its justification and the step the platform starts (KOR-49, ADR-077) |
+| `15-prerequisites.md` | the register of every code a task can wait for or be refused for, with its justification and the step the platform starts (KOR-49, ADR-078) |
 | `../adr/NNN-*.md` | one decision per file |
 
 Not part of the specification: `docs/host-*.md` are workspace-internal operator notes required by `PROJECT.md`

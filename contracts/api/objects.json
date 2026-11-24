@@ -871,7 +871,7 @@
               "type": "null"
             }
           ],
-          "description": "null only for agent.account_change (an account-level notification, 11-agent-access.md section 8) and operator.request (a request to the operator, ADR-077)"
+          "description": "null only for agent.account_change (an account-level notification, 11-agent-access.md section 8) and operator.request (a request to the operator, ADR-078)"
         },
         "wg_id": {
           "anyOf": [

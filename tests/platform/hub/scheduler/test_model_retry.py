@@ -1,4 +1,4 @@
-"""U-HUB-scheduler (model-access continuation, KOR-49, ADR-077 section 4, rule E-05): a main session that failed
+"""U-HUB-scheduler (model-access continuation, KOR-49, ADR-078 section 4, rule E-05): a main session that failed
 `model_access_unavailable` gets the hub's next attempt once its owner stores a model credential - in the transaction
 that stores the credential, or at once when the credential arrived while the start ran - which takes over the
 undelivered prompts exactly as the capacity retry does; nothing else starts an attempt."""

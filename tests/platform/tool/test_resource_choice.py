@@ -301,7 +301,7 @@ def test_diagnose_falls_back_to_the_transition_reason(tool: Tool, hub: HubFake, 
     assert tool.run("diagnose", "--task", task_id)[1]["findings"][-1]["reason"] == "keys_pending"
 
 
-# --- the first task of an admin assigns a device (ADR-077, rule E-05) ---
+# --- the first task of an admin assigns a device (ADR-078, rule E-05) ---
 
 
 def test_an_admins_task_assigns_a_platform_device_first(tool: Tool, hub: HubFake, account: User) -> None:

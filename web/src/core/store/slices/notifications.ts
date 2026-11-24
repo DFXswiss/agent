@@ -26,7 +26,7 @@ export const NOTIFICATION_KINDS = [
 /** The account-level kind (no org): an account-changing action of one of the user's agents (11-agent-access.md
  *  section 8); `ref` is `<action>:<agent id>`. */
 export const ACCOUNT_KIND = 'agent.account_change';
-/** The other account-level kind: a request to the operator (ADR-077); `ref` is `<reason>:<org id>`. */
+/** The other account-level kind: a request to the operator (ADR-078); `ref` is `<reason>:<org id>`. */
 export const OPERATOR_KIND = 'operator.request';
 
 /** At most this many toasts at a time (the oldest leaves first). */

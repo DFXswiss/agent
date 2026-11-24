@@ -573,7 +573,7 @@ def test_waiting_lists_the_tasks_the_operator_must_serve(
             (own, device),
         )
     hub.clock.advance(1)
-    credit = _waiting_task(hub, own, "credit_exhausted")  # ADR-077: credit is the operator's as well
+    credit = _waiting_task(hub, own, "credit_exhausted")  # ADR-078: credit is the operator's as well
     code, out, _ = run("waiting")
     assert code == 0
     assert out.splitlines() == [
@@ -590,7 +590,7 @@ def test_waiting_lists_the_tasks_the_operator_must_serve(
 def test_switches_lists_and_the_operator_role(
     run: Callable[..., tuple[int, str, str]], hub: HubHarness, plat: Platform
 ) -> None:
-    """ADR-077 section 2: `set-policy`, `grant-operator-subscriptions [--revoke]`, `grant-role operator` and
+    """ADR-078 section 2: `set-policy`, `grant-operator-subscriptions [--revoke]`, `grant-role operator` and
     `settings`, which prints the switches and lists of the log verified with the operator's own key."""
     assert run("settings") == (
         0,

@@ -177,9 +177,9 @@ _INVITE_DEVICE: dict[str, Check] = {**_INVITE_COMMON, "wgs": _wgs(_one_of("devic
 
 # Platform log (contracts/common.json platform_body_*).
 PLATFORM_ROLES = ("inviter", "operator")
-"""Platform roles: `inviter` creates platform invitations (ADR-026), `operator` receives the requests of ADR-077 §4."""
+"""Platform roles: `inviter` creates platform invitations (ADR-026), `operator` receives the requests of ADR-078 §4."""
 PLATFORM_POLICIES = ("open_platform_access", "open_platform_invites")
-"""Switches of `platform_policy` (ADR-077 §2): off until an entry turns them on."""
+"""Switches of `platform_policy` (ADR-078 §2): off until an entry turns them on."""
 _PLATFORM_ROLE = _one_of(*PLATFORM_ROLES)
 _PLATFORM_COMMON: dict[str, Check] = {
     "seq": _seq,
@@ -210,8 +210,8 @@ _PLATFORM_TYPES: dict[str, dict[str, Check]] = {
     "org_platform_access": {"org": fields.uuid, "granted": _bool},
     "user_certify": {"user": fields.uuid, "pub": _pub},
     "user_decertify": {"user": fields.uuid},
-    "platform_policy": {"name": _one_of(*PLATFORM_POLICIES), "on": _bool},  # ADR-077
-    "org_operator_subscriptions": {"org": fields.uuid, "granted": _bool},  # ADR-077
+    "platform_policy": {"name": _one_of(*PLATFORM_POLICIES), "on": _bool},  # ADR-078
+    "org_operator_subscriptions": {"org": fields.uuid, "granted": _bool},  # ADR-078
 }
 
 LOG_TYPES = frozenset(_LOG_TYPES)

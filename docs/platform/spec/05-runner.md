@@ -63,8 +63,8 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `TEXTFILE_DIR` | empty = textfile sink off | node_exporter textfile directory (08 §3) |
 | `MODEL_CATALOG` | packaged `model-catalog.json` | §10.5 |
 | `OPENROUTER_KEY_FILE` | empty | platform devices only; file 0600; refused on org devices (`config_invalid`) |
-| `OPERATOR_SUBSCRIPTION_DIR` | empty | platform devices only (refused on org devices); directory 0700 of the runner account, not a symlink, holding the operator's subscription token files `<name>.token` (§10.1, ADR-052); alone valid since ADR-077 (the organizations come from the root-signed `org_operator_subscriptions` of the platform log) |
-| `OPERATOR_SUBSCRIPTION_ORGS` | empty = nobody | comma-separated organization IDs whose sessions may use the operator's subscriptions while the platform log has no `org_operator_subscriptions` of the organization (an entry of the log wins; kept for the move into the log, ADR-077 §3); needs `OPERATOR_SUBSCRIPTION_DIR` (the list without it: `config_invalid`) |
+| `OPERATOR_SUBSCRIPTION_DIR` | empty | platform devices only (refused on org devices); directory 0700 of the runner account, not a symlink, holding the operator's subscription token files `<name>.token` (§10.1, ADR-052); alone valid since ADR-078 (the organizations come from the root-signed `org_operator_subscriptions` of the platform log) |
+| `OPERATOR_SUBSCRIPTION_ORGS` | empty = nobody | comma-separated organization IDs whose sessions may use the operator's subscriptions while the platform log has no `org_operator_subscriptions` of the organization (an entry of the log wins; kept for the move into the log, ADR-078 §3); needs `OPERATOR_SUBSCRIPTION_DIR` (the list without it: `config_invalid`) |
 | `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` | empty / empty | the operator's own GitHub token (absolute path) and the operator's user ID (exactly one UUID; more is `config_invalid` `OPERATOR_GITHUB_USERS:one_user_only`, HOT-14); both or neither, platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
 | `CONTEXT_INTERVAL_SECONDS` / `CONTEXT_CACHE_MIB` / `CONTEXT_WORKSPACE_MIB` / `CONTEXT_TRANSCRIPT_MIB` | 600 / 20480 / 4096 / 4096 | context checkpoints (§6.6, KOR-33): interval while working (30–86400), local encrypted cache cap (every object; the newest of each task is always kept), workspace above the limit is left out, transcript above the limit cannot be checkpointed |
 | `CONTEXT_WAIT_SECONDS` | 180 | how long a restore waits for the final checkpoint of the session it continues and retries transient hub failures (0–3600, §6.6) |
@@ -703,7 +703,7 @@ Inputs: owner's `user_settings.model_access` (from `GET /v1/device/state`), owne
 this device, device kind. `auto` order: `claude_subscription` → `anthropic_api_key` → operator subscription → `platform` (only on
 platform devices with `OPENROUTER_KEY_FILE`). **Operator subscription** (ADR-052, runner only): on a platform device
 with `OPERATOR_SUBSCRIPTION_DIR`, a session of an organization granted in the verified platform log
-(`org_operator_subscriptions`, ADR-077; without such an entry: listed in `OPERATOR_SUBSCRIPTION_ORGS`) takes a usable
+(`org_operator_subscriptions`, ADR-078; without such an entry: listed in `OPERATOR_SUBSCRIPTION_ORGS`) takes a usable
 token file of the operator's pool (the file with the fewest bound sessions, then the one unused the longest); the
 explicit preference `claude_subscription` takes it too when the owner has no own subscription on this device. It is
 reported as `claude_subscription` (`session_transition`, web); only the runner log and the textfile metrics show the
@@ -711,7 +711,7 @@ pool. Token files: regular files of the runner account, mode 0600, one access to
 with `O_NOFOLLOW` and checked before reading (anything else is ignored, logged once by name and never read). Other
 organizations see no difference; an empty pool changes nothing (`model_access_unavailable` or the next kind). An explicit preference that is unavailable → session `failed`
 reason `model_access_unavailable` (no silent fallback); the task's chat offers its owner the connection, and the
-hub continues the task by itself once the owner stored a model credential (ADR-077 §4). Model: owner's `model_id` if allowed for the access kind
+hub continues the task by itself once the owner stored a model credential (ADR-078 §4). Model: owner's `model_id` if allowed for the access kind
 in the catalog, else the catalog default (`platform`: `deepseek/deepseek-v4.1-flash-1017`; API key/subscription:
 Claude Code default, no `--model`). Chosen kind and model are reported in `session_transition`.
 

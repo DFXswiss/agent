@@ -4,7 +4,7 @@
   transaction wrote and the `ping` hints to the devices of the pinged sessions;
 - `task.state` (sessions): `task.idle` / `task.failed` to the owner;
 - `task.attention` (attention, KOR-39): `task.attention` to the owner; `operator.request` to the operators and
-  `device.needed` to the admins (ADR-077);
+  `device.needed` to the admins (ADR-078);
 - `invite.accepted` (invites): `invite.accepted` to the inviting admin.
 
 Owed rotations (`log.appended`, `device.decertified`) no longer notify anybody: the admins' browsers run them silently

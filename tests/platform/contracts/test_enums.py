@@ -119,7 +119,7 @@ SPEC_AUDIT_PATTERNS = {
     "device_request": "pending delivered answered failed expired",
     # 04-crypto.md section 4.8
     "platform": "root device_invite device_certify device_decertify role_grant role_revoke user_invite"
-    " org_platform_access user_certify user_decertify platform_policy org_operator_subscriptions",  # ADR-077
+    " org_platform_access user_certify user_decertify platform_policy org_operator_subscriptions",  # ADR-078
 }
 # "invitations" of 02-data-model.md section 2.9, made concrete (decisions/CTR-01.md) and credential rotation
 # (03-api.md section 4.8); the rejected outbox item of 03-api.md section 6.1 (contracts/changes/HUB-10.md).

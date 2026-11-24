@@ -2735,7 +2735,7 @@
     },
     "platform_body_platform_policy": {
       "type": "object",
-      "description": "body of a platform_policy entry (ADR-077: a switch, the latest entry of a name counts)",
+      "description": "body of a platform_policy entry (ADR-078: a switch, the latest entry of a name counts)",
       "properties": {
         "seq": {
           "$ref": "#/$defs/seq"
@@ -2791,7 +2791,7 @@
     },
     "platform_body_org_operator_subscriptions": {
       "type": "object",
-      "description": "body of a org_operator_subscriptions entry (ADR-077: the organization's members use the operator's subscriptions)",
+      "description": "body of a org_operator_subscriptions entry (ADR-078: the organization's members use the operator's subscriptions)",
       "properties": {
         "seq": {
           "$ref": "#/$defs/seq"

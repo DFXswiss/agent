@@ -1,6 +1,6 @@
 {
-  "name": "e2e-59-no-approval",
-  "description": "E2E-59: no approval as a precondition. A team organization works at once on the platform device with the switch open_platform_access on; the operator's subscription pool serves an organization granted in the platform log and stops after the revocation, without a runner restart; a task that failed for want of model access continues by itself once the owner stores an API key; a push to main goes through without a workgroup list and a commit to main is refused branch_protected once the workgroup lists main.",
+  "name": "e2e-60-no-approval",
+  "description": "E2E-60: no approval as a precondition. A team organization works at once on the platform device with the switch open_platform_access on; the operator's subscription pool serves an organization granted in the platform log and stops after the revocation, without a runner restart; a task that failed for want of model access continues by itself once the owner stores an API key; a push to main goes through without a workgroup list and a commit to main is refused branch_protected once the workgroup lists main.",
   "steps": [
     {
       "id": "open",

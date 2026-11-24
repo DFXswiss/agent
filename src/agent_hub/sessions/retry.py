@@ -106,7 +106,7 @@ def start(connection: Connection, task: TaskRow, created: datetime, effects: Eff
     """Create and place the next attempt (after the refusal is stored, so the scheduler sees it); the derived task.
     At the refusal limit the attempt waits and is held back (module docstring). `reason` is the reason of the
     attempt's first transition: `capacity_exhausted`, or `model_access_unavailable` for the attempt after the owner
-    connected model access (`agent_hub.sessions.model_retry`, ADR-077), which is never held back."""
+    connected model access (`agent_hub.sessions.model_retry`, ADR-078), which is never held back."""
     limit = settings.capacity_refusals()
     # the attempt counts as the next one in the row: the refusals before it are the row of the refused session
     held = reason == REASON and refusals(_newest(connection, task.id, limit)) >= limit

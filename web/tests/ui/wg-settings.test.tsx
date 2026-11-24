@@ -176,7 +176,7 @@ describe('workgroup settings', () => {
     expect(await screen.findByTestId('wg-settings.view.repositories')).toHaveTextContent(
       'Every repository of the GitHub connection is allowed.',
     );
-    // ADR-077: no protected branch by default; GitHub's own branch protection applies
+    // ADR-078: no protected branch by default; GitHub's own branch protection applies
     expect(screen.getByTestId('wg-settings.view.protected')).toHaveTextContent(
       'No branch is protected here; the branch protection of the repository at GitHub applies.',
     );

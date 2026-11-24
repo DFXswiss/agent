@@ -82,7 +82,7 @@ USER_TYPES = frozenset({"user_certify", "user_decertify"})
 ROLE_TYPES = frozenset({"role_grant", "role_revoke"})
 OPERATOR_ROLE = "operator"
 POLICY_TYPES = frozenset({"platform_policy", "org_operator_subscriptions"})
-"""ADR-077: entries an older runner does not know; like `USER_TYPES` they wait for the runners' feature `log.policy`
+"""ADR-078: entries an older runner does not know; like `USER_TYPES` they wait for the runners' feature `log.policy`
 (also a `role_grant` / `role_revoke` of the new role `operator`)."""
 MAX_DETAIL_DEVICES = 64
 
@@ -174,7 +174,7 @@ def _check_hub_rules(connection: psycopg.Connection[Any], body: dict[str, object
 
 
 def _require_feature(connection: psycopg.Connection[Any], feature: str, kind: str | None) -> None:
-    """ADR-060, ADR-077: an older runner verifies the whole platform log and would stop at an unknown type or value
+    """ADR-060, ADR-078: an older runner verifies the whole platform log and would stop at an unknown type or value
     (and so miss every later decertification); every active device (of `kind`, or of every kind: organization devices
     verify the platform log too) must have announced `feature` first."""
     active = [

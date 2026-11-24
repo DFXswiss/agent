@@ -647,7 +647,7 @@ def test_operator_subscriptions_and_operator_github_together(
 
 
 def test_the_operator_list_needs_the_directory(base: dict[str, str], operator_dir: Path) -> None:
-    """ADR-077: the directory alone is valid (the organizations come from the platform log); the list needs it."""
+    """ADR-078: the directory alone is valid (the organizations come from the platform log); the list needs it."""
     base["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"] = str(operator_dir)
     alone = load(base, device_kind="platform")
     assert (alone.operator_subscription_dir, alone.operator_subscription_orgs) == (operator_dir, frozenset())

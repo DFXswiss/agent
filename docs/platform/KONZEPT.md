@@ -397,7 +397,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   korrekte Antwort besteht darin das GitHub Login anzustossen“
 - **Bezug:** ergänzt [§9](#k-9) und [Idee 32](#k-idee-32); gilt als Muster für jede fehlende Voraussetzung.
 - **Umsetzung:** gebaut – für GitHub [ADR-066](adr/066-held-github-operations.md) (KOR-25); für Modellzugang,
-  Guthaben, Gerät und Plattformzugang [ADR-077](adr/077-no-approval-as-precondition.md) (KOR-49); jede Voraussetzung
+  Guthaben, Gerät und Plattformzugang [ADR-078](adr/078-no-approval-as-precondition.md) (KOR-49); jede Voraussetzung
   mit dem Schritt, den die Plattform anstößt, im Register [spec/15-prerequisites.md](spec/15-prerequisites.md).
 
 <a id="e-06"></a>
@@ -491,7 +491,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Umsetzung:** gebaut für Repositories – [ADR-054](adr/054-repository-list-optional.md) (KOR-30) – und für die
   Arbeits-VM ohne Befehlsfilter – [ADR-059](adr/059-work-vm-on-request.md) (KOR-29); Inventur, Register mit Prüfung,
   vom Root signierte Schalter und die Betreiber-Abo-Liste im Plattform-Log, keine geschützten Branches als
-  Voreinstellung – [ADR-077](adr/077-no-approval-as-precondition.md) (KOR-49); die Schalter legt der Betreiber nach
+  Voreinstellung – [ADR-078](adr/078-no-approval-as-precondition.md) (KOR-49); die Schalter legt der Betreiber nach
   dem Entscheid des Auftraggebers um (Teil D).
 
 <a id="e-12"></a>
@@ -853,7 +853,7 @@ Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 
 | Regel / Stelle | Gebauter Stand heute | Schließt |
 |---|---|---|
-| [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber über ein Startguthaben entscheidet (die Schalter sind gebaut, [ADR-077](adr/077-no-approval-as-precondition.md)); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
+| [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber über ein Startguthaben entscheidet (die Schalter sind gebaut, [ADR-078](adr/078-no-approval-as-precondition.md)); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |

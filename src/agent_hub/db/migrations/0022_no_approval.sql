@@ -1,10 +1,10 @@
 -- 0022_no_approval: switches of the platform log, the platform role `operator` and the requests to operators and admins
--- (KOR-49, ADR-077; 02-data-model.md sections 2.1, 2.2 and 2.6).
+-- (KOR-49, ADR-078; 02-data-model.md sections 2.1, 2.2 and 2.6).
 --
 -- `platform_policy` projects the latest `platform_policy` entry of each switch (`agent_hub.platform.projection`); a
 -- switch without a row is off. `org.platform_access_grant` keeps the latest `org_platform_access` of the org (NULL:
 -- none), so `org.platform_access` = `private OR COALESCE(platform_access_grant, <switch open_platform_access>)` can be
--- derived again when the switch changes. `operator` is a new platform role (the requests of ADR-077 section 4 go to
+-- derived again when the switch changes. `operator` is a new platform role (the requests of ADR-078 section 4 go to
 -- its holders). `operator.request` (account level without an org, to operators) and `device.needed` (to the org's
 -- admins) are new notification kinds; the checks are replaced NOT VALID like in 0010, 0013 and 0021.
 

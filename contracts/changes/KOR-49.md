@@ -1,6 +1,6 @@
 # KOR-49 – contract changes
 
-ADR-027 section 3 (additive); design: ADR-077 (no approval as a precondition).
+ADR-027 section 3 (additive); design: ADR-078 (no approval as a precondition).
 
 - `common.json`: platform-log bodies `platform_body_platform_policy` (`name` ∈ `open_platform_access`,
   `open_platform_invites`, `on` bool) and `platform_body_org_operator_subscriptions` (`org`, `granted` bool) in

@@ -1,7 +1,7 @@
-# KOR-49: decisions of the end-to-end scenario E2E-59
+# KOR-49: decisions of the end-to-end scenario E2E-60
 
-Spec `e2e/platform/specs/e2e-59-no-approval.spec.ts`, model-double scenario `e2e/platform/scenarios/e2e-59-no-approval.json`,
-row E2E-59 in [07-testing.md](../spec/07-testing.md) section 2.1. Design: [ADR-077](../adr/077-no-approval-as-precondition.md).
+Spec `e2e/platform/specs/e2e-60-no-approval.spec.ts`, model-double scenario `e2e/platform/scenarios/e2e-60-no-approval.json`,
+row E2E-60 in [07-testing.md](../spec/07-testing.md) section 2.1. Design: [ADR-078](../adr/078-no-approval-as-precondition.md).
 
 1. **One spec, the order of the model double.** The double consumes its steps strictly in order, so the spec runs the
    parts one after another: switch off, switch on, operator subscriptions, model access, branches, the forged switch

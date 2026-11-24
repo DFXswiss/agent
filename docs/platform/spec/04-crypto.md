@@ -266,13 +266,13 @@ device anyway. Vectors for R (every entry type, edge cases) are part of `contrac
 Same entry structure with `P‖"platform-log\0"` as signature label; all entries signed by the platform root.
 Types: `root` (seq 0, `pub`), `device_invite` (`invite_id`, `pk_inv`, `expires`), `device_certify`
 (`device`, `pub{kem,sig}`, `invite_id`, `enroll_sig`, `inv_sig` – both over the enrollment text of §3),
-`device_decertify` (`device`), `role_grant` / `role_revoke` (`subject` user, `role` = `inviter` or – ADR-077 –
+`device_decertify` (`device`), `role_grant` / `role_revoke` (`subject` user, `role` = `inviter` or – ADR-078 –
 `operator`), `user_invite`
 (`invite_id`, `pk_inv`, `expires`; `pk_inv` since ADR-043; platform user invitation created by the operator CLI `agent-hub platform invite-user`,
 the bootstrap path for the first users and inviters), `org_platform_access` (`org`, `granted` bool; ADR-026),
 `user_certify` (`user`, `pub{kem,sig}`; ADR-060: the root attests the identity keys of an existing account; refused
 while the user has a valid certification or when the ID was ever certified as a device, and `device_certify` is refused
-for an ID that was ever certified as a user), `user_decertify` (`user`; ends the valid certification), and – ADR-077 –
+for an ID that was ever certified as a user), `user_decertify` (`user`; ends the valid certification), and – ADR-078 –
 `platform_policy` (`name` ∈ `open_platform_access`, `open_platform_invites`, `on` bool; a switch, off without an
 entry) and `org_operator_subscriptions` (`org`, `granted` bool; the organization uses the operator's subscriptions);
 for both the latest entry counts. Platform access of an org (ADR-026): private, else its latest `org_platform_access`,
@@ -392,7 +392,7 @@ existing `CK` is wrapped for the org's devices by catch-up (W2).
 2. The hub marks the platform invitation used and sets `org.platform_access = true` (ADR-026). Without a platform
    invitation bound to the user, `genesis{private:true}` is refused (`platform_invite_required`); any user may
    create non-private orgs, which need a root-signed `org_platform_access` entry – or the switch `open_platform_access`
-   (ADR-077) – before platform devices can be assigned.
+   (ADR-078) – before platform devices can be assigned.
 
 ### 5.4 Login and unlock
 

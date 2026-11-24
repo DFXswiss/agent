@@ -12,7 +12,7 @@ first, the operator's ones with `created_by` null) and revoke open ones; a used 
 (`invite_consumed`). The registration through a platform invitation (HUB-03) and its use by the private-org genesis
 (HUB-05) work on the same rows.
 
-ADR-077 §3: while the switch `open_platform_invites` of the platform log is on (projection `platform_policy`), every
+ADR-078 §3: while the switch `open_platform_invites` of the platform log is on (projection `platform_policy`), every
 user may create platform invitations; such a user without the role lists and revokes only the invitations it created
 itself (the invitation stays mandatory: only who may invite changes).
 """
@@ -47,7 +47,7 @@ def holds_role(connection: psycopg.Connection[Any], user: UUID) -> bool:
 
 
 def invites_open(connection: psycopg.Connection[Any]) -> bool:
-    """The switch `open_platform_invites` is on (ADR-077)."""
+    """The switch `open_platform_invites` is on (ADR-078)."""
     row = connection.execute('SELECT "on" FROM hub.platform_policy WHERE name = %s', (OPEN_INVITES,)).fetchone()
     return row is not None and bool(row[0])
 

@@ -75,7 +75,7 @@ def ts(minutes: int) -> str:
 
 ORG = pid("org")
 OTHER_ORG = pid("org/other")
-"""An organization without an `org_platform_access` of its own (ADR-077 switch vectors)."""
+"""An organization without an `org_platform_access` of its own (ADR-078 switch vectors)."""
 W0 = pid("wg/default")
 W1 = pid("wg/one")
 W2 = pid("wg/two")
@@ -270,7 +270,7 @@ def platform_builder() -> PlatformBuilder:
     log.add("user_certify", user=pid("bob"), pub=pub("bob"))  # 14
     log.add("user_decertify", user=pid("bob"))  # 15
     log.add("user_certify", user=pid("bob"), pub=pub("hub"))  # 16 (bob's identity renewed)
-    # switches, the operator-subscription list and the role `operator` (ADR-077)
+    # switches, the operator-subscription list and the role `operator` (ADR-078)
     log.add("platform_policy", name="open_platform_access", on=True)  # 17
     log.add("org_operator_subscriptions", org=ORG, granted=True)  # 18
     log.add("role_grant", subject=pid("alice"), role="operator")  # 19
@@ -1252,7 +1252,7 @@ def build_platform_log() -> Json:
             ),
             "log_signature",
         ),
-        # ADR-077: a switch or list entry the root did not sign stops the log like every other entry (P4)
+        # ADR-078: a switch or list entry the root did not sign stops the log like every other entry (P4)
         neg(
             "P4_policy_signed_by_hub",
             "verify_platform_log",
@@ -1393,7 +1393,7 @@ def build_platform_log() -> Json:
                 {"count": 6, "org": ORG, "private": False, "access": True},
                 {"count": 11, "org": ORG, "private": False, "access": False},
                 {"count": 11, "org": ORG, "private": True, "access": True},
-                # ADR-077: without an `org_platform_access` of its own an org follows the switch; an explicit entry wins
+                # ADR-078: without an `org_platform_access` of its own an org follows the switch; an explicit entry wins
                 {"count": 17, "org": OTHER_ORG, "private": False, "access": False},
                 {"count": 18, "org": OTHER_ORG, "private": False, "access": True},
                 {"count": 18, "org": ORG, "private": False, "access": False},

@@ -155,9 +155,9 @@ const PLATFORM_COMMON: Record<string, Check> = {
   ts: F.time,
   v: version,
 };
-/** Platform roles: `inviter` (ADR-026) and `operator` (receives the requests of ADR-077 §4). */
+/** Platform roles: `inviter` (ADR-026) and `operator` (receives the requests of ADR-078 §4). */
 export const PLATFORM_ROLES = ['inviter', 'operator'] as const;
-/** Switches of `platform_policy` (ADR-077 §2): off until an entry turns them on. */
+/** Switches of `platform_policy` (ADR-078 §2): off until an entry turns them on. */
 export const PLATFORM_POLICIES = ['open_platform_access', 'open_platform_invites'] as const;
 const PLATFORM_TYPE_FIELDS: Record<string, Record<string, Check>> = {
   root: { pub: key },
@@ -180,7 +180,7 @@ const PLATFORM_TYPE_FIELDS: Record<string, Record<string, Check>> = {
   org_platform_access: { org: F.uuid, granted: bool },
   user_certify: { user: F.uuid, pub },
   user_decertify: { user: F.uuid },
-  // ADR-077: switches and the operator-subscription list
+  // ADR-078: switches and the operator-subscription list
   platform_policy: { name: oneOf(...PLATFORM_POLICIES), on: bool },
   org_operator_subscriptions: { org: F.uuid, granted: bool },
 };

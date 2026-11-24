@@ -2,7 +2,7 @@
 
 `rebuild(connection)` derives the projections of `agent_hub.platform.projection` again from the stored platform log
 (entries in `seq` order with their receive times): `platform_role` and `platform_policy` from scratch,
-`org.platform_access` from `private` plus the latest `org_platform_access` or the switch (ADR-077), the state,
+`org.platform_access` from `private` plus the latest `org_platform_access` or the switch (ADR-078), the state,
 `certified_seq` and keys of platform devices, the platform invitation rows of the log and the certification marks.
 Stored entries were verified when they were appended (`hub.platform_entry` is append-only), so the rebuild needs no
 key. Run it inside one transaction.

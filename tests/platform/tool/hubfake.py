@@ -736,7 +736,7 @@ class HubFake:
             wrapped_by=cast(str, request.user),
             platform=self.platform_state(),
             now=datetime.now(UTC),
-            # as the hub: the org's own flag, or the platform log (an `org_platform_access` or the switch, ADR-077)
+            # as the hub: the org's own flag, or the platform log (an `org_platform_access` or the switch, ADR-078)
             platform_access=found.platform_access or self.platform_state().platform_access(org, private=False),
         )
         found.log = result.log

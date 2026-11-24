@@ -4,7 +4,7 @@
 The operator puts access tokens of Claude subscriptions into `AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR`, one file
 `<name>.token` per subscription holding one line. The files are replaced from outside (atomically, `rename`) whenever
 the token is renewed. Sessions of the organizations the verified platform log grants the operator's subscriptions
-(`org_operator_subscriptions`, root-signed, ADR-077) may use this pool; an organization without such an entry may use
+(`org_operator_subscriptions`, root-signed, ADR-078) may use this pool; an organization without such an entry may use
 it while it is listed in `AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS` (the list of ADR-052, kept for the move into the
 log; an explicit entry of the log wins over it). A change of the log takes effect at the runner's next refresh of
 the platform log, without a restart; for every other organization nothing changes. Towards the hub and the web
@@ -162,7 +162,7 @@ class Pool:
 
     def allows(self, org_id: str | None) -> bool:
         """The organization may use the pool: by its latest `org_operator_subscriptions` in the verified platform log,
-        and without one by the environment list (ADR-077 section 3)."""
+        and without one by the environment list (ADR-078 section 3)."""
         if org_id is None:
             return False
         state = self.platform()

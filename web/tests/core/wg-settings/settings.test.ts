@@ -72,7 +72,7 @@ describe('parseSettings', () => {
 
   it('round-trips through the form input', () => {
     expect(parseSettings(toInput(VALID))).toEqual({ ok: true, settings: VALID });
-    expect(toInput(DEFAULTS).protectedBranches).toBe(''); // ADR-077: no default
+    expect(toInput(DEFAULTS).protectedBranches).toBe(''); // ADR-078: no default
   });
 });
 

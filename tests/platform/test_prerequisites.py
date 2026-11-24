@@ -1,4 +1,4 @@
-"""U-DOC-prerequisites (KOR-49, ADR-077 section 1, rules E-05, E-11, E-19): the register of prerequisites is complete.
+"""U-DOC-prerequisites (KOR-49, ADR-078 section 1, rules E-05, E-11, E-19): the register of prerequisites is complete.
 
 `docs/platform/spec/15-prerequisites.md` has one row for every code with which a task, a session, an operation or a
 request can wait or be refused. The codes come from the closed contract lists - scheduling reasons, session failure

@@ -225,7 +225,7 @@ describe('notificationNames caching', () => {
   });
 });
 
-describe('requests to the operator and computers needed (ADR-077)', () => {
+describe('requests to the operator and computers needed (ADR-078)', () => {
   const request = (ref: string | null) => notification('n1', { kind: 'operator.request', org_id: null, ref });
 
   it('names the reason and the organization by its ID; an unknown or missing reason generically', () => {

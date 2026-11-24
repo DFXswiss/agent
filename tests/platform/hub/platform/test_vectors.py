@@ -34,7 +34,7 @@ def vector_hub(
 ) -> Iterator[HubHarness]:
     # the vector devices run a current runner: every device the log certifies has announced `log.admit`, so the user
     # certifications of the vector log are not held back (ADR-060, `peer_outdated`), nor the switches (`log.policy`,
-    # ADR-077)
+    # ADR-078)
     owner.execute("ALTER TABLE hub.device ALTER COLUMN features SET DEFAULT '{log.admit,log.policy}'")
     config = load_config(hub_environ(migrated_db, AGENT_HUB_PLATFORM_ROOT_KEY=VECTORS["root"]))
     for harness in start_hub(config, hub_pool, clock):
