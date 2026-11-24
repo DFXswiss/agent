@@ -172,6 +172,9 @@ class ReadLog:
         self._monotonic = monotonic
         self._clock = clock
         self._lock = threading.Lock()
+        # One flush at a time: the final flush of `stop` waits for a write of the sweeper that is still running (its
+        # task is cancelled, its thread is not), and writes what that write gave back on failure (HOT-15).
+        self._flushing = threading.Lock()
         self._open: dict[Key, _Window] = {}
         self._ended: list[_Window] = []  # windows with repeats whose row is not written yet
         self._task: asyncio.Task[None] | None = None
@@ -246,6 +249,10 @@ class ReadLog:
     def flush(self, *, all_windows: bool = True) -> int:
         """End the windows (all, or only the expired ones) and write the `audit.repeat` rows of those with repeats in
         one transaction; the number written. On failure the rows wait for the next call."""
+        with self._flushing:
+            return self._flush(all_windows=all_windows)
+
+    def _flush(self, *, all_windows: bool) -> int:
         now = self._monotonic()
         with self._lock:
             for key, window in list(self._open.items()):

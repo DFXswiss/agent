@@ -94,3 +94,13 @@ hub double took the batches as fast as it could, so on an idle device the wall t
 would hit. **Decision:** a live session sends its events over time. The test sends at most one batch per second
 (`BATCH_INTERVAL_MS`), so the burst's wall time is set by the test. The bound of HOT-05 (50 %) is unchanged; measured
 20–21 % on the idle test device. 12 of 12 runs green (both scenarios, desktop and phone, three repeats).
+
+## 6. `hub/core/test_read_log.py::test_sweeper_writes_expired_windows` (product fault)
+
+Red in gate run 7 under load: 1 stored row instead of 2. `ReadLog.flush` takes the expired windows off the pending
+list before its transaction commits. `stop()` cancels the sweeper task, but the flush thread under it keeps running.
+The final flush of `stop` then found nothing and returned while the write was still in progress. Had that write failed
+after `stop` (pool closed), the repeats would have been lost, although `stop` promises to write every window.
+**Decision:** flushes are serialized (`_flushing`). The final flush waits for a write that is still running and writes
+what a failed write gave back. New test `test_stop_waits_for_the_write_of_the_sweeper`: it holds the sweeper's write
+on an event and is red without the fix (`stop` returned at once).

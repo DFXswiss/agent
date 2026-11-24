@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from collections.abc import Iterator
 from typing import Any
@@ -16,7 +17,7 @@ import pytest
 from psycopg_pool import ConnectionPool, PoolClosed
 
 from agent_hub.app import create_app, discovered_routers
-from agent_hub.audit.chain import AuditRow, AuditRowInvalid, StoredAudit, read_audit, verify_chain
+from agent_hub.audit.chain import AuditRow, AuditRowInvalid, StoredAudit, append_audit, read_audit, verify_chain
 from agent_hub.audit.placement import place
 from agent_hub.auth.keys import ANONYMOUS, Principal
 from agent_hub.config import HubConfig
@@ -430,6 +431,44 @@ def test_sweeper_writes_expired_windows(hub_pool: ConnectionPool[psycopg.Connect
             await asyncio.sleep(0.01)
         await log.stop()
         await log.stop()
+        return len(stored(hub_pool))
+
+    assert asyncio.run(scenario()) == 2
+
+
+def test_stop_waits_for_the_write_of_the_sweeper(
+    hub_pool: ConnectionPool[psycopg.Connection[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweeper has taken the expired window and is still writing it when `stop` comes: `stop` returns only after
+    that write (before HOT-15 it returned at once, and a write failing afterwards lost the repeats)."""
+    now = [0.0]
+    writing = threading.Event()
+    release = threading.Event()
+
+    def slow_repeat(connection: psycopg.Connection[Any], row: AuditRow) -> StoredAudit:
+        if row.action == readlog.REPEAT_ACTION:
+            writing.set()
+            assert release.wait(30)
+        return append_audit(connection, row)
+
+    monkeypatch.setattr(readlog, "append_audit", slow_repeat)
+
+    async def scenario() -> int:
+        log = ReadLog(hub_pool, window=10.0, sweep=0.01, monotonic=lambda: now[0])
+        row = make_row()
+        await asyncio.to_thread(log.admit, row)
+        await asyncio.to_thread(log.admit, row)
+        await log.start()
+        now[0] = 11.0
+        assert await asyncio.to_thread(writing.wait, 30)
+        assert log.pending() == 0  # taken by the sweeper, not yet written
+        stopping = asyncio.ensure_future(log.stop())
+        try:
+            await asyncio.sleep(0.2)
+            assert not stopping.done()  # stop waits for the write
+        finally:
+            release.set()
+            await stopping
         return len(stored(hub_pool))
 
     assert asyncio.run(scenario()) == 2
