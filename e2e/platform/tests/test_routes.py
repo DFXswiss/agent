@@ -116,6 +116,7 @@ def test_runners(ctx: Context) -> None:
 def test_a_runner_restarts_with_its_github_ways(ctx: Context) -> None:
     runner = ctx.runners["runner-1"]
     call(ctx, "POST", "/runners/runner-1/stop")
+    bad: dict[str, Any]
     for bad in ({"github": []}, {"github": {"other": "x"}}, {"github": {"app_slug": ""}}, {"github": {"app_slug": 5}}):
         assert call(ctx, "POST", "/runners/runner-1/start", bad)[0] == 400
     ways = {"oauth_client_id": "Ov23double00000000", "app_slug": "agent-dfx-swiss"}

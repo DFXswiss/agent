@@ -202,7 +202,8 @@ agent-platform agents confirm --link "<connect_link>" --code XXXXX-XXXXX   # ret
 
 Model access and GitHub without a person: `claude connect` takes the Claude Code login of this computer, `credentials
 set-api-key` stores an API key and `settings set --model-access platform` uses the DFX model access; `github connect
---token -` stores an existing GitHub token (for example `gh auth token`). `claude setup-token` and the GitHub device
+--from-gh` stores the GitHub CLI login of this computer in one command (`github connect --token -` any other existing
+token). `claude setup-token` and the GitHub device
 page need a person at those services. `docs/platform/agent-parity.md` ("Without a person") lists every such step.
 
 ## 2. Connect the Claude subscription
@@ -316,11 +317,15 @@ agent-platform session terminal --session <session_id> [--after <next_after>]   
 agent-platform session workvm --session <session_id>          # its work VM: state, size, runtime, command runs
 ```
 
-When an operation of a session needs GitHub and your user has no usable GitHub connection, the platform holds it and
-the chat of `task show` and `task follow` carries one event with a `waiting` card (`operation_type`, `repo`,
-`operations`, `until_ms`, `status`: `open`, `done` or `expired`). If your user owns the task and the card is `open`,
-its `next` is `github connect`: connect GitHub (below) and the task goes on by itself; `reconnect: true` means the
-stored connection could not be used (expired or revoked). `task show` also gives the task's `runtime_s`, `session show`
+When an operation of a session needs GitHub and your user has no usable GitHub connection, or the connection does not
+reach the repository, the platform holds it and the chat of `task show` and `task follow` carries one event with a
+`waiting` card (`reason` `github_connection` or `github_access`, `operation_type`, `repo`, `operations`, `until_ms`,
+`status`: `open`, `done` or `expired`, `owner_id`: the person asked). If that person is your user and the card is
+`open`, its `next` is the one step: `github connect` (connect GitHub, below: `--from-gh` works without a browser), or
+for `github_access` the `action` and its link `url` (`install_app`, `approve_app`: an organisation's approval,
+`authorize_sso`, `new_token`: create a token there and store it with `--token -`, `check_access`: the account has no
+access). Tell your user the link when it needs their account at GitHub; the task goes on by itself once GitHub allows
+it. `reconnect: true` means the stored connection could not be used (expired or revoked). `task show` also gives the task's `runtime_s`, `session show`
 the session's `runtime_s` and whether the hub reaches its device (`device_reachable`).
 
 **Whiteboards** (one per organization, workgroup and task; `--wg` and `--task` choose the level):
@@ -404,13 +409,15 @@ agent-platform claude service remove                             # stop the back
 agent-platform claude login                                      # Claude login through a device; then
 printf '%s' "<code>" | agent-platform claude login --request <request_id> --code
 agent-platform github status
+agent-platform github connect --from-gh    # the GitHub CLI login of this computer: no browser, every repository
 agent-platform github connect              # opens GitHub's device page for your user; returns request_id, user_code
 agent-platform github connect --request <request_id> --wait 120  # until done
 printf '%s' "$GITHUB_TOKEN" | agent-platform github connect --token -  # an existing token instead (see below)
 agent-platform github disconnect
 ```
 
-**GitHub with an existing token.** Instead of the device page, `github connect --token -` stores a token your user
+**GitHub with an existing token.** Instead of the device page, `github connect --from-gh` stores the GitHub CLI login
+of this computer (`gh auth token`; none: `github_login_missing`), and `github connect --token -` any token your user
 already has: the GitHub CLI login (`gh auth token | agent-platform github connect --token -`) or a personal access
 token (a fine-grained one limited to the repositories the agents need is recommended). The token is read from stdin
 only, never from the command line; it goes only into the request sealed to the execution device, which checks it at

@@ -89,7 +89,7 @@
   "R-8.8": {"milestone": 2, "tests": ["E2E-19"]},
   "R-8.9": {"milestone": 2, "tests": ["E2E-15", "E2E-19"]},
   "R-9.1": {"milestone": 2, "tests": ["E2E-20", "E2E-56"]},
-  "R-9.2": {"milestone": 2, "tests": ["E2E-21", "LIVE-02"]},
+  "R-9.2": {"milestone": 2, "tests": ["E2E-21", "LIVE-02", "E2E-56"]},
   "R-9.3": {"milestone": 2, "tests": ["E2E-21", "LIVE-02"]},
   "R-9.4": {"milestone": 2, "tests": ["E2E-22", "E2E-56"]},
   "R-9.5": {"milestone": 2, "tests": ["E2E-15", "E2E-21"]},

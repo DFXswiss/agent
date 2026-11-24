@@ -159,10 +159,11 @@ def test_control_refusals(github: Any, body: Any, message: str) -> None:
         ({"interval": -1}, "interval must be a non-negative integer"),
         ({"expires_in": True}, "expires_in must be a non-negative integer"),
         ({"enabled": "yes"}, "enabled must be a boolean"),
+        ({"oauth_client_id": ""}, "oauth_client_id must be a non-empty string"),
     ],
 )
 def test_configuration_refusals(raw: Any, message: str) -> None:
-    flow = DeviceFlow(lambda: 0.0, lambda login: "t", lambda: "http://127.0.0.1:1")
+    flow = DeviceFlow(lambda: 0.0, lambda login, kind, scope: "t", lambda: "http://127.0.0.1:1")
     with pytest.raises(DeviceFlowError, match=message):
         flow.configure(raw)
     assert flow.client_id == DEFAULT_CLIENT_ID
