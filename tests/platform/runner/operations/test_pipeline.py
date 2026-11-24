@@ -20,7 +20,7 @@ from agent_runner.operations.extensions import (
 from agent_runner.operations.pipeline import Pipeline
 
 from ..reconcile.rig import Rig
-from ..sessions.kit import TASK, WG
+from ..sessions.kit import OWNER, TASK, WG
 from .kit import OKit, ok, run, setup
 
 REPO = "example-org/example-repo"
@@ -249,7 +249,13 @@ def test_retryable_failures_are_retried_with_2_8_30_seconds_then_fail_retryable(
         ]
         final = items[-1][1]
         assert (final["error_code"], final["retryable"]) == ("upstream_error", True)
-        assert items[-2][1]["body"] == {"operation_id": op.id, "status": "failed", "error": error}
+        # the executor ran with the acting user's connection (HOT-14): the result event names it
+        assert items[-2][1]["body"] == {
+            "operation_id": op.id,
+            "status": "failed",
+            "connection_of": OWNER,
+            "error": error,
+        }
         await kit_.kit.pushed_events()  # contract-valid
 
     run(rig, body)

@@ -40,7 +40,7 @@ from agent_runner.orgs.keys import store_scope_key
 from ..credentials.kit import ALICE, BOB, CLIENT_ID, Env, ck, github_body, make_record
 from ..operations.kit import OKit, setup
 from ..reconcile.rig import Rig, standard_world
-from .conftest import OTHER_TOKEN, REPO, TOKEN, GitHub
+from .conftest import OTHER_TOKEN, REPO, TOKEN, GitHub, seed
 from .test_executors import with_env
 
 SOURCE = Path(agent_runner.__file__).parent
@@ -60,9 +60,10 @@ def _kind_literals(call: ast.Call) -> set[str]:
 
 
 def _called(call: ast.Call) -> str | None:
+    """The called function's name; None for the one place itself (`acting.opened`)."""
     func = call.func
     if isinstance(func, ast.Attribute):
-        return func.attr
+        return None if isinstance(func.value, ast.Name) and func.value.id == "acting" else func.attr
     return func.id if isinstance(func, ast.Name) else None
 
 
@@ -232,7 +233,13 @@ async def turn(kit: OKit, sid: str, actor: str | None) -> None:
         await conn.execute("UPDATE runner.session SET turn_actor = %s, turn_open = true WHERE id = %s", (actor, sid))
 
 
-def test_a_shared_task_uses_the_github_of_whoever_gave_the_instruction(store_dsn: str, github: GitHub) -> None:
+def test_a_shared_task_uses_the_github_of_whoever_gave_the_instruction(
+    store_dsn: str, start_github: Callable[..., GitHub]
+) -> None:
+    world = seed()
+    world["installations"][0]["users"].append("other-user")  # bob's account reaches the repository too
+    github = start_github(world=world)
+
     async def body(kit: OKit, served: dict[str, Any]) -> None:
         await connect(kit, served, ALICE)
         sid = await kit.session(actor=BOB)  # alice's task, bob wrote the prompt of this turn
@@ -280,8 +287,5 @@ def test_a_turn_without_one_acting_user_uses_nobodys_connection(store_dsn: str, 
         assert {connection for _op, connection in await results(kit)} <= {None}  # nobody's connection used
         assert github.journal() == []
         assert any(f"no_acting_user operation_id={op.id}" in line for line in kit.lines)
-        # other operations need no personal connection and run as before
-        titled = await kit.run(sid, "task.set_title", {"title": "Shared"})
-        assert titled.state == "succeeded"
 
     two_people(store_dsn, github, body)

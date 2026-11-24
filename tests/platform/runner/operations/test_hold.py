@@ -377,7 +377,7 @@ def test_a_held_operation_of_an_ended_session_never_runs(rig: Rig) -> None:
             assert (op.state, op.held) == ("rejected", False)
             error = {
                 "code": "not_found",
-                "message": "The session ended while the operation waited for a GitHub connection.",
+                "message": SESSION_ENDED_MESSAGE,
             }
             assert op.answer == {"operation_id": op_id, "status": "rejected", "error": error}
             assert kit_.hub.requests[-1]["local_check"] == "rejected"
