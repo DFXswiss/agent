@@ -71,13 +71,14 @@ interface JournalRecord {
   readonly body: unknown;
 }
 
-/** The text of the newest request the model double answered with step `step` (the whole request body). */
+/** The conversation of the newest request the model double answered with step `step` (its messages, without the
+ * system prompt, whose rules quote the line too). */
 async function requestOf(orchestrator: Orchestrator, step: string): Promise<string> {
   const { body } = await orchestrator.doubleRequest('model', 'GET', '/_double/journal');
   const records = (Array.isArray(body) ? body : []) as JournalRecord[];
   const found = records.filter((record) => record.path === '/v1/messages' && record.step === step).at(-1);
   expect(found, `no request answered by step ${step}`).toBeDefined();
-  return JSON.stringify(found!.body);
+  return JSON.stringify((found!.body as { messages?: unknown }).messages);
 }
 
 async function followUp(page: Page, text: string): Promise<void> {

@@ -48,6 +48,8 @@ CATEGORIES: dict[str, str] = {
     "access origin and VM size of each charge, balances, credit history, the price list versions, the USD/CHF rates "
     "and the CHF equivalent of each booking (books); per-device DFX keys (ADR-081): request, key reference, issuer, "
     "booked provider spend and the cost reported per session for the next booking",
+    "shared": "Shared sessions (ADR-083): which person triggered an operation, a session and a consumption item, the "
+    "daily consumption sum per person, which prompt came through the author's agent, withdrawal requests of prompts",
     "contexts": "Context checkpoints (ADR-072): IDs, epoch, chunk counts, sizes, digest and chunk hashes, the signed "
     "manifest, times; pull-request links: opaque tag, epoch, task and session; restore outcomes",
 }
@@ -171,7 +173,7 @@ session: tasks | id:uuid task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid devic
   parent_session_id:uuid origin_operation_id:uuid depth:number state:code state_reason:code model_access:code
   model_id:code agent_kind:code agent_version:code estimate_ms:number created_at:time ready_at:time
   first_working_at:time ended_at:time context_restore:code@contexts context_reason:code@contexts not_before:time
-  github_identity:uuid wait_until:time dfx_choice:flag wait_at:time
+  github_identity:uuid wait_until:time dfx_choice:flag wait_at:time triggered_by:uuid@shared
 session_ping: notifications | id:uuid session_id:uuid kind:code level:code ref:code created_at:time
   delivered_at:time
 session_transition: tasks | session_id:uuid seq:number state:code reason:code at:time received_at:time
@@ -195,8 +197,10 @@ credit_entry: billing | org_id:uuid n:number at:time kind:code amount_micro_usd:
   chf_per_usd_e8:number amount_micro_chf:number
 charge: billing | id:uuid org_id:uuid wg_id:uuid task_id:uuid session_id:uuid device_id:uuid origin_seq:number
   kind:code at:time amount_micro_usd:number price_version:number quantity:json fx_n:number fx_day:time
-  chf_per_usd_e8:number amount_micro_chf:number part:number
+  chf_per_usd_e8:number amount_micro_chf:number part:number triggered_by:uuid@shared
 charge_pending: billing | charge_id:uuid org_id:uuid amount_micro_usd:number
+charge_person_daily: shared | org_id:uuid day:time user_id:uuid kind:code amount_micro_usd:number quantity:number
+prompt_withdrawal: shared | event_id:uuid task_id:uuid requested_by:uuid requested_at:time withdrawn_at:time
 charge_daily: billing | org_id:uuid day:time wg_id:uuid device_id:uuid kind:code amount_micro_usd:number
   quantity:number
 user_identity: auth | user_id:uuid@ids kem_pub:bytes@logs sig_pub:bytes@logs recovery_id:code created_at:time
