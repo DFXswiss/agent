@@ -30,6 +30,8 @@ CATEGORIES: dict[str, str] = {
     "operations": "Operation type, state, decision, error code, dedupe tag, timestamps, actor",
     "metrics": "Resource metrics, token counters, cost, context-window percentage, subscription quota percentages",
     "notifications": "Notification records (recipient, kind, target IDs)",
+    "attention": "Attention record of a task (category, reason code, ref ID, times, subagent counters), derived from "
+    "the task, session and operation metadata (ADR-064)",
     "audit": "Audit and read-log rows (actor, action, target IDs, result)",
     "credentials": "Credential metadata (owner, kind, version)",
     "settings": "User settings (model access preference, model choice, locale)",
@@ -134,6 +136,8 @@ session_transition: tasks | session_id:uuid seq:number state:code reason:code at
   reported_by:uuid
 task: tasks | id:uuid org_id:uuid wg_id:uuid owner_id:uuid state:code state_reason:code created_at:time
   state_at:time last_activity_at:time closed_at:time
+task_attention: attention | task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid category:code reason:code
+  ref_kind:code ref_id:uuid since:time seq:number subagents_total:number subagents_active:number updated_at:time
 task_transition: tasks | task_id:uuid seq:number state:code reason:code at:time by_id:uuid
 usage_counter: metrics | session_id:uuid requests:number input_tokens:number output_tokens:number
   cache_read_tokens:number cache_write_tokens:number thinking_tokens:number cost_micro_usd:number cost_basis:code

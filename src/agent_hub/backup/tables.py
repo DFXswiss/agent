@@ -98,6 +98,9 @@ RULES: tuple[TableRule, ...] = (
     TableRule("device_stream", DEVICE_ROWS),
     TableRule("outbox_receipt", DEVICE_ROWS),
     TableRule("task", ORG_ROWS),
+    # the attention records (ADR-064): a projection whose `since` and `seq` keep the history of the occasions, so it is
+    # exported rather than derived again (a missing row is derived by the job `attention.backfill`)
+    TableRule("task_attention", ORG_ROWS),
     TableRule("task_transition", "task_id = ANY(%(tasks)s)", append_only=True),
     TableRule("session", ORG_ROWS),
     TableRule("session_transition", "session_id = ANY(%(sessions)s)", append_only=True),

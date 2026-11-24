@@ -25,6 +25,8 @@ OPERATION_TYPES = frozenset(
         "github.comment",
         "subagent.request",
         "task.set_title",
+        "human.question",
+        "human.approval",
     }
 )
 SUBAGENT_REQUEST = "subagent.request"

@@ -30,6 +30,8 @@ registration runs in one transaction:
    the local check). An accepted `subagent.request` creates the child session (`agent_hub.operations.children`) and
    answers its ID.
 
+6. The task's attention record is refreshed (`agent_hub.attention.store`, ADR-064; the last lock of the transaction).
+
 After the commit the caller sends the recorded effects: the `operation` frame for the org's browsers (and, with a
 child, its `session`/`task` frames and the `session.start` hint).
 """
@@ -44,6 +46,7 @@ from uuid import UUID
 import psycopg
 from pydantic import Field, StringConstraints
 
+from agent_hub.attention import store as attention
 from agent_hub.audit.chain import AUDIT_LOCK
 from agent_hub.auth.fields import B64u32, Strict, Uuid7
 from agent_hub.errors import HubError
@@ -356,4 +359,5 @@ def register(
         child = children.create_child(connection, task, parent, operation, now, effects=outcome.effects)
     outcome.body = _answer(connection, state, error_code, duplicate_of, child)
     outcome.effects.org_frame(task.org_id, "operation", operation_row(connection, operation))
+    attention.refresh(connection, task.id, now, outcome.effects)
     return outcome

@@ -7,7 +7,8 @@
 - `accepted` for `ACCEPTED_LIMIT` (30 min after the decision) without `executing` - `expired` with `timeout`.
 
 Each expiry writes the operation row (`finished_at`), a transition (`by_id` NULL = the hub), releases the dedupe slot,
-writes the audit row `operation.expired` (actor: the hub) and, after the commit, sends the `operation` frame and the
+writes the audit row `operation.expired` (actor: the hub), refreshes the task's attention record
+(`agent_hub.attention.store`, ADR-064) and, after the commit, sends the `operation` frame and the
 signal `operation.finished`. A later `operation_transition` of the runner for such an operation is answered by the
 outbox's state rules (`expired` again changes nothing; any other step is refused as `rejected`).
 
@@ -23,6 +24,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
+from agent_hub.attention import store as attention
 from agent_hub.audit.chain import AUDIT_LOCK
 from agent_hub.jobs import Job
 from agent_hub.operations import dedupe
@@ -59,6 +61,7 @@ def _expire_batch(context: Any) -> int:
             dedupe.release(connection, ref.id)
             audit_step(connection, ref, "expired", now, actor_kind="hub", actor_id=None, error_code=code)
             effects.org_frame(ref.org_id, "operation", operation_row(connection, ref.id))
+            attention.refresh(connection, ref.task_id, now, effects)
             effects.signal(
                 FINISHED_SIGNAL,
                 operation_id=ref.id,

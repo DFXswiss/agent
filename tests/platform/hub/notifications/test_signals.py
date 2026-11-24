@@ -19,7 +19,14 @@ from tests.platform.hub.conftest import HubHarness
 
 def test_the_extensions_are_registered() -> None:
     found = dict(discover(SIGNAL_SUBSCRIBERS))["notifications"]
-    assert set(found) == {"event.appended", "task.state", "invite.accepted", "log.appended", "device.decertified"}
+    assert set(found) == {
+        "event.appended",
+        "task.state",
+        "task.attention",
+        "invite.accepted",
+        "log.appended",
+        "device.decertified",
+    }
     assert "notifications.bind_context" in [job.name for job in check_jobs(concat_sequences(JOBS))]
     assert device_state.SECTION in sections()
 

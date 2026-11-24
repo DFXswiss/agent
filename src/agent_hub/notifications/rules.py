@@ -12,7 +12,14 @@ A `notification` row is content-free: recipient, kind, org, workgroup, task, a r
   `working` -> `idle` after at least `IDLE_AFTER` of `working` (device times of the two session transitions);
   `created_at` = the hub receive time of the `idle` transition.
 - `task.failed` (`task_rule`): to the task owner when the task became `failed`; `created_at` = the task transition.
-  Both task rules notify an owner only while the owner still reads the task's workgroup.
+  Both task rules notify an owner only while the owner still reads the task's workgroup. No `task.idle` is written
+  while the task's attention record is `needs_decision` or `blocked` (`task.attention` covers it, ADR-064 section 5).
+- `task.attention` (`attention_rule`, KOR-39): to the task owner (while the owner reads the workgroup) when the task's
+  attention record entered an occasion of `needs_decision` or `blocked` and still is in it, once per occasion
+  (`ref` = `<category>:<reason>:<seq>`). Causes that concern the whole workgroup (`WG_WIDE`: no computer, computer
+  unreachable, all busy) notify an owner once per workgroup and reason while an earlier such notification is unread
+  (`ref` = `<category>:<reason>:wg`). A `blocked` record of a failed task is covered by `task.failed` and notifies
+  nothing; `created_at` = the hub time of the rule.
 - `invite.accepted` (`invite_rule`): to the admin who created the org invitation (while still an admin of the org;
   never to the accepting subject itself), `ref` = the subject (user or device).
 - `rotation.required` (`rotation_rule`): to every admin of an org whose `rotation_pending` is not empty, unless the
@@ -34,6 +41,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.attention.derive import BLOCKED, OCCASIONS, WG_WIDE
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.crypto.encoding import format_time
 from agent_hub.crypto.ids import uuid7
@@ -43,6 +51,7 @@ from agent_hub.whiteboards.projection import NOTIFY_ACTION, ORG, BoardEvent
 
 Connection = psycopg.Connection[Any]
 WHITEBOARD, TASK_IDLE, TASK_FAILED = "whiteboard.entry", "task.idle", "task.failed"
+TASK_ATTENTION = "task.attention"
 INVITE_ACCEPTED, ROTATION_REQUIRED = "invite.accepted", "rotation.required"
 IDLE_AFTER = timedelta(seconds=10)
 COLUMNS = "id, recipient_id, kind, org_id, wg_id, task_id, ref, created_at, read_at"
@@ -210,11 +219,57 @@ def task_rule(connection: Connection, task_id: UUID, state: str) -> list[Notific
     task = connection.execute("SELECT org_id, wg_id, owner_id FROM hub.task WHERE id = %s", (task_id,)).fetchone()
     if task is None or not _wg_reader(connection, task[1], task[2]):
         return []
+    if state == "idle" and _needs_attention(connection, task_id):
+        return []
     kind, query = (TASK_IDLE, _IDLE_AT) if state == "idle" else (TASK_FAILED, _FAILED_AT)
     at = connection.execute(query, {"task": task_id, "after": IDLE_AFTER}).fetchone()
     if at is None:
         return []
     return _write(connection, task[2], kind, at[0], org_id=task[0], wg_id=task[1], task_id=task_id, once=True)
+
+
+def _needs_attention(connection: Connection, task_id: UUID) -> bool:
+    found = connection.execute(
+        "SELECT 1 FROM hub.task_attention WHERE task_id = %s AND category = ANY(%s)", (task_id, sorted(OCCASIONS))
+    ).fetchone()
+    return found is not None
+
+
+@dataclass(frozen=True)
+class Occasion:
+    """The ids of the signal `task.attention` (`agent_hub.attention.store`)."""
+
+    task_id: UUID
+    category: str
+    reason: str
+    seq: int
+    task_state: str
+
+
+def attention_rule(connection: Connection, occasion: Occasion, now: datetime) -> list[Notification]:
+    """`task.attention` for a task whose record entered an occasion (module docstring)."""
+    if occasion.category == BLOCKED and occasion.task_state == "failed":
+        return []
+    found = connection.execute(
+        "SELECT a.org_id, a.wg_id, a.owner_id FROM hub.task_attention a"
+        " WHERE a.task_id = %s AND a.category = %s AND a.reason = %s AND a.seq = %s",
+        (occasion.task_id, occasion.category, occasion.reason, occasion.seq),
+    ).fetchone()
+    if found is None or not _wg_reader(connection, found[1], found[2]):
+        return []
+    org_id, wg_id, owner_id = found
+    wide = occasion.reason in WG_WIDE
+    ref = f"{occasion.category}:{occasion.reason}:{'wg' if wide else occasion.seq}"
+    duplicate = connection.execute(
+        "SELECT 1 FROM hub.notification WHERE recipient_id = %s AND kind = %s AND org_id = %s AND ref = %s"
+        " AND (CASE WHEN %s THEN wg_id = %s AND read_at IS NULL ELSE task_id = %s END)",
+        (owner_id, TASK_ATTENTION, org_id, ref, wide, wg_id, occasion.task_id),
+    ).fetchone()
+    if duplicate is not None:
+        return []
+    return _write(
+        connection, owner_id, TASK_ATTENTION, now, org_id=org_id, wg_id=wg_id, task_id=occasion.task_id, ref=ref
+    )
 
 
 def invite_rule(

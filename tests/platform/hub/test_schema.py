@@ -230,6 +230,22 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("closed_at", TS),
     ],
     "task_transition": [("task_id", U), ("seq", INT), ("state", T), ("reason", T), ("at", TS), ("by_id", U)],
+    # KOR-39, migration 0011 (ADR-064): the attention record of a task, a projection
+    "task_attention": [
+        ("task_id", U),
+        ("org_id", U),
+        ("wg_id", U),
+        ("owner_id", U),
+        ("category", T),
+        ("reason", T),
+        ("ref_kind", T),
+        ("ref_id", U),
+        ("since", TS),
+        ("seq", INT),
+        ("subagents_total", INT),
+        ("subagents_active", INT),
+        ("updated_at", TS),
+    ],
     "session": [
         ("id", U),
         ("task_id", U),
@@ -623,6 +639,10 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("event", "(received_at)"),
         ("dedupe_slot", "(wg_id, epoch, tag)"),
         ("wg", "(org_id) WHERE is_default"),
+        ("task_attention", "(org_id, category, since DESC, task_id DESC)"),
+        ("task_attention", "(wg_id, category, since)"),
+        ("task_attention", "(owner_id, category, wg_id)"),
+        ("event", "(task_id, received_at DESC) WHERE (kind = 'prompt'::text)"),
     ],
 )
 def test_named_indexes(owner: psycopg.Connection[Any], table: str, definition: str) -> None:
@@ -665,6 +685,8 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
             ["received", "rejected", "accepted", "duplicate", "denied", "executing", "succeeded", "failed", "expired"],
         ),
         ("whiteboard_entry", "level", ["org", "workgroup", "task"]),
+        ("task_attention", "category", ["needs_decision", "blocked", "working", "done"]),
+        ("task_attention", "ref_kind", ["operation", "session"]),
         ("session_ping", "kind", ["whiteboard.entry", "subagent.finished", "operation.finished"]),
         (
             "notification",
@@ -673,6 +695,7 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
                 "whiteboard.entry",
                 "task.idle",
                 "task.failed",
+                "task.attention",
                 "invite.accepted",
                 "rotation.required",
                 "agent.account_change",

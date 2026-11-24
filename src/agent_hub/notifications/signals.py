@@ -3,6 +3,7 @@
 - `event.appended` (events) of a `whiteboard.entry` with `notify` 1: the `notification` frames of the rows the storing
   transaction wrote and the `ping` hints to the devices of the pinged sessions;
 - `task.state` (sessions): `task.idle` / `task.failed` to the owner;
+- `task.attention` (attention, KOR-39): `task.attention` to the owner;
 - `invite.accepted` (invites): `invite.accepted` to the inviting admin;
 - `log.appended` (orgs) and `device.decertified` (platform): `rotation.required` to the admins of the orgs with a
   pending rotation.
@@ -100,6 +101,18 @@ def on_task_state(_name: str, ids: Mapping[str, Any]) -> None:
     _queue(_rows(lambda connection, _now: rules.task_rule(connection, task, state)))
 
 
+def on_task_attention(_name: str, ids: Mapping[str, Any]) -> None:
+    """`task.attention` (`task_id`, `category`, `reason`, `seq`, `task_state`, ...)."""
+    occasion = rules.Occasion(
+        task_id=ids["task_id"],
+        category=str(ids["category"]),
+        reason=str(ids["reason"]),
+        seq=int(ids["seq"]),
+        task_state=str(ids["task_state"]),
+    )
+    _queue(_rows(lambda connection, now: rules.attention_rule(connection, occasion, now)))
+
+
 def on_invite_accepted(_name: str, ids: Mapping[str, Any]) -> None:
     """`invite.accepted` (`org_id`, `invite_id`, `subject_id`)."""
     org, invite, subject = ids["org_id"], ids["invite_id"], ids["subject_id"]
@@ -125,6 +138,7 @@ def on_device_decertified(_name: str, ids: Mapping[str, Any]) -> None:
 SUBSCRIBERS: Mapping[str, Sequence[signals.Subscriber]] = {
     "event.appended": [on_event],
     "task.state": [on_task_state],
+    "task.attention": [on_task_attention],
     "invite.accepted": [on_invite_accepted],
     "log.appended": [on_log_appended],
     "device.decertified": [on_device_decertified],

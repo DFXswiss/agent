@@ -261,7 +261,8 @@ def event_bytes(item: LiveEvent) -> bytes:
     return frame_bytes(frame, {"scope_id": str(item.scope_id), "scope_seq": item.scope_seq, "event": item.event})
 
 
-ROW_FRAMES = frozenset({"task", "session", "operation"})
+ROW_FRAMES = frozenset({"task", "session", "operation", "attention"})
+"""Frames of one workgroup's row; `attention` (KOR-39) names its workgroup only by `wg_id=` (its row has none)."""
 UNKNOWN = UUID(int=0)  # a frame that must name its workgroup but does not: delivered to nobody (fail closed)
 
 
@@ -273,10 +274,10 @@ def _wg_value(value: object) -> UUID:
 
 
 def frame_wg(item: Published) -> UUID | None:
-    """The workgroup an org frame belongs to: `wg_id=` of `publish`; for task, session and operation rows the row's
-    `wg_id` (`UNKNOWN` without one); for `metrics` without `wg_id=` None only when every sample is a device sample
-    (VM and session samples belong to a workgroup, 03-api.md section 4.11), else `UNKNOWN`; None (org-wide) for the
-    other frames."""
+    """The workgroup an org frame belongs to: `wg_id=` of `publish`; for task, session, operation and attention rows
+    the row's `wg_id` (`UNKNOWN` without one); for `metrics` without `wg_id=` None only when every sample is a device
+    sample (VM and session samples belong to a workgroup, 03-api.md section 4.11), else `UNKNOWN`; None (org-wide) for
+    the other frames."""
     if item.wg_id is not None:
         return item.wg_id
     if item.frame in ROW_FRAMES:
