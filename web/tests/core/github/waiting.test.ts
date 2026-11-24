@@ -230,11 +230,14 @@ describe('github_access (KOR-65)', () => {
       item(3, { ...ACCESS, operation_id: OP2 }),
       item(4, { ...withoutStep, operation_id: OP3 }),
     ]);
+    // one card per owner of the step: third-org (connect, then approve) and the one without a step
     expect(folded.map((entry) => [entry.key, entry.waiting?.reason])).toEqual([
       ['e1', 'github_connection'],
+      ['e3', 'github_access'],
       ['e4', 'github_access'],
     ]);
-    expect(folded[1]!.waiting).toMatchObject({ next: { ...STEP }, operations: [OP1, OP2, OP3] });
+    expect(folded[1]!.waiting).toMatchObject({ next: { ...STEP }, operations: [OP1, OP2] });
+    expect(folded[2]!.waiting).toMatchObject({ next: null, operations: [OP3] });
     expect(foldWaiting([item(1, withoutStep)])[0]!.waiting).toMatchObject({ next: null });
   });
 

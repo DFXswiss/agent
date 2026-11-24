@@ -215,7 +215,7 @@ export function ConnectFlow({
 }: {
   readonly method?: ConnectMethod;
   /** The OAuth App's sign-in only (the step "connect" of a held operation, KOR-65). */
-  readonly app?: 'oauth_app';
+  readonly app?: 'oauth_app' | undefined;
   readonly onConnected: () => void;
   readonly onClose: () => void;
 }) {

@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
 
 from agent_runner.credentials import cache
-from agent_runner.github import reach
+from agent_runner.github import ops, reach
 from agent_runner.github.client import GitHubClient, GitHubError, GitHubOptions, RateGate, sso_link, token_kind
 from agent_runner.github.executors import EXECUTORS
 from agent_runner.github.op_prechecks import PRECHECKS
@@ -503,25 +504,25 @@ def test_a_write_github_refuses_at_execution_names_the_step(
         assert failed.message.startswith(
             f"The GitHub connection of the person who gave this instruction does not reach {OWN}."
         )
-        # a refusal that is no access refusal stays as before
-        github.faults({"route": "POST /repos/{owner}/{repo}/issues/{number}/comments", "kind": "error", "status": 403})
-        refused = await fails(env, "github.comment", {"repo": OWN, "number": 1, "body": "Done."})
-        assert refused.code == "upstream_error"
 
     with_env(store_dsn, github, body, token=APP)
 
 
-def test_an_executor_without_a_repository_keeps_the_plain_failure(
-    store_dsn: str, start_github: Callable[..., GitHub]
-) -> None:
-    github = start_github(world=world())
+def test_only_a_refused_access_of_a_repository_becomes_a_step() -> None:
+    async def main() -> None:
+        made = client(APP, oauth_client_id=OAUTH_ID)
+        with_repo: Any = SimpleNamespace(params={"repo": THIRD})
+        without: Any = SimpleNamespace(params={})
+        assert ops._refused(None, with_repo, INTEGRATION) is None  # the connection did not even open
+        assert ops._refused(made, without, INTEGRATION) is None  # a type without a repository
+        assert ops._refused(made, with_repo, NOT_FOUND) is None  # the issue or pull request of the type is missing
+        assert ops._refused(made, with_repo, GitHubError("forbidden", status=403, message="Forbidden")) is None
+        refused = ops._refused(made, with_repo, INTEGRATION)
+        assert refused is not None
+        assert (refused.code, refused.retryable) == ("repo_not_accessible", False)
+        await made.aclose()
 
-    async def body(env: Env) -> None:
-        github.faults({"route": "GET /user/installations", "kind": "error", "status": 403})
-        failed = await fails(env, "github.list_repositories", {}, data={"allowed": []})
-        assert failed.code == "upstream_error"
-
-    with_env(store_dsn, github, body, token=APP)
+    asyncio.run(main())
 
 
 # -- the right to push (KOR-65 review): a readable repository is not yet a writable one -------------------------------

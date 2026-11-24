@@ -111,7 +111,7 @@ def executor(body: Body, *, not_found: str = "not_found") -> Callable[[Operation
 
 def _refused(client: GitHubClient | None, ctx: OperationContext, error: GitHubError) -> OperationFailed | None:
     """`repo_not_accessible` with the one next step for a `403` access refusal at execution time (`reach`, KOR-65)."""
-    repo = ctx.operation.params.get("repo")
+    repo = ctx.params.get("repo")
     if client is None or error.kind != "forbidden" or not isinstance(repo, str):
         return None
     step = reach.next_step(client, repo, error)

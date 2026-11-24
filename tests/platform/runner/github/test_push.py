@@ -199,7 +199,8 @@ def test_refusals_of_the_ref_read_and_of_the_write(store_dsn: str, tmp_path: Pat
             return httpx.Response(403, json={"message": "Resource not accessible by integration"})
         return None
 
-    mocked(store_dsn, tmp_path, broken_write, ("failed", "upstream_error"))
+    # the token lacks the right to write: the push ends with the one next step (KOR-65)
+    mocked(store_dsn, tmp_path, broken_write, ("failed", "repo_not_accessible"))
 
 
 def test_a_repository_answer_without_an_https_url_refuses_the_push(store_dsn: str, tmp_path: Path) -> None:

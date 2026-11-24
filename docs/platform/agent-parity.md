@@ -260,6 +260,7 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | action:credential-claude-login | `claude connect` (the Claude Code login of this computer, read only), `credentials set-api-key`, `settings set --model-access` (the DFX model access); `claude setup-token` needs a person's click at claude.ai | outside |
 | action:credential-claude-relay | `claude connect`, `credentials set-api-key` (the relayed login needs a person at claude.ai) | outside |
 | action:task-waiting | `github connect --from-gh`, `github connect --token` (the waiting card's next step `github connect` needs a person at GitHub's device page; an access step at GitHub - install, approval, SSO - needs the account at GitHub) | outside |
+| action:github-token | `github connect --from-gh` (the GitHub CLI login of this computer), `github connect --token` (any existing token) | built |
 | action:github-connect | `github connect --from-gh` (the GitHub CLI login of this computer), `github connect --token` (any existing token; the device page needs a person at GitHub) | outside |
 | next:not_paired | `register --own-account`, `recover --hub` | built |
 | next:agent_revoked | `recover --hub` | built |
@@ -278,7 +279,7 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | next:claude_login_missing | `claude connect` on a computer where Claude Code is logged in, `credentials set-api-key` | outside |
 | next:claude_login_expired | `claude sync`, `credentials set-api-key` | outside |
 | next:waiting.CONNECT | `github connect --from-gh`, `github connect --token` (an existing token; the device page needs a person at GitHub) | outside |
-| next:github_login_missing | `github connect --token` (any existing token; `gh auth login` is the login at GitHub on this computer) | outside |
+| next:github_login_missing | `github connect --token` (any existing token; the GitHub CLI's own login at GitHub happens on this computer) | outside |
 | next:claude_missing | `claude connect`, `credentials set-api-key` | outside |
 | next:claude_expired | `claude sync`, `credentials set-api-key` | outside |
 | next:claude_unreadable | `claude connect` | outside |

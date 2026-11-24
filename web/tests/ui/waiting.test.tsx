@@ -6,6 +6,8 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { HubError } from '../../src/core/net/signedFetch';
+import { setLog } from '../../src/core/store/slices/orgs';
+import { actor } from '../core/log/world';
 import { type EventEntry, putEvents } from '../../src/core/store/slices/events';
 import { setGithub } from '../../src/core/store/slices/github';
 import { type OperationRow, putOperations } from '../../src/core/store/slices/operations';
@@ -320,10 +322,13 @@ describe('waiting card', () => {
 
     it('signs in for "connect" only on a device that runs the OAuth App', async () => {
       const t = await page();
+      const signer = await actor('ui-wait-device');
+      await t.world.admitDevice(t.me, signer, [t.wg]);
+      act(() => setLog(t.store, t.org, t.world.log!));
       const device = (features: string[]) => ({
         devices: [
           {
-            device_id: t.devices[0]!.id,
+            device_id: signer.id,
             kind: 'platform',
             org_id: t.org,
             wg_ids: [t.wg],
@@ -341,7 +346,7 @@ describe('waiting card', () => {
       fireEvent.click(within(card).getByTestId('github.flow.close'));
       t.client.on('GET /v1/me/devices', () => device(['github.ways', 'github.device_flow', 'github.oauth_app']));
       fireEvent.click(within(card).getByTestId('github.connect'));
-      expect(await within(card).findByTestId('github.devices.select')).toHaveValue(t.devices[0]!.id);
+      expect(await within(card).findByTestId('github.devices.select')).toHaveValue(signer.id);
     });
 
     it('shows others whom it waits for, without a step', async () => {
