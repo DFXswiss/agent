@@ -31,6 +31,9 @@ const MAX_FRAME_GAP_MS = 500;
 const MAX_FRAME_GAP_RICH_MS = 1000;
 /** Share of the live burst's wall time spent in long tasks (the main thread is not kept busy). */
 const MAX_BURST_BUSY = 0.5;
+/** A live session sends its events over time: at most one batch per interval. The burst's wall time is thus set by
+ * the test, not by how fast the hub double takes the events on an idle or a loaded device (HOT-15). */
+const BATCH_INTERVAL_MS = 1000;
 /** Time until the composer shows typed text. */
 const MAX_INPUT_MS = 2000;
 
@@ -50,9 +53,16 @@ function events(offset: number): SessionEvent[] {
   return list;
 }
 
+/** Sends one batch and waits for the rest of `BATCH_INTERVAL_MS`. */
+async function paced(session: string, list: SessionEvent[]): Promise<void> {
+  const started = Date.now();
+  await sessionEvents(session, list);
+  const left = BATCH_INTERVAL_MS - (Date.now() - started);
+  if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
+}
+
 async function store(session: string, list: SessionEvent[]): Promise<void> {
-  for (let index = 0; index < list.length; index += BATCH)
-    await sessionEvents(session, list.slice(index, index + BATCH));
+  for (let index = 0; index < list.length; index += BATCH) await paced(session, list.slice(index, index + BATCH));
 }
 
 /** Records long tasks and frame gaps from the start of the page (read by `probe`). */
@@ -104,12 +114,25 @@ async function usable(page: Page, label: string, files = true): Promise<void> {
   await expect(prompt).toHaveValue(`still usable ${label}`, { timeout: 2000 });
   const input = Date.now() - typed;
   expect(input).toBeLessThan(MAX_INPUT_MS);
-  // scrolling moves the page
+  // scrolling moves the page: after a turn of the wheel upwards an earlier row is at the top of the viewport. Not
+  // `scrollY`: rows above that render for the first time (`content-visibility: auto`) grow from their placeholder
+  // height, and the browser's scroll anchoring then raises `scrollY` to keep what the user sees in place (HOT-15).
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  const bottom = await page.evaluate(() => window.scrollY);
-  expect(bottom).toBeGreaterThan(0);
+  const view = () =>
+    page.evaluate(() => {
+      const items = [...document.querySelectorAll('[data-testid="chat.item"]')];
+      return {
+        top: items.findIndex((item) => item.getBoundingClientRect().bottom > 0),
+        y: Math.round(window.scrollY),
+        height: document.documentElement.scrollHeight,
+      };
+    });
+  const bottom = await view();
+  expect(bottom.y).toBeGreaterThan(0);
+  expect(bottom.top).toBeGreaterThan(0);
   await page.mouse.wheel(0, -1500);
-  await expect.poll(() => page.evaluate(() => window.scrollY), { timeout: 2000 }).toBeLessThan(bottom);
+  await expect.poll(async () => (await view()).top, { timeout: 30_000 }).toBeLessThan(bottom.top);
+  console.log(`HOT-15 ${label}: scrolled up from ${JSON.stringify(bottom)} to ${JSON.stringify(await view())}`);
   if (files) {
     await page.getByTestId('chat.files').first().scrollIntoViewIfNeeded();
     await page.getByTestId('chat.files.toggle').first().click();
@@ -225,13 +248,13 @@ async function mixed(page: Page, baseURL: string, label: string): Promise<void> 
   const post = async () => {
     const step = 250;
     for (let from = 0; from < MESSAGES; from += step) {
-      await sessionEvents(
+      await paced(
         main,
         range(step, from).flatMap((n) => [message(n), tool(n)]),
       );
-      if (from < CHILD) await sessionEvents(child, range(step, from).map(childOutput));
+      if (from < CHILD) await paced(child, range(step, from).map(childOutput));
     }
-    await sessionEvents(main, [tool(TOOLS, HUGE)]);
+    await paced(main, [tool(TOOLS, HUGE)]);
   };
   const done = async (shown: Page) => {
     await expect(shown.getByTestId('chat.tool.summary').filter({ hasText: `cat ${TOOLS}` })).toBeVisible({

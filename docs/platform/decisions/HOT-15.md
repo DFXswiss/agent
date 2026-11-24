@@ -75,3 +75,22 @@ never reaches EOF.
 
 Withdrawn from this package by the orchestrator (addendum 2). `web/e2e/performance.spec.ts` and `06-web.md` §12.2
 belong to HOT-16. This package changes neither. The measurements are in the report.
+
+## 5. `web/e2e/devices/chat-volume.spec.ts` (addendum 3)
+
+**Scrolling up (`usable`, formerly line 112).** The test compared `window.scrollY` before and after a turn of the wheel
+upwards (`Expected: < 18009, Received: 24141`). This is not a product fault: the timeline does not follow the end
+(only "Jump to the latest item" scrolls). Rows outside the viewport skip their layout (`content-visibility: auto`,
+placeholder height 4rem). When the user scrolls up, rows above render for the first time and grow. The browser's
+scroll anchoring then raises `scrollY` so that what the user sees stays in place. A run on the test device showed
+exactly the values of the red train: from `{top row 94, scrollY 18009, height 18848}` to `{top row 91, scrollY 24141,
+height 29306}`, so the view moved up by three rows. Whether rows above were already laid out depends on timing, hence
+the flakiness. **Decision:** the test checks the behaviour: after the wheel, an earlier row is at the top of the
+viewport. It polls with up to 30 s, which is not a measuring window: it passes as soon as the row is there.
+
+**Busy share of the live burst (`busy < 0.5`).** The share is the long-task time divided by the burst's wall time. The
+hub double took the batches as fast as it could, so on an idle device the wall time was short (3.7 s) and the share
+60–66 % (red). Under load it was lower (green): the opposite load dependence, which a train with the device to itself
+would hit. **Decision:** a live session sends its events over time. The test sends at most one batch per second
+(`BATCH_INTERVAL_MS`), so the burst's wall time is set by the test. The bound of HOT-05 (50 %) is unchanged; measured
+20–21 % on the idle test device. 12 of 12 runs green (both scenarios, desktop and phone, three repeats).
