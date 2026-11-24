@@ -83,7 +83,7 @@ KIND_RULES: tuple[KindRule, ...] = (
     KindRule("wg.profile", "org", (USER,), ORG_ADMIN, {"wg": "target"}),
     KindRule("member.profile", "org", (USER,), ORG_MEMBER_SELF, {"wg": "empty", "ref": "author"}),
     KindRule("device.profile", "org", (USER,), ORG_ADMIN, {"wg": "empty", "ref": "device"}),
-    # an admin-given name of a member or of an invitation's person (ADR-072)
+    # an admin-given name of a member or of an invitation's person (ADR-073)
     KindRule("member.name", "org", (USER,), ORG_ADMIN, {"wg": "empty", "ref": "subject"}),
     *(
         rule
