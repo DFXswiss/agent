@@ -145,7 +145,7 @@ class DeviceFlow:
             grant = Grant(
                 digest[:40],
                 user_code,
-                params.get("scope", "") if client_id == self.oauth_client_id else "",
+                params.get("scope", ""),
                 str(client_id),
                 self._clock(),
                 self.expires_in,
@@ -183,8 +183,8 @@ class DeviceFlow:
             login, scope, client = grant.login, grant.scope, grant.client_id
             kind = "oauth" if client == self.oauth_client_id else "app"
         assert login is not None
-        # GitHub names the granted scopes comma separated
-        granted = ",".join(scope.split())
+        # GitHub names the granted scopes of an OAuth App comma separated
+        granted = ",".join(scope.split()) if kind == "oauth" else scope
         return {"access_token": self._issue_token(login, kind, scope), "token_type": "bearer", "scope": granted}
 
     def _decide(self, grant: Grant) -> tuple[str | None, dict[str, Any]]:

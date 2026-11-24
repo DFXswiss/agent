@@ -1340,7 +1340,7 @@ def test_saml_enforcement(start_github: Callable[..., Any], seed: Callable[[], A
         response = gh.api("GET", path, token=token)
         assert (response.status, response.json()) == (403, expected)
         assert response.headers["x-github-sso"] == (
-            "required; url=https://github.com/orgs/octo-org/sso?authorization_request=x"
+            f"required; url={gh.double.served_url}/orgs/octo-org/sso?authorization_request=x"
         )
     assert gh.get("/repos/free-org/open", token="sso")["full_name"] == "free-org/open"
     assert gh.state()["ok"] is True

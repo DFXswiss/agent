@@ -291,7 +291,8 @@ def access_run(dsn: str, github: GitHub, token: str | None, body: Body, **config
 
 
 async def statuses(kit: OKit) -> list[dict[str, Any]]:
-    return [item["body"] for kind, item in await kit.outbox() if kind == "event"]
+    """The `waiting` bodies of the `session.status` events in the outbox."""
+    return [item["body"] for kind, item in await kit.outbox() if kind == "event" and "waiting_for" in item["body"]]
 
 
 async def scan(kit: OKit) -> None:
@@ -434,11 +435,8 @@ def test_the_timeout_names_the_step(store_dsn: str, places: GitHub) -> None:
         op_id = await kit.request(sid, "github.list_issues", {"repo": THIRD})
         await scan(kit)
         assert (await kit.op(op_id)).held
-        await kit.age(op_id, HOLD_S + 1)
-        async with kit.env.pool.connection() as conn:
-            await conn.execute(
-                "UPDATE runner.operation SET held_until = now() - interval '1 second' WHERE id = %s", (op_id,)
-            )
+        wall = kit.kit.session_env.wall
+        kit.kit.session_env.wall = lambda: wall() + HOLD_S + 1
         kit.hub.decisions.append({"state": "rejected", "error_code": "repo_not_accessible"})
         await scan(kit)
         op = await kit.op(op_id)
@@ -456,7 +454,9 @@ def test_github_answers_other_than_access_are_not_held(store_dsn: str, places: G
         sid = await kit.session()
         places.faults({"route": "GET /repos/{owner}/{repo}", "kind": "error", "status": 502, "times": 1})
         failed = await kit.run(sid, "github.list_issues", {"repo": OWN})
-        assert (failed.state, failed.held_until) == ("rejected", None)
+        assert failed.held_until is None
+        assert failed.answer is not None
+        assert (failed.answer["status"], failed.answer["error"]["code"]) == ("rejected", "upstream_error")
 
     access_run(store_dsn, places, OAUTH, body, oauth=OAUTH_ID)
 

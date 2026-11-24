@@ -215,8 +215,8 @@ def settings_for(context: Any) -> GitHubSettings:
         wall=options.wall,
         sleep=options.sleep or context.host.sleep,
         transport=options.transport,
-        oauth_client_id=config.github_oauth_client_id,
-        app_slug=config.github_app_slug,
+        oauth_client_id=getattr(config, "github_oauth_client_id", None),
+        app_slug=getattr(config, "github_app_slug", None),
     )
     setattr(context, ATTRIBUTE, built)
     return built

@@ -303,9 +303,8 @@ def test_precheck_refusals(store_dsn: str, start_github: Any, tmp_path: Path, mo
         assert refused(await r.run(sid, "github.commit", params)) == "upstream_error"
         github.faults({"route": "GET /repos/{owner}/{repo}/git/ref/{ref}", "kind": "error", "status": 502})
         assert refused(await r.run(sid, "github.commit", params)) == "upstream_error"
-        assert refused(await r.run(sid, "github.commit", {**params, "repo": "octo-org/hidden"})) == (
-            "repo_not_accessible"
-        )
+        hidden = await r.run(sid, "github.commit", {**params, "repo": "octo-org/hidden"})
+        assert (hidden.state, hidden.held_reason) == ("received", "github_access")  # KOR-65: held with a next step
         delattr(r.ok.env.context, PIPELINE_ATTRIBUTE)
         assert refused(await r.run(sid, "github.commit", params)) == "not_found"
         assert r.scratch() == []

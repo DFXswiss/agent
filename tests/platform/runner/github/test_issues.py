@@ -273,10 +273,12 @@ def test_an_organisation_that_requires_sso_is_named_without_its_url(store_dsn: s
         failed = await fails(env, "github.list_issues", {"repo": REPO})
         assert (failed.code, failed.message, failed.retryable) == ("upstream_error", ops.SSO_REQUIRED, False)
         assert "https://" not in (failed.message or "")
-        assert await refused(env, "github.get_issue", {"repo": REPO}) == "upstream_error"
+        # the pre-check names the one next step instead (KOR-65): authorise the token for the organisation
+        assert await refused(env, "github.get_issue", {"repo": REPO}) == "repo_not_accessible"
         with pytest.raises(CheckFailed) as caught:
             await PRECHECKS["github.get_issue"](precheck_request(env, "github.get_issue", {"repo": REPO}))
-        assert caught.value.error() == {"code": "upstream_error", "message": ops.SSO_REQUIRED}
+        assert caught.value.next_step is not None
+        assert caught.value.next_step["action"] == "authorize_sso"
 
     with_env(store_dsn, gh, sso, token=SSO_TOKEN)
 

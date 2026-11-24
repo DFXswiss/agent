@@ -122,7 +122,13 @@ def test_checkout_precheck_refusals(store_dsn: str, start_github: Any, tmp_path:
         unknown = await r.run(sid, "github.checkout", {"repo": REPO, "ref": "nope"})
         assert refused(unknown) == "not_found"
         hidden = await r.run(sid, "github.checkout", {"repo": "octo-org/hidden"})
-        assert refused(hidden) == "repo_not_accessible"
+        # not reachable with this token: held with the one next step for the person (KOR-65)
+        assert (hidden.state, hidden.held_reason) == ("received", "github_access")
+        assert hidden.held_next == {
+            "action": "check_access",
+            "owner": "octo-org",
+            "url": "https://github.example/octo-org/hidden",
+        }
         github.faults({"route": "GET /repos/{owner}/{repo}/commits/{ref}", "kind": "error", "status": 502})
         failing = await r.run(sid, "github.checkout", {"repo": REPO})
         assert refused(failing) == "upstream_error"

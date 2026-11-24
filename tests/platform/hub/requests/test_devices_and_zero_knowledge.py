@@ -24,6 +24,11 @@ def test_my_devices_lists_eligible_devices_with_presence(desk: Desk) -> None:
                 now - timedelta(minutes=2),
             ),
         )
+        # the GitHub ways the device announced on its live channel (KOR-65)
+        connection.execute(
+            "UPDATE hub.device SET features = %s WHERE id = %s",
+            (["log.admit", "github.ways", "github.device_flow"], scene.device.id),
+        )
     body = scene.writer.browser.get("/v1/me/devices").json()
     by_id = {item["device_id"]: item for item in body["devices"]}
     assert sorted(by_id) == sorted([scene.device.id, scene.other_device.id])
@@ -34,7 +39,9 @@ def test_my_devices_lists_eligible_devices_with_presence(desk: Desk) -> None:
         "wg_ids": [scene.wg],
         "online": True,
         "last_seen_at": "2026-11-21T11:59:55.123Z",
+        "features": ["github.device_flow", "github.ways", "log.admit"],
     }
+    assert by_id[scene.other_device.id]["features"] == []
     assert by_id[scene.other_device.id]["online"] is False
     assert by_id[scene.other_device.id]["last_seen_at"] == "2026-11-21T11:58:00.123Z"
     assert [item["device_id"] for item in body["devices"]] == sorted(by_id, reverse=True)

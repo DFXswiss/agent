@@ -38,6 +38,7 @@ def connect(
                 env.context.github_options = GitHubOptions(wall=wall, transport=kw["transport"])
             if kw.get("client_id", True) is not True:
                 env.context.config.github_client_id = kw["client_id"]
+            env.context.config.github_oauth_client_id = kw.get("oauth")
             if kw.get("ck", True):
                 await env.add_ck()
             count = 0
@@ -331,7 +332,7 @@ def test_storing_needs_the_owners_ck_and_the_hub(store_dsn: str) -> None:
         return github_mock(login_device_code=(200, CODE), login_oauth_access_token=(200, TOKEN), user=(200, USER))
 
     assert mocked(store_dsn, transport(), ck=False)[-1] == failed("credential_missing")
-    assert mocked(store_dsn, transport(), client_id=None) == [failed("upstream_error")]
+    assert mocked(store_dsn, transport(), client_id=None) == [failed("flow_unavailable")]
 
 
 def test_a_hub_refusing_or_unreachable_while_storing_ends_failed(store_dsn: str) -> None:

@@ -119,7 +119,7 @@ def test_session_order_heartbeat_and_hint_dispatch(
             assert (before, during, env.sync.ws.connected) == (False, True, False)
             log = env.log()
             assert "runner.sync ws_connected count=1\n" in log
-            assert env.hub.ws_features == ["log.admit,log.org_assign,vm.choice"]
+            assert env.hub.ws_features == ["log.admit,log.org_assign,vm.choice,github.ways"]
             assert "runner.sync hint_invalid\n" in log
             assert "runner.sync hint_unknown type=bogus\n" in log
             assert "runner.sync hint_failed type=reconcile error=RuntimeError\n" in log

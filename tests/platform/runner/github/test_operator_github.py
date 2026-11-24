@@ -18,7 +18,7 @@ import pytest
 
 from agent_guest.schema import SchemaSet
 from agent_runner.credentials import cache
-from agent_runner.github import operator, precheck
+from agent_runner.github import operator
 from agent_runner.github.executors import EXECUTORS
 from agent_runner.github.op_prechecks import PRECHECKS
 from agent_runner.operations.extensions import CheckFailed, OperationFailed
@@ -533,7 +533,7 @@ def test_without_an_allow_list_every_repository_of_the_account_works(
 ) -> None:
     """KOR-30: no list in the workgroup settings allows every repository the connection reaches - listed `allowed`,
     then checkout, commit, push, pull request and comment on the account's own repository, each registered at the hub
-    with its type; a repository the account cannot reach is refused by GitHub (`repo_not_accessible`)."""
+    with its type; a repository the account cannot reach is held with the one next step (KOR-65)."""
     data = run10_world()
     data["users"] += [user for user in operator_world()["users"] if user["login"].startswith("op-")]
     data["repositories"] += [{"full_name": "op-account/tools", "branches": [{"name": "main", "commits": [{}]}]}]
@@ -574,12 +574,14 @@ def test_without_an_allow_list_every_repository_of_the_account_works(
         assert [r.ok.hub.params_event(index)[1]["params"]["repo"] for index in range(1, 6)] == [tools] * 5
         # not reachable for the account: GitHub refuses it in the pre-check, the session gets a clear code
         outside = await r.run(sid, "github.checkout", {"repo": "octo-org/second"})
-        assert refused(outside) == "repo_not_accessible"
-        assert outside.answer is not None
-        assert outside.answer["error"]["message"] == precheck.NOT_ACCESSIBLE
-        rejected = r.ok.hub.requests[-1]
-        assert (len(r.ok.hub.requests), rejected["type"], rejected["local_check"]) == (7, "github.checkout", "rejected")
-        assert r.ok.hub.params_event()[1]["params"]["repo"] == "octo-org/second"
+        # the account itself has no access: held with the step "check access" for the person (KOR-65), not registered
+        assert (outside.state, outside.held_reason) == ("received", "github_access")
+        assert outside.held_next == {
+            "action": "check_access",
+            "owner": "octo-org",
+            "url": "https://github.example/octo-org/second",
+        }
+        assert len(r.ok.hub.requests) == 6
 
     run10(store_dsn, github, tmp_path, body, token=OPERATOR_TOKEN, allowed=allowed)
 

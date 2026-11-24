@@ -92,15 +92,12 @@ def test_an_open_pull_request_at_github_succeeds_as_existing_and_is_answered_dup
     pipeline_run(store_dsn, github, body)
 
 
-def test_an_allowed_repository_the_owner_cannot_reach_is_rejected_repo_not_accessible(
-    store_dsn: str, github: GitHub
-) -> None:
+def test_an_allowed_repository_the_owner_cannot_reach_is_held_with_a_next_step(store_dsn: str, github: GitHub) -> None:
     async def body(kit: OKit) -> None:
         sid = await kit.session()
-        kit.hub.decisions.append({"state": "rejected", "error_code": "repo_not_accessible"})
         op = await kit.run(sid, "github.create_branch", {"repo": "octo-org/hidden", "branch": "x", "from": "main"})
-        assert (op.state, op.error_code) == ("rejected", "repo_not_accessible")
-        assert kit.hub.requests[0]["local_check"] == "rejected"
+        assert (op.state, op.held_reason) == ("received", "github_access")
+        assert kit.hub.requests == []
         assert github.paths() == ["GET /repos/octo-org/hidden"]
 
     pipeline_run(store_dsn, github, body)
