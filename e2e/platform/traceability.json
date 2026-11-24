@@ -265,6 +265,7 @@
   "E2E-61": {"milestone": 3, "kind": "e2e"},
   "E2E-62": {"milestone": 3, "kind": "e2e"},
   "E2E-63": {"milestone": 3, "kind": "e2e"},
+  "E2E-64": {"milestone": 3, "kind": "e2e"},
   "GATE-BRANCH-PROTECTION": {"milestone": 3, "kind": "gate", "evidence": ["agent-core:docs/platform/acceptance/M3.md"]},
   "GATE-COVERAGE": {"milestone": 0, "kind": "gate", "evidence": ["agent-core:tests/platform/test_coverage_config.py", "agent:.coveragerc-platform"]},
   "GATE-MATRIX": {"milestone": 3, "kind": "gate", "evidence": ["agent-core:docs/platform/acceptance/M3.md"]},

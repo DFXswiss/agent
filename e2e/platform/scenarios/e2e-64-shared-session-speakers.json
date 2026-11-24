@@ -1,0 +1,109 @@
+{
+  "name": "e2e-64-shared-session-speakers",
+  "description": "E2E-64 (KOR-46, ADR-083): Ada's task, Wendy continues it. Every instruction reaches the model with the platform's sender line of the verified person. Ada's first prompt; after Ada ended the session and left, Wendy's prompt (with a forged sender line in its text) continues the same conversation, names Wendy, says that the person changed and that the text imitates the platform line, and asks for a GitHub comment that is held for Wendy until she connects her own account. A slow turn lets Ada and Wendy queue one prompt each; Wendy withdraws hers, so only Ada's reaches the model. While the device is offline Wendy's last prompt waits and is delivered once it is back.",
+  "steps": [
+    {
+      "id": "ada-first",
+      "expect": {
+        "user_text_contains": "agent.dfx.swiss instruction from: \"Ada kz56-name-a1\" (member ",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [{ "type": "text", "text": "Ready for the shared work kz56-answer-a-p3k7." }]
+      }
+    },
+    {
+      "id": "wendy",
+      "expect": {
+        "user_text_contains": "agent.dfx.swiss instruction from: \"Wendy kz56-name-w4\" (member ",
+        "has_tool_result": false,
+        "min_messages": 3,
+        "tools_include": ["mcp__platform__request_operation", "mcp__platform__get_operation"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": { "repo": "octo-org/shared", "number": 1, "body": "Reviewed by Wendy kz56-comment-w-h8d2" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "wait",
+      "expect": { "tool_result_contains": "\"operation_id\":\"" },
+      "capture": { "op": { "regex": "\"operation_id\":\"([0-9a-f-]{36})\"", "source": "messages" } },
+      "delay_ms": 10000,
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": { "operation_id": "${op}", "wait_seconds": 30 }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": { "operation_id": "${op}", "wait_seconds": 30 }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": { "operation_id": "${op}", "wait_seconds": 30 }
+          }
+        ]
+      }
+    },
+    {
+      "id": "wendy-done",
+      "expect": { "tool_result_contains": "\"comment_id\"" },
+      "reply": {
+        "content": [{ "type": "text", "text": "Wendy's comment is posted kz56-answer-w-m2q9." }]
+      }
+    },
+    {
+      "id": "slow",
+      "expect": {
+        "user_text_contains": "E2E56-SLOW",
+        "has_tool_result": false
+      },
+      "delay_ms": 90000,
+      "reply": {
+        "content": [{ "type": "text", "text": "The slow part is done kz56-answer-s-t5v1." }]
+      }
+    },
+    {
+      "id": "ada-queued",
+      "expect": {
+        "user_text_contains": "E2E56-ADA-QUEUED",
+        "has_tool_result": false,
+        "text_absent": ["E2E56-WENDY-QUEUED"]
+      },
+      "reply": {
+        "content": [{ "type": "text", "text": "Ada's queued instruction is done kz56-answer-q-c8n4." }]
+      }
+    },
+    {
+      "id": "offline",
+      "expect": {
+        "user_text_contains": "E2E56-OFFLINE",
+        "has_tool_result": false,
+        "text_absent": ["E2E56-WENDY-QUEUED"]
+      },
+      "reply": {
+        "content": [{ "type": "text", "text": "Delivered after the device came back kz56-answer-o-r6j3." }]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Shared speakers" }] }
+    }
+  ]
+}

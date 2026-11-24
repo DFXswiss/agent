@@ -117,6 +117,11 @@ When an org's `exhausted` changes the hub sends `reconcile {}` to the devices as
   total_micro_usd}`.
 - `GET /v1/tasks/{task_id}/charges` (browser, `wg:read` of the task's workgroup; read log `read.task.charges`):
   `{sessions: [{session_id, tokens_micro_usd, runtime_micro_usd, tokens, runtime_ms}], total_micro_usd}`.
+- Per person (KOR-46, ADR-083 §2): the org billing (last 30 days) and the task charges also carry `people:
+  [{user_id, tokens_micro_usd, runtime_micro_usd, tokens, runtime_ms}]` (largest first; `user_id` null for
+  unattributed consumption): every charge keeps the `triggered_by` of its `usage`/`runtime` item (the person whose
+  instruction caused it); the booking to the organization does not change. The web shows the breakdown in the
+  billing settings and the task's Costs tab.
 - Amounts in these answers are charges; `tokens` = input + output + cache read + cache write of charged requests.
 - Errors: `credit_exhausted` (task/session reason, operation code).
 

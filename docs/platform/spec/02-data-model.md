@@ -109,6 +109,15 @@ main session failed and no retry is pending; `closed` only by user action.
 | `context_chunk` | (`object_id` → `context_object` on delete cascade, `chunk_index`) PK, `ct` bytea (sealed chunk, `04-crypto.md` §4.11), `sha256` bytea | ciphertext only; inside the transactional backup |
 | `pr_link` | (`wg_id`,`epoch`,`tag`) PK, `task_id` → `task` on delete cascade, `session_id`, `created_at` | opaque HMAC tag of a pull request (repository and number never reach the hub); the first task keeps a tag. The only table matching the "no pull-request table" guard of ADR-014 |
 
+#### 2.4.3 Shared sessions (KOR-46, ADR-083)
+
+| Table / column | Content | Notes |
+|---|---|---|
+| `session.triggered_by` NULL | the person whose instruction created the session: the author of the prompt a main session was created for, the triggering person of the `subagent.request` of a child | ID only; null for rows before KOR-46 or when unknown |
+| `operation.triggered_by` NULL | the person whose instruction the operation follows from (the runner's stamp of ADR-070, accepted only when null or the author of a prompt of the task) | `actor_id` stays the task owner; KOR-45 intersects the rights of both |
+| `charge.triggered_by` NULL, `charge_person_daily` | the person of a consumption item (`usage`/`runtime`) and the daily sum per organization, person (null = unattributed) and kind | IDs and amounts only ([A4](../KONZEPT.md#a-4)); booking to the organization unchanged |
+| `prompt_withdrawal` | `event_id` PK (a `prompt` event), `task_id`, `requested_by`, `requested_at`, `withdrawn_at` NULL | `withdrawn_at` set at once for a session without device, else when the device reports `session.prompt_withdrawn`; withdrawn prompts leave the routing |
+
 ### 2.5 Operations
 
 | Table | Columns | Notes |
@@ -123,7 +132,7 @@ main session failed and no retry is pending; `closed` only by user action.
 |---|---|---|
 | `whiteboard_entry` [P] | `id` PK (= `ref`), `org_id`, `level` CHECK in (`org`,`workgroup`,`task`), `wg_id` NULL, `task_id` NULL, `author_id`, `created_event_id`, `latest_event_id`, `created_at`, `updated_at`, `deleted` bool, `notify` bool | projection of whiteboard events (history = the events) |
 | `session_ping` | `id` PK, `session_id`, `kind` CHECK in (`whiteboard.entry`,`subagent.finished`,`operation.finished`), `level` NULL, `ref`, `created_at`, `delivered_at` NULL | durable content-free pings; undelivered rows are returned in `GET /v1/device/state`; set delivered by the outbox audit item `ping.delivered`; the hub writes only `whiteboard.entry` rows (runner pings live in the runner's `ping` table, KOR-07) |
-| `notification` | `id` PK, `recipient_id`, `kind` CHECK in (`whiteboard.entry`,`task.idle`,`task.failed`,`task.attention`,`invite.accepted`,`rotation.required`,`agent.account_change`,`org.admitted`,`operator.request`,`device.needed`), `org_id` (NULL only for `agent.account_change` and `operator.request`, ADR-079), `wg_id` NULL, `task_id` NULL, `ref` NULL, `created_at`, `read_at` NULL | content-free |
+| `notification` | `id` PK, `recipient_id`, `kind` CHECK in (`whiteboard.entry`,`task.idle`,`task.failed`,`task.attention`,`invite.accepted`,`rotation.required`,`agent.account_change`,`org.admitted`,`operator.request`,`device.needed`,`prompt.waiting_for_device`), `org_id` (NULL only for `agent.account_change` and `operator.request`, ADR-079), `wg_id` NULL, `task_id` NULL, `ref` NULL, `created_at`, `read_at` NULL | content-free |
 
 ### 2.7 Credentials and device requests
 
@@ -195,7 +204,7 @@ wipe never changes the identity (legacy rule).
 | `golden` | `version` PK, `lima_name`, `claude_version`, `guest_version`, `image_digest`, `built_at`, `state` CHECK in (`building`,`ready`,`retired`) | |
 | `vm` | `id` PK (`vm-<8 hex>`), `lima_name` UNIQUE, `golden_version`, `wg_id` NULL, `org_id` NULL, `state`, `control_token_hash`, `cpus`, `memory_mib`, `created_at`, `assigned_at`, `last_session_at` | several live VMs per workgroup and device (ADR-075 §4; the former partial UNIQUE index on `wg_id` is dropped by runner migration 0018); a VM belongs to one workgroup for its life |
 | `session` | `id` PK, `task_id`, `org_id`, `wg_id`, `vm_id`, `parent_id`, `depth`, `uid` int, `state`, `claude_session_id`, `model_access`, `model_id`, `credential_owner`, `created_at`, `ready_at`, `ended_at`, `last_prompt_at` | |
-| `prompt_delivery` | `event_id` PK, `session_id`, `state` CHECK in (`pending`,`registered`,`typed`,`accepted`,`refused`,`failed`), `updated_at` | |
+| `prompt_delivery` | `event_id` PK, `session_id`, `state` CHECK in (`pending`,`registered`,`typed`,`accepted`,`refused`,`failed`,`withdrawn`), `via_agent` bool (the hub reported the author's agent, KOR-46), `updated_at` | `withdrawn`: final, never handed to a guest (ADR-083 §3) |
 | `operation` | `id` PK, `session_id`, `task_id`, `wg_id`, `type`, `state`, `params` jsonb (plaintext, local only), `result` jsonb, `error_code`, `dedupe_tag`, `attempt`, `created_at`, `updated_at` | |
 | `guest_cursor` | `vm_id` PK, `journal_seq` | |
 | `credential_cache` | (`owner_id`,`kind`) PK, `version`, `record` jsonb (encrypted record as stored at the hub) | decrypted only in memory; for `github` the owner's primary record |
@@ -216,7 +225,7 @@ per organization, `dfx_key_issued` – the requests an issuing platform device a
 |---|---|---|
 | `journal` | `seq` INTEGER PK AUTOINCREMENT, `ts` text, `session_id`, `kind`, `body` text (JSON, plaintext) | append-only by code; rows acked by the runner (`POST /v1/journal/ack`) and older than 24 h are pruned (at start and every 10 min) |
 | `session` | `id` PK, `uid`, `token_sha256`, `state`, `workspace`, `claude_session_id`, `created_at` | token compared constant-time against the hash |
-| `prompt_registry` | (`session_id`,`sha256`) PK, `registered_at`, `used_at` NULL | |
+| `prompt_registry` | (`session_id`,`sha256`) PK, `registered_at`, `used_at` NULL, `speaker` NULL | `speaker`: the sender line the runner registered with the prompt, returned by `prompt.check` with the acceptance (ADR-083 §1) |
 | `pending` | `id` PK, `session_id`, `kind` CHECK in (`operation`,`query`), `request` text, `state`, `answer` text NULL, `created_at` | MCP calls waiting for the runner; a row unanswered for 1 h is removed (at start and every 10 min) with `guest.error pending_expired` of its session (KOR-02) |
 | `ping` | `id` PK, `session_id`, `kind` CHECK in (`whiteboard.entry`,`subagent.finished`,`operation.finished`), `level` NULL, `ref`, `created_at`, `noticed_at` NULL, `delivered_at` NULL | content-free notices; `noticed_at` when a hook answer carried the notice, `delivered_at` when `get_notifications` returned it (RUN-14) |
 

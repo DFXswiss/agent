@@ -160,3 +160,6 @@ session and charge views of the tool show `triggered_by`.
 - Withdrawal decided by the hub alone: the device may already have handed the prompt to the guest; the delivered
   count would no longer match. Rejected except for sessions without a device.
 - Booking charges to the person: contradicts A15 (the organization carries the consumption).
+
+## Deviation from DESIGN.md
+None.

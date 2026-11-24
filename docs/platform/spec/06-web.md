@@ -423,6 +423,15 @@ after a reconnect; without a switch, or when the audit cannot be read, nothing i
   plus a menu **End session** (`stop`) are shown (`POST /v1/sessions/{id}/control`). "Close task"
   (`POST /v1/tasks/{task}/close`) in the task menu.
 - Read-only users see no composer and no control buttons; a notice "You have read access" is shown.
+- **Queue (KOR-46, ADR-083 §3)**, above the composer for every reader: `GET /v1/tasks/{task}/queue`, reloaded when
+  the task's prompts, sessions or the task change. "N instructions waiting" (none: nothing shown), the waiting prompts
+  in event order with the sender's name ("you", "<name> (through their agent)") and their state: waiting, "waiting
+  for the device" (the session's device is offline) or "being withdrawn". Writers see **Withdraw** on their own
+  waiting prompts (`POST /v1/tasks/{task}/prompts/{event}/withdraw`; `peer_outdated` reads "the device has to be
+  updated first"). The prompt bubble shows the outcome of a withdrawal: "Withdrawn", "Being withdrawn" or "Could
+  not be withdrawn: it had already reached the AI".
+- **Triggered by**: operation cards and the operation drawer, and session rows of the Sessions tab, name the person
+  whose instruction they follow from (`triggered_by`), when the hub reports one.
 - Usage strip (per task): tokens, cost with basis label ("provider", "list price", "subscription equivalent"),
   context-window percentage of the main session.
 
@@ -491,6 +500,8 @@ open `workvm.request`; a stopped one (paused session) reads "stopped – starts 
   marks read and navigates
   (`task.attention`: to the situation view entry); "Mark all read".
 - Toasts for live notifications (auto-dismiss 6 s, accessible live region).
+- `prompt.waiting_for_device` (KOR-46): "Your instruction in task Y waits for the device of its session", opening the
+  task.
 
 ## 7. Organization management
 
