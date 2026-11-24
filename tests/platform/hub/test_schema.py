@@ -174,6 +174,9 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("inherited", BOOL),
     ],
     "wg_device": [("wg_id", U), ("device_id", U), ("assigned_seq", INT), ("unassigned_seq", INT)],
+    # resource choice (KOR-41, ADR-060, migration 0013)
+    "org_device": [("org_id", U), ("device_id", U), ("assigned_seq", INT), ("unassigned_seq", INT)],
+    "wg_placement": [("wg_id", U), ("device_id", U), ("vm_id", T), ("set_by", U), ("set_at", TS)],
     "platform_role": [("user_id", U), ("role", T), ("granted_seq", INT), ("revoked_seq", INT)],
     "scope_epoch": [("scope", T), ("scope_id", U), ("epoch", INT), ("created_at", TS), ("created_seq", INT)],
     "key_wrap": [
@@ -235,6 +238,8 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("state_at", TS),
         ("last_activity_at", TS),
         ("closed_at", TS),
+        ("placement_device_id", U),  # KOR-41, migration 0013
+        ("placement_vm_id", T),
     ],
     "task_transition": [("task_id", U), ("seq", INT), ("state", T), ("reason", T), ("at", TS), ("by_id", U)],
     "session": [
@@ -259,6 +264,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("ready_at", TS),
         ("first_working_at", TS),
         ("ended_at", TS),
+        ("not_before", TS),  # KOR-41, migration 0013
     ],
     "session_transition": [
         ("session_id", U),
@@ -499,6 +505,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "org_member": ("org_id", "principal_id"),
     "wg_access": ("wg_id", "user_id"),
     "wg_device": ("wg_id", "device_id"),
+    "org_device": ("org_id", "device_id"),
     "platform_role": ("user_id", "role"),
     "scope_epoch": ("scope", "scope_id", "epoch"),
     "key_wrap": ("scope", "scope_id", "epoch", "recipient_id"),

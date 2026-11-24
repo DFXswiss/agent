@@ -1617,6 +1617,80 @@
       "read_resource": null,
       "streaming": false,
       "owner": "KOR-24"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/placement",
+      "name": "workgroup-placement-get",
+      "section": "4.5",
+      "auth": "browser",
+      "rights": [
+        "wg:read"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/workgroup-placement-get.request.json",
+      "response": "api/workgroup-placement-get.response.json",
+      "read_resource": "workgroup.placement",
+      "streaming": false,
+      "owner": "KOR-41"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/workgroups/{wg}/placement",
+      "name": "workgroup-placement-put",
+      "section": "4.5",
+      "auth": "browser",
+      "rights": [
+        "wg:write"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/workgroup-placement-put.request.json",
+      "response": "api/workgroup-placement-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-41"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/tasks/{task}/placement",
+      "name": "task-placement-put",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:write"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/task-placement-put.request.json",
+      "response": "api/task-placement-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-41"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/waiting",
+      "name": "platform-waiting",
+      "section": "4.3",
+      "auth": "root",
+      "rights": [
+        "root"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/platform-waiting.request.json",
+      "response": "api/platform-waiting.response.json",
+      "read_resource": "platform.waiting",
+      "streaming": false,
+      "owner": "KOR-41"
     }
   ]
 }

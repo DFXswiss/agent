@@ -48,7 +48,10 @@ DEVICES = ("device", "dev2", "pdev", "qdev")
 LABELS = {vectors.pid(label): label for label in (*USERS, *DEVICES)}
 HUB_CODES = {"L1_seq_gap": "seq_conflict", "L1_duplicate_entry": "seq_conflict"}
 NOT_AT_THE_HUB = {"log_empty", "L3_founder_not_pinned"}
-NO_PLATFORM_ACCESS = {"assign_without_platform_access": "platform_access_denied"}
+NO_PLATFORM_ACCESS = {
+    "assign_without_platform_access": "platform_access_denied",
+    "assign_org_without_platform_access": "platform_access_denied",
+}
 CASES = [case for case in VECTORS["invalid"] if case["op"] in ("verify_log", "append_log")]
 EXCLUDED = frozenset({vectors.pid("qdev")})
 VALID_BATCHES = [

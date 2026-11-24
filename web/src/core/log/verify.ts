@@ -95,6 +95,7 @@ async function genesis(body: Body, entry: Body, founder: string): Promise<OrgSta
     workgroups: new Map([[wg, { id: wg, isDefault: true, createdSeq: 0, archivedSeq: null }]]),
     access: new Map(),
     assignments: new Map(),
+    orgAssignments: new Map(),
     epochs: new Map([
       [pairKey(ORG, org), 1],
       [pairKey(WG, wg), 1],
@@ -263,18 +264,20 @@ function platformDevice(state: OrgState, body: Body, seq: number, ctx: Context):
   };
 }
 
+/** The device of a `device_assign`/`device_assign_org`: a certified platform device (with `platform_seq`) or an
+ * active org device. */
+function assignable(state: OrgState, body: Body, seq: number, ctx: Context): Principal {
+  if (Object.hasOwn(body, 'platform_seq')) return platformDevice(state, body, seq, ctx);
+  const found = state.member(body.device as string);
+  if (found === null || found.kind !== DEVICE || found.platformSeq !== null) fail('log_rights');
+  return found;
+}
+
 function deviceAssign(state: OrgState, body: Body, seq: number, ctx: Context): OrgState {
   const device = body.device as string;
   const wg = body.wg as string;
-  rights(state.writable(wg) && !state.assignments.has(pairKey(device, wg)));
-  let principal: Principal;
-  if (Object.hasOwn(body, 'platform_seq')) {
-    principal = platformDevice(state, body, seq, ctx);
-  } else {
-    const found = state.member(device);
-    if (found === null || found.kind !== DEVICE || found.platformSeq !== null) fail('log_rights');
-    principal = found;
-  }
+  rights(state.writable(wg) && !state.assignments.has(pairKey(device, wg)) && !state.orgAssignments.has(device));
+  const principal = assignable(state, body, seq, ctx);
   return state.with({
     principals: new Map(state.principals).set(device, principal),
     assignments: new Map(state.assignments).set(pairKey(device, wg), seq),
@@ -282,12 +285,29 @@ function deviceAssign(state: OrgState, body: Body, seq: number, ctx: Context): O
 }
 
 function deviceUnassign(state: OrgState, body: Body): OrgState {
-  const device = body.device as string;
-  const wg = body.wg as string;
-  rights(state.assigned(device, wg));
+  const key = pairKey(body.device as string, body.wg as string);
+  rights(state.member(body.device as string) !== null && state.assignments.has(key));
   const assignments = new Map(state.assignments);
-  assignments.delete(pairKey(device, wg));
+  assignments.delete(key);
   return state.with({ assignments });
+}
+
+function deviceAssignOrg(state: OrgState, body: Body, seq: number, ctx: Context): OrgState {
+  const device = body.device as string;
+  rights(!state.orgAssignments.has(device));
+  const principal = assignable(state, body, seq, ctx);
+  return state.with({
+    principals: new Map(state.principals).set(device, principal),
+    orgAssignments: new Map(state.orgAssignments).set(device, seq),
+  });
+}
+
+function deviceUnassignOrg(state: OrgState, body: Body): OrgState {
+  const device = body.device as string;
+  rights(state.orgAssigned(device));
+  const orgAssignments = new Map(state.orgAssignments);
+  orgAssignments.delete(device);
+  return state.with({ orgAssignments });
 }
 
 function without<T>(map: ReadonlyMap<string, T>, principal: string): Map<string, T> {
@@ -304,6 +324,7 @@ function remove(state: OrgState, body: Body, seq: number): OrgState {
     principals: new Map(state.principals).set(subject, { ...found, removedSeq: seq }),
     access: without(state.access, subject),
     assignments: without(state.assignments, subject),
+    orgAssignments: new Map([...state.orgAssignments].filter(([device]) => device !== subject)),
   });
   if (subject === by) {
     // leaving: the leaver cannot rotate (L8), so the rotation is owed by the remaining holders
@@ -340,6 +361,8 @@ const ADMIN_ONLY: Record<string, Transition> = {
   ungrant: (state, body) => ungrant(state, body),
   device_assign: deviceAssign,
   device_unassign: (state, body) => deviceUnassign(state, body),
+  device_assign_org: deviceAssignOrg,
+  device_unassign_org: (state, body) => deviceUnassignOrg(state, body),
 };
 const OTHERS: Record<string, Transition> = {
   remove: (state, body, seq) => remove(state, body, seq),

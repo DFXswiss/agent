@@ -1,19 +1,23 @@
-// The device dialogs (06-web.md section 7.3): assign a platform device (workgroup, then the candidates the verified
-// platform log certifies; others are shown as not certified and cannot be chosen), assign an org device to a further
-// workgroup (every writable workgroup, ADR-058: key holders deliver what the admin does not hold), and rename. Each
-// runs through the confirmation dialog of the member screen.
+// The device dialogs (06-web.md section 7.3): assign a platform device (a workgroup or the whole organization, then the
+// candidates the verified platform log certifies – for the organization those of the default workgroup; others are
+// shown as not certified and cannot be chosen), assign an org device to a further workgroup (every writable workgroup, ADR-058: key holders deliver what the
+// admin does not hold) or the whole organization,
+// assign a listed device to the whole organization (ADR-060 section 5, with the plain statement of what the device
+// receives), and rename. Each runs through the confirmation dialog with the batch progress of the member screen.
 import { useEffect, useId, useState } from 'react';
 import type { OrgState } from '../../../core/log/state';
-import { actionErrorCode } from '../../../core/org/batch';
+import { actionErrorCode, keyRing } from '../../../core/org/batch';
 import {
   assignableWorkgroups,
   assignDevice,
+  canAssignToOrg,
   type CandidateRow,
   capacityUse,
   deviceLabel,
   type DeviceRow,
   loadCandidates,
   renameDevice,
+  WHOLE_ORG,
 } from '../../../core/org/devices';
 import type { Directory } from '../../../core/tasks/directory';
 import { useI18n } from '../../i18n';
@@ -27,12 +31,16 @@ function WorkgroupSelect(props: {
   readonly onChange: (wg: string) => void;
   readonly directory: Directory;
   readonly testId: string;
+  /** Offer "Whole organization" (value `WHOLE_ORG`) after the workgroups. */
+  readonly org?: boolean;
+  /** `data-testid` of the label (it leads to the select). */
+  readonly labelTestId?: string;
 }) {
   const { t } = useI18n();
   const id = useId();
   return (
-    <label htmlFor={id} className="flex flex-col gap-1">
-      <span>{t('devices.assign.workgroup')}</span>
+    <label htmlFor={id} className="flex flex-col gap-1" data-testid={props.labelTestId}>
+      <span>{t(props.org === true ? 'devices.assign.scope' : 'devices.assign.workgroup')}</span>
       <select
         id={id}
         className="min-h-11 rounded border border-gray-300 px-2"
@@ -45,8 +53,22 @@ function WorkgroupSelect(props: {
             {props.directory.workgroups.get(wg) ?? t('devices.wg.unnamed')}
           </option>
         ))}
+        {props.org === true && <option value={WHOLE_ORG}>{t('devices.whole-org')}</option>}
       </select>
     </label>
+  );
+}
+
+/** What a device given to the whole organization receives (06-web.md section 7.3, said plainly). */
+export function OrgNotice() {
+  const { t } = useI18n();
+  return (
+    <p
+      className="rounded border border-amber-300 bg-amber-50 p-3 text-amber-950"
+      data-testid="devices.assign.org-notice"
+    >
+      {t('devices.org-notice')}
+    </p>
   );
 }
 
@@ -98,19 +120,23 @@ export function AssignPlatformDialog(props: {
   const { org, state, directory, onClose } = props;
   const { app } = useAppEnv();
   const { t, error } = useI18n();
+  const held = keyRing(app.store, org);
   // never empty: the default workgroup is never archived
   const choices = assignableWorkgroups(state);
+  const orgChoice = canAssignToOrg(state, held);
   const [wg, setWg] = useState(choices[0]!);
+  // the whole organization takes the platform candidates of the default workgroup
+  const source = wg === WHOLE_ORG ? state.defaultWg : wg;
   // the candidates of the workgroup they were loaded for (a change of the workgroup shows "loading" until its own)
   const [loaded, setLoaded] = useState<{ wg: string; rows: CandidateRow[] | null; code: string | null } | null>(null);
   const [chosen, setChosen] = useState('');
   useEffect(() => {
-    loadCandidates(app.tasks, org, wg).then(
-      (found) => setLoaded({ wg, rows: found, code: null }),
-      (failure: unknown) => setLoaded({ wg, rows: null, code: actionErrorCode(failure) }),
+    loadCandidates(app.tasks, org, source).then(
+      (found) => setLoaded({ wg: source, rows: found, code: null }),
+      (failure: unknown) => setLoaded({ wg: source, rows: null, code: actionErrorCode(failure) }),
     );
-  }, [app, org, wg]);
-  const current = loaded?.wg === wg ? loaded : null;
+  }, [app, org, source]);
+  const current = loaded?.wg === source ? loaded : null;
   const rows = current?.rows ?? null;
   const code = current?.code ?? null;
   const candidate = rows?.find((row) => row.device_id === chosen && row.verified);
@@ -138,9 +164,11 @@ export function AssignPlatformDialog(props: {
           value={wg}
           onChange={setWg}
           directory={directory}
-          testId="devices.assign.wg"
+          testId="devices.assign.scope"
+          labelTestId="devices.assign.wg"
+          org={orgChoice}
         />
-        <p>{t('devices.assign.note')}</p>
+        {wg === WHOLE_ORG ? <OrgNotice /> : <p>{t('devices.assign.note')}</p>}
         {code !== null && (
           <p role="alert" className="text-red-800" data-testid="devices.assign.load-error" data-code={code}>
             {error(code).title}
@@ -165,8 +193,10 @@ export function AssignToWorkgroupDialog(props: {
   const { org, row, state, directory, onClose } = props;
   const { app } = useAppEnv();
   const { t } = useI18n();
+  const held = keyRing(app.store, org);
   const choices = assignableWorkgroups(state).filter((wg) => !row.workgroups.includes(wg));
-  const [wg, setWg] = useState(choices[0] ?? '');
+  const orgChoice = canAssignToOrg(state, held);
+  const [wg, setWg] = useState(choices[0] ?? (orgChoice ? WHOLE_ORG : ''));
   return (
     <ActionDialog
       title={t('devices.to-wg.title', { name: deviceName(t, row) })}
@@ -177,7 +207,7 @@ export function AssignToWorkgroupDialog(props: {
       onDone={onClose}
       onClose={onClose}
     >
-      {choices.length === 0 ? (
+      {choices.length === 0 && !orgChoice ? (
         <p data-testid="devices.to-wg.none">{t('devices.to-wg.none')}</p>
       ) : (
         <WorkgroupSelect
@@ -186,8 +216,37 @@ export function AssignToWorkgroupDialog(props: {
           onChange={setWg}
           directory={directory}
           testId="devices.to-wg.wg"
+          org={orgChoice}
         />
       )}
+      {wg === WHOLE_ORG && <OrgNotice />}
+    </ActionDialog>
+  );
+}
+
+/** "Assign to the whole organization" of a listed device (`device_assign_org`, its `platform_seq` from the log). */
+export function AssignOrgDialog(props: {
+  readonly org: string;
+  readonly row: DeviceRow;
+  readonly onClose: () => void;
+}) {
+  const { org, row, onClose } = props;
+  const { app } = useAppEnv();
+  const { t } = useI18n();
+  const target =
+    row.platformSeq === null
+      ? ({ kind: 'org', device: row.id } as const)
+      : ({ kind: 'platform', device: row.id, platformSeq: row.platformSeq } as const);
+  return (
+    <ActionDialog
+      title={t('devices.assign-org.title', { name: deviceName(t, row) })}
+      testId="devices.assign-org"
+      confirmLabel={t('devices.assign-org.confirm')}
+      run={(progress) => assignDevice(app.tasks, org, WHOLE_ORG, target, progress)}
+      onDone={onClose}
+      onClose={onClose}
+    >
+      <OrgNotice />
     </ActionDialog>
   );
 }

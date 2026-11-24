@@ -16,8 +16,13 @@
 //   wrap of the user's own `CK` (`wrapCredentialKey`, best effort like the first-task flow);
 // - platform candidates (`GET /v1/workgroups/{wg}/device-candidates`) are offered only when the verified platform log
 //   certifies them with the listed keys (compiled root key);
-// - unassign (`device_unassign`) and unpair (`remove` of the device): `submitBatch` adds the rotation of R with the new
-//   keys for every remaining recipient (04-crypto.md section 5.10);
+// - assign a device to the whole organization (ADR-060 section 5): one batch `device_assign_org` (platform devices
+//   with `platform_seq`) + the wraps of the current `OK` and of every current `WK` the admin holds (`buildBatch` wraps
+//   every held key of a scope the device newly reads), then the wrap of the admin's own `CK`; the other keys reach
+//   the device by catch-up from their holders;
+// - unassign (`device_unassign`), remove from the organization (`device_unassign_org`) and unpair (`remove` of the
+//   device): `submitBatch` adds the rotation of R with the new keys for every remaining recipient (04-crypto.md
+//   section 5.10);
 // - rename: a new `device.profile` event sealed with the current `OK`.
 import { uuid7 } from '../encoding/ids';
 import { bodyJson } from '../encoding/json';
@@ -25,7 +30,7 @@ import { formatTime } from '../encoding/time';
 import { newHeader, sealEvent } from '../crypto/event';
 import type { LogFields } from '../log/entries';
 import type { PlatformState } from '../log/platform';
-import { DEVICE, ORG, type OrgState } from '../log/state';
+import { DEVICE, ORG, type OrgState, pairKey } from '../log/state';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import { memoize } from '../store/selectors';
@@ -67,14 +72,66 @@ export interface Capacity {
   readonly vm_slots_total: number;
   readonly vm_slots_free: number;
   readonly pool_ready: number;
+  // optional counters and settings of a runner that reports them (ADR-060 section 2)
+  readonly cpus?: number;
+  readonly memory_total_mib?: number;
+  readonly disk_free_mib?: number;
+  readonly vms_running?: number;
+  readonly sessions_active?: number;
+  readonly work_vms_running?: number;
+  /** Occupying sessions per VM (0 = no limit). */
+  readonly sessions_per_vm?: number;
+  /** VMs of the device that occupy a slot (0 = only the memory budget decides). */
+  readonly vms_max?: number;
 }
 
 const CAPACITY_FIELDS = ['vm_memory_budget_mib', 'vm_memory_used_mib', 'vm_slots_total', 'vm_slots_free', 'pool_ready'];
 
-const count = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
+const count = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 
 export const isCapacity = (value: unknown): value is Capacity =>
   isRecord(value) && CAPACITY_FIELDS.every((field) => count(value[field]));
+
+/** The optional details of a capacity report that are present and well-formed, in display order. */
+export const DETAIL_FIELDS = [
+  'cpus',
+  'memory_total_mib',
+  'disk_free_mib',
+  'vms_running',
+  'sessions_active',
+  'sessions_per_vm',
+  'vms_max',
+] as const;
+export type DetailField = (typeof DETAIL_FIELDS)[number];
+
+/** `[field, value]` of every reported detail (malformed values are left out). */
+export function capacityDetails(capacity: Capacity): [DetailField, number][] {
+  const record = capacity as unknown as Record<string, unknown>;
+  return DETAIL_FIELDS.flatMap((field): [DetailField, number][] =>
+    count(record[field]) ? [[field, record[field]]] : [],
+  );
+}
+
+/** A live VM of a workgroup on a device with its occupying sessions (`GET /v1/orgs/{org}/devices`, `vms`). */
+export interface DeviceVm {
+  readonly vm_id: string;
+  readonly wg_id: string;
+  readonly state: string;
+  readonly sessions: number;
+}
+
+const isDeviceVm = (value: unknown): value is DeviceVm =>
+  isRecord(value) &&
+  typeof value.vm_id === 'string' &&
+  typeof value.wg_id === 'string' &&
+  typeof value.state === 'string' &&
+  count(value.sessions);
+
+/** The session limit per VM a device reports (null: none reported or no limit). */
+export function sessionsPerVm(capacity: Capacity | null): number | null {
+  const limit = capacity?.sessions_per_vm;
+  return count(limit) && limit > 0 ? limit : null;
+}
 
 /** One row of `GET /v1/orgs/{org}/devices`. */
 export interface HubDevice {
@@ -87,6 +144,10 @@ export interface HubDevice {
   readonly capacity: Capacity;
   readonly capacity_low: boolean;
   readonly assigned_wgs: readonly string[];
+  /** Assigned to the whole organization (display data, ADR-060 section 5). */
+  readonly assigned_org?: boolean;
+  /** Live VMs of the workgroups the user may read, with their sessions. */
+  readonly vms?: readonly DeviceVm[];
 }
 
 const isHubDevice = (value: unknown): value is HubDevice =>
@@ -100,7 +161,9 @@ const isHubDevice = (value: unknown): value is HubDevice =>
   isCapacity(value.capacity) &&
   typeof value.capacity_low === 'boolean' &&
   Array.isArray(value.assigned_wgs) &&
-  value.assigned_wgs.every((wg) => typeof wg === 'string');
+  value.assigned_wgs.every((wg) => typeof wg === 'string') &&
+  (value.assigned_org === undefined || typeof value.assigned_org === 'boolean') &&
+  (value.vms === undefined || (Array.isArray(value.vms) && value.vms.every(isDeviceVm)));
 
 /** `GET /v1/orgs/{org}/devices` (`unavailable` for a malformed answer). */
 export async function loadOrgDevices(context: Pick<TasksContext, 'client'>, org: string): Promise<HubDevice[]> {
@@ -129,8 +192,13 @@ export interface DeviceRow {
   readonly platformSeq: number | null;
   /** A platform device whose certification (the one its keys come from) has ended. */
   readonly decertified: boolean;
-  /** Assigned workgroups from the verified log, in the order of `workgroupOrder`. */
+  /** Assigned workgroups from the verified log (explicitly or through the organization), in the order of
+   *  `workgroupOrder`. */
   readonly workgroups: readonly string[];
+  /** Assigned to the whole organization by the verified log (ADR-060 section 5). */
+  readonly org: boolean;
+  /** The explicit per-workgroup assignments (they remain after the organization assignment ends). */
+  readonly explicit: readonly string[];
   /** What the hub reports (null while its list does not name the device). */
   readonly hub: HubDevice | null;
 }
@@ -156,6 +224,8 @@ export function deviceRows(
       platformSeq: p.platformSeq,
       decertified: excluded.has(p.id),
       workgroups: order.filter((wg) => state.assigned(p.id, wg)),
+      org: state.orgAssigned(p.id),
+      explicit: order.filter((wg) => state.assignments.has(pairKey(p.id, wg))),
       hub: byId.get(p.id) ?? null,
     }));
 }
@@ -200,6 +270,11 @@ export function hasPlatformAccess(state: OrgState, platform: PlatformState | nul
  */
 export function assignableWorkgroups(state: OrgState): string[] {
   return workgroupOrder(state).filter((wg) => state.writable(wg));
+}
+
+/** The whole organization is a choice when the user holds the current `OK` (the batch wraps it for the device). */
+export function canAssignToOrg(state: OrgState, held: ReturnType<typeof keyRing>): boolean {
+  return held(ORG, state.org, state.epoch(ORG, state.org)) !== null;
 }
 
 // --- platform candidates ---
@@ -303,6 +378,33 @@ export function unassignPlan(device: string, wg: string): Planner {
   };
 }
 
+/** `device_assign_org` of `device` (`platformSeq` for a platform device); null once it is assigned to the org. */
+export function assignOrgPlan(device: string, platformSeq: number | null): Planner {
+  return (log, me) => {
+    const state = log.state;
+    requireAdmin(state, me);
+    if (state.orgAssigned(device)) return null;
+    const found = state.member(device);
+    if (platformSeq === null) {
+      if (found?.kind !== DEVICE || found.platformSeq !== null) refuse('not_found');
+      return { entries: [{ type: 'device_assign_org', device }] };
+    }
+    if (found !== null && found.platformSeq !== platformSeq) refuse('log_rights');
+    return { entries: [{ type: 'device_assign_org', device, platform_seq: platformSeq }] };
+  };
+}
+
+/** `device_unassign_org` (+ R: every workgroup without an explicit assignment, and the org once nothing is left);
+ *  null once done. */
+export function unassignOrgPlan(device: string): Planner {
+  return (log, me) => {
+    const state = log.state;
+    requireAdmin(state, me);
+    if (!state.orgAssigned(device)) return null;
+    return { entries: [{ type: 'device_unassign_org', device }] };
+  };
+}
+
 /** Unpair: `remove` of the device (+ R: every workgroup it was assigned to and the org); null once it is gone. */
 export function unpairPlan(device: string): Planner {
   return (log, me) => {
@@ -320,8 +422,12 @@ export type AssignTarget =
   | { readonly kind: 'org'; readonly device: string }
   | { readonly kind: 'platform'; readonly device: string; readonly platformSeq: number };
 
+/** The scope value of "the whole organization" next to workgroup IDs (never a UUID). */
+export const WHOLE_ORG = 'org';
+
 /**
- * Assigns a device to a workgroup (the batch with `WK` and `OK` for the device), then wraps the user's own `CK` for it.
+ * Assigns a device to a workgroup (the batch with `WK` and `OK` for the device) – or with `wg` = `WHOLE_ORG` to the
+ * whole organization (the batch with `OK` and every `WK` the user holds) – then wraps the user's own `CK` for it.
  * Platform devices need platform access (`platform_access_denied`, ADR-026) and a valid certification in the verified
  * platform log with the device's keys.
  */
@@ -345,7 +451,9 @@ export async function assignDevice(
   } else {
     kem = actor.log.state.member(target.device)?.kem ?? refuse('not_found');
   }
-  const submitted = await submitBatch(context, org, assignPlan(target.device, wg, platformSeq), progress);
+  const plan =
+    wg === WHOLE_ORG ? assignOrgPlan(target.device, platformSeq) : assignPlan(target.device, wg, platformSeq);
+  const submitted = await submitBatch(context, org, plan, progress);
   if (submitted.built !== null) {
     await wrapCredentialKey(context, { userId: actor.userId, identity: actor.identity }, { id: target.device, kem });
   }

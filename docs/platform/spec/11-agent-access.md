@@ -202,7 +202,7 @@ row names a command the tool lacks. Rows in stage c are not built yet. Until a c
 | `settings set [--model-access] [--model] [--locale]` | `PUT /v1/me/settings` |
 | `api <METHOD> <path> [--body …]` | the generic signed call |
 | `org list|create|show`, `org invite --org [--role admin|member] [--wg …] [--expires-hours]`, `org join` | organizations and invitations of every role, joining with an invitation |
-| `wg list|create|grant`, `repos list|allow|disallow`, `device assign` | workgroups, allowed repositories, platform device |
+| `wg list|create|grant`, `wg placement [--device <id> [--vm <id>]|--auto]`, `repos list|allow|disallow`, `device list`, `device assign --wg <id>|--org <id>`, `device unassign --org <id> --device <id>` | workgroups and their default device, allowed repositories, devices with VMs and load, assignment to a workgroup or the whole organization (ADR-060) |
 | `github connect` | device request `github.connect`; opens the verification page, copies the user code to the clipboard, waits |
 | `diagnose [--task <id>]` | why a task does not start: device, assignment, model access, credentials (incl. expiry), last transition, with `reason` and `next` from fixed lists |
 | `task list --wg [--state]`, `task create --wg --text`, `task prompt --task --text`, `task show --task`, `task follow --task [--after] [--wait]` | tasks sealed and opened on the user's computer like the web client (`task.meta` with the derived title and `prompt` under the workgroup's current epoch, signed by the identity; reading runs the reader checks and opens with the user's own workgroup key; `--text -` reads stdin; `follow` returns the new chat events after a position and `next_after` for the next call, waiting up to `--wait` seconds for the first) |

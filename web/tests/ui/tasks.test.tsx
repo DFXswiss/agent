@@ -67,18 +67,13 @@ describe('composer', () => {
     expect(t.client.of('POST /v1/tasks')).toHaveLength(1);
   });
 
-  it('keeps the prepared request after a failure and sends it again unchanged; links the devices screen', async () => {
+  it('keeps the prepared request after a failure and sends it again unchanged; waits without a device', async () => {
     const t = await taskWorld();
     t.client.on(`GET /v1/workgroups/${t.wg}`, () => ({ devices: [] }));
     t.client.on(`GET /v1/workgroups/${t.wg}/device-candidates`, () => ({ candidates: [] }));
     const router = mount(t, [{ path: '/', element: <Composer org={t.org} wg={t.wg} /> }], '/');
     expect(screen.queryByTestId('composer.chips')).toBeNull();
     fireEvent.change(screen.getByTestId('composer.prompt'), { target: { value: 'Hello' } });
-    fireEvent.click(screen.getByTestId('composer.send'));
-    const error = await screen.findByTestId('composer.error');
-    expect(error).toHaveAttribute('data-code', 'no_device_available');
-    expect(screen.getByTestId('composer.devices')).toHaveAttribute('href', `/o/${t.org}/devices`);
-    t.client.on(`GET /v1/workgroups/${t.wg}`, () => ({ devices: [{}] }));
     let posts = 0;
     t.client.on('POST /v1/tasks', (body) => {
       posts += 1;
@@ -87,11 +82,72 @@ describe('composer', () => {
     });
     fireEvent.click(screen.getByTestId('composer.send'));
     await waitFor(() => expect(screen.getByTestId('composer.error')).toHaveAttribute('data-code', 'unavailable'));
-    expect(screen.queryByTestId('composer.devices')).toBeNull();
+    expect(screen.queryByTestId('home.device')).toBeNull();
     fireEvent.click(screen.getByTestId('composer.send'));
     await waitFor(() => expect(router.state.location.pathname).toMatch(/\/t\//));
     const [first, second] = t.client.of('POST /v1/tasks');
     expect(JSON.stringify(first!.body)).toBe(JSON.stringify(second!.body));
+    expect(first!.body).not.toHaveProperty('placement');
+  });
+
+  it('chooses device and VM, preselects the workgroup default and applies "Automatic" over a default', async () => {
+    const t = await taskWorld();
+    const d1 = '0190f000-0000-7000-8000-0000000000d1';
+    const d2 = '0190f000-0000-7000-8000-0000000000d2';
+    t.client.on(`GET /v1/workgroups/${t.wg}`, () => ({
+      devices: [
+        {
+          device_id: d1,
+          kind: 'platform',
+          online: true,
+          capacity: {
+            vm_memory_budget_mib: 1,
+            vm_memory_used_mib: 0,
+            vm_slots_total: 1,
+            vm_slots_free: 1,
+            pool_ready: 0,
+            sessions_per_vm: 16,
+          },
+          vms: [{ vm_id: 'vm-1a2b3c4d', state: 'running', sessions: 3 }],
+        },
+        { device_id: d2, kind: 'org', online: false, vms: [{ vm_id: 'vm-5e6f7a8b', state: 'running', sessions: 1 }] },
+      ],
+      placement: { device_id: d1, vm_id: null },
+    }));
+    t.client.on('POST /v1/tasks', (body) => created(t, body));
+    const puts = () => t.client.calls.filter((call) => call.method === 'PUT');
+    const router = mount(t, [{ path: '/', element: <Composer org={t.org} wg={t.wg} /> }], '/');
+    await waitFor(() => expect(screen.getByTestId('home.device')).toHaveValue(d1));
+    const device = screen.getByTestId('home.device');
+    expect(device).toHaveTextContent('Automatic');
+    expect(device).toHaveTextContent(`Device …${d2.slice(-6)} (offline)`);
+    expect(screen.getByTestId('home.vm')).toHaveValue('any');
+    expect(screen.getByTestId('home.vm')).toHaveTextContent('vm-1a2b3c4d · 3 of 16 sessions');
+    fireEvent.change(device, { target: { value: d2 } });
+    expect(screen.getByTestId('home.vm')).toHaveTextContent('vm-5e6f7a8b · 1 sessions');
+    fireEvent.change(screen.getByTestId('home.vm'), { target: { value: 'vm-5e6f7a8b' } });
+    fireEvent.change(screen.getByTestId('home.vm'), { target: { value: 'any' } });
+    fireEvent.change(screen.getByTestId('home.vm'), { target: { value: 'vm-5e6f7a8b' } });
+    fireEvent.change(screen.getByTestId('composer.prompt'), { target: { value: 'Hello' } });
+    fireEvent.click(screen.getByTestId('composer.send'));
+    await waitFor(() => expect(router.state.location.pathname).toMatch(/\/t\//));
+    expect(t.client.of('POST /v1/tasks')[0]!.body).toMatchObject({
+      placement: { device_id: d2, vm_id: 'vm-5e6f7a8b' },
+    });
+    expect(puts()).toHaveLength(0);
+    await act(() => router.navigate('/'));
+    await waitFor(() => expect(screen.getByTestId('home.device')).toHaveValue(d1));
+    fireEvent.change(screen.getByTestId('home.device'), { target: { value: 'auto' } });
+    expect(screen.queryByTestId('home.vm')).toBeNull();
+    fireEvent.change(screen.getByTestId('composer.prompt'), { target: { value: 'Again' } });
+    fireEvent.click(screen.getByTestId('composer.send'));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    const second = t.client.of('POST /v1/tasks')[1]!.body as { task_id: string };
+    expect(second).not.toHaveProperty('placement');
+    expect(puts()[0]).toMatchObject({
+      target: `/v1/tasks/${second.task_id}/placement`,
+      body: { device_id: null, vm_id: null },
+    });
   });
 
   it('prepares a new request when the prompt changed, shows the countdown while sending, says Offline offline', async () => {
@@ -145,7 +201,7 @@ describe('composer', () => {
     mount(t, [{ path: '/', element: <Composer org={t.org} wg={t.wg} /> }], '/');
     fireEvent.submit(screen.getByTestId('composer'));
     fireEvent.keyDown(screen.getByTestId('composer.prompt'), { key: 'Enter', ctrlKey: true });
-    expect(t.client.calls).toHaveLength(0);
+    expect(t.client.of('POST /v1/tasks')).toHaveLength(0);
   });
 });
 
@@ -235,6 +291,84 @@ describe('countdown panel', () => {
     await panel(() => undefined, { main_session_id: null });
     expect(screen.getByTestId('countdown.reason')).toHaveAttribute('data-reason', 'unknown');
     expect(screen.getByTestId('countdown.reason')).toHaveTextContent('Waiting for an execution device.');
+  });
+
+  it('names every waiting reason and the step the user can take (ADR-060)', async () => {
+    const waiting = (reason: string, extra: Record<string, unknown> = {}) => ({
+      state: 'scheduling',
+      state_reason: reason,
+      main_session_id: null,
+      ...extra,
+    });
+    const texts: [string, string][] = [
+      ['capacity_exhausted', 'All execution devices are full'],
+      ['wg_vm_limit', 'as many VMs as allowed'],
+      ['device_offline', 'The execution device is offline'],
+      ['keys_pending', 'still receiving the keys'],
+      ['platform_access_required', 'the operator has been notified'],
+    ];
+    for (const [reason, text] of texts) {
+      document.body.innerHTML = '';
+      await panel(() => undefined, waiting(reason));
+      expect(screen.getByTestId('countdown.reason')).toHaveTextContent(text);
+      expect(screen.queryByRole('button')).toBeNull();
+    }
+    // no device: admins assign one (a refusal is shown), everyone else learns who can
+    document.body.innerHTML = '';
+    const t = await panel((world) => {
+      world.client.on(`GET /v1/workgroups/${world.wg}/device-candidates`, () => ({ candidates: [] }));
+    }, waiting('no_device'));
+    expect(screen.getByTestId('countdown.reason')).toHaveTextContent('No execution device is assigned');
+    fireEvent.click(screen.getByTestId('countdown.assign-device'));
+    await waitFor(() =>
+      expect(screen.getByTestId('countdown.action-error')).toHaveAttribute('data-code', 'no_device_available'),
+    );
+    expect(t.client.of(`GET /v1/workgroups/${t.wg}/device-candidates`)).toHaveLength(1);
+    document.body.innerHTML = '';
+    await panel((world) => world.store.update('me', (me) => ({ ...me, userId: 'reader' })), waiting('no_device'));
+    expect(screen.getByTestId('countdown.ask-admin')).toHaveTextContent('An admin of the organization can assign one.');
+    document.body.innerHTML = '';
+    await panel((world) => world.store.update('me', (me) => ({ ...me, userId: null })), waiting('no_device'));
+    expect(screen.queryByTestId('countdown.ask-admin')).toBeNull();
+  });
+
+  it('names the chosen device that is full or offline and chooses automatically (ADR-060)', async () => {
+    const device = '0190f000-0000-7000-8000-0000000000d1';
+    const placement = { device_id: device, vm_id: null };
+    let calls = 0;
+    const t = await panel(
+      (world, task) =>
+        world.client.on(`PUT /v1/tasks/${task.task_id}/placement`, () => {
+          calls += 1;
+          if (calls === 1) throw new HubError('unavailable', 503);
+          return { task: { ...task, placement: null } };
+        }),
+      { state: 'scheduling', state_reason: 'placement_offline', main_session_id: null, placement },
+    );
+    expect(screen.getByTestId('countdown.reason')).toHaveTextContent(
+      `The chosen device Device …${device.slice(-6)} is offline`,
+    );
+    fireEvent.click(screen.getByTestId('countdown.choose-automatic'));
+    await waitFor(() =>
+      expect(screen.getByTestId('countdown.action-error')).toHaveAttribute('data-code', 'unavailable'),
+    );
+    fireEvent.click(screen.getByTestId('countdown.choose-automatic'));
+    await waitFor(() => expect(screen.queryByTestId('countdown.action-error')).toBeNull());
+    expect(t.client.of(`PUT /v1/tasks/0190f000-0000-7000-8000-000000000001/placement`)[1]!.body).toEqual({
+      device_id: null,
+      vm_id: null,
+    });
+    document.body.innerHTML = '';
+    await panel(() => undefined, { state: 'scheduling', state_reason: 'placement_full', main_session_id: null });
+    expect(screen.getByTestId('countdown.reason')).toHaveTextContent('The chosen device device is full');
+    document.body.innerHTML = '';
+    await panel((world) => world.store.update('me', (me) => ({ ...me, userId: 'reader' })), {
+      state: 'scheduling',
+      state_reason: 'placement_full',
+      main_session_id: null,
+      placement,
+    });
+    expect(screen.queryByTestId('countdown.choose-automatic')).toBeNull();
   });
 
   it('collapses into "Ready in" once working is reached', async () => {
@@ -542,6 +676,23 @@ describe('task page', () => {
     expect(screen.getAllByTestId('chat.prompt.text')[0]).toHaveTextContent('Hello there');
     fireEvent.click(screen.getByTestId('countdown.retry'));
     await waitFor(() => expect(t.client.of(`POST /v1/tasks/${row.task_id}/prompts`)).toHaveLength(1));
+  });
+
+  it('names device and VM of the main session in the header and the sessions tab (ADR-060)', async () => {
+    const t = await taskWorld();
+    const row = taskRow(t, { state: 'working' });
+    putTasks(t.store, [{ ...row, main_session_id: '0190f000-0000-7000-8000-0000000000a1' } as TaskRow]);
+    putSession(t.store, sessionRow(t, { state: 'working', vm_id: 'vm-1a2b3c4d' }) as never, [], 0);
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}?tab=sessions`);
+    const placement = await screen.findByTestId('task.placement');
+    expect(placement).toHaveAttribute('data-device', '0190f000-0000-7000-8000-0000000000d1');
+    expect(placement).toHaveAttribute('data-vm', 'vm-1a2b3c4d');
+    expect(placement).toHaveTextContent('On Device …0000d1 · vm-1a2b3c4d');
+    expect(await screen.findByTestId('session.device')).toHaveTextContent('On Device …0000d1 · vm-1a2b3c4d');
+    act(() => putSession(t.store, sessionRow(t, { state: 'working', vm_id: null }) as never, [], 0));
+    expect(screen.getByTestId('task.placement')).toHaveAttribute('data-vm', '');
+    act(() => putSession(t.store, sessionRow(t, { state: 'requested', device_id: null }) as never, [], 0));
+    expect(screen.queryByTestId('task.placement')).toBeNull();
   });
 
   it('offers Retry only to users who may write in the workgroup', async () => {

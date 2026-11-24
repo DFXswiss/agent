@@ -320,6 +320,8 @@ export async function spawnRunner(
     readonly pool_size?: number;
     readonly session_idle_seconds?: number;
     readonly vm_idle_seconds?: number;
+    readonly sessions_per_vm?: number;
+    readonly max_vms?: number;
   } = {},
 ): Promise<Spawned> {
   const taken = Object.keys(await orchestrator.runners()).map((name) => Number(/^runner-(\d+)$/.exec(name)?.[1] ?? 0));

@@ -5,7 +5,7 @@
 //   browser launched, from the moment the estimate appeared for a session that waited (`estimatedAt`), else from the
 //   session's creation on the hub clock (hub clock offset from `hello.hub_time`); whole seconds, tenths below 3 s;
 // - `delayed`: the countdown reached 0 before `working` – the current step and the live elapsed time;
-// - `waiting`: no estimate (`scheduling`): the real reason (`device_offline`, `capacity_exhausted`) and the elapsed time;
+// - `waiting`: no estimate (`scheduling`): the real reason (a waiting reason of ADR-060 section 7) and the elapsed time;
 // - `ready`: `working` reached – "Ready in x s" (`first_working_at − task.created_at`, both hub clock);
 // - `failed`: the session failed – its reason (catalog) and "Retry".
 //

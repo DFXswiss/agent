@@ -1011,6 +1011,272 @@
         "entries": [
           {
             "body": {
+              "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "device": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "prev": "WXIx9zbaJcoYtGMGRUbgONFcaNjywg5pd0jIWDIy8Aw",
+              "seq": 6,
+              "ts": "2026-11-21T12:06:00.000Z",
+              "type": "device_assign_org",
+              "v": 1
+            },
+            "sig": "_y4N1CJbbDmSDTZp75nSXRKe1t9xasWH4STcPMgaSgzU7eEBFDSKcduR2NB2uH9hk9eS_kcmPzgmLNllbAqrDg"
+          },
+          {
+            "body": {
+              "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "device": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "prev": "8zJ8G_Dyn1LnZCqG1DPpWsNDkBxmOOC40k3ben6fra4",
+              "seq": 7,
+              "ts": "2026-11-21T12:07:00.000Z",
+              "type": "device_assign_org",
+              "v": 1
+            },
+            "sig": "EzSlumDqeZAdluNP3sRbpal9UfizqUIrAWZCNwS8zlpFP9C3cuVN6uB_IjQhsFXLamlZvOKyyYQ6YcnRZD6uBQ"
+          }
+        ],
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 6,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        }
+      },
+      "error": "log_rights",
+      "name": "L5_assign_org_twice",
+      "op": "verify_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "device": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "prev": "mSyReZv_lNz3r8GW9OK8eSY40SBfm6SApGvEw2ju1Qk",
+              "seq": 4,
+              "ts": "2026-11-21T12:04:00.000Z",
+              "type": "device_assign_org",
+              "v": 1
+            },
+            "sig": "OPRHX65Tu6OBldU8PLwxSgBDvU__x2Tpjt2ciFYPAEbmYV765wTbwNDaUmpHvUa7-tA0N0H6KNjTotHzNTtJAA"
+          }
+        ],
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 4,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        }
+      },
+      "error": "log_rights",
+      "name": "L5_assign_org_unknown_device",
+      "op": "verify_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72",
+              "device": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "prev": "WXIx9zbaJcoYtGMGRUbgONFcaNjywg5pd0jIWDIy8Aw",
+              "seq": 6,
+              "ts": "2026-11-21T12:06:00.000Z",
+              "type": "device_assign_org",
+              "v": 1
+            },
+            "sig": "lzxojaQZFJUcgDMTI799kwKGMTalxZStx2hfvXi_ohtCagP7jE46BsXsfdgi5gP7XN0hrrk9UGcjKllmSyTBBg"
+          }
+        ],
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 6,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        }
+      },
+      "error": "log_rights",
+      "name": "L5_assign_org_by_member",
+      "op": "verify_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "device": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "prev": "WXIx9zbaJcoYtGMGRUbgONFcaNjywg5pd0jIWDIy8Aw",
+              "seq": 6,
+              "ts": "2026-11-21T12:06:00.000Z",
+              "type": "device_unassign_org",
+              "v": 1
+            },
+            "sig": "aa4KYg6P5QUFFjkA5A7DaMB1303XATVJW-hM6hroyei4ORbl5eq5ML5GYV34sFOaykh8ZMEciBK2JnwxpsVRBg"
+          }
+        ],
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 6,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        }
+      },
+      "error": "log_rights",
+      "name": "L5_unassign_org_not_assigned",
+      "op": "verify_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "device": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "prev": "WXIx9zbaJcoYtGMGRUbgONFcaNjywg5pd0jIWDIy8Aw",
+              "seq": 6,
+              "ts": "2026-11-21T12:06:00.000Z",
+              "type": "device_assign_org",
+              "v": 1
+            },
+            "sig": "_y4N1CJbbDmSDTZp75nSXRKe1t9xasWH4STcPMgaSgzU7eEBFDSKcduR2NB2uH9hk9eS_kcmPzgmLNllbAqrDg"
+          },
+          {
+            "body": {
+              "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "device": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "prev": "8zJ8G_Dyn1LnZCqG1DPpWsNDkBxmOOC40k3ben6fra4",
+              "seq": 7,
+              "ts": "2026-11-21T12:07:00.000Z",
+              "type": "device_assign",
+              "v": 1,
+              "wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+            },
+            "sig": "Z_jYYRSqbzkPqcWxKJhz5KptbOqPKqeYotgQZYD52fbGEjAnPqlffgWQXNkHda3X_6ldEjanjHmrNGRoHF0VAg"
+          }
+        ],
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 6,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        }
+      },
+      "error": "log_rights",
+      "name": "L5_assign_wg_while_org_assigned",
+      "op": "verify_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "device": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "prev": "WXIx9zbaJcoYtGMGRUbgONFcaNjywg5pd0jIWDIy8Aw",
+              "seq": 6,
+              "ts": "2026-11-21T12:06:00.000Z",
+              "type": "device_assign_org",
+              "v": 1
+            },
+            "sig": "_y4N1CJbbDmSDTZp75nSXRKe1t9xasWH4STcPMgaSgzU7eEBFDSKcduR2NB2uH9hk9eS_kcmPzgmLNllbAqrDg"
+          },
+          {
+            "body": {
+              "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "device": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "prev": "8zJ8G_Dyn1LnZCqG1DPpWsNDkBxmOOC40k3ben6fra4",
+              "seq": 7,
+              "ts": "2026-11-21T12:07:00.000Z",
+              "type": "device_unassign",
+              "v": 1,
+              "wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+            },
+            "sig": "WgUw5AJz_IJ5cItI6J-E4DlH9auW1Qg-vqH-hW4V-37-9T0fu_0XPrBYi2wa-GkuzOLt1reezradmgaYx5yUDw"
+          }
+        ],
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 6,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        }
+      },
+      "error": "log_rights",
+      "name": "L5_unassign_wg_of_org_device",
+      "op": "verify_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "platform_seq": 1,
+              "prev": "PLHmuVGboDnaZ4r5fuPjHK0pHg7Wr2gcSaERiPzPHYM",
+              "seq": 13,
+              "ts": "2026-11-21T12:13:00.000Z",
+              "type": "device_assign_org",
+              "v": 1
+            },
+            "sig": "pPJUBEsVZCo6mJ_pf9-DGR4-dCBSAf88o3jTtuyblijwghTZ-EvAdT3wMXJzPgU2DNpDnYL_QNhrwctFvp8-Bw"
+          }
+        ],
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 13,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        }
+      },
+      "error": "log_rights",
+      "name": "L5_assign_org_platform_seq_not_certify",
+      "op": "verify_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
               "by": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72",
               "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
               "prev": "mSyReZv_lNz3r8GW9OK8eSY40SBfm6SApGvEw2ju1Qk",
@@ -2138,6 +2404,40 @@
               "prev": "PLHmuVGboDnaZ4r5fuPjHK0pHg7Wr2gcSaERiPzPHYM",
               "seq": 13,
               "ts": "2026-11-21T12:13:00.000Z",
+              "type": "device_assign_org",
+              "v": 1
+            },
+            "sig": "wFm9vxDrL2m5uS_BFP7X5HTq07Y3LPaD2YQwFLLDFiqO-8yZ7pwrAFnNoKM6FOaWFVtmPyQ85IhYSh22YeZwDw"
+          }
+        ],
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 13,
+          "name": "main"
+        },
+        "now": "2026-11-21T12:30:00.000Z",
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        }
+      },
+      "error": "log_rights",
+      "name": "assign_org_without_platform_access",
+      "op": "append_log"
+    },
+    {
+      "args": {
+        "append": [
+          {
+            "body": {
+              "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "platform_seq": 2,
+              "prev": "PLHmuVGboDnaZ4r5fuPjHK0pHg7Wr2gcSaERiPzPHYM",
+              "seq": 13,
+              "ts": "2026-11-21T12:13:00.000Z",
               "type": "device_assign",
               "v": 1,
               "wg": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
@@ -2711,6 +3011,237 @@
         "sig": "pmXtqtsPXfh5Ay6Os6HyzYJbXBZtFuMe684sBrCBR-FcBi0Z4T2s1IVSDTaRWG3WWD84T2v50m28BkmGmEB2CQ"
       }
     ],
+    "orgwide": [
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "",
+          "private": false,
+          "pub": {
+            "kem": "MUbmKmKwNkQPw8Miz0JMpgezZnLgQkVVJRaqvWyM8x8",
+            "sig": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs"
+          },
+          "seq": 0,
+          "subject": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "ts": "2026-11-21T12:00:00.000Z",
+          "type": "genesis",
+          "v": 1
+        },
+        "sig": "l_qPznegPtDKlFM0qoqE8ZG3kSSgmjMWDFUqoYGuvbToGkQ33E5Hdme-2_H7ktazVv9ktrYLCqbaD1l7sKJ3BQ"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "epoch": 1,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "-mPHuFAwp2-siadJSCn16Z8sGbPGmSOnaqflATZl_FY",
+          "seq": 1,
+          "ts": "2026-11-21T12:01:00.000Z",
+          "type": "wg_create",
+          "v": 1,
+          "wg": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+        },
+        "sig": "p-k9h55UVZMe_1ZwpVcSrYYLJ4bkhJwV4I3WR0M4h0tPqwoc8azSMb7ZaqvoVd7y1O9SvUID4rDUxvWEWEa6CQ"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "expires": "2026-11-24T12:00:00.000Z",
+          "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+          "kind": "device",
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "pk_inv": "qTv6Av5AxAF3RU3wkR3rP8xGY17x1i99cOa_QEduydE",
+          "prev": "4m9N5qAaIFGzm4yDUKlLEOlXFrktkKYPUX7qjp4XGNo",
+          "seq": 2,
+          "ts": "2026-11-21T12:02:00.000Z",
+          "type": "invite",
+          "v": 1,
+          "wgs": {
+            "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61": "device"
+          }
+        },
+        "sig": "9GvptYBkJtGo1eQKbi6HckMhg6Ans2LdWSU5GOfZRmewLBE7YwEQYF1MzGO2DNZYpghOy-TtIuHddHQ5BZD5Bw"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+          "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+          "kind": "device",
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "Xpd2d4IM_m3gGJhMi1-KgVXcpOhVWFJ_fHBjX5Ck9bk",
+          "pub": {
+            "kem": "CUU4MzNW8CQOYeXZ2tjJMtBNzxa3J3se6FcqD8YbOCo",
+            "sig": "qJMhUYo4EztFei1SsOaXC_nebbQZzSEN_scPAj8kDZk"
+          },
+          "seq": 3,
+          "subject": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+          "ts": "2026-11-21T12:03:00.000Z",
+          "type": "accept",
+          "v": 1
+        },
+        "inv_sig": "Q1NFz8N1BIfBEo8HPsOl0olNYDOJwd197P7JDjaVLQN7DonLhzpOgVjcmGJcccIBmmteX6k95wEI8VTRPHh0Ag",
+        "sig": "h71_BcpWB5qE5Rxl5nggaYswC-WpJsncbzXxRzFHpS1E9jOJdotand-RGfcge1N0aMh7cmFuKqLa0Uoy8Vo2Dg"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "device": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "NBxjGrOvkJBnnX_jSClKzGrndzCKieZmA0QX1ZHQ-KI",
+          "seq": 4,
+          "ts": "2026-11-21T12:04:00.000Z",
+          "type": "device_assign_org",
+          "v": 1
+        },
+        "sig": "ahxo4U7ahegRnaKj74oMtx8qC11VY_oCOD__VtyhBpBQa1ycS2l7HYZj6FH51SoPHGeNbTH-LVk9qg3wJioHCQ"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "epoch": 1,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "rS09Q7QBGb5LS7HFrDRpEYlA9bOCN7RW0ZMMZ6i01SM",
+          "seq": 5,
+          "ts": "2026-11-21T12:05:00.000Z",
+          "type": "wg_create",
+          "v": 1,
+          "wg": "01a1ee56-5e00-7214-a94a-124ee5122386"
+        },
+        "sig": "5EKb3SqGCMySwZ-cZmjofamxSgyx9nyB1M_Sp8yNXSHmDhl6hCcGT4Yo6UYW53LbyKsZyCidQAm71x939sCGBA"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "device": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "p51K0lbm3fxihCvo9KqTkl8sSLjGZn7jzA0EM4GmD0w",
+          "seq": 6,
+          "ts": "2026-11-21T12:06:00.000Z",
+          "type": "device_unassign_org",
+          "v": 1
+        },
+        "sig": "RUAO0VuIdpiIaRiJIm_Z-84ZGe9k7Ey8WD2xOPfUb8Azf3KEyR01pzYNQd7M59Wy21tBMJAB8sI9xXIdn63QAg"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "epoch": 2,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "suGpYbz7qly-zz59XTISEUQgd1xtWxbJJCpSj1nSPjk",
+          "scope": "wg",
+          "scope_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+          "seq": 7,
+          "ts": "2026-11-21T12:07:00.000Z",
+          "type": "rotate",
+          "v": 1
+        },
+        "sig": "jphbdG4nSNL4Z9VW_VVcPqhtfGqtpBKiUH8TgXSCRiKvdzbC1xIX3OkOS47JlmJCMxFRiHuBmXxF9ABoUanmDw"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "epoch": 2,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "2m9u5Vrnu5v47JRhh5d8JcCynUsbWMArOp1_g2xhiUo",
+          "scope": "wg",
+          "scope_id": "01a1ee56-5e00-7214-a94a-124ee5122386",
+          "seq": 8,
+          "ts": "2026-11-21T12:08:00.000Z",
+          "type": "rotate",
+          "v": 1
+        },
+        "sig": "_WaAscIZhEZarP-9kM-agyw1lqKCzDODTwAH_RTIbxgk1Bi2aF_IKjmGSQN1jDTgquPiHqMmNxOhsGyDLO-LDA"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "platform_seq": 2,
+          "prev": "ULX-etF5SVTXbo-RLKDC75ed65-aB4LUOeptsUarCUs",
+          "seq": 9,
+          "ts": "2026-11-21T12:09:00.000Z",
+          "type": "device_assign_org",
+          "v": 1
+        },
+        "sig": "sBvlAF1xKpgH4aW0tf9g-Qb1hGLx8CBdUtB6GgID4MkTc9dbp3hu2-Nbs_1ZOWcQzdK2edFeXmyOGHFScN0fCQ"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "LNWu4i3HiRvAA_8btZn3XO1_j7uONrhb_Jw8oG2tQQo",
+          "seq": 10,
+          "subject": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+          "ts": "2026-11-21T12:10:00.000Z",
+          "type": "remove",
+          "v": 1
+        },
+        "sig": "tfhJCMvyMIspF-VMqWhp3QKChjr1frXbahYmQw4rLKbOriVWyjom4p0ghW1CITGkxI7TTttB7VZhHJgxqKkfAw"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "epoch": 2,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "wXLK8EBzdtYQiFUKUSlE5Odq1vpMVLN-Kew-E-xTfT4",
+          "scope": "org",
+          "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "seq": 11,
+          "ts": "2026-11-21T12:11:00.000Z",
+          "type": "rotate",
+          "v": 1
+        },
+        "sig": "ek9WgtkHVA-fg75fFf64ZJVidrA6YfWjaMLfUSFsiKERI4qTP_VYA-a7JbPi7nWWqtkour2X6fdmSVck6kwtBg"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "epoch": 3,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "-HeVPyWEGseBSLAQULic-3KZcBcF3pRn5MMk_Auuwmc",
+          "scope": "wg",
+          "scope_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+          "seq": 12,
+          "ts": "2026-11-21T12:12:00.000Z",
+          "type": "rotate",
+          "v": 1
+        },
+        "sig": "pcAjsl3AfvttHe7LNAu9P9Bn7Q1EezEc_kixkPzDPjUwZXcfFz-ooLl_lGshCq6CRMxNv6oqC12ySloO9Y8zCA"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "epoch": 2,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "e7L6d_nNCCQz-QyRE4TCKSZQTevl_TeUu7Xcvhsgu9s",
+          "scope": "wg",
+          "scope_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61",
+          "seq": 13,
+          "ts": "2026-11-21T12:13:00.000Z",
+          "type": "rotate",
+          "v": 1
+        },
+        "sig": "pUI5SqjuROZYnC-7O_cmTqMXefke0JY4keIZ9bsyFvZPJoM7iZFR0SMGL4eUQ2VCNQTHUL8vQ9iJmHuXU6DiCw"
+      },
+      {
+        "body": {
+          "by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "epoch": 3,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "3dlgUPdlRS1TQbM71Jub_f6cE8QRNjKTu33yShK2efA",
+          "scope": "wg",
+          "scope_id": "01a1ee56-5e00-7214-a94a-124ee5122386",
+          "seq": 14,
+          "ts": "2026-11-21T12:14:00.000Z",
+          "type": "rotate",
+          "v": 1
+        },
+        "sig": "GgFTdFYUMF0K3PWhHOxjArXQhwJEPmu-wUUHdwqFnuy5ZlM65fDmkyhtkc3UkVH7M9dtVKfVLVCA8bOCZcHkAg"
+      }
+    ],
     "platform": [
       {
         "body": {
@@ -3120,6 +3651,1288 @@
           "v": 1
         },
         "sig": "8f4GYBiFN2tzNomSdcBX1jh5iq7bifNsLkEJMEH_tXPa0wMo-kSTvuEF-WyfrbJazZDP1E-Bu3UPy08Z8yiSCw"
+      }
+    ]
+  },
+  "orgwide": {
+    "device_wgs": [
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": []
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": []
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": []
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+        ]
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61",
+          "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+        ]
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7214-a94a-124ee5122386",
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61",
+          "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+        ]
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+        ]
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+        ]
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+        ]
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [
+          "01a1ee56-5e00-7214-a94a-124ee5122386",
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61",
+          "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+        ],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+        ]
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+        ]
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+        ]
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+        ]
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+        ]
+      },
+      {
+        "01a1ee56-5e00-73ca-a67e-25beb91e6d26": [],
+        "01a1ee56-5e00-740b-8803-c7ea5d113b0f": [
+          "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+        ]
+      }
+    ],
+    "heads": [
+      {
+        "hash": "-mPHuFAwp2-siadJSCn16Z8sGbPGmSOnaqflATZl_FY",
+        "seq": 0
+      },
+      {
+        "hash": "4m9N5qAaIFGzm4yDUKlLEOlXFrktkKYPUX7qjp4XGNo",
+        "seq": 1
+      },
+      {
+        "hash": "Xpd2d4IM_m3gGJhMi1-KgVXcpOhVWFJ_fHBjX5Ck9bk",
+        "seq": 2
+      },
+      {
+        "hash": "NBxjGrOvkJBnnX_jSClKzGrndzCKieZmA0QX1ZHQ-KI",
+        "seq": 3
+      },
+      {
+        "hash": "rS09Q7QBGb5LS7HFrDRpEYlA9bOCN7RW0ZMMZ6i01SM",
+        "seq": 4
+      },
+      {
+        "hash": "p51K0lbm3fxihCvo9KqTkl8sSLjGZn7jzA0EM4GmD0w",
+        "seq": 5
+      },
+      {
+        "hash": "suGpYbz7qly-zz59XTISEUQgd1xtWxbJJCpSj1nSPjk",
+        "seq": 6
+      },
+      {
+        "hash": "2m9u5Vrnu5v47JRhh5d8JcCynUsbWMArOp1_g2xhiUo",
+        "seq": 7
+      },
+      {
+        "hash": "ULX-etF5SVTXbo-RLKDC75ed65-aB4LUOeptsUarCUs",
+        "seq": 8
+      },
+      {
+        "hash": "LNWu4i3HiRvAA_8btZn3XO1_j7uONrhb_Jw8oG2tQQo",
+        "seq": 9
+      },
+      {
+        "hash": "wXLK8EBzdtYQiFUKUSlE5Odq1vpMVLN-Kew-E-xTfT4",
+        "seq": 10
+      },
+      {
+        "hash": "-HeVPyWEGseBSLAQULic-3KZcBcF3pRn5MMk_Auuwmc",
+        "seq": 11
+      },
+      {
+        "hash": "e7L6d_nNCCQz-QyRE4TCKSZQTevl_TeUu7Xcvhsgu9s",
+        "seq": 12
+      },
+      {
+        "hash": "3dlgUPdlRS1TQbM71Jub_f6cE8QRNjKTu33yShK2efA",
+        "seq": 13
+      },
+      {
+        "hash": "t0vOSugZl8p-QzzLC32Nn2diEqA_-y1OylBYRxkNzhA",
+        "seq": 14
+      }
+    ],
+    "log": {
+      "count": 15,
+      "name": "orgwide"
+    },
+    "platform": {
+      "count": 11,
+      "name": "platform",
+      "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+    },
+    "projections": [
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "-mPHuFAwp2-siadJSCn16Z8sGbPGmSOnaqflATZl_FY",
+          "seq": 0
+        },
+        "invites": [],
+        "members": [
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 1,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "4m9N5qAaIFGzm4yDUKlLEOlXFrktkKYPUX7qjp4XGNo",
+          "seq": 1
+        },
+        "invites": [],
+        "members": [
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 1,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "Xpd2d4IM_m3gGJhMi1-KgVXcpOhVWFJ_fHBjX5Ck9bk",
+          "seq": 2
+        },
+        "invites": [
+          {
+            "accepted_seq": null,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 1,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "NBxjGrOvkJBnnX_jSClKzGrndzCKieZmA0QX1ZHQ-KI",
+          "seq": 3
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 1,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "rS09Q7QBGb5LS7HFrDRpEYlA9bOCN7RW0ZMMZ6i01SM",
+          "seq": 4
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "org_assigned_seq": 4,
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 1,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "p51K0lbm3fxihCvo9KqTkl8sSLjGZn7jzA0EM4GmD0w",
+          "seq": 5
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "org_assigned_seq": 4,
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 1,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 5,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7214-a94a-124ee5122386"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "suGpYbz7qly-zz59XTISEUQgd1xtWxbJJCpSj1nSPjk",
+          "seq": 6
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 1,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 5,
+            "devices": [],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7214-a94a-124ee5122386"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "2m9u5Vrnu5v47JRhh5d8JcCynUsbWMArOp1_g2xhiUo",
+          "seq": 7
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 1,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 5,
+            "devices": [],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7214-a94a-124ee5122386"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "ULX-etF5SVTXbo-RLKDC75ed65-aB4LUOeptsUarCUs",
+          "seq": 8
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 1,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 5,
+            "devices": [],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7214-a94a-124ee5122386"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "LNWu4i3HiRvAA_8btZn3XO1_j7uONrhb_Jw8oG2tQQo",
+          "seq": 9
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 9,
+            "kind": "device",
+            "org_assigned_seq": 9,
+            "platform_seq": 2,
+            "principal_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "removed_seq": null,
+            "role": "device"
+          },
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 1,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 5,
+            "devices": [
+              "01a1ee56-5e00-73ca-a67e-25beb91e6d26"
+            ],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7214-a94a-124ee5122386"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [
+              "01a1ee56-5e00-73ca-a67e-25beb91e6d26"
+            ],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "wXLK8EBzdtYQiFUKUSlE5Odq1vpMVLN-Kew-E-xTfT4",
+          "seq": 10
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 9,
+            "kind": "device",
+            "platform_seq": 2,
+            "principal_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "removed_seq": 10,
+            "role": "device"
+          },
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 1,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 5,
+            "devices": [],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7214-a94a-124ee5122386"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "-HeVPyWEGseBSLAQULic-3KZcBcF3pRn5MMk_Auuwmc",
+          "seq": 11
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 9,
+            "kind": "device",
+            "platform_seq": 2,
+            "principal_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "removed_seq": 10,
+            "role": "device"
+          },
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 2,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 5,
+            "devices": [],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7214-a94a-124ee5122386"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "e7L6d_nNCCQz-QyRE4TCKSZQTevl_TeUu7Xcvhsgu9s",
+          "seq": 12
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 9,
+            "kind": "device",
+            "platform_seq": 2,
+            "principal_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "removed_seq": 10,
+            "role": "device"
+          },
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 2,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 5,
+            "devices": [],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7214-a94a-124ee5122386"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 1,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 3,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "3dlgUPdlRS1TQbM71Jub_f6cE8QRNjKTu33yShK2efA",
+          "seq": 13
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 9,
+            "kind": "device",
+            "platform_seq": 2,
+            "principal_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "removed_seq": 10,
+            "role": "device"
+          },
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 2,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 5,
+            "devices": [],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7214-a94a-124ee5122386"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 3,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
+      },
+      {
+        "default_wg": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1",
+        "head": {
+          "hash": "t0vOSugZl8p-QzzLC32Nn2diEqA_-y1OylBYRxkNzhA",
+          "seq": 14
+        },
+        "invites": [
+          {
+            "accepted_seq": 3,
+            "invite_id": "flzdWnuCCTnO6N82P4Axcg",
+            "kind": "device",
+            "revoked_seq": null,
+            "seq": 2
+          }
+        ],
+        "members": [
+          {
+            "joined_seq": 9,
+            "kind": "device",
+            "platform_seq": 2,
+            "principal_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "removed_seq": 10,
+            "role": "device"
+          },
+          {
+            "joined_seq": 0,
+            "kind": "user",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+            "removed_seq": null,
+            "role": "admin"
+          },
+          {
+            "joined_seq": 3,
+            "kind": "device",
+            "platform_seq": null,
+            "principal_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+            "removed_seq": null,
+            "role": "device"
+          }
+        ],
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "org_epoch": 2,
+        "pending_rotation": [],
+        "private": false,
+        "workgroups": [
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 5,
+            "devices": [],
+            "epoch": 3,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7214-a94a-124ee5122386"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 1,
+            "devices": [
+              "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+            ],
+            "epoch": 2,
+            "inherited": [],
+            "is_default": false,
+            "wg_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61"
+          },
+          {
+            "access": {
+              "01a1ee56-5e00-73dd-ae4f-2dc5614b7565": "write"
+            },
+            "archived_seq": null,
+            "created_seq": 0,
+            "devices": [],
+            "epoch": 3,
+            "inherited": [],
+            "is_default": true,
+            "wg_id": "01a1ee56-5e00-7d96-980f-2a0a24ec96b1"
+          }
+        ]
       }
     ]
   },

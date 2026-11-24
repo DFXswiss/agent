@@ -14,6 +14,7 @@ import {
   entrySubject,
   createOrgBody,
   decertificationBatch,
+  unassignAll,
   pendingRotation,
 } from '../../../src/core/log/rotation';
 import { slotJson } from '../../../src/core/log/wraps';
@@ -318,6 +319,38 @@ describe('platform devices in batches', () => {
     expect(owed.body.wraps.map((w) => w.recipient_id)).toEqual([alice.id, alice.id]);
     const rotate = await world.batch(alice, [{ type: 'rotate', scope: 'wg', scope_id: world.defaultWg, epoch: 2 }]);
     expect(rotate.body.wraps.map((w) => w.recipient_id)).toEqual([alice.id]);
+  });
+
+  it('owes device_unassign_org and every explicit device_unassign of a decertified device (ADR-060)', async () => {
+    const pdev = await actor('pdev');
+    const plat = await platformWith([pdev]);
+    const world = await World.create(alice, { private: true });
+    world.platform = plat.state;
+    world.add(pdev);
+    const seq = plat.seqs.get(pdev.id)!;
+    const wg = await idOf('wg org-wide');
+    await world.batch(alice, [{ type: 'device_assign', device: pdev.id, wg: world.defaultWg, platform_seq: seq }]);
+    await world.batch(alice, [{ type: 'device_assign_org', device: pdev.id, platform_seq: seq }]);
+    const created = await world.batch(alice, [{ type: 'wg_create', wg, epoch: 1 }]);
+    // the organization's device is a recipient of the new workgroup's first key
+    expect(created.body.wraps.map((w) => w.recipient_id).sort()).toEqual([alice.id, pdev.id].sort());
+    expect(unassignAll(world.log!.state, pdev.id)).toEqual([
+      { type: 'device_unassign_org', device: pdev.id },
+      { type: 'device_unassign', device: pdev.id, wg: world.defaultWg },
+    ]);
+    expect(unassignAll(world.log!.state, 'unknown')).toEqual([]);
+    const ended = plat.state.with({
+      certifications: new Map([...plat.state.certifications].map(([s, c]) => [s, { ...c, decertifiedSeq: 99 }])),
+    });
+    world.platform = ended;
+    const owed = (await decertificationBatch(world.log!, ended, { author: alice, ts: TS }))!;
+    expect(owed.body.entries.map((e) => e.body.type)).toEqual([
+      'device_unassign_org',
+      'device_unassign',
+      'rotate',
+      'rotate',
+      'rotate',
+    ]);
   });
 });
 

@@ -128,6 +128,9 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "pairing_unknown",
                         "pairing_gesture_required",
                         "claim_invalid",
+                        "placement_forbidden",
+                        "placement_invalid",
+                        "device_outdated",
                     ],
                 }
             ],
@@ -328,7 +331,15 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
     },
+    "log.device_assign_org": {
+        "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "required": ["seq"],
+    },
     "log.device_unassign": {
+        "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "required": ["seq"],
+    },
+    "log.device_unassign_org": {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
     },
@@ -850,6 +861,9 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "pairing_unknown",
                         "pairing_gesture_required",
                         "claim_invalid",
+                        "placement_forbidden",
+                        "placement_invalid",
+                        "device_outdated",
                     ],
                 }
             ],
@@ -931,6 +945,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.platform.enrollments": {"properties": {}, "required": []},
     "read.platform.invites": {"properties": {}, "required": []},
     "read.platform.log": {"properties": {}, "required": []},
+    "read.platform.waiting": {"properties": {}, "required": []},
     "read.scope.events": {"properties": {}, "required": []},
     "read.session.get_context": {
         "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
@@ -983,6 +998,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.whiteboards": {"properties": {}, "required": []},
     "read.workgroup.device_candidates": {"properties": {}, "required": []},
     "read.workgroup": {"properties": {}, "required": []},
+    "read.workgroup.placement": {"properties": {}, "required": []},
     "read.workgroup.tasks": {"properties": {}, "required": []},
     "read.wraps": {"properties": {}, "required": []},
     "runner.alert": {
@@ -1154,6 +1170,26 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "task.create": {
         "properties": {"origin": [{"type": "string", "enum": ["browser", "device"]}]},
         "required": ["origin"],
+    },
+    "task.placement": {
+        "properties": {
+            "device_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "vm_id": [{"type": "string", "pattern": "^vm-[0-9a-f]{8}$"}, {"type": "null"}],
+        },
+        "required": ["device_id", "vm_id"],
+    },
+    "wg.placement": {
+        "properties": {
+            "device_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "vm_id": [{"type": "string", "pattern": "^vm-[0-9a-f]{8}$"}, {"type": "null"}],
+        },
+        "required": ["device_id", "vm_id"],
     },
     "whiteboard.notify": {
         "properties": {

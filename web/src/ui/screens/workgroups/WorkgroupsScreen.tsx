@@ -1,8 +1,15 @@
 // Workgroups (06-web.md section 7.2, route `/o/:org/workgroups`, right org:member, edit: admin): names (decrypted
 // `wg.profile`), my access, devices, archived flag. Admins create a workgroup (one batch: `wg_create`, grants for the
 // chosen members, assignments of chosen devices, WK_1 for every reader, `wg.profile`), rename it and archive it (never
-// the default workgroup). Controls the user's verified rights do not allow are not rendered (section 1.2).
+// the default workgroup). Writers of a workgroup set its default device (and VM) for new tasks, shown in its row
+// (`PUT /v1/workgroups/{wg}/placement`, 06-web.md section 7.3, ADR-060 section 6). Controls the user's verified rights
+// do not allow are not rendered (section 1.2).
 import { useId, useState } from 'react';
+import { actionErrorCode } from '../../../core/org/batch';
+import { type Placement, setWorkgroupPlacement, validChoice } from '../../../core/tasks/placement';
+import { PlacementSelect, useWorkgroupDevices } from '../../composer/DeviceChoice';
+import { Dialog } from '../members/Dialog';
+import { useDeviceNames } from '../devices/labels';
 import { Link, useParams } from 'react-router-dom';
 import { uuid7 } from '../../../core/encoding/ids';
 import { submitBatch } from '../../../core/org/batch';
@@ -27,6 +34,7 @@ import { useDirectory, useOrgView } from '../tasks/hooks';
 
 type Open =
   | { readonly kind: 'create' }
+  | { readonly kind: 'placement'; readonly row: WorkgroupRow }
   | { readonly kind: 'rename'; readonly row: WorkgroupRow }
   | { readonly kind: 'archive'; readonly row: WorkgroupRow };
 
@@ -166,15 +174,103 @@ function RenameDialog({
   );
 }
 
+/** The default device of a workgroup: "Automatic" or a device and optionally a VM. */
+function PlacementDialog(props: {
+  readonly org: string;
+  readonly row: WorkgroupRow;
+  readonly onSaved: () => void;
+  readonly onClose: () => void;
+}) {
+  const { org, row, onSaved, onClose } = props;
+  const { app } = useAppEnv();
+  const { t, error } = useI18n();
+  const devices = useWorkgroupDevices(row.id);
+  const [picked, setPicked] = useState<{ value: Placement | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [code, setCode] = useState<string | null>(null);
+  const value = picked?.value ?? (devices === null ? null : validChoice(devices.devices, devices.placement));
+  const save = async () => {
+    setBusy(true);
+    setCode(null);
+    try {
+      await setWorkgroupPlacement(app.tasks, row.id, value);
+      onSaved();
+    } catch (failure) {
+      setCode(actionErrorCode(failure));
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog title={t('workgroups.placement.title')} testId="workgroups.placement" busy={busy} onClose={onClose}>
+      <p className="text-sm text-gray-700">{t('workgroups.placement.note')}</p>
+      {devices === null ? (
+        <p data-testid="workgroups.placement.loading">{t('workgroups.placement.loading')}</p>
+      ) : (
+        <PlacementSelect
+          org={org}
+          devices={devices}
+          value={value}
+          onChange={(next) => setPicked({ value: next })}
+          testId="workgroups.placement"
+          disabled={busy}
+        />
+      )}
+      {code !== null && (
+        <p role="alert" className="text-red-800" data-testid="workgroups.placement.error" data-code={code}>
+          {error(code).title}
+        </p>
+      )}
+      <div className="flex flex-wrap gap-3">
+        <button
+          type="button"
+          className={PRIMARY}
+          disabled={busy || devices === null}
+          onClick={() => void save()}
+          data-testid="workgroups.placement.save"
+        >
+          {t('workgroups.placement.save')}
+        </button>
+        <button type="button" className={BUTTON} disabled={busy} onClick={onClose}>
+          {t('workgroups.placement.cancel')}
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
+/** The row's default device ("Default device: Automatic" or "… <device> · vm-…"), read from the hub. */
+function PlacementLine({ org, wg, version }: { readonly org: string; readonly wg: string; readonly version: number }) {
+  const { t } = useI18n();
+  const name = useDeviceNames([org]);
+  const devices = useWorkgroupDevices(wg, version);
+  if (devices === null) return null;
+  const placement = validChoice(devices.devices, devices.placement);
+  const text =
+    placement === null
+      ? t('workgroups.placement.auto')
+      : [name(placement.device_id), ...(placement.vm_id === null ? [] : [placement.vm_id])].join(' · ');
+  return (
+    <span data-testid="workgroups.item.placement" data-device={placement?.device_id ?? ''}>
+      {t('workgroups.placement.line', { device: text })}
+    </span>
+  );
+}
+
 function WorkgroupItem({
   org,
   row,
   admin,
+  writer,
+  version,
   onOpen,
 }: {
   readonly org: string;
   readonly row: WorkgroupRow;
   readonly admin: boolean;
+  /** `wg:write`: the user sets the workgroup's default device. */
+  readonly writer: boolean;
+  /** Changes after a saved default (the row reads it again). */
+  readonly version: number;
   readonly onOpen: (open: Open) => void;
 }) {
   const { t } = useI18n();
@@ -206,7 +302,24 @@ function WorkgroupItem({
         <span data-testid="workgroups.item.access">{t(`workgroups.access.${row.myAccess ?? 'none'}`)}</span>
         {' · '}
         <span data-testid="workgroups.item.devices">{t('workgroups.devices', { count: row.devices.length })}</span>
+        {row.myAccess !== null && (
+          <>
+            {' · '}
+            <PlacementLine org={org} wg={row.id} version={version} />
+          </>
+        )}
       </p>
+      {writer && (
+        <button
+          type="button"
+          className={`${BUTTON} self-start`}
+          onClick={() => onOpen({ kind: 'placement', row })}
+          data-testid="workgroups.placement.open"
+          data-wg={row.id}
+        >
+          {t('workgroups.placement.open')}
+        </button>
+      )}
       {admin && !row.archived && (
         <div className="flex flex-wrap gap-2">
           <button
@@ -240,6 +353,7 @@ export function WorkgroupsScreen() {
   const { state, userId } = useOrgView(org);
   const directory = useDirectory(org, state !== null);
   const [open, setOpen] = useState<Open | null>(null);
+  const [version, setVersion] = useState(0);
   if (state === null) {
     return (
       <p className="p-4" data-testid="workgroups.loading">
@@ -272,11 +386,30 @@ export function WorkgroupsScreen() {
       )}
       <ul data-testid="workgroups.list">
         {rows.map((row) => (
-          <WorkgroupItem key={row.id} org={org} row={row} admin={admin} onOpen={setOpen} />
+          <WorkgroupItem
+            key={row.id}
+            org={org}
+            row={row}
+            admin={admin}
+            writer={state.canWriteWg(userId, row.id)}
+            version={version}
+            onOpen={setOpen}
+          />
         ))}
       </ul>
       {open?.kind === 'create' && (
         <CreateDialog org={org} state={state} userId={userId} directory={directory} onClose={close} />
+      )}
+      {open?.kind === 'placement' && (
+        <PlacementDialog
+          org={org}
+          row={open.row}
+          onSaved={() => {
+            setVersion((n) => n + 1);
+            close();
+          }}
+          onClose={close}
+        />
       )}
       {open?.kind === 'rename' && (
         <RenameDialog org={org} row={open.row} current={open.row.name ?? ''} onClose={close} />

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-placement-put.response.json",
+  "title": "PUT /v1/tasks/{task}/placement response",
+  "description": "Body of a successful response to PUT /v1/tasks/{task}/placement (03-api.md section 4.6).",
+  "type": "object",
+  "properties": {
+    "task": {
+      "$ref": "objects.json#/$defs/task_row"
+    }
+  },
+  "required": [
+    "task"
+  ],
+  "additionalProperties": false
+}

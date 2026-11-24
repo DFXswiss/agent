@@ -51,6 +51,82 @@ describe('workgroup screen', () => {
     expect(within(items[2]!).getByTestId('workgroups.item.name').tagName).toBe('SPAN');
     expect(screen.queryByTestId('workgroups.create.open')).toBeNull();
     expect(screen.queryByTestId('workgroups.item.rename')).toBeNull();
+    // bob writes only the default workgroup, so only there he sets the default device
+    expect(screen.getAllByTestId('workgroups.placement.open').map((node) => node.dataset.wg)).toEqual([
+      w.world.defaultWg,
+    ]);
+  });
+
+  it('sets the default device of a workgroup and shows it in the row (ADR-060)', async () => {
+    const { w, one } = await wgWorld();
+    const { dev1 } = w.others;
+    let stored: unknown = { device_id: 'gone', vm_id: null };
+    let release: () => void = () => undefined;
+    const devices = [
+      { device_id: dev1.id, online: true, vms: [{ vm_id: 'vm-1a2b3c4d', state: 'running', sessions: 1 }] },
+    ];
+    w.client.on(`GET /v1/workgroups/${w.world.defaultWg}`, () => ({ devices: [], placement: null }));
+    w.client.on(`GET /v1/workgroups/${one}`, async () => {
+      await new Promise<void>((resolve) => (release = resolve));
+      return { devices, placement: stored };
+    });
+    let puts = 0;
+    w.client.on(`PUT /v1/workgroups/${one}/placement`, (body) => {
+      puts += 1;
+      if (puts === 1) throw new HubError('placement_forbidden', 403);
+      stored = body;
+      return { placement: body };
+    });
+    names(w, {}, { [one]: 'One' });
+    mount(w, at, `/o/${w.org}/workgroups`);
+    const row = () => screen.getAllByTestId('workgroups.item').find((item) => item.dataset.wg === one)!;
+    const opener = within(row()).getByTestId('workgroups.placement.open');
+    expect(opener).toHaveAttribute('data-wg', one);
+    act(() => release());
+    // a default whose device is no longer listed counts as automatic
+    await waitFor(() =>
+      expect(within(row()).getByTestId('workgroups.item.placement')).toHaveTextContent('Default device: Automatic'),
+    );
+    fireEvent.click(opener);
+    expect(screen.getByTestId('workgroups.placement.loading')).toBeVisible();
+    expect(screen.getByTestId('workgroups.placement.save')).toBeDisabled();
+    act(() => release());
+    await waitFor(() => expect(screen.getByTestId('workgroups.placement.device')).toHaveValue('auto'));
+    fireEvent.change(screen.getByTestId('workgroups.placement.device'), { target: { value: dev1.id } });
+    fireEvent.change(screen.getByTestId('workgroups.placement.vm'), { target: { value: 'vm-1a2b3c4d' } });
+    fireEvent.click(screen.getByTestId('workgroups.placement.save'));
+    await waitFor(() =>
+      expect(screen.getByTestId('workgroups.placement.error')).toHaveAttribute('data-code', 'placement_forbidden'),
+    );
+    fireEvent.click(screen.getByTestId('workgroups.placement.save'));
+    await waitFor(() => expect(screen.queryByTestId('workgroups.placement')).toBeNull());
+    expect(stored).toEqual({ device_id: dev1.id, vm_id: 'vm-1a2b3c4d' });
+    act(() => release());
+    await waitFor(() =>
+      expect(within(row()).getByTestId('workgroups.item.placement')).toHaveTextContent(
+        `Default device: Device …${dev1.id.slice(-6)} · vm-1a2b3c4d`,
+      ),
+    );
+    expect(within(row()).getByTestId('workgroups.item.placement')).toHaveAttribute('data-device', dev1.id);
+    fireEvent.click(within(row()).getByTestId('workgroups.placement.open'));
+    act(() => release());
+    await waitFor(() => expect(screen.getByTestId('workgroups.placement.device')).toHaveValue(dev1.id));
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(screen.queryByTestId('workgroups.placement')).toBeNull();
+    // the device without a VM
+    fireEvent.click(within(row()).getByTestId('workgroups.placement.open'));
+    act(() => release());
+    await waitFor(() => expect(screen.getByTestId('workgroups.placement.vm')).toHaveValue('vm-1a2b3c4d'));
+    fireEvent.change(screen.getByTestId('workgroups.placement.vm'), { target: { value: 'any' } });
+    fireEvent.click(screen.getByTestId('workgroups.placement.save'));
+    await waitFor(() => expect(screen.queryByTestId('workgroups.placement')).toBeNull());
+    act(() => release());
+    await waitFor(() =>
+      expect(within(row()).getByTestId('workgroups.item.placement')).toHaveTextContent(
+        `Default device: Device …${dev1.id.slice(-6)}`,
+      ),
+    );
+    expect(within(row()).getByTestId('workgroups.item.placement')).not.toHaveTextContent('vm-');
   });
 
   it('says loading before the log and not found for a non-member', async () => {

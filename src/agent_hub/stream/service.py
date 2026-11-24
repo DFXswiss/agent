@@ -329,7 +329,7 @@ class StreamService:
         return now
 
     async def _serve(self, socket: DeviceSocket, window: float) -> None:
-        async def on_heartbeat(capacity: dict[str, int]) -> bool:
+        async def on_heartbeat(capacity: dict[str, Any]) -> bool:
             result = await asyncio.to_thread(
                 self._transaction,
                 presence.heartbeat,

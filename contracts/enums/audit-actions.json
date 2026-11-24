@@ -126,6 +126,14 @@
       "group": "log"
     },
     {
+      "action": "log.device_assign_org",
+      "group": "log"
+    },
+    {
+      "action": "log.device_unassign_org",
+      "group": "log"
+    },
+    {
       "action": "event.append",
       "group": "event"
     },
@@ -135,6 +143,14 @@
     },
     {
       "action": "task.close",
+      "group": "task"
+    },
+    {
+      "action": "task.placement",
+      "group": "task"
+    },
+    {
+      "action": "wg.placement",
       "group": "task"
     },
     {
@@ -519,6 +535,14 @@
     },
     {
       "action": "read.wraps",
+      "group": "read"
+    },
+    {
+      "action": "read.workgroup.placement",
+      "group": "read"
+    },
+    {
+      "action": "read.platform.waiting",
       "group": "read"
     },
     {

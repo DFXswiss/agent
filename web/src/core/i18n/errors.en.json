@@ -104,6 +104,11 @@
     "body": "The execution device is offline – the task starts as soon as it is back.",
     "action": "No action needed."
   },
+  "device_outdated": {
+    "title": "This device's runner must be updated first",
+    "body": "Before a device can be given to the whole organization or join it, every device of the organization needs the current runner.",
+    "action": "Update the runner on the organization's devices, then try again."
+  },
   "device_shutdown": {
     "title": "Execution device shut down",
     "body": "The execution device was shut down while the session was running.",
@@ -203,6 +208,11 @@
     "title": "Unknown key",
     "body": "The server does not know the key of this session or device.",
     "action": "Sign in again."
+  },
+  "keys_pending": {
+    "title": "Device is receiving keys",
+    "body": "The device with room is still receiving the keys of this workgroup – the task starts as soon as they are there.",
+    "action": "No action needed."
   },
   "kind_not_allowed": {
     "title": "Action not allowed here",
@@ -369,10 +379,35 @@
     "body": "A file path is not allowed.",
     "action": "Use a path inside the repository."
   },
+  "placement_forbidden": {
+    "title": "Device not available",
+    "body": "This device is not assigned to the workgroup, so tasks of the workgroup cannot run on it.",
+    "action": "Choose another device or “Automatic”."
+  },
+  "placement_full": {
+    "title": "Chosen device is full",
+    "body": "The chosen device is full – the task starts as soon as it has room.",
+    "action": "Wait, or let the platform choose a device automatically."
+  },
+  "placement_invalid": {
+    "title": "VM not available",
+    "body": "This VM no longer runs for the workgroup on the chosen device.",
+    "action": "Choose another VM or “Any VM”."
+  },
+  "placement_offline": {
+    "title": "Chosen device is offline",
+    "body": "The chosen device is offline – the task starts as soon as it is back.",
+    "action": "Wait, or let the platform choose a device automatically."
+  },
   "platform_access_denied": {
     "title": "No platform devices",
     "body": "This organization may not use platform execution devices.",
     "action": "Add your own device or ask the operator for platform access."
+  },
+  "platform_access_required": {
+    "title": "No execution device yet",
+    "body": "This organization has no execution device yet – the operator has been notified.",
+    "action": "No action needed; you can also add your own device."
   },
   "platform_invite_required": {
     "title": "Invitation required",
@@ -543,6 +578,11 @@
     "title": "VM did not start",
     "body": "The virtual machine for this workgroup could not be started.",
     "action": "Retry the task."
+  },
+  "wg_vm_limit": {
+    "title": "Workgroup VM limit reached",
+    "body": "The workgroup uses as many VMs as allowed – the task starts when one of them has room.",
+    "action": "No action needed."
   },
   "workvm_unavailable": {
     "title": "Work VM unavailable",

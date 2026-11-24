@@ -9,8 +9,11 @@ import { actionErrorCode, keyRing, submitBatch } from '../../../src/core/org/bat
 import {
   assignableWorkgroups,
   assignDevice,
+  assignOrgPlan,
   assignPlan,
+  canAssignToOrg,
   canManageDevices,
+  capacityDetails,
   capacityUse,
   type Capacity,
   deviceLabel,
@@ -23,8 +26,11 @@ import {
   loadOrgDevices,
   renameDevice,
   selectDeviceLabels,
+  sessionsPerVm,
+  unassignOrgPlan,
   unassignPlan,
   unpairPlan,
+  WHOLE_ORG,
 } from '../../../src/core/org/devices';
 import { createStore } from '../../../src/core/store';
 import { putEvents } from '../../../src/core/store/slices/events';
@@ -143,12 +149,41 @@ describe('labels, the command and capacity', () => {
     expect(capacityUse({ ...CAPACITY, vm_slots_total: 0, vm_slots_free: 0 })).toEqual({ used: 0, total: 0, share: 0 });
     expect(capacityUse({ ...CAPACITY, vm_slots_free: 12 })).toEqual({ used: 0, total: 8, share: 0 });
   });
+
+  it('lists the reported capacity details in order and reads the session limit per VM (ADR-060)', () => {
+    expect(capacityDetails(CAPACITY)).toEqual([]);
+    const full = {
+      ...CAPACITY,
+      vms_max: 0,
+      cpus: 8,
+      memory_total_mib: 16384,
+      disk_free_mib: -1,
+      vms_running: 2,
+      sessions_active: 3,
+      sessions_per_vm: 16,
+    } as Capacity;
+    expect(capacityDetails(full)).toEqual([
+      ['cpus', 8],
+      ['memory_total_mib', 16384],
+      ['vms_running', 2],
+      ['sessions_active', 3],
+      ['sessions_per_vm', 16],
+      ['vms_max', 0],
+    ]);
+    expect(sessionsPerVm(full)).toBe(16);
+    expect(sessionsPerVm({ ...CAPACITY, sessions_per_vm: 0 })).toBeNull();
+    expect(sessionsPerVm(CAPACITY)).toBeNull();
+    expect(sessionsPerVm(null)).toBeNull();
+  });
 });
 
 describe('the hub list', () => {
   it('reads valid lists and refuses malformed ones', async () => {
     const { w } = await setup();
-    const rows = [hubRow('d1'), hubRow('d2', { kind: 'platform', last_seen_at: null })];
+    const rows = [
+      hubRow('d1', { assigned_org: true, vms: [{ vm_id: 'vm-1a2b3c4d', wg_id: 'w', state: 'running', sessions: 2 }] }),
+      hubRow('d2', { kind: 'platform', last_seen_at: null }),
+    ];
     w.client.on(`GET /v1/orgs/${w.org}/devices`, () => ({ devices: rows }));
     expect(await loadOrgDevices(w.context, w.org)).toEqual(rows);
     const bad: unknown[] = [
@@ -165,6 +200,13 @@ describe('the hub list', () => {
       { devices: [{ ...hubRow('d'), online: 'yes' }] },
       { devices: [{ ...hubRow('d'), agent_version: null }] },
       { devices: [{ ...hubRow('d'), capacity_low: null }] },
+      { devices: [{ ...hubRow('d'), assigned_org: 'yes' }] },
+      { devices: [{ ...hubRow('d'), vms: 'x' }] },
+      { devices: [{ ...hubRow('d'), vms: [{ vm_id: 'vm-1', wg_id: 'w', state: 'running', sessions: -1 }] }] },
+      { devices: [{ ...hubRow('d'), vms: [{ vm_id: 1, wg_id: 'w', state: 'running', sessions: 1 }] }] },
+      { devices: [{ ...hubRow('d'), vms: [{ vm_id: 'vm-1', wg_id: 1, state: 'running', sessions: 1 }] }] },
+      { devices: [{ ...hubRow('d'), vms: [{ vm_id: 'vm-1', wg_id: 'w', state: 1, sessions: 1 }] }] },
+      { devices: [null] },
     ];
     for (const body of bad) {
       w.client.on(`GET /v1/orgs/${w.org}/devices`, () => body);
@@ -327,6 +369,33 @@ describe('planners', () => {
     expect(refusalOf(() => assignPlan(a.pdev!.id, one, null)(log, a.ada!.id))).toBe('not_found');
   });
 
+  it('assign and unassign the whole organization: admins only, null once done, org devices or platform by seq', async () => {
+    const { w, a } = await setup({ private: true });
+    const log = orgEntry(w.store.getState().orgs, w.org).log!;
+    const me = a.ada!.id;
+    expect(refusalOf(() => assignOrgPlan(a.dev2!.id, null)(log, a.bob!.id))).toBe('forbidden');
+    expect(refusalOf(() => assignOrgPlan('unknown', null)(log, me))).toBe('not_found');
+    expect(refusalOf(() => assignOrgPlan(a.pdev!.id, null)(log, me))).toBe('not_found');
+    expect(refusalOf(() => assignOrgPlan(a.pdev!.id, 5)(log, me))).toBe('log_rights');
+    expect(assignOrgPlan(a.dev2!.id, null)(log, me)).toEqual({
+      entries: [{ type: 'device_assign_org', device: a.dev2!.id }],
+    });
+    expect(assignOrgPlan(a.pdev!.id, 2)(log, me)).toEqual({
+      entries: [{ type: 'device_assign_org', device: a.pdev!.id, platform_seq: 2 }],
+    });
+    expect(assignOrgPlan('new-platform-device', 3)(log, me)).toEqual({
+      entries: [{ type: 'device_assign_org', device: 'new-platform-device', platform_seq: 3 }],
+    });
+    expect(refusalOf(() => unassignOrgPlan(a.dev2!.id)(log, a.bob!.id))).toBe('forbidden');
+    expect(unassignOrgPlan(a.dev2!.id)(log, me)).toBeNull();
+    await submitBatch(w.context, w.org, assignOrgPlan(a.dev2!.id, null));
+    const after = orgEntry(w.store.getState().orgs, w.org).log!;
+    expect(assignOrgPlan(a.dev2!.id, null)(after, me)).toBeNull();
+    expect(unassignOrgPlan(a.dev2!.id)(after, me)).toEqual({
+      entries: [{ type: 'device_unassign_org', device: a.dev2!.id }],
+    });
+  });
+
   it('unassign and unpair: admins only, null once done, never a user', async () => {
     const { w, a, one } = await setup();
     const log = orgEntry(w.store.getState().orgs, w.org).log!;
@@ -412,6 +481,41 @@ describe('assign, unassign, unpair', () => {
     expect(w.world.state.epoch(WG, w.world.defaultWg)).toBe(epochDefault + 1);
     expect(w.world.state.epoch(ORG, w.org)).toBe(epochOrg + 1);
     expect(holds(w, a.dev1!, ORG, w.org)).toBe(false);
+  });
+});
+
+describe('the whole organization (ADR-060)', () => {
+  it('gives an org device to every workgroup with OK and the held WKs, then removes it with the rotation', async () => {
+    const { w, a, one, old } = await setup();
+    const dev2 = a.dev2!;
+    w.world.add(dev2);
+    expect(canAssignToOrg(w.world.state, keyRing(w.store, w.org))).toBe(true);
+    const done = await assignDevice(w.context, w.org, WHOLE_ORG, { kind: 'org', device: dev2.id });
+    expect(done.built!.body.entries.map((entry) => entry.body.type)).toEqual(['device_assign_org']);
+    const state = w.world.state;
+    expect(state.orgAssigned(dev2.id)).toBe(true);
+    expect([one, old, w.world.defaultWg].every((wg) => state.assigned(dev2.id, wg))).toBe(true);
+    expect(holds(w, dev2, ORG, w.org)).toBe(true);
+    expect(holds(w, dev2, WG, one)).toBe(true);
+    const rows = deviceRows(state, null, [], new Map());
+    expect(rows.find((row) => row.id === dev2.id)).toMatchObject({ org: true, explicit: [w.world.defaultWg] });
+    const epochOne = state.epoch(WG, one);
+    const epochDefault = state.epoch(WG, w.world.defaultWg);
+    await submitBatch(w.context, w.org, unassignOrgPlan(dev2.id));
+    const after = w.world.state;
+    expect(after.orgAssigned(dev2.id)).toBe(false);
+    expect(after.assigned(dev2.id, w.world.defaultWg)).toBe(true);
+    expect(after.epoch(WG, one)).toBe(epochOne + 1);
+    expect(after.epoch(WG, w.world.defaultWg)).toBe(epochDefault);
+  });
+
+  it('gives a platform device to the organization and needs the current OK', async () => {
+    const { w, a } = await setup({ private: true });
+    const pdev = a.pdev!;
+    w.world.add(pdev);
+    await assignDevice(w.context, w.org, WHOLE_ORG, { kind: 'platform', device: pdev.id, platformSeq: 2 });
+    expect(w.world.state.orgAssigned(pdev.id)).toBe(true);
+    expect(canAssignToOrg(w.world.state, () => null)).toBe(false);
   });
 });
 

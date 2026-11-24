@@ -92,7 +92,7 @@ def _capacity(free: int) -> dict[str, int]:
         "vm_memory_used_mib": 0,
         "vm_slots_total": 8,
         "vm_slots_free": free,
-        "pool_ready": 1,
+        "pool_ready": 1 if free else 0,
     }
 
 
@@ -117,23 +117,29 @@ def test_full_devices_leave_the_task_scheduling_with_capacity_exhausted(desk: De
     desk.set_capacity(desk.scene.other_device, _capacity(free=0))
     body = desk.create(desk.scene.writer).json()
     assert (body["task"]["state"], body["task"]["state_reason"]) == ("scheduling", "capacity_exhausted")
+    # a ready pool VM is a place for a new VM even without a free slot (it holds its slot already, ADR-060 section 3)
+    desk.set_capacity(desk.scene.device, {**_capacity(free=0), "pool_ready": 1})
+    assert desk.create(desk.scene.writer).json()["session"]["device_id"] == desk.scene.device.id
 
 
-def test_no_active_assigned_device_is_no_device(desk: Desk, published: MemoryPublisher) -> None:
+def test_without_an_active_device_the_task_waits_for_the_operator(desk: Desk, published: MemoryPublisher) -> None:
+    """ADR-060 section 7: the task is always created; an org without platform access and without an own active device
+    waits with `platform_access_required`."""
     desk.execute(
         "UPDATE hub.device SET state = 'decertified' WHERE id = ANY(%s::uuid[])",
         [desk.scene.device.id, desk.scene.other_device.id],
     )
     task_id = new_id()
     response = desk.create(desk.scene.writer, task_id)
-    assert response.status_code == 409
-    assert response.json() == {"error": "no_device", "detail": {"candidates_available": False}}
-    assert desk.rows("SELECT 1 FROM hub.task WHERE id = %s", task_id) == []
-    assert desk.rows("SELECT 1 FROM hub.event WHERE task_id = %s", task_id) == []
-    assert published.items() == []
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["task"]["state"], body["task"]["state_reason"]) == ("scheduling", "platform_access_required")
+    assert body["session"]["device_id"] is None
+    assert len(desk.rows("SELECT 1 FROM hub.event WHERE task_id = %s", task_id)) == 2
+    assert published.items() != []
 
 
-def test_no_device_names_available_platform_candidates(world: World, fleet: Fleet) -> None:
+def test_a_private_org_without_assigned_devices_waits_for_an_assignment(world: World, fleet: Fleet) -> None:
     draft = world.private_org()
     desk = Desk.build(world)
     # a private org without assigned devices, and one certified platform device
@@ -143,8 +149,8 @@ def test_no_device_names_available_platform_candidates(world: World, fleet: Flee
     meta = draft.event(founder, "task.meta", scope="wg", scope_id=draft.default_wg, wg=draft.default_wg, task=task_id)
     prompt = draft.event(founder, "prompt", scope="wg", scope_id=draft.default_wg, wg=draft.default_wg, task=task_id)
     response = desk.create(founder, task_id, wg=draft.default_wg, events=[meta, prompt])
-    assert response.status_code == 409
-    assert response.json() == {"error": "no_device", "detail": {"candidates_available": True}}
+    assert response.status_code == 200
+    assert response.json()["task"]["state_reason"] == "no_device"
 
 
 def test_reader_and_stranger_may_not_create(desk: Desk) -> None:
@@ -266,7 +272,7 @@ def test_a_concurrent_create_of_the_same_task_id_is_a_conflict(desk: Desk, monke
     task_id = new_id()
     real = load.decide
 
-    def racing(*args: Any) -> Any:
+    def racing(*args: Any, **options: Any) -> Any:
         desk.execute(
             "INSERT INTO hub.task (id, org_id, wg_id, owner_id, state, created_at, state_at, last_activity_at)"
             " VALUES (%s, %s, %s, %s, 'scheduling', now(), now(), now())",
@@ -275,7 +281,7 @@ def test_a_concurrent_create_of_the_same_task_id_is_a_conflict(desk: Desk, monke
             desk.wg,
             writer.id,
         )
-        return real(*args)
+        return real(*args, **options)
 
     monkeypatch.setattr(load, "decide", racing)
     response = desk.create(writer, task_id)

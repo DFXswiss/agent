@@ -41,7 +41,7 @@ from agent_hub.crypto.ids import uuid7
 from agent_hub.scheduler import load
 from agent_hub.sessions.derive import STOPPED, STOPPING
 from agent_hub.sessions.effects import Effects
-from agent_hub.sessions.lifecycle import create_main_session, no_device
+from agent_hub.sessions.lifecycle import create_main_session
 from agent_hub.sessions.taskstate import HUB, TaskRow
 from agent_hub.usage import binding
 
@@ -180,6 +180,13 @@ def carry_over(connection: Connection, task: TaskRow, session_id: UUID | str, no
         return
     # after every prompt of the task (all of them belong to the ended session, the newest), so they stay carried ones
     created = max(now, ended.pending[-1].received_at + TICK)
-    decision = no_device(load.decide(connection, task.wg_id, created, binding.online_window()))
+    decision = load.decide(
+        connection,
+        task.wg_id,
+        created,
+        binding.online_window(),
+        pin=load.task_pin(connection, task.id),
+        owner=task.owner_id,
+    )
     new_id = UUID(uuid7(int(created.timestamp() * 1000)))
     create_main_session(connection, task, new_id, decision, created, actor=HUB, effects=effects)

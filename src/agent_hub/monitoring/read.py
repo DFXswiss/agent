@@ -146,7 +146,7 @@ def readable_wgs(connection: Connection, org: UUID, user: UUID) -> list[str]:
 def org_view(connection: Connection, org: UUID, user: UUID, now: datetime, online_seconds: int) -> OrgView:
     """The devices, VMs and sessions of the org the member sees."""
     wgs = readable_wgs(connection, org, user)
-    devices = org_devices(connection, org, now, online_seconds)
+    devices = org_devices(connection, org, now, online_seconds, user)
     vms = connection.execute(
         "SELECT id, device_id, wg_id, state FROM hub.vm WHERE wg_id = ANY(%s::uuid[]) AND state <> 'deleted'"
         " ORDER BY created_at DESC, id DESC",

@@ -1,5 +1,5 @@
 {
-  "description": "Task states (02-data-model.md section 2.4): derived from the sessions except closed (user action). Reasons while scheduling: device_offline, capacity_exhausted (03-api.md section 4.6.2).",
+  "description": "Task states (02-data-model.md section 2.4): derived from the sessions except closed (user action). Reasons while scheduling (03-api.md section 4.6.2, ADR-060 section 7) with their category for the situation view.",
   "states": [
     "scheduling",
     "starting",
@@ -13,6 +13,22 @@
   ],
   "scheduling_reasons": [
     "device_offline",
-    "capacity_exhausted"
-  ]
+    "capacity_exhausted",
+    "no_device",
+    "platform_access_required",
+    "wg_vm_limit",
+    "placement_full",
+    "placement_offline",
+    "keys_pending"
+  ],
+  "scheduling_categories": {
+    "capacity_exhausted": "waiting_for_capacity",
+    "wg_vm_limit": "waiting_for_capacity",
+    "placement_full": "waiting_for_capacity",
+    "device_offline": "waiting_for_device",
+    "placement_offline": "waiting_for_device",
+    "keys_pending": "waiting_for_device",
+    "no_device": "waiting_for_device",
+    "platform_access_required": "waiting_for_device"
+  }
 }

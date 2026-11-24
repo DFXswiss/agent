@@ -1,0 +1,43 @@
+{
+  "devices": [
+    {
+      "device_id": "01930014-0000-7000-8000-000000000014",
+      "kind": "platform",
+      "state": "active",
+      "online": true,
+      "last_seen_at": "2026-11-21T12:00:00.000Z",
+      "agent_version": "0.1.0",
+      "capacity": {
+        "vm_memory_budget_mib": 65536,
+        "vm_memory_used_mib": 8192,
+        "vm_slots_total": 8,
+        "vm_slots_free": 6,
+        "pool_ready": 2,
+        "cpus": 18,
+        "memory_total_mib": 131072,
+        "disk_free_mib": 500000,
+        "vms_running": 1,
+        "sessions_active": 2,
+        "work_vms_running": 0,
+        "sessions_per_vm": 16,
+        "vms_max": 0,
+        "features": [
+          "Not-A-Feature"
+        ]
+      },
+      "capacity_low": false,
+      "assigned_wgs": [
+        "01930002-0000-7000-8000-000000000002"
+      ],
+      "assigned_org": true,
+      "vms": [
+        {
+          "vm_id": "vm-0a1b2c3d",
+          "wg_id": "0193000b-0000-7000-8000-00000000000b",
+          "state": "running",
+          "sessions": 2
+        }
+      ]
+    }
+  ]
+}

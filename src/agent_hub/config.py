@@ -42,6 +42,9 @@ MODEL_CATALOG = "AGENT_HUB_MODEL_CATALOG"
 TRUSTED_PROXIES = "AGENT_HUB_TRUSTED_PROXIES"
 IPV4_MAPPED = ipaddress.IPv6Network("::ffff:0:0/96")
 FORWARDED_HEADER = "AGENT_HUB_FORWARDED_HEADER"
+VMS_PER_WG = "AGENT_HUB_VMS_PER_WG"
+CAPACITY_REFUSALS = "AGENT_HUB_CAPACITY_REFUSALS"
+REFUSAL_HOLD_SECONDS = "AGENT_HUB_REFUSAL_HOLD_SECONDS"
 
 TEST_PREFIX = "AGENT_HUB_TEST_"
 KNOWN_VARIABLES = frozenset(
@@ -59,12 +62,23 @@ KNOWN_VARIABLES = frozenset(
         MODEL_CATALOG,
         TRUSTED_PROXIES,
         FORWARDED_HEADER,
+        VMS_PER_WG,
+        CAPACITY_REFUSALS,
+        REFUSAL_HOLD_SECONDS,
     }
 )
 
 DEFAULT_PORT = 8788
 DEFAULT_DEVICE_ONLINE_SECONDS = 30
 MAX_DEVICE_ONLINE_SECONDS = 3600
+DEFAULT_VMS_PER_WG = 100
+"""Live VMs of one workgroup over all devices (ADR-060 section 1; 0 = no limit)."""
+MAX_VMS_PER_WG = 1_000_000
+DEFAULT_CAPACITY_REFUSALS = 3
+"""Refusals in a row after which the next attempt is held back (ADR-060 section 7, ADR-049)."""
+MAX_CAPACITY_REFUSALS = 1000
+DEFAULT_REFUSAL_HOLD_SECONDS = 60
+MAX_REFUSAL_HOLD_SECONDS = 86400
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_CATALOG_BYTES = 1024 * 1024
 
@@ -152,6 +166,9 @@ class HubConfig:
     model_catalog: ModelCatalog
     trusted_proxies: tuple[Network, ...] = ()
     forwarded_header: str = X_FORWARDED_FOR
+    vms_per_wg: int = DEFAULT_VMS_PER_WG
+    capacity_refusals: int = DEFAULT_CAPACITY_REFUSALS
+    refusal_hold_seconds: int = DEFAULT_REFUSAL_HOLD_SECONDS
 
     def signer(self) -> HubSigner:
         """The hub's response and checkpoint signer (reused `agent_core.signing.HubSigner`)."""
@@ -218,6 +235,16 @@ def _bounded_int(environ: Mapping[str, str], name: str, default: int, pattern: r
         return default
     if pattern.fullmatch(value) is None or not 1 <= int(value) <= maximum:
         raise ConfigError(f"{name} must be an integer from 1 to {maximum}")
+    return int(value)
+
+
+def _setting(environ: Mapping[str, str], name: str, default: int, maximum: int) -> int:
+    """A count setting of 0 to `maximum` (0 = no limit or no hold, ADR-060 section 1)."""
+    value = _value(environ, name)
+    if value is None:
+        return default
+    if _SECONDS_RE.fullmatch(value) is None or int(value) > maximum:
+        raise ConfigError(f"{name} must be an integer from 0 to {maximum}")
     return int(value)
 
 
@@ -422,4 +449,11 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
         model_catalog=load_model_catalog(Path(_require(environ, MODEL_CATALOG))),
         trusted_proxies=trusted,
         forwarded_header=_forwarded_header(environ, trusted),
+        vms_per_wg=_setting(environ, VMS_PER_WG, DEFAULT_VMS_PER_WG, MAX_VMS_PER_WG),
+        capacity_refusals=_bounded_int(
+            environ, CAPACITY_REFUSALS, DEFAULT_CAPACITY_REFUSALS, _SECONDS_RE, MAX_CAPACITY_REFUSALS
+        ),
+        refusal_hold_seconds=_setting(
+            environ, REFUSAL_HOLD_SECONDS, DEFAULT_REFUSAL_HOLD_SECONDS, MAX_REFUSAL_HOLD_SECONDS
+        ),
     )

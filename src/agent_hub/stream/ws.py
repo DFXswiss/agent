@@ -48,6 +48,22 @@ RESTART = 1012
 CAPACITY_KEYS = frozenset(
     {"vm_memory_budget_mib", "vm_memory_used_mib", "vm_slots_total", "vm_slots_free", "pool_ready"}
 )
+OPTIONAL_CAPACITY_KEYS = frozenset(
+    {
+        "cpus",
+        "memory_total_mib",
+        "disk_free_mib",
+        "vms_running",
+        "sessions_active",
+        "work_vms_running",
+        "sessions_per_vm",
+        "vms_max",
+    }
+)
+"""Counters and settings a runner may add to its capacity (ADR-060 section 2)."""
+FEATURES_KEY = "features"
+MAX_FEATURES = 16
+_FEATURE_RE = re.compile(r"[a-z][a-z0-9_]{0,31}")
 SESSION_STATES = frozenset(
     {
         "requested",
@@ -92,8 +108,18 @@ def _items(value: object, keys: tuple[str, str], pattern: re.Pattern[str], state
             raise FrameInvalid("list item")
 
 
-def parse_heartbeat(text: str) -> dict[str, int]:
-    """The capacity of a heartbeat frame (`FrameInvalid` for anything else)."""
+def _features(value: object) -> list[str]:
+    if not isinstance(value, list) or len(value) > MAX_FEATURES:
+        raise FrameInvalid("features")
+    for item in value:
+        if not isinstance(item, str) or _FEATURE_RE.fullmatch(item) is None:
+            raise FrameInvalid("features")
+    return list(value)
+
+
+def parse_heartbeat(text: str) -> dict[str, Any]:
+    """The capacity of a heartbeat frame (`FrameInvalid` for anything else): the five counters, optionally the further
+    counters and settings and the features of ADR-060 section 2."""
     try:
         data = json.loads(text)
     except ValueError as error:
@@ -103,9 +129,13 @@ def parse_heartbeat(text: str) -> dict[str, int]:
     if set(data) != {"type", "capacity", "sessions", "vms"}:
         raise FrameInvalid("fields")
     capacity = data["capacity"]
-    if not isinstance(capacity, dict) or set(capacity) != CAPACITY_KEYS:
+    if not isinstance(capacity, dict) or not CAPACITY_KEYS <= set(
+        capacity
+    ) <= CAPACITY_KEYS | OPTIONAL_CAPACITY_KEYS | {FEATURES_KEY}:
         raise FrameInvalid("capacity")
-    counts = {key: _count(value) for key, value in capacity.items()}
+    counts: dict[str, Any] = {key: _count(value) for key, value in capacity.items() if key != FEATURES_KEY}
+    if FEATURES_KEY in capacity:
+        counts[FEATURES_KEY] = _features(capacity[FEATURES_KEY])
     _items(data["sessions"], ("session_id", "state"), _UUID_RE, SESSION_STATES)
     _items(data["vms"], ("vm_id", "state"), _VM_ID_RE, VM_STATES)
     return counts

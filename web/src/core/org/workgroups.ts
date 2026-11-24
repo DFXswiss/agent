@@ -62,7 +62,9 @@ export function workgroupRows(state: OrgState, me: string, directory: Directory)
 
 /**
  * Devices an admin can assign to a new workgroup: active devices of the org that are not decertified; platform
- * devices only while the org has platform access (ADR-026). With their `platform_seq` (null for org devices).
+ * devices only while the org has platform access (ADR-026); not the devices of the whole organization (ADR-060: they
+ * are assigned to the new workgroup already and receive its `WK_1` from the batch). With their `platform_seq` (null
+ * for org devices).
  */
 export function assignableDevices(
   state: OrgState,
@@ -71,7 +73,7 @@ export function assignableDevices(
   const excluded = new Set(excludedFor(platform, state));
   const access = platform?.platformAccess(state.org, state.private) ?? false;
   return [...state.principals.values()]
-    .filter((p) => p.kind === DEVICE && p.removedSeq === null && !excluded.has(p.id))
+    .filter((p) => p.kind === DEVICE && p.removedSeq === null && !excluded.has(p.id) && !state.orgAssigned(p.id))
     .filter((p) => p.platformSeq === null || access)
     .map((p) => ({ id: p.id, platformSeq: p.platformSeq }))
     .sort((a, b) => Number(a.id > b.id) - Number(a.id < b.id));

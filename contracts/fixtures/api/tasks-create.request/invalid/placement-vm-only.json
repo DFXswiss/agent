@@ -1,0 +1,55 @@
+{
+  "task_id": "01930003-0000-7000-8000-000000000003",
+  "wg_id": "01930002-0000-7000-8000-000000000002",
+  "events": [
+    {
+      "header": {
+        "v": 1,
+        "alg": "A256GCM-HKDF",
+        "id": "01930029-0000-7000-8000-000000000029",
+        "org": "01930001-0000-7000-8000-000000000001",
+        "scope": "wg",
+        "scope_id": "01930002-0000-7000-8000-000000000002",
+        "epoch": 1,
+        "wg": "01930002-0000-7000-8000-000000000002",
+        "task": "01930003-0000-7000-8000-000000000003",
+        "session": "",
+        "author": "0193000a-0000-7000-8000-00000000000a",
+        "kind": "task.meta",
+        "ref": "",
+        "ts": "2026-11-21T12:00:00.000Z",
+        "lh": 4,
+        "salt": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+        "nonce": "AgICAgICAgICAgIC"
+      },
+      "ct": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+      "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+    },
+    {
+      "header": {
+        "v": 1,
+        "alg": "A256GCM-HKDF",
+        "id": "01930028-0000-7000-8000-000000000028",
+        "org": "01930001-0000-7000-8000-000000000001",
+        "scope": "wg",
+        "scope_id": "01930002-0000-7000-8000-000000000002",
+        "epoch": 1,
+        "wg": "01930002-0000-7000-8000-000000000002",
+        "task": "01930003-0000-7000-8000-000000000003",
+        "session": "",
+        "author": "0193000a-0000-7000-8000-00000000000a",
+        "kind": "prompt",
+        "ref": "",
+        "ts": "2026-11-21T12:00:00.000Z",
+        "lh": 4,
+        "salt": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+        "nonce": "AgICAgICAgICAgIC"
+      },
+      "ct": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+      "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+    }
+  ],
+  "placement": {
+    "vm_id": "vm-0a1b2c3d"
+  }
+}

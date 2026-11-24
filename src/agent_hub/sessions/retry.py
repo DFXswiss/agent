@@ -21,9 +21,12 @@ end, the task fails with the reason and shows "Retry"):
   a follow-up already replaced, starts nothing);
 - the user did not stop it (audit `session.control` `stop`, like `agent_hub.sessions.prompts.carry_over`);
 - prompts are pending there (a resume the device started on its own has nothing to deliver);
-- **limit**: fewer than `MAX_REFUSALS` refusals in a row for the same prompts (`refusals`: the refused session and the
-  attempts directly before it that were refused before they ever worked); a follow-up ("Retry") or a session that
-  worked starts a new row. Reaching the limit is logged (`agent_hub.sessions.retry`, `capacity_refusal_limit`).
+- **limit** (ADR-060 section 7, amending ADR-049): from `AGENT_HUB_CAPACITY_REFUSALS` refusals in a row for the same
+  prompts on (`refusals`: the refused session and the attempts directly before it that were refused before they ever
+  worked; a follow-up or a session that worked starts a new row) the attempt is still created, but it waits
+  (`capacity_exhausted`) and is not placed before `AGENT_HUB_REFUSAL_HOLD_SECONDS` (`session.not_before`, honoured
+  by `agent_hub.scheduler.reschedule`); the task never fails for want of capacity. Reaching the limit is logged
+  (`agent_hub.sessions.retry`, `capacity_refusal_limit`).
 
 The attempt is created after every pending prompt and after the refused session (`created_at` order of the routing).
 """
@@ -31,25 +34,25 @@ The attempt is created after every pending prompt and after the refused session 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
 
 import psycopg
 
 from agent_hub.crypto.ids import uuid7
-from agent_hub.scheduler import load
+from agent_hub.scheduler import load, settings
+from agent_hub.scheduler.core import CAPACITY_EXHAUSTED, Decision, NoPlacement
 from agent_hub.sessions import prompts
 from agent_hub.sessions.effects import Effects
-from agent_hub.sessions.lifecycle import create_main_session, no_device
+from agent_hub.sessions.lifecycle import create_main_session
 from agent_hub.sessions.taskstate import HUB, TaskRow
 from agent_hub.usage import binding
 
 Connection = psycopg.Connection[Any]
 LOG = logging.getLogger("agent_hub.sessions.retry")
 REASON = prompts.RETRY_REASON
-MAX_REFUSALS = 3
-"""Refusals in a row for the same prompts after which the task fails with `capacity_exhausted`."""
+HELD = NoPlacement(CAPACITY_EXHAUSTED)
 
 
 def refusals(newest: list[tuple[Any, ...]]) -> int:
@@ -64,22 +67,23 @@ def refusals(newest: list[tuple[Any, ...]]) -> int:
     return count
 
 
+def _newest(connection: Connection, task_id: UUID, limit: int) -> list[tuple[Any, ...]]:
+    return connection.execute(
+        "SELECT s.id, s.created_at, (SELECT t.reason FROM hub.session_transition t WHERE t.session_id = s.id"
+        " AND t.seq = 1), s.state = 'failed' AND s.state_reason = 'capacity_exhausted' AND s.first_working_at IS NULL,"
+        " s.first_working_at IS NULL FROM hub.session s WHERE s.task_id = %s AND s.depth = 0"
+        " ORDER BY s.created_at DESC, s.id DESC LIMIT %s",
+        (task_id, limit),
+    ).fetchall()
+
+
 def planned(connection: Connection, task: TaskRow, session_id: UUID, now: datetime) -> datetime | None:
     """The creation time of the next attempt after the device refused `session_id` of the locked task, None when the
     refusal ends it (module docstring). Runs before the refusal is stored."""
     if task.state == "closed":
         return None
-    newest = connection.execute(
-        "SELECT s.id, s.created_at, (SELECT t.reason FROM hub.session_transition t WHERE t.session_id = s.id"
-        " AND t.seq = 1), s.state = 'failed' AND s.state_reason = 'capacity_exhausted' AND s.first_working_at IS NULL,"
-        " s.first_working_at IS NULL FROM hub.session s WHERE s.task_id = %s AND s.depth = 0"
-        " ORDER BY s.created_at DESC, s.id DESC LIMIT %s",
-        (task.id, MAX_REFUSALS),
-    ).fetchall()
+    newest = _newest(connection, task.id, settings.capacity_refusals())
     if str(newest[0][0]) != str(session_id):
-        return None
-    if refusals(newest) >= MAX_REFUSALS:
-        LOG.warning("capacity_refusal_limit task_id=%s session_id=%s", task.id, session_id)
         return None
     held = cast(
         tuple[bool],
@@ -99,9 +103,30 @@ def planned(connection: Connection, task: TaskRow, session_id: UUID, now: dateti
 
 
 def start(connection: Connection, task: TaskRow, created: datetime, effects: Effects) -> TaskRow:
-    """Create and place the next attempt (after the refusal is stored, so the scheduler sees it); the derived task."""
-    decision = no_device(load.decide(connection, task.wg_id, created, binding.online_window()))
+    """Create and place the next attempt (after the refusal is stored, so the scheduler sees it); the derived task.
+    At the refusal limit the attempt waits and is held back (module docstring)."""
+    limit = settings.capacity_refusals()
+    # the attempt counts as the next one in the row: the refusals before it are the row of the refused session
+    held = refusals(_newest(connection, task.id, limit)) >= limit
     session_id = UUID(uuid7(int(created.timestamp() * 1000)))
-    return create_main_session(
+    if held:
+        LOG.warning("capacity_refusal_limit task_id=%s session_id=%s", task.id, session_id)
+        decision: Decision = HELD
+    else:
+        decision = load.decide(
+            connection,
+            task.wg_id,
+            created,
+            binding.online_window(),
+            pin=load.task_pin(connection, task.id),
+            owner=task.owner_id,
+        )
+    found = create_main_session(
         connection, task, session_id, decision, created, actor=HUB, effects=effects, reason=REASON
     )
+    if held:
+        connection.execute(
+            "UPDATE hub.session SET not_before = %s WHERE id = %s",
+            (created + timedelta(seconds=settings.refusal_hold_seconds()), session_id),
+        )
+    return found

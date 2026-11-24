@@ -27,5 +27,13 @@
   "archive.confirm": "Archivieren",
   "archive.body": "Archivierte Workgroups behalten ihre Historie, nehmen aber keine neuen Tasks oder Änderungen an.",
   "unlocking": "Wird freigeschaltet – die Inhalte erscheinen, sobald ein Mitglied oder Gerät dieser Workgroup online war.",
-  "unlocking.lost": "Ältere Inhalte dieser Workgroup lassen sich nicht mehr öffnen: Niemand, der sie teilen könnte, ist mehr dabei. Neue Inhalte werden in Kürze für dich lesbar."
+  "unlocking.lost": "Ältere Inhalte dieser Workgroup lassen sich nicht mehr öffnen: Niemand, der sie teilen könnte, ist mehr dabei. Neue Inhalte werden in Kürze für dich lesbar.",
+  "placement.open": "Standardgerät",
+  "placement.title": "Standardgerät für neue Aufgaben",
+  "placement.note": "Neue Aufgaben dieser Workgroup laufen auf diesem Gerät, wenn niemand ein anderes wählt. Ein Gerät, das der Workgroup nicht mehr zugewiesen ist, zählt als automatisch.",
+  "placement.loading": "Geräte werden geladen…",
+  "placement.save": "Speichern",
+  "placement.cancel": "Abbrechen",
+  "placement.auto": "Automatisch",
+  "placement.line": "Standardgerät: {device}"
 }

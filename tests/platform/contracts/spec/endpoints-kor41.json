@@ -1,0 +1,47 @@
+{
+  "description": "Endpoints added by KOR-41 (ADR-060): the default device and VM of a workgroup, the chosen device and VM of a task (03-api.md sections 4.5, 4.6) and the operator's list of tasks waiting for a device (section 4.3).",
+  "rights": [
+    "wg:read",
+    "wg:write",
+    "task:write",
+    "root"
+  ],
+  "auth": [
+    "browser",
+    "root"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/placement",
+      "rights": [
+        "wg:read"
+      ],
+      "section": "4.5"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/workgroups/{wg}/placement",
+      "rights": [
+        "wg:write"
+      ],
+      "section": "4.5"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/tasks/{task}/placement",
+      "rights": [
+        "task:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/waiting",
+      "rights": [
+        "root"
+      ],
+      "section": "4.3"
+    }
+  ]
+}

@@ -22,7 +22,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 |---|---|---|---|---|---|---|
 | R-0.1 | [GP s1](../KONZEPT.md#k-gp) | Invitation-based, encrypted platform for AI-supported tasks. | Realised by R-1 (invitation) and R-5 (E2E encryption). | HUB, WEB, RUN | 00 §1, 04 | E2E-01, E2E-09 |
 | R-0.2 | [GP s2](../KONZEPT.md#k-gp) | Hierarchy consists exclusively of Organization → Workgroup → Task. | No other container object exists in schema, API or UI. | HUB, WEB | 02 §2.2, §2.4 | E2E-08, U-HUB-schema |
-| R-0.3 | [GP s3](../KONZEPT.md#k-gp) | `agent-core` coordinates and synchronises. | Hub is coordinator (scheduler, operation registry, fan-out) – ADR-002. | HUB | 00 §2, 03 §4.6.2, §6 | E2E-06, E2E-38 |
+| R-0.3 | [GP s3](../KONZEPT.md#k-gp) | `agent-core` coordinates and synchronises. | Hub is coordinator (scheduler, operation registry, fan-out) – ADR-002. | HUB | 00 §2, 03 §4.6.2, §6 | E2E-06, E2E-38, E2E-47 |
 | R-0.4 | [GP s3](../KONZEPT.md#k-gp) | AI sessions run on assigned execution devices. | Only devices assigned to the workgroup are candidates. | HUB, RUN | 03 §4.6.2 | E2E-06, E2E-38 |
 | R-0.5 | [GP s4](../KONZEPT.md#k-gp) | Entry without configuration. | Invite link → passkey → first task; private org, default workgroup and platform device are created/assigned automatically. | WEB, HUB | 04 §5.3, 03 §4.6.1, 06 §3–§4 | E2E-01, E2E-05 |
 
@@ -65,7 +65,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 |---|---|---|---|---|---|---|
 | R-3.1 | [§3 b1](../KONZEPT.md#k-3-b1) | AI works on tasks on physical execution devices. | Runner on a macOS machine, sessions in Lima VMs there. | RUN | 00 §1, 05 | E2E-06 |
 | R-3.2 | [§3 b2](../KONZEPT.md#k-3-b2) | Devices can be added to an organization. | Org device invitation + enrollment. | HUB, RUN, WEB | 04 §5.8 | E2E-04 |
-| R-3.3 | [§3 b2](../KONZEPT.md#k-3-b2) | Devices can be assigned to workgroups. | `device_assign` / `device_unassign` log entries + wraps. | HUB, WEB | 04 §4.7, §5.9 | E2E-38 |
+| R-3.3 | [§3 b2](../KONZEPT.md#k-3-b2) | Devices can be assigned to workgroups. | `device_assign` / `device_unassign` log entries + wraps. | HUB, WEB | 04 §4.7, §5.9 | E2E-38, E2E-47 |
 | R-3.4 | [§3 b3](../KONZEPT.md#k-3-b3) | By default DFX provides its own execution servers. | Platform devices certified in the platform log; auto-assigned for private orgs. ADR-023. | HUB, WEB, RUN | 04 §5.9, 03 §4.6.1 | E2E-05 |
 | R-3.5 | [§3 b3](../KONZEPT.md#k-3-b3) | Users can optionally attach their own hardware. | Org devices (kind `org`). | RUN, HUB | 04 §5.8 | E2E-04, E2E-36 |
 | R-3.6 | [§3 b4](../KONZEPT.md#k-3-b4) | Initially only macOS is supported. | Runner refuses non-darwin hosts at start (`unsupported_os`); guest is Linux inside Lima. | RUN | 05 | E2E-04 (enrollment on the macOS runner device), U-RUN-config (non-darwin refused, R-P exception: a non-macOS host is not available in the E2E topologies), `agent-runner doctor` assertion in E2E-04 |
@@ -244,7 +244,7 @@ row adds `R-` rows with their tests and replaces the row here.
 
 | ID | Ref | Requirement | Status | As built today | Package |
 |---|---|---|---|---|---|
-| K-3.5 | [§3 b5](../KONZEPT.md#k-3-b5) | Under high load several VMs per workgroup may run on several devices. | teils | Separate VM per workgroup and device; the scheduler stays on the device with the running workgroup VM even when it is full. | – |
+| K-3.5 | [§3 b5](../KONZEPT.md#k-3-b5) | Under high load several VMs per workgroup may run on several devices. | gebaut | A full VM (sessions per VM, a setting) gets a second VM on the device or a VM on another assigned device – [ADR-060](../adr/060-resource-choice.md) | KOR-41 |
 | K-10.3 | [§10 b3](../KONZEPT.md#k-10-b3) | Subagents, tests and browsers are requested only as controlled platform operations. | teils | Subagents only by operation (R-13); tests and browsers not yet; the work VM is free ([E-08](../KONZEPT.md#e-08)). | KOR-29 |
 | K-27 | [Idee 27](../KONZEPT.md#k-idee-27) | Temporary test VMs: every test run gets an isolated temporary Lima VM; results, logs and exit codes stored; VM removed even on failure. | offen | Ban part built (no shell in the session); test run as operation missing ([A6](../KONZEPT.md#a-6)). | KOR-29 |
 | K-28 | [Idee 28](../KONZEPT.md#k-idee-28) | Temporary browser VMs: isolated Ubuntu VM with a browser controlled through controlled interfaces, traceable and live, removed after use. | offen | – | KOR-29 |
@@ -254,10 +254,10 @@ row adds `R-` rows with their tests and replaces the row here.
 | K-32 | [Idee 32](../KONZEPT.md#k-idee-32) | Autonomous-first: dashboard prioritises agent status, progress, blockers and required decisions. | teils | Task per request, no questions, task overview ([E-21](../KONZEPT.md#e-21)); status-first dashboard missing. | KOR-32 |
 | K-33 | [Idee 33](../KONZEPT.md#k-idee-33) | "Optimise processes" button starts an analysis session over authorised logs and metrics, no automatic changes. | offen | Raw data exist. | – |
 | K-34 | [Idee 34](../KONZEPT.md#k-idee-34) | Exactly one delegated main orchestrator per user, passkey release, own key, audit, revocation. | teils | Pairing with a passkey, own key, audit and revocation built by KOR-24 ([ADR-056](../adr/056-delegated-agent-access.md)); the orchestrator running on DFX hardware is open. | KOR-24 |
-| K-35 | [Idee 35](../KONZEPT.md#k-idee-35) | Own hardware exclusively for a workgroup or the whole organization; capacity, not data access. | teils | Org device per workgroup, separate VMs; assignment to the whole organization in one step missing. | – |
+| K-35 | [Idee 35](../KONZEPT.md#k-idee-35) | Own hardware exclusively for a workgroup or the whole organization; capacity, not data access. | gebaut | Per workgroup or for the whole organization in one step (`device_assign_org`); the device holds the keys of the workgroups it may run (said in the dialog) – [ADR-060](../adr/060-resource-choice.md) | KOR-41 |
 | K-36 | [Idee 36](../KONZEPT.md#k-idee-36) | Every workgroup member with write access can continue a session; interventions attributed. | teils | Ordered queue and author per prompt built; the session does not learn who speaks. | – |
 | K-37 | [Idee 37](../KONZEPT.md#k-idee-37) | GitHub identities per PR and commit (author, committer, signature, co-authors), defaults per org/workgroup. | offen | One GitHub connection per user, operator account ([E-06](../KONZEPT.md#e-06)). | KOR-25 |
-| K-38 | [Idee 38](../KONZEPT.md#k-idee-38) | Automatic and manual choice of device and VM, deterministic. | teils | Deterministic scheduler; manual choice and fallback to a second VM missing. | – |
+| K-38 | [Idee 38](../KONZEPT.md#k-idee-38) | Automatic and manual choice of device and VM, deterministic. | gebaut | Deterministic device choice (hub) and VM choice (runner), several VMs per workgroup, choice by user and agent, waiting states instead of refusals – [ADR-060](../adr/060-resource-choice.md) | KOR-41 |
 | K-39 | [Idee 39](../KONZEPT.md#k-idee-39) | Session completion and cleanup; logs, results and context kept. | teils | Closing ends the process and frees the sandbox; context not kept resumable. | – |
 | K-40 | [Idee 40](../KONZEPT.md#k-idee-40) | Full session resume of the original Claude Code session, also on another VM. | offen | Resume only of a paused session on the same VM. | – |
 | K-41 | [Idee 41](../KONZEPT.md#k-idee-41) | PR conflict auto-fix button; updates the PR branch, no automatic merge. | offen | No automatic merge (met); the rest missing ([A2](../KONZEPT.md#a-2)). | – |

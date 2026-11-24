@@ -82,8 +82,14 @@ def insert_identity(pool: Pool, user_id: str, identity: Identity, now: datetime)
         )
 
 
-def insert_device(pool: Pool, device_id: str, identity: Identity, now: datetime, kind: str = "org") -> None:
-    """A device principal with its own keys."""
+ORG_ASSIGN_CAPACITY = {"features": ["org_assign"]}
+"""A runner that reads assignments to the whole organization (ADR-060 section 5)."""
+
+
+def insert_device(
+    pool: Pool, device_id: str, identity: Identity, now: datetime, kind: str = "org", *, outdated: bool = False
+) -> None:
+    """A device principal with its own keys (`outdated`: its runner does not report the feature `org_assign`)."""
     with pool.connection() as connection, connection.transaction():
         connection.execute(
             "INSERT INTO hub.principal (id, kind, created_at) VALUES (%s, 'device', %s)", (device_id, now)
@@ -98,7 +104,7 @@ def insert_device(pool: Pool, device_id: str, identity: Identity, now: datetime,
                 identity.sig_public(),
                 new_id() if kind == "org" else None,
                 now,
-                Jsonb({}),
+                Jsonb({} if outdated else ORG_ASSIGN_CAPACITY),
                 now,
             ),
         )

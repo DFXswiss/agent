@@ -14,6 +14,7 @@ import { putEvents } from '../../../src/core/store/slices/events';
 import { blockOrg, setPlatform } from '../../../src/core/store/slices/orgs';
 import { putTasks, type TaskRow } from '../../../src/core/store/slices/tasks';
 import {
+  assignFirstCandidate,
   certified,
   ensureDevice,
   latestPrompt,
@@ -231,27 +232,36 @@ describe('ensureDevice', () => {
     expect(opened.reveal((raw) => [...raw])).toEqual(t.credKey.reveal((raw) => [...raw]));
   });
 
-  it('refuses non-admins, orgs without platform access and workgroups without a certified candidate', async () => {
+  it('assigns nothing for non-admins, orgs without platform access and workgroups without a certified candidate', async () => {
     const member = await taskWorld({ member: true });
     member.client.on(WG_PATH(member), () => ({ devices: [] }));
-    expect(await rejects(ensureDevice(member.context, member.org, member.wg))).toBe('no_device_available');
+    expect(await ensureDevice(member.context, member.org, member.wg)).toBeNull();
+    expect(await rejects(assignFirstCandidate(member.context, member.org, member.wg))).toBe('no_device_available');
     const shared = await taskWorld({ private: false });
     shared.client.on(WG_PATH(shared), () => ({ devices: [] }));
-    expect(await rejects(ensureDevice(shared.context, shared.org, shared.wg))).toBe('no_device_available');
+    expect(await ensureDevice(shared.context, shared.org, shared.wg)).toBeNull();
     const none = await taskWorld();
     assignable(none, [candidate(none, 0, { platform_seq: 0 }), { device_id: 1 }]);
-    expect(await rejects(ensureDevice(none.context, none.org, none.wg))).toBe('no_device_available');
+    expect(await ensureDevice(none.context, none.org, none.wg)).toBeNull();
     expect(none.context.refreshLog).toHaveBeenCalledTimes(1);
     const malformed = await taskWorld();
     assignable(malformed);
     malformed.client.on(CANDIDATES(malformed), () => ({ candidates: 'x' }));
-    expect(await rejects(ensureDevice(malformed.context, malformed.org, malformed.wg))).toBe('no_device_available');
+    expect(await rejects(assignFirstCandidate(malformed.context, malformed.org, malformed.wg))).toBe(
+      'no_device_available',
+    );
+    const failing = await taskWorld();
+    assignable(failing);
+    failing.client.on(CANDIDATES(failing), () => {
+      throw new HubError('unavailable', 503);
+    });
+    expect(await rejects(ensureDevice(failing.context, failing.org, failing.wg))).toBe('unavailable');
   });
 
-  it('verifies the platform log first when the store has none, and refuses if it stays missing', async () => {
+  it('verifies the platform log first when the store has none, and assigns nothing if it stays missing', async () => {
     const t = await taskWorld({ noPlatform: true });
     assignable(t);
-    expect(await rejects(ensureDevice(t.context, t.org, t.wg))).toBe('no_device_available');
+    expect(await ensureDevice(t.context, t.org, t.wg)).toBeNull();
     expect(t.context.refreshLog).toHaveBeenCalledTimes(1);
     const later = await taskWorld({ noPlatform: true });
     assignable(later);
@@ -466,47 +476,33 @@ describe('sendTask', () => {
     ]);
   });
 
-  it('assigns a device on no_device and sends again; other refusals pass', async () => {
+  it('creates the task without a device when none can be assigned, and sends the chosen placement', async () => {
     const t = await taskWorld();
     const prepared = await prepareTask(t.context, { org: t.org, wg: t.wg, prompt: 'x' });
-    assignable(t);
-    passHead(t);
-    let devices = 1;
-    t.client.on(WG_PATH(t), () => ({ devices: Array.from({ length: devices }, () => ({})) }));
-    let posts = 0;
-    t.client.on('POST /v1/tasks', () => {
-      posts += 1;
-      if (posts === 1) {
-        devices = 0;
-        throw new HubError('no_device', 409);
-      }
-      return created(t, prepared, {
+    expect(prepared.placement).toBeNull();
+    expect(prepared.body).not.toHaveProperty('placement');
+    t.client.on(WG_PATH(t), () => ({ devices: [] })).on(CANDIDATES(t), () => ({ candidates: [] }));
+    t.client.on('POST /v1/tasks', () =>
+      created(t, prepared, {
         session: { session_id: 's1', state: 'requested', device_id: null, estimate_ms: null },
         events: ['x'],
-      });
-    });
+      }),
+    );
     const sent = await sendTask(t.context, prepared);
     expect(sent.estimateMs).toBeNull();
-    expect(t.store.getState().tasks.launches[prepared.taskId]!.assignedMs).toBe(0);
+    expect(t.store.getState().tasks.launches[prepared.taskId]!.assignedMs).toBeNull();
     expect(t.ingested).toEqual([]);
-    const other = await taskWorld();
-    const second = await prepareTask(other.context, { org: other.org, wg: other.wg, prompt: 'x' });
-    other.client.on(WG_PATH(other), () => ({ devices: [] })).on(CANDIDATES(other), () => ({ candidates: [] }));
-    expect(await rejects(sendTask(other.context, second))).toBe('no_device_available');
-  });
-
-  it('keeps the first assignment time when the second check finds a device', async () => {
-    const t = await taskWorld();
-    const prepared = await prepareTask(t.context, { org: t.org, wg: t.wg, prompt: 'x' });
-    assignable(t);
-    let posts = 0;
-    t.client.on('POST /v1/tasks', () => {
-      posts += 1;
-      if (posts === 1) throw new HubError('no_device', 409);
-      return created(t, prepared);
+    const device = { device_id: 'd1', vm_id: null };
+    const chosen = await prepareTask(t.context, { org: t.org, wg: t.wg, prompt: 'x', placement: device });
+    expect(chosen.placement).toEqual(device);
+    expect(chosen.body.placement).toEqual({ device_id: 'd1' });
+    const vm = await prepareTask(t.context, {
+      org: t.org,
+      wg: t.wg,
+      prompt: 'x',
+      placement: { device_id: 'd1', vm_id: 'vm-1a2b3c4d' },
     });
-    await sendTask(t.context, prepared);
-    expect(t.store.getState().tasks.launches[prepared.taskId]!.assignedMs).toBe(0);
+    expect(vm.body.placement).toEqual({ device_id: 'd1', vm_id: 'vm-1a2b3c4d' });
   });
 
   it('refuses malformed answers and answers about another task', async () => {

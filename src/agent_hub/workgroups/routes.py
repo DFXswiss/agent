@@ -44,7 +44,7 @@ def _candidates(context: HubContext, user: UUID, wg: UUID) -> dict[str, Any]:
 def _org_devices(context: HubContext, user: UUID, org: UUID) -> dict[str, Any]:
     with context.pool.connection() as connection:
         rights.require(connection, user, rights.ORG_MEMBER, org_id=org)
-        found = read.org_devices(connection, org, context.clock(), context.config.device_online_seconds)
+        found = read.org_devices(connection, org, context.clock(), context.config.device_online_seconds, user)
     return {"devices": found}
 
 

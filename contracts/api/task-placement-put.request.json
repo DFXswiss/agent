@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-placement-put.request.json",
+  "title": "PUT /v1/tasks/{task}/placement request",
+  "description": "Body of PUT /v1/tasks/{task}/placement: the chosen device (null = automatic) and VM (03-api.md section 4.6, ADR-060 section 6).",
+  "type": "object",
+  "properties": {
+    "device_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "vm_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/vm_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "device_id",
+    "vm_id"
+  ],
+  "additionalProperties": false
+}

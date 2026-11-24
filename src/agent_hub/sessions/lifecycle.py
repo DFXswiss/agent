@@ -16,7 +16,7 @@ from uuid import UUID
 
 import psycopg
 
-from agent_hub.scheduler.core import Decision, NoPlacement, Placement
+from agent_hub.scheduler.core import Decision, Placement
 from agent_hub.sessions import rows
 from agent_hub.sessions.effects import Effects
 from agent_hub.sessions.taskstate import Actor, TaskRow, audit, refresh_task
@@ -87,9 +87,3 @@ def create_main_session(
         target=("session", session_id),
     )
     return place(connection, task, session_id, decision, now, actor=actor, effects=effects, reopen=reopen)
-
-
-def no_device(decision: Decision | None) -> Decision:
-    """The decision to store when the workgroup has no active assigned device any more (a follow-up prompt or a
-    re-scheduling after an unassignment): the session waits as if every device were offline."""
-    return decision if decision is not None else NoPlacement("device_offline")

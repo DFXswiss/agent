@@ -2,7 +2,7 @@
 // (WEB-05 embeds it): large digits with a progress ring, "Delayed" with the current step and a live elapsed time,
 // the real reason while the task waits, the status steps with device time and elapsed time, the one-line summary
 // "Ready in x s" once `working` is reached and, after `failed`, the catalog error with "Retry" (the same prompt as a
-// follow-up). No spinner. Announced through a polite live region every 5 s and on every step change (section 12.3).
+// follow-up). While the task waits, the reason comes with the step the user can take (`Waiting.tsx`, ADR-060). No spinner. Announced through a polite live region every 5 s and on every step change (section 12.3).
 import { useState } from 'react';
 import { announcement, countdown, type CountdownView, digits, settled } from '../../core/tasks/countdown';
 import type { TaskRow } from '../../core/store/slices/tasks';
@@ -11,6 +11,7 @@ import { useI18n } from '../i18n';
 import { useAppEnv } from '../shell/context';
 import { Digits, Ring, StepRow, stepId, useSeconds } from './parts';
 import { useNow } from './useNow';
+import { ReasonText, WaitingAction } from './Waiting';
 
 export interface CountdownPanelProps {
   readonly task: TaskRow;
@@ -43,7 +44,7 @@ function useAnnouncement(view: CountdownView): string {
   return t(`countdown.announce.${said.phase}`, { step: t(`countdown.step.${said.step!}`), seconds: said.seconds });
 }
 
-function Status({ view }: { readonly view: CountdownView }) {
+function Status({ view, task }: { readonly view: CountdownView; readonly task: TaskRow }) {
   const { t } = useI18n();
   const seconds = useSeconds();
   const step = t(`countdown.step.${view.current!}`);
@@ -70,12 +71,11 @@ function Status({ view }: { readonly view: CountdownView }) {
   const reason = view.reason ?? 'unknown';
   return (
     <div className="flex flex-col gap-1">
-      <p className="font-semibold text-amber-800" data-testid="countdown.reason" data-reason={reason}>
-        {t(`countdown.reason.${reason}`)}
-      </p>
+      <ReasonText task={task} reason={reason} />
       <p className="tabular-nums" data-testid="countdown.elapsed">
         {t('countdown.waiting', { seconds: seconds(view.elapsedMs) })}
       </p>
+      <WaitingAction task={task} reason={reason} />
     </div>
   );
 }
@@ -151,7 +151,7 @@ export function CountdownPanel({ task, onRetry }: CountdownPanelProps) {
       {view.phase === 'failed' ? (
         <Failed view={view} {...(onRetry !== undefined && { onRetry })} />
       ) : (
-        <Status view={view} />
+        <Status view={view} task={task} />
       )}
       <ol className="flex flex-col gap-1" data-testid="countdown.steps">
         {view.assignedMs !== null && (

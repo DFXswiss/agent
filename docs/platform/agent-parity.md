@@ -57,8 +57,10 @@ alone cannot do). Alternatives in a command are written `a\|b` (an escaped bar, 
 | workgroups-ungrant | screens/workgroups | `wg ungrant` (with rotation) | api |
 | workgroups-archive | screens/workgroups | `wg archive` | api |
 | wg-settings | screens/wg-settings | `repos list\|allow\|disallow`, `wg settings` | api |
-| devices-list | screens/devices | `device list` | api |
-| devices-assign | screens/devices | `device assign` | done |
+| devices-list | screens/devices | `device list` (devices, VMs, sessions, limits) | done |
+| devices-assign | screens/devices | `device assign --wg\|--org` | done |
+| devices-unassign-org | screens/devices | `device unassign --org` (with rotation) | done |
+| wg-placement | screens/workgroups | `wg placement` | done |
 | devices-unassign | screens/devices | `device unassign` (with rotation) | api |
 | devices-invite | screens/devices | `device invite` | api |
 | devices-profile | screens/devices | `device rename` | api |

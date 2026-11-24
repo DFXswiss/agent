@@ -23,7 +23,10 @@ Commands (entries they append):
 - `certify-pending [--device ID ...]`: one `device_certify` per verified pending enrollment (or the named devices);
 - `grant-org-access --org ID [--revoke]`: `org_platform_access` (ADR-026);
 - `grant-role inviter --user ID`, `revoke-role inviter --user ID`: `role_grant`, `role_revoke`;
-- `decertify --device ID`: `device_decertify`.
+- `decertify --device ID`: `device_decertify`;
+- `waiting`: appends nothing; lists the workgroups whose tasks wait for a device the operator must provide
+  (`GET /v1/platform/waiting`, ADR-060 section 7): organization, workgroup, reason, number of tasks, oldest, and
+  whether the organization has platform access.
 
 Output never contains the root key or a hub secret; the invitation code is printed because the operator hands it on.
 Exit codes: 0 done, 1 refused (by the hub or by a local check; the line names the code), 2 usage or key-file error.
@@ -373,6 +376,21 @@ def certify_pending(operator: Operator, devices: Sequence[str], out: TextIO) -> 
         print(f"certified {body['device']} (seq {seq})", file=out)
 
 
+def show_waiting(operator: Operator, out: TextIO) -> None:
+    """Print the workgroups whose tasks wait for the operator (one line each)."""
+    data = operator.request("GET", "/v1/platform/waiting")
+    rows = list(data["waiting"])
+    if not rows:
+        print("no tasks wait for a device", file=out)
+    for row in rows:
+        access = "yes" if row["platform_access"] else "no"
+        print(
+            f"org {row['org_id']} wg {row['wg_id']} {row['reason']} tasks {row['tasks']} since {row['oldest_at']}"
+            f" platform access {access}",
+            file=out,
+        )
+
+
 def simple(operator: Operator, body: dict[str, Any], out: TextIO) -> None:
     """Append one entry and print its type and `seq`."""
     done = operator.append(lambda _log, _pending: [body])
@@ -417,6 +435,8 @@ def dispatch(args: argparse.Namespace, http: httpx.Client | None, clock: Clock, 
         certify_pending(operator, args.device or [], out)
     elif command == "grant-org-access":
         simple(operator, {"type": "org_platform_access", "org": args.org, "granted": not args.revoke}, out)
+    elif command == "waiting":
+        show_waiting(operator, out)
     elif command in ("grant-role", "revoke-role"):
         kind = "role_grant" if command == "grant-role" else "role_revoke"
         simple(operator, {"type": kind, "subject": args.user, "role": args.role}, out)
@@ -477,6 +497,7 @@ def register(subparsers: argparse._SubParsersAction[Any]) -> None:
         role = command(name, f"{name.split('-')[0]} a platform role")
         role.add_argument("role", choices=["inviter"])
         role.add_argument("--user", type=uuid_text, required=True)
+    command("waiting", "list workgroups whose tasks wait for a device the operator must provide")
     decertify = command("decertify", "decertify a platform device")
     decertify.add_argument("--device", type=uuid_text, required=True)
     parser.set_defaults(handler=run)

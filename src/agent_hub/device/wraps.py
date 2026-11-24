@@ -17,6 +17,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub import signals
 from agent_hub.stream.publish import Audience, AudienceKind, publish
 from agent_hub.wraps.rules import Stored, store_wraps, wraps_for
 
@@ -45,8 +46,15 @@ def store(
     return stored, kinds
 
 
+WRAPS_SIGNAL = "wraps.stored"
+"""Internal signal after a wrap for a device was stored (`device_id`; the scheduler re-runs, ADR-060)."""
+
+
 def publish_wraps(stored: Stored, kinds: dict[str, str]) -> None:
     """The `wraps` frame/hint to every recipient of a new wrap (after the commit)."""
     for recipient in sorted(stored.recipients):
         kind: AudienceKind = "device" if kinds.get(recipient) == "device" else "user"
         publish(Audience(kind, UUID(recipient)), "wraps", {})
+        if kind == "device":
+            # a device that got a key may now take a waiting task (`keys_pending`, ADR-060 section 3)
+            signals.emit(WRAPS_SIGNAL, device_id=UUID(recipient))

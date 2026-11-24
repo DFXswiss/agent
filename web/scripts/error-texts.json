@@ -1330,5 +1330,101 @@
       "body": "Der Verbindungslink des Agenten passt nicht zur Anfrage beim Server.",
       "action": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden."
     }
+  },
+  "device_outdated": {
+    "en": {
+      "title": "This device's runner must be updated first",
+      "body": "Before a device can be given to the whole organization or join it, every device of the organization needs the current runner.",
+      "action": "Update the runner on the organization's devices, then try again."
+    },
+    "de": {
+      "title": "Der Runner dieses Geräts muss zuerst aktualisiert werden",
+      "body": "Bevor ein Gerät der ganzen Organisation gegeben werden oder ihr beitreten kann, braucht jedes Gerät der Organisation den aktuellen Runner.",
+      "action": "Aktualisiere den Runner auf den Geräten der Organisation und versuche es dann erneut."
+    }
+  },
+  "placement_forbidden": {
+    "en": {
+      "title": "Device not available",
+      "body": "This device is not assigned to the workgroup, so tasks of the workgroup cannot run on it.",
+      "action": "Choose another device or “Automatic”."
+    },
+    "de": {
+      "title": "Gerät nicht verfügbar",
+      "body": "Dieses Gerät ist der Workgroup nicht zugewiesen, deshalb können Aufgaben der Workgroup nicht darauf laufen.",
+      "action": "Wähle ein anderes Gerät oder „Automatisch“."
+    }
+  },
+  "placement_invalid": {
+    "en": {
+      "title": "VM not available",
+      "body": "This VM no longer runs for the workgroup on the chosen device.",
+      "action": "Choose another VM or “Any VM”."
+    },
+    "de": {
+      "title": "VM nicht verfügbar",
+      "body": "Diese VM läuft auf dem gewählten Gerät nicht mehr für die Workgroup.",
+      "action": "Wähle eine andere VM oder „Beliebige VM“."
+    }
+  },
+  "keys_pending": {
+    "en": {
+      "title": "Device is receiving keys",
+      "body": "The device with room is still receiving the keys of this workgroup – the task starts as soon as they are there.",
+      "action": "No action needed."
+    },
+    "de": {
+      "title": "Gerät erhält Schlüssel",
+      "body": "Das Gerät mit freiem Platz erhält noch die Schlüssel dieser Workgroup – die Aufgabe startet, sobald sie da sind.",
+      "action": "Keine Aktion nötig."
+    }
+  },
+  "placement_full": {
+    "en": {
+      "title": "Chosen device is full",
+      "body": "The chosen device is full – the task starts as soon as it has room.",
+      "action": "Wait, or let the platform choose a device automatically."
+    },
+    "de": {
+      "title": "Gewähltes Gerät ist voll",
+      "body": "Das gewählte Gerät ist voll – die Aufgabe startet, sobald dort Platz ist.",
+      "action": "Warte oder lass die Plattform automatisch ein Gerät wählen."
+    }
+  },
+  "placement_offline": {
+    "en": {
+      "title": "Chosen device is offline",
+      "body": "The chosen device is offline – the task starts as soon as it is back.",
+      "action": "Wait, or let the platform choose a device automatically."
+    },
+    "de": {
+      "title": "Gewähltes Gerät ist offline",
+      "body": "Das gewählte Gerät ist offline – die Aufgabe startet, sobald es wieder da ist.",
+      "action": "Warte oder lass die Plattform automatisch ein Gerät wählen."
+    }
+  },
+  "platform_access_required": {
+    "en": {
+      "title": "No execution device yet",
+      "body": "This organization has no execution device yet – the operator has been notified.",
+      "action": "No action needed; you can also add your own device."
+    },
+    "de": {
+      "title": "Noch kein Ausführungsgerät",
+      "body": "Diese Organisation hat noch kein Ausführungsgerät – der Betreiber wurde benachrichtigt.",
+      "action": "Keine Aktion nötig; du kannst auch ein eigenes Gerät hinzufügen."
+    }
+  },
+  "wg_vm_limit": {
+    "en": {
+      "title": "Workgroup VM limit reached",
+      "body": "The workgroup uses as many VMs as allowed – the task starts when one of them has room.",
+      "action": "No action needed."
+    },
+    "de": {
+      "title": "VM-Grenze der Workgroup erreicht",
+      "body": "Die Workgroup nutzt so viele VMs wie erlaubt – die Aufgabe startet, sobald eine davon Platz hat.",
+      "action": "Keine Aktion nötig."
+    }
   }
 }

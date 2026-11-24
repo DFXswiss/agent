@@ -103,13 +103,14 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `POST /v1/orgs` | user | `{genesis` entry`,wraps[],events[]` (`org.profile`, `wg.profile`, `member.profile`)`,platform_invite_id?}` → `{org_id,default_wg}`. `genesis.private:true` REQUIRES `platform_invite_id` = an unused platform invitation whose `registered_user` is the caller (`platform_invite_required`); it is consumed in the same transaction and the org gets `platform_access=true` (one private org per platform invitation). Non-private orgs may be created by any user; they get `platform_access=false` until a root-signed `org_platform_access` entry (ADR-026). |
 | `GET /v1/orgs/{org}` | org:member | → `{org_id,private,default_wg,log_head,workgroups:[{wg_id,is_default,archived,my_access,devices:[device_id],epoch}],members:[{principal_id,kind,role,joined_seq}],rotation_pending}` |
 | `GET /v1/orgs/{org}/log` | org:member | `?after=` → `{entries:[{seq,entry}],head}` |
-| `POST /v1/orgs/{org}/log` | per entry type (`04-crypto.md` §4.7) | `{expected_seq,entries[],wraps[],events[]}` (`expected_seq` = the `seq` of the first entry in the batch = current head + 1) → `{head}`; atomic; hub runs L1–L8, W3, E1–E9, the rotation obligation (`rotation_required` if the batch does not contain exactly the rotate set R of `04-crypto.md` §4.7) and, for `device_assign` with `platform_seq`, the platform-access rule (`platform_access_denied` unless `org.platform_access`) |
+| `POST /v1/orgs/{org}/log` | per entry type (`04-crypto.md` §4.7) | `{expected_seq,entries[],wraps[],events[]}` (`expected_seq` = the `seq` of the first entry in the batch = current head + 1) → `{head}`; atomic; hub runs L1–L8, W3, E1–E9, the rotation obligation (`rotation_required` if the batch does not contain exactly the rotate set R of `04-crypto.md` §4.7) and, for `device_assign`/`device_assign_org` with `platform_seq`, the platform-access rule (`platform_access_denied` unless `org.platform_access`); `device_assign_org` only when every active device member of the org reports the feature `org_assign` (`409 device_outdated`, ADR-060 §5) |
 | `GET /v1/wraps` | user | `?scope=&scope_id=&epoch=` → wraps where recipient = me |
 | `POST /v1/wraps` | user | `{wraps:[{scope,scope_id,epoch,recipient_id,wrap,sig}]}` → `{stored,ignored}` |
 | `GET /v1/orgs/{org}/catch-up` | org:member | → list of `{scope,scope_id,epoch,recipient_id}` without wrap that this caller may create (W2) |
 | `GET /v1/platform/log` | user | `?after=` → platform log entries |
 | `POST /v1/platform/log` | entry signed by the platform root (operator CLI `agent-hub platform …`; no session needed) | `{expected_seq,entries[]}` → `{head}`; types of `04-crypto.md` §4.8 incl. `device_decertify` (hub then refuses the device, sets `decertified`, marks affected scopes `rotation_pending`, sends `decertified` hint) |
 | `GET /v1/platform/enrollments` | root-signed request (§1) | → pending platform device enrollments with verified `inv_sig` (for `certify-pending`) |
+| `GET /v1/platform/waiting` | root-signed request (§1) | → `{waiting:[{org_id,wg_id,reason,tasks,oldest_at,platform_access}]}`: workgroups whose tasks wait for a device the operator must provide (`platform_access_required`, or `no_device` without an assignable device), oldest first (operator CLI `agent-hub platform waiting`, ADR-060 §7) |
 
 ### 4.4 Events
 
@@ -122,19 +123,21 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 
 | Endpoint | Right | Request → Response |
 |---|---|---|
-| `GET /v1/workgroups/{wg}` | wg:read | → `{wg_id,org_id,is_default,epoch,devices:[{device_id,kind,online,capacity}],members:[{user_id,access}]}` – `members` and `my_access` (of `GET /v1/orgs/{org}`) carry the effective access, so every admin appears with `read` unless it has explicit access (ADR-058); no marker, a client derives the source from the verified log |
+| `GET /v1/workgroups/{wg}` | wg:read | → `{wg_id,org_id,is_default,epoch,devices:[{device_id,kind,online,capacity,assigned_via:"workgroup"|"org",vms:[{vm_id,state,sessions}]}],members:[{user_id,access}],placement:{device_id,vm_id}|null}` (`vms`: the workgroup's live VMs on the device with their occupying sessions, ADR-060) – `members` and `my_access` (of `GET /v1/orgs/{org}`) carry the effective access, so every admin appears with `read` unless it has explicit access (ADR-058); no marker, a client derives the source from the verified log |
+| `GET /v1/workgroups/{wg}/placement` / `PUT …/placement` | wg:read / wg:write | → / `{device_id:uuid|null,vm_id:string|null}` → `{placement:{device_id,vm_id}|null}`: the workgroup's default device and VM for new tasks (`null` device = automatic; audit `wg.placement`); the device must be a candidate of the workgroup (`403 placement_forbidden`), the VM a live VM of the workgroup on it (`409 placement_invalid`) (ADR-060 §6) |
 | `GET /v1/workgroups/{wg}/device-candidates` | wg:write | → platform devices `{device_id,platform_seq,pub,online,capacity}` ordered by free capacity (§4.6.2) |
-| `GET /v1/orgs/{org}/devices` | org:member | → devices of the org and platform devices assigned to its workgroups: `{device_id,kind,state,online,last_seen_at,agent_version,capacity,assigned_wgs}` |
+| `GET /v1/orgs/{org}/devices` | org:member | → devices of the org and platform devices assigned to its workgroups: `{device_id,kind,state,online,last_seen_at,agent_version,capacity,assigned_wgs,assigned_org,vms:[{vm_id,wg_id,state,sessions}]}` (`assigned_org`: assigned to the whole organization, ADR-060 §5; `vms` only of workgroups the caller may read) |
 
 ### 4.6 Tasks and sessions
 
 | Endpoint | Right | Request → Response |
 |---|---|---|
-| `POST /v1/tasks` | wg:write | `{task_id,wg_id,events:[task.meta,prompt]}` → `{task,session:{session_id,state,device_id,estimate_ms},events:[…]}`; `409 no_device` with `detail.candidates_available` when the workgroup has no active assigned device |
+| `POST /v1/tasks` | wg:write | `{task_id,wg_id,events:[task.meta,prompt],placement?:{device_id,vm_id?}}` → `{task,session:{session_id,state,device_id,estimate_ms},events:[…]}`; the task is always created – without a device it waits `scheduling` with a reason of §4.6.2 (ADR-060 §7; `409 no_device` is no longer answered). `placement` (else the workgroup default, else automatic): `403 placement_forbidden` for a device that is not a candidate of the workgroup, `409 placement_invalid` for a VM that is not a live VM of the workgroup on that device |
 | `GET /v1/workgroups/{wg}/tasks` | wg:read | `?state=&before=&order=` → tasks newest first (`order=created`, default) or by latest activity (`order=activity`, KOR-32) `{task_id,owner_id,state,created_at,last_activity_at,main_session_id,title_event_id}` |
 | `GET /v1/tasks/{task}` | task:read | → task + sessions (tree) + usage per session + latest transitions |
 | `POST /v1/tasks/{task}/prompts` | task:write | `{event}` (kind `prompt`) → `{scope_seq,session_id}` (resumes or restarts the main session, §4.6.3) |
 | `POST /v1/tasks/{task}/close` | task:write | `{}` → task (`closed`; all sessions `stopping`) |
+| `PUT /v1/tasks/{task}/placement` | task:write | `{device_id:uuid|null,vm_id:string|null}` → task: changes the chosen device/VM (`null` = automatic) for the waiting and later main sessions; same checks as `POST /v1/tasks`; audit `task.placement` (ADR-060 §6) |
 | `POST /v1/sessions/{session}/control` | task:write | `{action:"interrupt"|"stop"}` → `{}` |
 | `GET /v1/sessions/{session}` | task:read | → session incl. transitions, usage, device, vm, parent, children |
 
@@ -142,7 +145,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 
 1. Browser: `GET /v1/workgroups/{wg}`. If `devices` is empty: `GET …/device-candidates`; pick the first
    candidate; verify its certification in the platform log; append `device_assign` + wraps of `WK`, `OK` and the
-   own `CK` for the device in one `POST /v1/orgs/{org}/log` batch (admins only – in a private org the single member is the admin – and only if the org has platform access, ADR-026). If no candidate exists: show `no_device_available`.
+   own `CK` for the device in one `POST /v1/orgs/{org}/log` batch (admins only – in a private org the single member is the admin – and only if the org has platform access, ADR-026). If no candidate exists or the user is no admin, the task is created anyway and waits (`no_device` / `platform_access_required`, §4.6.2) with the follow-up in the task view.
 2. Browser: `POST /v1/tasks` with `task.meta` (title derived per `06-web.md` §4.2) and `prompt` events.
 3. Hub (one transaction): checks, stores events, creates `task(scheduling)` and `session(requested)`, runs the
    scheduler, sets `session.device_id`, `estimate_ms`, task `starting`, writes audit; after commit: NOTIFY,
@@ -159,6 +162,25 @@ highest free VM memory budget; (4) smallest device ID. A device with `vm_slots_f
 workgroup is skipped. Estimates: (1) 2500 ms, (2) 6500 ms, (3) with `pool_ready > 0` 3000 ms else 8000 ms.
 No candidate: task stays `scheduling` with reason `device_offline` or `capacity_exhausted`; the hub re-runs the
 scheduler when a device of the workgroup connects or reports capacity, and the browser shows the real reason.
+**Several VMs per workgroup (ADR-060 §3):** candidates include devices assigned through the organization
+(`device_assign_org`). A device counts at level (1) only while a running VM of the workgroup has room
+(`capacity.sessions_per_vm` minus its occupying sessions – states `requested` … `stopping` without `suspended` –
+after the workgroup's sessions placed there without a VM yet), at level (2) only with a stopped VM with room, and
+otherwise at level (3) a new VM: a ready pool VM (`pool_ready > 0`) or `vm_slots_free > 0`, and fewer than `AGENT_HUB_VMS_PER_WG` (default 100, 0 = no limit)
+live VMs of the workgroup on all devices; else it is skipped. Without `sessions_per_vm` (0 or not reported) every
+running VM has room. Each placement of a re-scheduling round is booked on its device (a pending session; at level (3)
+also a slot and a VM of the workgroup). A task with a chosen device (`placement`) considers only that device and,
+with a VM, only that VM's room; when the device is no longer a candidate the choice is ignored (automatic). Reasons
+while waiting and their category for the situation view: `capacity_exhausted`, `wg_vm_limit` (the workgroup is
+at `AGENT_HUB_VMS_PER_WG` while a device has a free slot) and `placement_full` (the chosen device or VM is full) →
+`waiting_for_capacity`; `device_offline`, `placement_offline` (the chosen device is offline), `keys_pending` (the
+devices with room are assigned only through the organization and lack the wrap of the workgroup's current key),
+`no_device` (no active device assigned) and `platform_access_required` (no device assigned, the org has no device of
+its own and no platform access) → `waiting_for_device`. A new VM (level 3) also needs, when the device reports
+`disk_free_mib`, at least 20480 MiB free. The device state names per session whether the runner may create a VM for
+it (`vm_new_allowed`). The hub re-runs the scheduler also after a placement change. Tasks waiting
+with `platform_access_required`, or with `no_device` while no device could be assigned, are listed for the operator
+(`GET /v1/platform/waiting`).
 **Refusal for lack of capacity** (`05-runner.md` §3.4, ADR-049): when the device fails the newest main session of an
 open task with `capacity_exhausted` and prompts are pending there, the hub creates the next main session (an
 *attempt*: its first transition `requested` carries the reason `capacity_exhausted`) in the same transaction, without
@@ -166,8 +188,10 @@ showing the task `failed` in between; the attempt takes over the undelivered pro
 scheduler. A device that refused counts with `vm_slots_free = 0` until its next heartbeat, and for the refused
 workgroup a stopped VM no longer exempts it from needing a free slot until it reports one (a running VM still does),
 so the attempt goes to another device with room or waits `scheduling` (`capacity_exhausted`). Not after the user
-stopped the session, and at most 3 refusals in a row for the same prompts (sessions refused before they ever worked):
-the third refusal fails the task with `capacity_exhausted` ("Retry"). The attempt resumes from the last session on
+stopped the session. Refusals in a row for the same prompts (sessions refused before they ever worked) up to
+`AGENT_HUB_CAPACITY_REFUSALS` (default 3) are placed at once; from then on the next attempt waits `scheduling`
+(`capacity_exhausted`) and is not placed before `AGENT_HUB_REFUSAL_HOLD_SECONDS` (default 60, `session.not_before`)
+– the task never fails for want of capacity (ADR-060 §7). The attempt resumes from the last session on
 the same device that ran (a refused session never ran an agent).
 Capacity warning: when `vm_slots_free / vm_slots_total < 0.1` the device carries `capacity_low:true` in all
 device lists (UI badge) and in metrics (alert rule, `08-monitoring.md`).
@@ -274,7 +298,7 @@ receive → browser frame: p95 < 300 ms on LAN.
 | Endpoint | Right | Request → Response |
 |---|---|---|
 | `POST /v1/device/enroll` | signature by the key in the body (proof of possession) + invite proof | `{device_id,kind:"org"|"platform",invite_id,pub:{kem,sig},entry?` (org: `accept` entry with `sig`+`inv_sig`)`,enroll_sig?,inv_sig?` (platform)`,agent_version,os,arch,capacity}` → `{state:"active"|"pending_certification",org_id?}` |
-| `GET /v1/device/state` | device:any | pending device → `{state:"pending_certification",hub_time}`; active device → desired state: `{state:"active",last_origin_seq,orgs:[{org_id,log_head}],assigned:[{org_id,wg_id}],sessions:[{session_id,task_id,org_id,wg_id,state,parent_session_id,depth,owner_id,model_access_pref,model_id_pref,resume_from?}],pending_prompts:[{task_id,session_id,scope_id,scope_seq,event_id}],delivered_prompt_event_ids:{session_id:[event_id]}` (last 100 per active session)`,requests:[{request_id}],pings:[{ping_id,session_id,kind,level,ref,created_at}]` (undelivered rows of `session_ping`)`,credentials_changed:[owner_id],rotation_pending:[…],quota_poll_owners:[owner_id],platform_budget:{usd_per_org_day,spent_today_by_org}|null,hub_time}`; `quota_poll_owners` = subscription owners whose quota this device polls (the eligible online device with the smallest ID). After a local store wipe the runner continues its outbox at `last_origin_seq + 1` and never re-delivers the prompts in `delivered_prompt_event_ids`. |
+| `GET /v1/device/state` | device:any | pending device → `{state:"pending_certification",hub_time}`; active device → desired state: `{state:"active",last_origin_seq,orgs:[{org_id,log_head}],assigned:[{org_id,wg_id}],sessions:[{session_id,task_id,org_id,wg_id,state,parent_session_id,depth,owner_id,model_access_pref,model_id_pref,resume_from?,vm_id_pref?,vm_new_allowed?}],pending_prompts:[{task_id,session_id,scope_id,scope_seq,event_id}],delivered_prompt_event_ids:{session_id:[event_id]}` (last 100 per active session)`,requests:[{request_id}],pings:[{ping_id,session_id,kind,level,ref,created_at}]` (undelivered rows of `session_ping`)`,credentials_changed:[owner_id],rotation_pending:[…],quota_poll_owners:[owner_id],platform_budget:{usd_per_org_day,spent_today_by_org}|null,hub_time}`; `quota_poll_owners` = subscription owners whose quota this device polls (the eligible online device with the smallest ID). After a local store wipe the runner continues its outbox at `last_origin_seq + 1` and never re-delivers the prompts in `delivered_prompt_event_ids`. |
 | `POST /v1/device/outbox` | device (+ item rights) | `{items:[{origin_seq,item_kind,body}]}` (≤ 500 items, ≤ 4 MiB; pushes paced per device by a token bucket of one push per 100 ms with a reserve of 10 pushes, beyond it `429 rate_limited` with `Retry-After: 1`, ADR-048) → `{acked_through,results:[{origin_seq,status:"ok"|"replayed"|"rejected"|"reseal",error?}]}` |
 | `GET /v1/device/pull` | device:wg / org | `?cursor=<scope_id>:<seq>` (repeatable) `&kinds=` `&limit=` → every event kind except `session.terminal` in the wg scopes of assigned workgroups, plus `org.profile`, `wg.profile`, `member.profile`, `device.profile` and org-level `whiteboard.*` in the org scope (needed for `get_task_messages`, restarted sessions and duplicate results) |
 | `GET /v1/device/workgroups/{wg}/tasks` | device:wg | `?state=&before=&limit=` → task metadata as `GET /v1/workgroups/{wg}/tasks` |
@@ -291,8 +315,8 @@ Outbox item kinds and their effect at the hub (closed list `contracts/enums/outb
 | `item_kind` | Body | Effect |
 |---|---|---|
 | `event` | `{event}` (device-authored kinds) | append (E1–E9) |
-| `session_transition` | `{session_id,state,reason,at,agent_version?,model_access?,model_id?,claude_session_id_present?}` | session row + transition + task derivation + SSE |
-| `vm_state` | `{vm_id,wg_id,state,golden_version,cpus,memory_mib,disk_gib,at}` | `vm` row; `assigning`/`running` with a wg: `session.vm_id` of the device's open sessions of that wg (one VM per wg and device; a `session_transition` of an open session without VM takes it too) |
+| `session_transition` | `{session_id,state,reason,at,agent_version?,model_access?,model_id?,claude_session_id_present?,vm_id?}` | session row + transition + task derivation + SSE; `vm_id` (from `vm_ready` on, ADR-060) sets `session.vm_id` |
+| `vm_state` | `{vm_id,wg_id,state,golden_version,cpus,memory_mib,disk_gib,at}` | `vm` row; for a device without the feature `vm_choice` (one VM per wg and device): `assigning`/`running` with a wg sets `session.vm_id` of the device's open sessions of that wg (a `session_transition` of an open session without VM takes it too) |
 | `operation_transition` | `{operation_id,state:"executing"|"succeeded"|"failed"|"expired",error_code?,retryable?,result_event_id?,at}` | operation row + transition + dedupe slot release on failure |
 | `usage` | `{session_id,delta:{requests,input_tokens,…,cost_micro_usd},cost_basis,context_used_tokens,context_window_tokens,last_provider}` | `usage_counter` += delta |
 | `quota` | `{owner_id,windows:[{window,used_percent,resets_at,severity}],fetched_at}` or `{owner_id,unavailable:true,fetched_at}` (the usage endpoint refused the token, KOR-05) | `quota_snapshot` (an `unavailable` report deletes the owner's rows with `fetched_at` ≤ its own) |
@@ -504,7 +528,7 @@ of `agent_core.passkey.errors` (`client_data_invalid`, `challenge_mismatch`, `or
 `counter_regressed`). 401: `signature_missing`, `key_unknown`, `key_revoked`, `time_skew`, `signature_invalid`,
 `nonce_replayed`, `session_expired`, `unauthorized`. 403: `forbidden`, `last_admin`, `last_passkey`,
 `device_not_assigned`. 404: `not_found`, `invite_unknown`. 409: `id_conflict`, `event_conflict`, `seq_conflict`,
-`version_conflict`, `origin_seq_gap`, `origin_seq_conflict`, `no_device`, `already_assigned`, `rotation_required`.
+`version_conflict`, `origin_seq_gap`, `origin_seq_conflict`, `no_device` (no longer answered, ADR-060), `already_assigned`, `rotation_required`, `placement_invalid`, `device_outdated`. 403 also: `placement_forbidden`.
 410: `invite_expired`. 413: `size_exceeded`. 429: `rate_limited`. 503: `unavailable`. Additional: `platform_invite_required` (403), `platform_access_denied` (403), `no_device_available` (409), `invite_registered` (409, invitation already bound to another user), and every code of `04-crypto.md` §8 (e.g. `author_not_writer`, `invite_not_in_log`) with status 400 unless listed above. Delegated agent access (`11-agent-access.md` §4): `pairing_unknown` (404), `pairing_gesture_required` (403), `claim_invalid` (401). Client-only codes (never sent by the hub): `login_automation_failed`, `prf_missing`, `log_rollback`, `log_fork`, `platform_root_mismatch`, `pairing_mismatch`.
 All enumerations of this section are closed lists in `contracts/enums/` (`error-codes.json`, `operation-error-codes.json`, `session-failure-reasons.json`); every document and implementation references them.
 Operation codes (in operation results): `unknown_type`, `params_invalid`, `repo_not_allowed`,

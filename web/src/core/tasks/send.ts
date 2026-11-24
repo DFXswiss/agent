@@ -9,10 +9,11 @@
 //    `POST /v1/orgs/{org}/log` batch `device_assign` + the wraps of the current `WK` and `OK` for the device (built by
 //    `buildBatch` from the verified log, keys from the platform log, ADR-007), then the wrap of the user's own `CK`
 //    for the device (`POST /v1/wraps`: the hub stores `cred` wraps only there, decision WEB-04). Anyone else, or no
-//    candidate: `no_device_available` (the screen links to `/o/:org/devices`).
-// 3. `sendTask`: `POST /v1/tasks`; a `409 no_device` (the assignment raced with an unassignment) runs step 2 once more.
-//    The answer's rows enter the `tasks` slice, the sealed events the reader (title and prompt are readable at once),
-//    and the launch is recorded for the countdown.
+//    candidate: nothing is assigned and the task is created anyway – it waits for a device (ADR-060 section 7) and the
+//    countdown offers "Assign a device" (`assignFirstCandidate`, which refuses with `no_device_available`).
+// 3. `sendTask`: `POST /v1/tasks` with the chosen `placement` (device and optionally VM; without one the workgroup's
+//    default applies, ADR-060 section 6). The answer's rows enter the `tasks` slice, the sealed events the reader
+//    (title and prompt are readable at once), and the launch is recorded for the countdown.
 //
 // `sendFollowUp` seals another `prompt` of a task (`POST /v1/tasks/{task}/prompts`, section 4.6.3); `retryPrompt` is
 // the countdown's "Retry" after `failed`: the task's newest prompt again as a follow-up.
@@ -46,6 +47,7 @@ import {
 import type { Store } from '../store/store';
 import type { TasksContext } from './pull';
 import { pullEvents } from './pull';
+import type { Placement } from './placement';
 import { deriveTitle } from './title';
 
 /** Prompts are 1–65 536 characters (`contracts/events/prompt.json`). */
@@ -53,7 +55,8 @@ export const PROMPT_MAX = 65536;
 /** Attempts of a log batch that meets `seq_conflict` (the log is re-read and the batch rebuilt each time). */
 export const ASSIGN_ATTEMPTS = 3;
 
-/** A refused send with a catalog code (`no_device_available`, `forbidden`, `epoch_stale`, hub and crypto codes). */
+/** A refused send with a catalog code (`forbidden`, `epoch_stale`, hub and crypto codes; `no_device_available` of
+ *  `assignFirstCandidate`). */
 export class SendError extends Error {
   readonly code: string;
 
@@ -152,13 +155,23 @@ export interface PreparedTask {
   readonly taskId: string;
   readonly prompt: string;
   readonly title: string;
-  readonly body: { readonly task_id: string; readonly wg_id: string; readonly events: readonly unknown[] };
+  /** The chosen device and VM (null: the workgroup default, else automatic). */
+  readonly placement: Placement | null;
+  readonly body: {
+    readonly task_id: string;
+    readonly wg_id: string;
+    readonly events: readonly unknown[];
+    readonly placement?: { readonly device_id: string; readonly vm_id?: string };
+  };
 }
 
-/** Step 1: title, sealed `task.meta` and `prompt`, a fresh task ID (`forbidden` without `wg:write`). */
+/**
+ * Step 1: title, sealed `task.meta` and `prompt`, a fresh task ID (`forbidden` without `wg:write`); `placement` is the
+ * chosen device and VM (null or absent: the workgroup default, else automatic).
+ */
 export async function prepareTask(
   context: TasksContext,
-  input: { readonly org: string; readonly wg: string; readonly prompt: string },
+  input: { readonly org: string; readonly wg: string; readonly prompt: string; readonly placement?: Placement | null },
 ): Promise<PreparedTask> {
   const { userId, log } = writer(context.store, input.org);
   if (!log.state.canWriteWg(userId, input.wg)) fail('forbidden');
@@ -173,7 +186,18 @@ export async function prepareTask(
     taskId,
     prompt: input.prompt,
     title,
-    body: { task_id: taskId, wg_id: input.wg, events: [meta, prompt] },
+    placement: input.placement ?? null,
+    body: {
+      task_id: taskId,
+      wg_id: input.wg,
+      events: [meta, prompt],
+      ...(input.placement && {
+        placement: {
+          device_id: input.placement.device_id,
+          ...(input.placement.vm_id !== null && { vm_id: input.placement.vm_id }),
+        },
+      }),
+    },
   };
 }
 
@@ -261,9 +285,10 @@ function keyRing(store: Store, org: string) {
 }
 
 /**
- * Step 2: makes sure the workgroup has an assigned device. Returns null if one was assigned already, else the time
- * the automatic assignment took (ms). `onAssigning` is called when the assignment starts (the countdown's first
- * step "Assigning execution device").
+ * Step 2: makes sure the workgroup has an assigned device where the user may assign one. Returns null if one was
+ * assigned already or none can be assigned (the task then waits for a device, ADR-060 section 7), else the time the
+ * automatic assignment took (ms). `onAssigning` is called when the assignment starts (the countdown's first step
+ * "Assigning execution device").
  */
 export async function ensureDevice(
   context: TasksContext,
@@ -272,6 +297,25 @@ export async function ensureDevice(
   onAssigning?: () => void,
 ): Promise<number | null> {
   if ((await assignedDevices(context, wg)) > 0) return null;
+  try {
+    return await assignFirstCandidate(context, org, wg, onAssigning);
+  } catch (error) {
+    if (error instanceof SendError && error.code === 'no_device_available') return null;
+    throw error;
+  }
+}
+
+/**
+ * Assigns the first platform candidate that the verified platform log certifies to the workgroup (step 2 of the send
+ * sequence; "Assign a device" of a task that waits with `no_device`). Returns the time it took (ms);
+ * `no_device_available` when the user is no admin, the org has no platform access or there is no candidate.
+ */
+export async function assignFirstCandidate(
+  context: TasksContext,
+  org: string,
+  wg: string,
+  onAssigning?: () => void,
+): Promise<number> {
   const started = context.now();
   const { store } = context;
   // the platform log is verified by the log job: a new org has not run it yet, a newly certified device needs a
@@ -388,15 +432,8 @@ export async function sendTask(
   prepared: PreparedTask,
   options: { readonly onAssigning?: () => void } = {},
 ): Promise<SentTask> {
-  let assignedMs = await ensureDevice(context, prepared.org, prepared.wg, options.onAssigning);
-  let answer: Record<string, unknown>;
-  try {
-    answer = await postTask(context, prepared);
-  } catch (error) {
-    if (!(error instanceof HubError) || error.code !== 'no_device') throw error;
-    assignedMs = (await ensureDevice(context, prepared.org, prepared.wg, options.onAssigning)) ?? assignedMs;
-    answer = await postTask(context, prepared);
-  }
+  const assignedMs = await ensureDevice(context, prepared.org, prepared.wg, options.onAssigning);
+  const answer = await postTask(context, prepared);
   const task = answer.task as TaskRow;
   const session = answer.session as Record<string, unknown>;
   if (task.task_id !== prepared.taskId || typeof session.session_id !== 'string') {

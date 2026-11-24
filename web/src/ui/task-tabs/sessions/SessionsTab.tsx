@@ -6,6 +6,7 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { formatMoney, formatNumber } from '../../../core/i18n';
 import { sessionMeta, type SessionNode, sessionTree } from '../../../core/sessions/tree';
+import { sessionVm } from '../../../core/tasks/placement';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useDeviceNames } from '../../screens/devices/labels';
@@ -33,7 +34,11 @@ export function SessionState({ state }: { readonly state: string }) {
   );
 }
 
-/** The device (by name), the model and the usage counter of a session. */
+/** "<device> · vm-…" (the VM once the session has one, ADR-060 section 6). */
+export const placementText = (device: string, vm: string | null): string =>
+  vm === null ? device : `${device} · ${vm}`;
+
+/** The device (by name) and VM, the model and the usage counter of a session. */
 export function SessionFacts({ node }: { readonly node: Pick<SessionNode, 'entry'> }) {
   const { app } = useAppEnv();
   const { t, locale } = useI18n();
@@ -46,7 +51,7 @@ export function SessionFacts({ node }: { readonly node: Pick<SessionNode, 'entry
       <span data-testid="session.device">
         {row.device_id === null
           ? t('task.sessions.device.none')
-          : t('task.sessions.device', { device: name(row.device_id) })}
+          : t('task.sessions.device', { device: placementText(name(row.device_id), sessionVm(row)) })}
       </span>
       <span data-testid="session.model">
         {model === null ? t('task.sessions.model.none') : t('task.sessions.model', { model })}

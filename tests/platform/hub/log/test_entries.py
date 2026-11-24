@@ -12,13 +12,14 @@ import pytest
 from agent_hub.crypto.encoding import P, b64u_encode, canonical
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.log import entries
-from agent_hub.log.vectors import LogBuilder, PlatformBuilder, identity
+from agent_hub.log.vectors import LogBuilder, PlatformBuilder, identity, orgwide_builder
 
 Json = dict[str, Any]
 
 
 def test_every_entry_of_the_vector_logs_is_well_formed(main: LogBuilder, plat: PlatformBuilder) -> None:
-    assert {entries.check_log_entry(e)["type"] for e in main.entries} == entries.LOG_TYPES
+    logs = [*main.entries, *orgwide_builder().entries]
+    assert {entries.check_log_entry(e)["type"] for e in logs} == entries.LOG_TYPES
     assert {entries.check_platform_entry(e)["type"] for e in plat.entries} == entries.PLATFORM_TYPES
 
 

@@ -45,6 +45,16 @@
       },
       "minItems": 0,
       "maxItems": 100000
+    },
+    "placement": {
+      "anyOf": [
+        {
+          "$ref": "objects.json#/$defs/placement"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

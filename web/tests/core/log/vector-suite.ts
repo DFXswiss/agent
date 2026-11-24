@@ -139,7 +139,35 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       data.valid.projections,
       'projections',
     );
-    same(new Set(log.entries.map((entry) => entry.body.type)).size, LOG_TYPES.length, 'every entry type');
+    const orgwide = await ctx.log({ ...data.orgwide, founder: data.founder });
+    const types = new Set([...log.entries, ...orgwide.entries].map((entry) => entry.body.type));
+    same([...types].sort(), [...LOG_TYPES].sort(), 'every entry type');
+    // ADR-060: a device assigned to the organization reads every workgroup, also a later one; ending the
+    // organization assignment keeps its explicit assignment; `remove` ends both
+    same(
+      orgwide.states.map((s) => ({ seq: s.seq, hash: s.head })),
+      data.orgwide.heads,
+      'orgwide heads',
+    );
+    same(
+      orgwide.states.map((s) => s.projection()),
+      data.orgwide.projections,
+      'orgwide projections',
+    );
+    same(
+      orgwide.states.map((s, i) =>
+        Object.fromEntries(Object.keys(data.orgwide.device_wgs[i]).map((device) => [device, s.deviceWgs(device)])),
+      ),
+      data.orgwide.device_wgs,
+      'orgwide device workgroups',
+    );
+    const device = String(orgwide.entries[4]!.body.device);
+    const created = orgwide.states[5]!;
+    same(created.orgAssigned(device), true, 'org assigned');
+    same(created.canRead(device, 'wg', created.defaultWg), true, 'org device reads the default workgroup');
+    same(created.canRead(device, 'wg', String(orgwide.entries[5]!.body.wg)), true, 'org device reads a later one');
+    same(orgwide.states[6]!.orgAssigned(device), false, 'org assignment ended');
+    same(orgwide.states[6]!.assigned(device, String(orgwide.entries[1]!.body.wg)), true, 'explicit stays');
     for (const item of data.extends) await checkExtends(item.head, ctx.entries(item));
     for (const item of data.excluded) {
       const state = (await ctx.platform(item))!;
@@ -176,7 +204,17 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       same(rotation.asJson(rotation.requiredSet(before.state, after, item.subject)), item.required, item.name);
       seen.add(item.entry.body.type);
     }
-    for (const type of ['remove', 'ungrant', 'device_unassign', 'accept', 'grant', 'role', 'rotate', 'wg_create']) {
+    for (const type of [
+      'remove',
+      'ungrant',
+      'device_unassign',
+      'device_unassign_org',
+      'accept',
+      'grant',
+      'role',
+      'rotate',
+      'wg_create',
+    ]) {
       same(seen.has(type), true, `rotation case ${type}`);
     }
     for (const item of data.batches) {

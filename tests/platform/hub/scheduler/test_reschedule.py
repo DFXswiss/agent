@@ -29,15 +29,15 @@ def test_candidates_come_from_assignments_presence_capacity_and_vms(desk: Desk) 
     desk.vm(device, "pool", wg=desk.scene.draft.default_wg)
     with desk.hub.pool.connection() as connection:
         found = load.candidates(connection, desk.wg, desk.hub.clock(), 30)
-        assert [(item.device_id, item.online, item.wg_vm) for item in found] == sorted(
-            [(device.id, True, None), (other.id, True, "stopped")]
+        assert [(item.device_id, item.online, [vm.state for vm in item.vms]) for item in found] == sorted(
+            [(device.id, True, []), (other.id, True, ["stopped"])]
         )
         assert load.decide(connection, desk.wg, desk.hub.clock(), 30) == Placement(other.id, 6500)
     desk.online(device, seen=desk.hub.clock() - timedelta(seconds=30))
     desk.offline(other)
     with desk.hub.pool.connection() as connection:
         assert load.decide(connection, desk.wg, desk.hub.clock(), 30) == NoPlacement("device_offline")
-        assert load.decide(connection, desk.scene.draft.default_wg, desk.hub.clock(), 30) is None
+        assert load.decide(connection, desk.scene.draft.default_wg, desk.hub.clock(), 30) == NoPlacement("no_device")
 
 
 def test_removed_or_inactive_devices_are_no_candidates(desk: Desk) -> None:
@@ -99,7 +99,8 @@ def test_an_assignment_in_the_log_places_waiting_sessions(world: World) -> None:
     desk.online(desk.scene.device)
     desk.execute("UPDATE hub.wg_device SET unassigned_seq = 99 WHERE wg_id = %s", desk.wg)
     response = desk.create(desk.scene.writer)
-    assert response.json()["error"] == "no_device"
+    assert response.status_code == 200
+    assert response.json()["task"]["state_reason"] == "no_device"
     # a task that waits because its devices went away after it was created
     desk.execute("UPDATE hub.wg_device SET unassigned_seq = NULL WHERE wg_id = %s", desk.wg)
     desk.offline(desk.scene.device)
@@ -139,10 +140,10 @@ def test_a_session_that_changed_meanwhile_is_skipped(desk: Desk, monkeypatch: py
     assert reschedule.reschedule(context, [UUID(desk.wg)]) == 0
     assert desk.session(session)["device_id"] is None
     with desk.hub.pool.connection() as connection:
-        assert reschedule.waiting_wgs(connection) == []
+        assert reschedule.waiting_wgs(connection, desk.hub.clock()) == []
 
 
-def test_without_assigned_devices_the_reason_is_device_offline(desk: Desk) -> None:
+def test_without_assigned_devices_the_reason_is_no_device(desk: Desk) -> None:
     full = {
         "vm_memory_budget_mib": 8,
         "vm_memory_used_mib": 8,
@@ -156,7 +157,7 @@ def test_without_assigned_devices_the_reason_is_device_offline(desk: Desk) -> No
     assert desk.task(task)["state_reason"] == "capacity_exhausted"
     desk.execute("UPDATE hub.wg_device SET unassigned_seq = 99 WHERE wg_id = %s", desk.wg)
     reschedule.reschedule(desk.hub.app.state.hub, [UUID(desk.wg)])
-    assert desk.task(task)["state_reason"] == "device_offline"
+    assert desk.task(task)["state_reason"] == "no_device"
 
 
 def test_signals_without_context_or_with_a_closed_pool_do_nothing(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -195,7 +196,7 @@ def test_a_failing_reschedule_is_logged(
 
 def test_registrations_are_discovered() -> None:
     subscribers = dict(discover(SIGNAL_SUBSCRIBERS))["scheduler"]
-    assert set(subscribers) == {"device.presence", "device.capacity", "log.appended"}
+    assert set(subscribers) == {"device.presence", "device.capacity", "wraps.stored", "log.appended"}
     names = [job.name for job in check_jobs(concat_sequences(JOBS))]
     assert "scheduler.reschedule" in names
     assert jobs.JOBS[0].interval_seconds == 15.0

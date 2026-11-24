@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/platform-waiting.response.json",
+  "title": "GET /v1/platform/waiting response",
+  "description": "Body of a successful response to GET /v1/platform/waiting: workgroups whose tasks wait for a device the operator must provide (03-api.md section 4.3, ADR-060 section 7).",
+  "type": "object",
+  "properties": {
+    "waiting": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "org_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "wg_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "no_device",
+              "platform_access_required"
+            ]
+          },
+          "tasks": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "oldest_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "platform_access": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "org_id",
+          "wg_id",
+          "reason",
+          "tasks",
+          "oldest_at",
+          "platform_access"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    }
+  },
+  "required": [
+    "waiting"
+  ],
+  "additionalProperties": false
+}

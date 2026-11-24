@@ -413,3 +413,57 @@ def test_a_malformed_answer_is_reported_without_a_traceback(run: Callable[..., t
     code, _, err = run("decertify", "--device", uuid_v7(), http=html)
     assert code == cli.EXIT_REFUSED
     assert err.startswith("agent-hub platform: refused: unavailable")
+
+
+def _waiting_task(hub: HubHarness, org: str, reason: str) -> str:
+    """A workgroup of the org with one task waiting for a device (rows as the tasks area writes them)."""
+    wg, task = str(uuid_v7()), str(uuid_v7())
+    with hub.pool.connection() as connection, connection.transaction():
+        connection.execute(
+            "INSERT INTO hub.wg (id, org_id, is_default, created_seq) VALUES (%s, %s, false, 1)", (wg, org)
+        )
+        connection.execute(
+            "INSERT INTO hub.task (id, org_id, wg_id, owner_id, state, state_reason, created_at, state_at,"
+            " last_activity_at) VALUES (%s, %s, %s, %s, 'scheduling', %s, %s, %s, %s)",
+            (task, org, wg, new_user(hub), reason, hub.clock(), hub.clock(), hub.clock()),
+        )
+    return wg
+
+
+def test_waiting_lists_the_tasks_the_operator_must_serve(
+    run: Callable[..., tuple[int, str, str]], hub: HubHarness, plat: Platform
+) -> None:
+    """ADR-060 section 7: `platform_access_required`, and `no_device` while nobody could assign a device."""
+    assert run("waiting") == (0, "no tasks wait for a device\n", "")
+    closed = new_org(hub)
+    first = _waiting_task(hub, closed, "platform_access_required")
+    hub.clock.advance(1)
+    granted = new_org(hub, private=True)
+    second = _waiting_task(hub, granted, "no_device")
+    # an org with a device of its own, or with a platform device it could get, is not the operator's task
+    own = new_org(hub)
+    _waiting_task(hub, own, "no_device")
+    device = str(uuid_v7())
+    with hub.pool.connection() as connection, connection.transaction():
+        connection.execute("INSERT INTO hub.principal (id, kind, created_at) VALUES (%s, 'device', now())", (device,))
+        connection.execute(
+            "INSERT INTO hub.device (id, kind, kem_pub, sig_pub, owner_org, state, enrolled_at, agent_version, os,"
+            " arch, capacity, updated_at) VALUES (%s, 'org', %s, %s, %s, 'active', now(), '0.1.0', 'macos', 'arm64',"
+            " '{}', now())",
+            (device, b"k" * 32, b"s" * 32, own),
+        )
+        connection.execute(
+            "INSERT INTO hub.org_member (org_id, principal_id, kind, role, joined_seq)"
+            " VALUES (%s, %s, 'device', 'device', 1)",
+            (own, device),
+        )
+    code, out, _ = run("waiting")
+    assert code == 0
+    assert out.splitlines() == [
+        f"org {closed} wg {first} platform_access_required tasks 1 since 2026-11-21T12:00:00.123Z platform access no",
+        f"org {granted} wg {second} no_device tasks 1 since 2026-11-21T12:00:01.123Z platform access yes",
+    ]
+    certified = plat.enroll()
+    plat.certify(certified)
+    assert [line.split()[3] for line in run("waiting")[1].splitlines()] == [first]
+    assert hub.browser().get("/v1/platform/waiting").status_code == 403

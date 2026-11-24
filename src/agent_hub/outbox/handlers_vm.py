@@ -5,18 +5,30 @@ a workgroup needs `device:wg` (the device is assigned to that workgroup in its v
 (`wg_id: null`) only the device itself. `created_at` is the hub time of the first report, `state_at` the device time
 of the reported state; the row is kept for `deleted` VMs (the scheduler and the monitoring ignore them).
 
-`session.vm_id`: the contract carries no VM in `session_transition`, and a device runs one VM per workgroup
-(05-runner.md section 3), so a VM reported as `assigning`/`running` for a workgroup becomes the VM of the open
-sessions (`ended_at` NULL) of that device and workgroup; `link_session_vm` covers the opposite order.
+`session.vm_id`: a device with the feature `vm_choice` (ADR-060) names the VM in its `session_transition` items.
+A device without it runs one VM per workgroup (05-runner.md section 3) and names none, so a VM reported as
+`assigning`/`running` for a workgroup becomes the VM of the open sessions (`ended_at` NULL) of that device and
+workgroup; `link_session_vm` covers the opposite order.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from agent_hub.errors import HubError
 from agent_hub.outbox.base import ItemContext, moment
 from agent_hub.outbox.bodies import VmStateBody
 
 ACTIVE_STATES = ("assigning", "running")
+VM_CHOICE = "vm_choice"
+
+
+def chooses_vms(connection: Any, device: object) -> bool:
+    """The device reports the feature `vm_choice` (it names the VM of each session itself)."""
+    row = connection.execute(
+        "SELECT capacity -> 'features' ? %s FROM hub.device WHERE id = %s", (VM_CHOICE, device)
+    ).fetchone()
+    return row is not None and bool(row[0])
 
 
 def handle(item: ItemContext, body: VmStateBody) -> None:
@@ -45,7 +57,7 @@ def handle(item: ItemContext, body: VmStateBody) -> None:
     ).fetchone()
     if row is None:
         raise HubError("forbidden")
-    if body.wg_id is not None and body.state in ACTIVE_STATES:
+    if body.wg_id is not None and body.state in ACTIVE_STATES and not chooses_vms(item.connection, item.device):
         item.connection.execute(
             "UPDATE hub.session SET vm_id = %s WHERE device_id = %s AND wg_id = %s AND ended_at IS NULL"
             " AND vm_id IS DISTINCT FROM %s",

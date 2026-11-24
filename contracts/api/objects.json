@@ -57,6 +57,9 @@
               "$ref": "../common.json#/$defs/session_failure_reason"
             },
             {
+              "$ref": "../common.json#/$defs/task_waiting_reason"
+            },
+            {
               "type": "null"
             }
           ]
@@ -94,6 +97,16 @@
           "anyOf": [
             {
               "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "placement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/placement"
             },
             {
               "type": "null"
@@ -917,6 +930,21 @@
         },
         "capacity_low": {
           "type": "boolean"
+        },
+        "assigned_via": {
+          "type": "string",
+          "enum": [
+            "workgroup",
+            "org"
+          ]
+        },
+        "vms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/vm_load"
+          },
+          "minItems": 0,
+          "maxItems": 1000
         }
       },
       "required": [
@@ -1166,6 +1194,58 @@
         "authenticatorSelection",
         "extensions",
         "timeout"
+      ],
+      "additionalProperties": false
+    },
+    "placement": {
+      "type": "object",
+      "description": "a chosen device and optionally one of its VMs (ADR-060 section 6)",
+      "properties": {
+        "device_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "vm_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/vm_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "device_id",
+        "vm_id"
+      ],
+      "additionalProperties": false
+    },
+    "vm_load": {
+      "type": "object",
+      "description": "a live VM of a workgroup on a device with its occupying sessions (ADR-060 section 3)",
+      "properties": {
+        "vm_id": {
+          "$ref": "../common.json#/$defs/vm_id"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pool",
+            "assigning",
+            "running",
+            "stopping",
+            "stopped"
+          ]
+        },
+        "sessions": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "vm_id",
+        "state",
+        "sessions"
       ],
       "additionalProperties": false
     }

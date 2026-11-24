@@ -27,5 +27,13 @@
   "archive.confirm": "Archive",
   "archive.body": "Archived workgroups keep their history but take no new tasks or changes.",
   "unlocking": "Being unlocked – the content appears as soon as a member or device of this workgroup has been online.",
-  "unlocking.lost": "Older content of this workgroup can no longer be opened: nobody who could still share it is left. New content becomes readable for you shortly."
+  "unlocking.lost": "Older content of this workgroup can no longer be opened: nobody who could still share it is left. New content becomes readable for you shortly.",
+  "placement.open": "Default device",
+  "placement.title": "Default device for new tasks",
+  "placement.note": "New tasks of this workgroup run on this device unless someone chooses another one. A device that is no longer assigned to the workgroup counts as automatic.",
+  "placement.loading": "Loading the devices…",
+  "placement.save": "Save",
+  "placement.cancel": "Cancel",
+  "placement.auto": "Automatic",
+  "placement.line": "Default device: {device}"
 }

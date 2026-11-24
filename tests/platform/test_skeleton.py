@@ -35,6 +35,7 @@ AREAS = [
     "operations",
     "orgs",
     "outbox",
+    "placement",
     "platform",
     "requests",
     "scheduler",

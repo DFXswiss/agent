@@ -4,6 +4,8 @@
   `decertified` to every newly decertified device and the signal `device.decertified`;
 - `GET /v1/platform/log` (browser, `user`): `?after=&limit=` gives entries ascending, `head` and `next_after`;
 - `GET /v1/platform/enrollments` (root): verified pending enrollments and the platform log;
+- `GET /v1/platform/waiting` (root): workgroups whose tasks wait for a device the operator must provide
+  (`agent_hub.scheduler.waiting`, ADR-060 section 7);
 - `POST /v1/platform/invites`, `GET /v1/platform/invites`, `POST /v1/platform/invites/{id}/revoke` (browser,
   `platform:inviter`): platform invitations (`agent_hub.platform.invites`);
 - `POST /v1/invites/lookup` (anon): lookup of platform and org invitations (`agent_hub.invites.lookup`).
@@ -33,6 +35,7 @@ from agent_hub.invites import lookup as invite_lookup
 from agent_hub.notifications.rules import Notification, publish_rows
 from agent_hub.platform import enrollments, invites
 from agent_hub.platform import log as platform_log
+from agent_hub.scheduler import waiting as scheduler_waiting
 from agent_hub.stream.publish import Audience, publish
 
 router = HubRouter()
@@ -143,6 +146,14 @@ async def get_enrollments(context: Context) -> dict[str, Any]:
         return {"enrollments": enrollments.pending(connection, state), "log": log}
 
     return await in_transaction(context, read)
+
+
+@router.get("/v1/platform/waiting", auth="root", right="root", read_resource="platform.waiting")
+async def get_waiting(context: Context) -> dict[str, Any]:
+    now, online = context.clock(), context.config.device_online_seconds
+    return await in_transaction(
+        context, lambda connection: {"waiting": scheduler_waiting.waiting(connection, now, online)}
+    )
 
 
 @router.post("/v1/platform/invites", auth="browser", right="platform:inviter")

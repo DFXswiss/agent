@@ -10,7 +10,8 @@
 //   effective access (`wgAccess`) is the explicit access if there is one, else `read` for an active admin; the
 //   credential scope uses the explicit access only (`explicitAccess`, ADR-058 section 1);
 // - devices read the workgroups they are assigned to and the org scope while they have at least one assignment
-//   (ADR-007);
+//   (ADR-007); a device assigned to the organization (`device_assign_org` until `device_unassign_org` or `remove`,
+//   ADR-060) is assigned to every workgroup of the org, including later ones;
 // - an archived workgroup stays readable but is no longer writable (decision CRY-02).
 // `remove` deletes every access and assignment of the subject; a former member who accepts a new invitation starts
 // again from that invitation (rejoin).
@@ -89,8 +90,10 @@ export interface OrgStateFields {
   readonly workgroups: ReadonlyMap<string, Workgroup>;
   /** Explicit `pairKey(user, wg) -> read|write`; the default workgroup is derived and never stored here. */
   readonly access: ReadonlyMap<string, string>;
-  /** `pairKey(device, wg) -> seq` of the assignment. */
+  /** `pairKey(device, wg) -> seq` of the explicit assignment. */
   readonly assignments: ReadonlyMap<string, number>;
+  /** `device -> seq` of its assignment to the whole organization (ADR-060). */
+  readonly orgAssignments: ReadonlyMap<string, number>;
   /** `pairKey(scope, scope_id) -> epoch`. */
   readonly epochs: ReadonlyMap<string, number>;
   /** `"scope scope_id epoch" -> principal` that created the epoch (genesis, `wg_create`, `rotate`). */
@@ -116,6 +119,7 @@ export class OrgState implements OrgStateFields {
   declare readonly workgroups: ReadonlyMap<string, Workgroup>;
   declare readonly access: ReadonlyMap<string, string>;
   declare readonly assignments: ReadonlyMap<string, number>;
+  declare readonly orgAssignments: ReadonlyMap<string, number>;
   declare readonly epochs: ReadonlyMap<string, number>;
   declare readonly epochAuthors: ReadonlyMap<string, string>;
   declare readonly pending: ReadonlySet<string>;
@@ -179,14 +183,21 @@ export class OrgState implements OrgStateFields {
     return this.explicitAccess(principal, wg) === null && this.wgAccess(principal, wg) !== null;
   }
 
-  /** An active device assigned to the workgroup. */
+  /** An active device assigned to the whole organization (ADR-060). */
+  orgAssigned(device: string): boolean {
+    return this.member(device) !== null && this.orgAssignments.has(device);
+  }
+
+  /** An active device assigned to the workgroup, explicitly or through the organization. */
   assigned(device: string, wg: string): boolean {
-    return this.member(device) !== null && this.assignments.has(pairKey(device, wg));
+    if (this.member(device) === null) return false;
+    return this.assignments.has(pairKey(device, wg)) || (this.orgAssignments.has(device) && this.workgroups.has(wg));
   }
 
   /** Workgroups an active device is assigned to, sorted. */
   deviceWgs(device: string): string[] {
     if (this.member(device) === null) return [];
+    if (this.orgAssignments.has(device)) return [...this.workgroups.keys()].sort();
     return [...this.assignments.keys()]
       .map(splitKey)
       .filter(([dev]) => dev === device)
@@ -259,6 +270,7 @@ export class OrgState implements OrgStateFields {
         joined_seq: p.joinedSeq,
         removed_seq: p.removedSeq,
         platform_seq: p.platformSeq,
+        ...(this.orgAssignments.has(p.id) ? { org_assigned_seq: this.orgAssignments.get(p.id) } : {}),
       })),
       workgroups: byId(this.workgroups.values(), (wg) => wg.id).map((wg) => ({
         wg_id: wg.id,

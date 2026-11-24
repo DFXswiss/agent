@@ -113,7 +113,7 @@ def heartbeat(
     instance: str,
     connected_at: datetime,
     now: datetime,
-    capacity: Mapping[str, int],
+    capacity: Mapping[str, Any],
 ) -> Heartbeat:
     """Record a heartbeat of this connection and the reported capacity (lock order: device row, presence row - the
     same as `connect`)."""

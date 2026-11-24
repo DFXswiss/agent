@@ -93,6 +93,9 @@ class Estate:
         platform.invite_user()
         enrolled = platform.enroll()
         platform.certify(enrolled)
+        # a device of the org given to the whole organization (ADR-060): rows in `org_device`
+        scene.draft.add("device_assign_org", scene.admin, device=scene.other_device.id)
+        scene.draft.append(scene.admin)
         task, session = scene.start_session()
         estate = cls(hub, scene, board, platform, enrolled.device_id, task, session)
         estate._events()
@@ -284,6 +287,15 @@ class Estate:
                 "INSERT INTO hub.outbox_receipt (device_id, origin_seq, item_kind, item_sha256, status, received_at)"
                 " VALUES (%s, 1, 'event', %s, 'ok', %s)",
                 (device.id, hashlib.sha256(b"item").digest(), now),
+            ),
+            (
+                "INSERT INTO hub.wg_placement (wg_id, device_id, vm_id, set_by, set_at)"
+                " VALUES (%s, %s, 'vm-0000000a', %s, %s)",
+                (wg, device.id, writer.id, now),
+            ),
+            (
+                "UPDATE hub.task SET placement_device_id = %s, placement_vm_id = 'vm-0000000a' WHERE id = %s",
+                (device.id, self.task),
             ),
             (
                 "INSERT INTO hub.device_stream (device_id, last_origin_seq) VALUES (%s, 1)"
