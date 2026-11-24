@@ -3,16 +3,19 @@ payload trees, release keys, signature verification and the validation of `relea
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from agent_runner.crypto.encoding import b64u_encode
-from agent_runner.install import release, release_keys
+from agent_runner.crypto.encoding import b64u_decode, b64u_encode
+from agent_runner.install import build, release, release_keys
 
 from .conftest import COMMIT, HUB, ROOT_KEY, VERSION, Keys, make_version, manifest_doc, new_keys, refused
 from .conftest import Kit as InstallKit
@@ -132,6 +135,20 @@ def test_signed_data_must_be_one_canonical_object(keys: Keys, data: bytes, name:
 
 def test_the_packaged_key_list_is_valid() -> None:
     assert release.packaged_keys() == list(release_keys.KEYS)
+
+
+def test_the_packaged_keys_are_distinct_unpadded_ed25519_public_keys() -> None:
+    """The real `release_keys.py`: every entry is 43 base64url characters (32 bytes, no padding), none twice, and
+    the package build can read the list from the file."""
+    assert release_keys.KEYS, "no release key published: device add would refuse"
+    assert len(set(release_keys.KEYS)) == len(release_keys.KEYS)
+    for key in release_keys.KEYS:
+        assert re.fullmatch(r"[A-Za-z0-9_-]{43}", key), key
+        assert b64u_encode(b64u_decode(key, 32)) == key
+        Ed25519PublicKey.from_public_bytes(b64u_decode(key, 32))
+    match = build.KEYS_LINE.search(Path(release_keys.__file__).read_text(encoding="utf-8"))
+    assert match is not None
+    assert ast.literal_eval(match.group(1)) == release_keys.KEYS
 
 
 def test_a_key_list_is_an_object_of_valid_public_keys(keys: Keys) -> None:
