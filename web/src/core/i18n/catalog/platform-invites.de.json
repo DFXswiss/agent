@@ -24,5 +24,6 @@
   "state.used": "Verwendet",
   "state.revoked": "Widerrufen",
   "state.expired": "Abgelaufen",
-  "revoke": "Widerrufen"
+  "revoke": "Widerrufen",
+  "list.truncated": "Der Hub hat nur die neuesten Einladungen einer längeren Liste gesendet."
 }

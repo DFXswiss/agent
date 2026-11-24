@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_runner.billing import pause as credit
-from agent_runner.model import fallback, gateways, limits, operator, pauses
+from agent_runner.model import fallback, gateways, limits, merge, operator, pauses
 from agent_runner.model.pauses import stamp
 from agent_runner.prompts import first
 
@@ -98,6 +98,9 @@ async def scenario(found: FKit) -> None:  # noqa: PLR0915 - one story, step by s
     await found.state(sid, "working")
     found.emit(200)
     await found.consume()
+    # the newest delta waits in the 10 s usage merge (KOR-35, ADR-086 section 3): write it out before reading
+    async with found.env.pool.connection() as conn, conn.transaction():
+        await merge.flush(conn, found.kit.session_env, every=True)
     usage = (await found.kit.of_kind("usage"))[-1]
     assert (usage["access_origin"], usage["cost_basis"]) == ("platform", "provider")
     causes = [

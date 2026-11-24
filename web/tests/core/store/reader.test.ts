@@ -90,6 +90,8 @@ describe('event reader', () => {
     hub.fail.clear();
     await reader.retry(hub.world.org);
     expect(summary()).toEqual([[1, 'verified', null]]);
+    // the decrypted body's bytes count towards the store's byte bound
+    expect(entries()[0]!.bodyBytes).toBeGreaterThan(0);
   });
 
   it('does not wait for itself when the log advances but stays below lh (fork after a real refresh)', async () => {

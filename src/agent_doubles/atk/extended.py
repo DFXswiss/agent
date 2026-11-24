@@ -313,7 +313,7 @@ def policy_denied(run: evidence.RunEvidence) -> list[str]:
     ``allow`` would mean that only the OS layer stopped the attempt."""
     if run.mode != "hooks":
         return []
-    decisions = [b.get("decision") for b in records(run.journal, "session.hook") if b.get("event") == "PreToolUse"]
+    decisions = [b.get("decision") for b in evidence.pre_tool_use(run.journal)]
     if not decisions or any(decision != "deny" for decision in decisions):
         return [f"PreToolUse decisions {decisions}, expected only deny"]
     return []

@@ -159,6 +159,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'read.platform.enrollments',
   'read.platform.invites',
   'read.platform.log',
+  'read.platform.ui_health',
   'read.platform.user',
   'read.platform.waiting',
   'read.scope.events',

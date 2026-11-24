@@ -7,7 +7,11 @@ between orgs, but only the device sample is shown for it - VMs and sessions are 
 member reads (`wg:read`), so another org's VMs and sessions on a shared device never appear. VMs: every VM row of a
 readable workgroup except `deleted` ones (a pool VM has no workgroup and is not shown). Sessions: the sessions of
 readable workgroups that have not ended or ended less than `SESSION_GRACE` ago (the 15 minutes the Prometheus series
-of an ended session stay, 08-monitoring.md section 3), newest first. Work VMs (KOR-29): the work VMs of those sessions
+of an ended session stay, 08-monitoring.md section 3): at most `SESSIONS_MAX`, the most recently active first (the hub
+time of the session's newest state transition, else its creation; ties by ID), with `sessions_total` (all such
+sessions) and `truncated` (ADR-086 section 2). The devices are those of the org's device list (at most its cap,
+`devices_truncated` when it cut them).
+Work VMs (KOR-29): the work VMs of those sessions
 with a sample within `SESSION_GRACE` (the hub keeps no row per work VM; a work VM that was torn down disappears 15
 minutes after its last sample), under the device that sampled them, with the session's task and workgroup.
 
@@ -44,11 +48,12 @@ from agent_hub.errors import HubError
 from agent_hub.monitoring.rollup import BUCKET_SECONDS, GAUGES, RAW_RETENTION
 from agent_hub.orgs.rights import wg_access
 from agent_hub.stream.sse import readable_scopes
-from agent_hub.workgroups.read import org_devices
+from agent_hub.workgroups.read import device_window, org_devices
 
 Connection = psycopg.Connection[Any]
 STALE_SECONDS = 60
 SESSION_GRACE = timedelta(minutes=15)
+SESSIONS_MAX = 2000
 RAW_MIN_STEP = 15
 ROLLUP_MIN_STEP = BUCKET_SECONDS
 MAX_POINTS = 20000
@@ -130,7 +135,11 @@ class OrgView:
     vms: list[tuple[str, str, str, str]]
     """`(vm_id, device_id, wg_id, state)`, newest first."""
     sessions: list[tuple[str, str, str, str]]
-    """`(session_id, task_id, wg_id, state)`, newest first."""
+    """`(session_id, task_id, wg_id, state)`, the most recently active first (at most `SESSIONS_MAX`)."""
+    sessions_total: int
+    """The number of sessions shown without the cap."""
+    devices_truncated: bool = False
+    """The device list's cap cut the devices."""
     workvms: list[tuple[str, str, str]] = field(default_factory=list)
     """`(workvm_id, device_id, session_id)` of the visible sessions' work VMs (KOR-29), newest sample first."""
 
@@ -146,7 +155,8 @@ def readable_wgs(connection: Connection, org: UUID, user: UUID) -> list[str]:
 def org_view(connection: Connection, org: UUID, user: UUID, now: datetime, online_seconds: int) -> OrgView:
     """The devices, VMs and sessions of the org the member sees."""
     wgs = readable_wgs(connection, org, user)
-    devices = org_devices(connection, org, now, online_seconds, user)
+    listed = org_devices(connection, org, now, online_seconds, user=user, window=device_window(None, None))
+    devices = listed["devices"]
     vms = connection.execute(
         "SELECT id, device_id, wg_id, state FROM hub.vm WHERE wg_id = ANY(%s::uuid[]) AND state <> 'deleted'"
         " ORDER BY created_at DESC, id DESC",
@@ -154,10 +164,12 @@ def org_view(connection: Connection, org: UUID, user: UUID, now: datetime, onlin
     ).fetchall()
     # an ended session stays while a work VM it requested still sends samples (the task VM other sessions use)
     sessions = connection.execute(
-        "SELECT id, task_id, wg_id, state FROM hub.session WHERE org_id = %s AND wg_id = ANY(%s::uuid[])"
-        " AND (ended_at IS NULL OR ended_at > %s OR id IN (SELECT session_id FROM hub.metric_sample"
-        " WHERE entity_kind = 'workvm' AND ts > %s)) ORDER BY created_at DESC, id DESC",
-        (org, wgs, now - SESSION_GRACE, now - SESSION_GRACE),
+        "SELECT s.id, s.task_id, s.wg_id, s.state, count(*) OVER () FROM hub.session s WHERE s.org_id = %s"
+        " AND s.wg_id = ANY(%s::uuid[]) AND (s.ended_at IS NULL OR s.ended_at > %s OR s.id IN (SELECT session_id"
+        " FROM hub.metric_sample WHERE entity_kind = 'workvm' AND ts > %s))"
+        " ORDER BY COALESCE((SELECT t.received_at FROM hub.session_transition t WHERE t.session_id = s.id"
+        " ORDER BY t.seq DESC LIMIT 1), s.created_at) DESC, s.id DESC LIMIT %s",
+        (org, wgs, now - SESSION_GRACE, now - SESSION_GRACE, SESSIONS_MAX),
     ).fetchall()
     workvms = connection.execute(
         "SELECT entity_id, device_id, session_id FROM (SELECT DISTINCT ON (entity_id) entity_id, device_id, session_id,"
@@ -170,6 +182,8 @@ def org_view(connection: Connection, org: UUID, user: UUID, now: datetime, onlin
         vms=[(str(row[0]), str(row[1]), str(row[2]), str(row[3])) for row in vms],
         sessions=[(str(row[0]), str(row[1]), str(row[2]), str(row[3])) for row in sessions],
         workvms=[(str(row[0]), str(row[1]), str(row[2])) for row in workvms],
+        sessions_total=int(sessions[0][4]) if sessions else 0,
+        devices_truncated=listed.get("truncated", False),
     )
 
 
@@ -255,7 +269,15 @@ def overview(connection: Connection, org: UUID, user: UUID, now: datetime, onlin
                 "stale": is_stale(latest, now),
             }
         )
-    return {"devices": devices, "vms": vms, "sessions": sessions, "workvms": workvms}
+    return {
+        "devices": devices,
+        "vms": vms,
+        "sessions": sessions,
+        "workvms": workvms,
+        "sessions_total": view.sessions_total,
+        "truncated": view.sessions_total > len(sessions),
+        "devices_truncated": view.devices_truncated,
+    }
 
 
 # --- series ---

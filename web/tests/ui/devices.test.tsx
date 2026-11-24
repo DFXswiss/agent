@@ -61,7 +61,8 @@ async function deviceWorld(options: { as?: 'ada' | 'bob'; private?: boolean } = 
     hubRow(dev1.id, { capacity_low: true, capacity: { ...CAPACITY, vm_slots_free: 0 } }),
     hubRow(dev2.id, { online: false, last_seen_at: null }),
   ];
-  w.client.on(`GET /v1/orgs/${w.org}/devices`, () => ({ devices }));
+  // a fresh array per answer, as JSON over the wire (the screen keeps the previous list when it is the same)
+  w.client.on(`GET /v1/orgs/${w.org}/devices`, () => ({ devices: [...devices] }));
   w.client.on(`GET /v1/scopes/${w.org}/events`, () => ({ events: [], next_after: null, head: 0 }));
   names(w, {}, { [one]: 'One', [w.world.defaultWg]: 'Default' });
   return { w, one, devices, pdev };
@@ -246,6 +247,200 @@ describe('stale answers', () => {
     });
     expect(within(item(w.others.dev1.id)).getByTestId('devices.item.online')).toHaveTextContent('Online');
     expect(screen.queryByTestId('devices.error')).toBeNull();
+  });
+});
+
+describe('hub paging', () => {
+  it('lists the devices of the loaded pages, loads the next one and re-reads the loaded range on a poll', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { w, devices } = await deviceWorld({ as: 'bob' });
+    const { dev1, dev2 } = w.others;
+    let failing = false;
+    // newest enrolment first: dev2, then dev1 (a fresh array per answer)
+    w.client.on(`GET /v1/orgs/${w.org}/devices`, (_body, target) => {
+      if (failing) throw new HubError('unavailable', 503);
+      return String(target).includes('before=')
+        ? { devices: [{ ...devices[0]! }], next_before: null }
+        : { devices: [{ ...devices[1]! }], next_before: 'c1' };
+    });
+    mount(w, at, `/o/${w.org}/devices`);
+    await waitFor(() => expect(screen.getAllByTestId('devices.item')).toHaveLength(1));
+    // the size of the list is every device of the log
+    expect(item(dev2.id)).toHaveAttribute('aria-setsize', '2');
+    fireEvent.click(screen.getByTestId('devices.list.load-more'));
+    await waitFor(() => expect(screen.getAllByTestId('devices.item')).toHaveLength(2));
+    expect(within(item(dev1.id)).getByTestId('devices.item.online')).toHaveTextContent('Online');
+    expect(screen.queryByTestId('devices.list.load-more')).toBeNull();
+    // the poll reads both loaded pages again
+    devices[0] = { ...devices[0]!, online: false };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+    });
+    await waitFor(() => expect(within(item(dev1.id)).getByTestId('devices.item.online')).toHaveTextContent('Offline'));
+    expect(w.client.of(`GET /v1/orgs/${w.org}/devices`).map((call) => call.target)).toEqual([
+      `/v1/orgs/${w.org}/devices?limit=200`,
+      `/v1/orgs/${w.org}/devices?before=c1&limit=200`,
+      `/v1/orgs/${w.org}/devices?limit=200`,
+      `/v1/orgs/${w.org}/devices?before=c1&limit=200`,
+    ]);
+    // a failing re-read keeps the rows
+    failing = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+    });
+    await waitFor(() => expect(screen.getByTestId('devices.error')).toHaveAttribute('data-code', 'unavailable'));
+    expect(screen.getAllByTestId('devices.item')).toHaveLength(2);
+    expect(screen.queryByTestId('devices.truncated')).toBeNull();
+  });
+
+  it('offers "Load more" while a page names no device of the log, and shows a failing or late page', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { w, devices } = await deviceWorld({ as: 'bob' });
+    const slow: { release: () => void; fail: boolean }[] = [];
+    w.client.on(`GET /v1/orgs/${w.org}/devices`, async (_body, target) => {
+      if (!String(target).includes('before=')) return { devices: [hubRow('not-in-the-log')], next_before: 'c1' };
+      const pending: { release: () => void; fail: boolean } = { release: () => undefined, fail: false };
+      await new Promise<void>((resolve) => {
+        pending.release = resolve;
+        slow.push(pending);
+      });
+      if (pending.fail) throw new HubError('forbidden', 403);
+      return { devices: devices.map((row) => ({ ...row })), next_before: null };
+    });
+    mount(w, at, `/o/${w.org}/devices`);
+    const more = await screen.findByTestId('devices.list.load-more');
+    expect(screen.queryByTestId('devices.item')).toBeNull();
+    expect(screen.queryByTestId('devices.empty')).toBeNull();
+    // a page that arrives after a poll started is dropped
+    fireEvent.click(more);
+    await waitFor(() => expect(screen.getByTestId('devices.list.load-more')).toHaveTextContent('Loading…'));
+    expect(screen.getByTestId('devices.list.load-more')).toBeDisabled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+    });
+    await act(async () => {
+      slow[0]!.release();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId('devices.list.load-more')).toHaveTextContent('Load more'));
+    expect(screen.queryByTestId('devices.item')).toBeNull();
+    // a late failure is dropped as well
+    fireEvent.click(screen.getByTestId('devices.list.load-more'));
+    await waitFor(() => expect(slow).toHaveLength(2));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+    });
+    await act(async () => {
+      slow[1]!.fail = true;
+      slow[1]!.release();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId('devices.list.load-more')).toBeEnabled());
+    expect(screen.queryByTestId('devices.error')).toBeNull();
+    // a failing page is shown
+    fireEvent.click(screen.getByTestId('devices.list.load-more'));
+    await waitFor(() => expect(slow).toHaveLength(3));
+    await act(async () => {
+      slow[2]!.fail = true;
+      slow[2]!.release();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId('devices.error')).toHaveAttribute('data-code', 'forbidden'));
+    // and the next one arrives
+    fireEvent.click(screen.getByTestId('devices.list.load-more'));
+    await waitFor(() => expect(slow).toHaveLength(4));
+    await act(async () => {
+      slow[3]!.release();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getAllByTestId('devices.item')).toHaveLength(2));
+    expect(screen.queryByTestId('devices.error')).toBeNull();
+  });
+
+  it('repeats the request without paging on an old hub and says when it cut the list', async () => {
+    const { w, devices } = await deviceWorld({ as: 'bob' });
+    w.client.on(`GET /v1/orgs/${w.org}/devices`, (_body, target) => {
+      if (String(target).includes('?')) throw new HubError('request_invalid', 400);
+      return { devices: [{ ...devices[1]! }], truncated: true };
+    });
+    mount(w, at, `/o/${w.org}/devices`);
+    await waitFor(() => expect(screen.getByTestId('devices.truncated')).toBeVisible());
+    expect(screen.getByTestId('devices.truncated')).toHaveTextContent('newest devices only');
+    // every device of the log is listed; the one the hub did not send with presence unknown
+    expect(screen.getAllByTestId('devices.item')).toHaveLength(2);
+    expect(within(item(w.others.dev1.id)).getByTestId('devices.item.online')).toHaveTextContent('Status unknown');
+    expect(screen.queryByTestId('devices.list.load-more')).toBeNull();
+    expect(w.client.of(`GET /v1/orgs/${w.org}/devices`).map((call) => call.target)).toEqual([
+      `/v1/orgs/${w.org}/devices?limit=200`,
+      `/v1/orgs/${w.org}/devices`,
+    ]);
+  });
+
+  it('pages the open device invitations and the platform candidates', async () => {
+    const { w, one, pdev } = await deviceWorld({ private: true });
+    w.world.add(pdev);
+    // the newest page holds no open invitation: "Load more" without rows; the older one is cut by an old cap
+    w.client.on(`GET /v1/orgs/${w.org}/invites`, (_body, target) => {
+      const rows = [...w.hub.invites.values()].map(({ package_ct: _p, ...row }) => row);
+      return String(target).includes('before=')
+        ? { invites: rows, next_before: null, truncated: true }
+        : { invites: [], next_before: 'c1' };
+    });
+    mount(w, at, `/o/${w.org}/devices`);
+    await screen.findByTestId('devices.invites.rows.load-more');
+    fireEvent.click(screen.getByTestId('devices.add.open'));
+    fireEvent.click(screen.getByTestId('devices.add.submit'));
+    await screen.findByTestId('devices.add.code');
+    fireEvent.click(screen.getByTestId('devices.add.done'));
+    expect(screen.queryByTestId('devices.invites.empty')).toBeNull();
+    fireEvent.click(screen.getByTestId('devices.invites.rows.load-more'));
+    await waitFor(() => expect(screen.getAllByTestId('devices.invites.item')).toHaveLength(1));
+    expect(screen.getByTestId('devices.invites.truncated')).toHaveTextContent('only the newest device invitations');
+    w.client.on(`GET /v1/workgroups/${w.world.defaultWg}/device-candidates`, () => ({ candidates: [] }));
+    const candidate = {
+      device_id: pdev.id,
+      platform_seq: 2,
+      pub: pdev.identity.public(),
+      online: true,
+      capacity: CAPACITY,
+      capacity_low: false,
+    };
+    let release: () => void = () => undefined;
+    w.client.on(`GET /v1/workgroups/${one}/device-candidates`, async (_body, target) => {
+      if (!String(target).includes('before=')) return { candidates: [{ ...candidate }], next_before: 'k1' };
+      await new Promise<void>((resolve) => (release = resolve));
+      return { candidates: [{ ...candidate, device_id: 'other' }], next_before: null, truncated: true };
+    });
+    fireEvent.click(screen.getByTestId('devices.assign.open'));
+    fireEvent.change(screen.getByTestId('devices.assign.scope'), { target: { value: one } });
+    await waitFor(() => expect(screen.getAllByTestId('devices.assign.candidate')).toHaveLength(1));
+    fireEvent.click(screen.getByTestId('devices.assign.load-more'));
+    await waitFor(() => expect(screen.getByTestId('devices.assign.load-more')).toHaveTextContent('Loading…'));
+    release();
+    await waitFor(() => expect(screen.getAllByTestId('devices.assign.candidate')).toHaveLength(2));
+    expect(screen.getByTestId('devices.assign.truncated')).toHaveTextContent('only part');
+    expect(screen.queryByTestId('devices.assign.load-more')).toBeNull();
+  });
+
+  it('renders a bounded number of candidates however many are loaded, searchable by device ID', async () => {
+    const { w, one, pdev } = await deviceWorld({ private: true });
+    const many = Array.from({ length: 25 }, (_, index) => ({
+      device_id: `cand-${String(index).padStart(2, '0')}`,
+      platform_seq: 2,
+      pub: pdev.identity.public(),
+      online: false,
+      capacity: null,
+      capacity_low: false,
+    }));
+    w.client.on(`GET /v1/workgroups/${w.world.defaultWg}/device-candidates`, () => ({ candidates: [] }));
+    w.client.on(`GET /v1/workgroups/${one}/device-candidates`, () => ({ candidates: many, next_before: null }));
+    mount(w, at, `/o/${w.org}/devices`);
+    fireEvent.click(screen.getByTestId('devices.assign.open'));
+    fireEvent.change(screen.getByTestId('devices.assign.scope'), { target: { value: one } });
+    await waitFor(() => expect(screen.getAllByTestId('devices.assign.candidate')).toHaveLength(20));
+    expect(screen.getByTestId('devices.assign.candidates.more')).toHaveTextContent('Showing 20 of 25');
+    fireEvent.change(screen.getByTestId('devices.assign.candidates.search'), { target: { value: 'cand-24' } });
+    expect(screen.getAllByTestId('devices.assign.candidate').map((row) => row.dataset.device)).toEqual(['cand-24']);
   });
 });
 

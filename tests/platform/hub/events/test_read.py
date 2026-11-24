@@ -4,7 +4,8 @@ head, rights (a reader of a foreign workgroup gets `404`), parameter checks and 
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
+from uuid import UUID
 
 import pytest
 
@@ -180,3 +181,79 @@ def test_a_read_racing_an_append_serves_events_and_head_of_one_state(
     assert ([item["scope_seq"] for item in raced["events"]], raced["next_after"], raced["head"]) == ([1], None, 1)
     later = scene.read(scene.reader, after="1").json()
     assert ([item["scope_seq"] for item in later["events"]], later["head"]) == ([2], 2)
+
+
+def test_read_newest_first_with_before(scene: Scene) -> None:
+    """ADR-086 section 2 (KOR-35): `before` pages newest first with `next_before`, with every filter."""
+    filled = _fill(scene)
+    newest = scene.read(scene.reader, before="9999999999999999", limit="2")
+    assert (_seqs(newest), newest.json()) == ([6, 5], {**newest.json(), "next_before": 5, "head": 6})
+    older = scene.read(scene.reader, before="5", limit="2")
+    assert (_seqs(older), older.json()["next_before"]) == ([3, 2], 2)
+    last = scene.read(scene.reader, before="2")
+    assert (_seqs(last), last.json()["next_before"]) == ([1], None)
+    assert _seqs(scene.read(scene.reader, before="1")) == []
+    assert _seqs(scene.read(scene.reader, before="0")) == []
+    assert _seqs(scene.read(scene.reader, before="7", kinds="prompt")) == [6, 2]
+    assert _seqs(scene.read(scene.reader, before="7", kinds="session.terminal,session.output")) == [4, 3]
+    assert _seqs(scene.read(scene.reader, before="7", task=filled["task"])) == [3, 2]
+    assert _seqs(scene.read(scene.reader, before="7", session=filled["session"])) == [3]
+    assert _seqs(scene.read(scene.reader, before="7", session=filled["session"], kinds="session.terminal")) == [4]
+    assert _seqs(scene.read(scene.reader, before="7", ref=filled["entry"])) == [5]
+
+
+def test_after_and_before_exclude_each_other(scene: Scene) -> None:
+    for query in ({"after": "1", "before": "5"}, {"before": "-1"}, {"before": "05"}, {"before": "1" * 17}):
+        response = scene.reader.browser.get(
+            f"/v1/scopes/{scene.wg}/events", params=query, extensions={"contract": False}
+        )
+        assert (response.status_code, response.json()["error"]) == (400, "request_invalid"), query
+
+
+class Explaining:
+    """A connection that records the plan of every event read (EXPLAIN of the same text and parameters)."""
+
+    def __init__(self, connection: Any) -> None:
+        self.connection = connection
+        self.plans: list[str] = []
+
+    def execute(self, query: str, params: Any = None) -> Any:
+        if query.startswith("SELECT scope_seq"):
+            rows = self.connection.execute("EXPLAIN " + query, params).fetchall()
+            self.plans.append("\n".join(row[0] for row in rows))
+        return self.connection.execute(query, params)
+
+
+def test_every_page_is_read_in_index_order(scene: Scene) -> None:
+    """Pages in both directions come from an index in the order of the page (no scan of the table, no sort), with
+    each filter (ADR-086 section 2; `event_session_seq` of migration 0030 for a session's events)."""
+    filled = _fill(scene)
+    with scene.world.hub.pool.connection() as connection, connection.transaction():
+        for setting in ("enable_seqscan", "enable_bitmapscan", "enable_sort"):
+            connection.execute(f"SET LOCAL {setting} = off")
+        explaining = Explaining(connection)
+        wg = UUID(scene.wg)
+        for before in (None, 7):
+            for filters in (
+                {},
+                {"task": UUID(filled["task"])},
+                {"session": UUID(filled["session"])},
+                {"session": UUID(filled["session"]), "kinds": {"session.terminal"}},
+                {"kinds": {"prompt", "session.output"}},
+                {"ref": filled["entry"]},
+            ):
+                read.read_events(cast(Any, explaining), wg, before=before, **cast(Any, filters))
+    assert len(explaining.plans) == 12
+    for plan in explaining.plans:
+        assert "Index" in plan, plan
+        assert "Sort" not in plan, plan
+        assert "Seq Scan" not in plan, plan
+    session_plans = [explaining.plans[2], explaining.plans[8]]
+    assert all("event_session_seq" in plan for plan in session_plans), session_plans
+
+
+def test_event_pages_serialise_their_direction() -> None:
+    ascending = read.EventPage([], 4, 9)
+    newest = read.EventPage([], None, 9, next_before=3, backwards=True)
+    assert ascending.to_json() == {"events": [], "next_after": 4, "head": 9}
+    assert newest.to_json() == {"events": [], "next_after": None, "head": 9, "next_before": 3}

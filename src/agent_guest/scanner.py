@@ -62,6 +62,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_guest.journal import Journal
+from agent_guest.limits import FILES, FileLimits
 
 SCAN_SECONDS = 5.0
 HASH_LIMIT = 10 * 1024 * 1024
@@ -106,18 +107,8 @@ EXCLUDED_DIRS = frozenset(
 )
 
 
-@dataclass(frozen=True)
-class Limits:
-    """Bounds of the ``session.file`` records of one session (module docstring)."""
-
-    bulk_files: int = 100
-    window_seconds: float = 600.0
-    window_files: int = 1000
-    window_bytes: int = 8 * 1024 * 1024
-    summary_paths: int = 20
-
-
-DEFAULT_LIMITS = Limits()
+Limits = FileLimits
+DEFAULT_LIMITS = FILES
 
 
 def open_dir(base: str, parts: Sequence[str]) -> int:

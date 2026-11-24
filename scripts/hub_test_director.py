@@ -27,6 +27,8 @@ test hub (`scripts/hub_test_server.py` starts it on `--port` with the hub's writ
   (`scripts/hub_test_requests.py`, WEB-09).
 - `POST /devices/<id>/{vms,metrics,usage,rollups}`: VMs, metric samples, usage and rollups of the monitoring screen
   (`scripts/hub_test_metrics.py`, WEB-12).
+- `POST|GET /volume/seed`, `POST /volume/{invite,joined,live}`: the data set of the volume gate
+  (`scripts/hub_test_volume.py`, KOR-35).
 
 Frames and hints of these changes reach the hub's browsers over the PostgreSQL bus (`hub_stream`), exactly like the
 frames of another hub process (`agent_hub.stream.bus`). Only loopback, only for tests.
@@ -55,6 +57,7 @@ from typing import Any
 
 import httpx
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
@@ -77,6 +80,7 @@ def _sibling(name: str) -> ModuleType:
     """A module next to this script (scripts/ is no package)."""
     spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
     module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    sys.modules[name] = module  # dataclasses of the module look themselves up there
     spec.loader.exec_module(module)  # type: ignore[union-attr]
     return module
 
@@ -85,6 +89,7 @@ hub_test_events = _sibling("hub_test_events")
 hub_test_requests = _sibling("hub_test_requests")
 hub_test_operations = _sibling("hub_test_operations")
 hub_test_metrics = _sibling("hub_test_metrics")
+hub_test_volume = _sibling("hub_test_volume")
 
 ROOT_SEED = hashlib.sha256(b"agent.dfx.swiss test platform root key").digest()
 HEARTBEAT_SECONDS = 5.0
@@ -93,6 +98,8 @@ ONLINE_SECONDS = int(os.environ.get("AGENT_HUB_DEVICE_ONLINE_SECONDS") or 30)
 SLOTS = 8
 VM_MIB = 8192
 Json = dict[str, Any]
+THROWAWAY_PREFIX = "t_web_"
+"""Name prefix of the databases `scripts/hub_test_server.py` creates (and drops) for the suite."""
 
 
 def now() -> datetime:
@@ -138,11 +145,13 @@ class Director:
         self.online: set[str] = set()
         self.devices: list[str] = []
         self.identities: dict[str, Identity] = {}
+        self.certified: dict[str, int] = {}
         self.http = httpx.Client(timeout=30)
         self.context = SimpleNamespace(
             pool=pool, clock=now, config=SimpleNamespace(device_online_seconds=ONLINE_SECONDS)
         )
         self.metrics = hub_test_metrics.MetricsDouble(self, signed_headers)
+        self.volume = hub_test_volume.Seeder(self)
 
     # --- platform log ---
 
@@ -185,7 +194,8 @@ class Director:
             "pool_ready": pool_ready,
         }
 
-    def create_device(self, online: bool, pool_ready: int, free: int = SLOTS) -> str:
+    def create_device(self, online: bool, pool_ready: int, free: int = SLOTS, exclusive: bool = True) -> str:
+        """A certified platform device; `exclusive` (the default) makes it the first candidate (module docstring)."""
         identity = Identity.generate()
         device_id = str(uuid7())
         found = invite_format.invite_secrets(invite_format.generate_code())
@@ -210,17 +220,26 @@ class Director:
             raise RuntimeError(f"enrollment refused: {answer.text}")
         fields = {name: signed[name] for name in ("pub", "invite_id", "enroll_sig", "inv_sig", "agent_version")}
         fields.update({name: signed[name] for name in ("os", "arch", "capacity")})
-        self.append({"type": "device_certify", "device": device_id, **fields})
+        seq = self.append({"type": "device_certify", "device": device_id, **fields})
         with self.lock:
-            earlier = list(self.devices)
+            earlier = list(self.devices) if exclusive else []
             self.devices.append(device_id)
             self.identities[device_id] = identity
+            self.certified[device_id] = seq
         for other in earlier:
             self.set_online(other, False)
             self.set_capacity(other, self.capacity(0, 0))
         self.set_capacity(device_id, self.capacity(free, pool_ready))
         self.set_online(device_id, online)
         return device_id
+
+    def certified_seq(self, device_id: str) -> int:
+        """The platform-log `seq` of the device's `device_certify`."""
+        return self.certified[device_id]
+
+    def hub_key(self) -> Json:
+        """The hub's signing key as `GET /v1/config` publishes it (invitation packages name it)."""
+        return dict(self.http.get(self.hub + "/v1/config").json()["hub_key"])
 
     def set_capacity(self, device_id: str, capacity: Json) -> None:
         with self.pool.connection() as connection, connection.transaction():
@@ -344,6 +363,10 @@ def handler(director: Director) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:
             if self.path == "/health":
                 return self._send(200, {"ok": True})
+            if self.path == "/volume/seed":
+                return self._send(200, director.volume.status())
+            if self.path == "/volume/live":
+                return self._send(200, director.volume.live_count())
             match = SESSION_RE.match(self.path)
             found = None if match is None else director.main_session(match.group(1))
             self._send(404, {"error": "not_found"}) if found is None else self._send(200, found)
@@ -382,10 +405,25 @@ def handler(director: Director) -> type[BaseHTTPRequestHandler]:
                 )
                 self._send(200, answered)
                 return True
-            if (answer := director.metrics.route(self.path, body)) is not None:
+            answer = director.metrics.route(self.path, body)
+            if answer is None:
+                answer = self._volume_post(body)
+            if answer is not None:
                 self._send(200, answer)
-                return True
-            return False
+            return answer is not None
+
+        def _volume_post(self, body: Json) -> Json | None:
+            """The routes of the volume gate (KOR-35, `scripts/hub_test_volume.py`)."""
+            volume = director.volume
+            if self.path == "/volume/seed":
+                return dict(volume.start(dict(body.get("counts", {})), director.root.public_key().public_bytes_raw()))
+            if self.path == "/volume/invite":
+                return dict(volume.admin_invite())
+            if self.path == "/volume/joined":
+                return dict(volume.joined(str(body["user_id"])))
+            if self.path == "/volume/live":
+                return dict(volume.live_load(float(body.get("seconds", 10)), int(body.get("rate", 200))))
+            return None
 
         def do_POST(self) -> None:
             try:
@@ -429,6 +467,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     database = os.environ.get("AGENT_HUB_DATABASE")
     if not database:
         raise SystemExit("AGENT_HUB_DATABASE is not set")
+    name = str(conninfo_to_dict(database).get("dbname") or "")
+    if not name.startswith(THROWAWAY_PREFIX):
+        # the director writes rows directly (sessions, tasks, the volume data set): only into the suite's own database
+        raise SystemExit(f"AGENT_HUB_DATABASE must name a throwaway database of the suite ({THROWAWAY_PREFIX}*)")
     signals.configure({})
     pool: ConnectionPool[psycopg.Connection[Any]] = ConnectionPool(database, min_size=1, max_size=4, open=True)
     set_publisher(BusPublisher(pool))

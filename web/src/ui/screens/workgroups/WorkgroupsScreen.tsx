@@ -3,8 +3,10 @@
 // chosen members, assignments of chosen devices, WK_1 for every reader, `wg.profile`), rename it and archive it (never
 // the default workgroup). Writers of a workgroup set its default device (and VM) for new tasks, shown in its row
 // (`PUT /v1/workgroups/{wg}/placement`, 06-web.md section 7.3, ADR-075 section 6). Controls the user's verified rights
-// do not allow are not rendered (section 1.2).
-import { useId, useState } from 'react';
+// do not allow are not rendered (section 1.2). The rows are a `WindowedList` (ADR-086 section 1: at most `MAX_ROWS`
+// rendered), built once per log change; the members and devices of the create dialog are searchable pickers that
+// render a bounded number of choices (`lists/Picker.tsx`).
+import { useId, useMemo, useState } from 'react';
 import { actionErrorCode } from '../../../core/org/batch';
 import { type Placement, setWorkgroupPlacement, validChoice } from '../../../core/tasks/placement';
 import { PlacementSelect, useWorkgroupDevices } from '../../composer/DeviceChoice';
@@ -27,18 +29,76 @@ import type { OrgState } from '../../../core/log/state';
 import type { Directory } from '../../../core/tasks/directory';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
+import { Picker } from '../../lists/Picker';
+import { type RowProps, WindowedList } from '../../lists/WindowedList';
 import { useAppEnv } from '../../shell/context';
 import { ActionDialog, BUTTON, PRIMARY } from '../members/ActionDialog';
+import { MAX_ROWS, PAGE, sameValue } from '../members/lists';
 import { memberName } from '../members/MembersScreen';
 import { NoName } from '../../names/names';
 import { useDeviceNames } from '../devices/labels';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 
-type Open =
+export type Open =
   | { readonly kind: 'create' }
   | { readonly kind: 'placement'; readonly row: WorkgroupRow }
   | { readonly kind: 'rename'; readonly row: WorkgroupRow }
   | { readonly kind: 'archive'; readonly row: WorkgroupRow };
+
+/** A member of the create dialog with the access chosen for it. */
+interface MemberChoice {
+  readonly id: string;
+  readonly text: string;
+  readonly access: string;
+  readonly choose: (user: string, value: string) => void;
+}
+
+/** A device of the create dialog and whether it is chosen. */
+interface DeviceChoice {
+  readonly id: string;
+  readonly text: string;
+  /** Whether the device has a label (else its ID is shown below the sentence). */
+  readonly labelled: boolean;
+  readonly checked: boolean;
+  readonly toggle: (device: string, on: boolean) => void;
+}
+
+const choiceKey = (choice: { readonly id: string }) => choice.id;
+const choiceText = (choice: { readonly text: string }) => choice.text;
+
+function MemberChoiceRow({ item }: RowProps<MemberChoice>) {
+  const { t } = useI18n();
+  return (
+    <label className="flex items-center justify-between gap-2">
+      <span>{item.text}</span>
+      <select
+        className="min-h-11 rounded border border-gray-300 px-2"
+        value={item.access}
+        onChange={(event) => item.choose(item.id, event.target.value)}
+        data-testid={`workgroups.create.member.${item.id}`}
+      >
+        <option value="">{t('workgroups.access.none')}</option>
+        <option value="read">{t('workgroups.access.read')}</option>
+        <option value="write">{t('workgroups.access.write')}</option>
+      </select>
+    </label>
+  );
+}
+
+function DeviceChoiceRow({ item }: RowProps<DeviceChoice>) {
+  const { t } = useI18n();
+  return (
+    <label className="flex min-h-11 items-center gap-2">
+      <input
+        type="checkbox"
+        checked={item.checked}
+        onChange={(event) => item.toggle(item.id, event.target.checked)}
+        data-testid={`workgroups.create.device.${item.id}`}
+      />
+      <NoName t={t} text={item.text} id={item.id} showId={!item.labelled} />
+    </label>
+  );
+}
 
 interface CreateProps {
   readonly org: string;
@@ -58,12 +118,14 @@ function CreateDialog({ org, state, userId, directory, onClose }: CreateProps) {
   const [name, setName] = useState('');
   const [grants, setGrants] = useState<Record<string, Access>>({});
   const [devices, setDevices] = useState<string[]>([]);
-  const others = memberRows(state, userId, directory).filter((row) => !row.isMe);
-  const choices = assignableDevices(state, platform);
+  const others = useMemo(
+    () => memberRows(state, userId, directory).filter((row) => !row.isMe),
+    [state, userId, directory],
+  );
+  const choices = useMemo(() => assignableDevices(state, platform), [state, platform]);
   // devices by their label (`device.profile`, read with the org's profiles), else a sentence – never an ID (ADR-073)
   useDeviceNames([org]); // pulls the org's device labels once
   const labels = useStore(selectDeviceLabels(org), app.store);
-  const labelled = (device: string) => labels.has(device);
   const deviceNames = (device: string) =>
     labels.get(device) ??
     t(state.member(device)?.platformSeq == null ? 'names.device.unknown' : 'names.device.platform.unknown');
@@ -75,6 +137,20 @@ function CreateDialog({ org, state, userId, directory, onClose }: CreateProps) {
   };
   const toggle = (device: string, on: boolean) =>
     setDevices(on ? [...devices, device] : devices.filter((item) => item !== device));
+  // the choices as picker items (searched by name; a filtered-out choice keeps its value)
+  const members = others.map((row): MemberChoice => ({
+    id: row.id,
+    text: memberName(t, row),
+    access: grants[row.id] ?? '',
+    choose,
+  }));
+  const deviceChoices = choices.map((device): DeviceChoice => ({
+    id: device.id,
+    text: deviceNames(device.id),
+    labelled: labels.has(device.id),
+    checked: devices.includes(device.id),
+    toggle,
+  }));
   return (
     <ActionDialog
       title={t('workgroups.create.title')}
@@ -99,40 +175,30 @@ function CreateDialog({ org, state, userId, directory, onClose }: CreateProps) {
         data-testid="workgroups.create.name"
       />
       <p className="text-sm text-gray-700">{t('workgroups.create.note')}</p>
-      {others.length > 0 && (
+      {members.length > 0 && (
         <fieldset className="flex flex-col gap-2">
           <legend className="font-medium">{t('workgroups.create.members')}</legend>
-          {others.map((row) => (
-            <label key={row.id} className="flex items-center justify-between gap-2">
-              <span>{memberName(t, row)}</span>
-              <select
-                className="min-h-11 rounded border border-gray-300 px-2"
-                value={grants[row.id] ?? ''}
-                onChange={(event) => choose(row.id, event.target.value)}
-                data-testid={`workgroups.create.member.${row.id}`}
-              >
-                <option value="">{t('workgroups.access.none')}</option>
-                <option value="read">{t('workgroups.access.read')}</option>
-                <option value="write">{t('workgroups.access.write')}</option>
-              </select>
-            </label>
-          ))}
+          <Picker
+            items={members}
+            getKey={choiceKey}
+            text={choiceText}
+            Row={MemberChoiceRow}
+            testId="workgroups.create.members"
+            label={t('workgroups.create.members.search')}
+          />
         </fieldset>
       )}
-      {choices.length > 0 && (
+      {deviceChoices.length > 0 && (
         <fieldset className="flex flex-col gap-2">
           <legend className="font-medium">{t('workgroups.create.devices')}</legend>
-          {choices.map((device) => (
-            <label key={device.id} className="flex min-h-11 items-center gap-2">
-              <input
-                type="checkbox"
-                checked={devices.includes(device.id)}
-                onChange={(event) => toggle(device.id, event.target.checked)}
-                data-testid={`workgroups.create.device.${device.id}`}
-              />
-              <NoName t={t} text={deviceNames(device.id)} id={device.id} showId={!labelled(device.id)} />
-            </label>
-          ))}
+          <Picker
+            items={deviceChoices}
+            getKey={choiceKey}
+            text={choiceText}
+            Row={DeviceChoiceRow}
+            testId="workgroups.create.devices"
+            label={t('workgroups.create.devices.search')}
+          />
         </fieldset>
       )}
     </ActionDialog>
@@ -261,14 +327,8 @@ function PlacementLine({ org, wg, version }: { readonly org: string; readonly wg
   );
 }
 
-function WorkgroupItem({
-  org,
-  row,
-  admin,
-  writer,
-  version,
-  onOpen,
-}: {
+/** What a workgroup row shows: the row, the org (for the link) and the viewer's rights. */
+interface WorkgroupEntry {
   readonly org: string;
   readonly row: WorkgroupRow;
   readonly admin: boolean;
@@ -277,11 +337,14 @@ function WorkgroupItem({
   /** Changes after a saved default (the row reads it again). */
   readonly version: number;
   readonly onOpen: (open: Open) => void;
-}) {
+}
+
+function WorkgroupRowView({ item }: { readonly item: WorkgroupEntry }) {
+  const { org, row, admin, writer, version, onOpen } = item;
   const { t } = useI18n();
   const name = row.name ?? t('workgroups.unnamed');
   return (
-    <li className="flex flex-col gap-2 border-b border-gray-200 py-3" data-testid="workgroups.item" data-wg={row.id}>
+    <>
       <div className="flex flex-wrap items-center gap-2">
         {row.myAccess === null ? (
           <span className="font-medium" data-testid="workgroups.item.name">
@@ -347,7 +410,44 @@ function WorkgroupItem({
           )}
         </div>
       )}
-    </li>
+    </>
+  );
+}
+
+const workgroupKey = (entry: WorkgroupEntry) => entry.row.id;
+const workgroupAttributes = (entry: WorkgroupEntry) => ({ 'data-testid': 'workgroups.item', 'data-wg': entry.row.id });
+
+/** The workgroup rows in the order of `workgroupRows` (default first, archived last), windowed. */
+export function WorkgroupList(props: {
+  readonly org: string;
+  readonly rows: readonly WorkgroupRow[];
+  readonly admin: boolean;
+  /** `wg:write` of the user (sets a workgroup's default device). */
+  readonly writable: (wg: string) => boolean;
+  /** Changes after a saved default (the rows read it again). */
+  readonly version: number;
+  readonly onOpen: (open: Open) => void;
+}) {
+  const { org, rows, admin, writable, version, onOpen } = props;
+  const entries = useMemo(
+    () => rows.map((row): WorkgroupEntry => ({ org, row, admin, writer: writable(row.id), version, onOpen })),
+    [org, rows, admin, writable, version, onOpen],
+  );
+  return (
+    <WindowedList
+      listId="workgroups"
+      items={entries}
+      getKey={workgroupKey}
+      Row={WorkgroupRowView}
+      same={sameValue}
+      newest="start"
+      page={PAGE}
+      maxRows={MAX_ROWS}
+      testId="workgroups.list"
+      labels={{ older: 'workgroups.list.more', newer: 'workgroups.list.above', newest: 'workgroups.list.top' }}
+      rowClassName="flex flex-col gap-2 border-b border-gray-200 py-3"
+      rowAttributes={workgroupAttributes}
+    />
   );
 }
 
@@ -359,6 +459,11 @@ export function WorkgroupsScreen() {
   const directory = useDirectory(org, state !== null);
   const [open, setOpen] = useState<Open | null>(null);
   const [version, setVersion] = useState(0);
+  // rebuilt only when the verified log, the user or the names change, not on every render
+  const rows = useMemo(
+    () => (state === null || userId === null ? [] : workgroupRows(state, userId, directory)),
+    [state, userId, directory],
+  );
   if (state === null) {
     return (
       <p className="p-4" data-testid="workgroups.loading">
@@ -374,7 +479,6 @@ export function WorkgroupsScreen() {
     );
   }
   const admin = canManage(state, userId);
-  const rows = workgroupRows(state, userId, directory);
   const close = () => setOpen(null);
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" data-testid="workgroups.screen">
@@ -389,19 +493,14 @@ export function WorkgroupsScreen() {
           {t('workgroups.create.open')}
         </button>
       )}
-      <ul data-testid="workgroups.list">
-        {rows.map((row) => (
-          <WorkgroupItem
-            key={row.id}
-            org={org}
-            row={row}
-            admin={admin}
-            writer={state.canWriteWg(userId, row.id)}
-            version={version}
-            onOpen={setOpen}
-          />
-        ))}
-      </ul>
+      <WorkgroupList
+        org={org}
+        rows={rows}
+        admin={admin}
+        writable={(wg) => state.canWriteWg(userId, wg)}
+        version={version}
+        onOpen={setOpen}
+      />
       {open?.kind === 'create' && (
         <CreateDialog org={org} state={state} userId={userId} directory={directory} onClose={close} />
       )}

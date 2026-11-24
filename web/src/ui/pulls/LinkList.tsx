@@ -1,12 +1,16 @@
 // The linked pull requests of a workgroup or of one task (KOR-48): loaded newest first (`core/pulls/links.ts`), one
 // `PullRow` each, the load error with "Try again", the empty text, and "Load more" while the hub has further pages.
-// Shared by the workgroup's "Pull requests" view and the task's panel.
-import { useEffect, useMemo } from 'react';
+// Shared by the workgroup's "Pull requests" view and the task's panel. The rows are a `WindowedList` (ADR-086 section
+// 1, lists `pulls` and `task.pulls`): at most `MAX_ROWS` rendered – and only the rendered rows read their state from
+// the device – over the hub's cursor pages.
+import { useCallback, useEffect, useMemo } from 'react';
 import { loadLinks } from '../../core/pulls/links';
 import { linkList, listKey, type PullLink } from '../../core/pulls/state';
 import type { StoreState } from '../../core/store/store';
 import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
+import { WindowedList } from '../lists/WindowedList';
+import { MAX_ROWS, PAGE, sameValue } from '../screens/members/lists';
 import { useAppEnv } from '../shell/context';
 import { PullRow } from './PullRow';
 
@@ -24,6 +28,20 @@ export function selectLinks(key: string) {
     return items;
   };
 }
+
+/** What a row shows. */
+interface LinkEntry {
+  readonly org: string;
+  readonly link: PullLink;
+  readonly writer: boolean;
+  readonly showTask: boolean;
+}
+
+function LinkRow({ item }: { readonly item: LinkEntry }) {
+  return <PullRow org={item.org} link={item.link} writer={item.writer} showTask={item.showTask} />;
+}
+
+const linkKey = (entry: LinkEntry) => `${entry.link.epoch} ${entry.link.tag}`;
 
 export function LinkList({
   org,
@@ -43,6 +61,11 @@ export function LinkList({
   const list = useStore((state) => linkList(state.pulls, key), app.store);
   const select = useMemo(() => selectLinks(key), [key]);
   const items = useStore(select, app.store);
+  const entries = useMemo(
+    () => items.map((link): LinkEntry => ({ org, link, writer, showTask: task === null })),
+    [items, org, writer, task],
+  );
+  const more = useCallback(() => void loadLinks(app.tasks, org, wg, task, true), [app, org, wg, task]);
   useEffect(() => {
     void loadLinks(app.tasks, org, wg, task);
   }, [app, org, wg, task]);
@@ -71,23 +94,23 @@ export function LinkList({
           {t(task === null ? 'pulls.empty' : 'pulls.empty.task')}
         </p>
       )}
-      {items.length > 0 && (
-        <ul className="flex flex-col" data-testid="pulls.list">
-          {items.map((link) => (
-            <PullRow key={`${link.epoch} ${link.tag}`} org={org} link={link} writer={writer} showTask={task === null} />
-          ))}
-        </ul>
-      )}
-      {list.status === 'ready' && list.nextCursor !== null && (
-        <button
-          type="button"
-          className={BUTTON}
-          onClick={() => void loadLinks(app.tasks, org, wg, task, true)}
-          data-testid="pulls.more"
-        >
-          {t('pulls.more')}
-        </button>
-      )}
+      <WindowedList
+        listId={task === null ? 'pulls' : 'task.pulls'}
+        items={entries}
+        getKey={linkKey}
+        Row={LinkRow}
+        same={sameValue}
+        newest="start"
+        page={PAGE}
+        maxRows={MAX_ROWS}
+        testId="pulls.list"
+        testIds={{ loadMore: 'pulls.more' }}
+        className="flex flex-col"
+        rowHeight="lg"
+        hasMore={list.nextCursor !== null}
+        loading={list.status === 'loading'}
+        onLoadMore={more}
+      />
     </div>
   );
 }

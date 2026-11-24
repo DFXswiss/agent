@@ -1,8 +1,9 @@
 // Slice `whiteboards` (06-web.md section 6.1): per board location the entry rows of `GET /v1/whiteboards` (metadata
-// only: IDs, author, times, deleted flag, position of the newest event; every page) and the load state; per entry the
-// load state of its history (`GET /v1/whiteboards/{entry}/history`); and the sealed events kept for an unchanged retry
-// after a failure that a retry can fix (06-web.md section 12.5: retries re-use the same IDs). The text of an entry is
-// never here: it exists only inside the events of the `events` slice, decrypted by the reader.
+// only: IDs, author, times, deleted flag, position of the newest event; the pages read so far, newest first, with the
+// cursor of the next older page, ADR-086 section 2) and the load state; per entry the load state of its history
+// (`GET /v1/whiteboards/{entry}/history`, with the position of the next older page); and the sealed events kept for an
+// unchanged retry after a failure that a retry can fix (06-web.md section 12.5: retries re-use the same IDs). The text
+// of an entry is never here: it exists only inside the events of the `events` slice, decrypted by the reader.
 import { isRecord } from '../../registry';
 import type { Slice, Store } from '../store';
 
@@ -25,15 +26,19 @@ export interface WhiteboardRow {
 export interface BoardLoad {
   readonly status: LoadStatus;
   readonly code: string | null;
-  /** Every row of the board, newest first, as the hub listed them. */
+  /** The rows of the pages read so far, newest first, as the hub listed them. */
   readonly rows: readonly WhiteboardRow[];
-  /** The highest `scope_seq` of the board's scope in the store before the rows were listed (null before a load). */
+  /** The highest `scope_seq` of the board's scope in the store before the first page was listed (null before). */
   readonly checked: number | null;
+  /** The cursor (`next_before`) of the next older page of rows; null when every row is listed. */
+  readonly next: string | null;
 }
 
 export interface Load {
   readonly status: LoadStatus;
   readonly code: string | null;
+  /** `before` of the next older page of versions; null when the history is read to its start (or cannot be paged). */
+  readonly next: number | null;
 }
 
 /** A sealed event kept for a retry with identical content. */
@@ -81,9 +86,9 @@ export function isWhiteboardRow(value: unknown): value is WhiteboardRow {
   );
 }
 
-const EMPTY_BOARD: BoardLoad = { status: 'loading', code: null, rows: [], checked: null };
+const EMPTY_BOARD: BoardLoad = { status: 'loading', code: null, rows: [], checked: null, next: null };
 
-/** Marks a board loading (rows of earlier pages stay). */
+/** Marks a board loading – its first page or the next older one (rows of earlier pages stay). */
 export function setBoardLoading(store: Store, key: string): void {
   store.update('whiteboards', (state) => {
     const board = state.boards[key];
@@ -95,12 +100,29 @@ export function setBoardLoading(store: Store, key: string): void {
   });
 }
 
-/** The rows of a completed load and the scope position they cover (`ready`). */
-export function putBoardRows(store: Store, key: string, rows: readonly WhiteboardRow[], checked: number): void {
+/** The first page of rows, the scope position they cover and the cursor of the next page (`ready`). */
+export function putBoardRows(
+  store: Store,
+  key: string,
+  rows: readonly WhiteboardRow[],
+  checked: number,
+  next: string | null = null,
+): void {
   store.update('whiteboards', (state) => ({
     ...state,
-    boards: { ...state.boards, [key]: { status: 'ready', code: null, rows, checked } },
+    boards: { ...state.boards, [key]: { status: 'ready', code: null, rows, checked, next } },
   }));
+}
+
+/** An older page of rows appended to the read ones (rows listed already are not repeated) and the next cursor. */
+export function appendBoardRows(store: Store, key: string, rows: readonly WhiteboardRow[], next: string | null): void {
+  store.update('whiteboards', (state) => {
+    const board = state.boards[key] ?? EMPTY_BOARD;
+    const known = new Set(board.rows.map((row) => row.entry_id));
+    const fresh = rows.filter((row) => !known.has(row.entry_id));
+    const merged = { ...board, status: 'ready' as const, code: null, rows: [...board.rows, ...fresh], next };
+    return { ...state, boards: { ...state.boards, [key]: merged } };
+  });
 }
 
 /** A failed load with the catalog code (rows of an earlier load stay). */
@@ -111,11 +133,21 @@ export function setBoardError(store: Store, key: string, code: string): void {
   });
 }
 
-export function setHistoryLoad(store: Store, entry: string, status: LoadStatus, code: string | null = null): void {
+/** The load state of a history; `next` (the next older page) stays as it was unless given. */
+export function setHistoryLoad(
+  store: Store,
+  entry: string,
+  status: LoadStatus,
+  code: string | null = null,
+  next?: number | null,
+): void {
   store.update('whiteboards', (state) => {
     const current = state.histories[entry];
-    if (current !== undefined && current.status === status && current.code === code) return state;
-    return { ...state, histories: { ...state.histories, [entry]: { status, code } } };
+    const after = next === undefined ? (current?.next ?? null) : next;
+    if (current !== undefined && current.status === status && current.code === code && current.next === after) {
+      return state;
+    }
+    return { ...state, histories: { ...state.histories, [entry]: { status, code, next: after } } };
   });
 }
 

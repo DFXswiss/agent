@@ -1,0 +1,14 @@
+{
+  "older": "{count} weitere Einträge – anzeigen",
+  "newer": "{count} neuere Einträge – anzeigen",
+  "newest": "Zum Neuesten springen",
+  "load-more": "Mehr laden",
+  "loading": "Lädt…",
+  "range": "Einträge {from}–{to} von {total} angezeigt",
+  "range.loaded": "Einträge {from}–{to} von {total} geladenen angezeigt",
+  "clip.more": "Mehr anzeigen ({count} weitere Zeichen)",
+  "clip.download": "Ganzen Text herunterladen",
+  "picker.search": "Suchen",
+  "picker.more": "{shown} von {total} angezeigt – zum Eingrenzen tippen",
+  "picker.none": "Nichts passt zur Suche"
+}

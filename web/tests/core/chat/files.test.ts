@@ -1,15 +1,7 @@
 // U-WEB-chat-files (HOT-05): runs of `session.file` items become one `file-group` item per session run, the item
-// comparison of the memoized chat rows, and the window at the end of a long chat.
+// comparison of the memoized chat rows.
 import { describe, expect, it } from 'vitest';
-import {
-  FILE_GROUP,
-  type FileGroupBody,
-  groupFiles,
-  PAGE,
-  sameItem,
-  WINDOW,
-  windowStart,
-} from '../../../src/core/chat/files';
+import { FILE_GROUP, type FileGroupBody, groupFiles, sameItem } from '../../../src/core/chat/files';
 import type { TimelineItem } from '../../../src/core/chat/timeline';
 import type { SessionNode } from '../../../src/core/sessions/tree';
 
@@ -104,25 +96,5 @@ describe('sameItem', () => {
     expect(sameItem(group!, groupFiles([{ ...a }, { ...b }])[0]!)).toBe(true);
     expect(sameItem(group!, { ...group!, body: { files: [a, { ...b, body: {} }], last: b.at } })).toBe(false);
     expect(sameItem(group!, { ...group!, body: { files: [a, b, c], last: b.at } })).toBe(false);
-  });
-});
-
-describe('windowStart', () => {
-  const rows = (count: number) => Array.from({ length: count }, (_, index) => item('prompt', { key: `k${index}` }));
-
-  it('starts with the last WINDOW rows and keeps its first row while the list grows', () => {
-    expect(windowStart(rows(10), null, WINDOW)).toBe(0);
-    const list = rows(WINDOW + 10);
-    expect(windowStart(list, null, WINDOW)).toBe(10);
-    // a key that is gone falls back to the end
-    expect(windowStart(list, 'gone', WINDOW)).toBe(10);
-    const grown = rows(WINDOW + 10 + PAGE);
-    expect(windowStart(grown, 'k10', WINDOW)).toBe(10);
-    // one more row than budget + PAGE: back to the last WINDOW rows
-    expect(windowStart(rows(WINDOW + 11 + PAGE), 'k10', WINDOW)).toBe(11 + PAGE);
-    // a start after the floor (rows went away) still shows a full window
-    expect(windowStart(list, 'k20', WINDOW)).toBe(10);
-    // a larger budget ("Show earlier") keeps earlier rows
-    expect(windowStart(grown, 'k0', WINDOW + PAGE)).toBe(0);
   });
 });

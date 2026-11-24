@@ -1,5 +1,6 @@
-// Board actions against the scriptable client with a real reader: loading rows and events (paging, task filter, once
-// per generation, errors), history, create with and without notify, edit and delete with `base_event_id`, the
+// Board actions against the scriptable client with a real reader: loading rows and events (the first page, older pages
+// on demand, task filter, once per generation, errors), the history page by page (and on a hub without paging), the
+// `ListPaging` of both, create with and without notify, edit and delete with `base_event_id`, the
 // rights check before sealing, text limits, missing keys, kept events for retries.
 import { describe, expect, it } from 'vitest';
 import { openEvent } from '../../../src/core/crypto/event';
@@ -10,12 +11,18 @@ import { HubError } from '../../../src/core/net/signedFetch';
 import { setIdentity } from '../../../src/core/store/slices/me';
 import { blockOrg, orgEntry } from '../../../src/core/store/slices/orgs';
 import {
+  boardPaging,
   createEntry,
   deleteEntry,
   editEntry,
+  HISTORY_PAGE,
+  historyPaging,
+  historyTarget,
   listTarget,
   loadBoard,
+  loadBoardPage,
   loadHistory,
+  loadHistoryPage,
 } from '../../../src/core/whiteboards/actions';
 import { boardKey, orgBoard, taskBoard, wgBoard } from '../../../src/core/whiteboards/location';
 import { projectBoard, TEXT_MAX } from '../../../src/core/whiteboards/project';
@@ -23,7 +30,7 @@ import { keepWrite, setBoardLoading, setHistoryLoad } from '../../../src/core/st
 import { boardEvent, boardWorld, entryId } from './world';
 
 const TASK = '0190f000-0000-7000-8000-00000000000c';
-const empty = { events: [], next_after: null, head: 0 };
+const empty = { events: [], next_before: null, head: 0 };
 
 const row = (entry: string, org: string) => ({
   entry_id: entry,
@@ -66,7 +73,7 @@ describe('listTarget', () => {
 });
 
 describe('loadBoard', () => {
-  it('pulls the board events once, then lists every page of rows with the covered position', async () => {
+  it('pulls the board events once, then lists the first page of rows and older pages on demand', async () => {
     const w = await boardWorld();
     const board = orgBoard(w.org);
     const a = await entryId('a');
@@ -78,27 +85,38 @@ describe('loadBoard', () => {
     );
     w.client.on(`GET /v1/scopes/${w.org}/events`, () => ({
       events: [{ scope_seq: 4, received_at: null, event: stored }],
-      next_after: null,
+      next_before: null,
       head: 4,
     }));
     await loadBoard(w.context, board);
     const key = boardKey(board);
-    expect(w.store.getState().whiteboards.boards[key]).toMatchObject({ status: 'ready', code: null, checked: 4 });
-    expect(w.store.getState().whiteboards.boards[key]!.rows.map((r) => r.entry_id)).toEqual([a, 'b']);
+    const state = () => w.store.getState().whiteboards.boards[key]!;
+    expect(state()).toMatchObject({ status: 'ready', code: null, checked: 4, next: 'c1' });
+    expect(state().rows.map((r) => r.entry_id)).toEqual([a]);
     expect(w.client.calls.map((call) => call.target.split('?')[0])).toEqual([
       `/v1/scopes/${w.org}/events`,
       '/v1/whiteboards',
-      '/v1/whiteboards',
     ]);
+    expect(boardPaging(w.context, board, state())).toMatchObject({ hasMore: true, loading: false });
+    // the next page on demand: appended without repeating a listed row, then nothing more
+    boardPaging(w.context, board, state()).loadMore();
+    expect(state().status).toBe('loading');
+    await expect.poll(() => state().status).toBe('ready');
+    expect(state().rows.map((r) => r.entry_id)).toEqual([a, 'b']);
+    expect(state()).toMatchObject({ checked: 4, next: null });
     expect(w.client.of('GET /v1/whiteboards')[1]!.target).toContain('before=c1');
+    expect(boardPaging(w.context, board, state()).hasMore).toBe(false);
+    await loadBoardPage(w.context, board);
+    expect(w.client.of('GET /v1/whiteboards')).toHaveLength(2);
     const pull = new URL(w.client.of(`GET /v1/scopes/${w.org}/events`)[0]!.target, 'https://h');
     expect(pull.searchParams.get('kinds')).toBe('whiteboard.entry,whiteboard.edit,whiteboard.delete');
     expect(pull.searchParams.has('task')).toBe(false);
     const view = projectBoard(w.store.getState().events[w.org], board, [], null);
     expect((view.items[0] as { text: string }).text).toBe('Hello');
-    // a reload lists again, the events were pulled once
+    // a reload lists the first page again, the events were pulled once
     await loadBoard(w.context, board);
-    expect(w.client.of('GET /v1/whiteboards')).toHaveLength(4);
+    expect(w.client.of('GET /v1/whiteboards')).toHaveLength(3);
+    expect(state().rows.map((r) => r.entry_id)).toEqual([a]);
     expect(w.client.of(`GET /v1/scopes/${w.org}/events`)).toHaveLength(1);
   });
 
@@ -168,6 +186,60 @@ describe('loadBoard', () => {
     expect(w.store.getState().whiteboards.boards[boardKey(board)]!.code).toBe('not_found');
   });
 
+  it('reads no older page while loading, before the first page or after a reload, and records page failures', async () => {
+    const w = await boardWorld();
+    const board = orgBoard(w.org);
+    const key = boardKey(board);
+    w.client.on(`GET /v1/scopes/${w.org}/events`, () => empty);
+    // nothing loaded yet
+    await loadBoardPage(w.context, board);
+    expect(w.client.calls).toEqual([]);
+    expect(boardPaging(w.context, board, null)).toMatchObject({ hasMore: false, loading: false });
+    let answer: () => unknown = () => ({ entries: [row('a', w.org)], next_before: 'c1' });
+    w.client.on('GET /v1/whiteboards', () => answer());
+    await loadBoard(w.context, board);
+    // while a page loads, a second request is not sent
+    setBoardLoading(w.store, key);
+    await loadBoardPage(w.context, board);
+    expect(w.client.of('GET /v1/whiteboards')).toHaveLength(1);
+    expect(boardPaging(w.context, board, w.store.getState().whiteboards.boards[key]!).loading).toBe(true);
+    await loadBoard(w.context, board);
+    // a reload while the page is on its way: the late page is dropped
+    answer = async () => {
+      answer = () => ({ entries: [row('a', w.org)], next_before: 'c2' });
+      await loadBoard(w.context, board);
+      return { entries: [row('late', w.org)], next_before: null };
+    };
+    await loadBoardPage(w.context, board);
+    expect(w.store.getState().whiteboards.boards[key]!.next).toBe('c2');
+    expect(w.store.getState().whiteboards.boards[key]!.rows.map((r) => r.entry_id)).toEqual(['a']);
+    // a failed page keeps the rows; a sign-out drops a late page and a late failure
+    answer = () => {
+      throw new HubError('unavailable', 503);
+    };
+    await loadBoardPage(w.context, board);
+    expect(w.store.getState().whiteboards.boards[key]).toMatchObject({
+      status: 'error',
+      code: 'unavailable',
+      next: 'c2',
+    });
+    answer = () => {
+      w.store.reset();
+      return { entries: [], next_before: null };
+    };
+    await loadBoardPage(w.context, board);
+    expect(w.store.getState().whiteboards.boards).toEqual({});
+    w.client.on(`GET /v1/scopes/${w.org}/events`, () => empty);
+    answer = () => ({ entries: [], next_before: 'c3' });
+    await loadBoard(w.context, board);
+    answer = () => {
+      w.store.reset();
+      throw new HubError('unavailable', 503);
+    };
+    await loadBoardPage(w.context, board);
+    expect(w.store.getState().whiteboards.boards).toEqual({});
+  });
+
   it('keeps a running load as it is', async () => {
     const w = await boardWorld();
     const key = boardKey(orgBoard(w.org));
@@ -195,11 +267,11 @@ describe('loadHistory', () => {
       ],
     }));
     await loadHistory(w.context, board, a);
-    expect(w.store.getState().whiteboards.histories[a]).toEqual({ status: 'ready', code: null });
+    expect(w.store.getState().whiteboards.histories[a]).toEqual({ status: 'ready', code: null, next: null });
     const entry = projectBoard(w.store.getState().events[w.org], board, [], null).entries.get(a)!;
     expect(entry.versions.map((v) => v.text)).toEqual(['v1', 'v2']);
     setHistoryLoad(w.store, a, 'ready');
-    expect(w.store.getState().whiteboards.histories[a]).toEqual({ status: 'ready', code: null });
+    expect(w.store.getState().whiteboards.histories[a]).toEqual({ status: 'ready', code: null, next: null });
     // a second load reads only what the reader has not settled yet (an unverifiable event stays as well)
     w.store.update('events', (events) => {
       const entries = new Map(events[w.org]!.entries);
@@ -224,12 +296,91 @@ describe('loadHistory', () => {
     const board = orgBoard(w.org);
     w.client.on('GET /v1/whiteboards/e1/history', () => ({ events: [{ scope_seq: 'x' }] }));
     await loadHistory(w.context, board, 'e1');
-    expect(w.store.getState().whiteboards.histories.e1).toEqual({ status: 'error', code: 'unavailable' });
+    expect(w.store.getState().whiteboards.histories.e1).toEqual({ status: 'error', code: 'unavailable', next: null });
     w.client.on('GET /v1/whiteboards/e2/history', () => null);
     await loadHistory(w.context, board, 'e2');
     expect(w.store.getState().whiteboards.histories.e2!.code).toBe('unavailable');
     await loadHistory(w.context, board, 'e3');
     expect(w.store.getState().whiteboards.histories.e3!.code).toBe('not_found');
+  });
+  it('reads the history newest first, page by page on demand', async () => {
+    const w = await boardWorld();
+    const board = orgBoard(w.org);
+    const a = await entryId('p');
+    const first = await boardEvent(w, board, 'whiteboard.entry', a, { level: 'org', text: 'v1' });
+    const edit = (text: string) =>
+      boardEvent(w, board, 'whiteboard.edit', a, { text, base_event_id: '0190f000-0000-7000-8000-0000000000b0' });
+    const [second, third] = [await edit('v2'), await edit('v3')];
+    w.client.on(`GET /v1/whiteboards/${a}/history`, (_body, target) =>
+      new URL(target, 'https://h').searchParams.get('before') === '5'
+        ? { events: [{ scope_seq: 2, received_at: null, event: first }], next_before: null }
+        : {
+            events: [
+              { scope_seq: 8, received_at: null, event: third },
+              { scope_seq: 5, received_at: null, event: second },
+            ],
+            next_before: 5,
+          },
+    );
+    const history = () => w.store.getState().whiteboards.histories[a] ?? null;
+    expect(historyPaging(w.context, board, a, history())).toMatchObject({ hasMore: false, loading: false });
+    await loadHistoryPage(w.context, board, a);
+    expect(w.client.calls).toEqual([]);
+    await loadHistory(w.context, board, a);
+    expect(w.client.calls[0]!.target).toBe(`/v1/whiteboards/${a}/history?limit=${HISTORY_PAGE}`);
+    expect(history()).toEqual({ status: 'ready', code: null, next: 5 });
+    // the page is read in ascending order
+    expect(w.ingested.at(-1)!.items.map((item) => item.scope_seq)).toEqual([5, 8]);
+    expect(historyPaging(w.context, board, a, history())).toMatchObject({ hasMore: true, loading: false });
+    historyPaging(w.context, board, a, history()).loadMore();
+    expect(historyPaging(w.context, board, a, history()).loading).toBe(true);
+    // while a page loads, no second request
+    await loadHistoryPage(w.context, board, a);
+    await expect.poll(() => history()!.status).toBe('ready');
+    expect(w.client.calls).toHaveLength(2);
+    expect(w.client.calls[1]!.target).toBe(`/v1/whiteboards/${a}/history?limit=${HISTORY_PAGE}&before=5`);
+    expect(history()!.next).toBeNull();
+    await loadHistoryPage(w.context, board, a);
+    expect(w.client.calls).toHaveLength(2);
+    // a failed older page keeps its position for a retry
+    setHistoryLoad(w.store, a, 'ready', null, 5);
+    w.client.on(`GET /v1/whiteboards/${a}/history`, () => {
+      throw new HubError('rate_limited', 429);
+    });
+    await loadHistoryPage(w.context, board, a);
+    expect(history()).toEqual({ status: 'error', code: 'rate_limited', next: 5 });
+  });
+
+  it('asks a hub without paging once more without it and remembers that hub', async () => {
+    const w = await boardWorld();
+    const board = orgBoard(w.org);
+    const a = await entryId('o');
+    const first = await boardEvent(w, board, 'whiteboard.entry', a, { level: 'org', text: 'v1' });
+    w.client.on(`GET /v1/whiteboards/${a}/history`, (_body, target) => {
+      if (target.includes('?')) throw new HubError('request_invalid', 400);
+      return { events: [{ scope_seq: 2, received_at: null, event: first }], truncated: true };
+    });
+    await loadHistory(w.context, board, a);
+    expect(w.client.calls.map((call) => call.target)).toEqual([
+      `/v1/whiteboards/${a}/history?limit=${HISTORY_PAGE}`,
+      `/v1/whiteboards/${a}/history`,
+    ]);
+    expect(w.store.getState().whiteboards.histories[a]).toEqual({ status: 'ready', code: null, next: null });
+    await loadHistory(w.context, board, a);
+    expect(w.client.calls.map((call) => call.target).slice(2)).toEqual([`/v1/whiteboards/${a}/history`]);
+    expect(historyTarget('x y', 3)).toBe('/v1/whiteboards/x%20y/history?limit=50&before=3');
+    // a failure that is not a hub answer
+    w.client.on(`GET /v1/whiteboards/${a}/history`, () => {
+      throw new TypeError('offline');
+    });
+    await loadHistory(w.context, board, a);
+    expect(w.store.getState().whiteboards.histories[a]).toMatchObject({ status: 'error', code: 'unavailable' });
+    const fresh = await boardWorld();
+    fresh.client.on('GET /v1/whiteboards/e/history', () => {
+      throw new TypeError('offline');
+    });
+    await loadHistory(fresh.context, orgBoard(fresh.org), 'e');
+    expect(fresh.client.calls).toHaveLength(1);
   });
 });
 

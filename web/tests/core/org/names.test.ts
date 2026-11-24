@@ -11,7 +11,7 @@ import { newHeader, sealEvent } from '../../../src/core/crypto/event';
 import { checkEvent, openCheckedEvent } from '../../../src/core/log/events';
 import { epochKey, ORG } from '../../../src/core/log/state';
 import { HubError } from '../../../src/core/net/signedFetch';
-import { createInvite, inviteStatuses } from '../../../src/core/org/invites';
+import { createInvite, inviteHints, inviteStatuses } from '../../../src/core/org/invites';
 import { memberRows, selectOwnName } from '../../../src/core/org/members';
 import { closeSettledInvites, giveName } from '../../../src/core/org/names';
 import { type EventEntry, putEvents } from '../../../src/core/store/slices/events';
@@ -356,7 +356,10 @@ describe('settled invitations', () => {
       state: 'used',
       registered_user: a.cy.id,
     } as never);
-    const rows = new Map((await inviteStatuses(w.context, w.org)).map((row) => [row.inviteId, row]));
+    const state = w.context.store.getState().orgs.byId[w.org]!.log!.state;
+    const hints = await inviteHints(w.context, w.org);
+    const statuses = inviteStatuses(state, hints.rows, true, w.context.now());
+    const rows = new Map(statuses.map((row) => [row.inviteId, row]));
     expect(rows.get(forBob)).toMatchObject({ status: 'settled', acceptedBy: a.bob.id });
     expect(rows.get(forCy)).toMatchObject({ status: 'settled', acceptedBy: a.cy.id });
     expect(rows.get(forStranger)).toMatchObject({ status: 'registered', acceptedBy: undefined });
@@ -379,6 +382,25 @@ describe('settled invitations', () => {
     expect(w.world.state.invites.get(forStranger)!.revokedSeq).toBeNull();
     expect(await closeSettledInvites(w.context, w.org, 'not-a-member')).toEqual([]);
     expect(revoked).toHaveLength(2);
+  });
+
+  it('reads the hub list page by page and refuses without a verified log', async () => {
+    const { w, a, ids, revoked, registeredBy } = await invitations();
+    const [forBob, againBob] = ids as [string, string];
+    registeredBy(forBob, a.bob.id);
+    registeredBy(againBob, a.bob.id);
+    const rows = () => [...w.hub.invites.values()].map(({ package_ct: _p, ...row }) => row);
+    // two pages, the second repeating the last row of the first (a row moved between the reads)
+    w.client.on(`GET /v1/orgs/${w.org}/invites`, (_body, target) => {
+      const all = rows();
+      return new URL(target, 'https://hub.example').searchParams.get('before') === null
+        ? { invites: all.slice(0, 2), next_before: 'cursor' }
+        : { invites: all.slice(1), next_before: null };
+    });
+    expect((await closeSettledInvites(w.context, w.org, a.bob.id)).sort()).toEqual([forBob, againBob].sort());
+    expect(revoked.sort()).toEqual([forBob, againBob].sort());
+    w.client.on('GET /v1/orgs/elsewhere/invites', () => ({ invites: [] }));
+    await expect(closeSettledInvites(w.context, 'elsewhere', a.bob.id)).rejects.toMatchObject({ code: 'log_empty' });
   });
 });
 

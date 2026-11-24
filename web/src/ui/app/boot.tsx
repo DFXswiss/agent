@@ -1,6 +1,7 @@
 // Start of the client (06-web.md sections 2.2, 2.6, 10.4, 12.6): locale, configuration check against the hub, browser
 // support, the persistence and the stored session (a reload is `locked`: the passkey is needed again), then the app
-// with its router – or the blocking error page / the unsupported-browser page.
+// with its router – or the blocking error page / the unsupported-browser page. Once the hub is known, the long-task
+// early warning starts (ADR-086 section 5), signed in or not; its code is a lazy chunk (not in the first load).
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Credentials } from '../../core/account/ceremony';
@@ -32,7 +33,26 @@ export interface BootInput {
   /** What the browser lacks (default: `missingFeatures` of the page). */
   readonly missing?: () => Promise<readonly Feature[]>;
   readonly store?: Store;
+  /** Starts the long-task early warning (default: `startLongTaskMonitor` on the page's window). */
+  readonly longTasks?: (hub: LongTaskHub) => void;
 }
+
+export interface LongTaskHub {
+  readonly origin: string;
+  readonly version: string;
+  readonly fetch: typeof globalThis.fetch;
+}
+
+/** Nothing: the page then runs without the long-task early warning. */
+const withoutMonitor = (): void => undefined;
+
+/** The long-task early warning of the page, loaded after the start (not part of the first load, 06-web.md 12.2); a
+ * chunk that cannot be loaded leaves the page without it. */
+const pageLongTasks = (hub: LongTaskHub): void =>
+  void import('../../core/monitoring/longtasks').then(
+    (monitor) => void monitor.startLongTaskMonitor(monitor.browserMonitorOptions(window, hub)),
+    withoutMonitor,
+  );
 
 export async function boot(input: BootInput): Promise<ConfigResult> {
   const { container, fetch, rootKey, origin, languages } = input;
@@ -50,6 +70,7 @@ export async function boot(input: BootInput): Promise<ConfigResult> {
     page(<ErrorPage code={result.code} />);
     return result;
   }
+  (input.longTasks ?? pageLongTasks)({ origin: result.config.origin, version: result.config.version, fetch });
   const missing = await (input.missing ?? missingFeatures)();
   const persist = missing.length === 0 ? await Persist.open(input.indexedDB).catch(() => null) : null;
   if (persist === null) {

@@ -529,7 +529,7 @@ def test_the_task_ends_at_once_without_a_pool_and_logs_failing_rounds(
         await tasks.run(on)
         assert (len(calls), sleeps) == (2, [tasks.TICK_S, tasks.TICK_S])
         assert log.getvalue() == "runner.model operator_tick_failed error=RuntimeError\n"
-        assert [spec.name for spec in tasks.TASKS] == ["operator_subscriptions", "model_fallback"]
+        assert [spec.name for spec in tasks.TASKS] == ["operator_subscriptions", "model_fallback", "usage_merge"]
 
     asyncio.run(main())
 

@@ -4,7 +4,7 @@
 // the org world.
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { fromLocalInput, localInput } from '../../src/ui/screens/audit/AuditView';
+import { fromLocalInput, localInput, MAX_ROWS, PAGE, WINDOW } from '../../src/ui/screens/audit/AuditView';
 import { AuditScreen } from '../../src/ui/screens/audit/AuditScreen';
 import { AuditTab } from '../../src/ui/task-tabs/audit/AuditTab';
 import { tab } from '../../src/ui/task-tabs/audit';
@@ -199,6 +199,13 @@ describe('audit view', () => {
     });
     expect((field('action') as HTMLInputElement).value).toBe('log');
     expect((field('task') as HTMLInputElement).value).toBe('');
+    // applying empty fields filters by nothing
+    fireEvent.change(field('action'), { target: { value: '' } });
+    fireEvent.click(field('apply'));
+    expect(router.state.location.search).toBe('');
+    await act(async () => {
+      await router.navigate(`/o/${w.org}/audit?action=log`);
+    });
     fireEvent.click(field('reset'));
     expect(router.state.location.search).toBe('');
     expect((field('action') as HTMLInputElement).value).toBe('');
@@ -230,6 +237,70 @@ describe('audit view', () => {
     });
     expect(await screen.findByTestId('audit.error')).toHaveTextContent('(not_found)');
     expect(screen.getByTestId('audit.empty')).toBeInTheDocument();
+  });
+
+  it('windows many rows, pages with the cursor and pulls each task title once (ADR-086 section 1)', async () => {
+    const { w, wg } = await world();
+    w.client.on(`GET /v1/scopes/${wg}/events`, () => ({ events: [], next_before: null, head: 0 }));
+    const page = (newest: number, count: number) =>
+      Array.from({ length: count }, (_, i) =>
+        auditRow(newest - i, T0 + newest - i, {
+          action: 'event.append',
+          wg_id: wg,
+          task_id: i % 2 === 0 ? TASK : TASK2,
+        }),
+      );
+    w.client.on(`GET /v1/orgs/${w.org}/audit`, (_body, target) =>
+      target.includes('before=')
+        ? { rows: page(150, 150), next_before: null }
+        : { rows: page(300, 150), next_before: 'c1' },
+    );
+    mountScreen(w);
+    await waitFor(() => expect(screen.getAllByTestId('audit.row')).toHaveLength(WINDOW));
+    const list = screen.getByTestId('audit.rows');
+    expect(list.closest('[data-list]')).toHaveAttribute('data-list', 'audit');
+    expect(list.tagName).toBe('OL');
+    expect(row(300)).toBeInTheDocument();
+    expect(within(row(300)).getByTestId('audit.row.task')).toHaveTextContent('Fix the build');
+    // the window reaches the loaded end before "Load more" is offered
+    expect(screen.queryByTestId('audit.more')).toBeNull();
+    fireEvent.click(screen.getByTestId('audit.rows.older'));
+    expect(screen.getAllByTestId('audit.row')).toHaveLength(150);
+    fireEvent.click(screen.getByTestId('audit.more'));
+    await waitFor(() => expect(screen.getAllByTestId('audit.row')).toHaveLength(150 + PAGE));
+    expect(w.client.of(`GET /v1/orgs/${w.org}/audit`).at(-1)!.target).toContain('before=c1');
+    fireEvent.click(screen.getByTestId('audit.rows.older'));
+    expect(screen.getAllByTestId('audit.row')).toHaveLength(MAX_ROWS);
+    expect(screen.getByTestId('audit.rows.newer')).toBeInTheDocument();
+    // the titles are read per list and workgroup (`task.meta` pages, core/tasks/list.ts `titles`), never per row
+    const pulls = w.client
+      .of(`GET /v1/scopes/${wg}/events`)
+      .map((call) => new URL(call.target, 'http://x').searchParams);
+    expect(pulls.length).toBeGreaterThan(0);
+    expect(pulls.length).toBeLessThanOrEqual(3);
+    for (const params of pulls) {
+      expect(params.get('task')).toBeNull();
+      expect(params.get('kinds')).toBe('task.meta');
+    }
+  });
+
+  it('offers "Load more" while a time filter hides every loaded row', async () => {
+    const { w, wg } = await world();
+    let seq = 1000;
+    let inRange = false;
+    w.client.on(`GET /v1/orgs/${w.org}/audit`, () => {
+      seq -= 1;
+      const at = inRange ? T0 : T0 + 50_000;
+      return { rows: [auditRow(seq, at, { wg_id: wg })], next_before: `c${seq}` };
+    });
+    mountScreen(w, `?to=${encodeURIComponent(iso(T0 + 1000))}`);
+    const more = await screen.findByTestId('audit.more');
+    expect(screen.getByTestId('audit.empty')).toBeInTheDocument();
+    expect(screen.queryByTestId('audit.rows')).toBeNull();
+    inRange = true;
+    fireEvent.click(more);
+    expect(await screen.findAllByTestId('audit.row')).toHaveLength(1);
+    expect(screen.queryByTestId('audit.empty')).toBeNull();
   });
 
   it('marks rows written by an agent: the name of an own agent, else "by agent" (11-agent-access.md section 7)', async () => {
@@ -317,8 +388,11 @@ describe('audit view', () => {
   it('works for an org whose log is not verified yet', async () => {
     const { w } = await world();
     w.client.on('GET /v1/orgs/other-org/audit', () => ({ rows: [], next_before: null }));
+    // the own agents are known already: not read again
+    setAgents(w.store, []);
     mount(w, [{ path: '/o/:org/audit', element: <AuditScreen /> }], '/o/other-org/audit');
     expect(await screen.findByTestId('audit.empty')).toBeInTheDocument();
+    expect(w.client.of('GET /v1/me/agents')).toHaveLength(0);
     expect(within(screen.getByTestId('audit.filter.actor')).getAllByRole('option')).toHaveLength(1);
     expect(screen.queryByTestId('audit.verify')).toBeNull();
   });

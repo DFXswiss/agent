@@ -74,7 +74,13 @@ describe('backoff', () => {
 });
 
 function setup(
-  options: { cursors?: Record<string, number>; terminals?: string[]; monitoring?: boolean; now?: boolean } = {},
+  options: {
+    cursors?: Record<string, number>;
+    terminals?: string[];
+    monitoring?: boolean;
+    now?: boolean;
+    resyncKinds?: string[];
+  } = {},
 ) {
   const client = new FakeLiveClient();
   const timers = new ManualTimers();
@@ -91,6 +97,7 @@ function setup(
     ...(options.now !== false && { now: () => timers.now }),
     ...(options.terminals !== undefined && { terminals: options.terminals }),
     ...(options.monitoring !== undefined && { monitoring: options.monitoring }),
+    ...(options.resyncKinds !== undefined && { resyncKinds: options.resyncKinds }),
     handlers: {
       events: (scope, items) => {
         delivered.push([scope, items]);
@@ -333,6 +340,44 @@ describe('live channel', () => {
     // the slices learn of it like of a hello (rows whose frames the hub dropped are loaded again; KOR-05, A-23)
     expect(t.frames.map(([type]) => type)).toEqual(['hello', 'resync']);
     expect(t.frames[1]).toEqual(['resync', { reason: 'buffer_overflow' }]);
+  });
+
+  it('drops a resync that arrives while an earlier one still waits in the queue (HOT-05, KOR-35)', async () => {
+    const t = setup({ cursors: { [SCOPE_A]: 1 } });
+    t.client.pull = (_scope, after) => ({ events: [], next_after: null, head: after });
+    t.channel.start();
+    await settle();
+    t.client.last.frame('hello', hello({}));
+    await settle();
+    // a burst of large frames: the hub sends one resync per frame, all read in one chunk before any is handled
+    const resync = 'event: resync\ndata: {"reason":"buffer_overflow"}\n\n';
+    t.client.last.send(resync.repeat(50));
+    await settle();
+    expect(t.client.pulls).toEqual([`${SCOPE_A}:1`]);
+    expect(t.frames.map(([type]) => type)).toEqual(['hello', 'resync']);
+    // a later resync is handled again
+    t.client.last.send(resync);
+    await settle();
+    expect(t.client.pulls).toEqual([`${SCOPE_A}:1`, `${SCOPE_A}:1`]);
+    expect(t.frames.map(([type]) => type)).toEqual(['hello', 'resync', 'resync']);
+  });
+
+  it('pulls only the resync kinds after resync, without skipping ahead, and moves the cursor to the head', async () => {
+    const t = setup({ cursors: { [SCOPE_A]: 1 }, resyncKinds: ['task.meta', 'prompt'] });
+    t.client.pull = (_scope, after) =>
+      after === 1
+        ? { events: [stored(9000)], next_after: 9000, head: 20_000 }
+        : { events: [], next_after: null, head: 20_000 };
+    t.channel.start();
+    await settle();
+    t.client.last.frame('hello', hello({}));
+    await settle();
+    t.client.last.frame('resync', { reason: 'buffer_overflow' });
+    await settle();
+    expect(t.client.pulls).toEqual([`${SCOPE_A}:1:task.meta,prompt`, `${SCOPE_A}:9000:task.meta,prompt`]);
+    expect(t.seqs()).toEqual(['a9000']);
+    expect(t.cursors.get(SCOPE_A)).toBe(20_000);
+    expect(t.status()).toBe('live');
   });
 
   it('passes other frames on and ignores malformed ones', async () => {

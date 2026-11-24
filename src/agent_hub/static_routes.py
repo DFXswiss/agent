@@ -26,7 +26,8 @@ MANIFEST_FILE = "build-manifest.json"
 GUIDE_FILE = "agents.md"
 ASSET_CACHE = "public, max-age=31536000, immutable"
 PAGE_CACHE = "no-cache"
-# 06-web.md section 2.4, path parameters as single segments.
+# 06-web.md section 2.4, path parameters as single segments; the same set as the route patterns of the web client
+# (`web/src/ui/screens/*/routes.tsx`, checked by `test_spa_routes_are_the_routes_of_the_web_client`).
 SPA_ROUTES = (
     "/",
     "/invite",
@@ -34,6 +35,7 @@ SPA_ROUTES = (
     "/login",
     "/recover",
     "/o/{org}",
+    "/o/{org}/tasks",
     "/o/{org}/w/{wg}",
     "/o/{org}/t/{task}",
     "/o/{org}/s/{session}",
@@ -41,11 +43,15 @@ SPA_ROUTES = (
     "/o/{org}/w/{wg}/whiteboard",
     "/o/{org}/members",
     "/o/{org}/workgroups",
+    "/o/{org}/pulls",
+    "/o/{org}/w/{wg}/pulls",
     "/o/{org}/w/{wg}/settings",
     "/o/{org}/devices",
     "/o/{org}/monitoring",
     "/o/{org}/audit",
+    "/o/{org}/github",
     "/notifications",
+    "/community",
     "/settings",
     "/platform/invites",
     "/security",

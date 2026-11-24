@@ -100,7 +100,7 @@ export function PullRow({
   const state = display.kind === 'found' ? display.state : display.kind;
   const conflict = display.kind === 'found' ? display.conflict : null;
   return (
-    <li
+    <div
       className="flex min-w-0 flex-col gap-2 border-b border-gray-100 px-2 py-3"
       data-testid="pulls.item"
       data-pull={pull === null ? '' : pullLabel(pull)}
@@ -222,6 +222,6 @@ export function PullRow({
           {error(action.code).title}
         </p>
       )}
-    </li>
+    </div>
   );
 }

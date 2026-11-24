@@ -30,5 +30,7 @@
   "task.empty": "Für diese Aufgabe fielen keine Kosten an.",
   "task.total": "Gesamt {amount}",
   "task.session": "Session {session}: Modell {tokens} ({count} Tokens), Laufzeit {runtime} ({duration})",
-  "no-topup": "Guthaben schreibt der Betreiber gut; eine Zahlung in der Oberfläche gibt es nicht."
+  "no-topup": "Guthaben schreibt der Betreiber gut; eine Zahlung in der Oberfläche gibt es nicht.",
+  "task.truncated": "Der Hub hat nur einen Teil der Sitzungen gesendet (ein älterer Hub ohne Seiten).",
+  "credits.truncated": "Es werden nur die neuesten 100 Guthabenbuchungen angezeigt."
 }

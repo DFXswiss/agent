@@ -114,12 +114,18 @@ When an org's `exhausted` changes the hub sends `reconcile {}` to the devices as
   `{currency, balance_micro_usd, exhausted, billing_active, price_list: {version, valid_from, body} | null,
   credits: [{at, kind, amount_micro_usd, balance_micro_usd, reason, actor}] (newest 100), days: [{day,
   tokens_micro_usd, runtime_micro_usd, tokens, runtime_ms}] (last 30 UTC days), workgroups: [{wg_id,
-  tokens_micro_usd, runtime_micro_usd, tokens, runtime_ms}] (last 30 days)}`.
+  tokens_micro_usd, runtime_micro_usd, tokens, runtime_ms}] (last 30 days), credits_truncated?: true}`
+  (`credits_truncated` when older credit entries exist, ADR-086 section 2).
 - `GET /v1/workgroups/{wg_id}/charges` (browser, `wg:read`; read log `read.workgroup.charges`): `{tasks: [{task_id,
-  tokens_micro_usd, runtime_micro_usd, tokens, runtime_ms}] (last 30 days, by total descending, at most 200),
-  total_micro_usd}`.
+  tokens_micro_usd, runtime_micro_usd, tokens, runtime_ms}] (last 30 days, by total descending, at most 200;
+  `truncated: true` when cut), total_micro_usd}`.
 - `GET /v1/tasks/{task_id}/charges` (browser, `wg:read` of the task's workgroup; read log `read.task.charges`):
-  `{sessions: [{session_id, tokens_micro_usd, runtime_micro_usd, tokens, runtime_ms}], total_micro_usd}`.
+  `{sessions: [{session_id, tokens_micro_usd, runtime_micro_usd, tokens, runtime_ms}] (by first charge, at most
+  10 000; `truncated: true` when cut), total_micro_usd}`.
+- Both charge lists take `?before=&limit=` (optional, 03-api.md section 1 Pagination; ADR-086 section 2): one page
+  (default 50, max 200) newest first by the UUIDv7 ID of the task or session (its creation order: a page stays stable
+  while charges arrive) and `next_before` (the opaque cursor with the ID as key and time 0). `total_micro_usd` is
+  always that of the whole workgroup (30 days) or task.
 - Per person (KOR-46, ADR-083 §2): the org billing (last 30 days) and the task charges also carry `people:
   [{user_id, tokens_micro_usd, runtime_micro_usd, tokens, runtime_ms}]` (largest first; `user_id` null for
   unattributed consumption): every charge keeps the `triggered_by` of its `usage`/`runtime` item (the person whose
@@ -156,8 +162,9 @@ sessions on own access there are never touched.
 - Header item: balance (`$12.34`), red with "Credit used up" when exhausted; hidden when billing is inactive.
 - Settings section "Credit and usage" (USD only) (org): balance, exhausted notice ("Paid resources are paused until the operator
   adds credit. Own devices with own model access keep working."), price list in force (per Mtok after factor, per VM
-  hour), history of credits, consumption per day and per workgroup. No top-up control.
-- Task view: charges per session (tokens, runtime) and total; a provider-key share without a session is visible in
+  hour), history of credits (the newest 100, with a note when older entries exist), consumption per day and per workgroup. No top-up control.
+- Task view: charges per session (tokens, runtime) and total (the sessions are a windowed list `task.charges`, ADR-086
+  section 1, newest first, read page by page with "Load more"); a provider-key share without a session is visible in
   the organization's consumption only.
 - Settings section "Model access" (user): "Use DFX access when my own subscription is used up" (default off) and
   "… when the operator's subscriptions are used up" (default on), ADR-081 §1; the card `quota_choice` asks per task.

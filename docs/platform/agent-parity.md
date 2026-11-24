@@ -166,6 +166,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | credit-balance | shell (header item "Credit": the balance, "Credit used up") | `billing --org` | done |
 | diagnose | – (agent only) | `diagnose` | done |
 | error-pages | screens/errors, screens/notfound | (no action: every failure of the tool is one JSON object with error and next) | n/a |
+| ui-health-report | shell (the browser's automatic, anonymous UI health report, ADR-086 section 5) | (no action: a browser measures its own main-thread blocks; nothing a person does or reads) | n/a |
 
 ## Routes
 
@@ -266,6 +267,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `PUT /v1/tasks/{task}/github-identity` | task-github-identity |
 | `POST /v1/tasks/{task}/prompts/{event}/withdraw` | task-prompt-withdraw |
 | `GET /v1/tasks/{task}/queue` | task-queue, task-prompt-withdraw |
+| `POST /v1/telemetry/ui` | ui-health-report |
 | `GET /v1/users/lookup` | members-admit |
 | `GET /v1/users/{user}/identity` | members-admit |
 | `GET /v1/whiteboards` | whiteboard-list |

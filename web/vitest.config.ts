@@ -36,7 +36,13 @@ export default defineConfig({
       exclude: ['src/**/*.d.ts'],
       thresholds: { 'src/core/**': FULL },
       // @ts-expect-error option of vitest-monocart-coverage, passed through to monocart-coverage-reports
-      coverageReportOptions: vitestCoverage,
+      coverageReportOptions: {
+        ...vitestCoverage,
+        // a run that ended before its report (killed, interrupted) leaves its cache behind, and the next run would
+        // merge those stale sources in: an older version of a changed file then counts as a file of its own in the
+        // merged gate, with the coverage of that old version (KOR-35)
+        cleanCache: true,
+      },
     },
   },
 });

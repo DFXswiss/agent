@@ -24,5 +24,6 @@
   "state.used": "Used",
   "state.revoked": "Revoked",
   "state.expired": "Expired",
-  "revoke": "Revoke"
+  "revoke": "Revoke",
+  "list.truncated": "The hub sent only the newest invitations of a longer list."
 }

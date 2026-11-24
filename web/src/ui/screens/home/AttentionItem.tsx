@@ -20,7 +20,7 @@ import type { Directory } from '../../../core/tasks/directory';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
-import { durationLabel, TaskItem } from '../tasks/TaskItem';
+import { durationLabel, TaskEntry } from '../tasks/TaskItem';
 import { Actions } from './Actions';
 import { PullLine } from './PullLine';
 import { SessionTree } from './SessionTree';
@@ -68,7 +68,7 @@ function Item({ org, id, category, state, userId, directory, now }: AttentionIte
   const assign = state.isAdmin(userId) || (state.private && writer);
   const target = `/o/${encodeURIComponent(org)}/t/${encodeURIComponent(id)}`;
   return (
-    <TaskItem
+    <TaskEntry
       org={org}
       row={task}
       directory={directory}
@@ -132,7 +132,7 @@ function Item({ org, id, category, state, userId, directory, now }: AttentionIte
         </button>
       </div>
       {open && <SessionTree task={id} subagents={row.subagents_total} />}
-    </TaskItem>
+    </TaskEntry>
   );
 }
 

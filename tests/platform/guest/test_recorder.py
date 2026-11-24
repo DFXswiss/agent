@@ -18,6 +18,7 @@ import pytest
 
 from agent_guest import recorder, tmux
 from agent_guest.control import ControlContext
+from agent_guest.limits import TERMINAL, TerminalLimits
 from agent_guest.recorder import CastFile, Recorder, TerminalRecorder
 
 SID = "01a1ee56-5e00-7003-8f1b-340691d99f03"
@@ -64,13 +65,12 @@ def test_offsets_never_decrease_and_markers_are_events() -> None:
     assert rec.last_ms == 1500
 
 
-def test_records_hold_at_most_16_kib_of_data_and_4096_frames() -> None:
+def test_events_hold_at_most_16_kib_of_data_and_records_4096_frames() -> None:
     rec = Recorder()
-    rec.output(("€" * 6000).encode(), 1)  # 18000 bytes: split into two events
-    assert rec.pending_bytes == 18000
-    bodies = rec.take()
-    assert [len(body["frames"]) for body in bodies] == [1, 1]
-    assert all(sum(len(frame[2].encode()) for frame in body["frames"]) <= recorder.MAX_RECORD for body in bodies)
+    rec.output(("€" * 6000).encode(), 1)  # 18000 bytes: split into two events of one record
+    assert rec.pending_json == 18000 + 2 * len('[1,"o",""],')
+    (body,) = rec.take()
+    assert [len(frame[2].encode()) for frame in body["frames"]] == [16383, 1617]
     for index in range(recorder.MAX_FRAMES + 2):
         rec.output(b"z", index)
     bodies = rec.take()
@@ -103,28 +103,47 @@ def test_every_body_fits_the_terminal_event_limit_after_json_escaping(label: str
         rec.output(chunk, 2**40 + index)
     bodies = rec.take(final=True)
     assert all(encoded_size(body) + 16 <= 64 * 1024 for body in bodies), label
-    assert all(sum(len(frame[2].encode()) for frame in body["frames"]) <= recorder.MAX_RECORD for body in bodies)
+    assert all(encoded_size(body) <= TERMINAL.record_json for body in bodies), label
     assert all(len(body["frames"]) <= recorder.MAX_FRAMES for body in bodies)
-    assert all(len(frame[2]) <= recorder.MAX_RECORD for body in bodies for frame in body["frames"])
+    assert all(len(frame[2].encode()) <= recorder.MAX_PIECE for body in bodies for frame in body["frames"])
     data = "".join(frame[2] for body in bodies for frame in body["frames"])
     assert data == b"".join(chunks).decode("utf-8", errors="replace")
 
 
-def test_a_body_fills_the_limit_exactly_and_one_byte_more_starts_the_next() -> None:
+@pytest.mark.parametrize("limit", [TERMINAL.record_json, recorder.MAX_BODY_JSON, recorder.MAX_BODY_JSON + 1])
+def test_a_body_fills_the_limit_exactly_and_one_byte_more_starts_the_next(limit: int) -> None:
+    bound = min(limit, recorder.MAX_BODY_JSON)  # never beyond the ciphertext bound of E8
     head: list[list[Any]] = [[0, "o", "\x1b" * 2730]] * 3 + [[0, "o", "\x1b" * 1620]]
-    fill = recorder.MAX_BODY_JSON - encoded_size({"offset_ms_start": 0, "frames": head, "cols": 160, "rows": 48})
+    fill = bound - encoded_size({"offset_ms_start": 0, "frames": head, "cols": 160, "rows": 48})
     for extra, expected in ((0, [4]), (1, [3, 1])):
-        rec = Recorder()
+        rec = Recorder(record_json=limit)
         for _ in range(3):
             rec.output(b"\x1b" * 2730, 0)
         rec.output(b"\x1b" * 1620 + b"x" * (fill + extra), 0)
         bodies = rec.take()
         assert [len(body["frames"]) for body in bodies] == expected
-        assert sum(len(frame[2]) for body in bodies for frame in body["frames"]) <= recorder.MAX_RECORD
-        assert [encoded_size(body) <= recorder.MAX_BODY_JSON for body in bodies] == [True] * len(bodies)
-    assert encoded_size(Recorder._body(Recorder(), [*head[:3], [0, "o", head[3][2] + "x" * fill]])) == (
-        recorder.MAX_BODY_JSON
-    )
+        assert [encoded_size(body) <= bound for body in bodies] == [True] * len(bodies)
+    assert encoded_size(Recorder._body(Recorder(), [*head[:3], [0, "o", head[3][2] + "x" * fill]])) == bound
+
+
+def test_whole_takes_only_full_records_and_keeps_the_rest_in_order() -> None:
+    # body keys 54 bytes, an event 20 bytes and its separator: four events fill 137 bytes exactly
+    assert not Recorder(record_json=137).full
+    rec = Recorder(record_json=137)
+    for index in range(10):
+        rec.output(b"abcdefghij", index)
+    assert rec.full
+    bodies = rec.take(whole=True)
+    assert [[frame[0] for frame in body["frames"]] for body in bodies] == [[0, 1, 2, 3], [4, 5, 6, 7]]
+    assert (rec.full, rec.pending_json) == (False, 2 * len('[8,"o","abcdefghij"],'))
+    (rest,) = rec.take()
+    assert [frame[0] for frame in rest["frames"]] == [8, 9]
+    assert rec.pending_json == 0
+    many = Recorder(record_json=10**9)
+    for index in range(recorder.MAX_FRAMES + 1):
+        many.output(b"z", index)
+    assert many.full  # by the number of events
+    assert [len(body["frames"]) for body in many.take(whole=True)] == [recorder.MAX_FRAMES]
 
 
 def test_split_bounds_the_escaped_size_of_a_piece() -> None:
@@ -270,6 +289,9 @@ def test_pane_output_is_journaled_after_100_ms_and_copied_to_the_cast_file(
     assert seen == [1]
     ticks.value += 0.05
     rec.step()
+    assert terminal(context) == []  # 100 ms after the first output, but output came 50 ms ago
+    ticks.value += 0.07
+    rec.step()
     (body,) = terminal(context)
     assert body == {"offset_ms_start": 250, "frames": [[250, "o", "hello "], [300, "o", "€"]], "cols": 160,
                     "rows": 48}  # fmt: skip
@@ -282,7 +304,7 @@ def test_pane_output_is_journaled_after_100_ms_and_copied_to_the_cast_file(
     cast = [json.loads(line) for line in (base / "terminal.cast").read_text(encoding="utf-8").splitlines()]
     events = [[round(event[0] * 1000), event[1], event[2]] for event in cast[1:]]
     assert events == [frame for body in terminal(context) for frame in body["frames"]]
-    assert events[-1] == [350, "o", "more"]
+    assert events[-1] == [420, "o", "more"]
 
 
 def test_reads_continue_while_whole_chunks_arrive(make: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -295,15 +317,58 @@ def test_reads_continue_while_whole_chunks_arrive(make: Any, monkeypatch: pytest
     assert rec.drain() == 9
 
 
-def test_16_kib_are_flushed_at_once(context: ControlContext, make: Any) -> None:
+def test_a_full_record_is_written_at_once_and_the_rest_keeps_growing(
+    context: ControlContext, make: Any, ticks: Ticks
+) -> None:
     rec = make()
     rec.open()
-    for _ in range(recorder.MAX_RECORD // 1024):  # FIFO buffers can be smaller than 16 KiB
-        feed(rec, b"x" * 1024)
+    chunks = [bytes([65 + index % 26]) * 1024 for index in range(61)]
+    for chunk in chunks:  # FIFO buffers can be smaller than 60 KiB
+        feed(rec, chunk)
         rec.drain()
     assert rec.due() is True
     rec.step()
-    assert len(terminal(context)) == 1
+    (full,) = terminal(context)
+    assert TERMINAL.record_json - 1100 < encoded_size(full) <= TERMINAL.record_json
+    assert rec.recorder.pending
+    assert rec.due() is False
+    ticks.value += 0.1  # quiet: the rest is written
+    rec.step()
+    bodies = terminal(context)
+    assert len(bodies) == 2
+    assert "".join(frame[2] for body in bodies for frame in body["frames"]) == b"".join(chunks).decode()
+    assert rec.due() is False
+
+
+def test_sustained_output_is_written_once_a_second(context: ControlContext, make: Any, ticks: Ticks) -> None:
+    rec = make()
+    rec.open()
+    for _ in range(30):  # an event every 62.5 ms: never quiet for 100 ms
+        ticks.value += 0.0625
+        feed(rec, b"x")
+        rec.step()
+    assert [len(body["frames"]) for body in terminal(context)] == [17]  # the first event became 1 s old
+    ticks.value += 0.1
+    rec.step()
+    assert [len(body["frames"]) for body in terminal(context)] == [17, 13]
+
+
+def test_the_bounds_are_settings(context: ControlContext, make: Any, ticks: Ticks) -> None:
+    rec = make(limits=TerminalLimits(quiet_ms=250, max_age_ms=2000, record_json=200))
+    rec.open()
+    assert rec.recorder.record_json == 200
+    for _ in range(5):
+        feed(rec, b"x" * 40)
+        rec.drain()
+    rec.step()
+    assert [len(body["frames"]) for body in terminal(context)] == [2, 2]
+    assert all(encoded_size(body) <= 200 for body in terminal(context))
+    ticks.value += 0.125
+    rec.step()
+    assert len(terminal(context)) == 2
+    ticks.value += 0.125
+    rec.step()
+    assert [len(body["frames"]) for body in terminal(context)] == [2, 2, 1]
 
 
 def test_a_restarted_recorder_continues_the_offsets_with_a_marker(
@@ -364,7 +429,7 @@ def test_the_thread_records_until_stopped_and_survives_errors(
     monkeypatch.setattr(rec, "step", broken)
     while not calls:
         rec._stop.wait(0.01)
-    monkeypatch.setattr(recorder, "FLUSH_MS", 1)
+    rec.limits = TerminalLimits(quiet_ms=1)
     rec.stop()
     make().stop()  # never opened: nothing to do
 

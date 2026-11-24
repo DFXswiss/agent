@@ -1,10 +1,17 @@
 // What a board does (06-web.md section 6.1, 03-api.md sections 4.4 and 4.9, 04-crypto.md sections 4.3 and 5.12):
 //
 // - `loadBoard`: once per store generation the whiteboard events of the board's scope (`GET /v1/scopes/{scope}/events`,
-//   task boards filtered by `task`), then every page of the entry rows (`GET /v1/whiteboards?org|wg|task&level`). All
-//   events of a board are held anyway (the texts and histories come from them), so the rows are not paged in the UI. The texts come only from those events, read by the event reader; live events arrive
-//   over the channel (03-api.md section 5, `event`), so a second browser sees new entries at once;
-// - `loadHistory`: `GET /v1/whiteboards/{entry}/history` into the reader (every version of an entry);
+//   task boards filtered by `task`; newest first, at most `BOARD_PAGES` pages, ADR-086), then the first page of the
+//   entry rows (`GET /v1/whiteboards?org|wg|task&level&limit`, newest first); `loadBoardPage` reads the next older page
+//   on demand ("Load more", ADR-086 section 2) – never every page in a loop. An entry whose row is on a page not read
+//   yet is not taken for unlisted (`project.ts`, paged rows). The texts come only from the events, read by the event
+//   reader; live events arrive over the channel (03-api.md section 5, `event`), so a second browser sees new entries at
+//   once;
+// - `loadHistory`: the newest page of an entry's history (`GET /v1/whiteboards/{entry}/history?limit`, newest first)
+//   into the reader; `loadHistoryPage` the next older page on demand. A hub without paging answers `before`/`limit`
+//   with `400 request_invalid`: the request is repeated once without them (the whole history, capped by the hub) and
+//   the hub is remembered (per signed client) as one without paging; an answer without `next_before` has no older page;
+// - `boardPaging` / `historyPaging`: the `ListPaging` of a board's rows and of a history for the windowed lists;
 // - `createEntry` / `editEntry` / `deleteEntry`: the browser encrypts the body with the scope's current key, signs it
 //   (`lh` = the verified head) and sends it with `POST /v1/events` – a new entry optionally with `notify:true` (only
 //   `whiteboard.entry` may carry it); the stored event enters the reader at the returned `scope_seq`. Without the
@@ -17,13 +24,17 @@ import { formatTime } from '../encoding/time';
 import { newHeader, sealEvent } from '../crypto/event';
 import type { Secret } from '../crypto/secret';
 import { epochKey } from '../log/state';
+import type { ListPaging } from '../lists/window';
 import { HubError } from '../net/signedFetch';
 import type { StoredEvent } from '../net/sse';
 import { isRecord } from '../registry';
 import { orgEntry } from '../store/slices/orgs';
 import {
+  appendBoardRows,
+  type BoardLoad,
   isWhiteboardRow,
   keepWrite,
+  type Load,
   putBoardRows,
   setBoardError,
   setBoardLoading,
@@ -35,7 +46,7 @@ import { SendError, sendErrorCode } from '../tasks/send';
 import { type BoardLocation, boardKey, boardScope, canWriteBoard } from './location';
 import { DELETE, EDIT, ENTRY, validText, WHITEBOARD_KINDS } from './project';
 
-/** Rows per page of `GET /v1/whiteboards` (the maximum; every page is loaded). */
+/** Rows per page of `GET /v1/whiteboards` (the hub's maximum; further pages on demand). */
 export const PAGE_SIZE = 200;
 
 /** Failures after which the sealed event is kept for an identical retry. */
@@ -57,9 +68,25 @@ function highWater(context: TasksContext, scopeId: string): number {
   return Math.max(0, ...(scope === undefined ? [] : scope.entries.keys()));
 }
 
+/** Newest pages of whiteboard events a board reads (10 000 events: the hub's bound of one entry's history). */
+export const BOARD_PAGES = 10;
+
+/** One page of rows (`before`: the cursor of the older page, null for the newest). */
+async function rowsPage(
+  context: TasksContext,
+  location: BoardLocation,
+  before: string | null,
+): Promise<{ rows: WhiteboardRow[]; next: string | null }> {
+  const page = await context.client.request('GET', listTarget(location, before));
+  if (!isRecord(page) || !Array.isArray(page.entries) || !page.entries.every(isWhiteboardRow)) {
+    throw new HubError('unavailable', 200);
+  }
+  return { rows: page.entries, next: typeof page.next_before === 'string' ? page.next_before : null };
+}
+
 /**
- * Loads a board: first its events (once per store generation), then every page of its rows, so that every entry the
- * store held before the rows were listed is listed if the hub projected it (`checked`, `project.ts`).
+ * Loads a board: first its events (once per store generation, the newest `BOARD_PAGES` pages), then the first page of
+ * its rows with the scope position the store held before (`checked`, `project.ts`); older pages via `loadBoardPage`.
  */
 export async function loadBoard(context: TasksContext, location: BoardLocation): Promise<void> {
   const { store } = context;
@@ -70,23 +97,46 @@ export async function loadBoard(context: TasksContext, location: BoardLocation):
   try {
     await pullOnce(context, location.org, scopeId, {
       kinds: WHITEBOARD_KINDS,
+      pages: BOARD_PAGES,
       ...(location.task !== null && { task: location.task }),
     });
     const checked = highWater(context, scopeId);
-    const rows: WhiteboardRow[] = [];
-    let before: string | null = null;
-    do {
-      const page = await context.client.request('GET', listTarget(location, before));
-      if (!isRecord(page) || !Array.isArray(page.entries) || !page.entries.every(isWhiteboardRow)) {
-        throw new HubError('unavailable', 200);
-      }
-      rows.push(...page.entries.filter((row) => !rows.some((known) => known.entry_id === row.entry_id)));
-      before = typeof page.next_before === 'string' ? page.next_before : null;
-    } while (before !== null);
-    if (store.generation === generation) putBoardRows(store, key, rows, checked);
+    const { rows, next } = await rowsPage(context, location, null);
+    if (store.generation === generation) putBoardRows(store, key, rows, checked, next);
   } catch (error) {
     if (store.generation === generation) setBoardError(store, key, sendErrorCode(error));
   }
+}
+
+/**
+ * Reads the next older page of a loaded board's rows. Does nothing while the board loads, before its first page or
+ * when every row is listed; an answer for a cursor the board no longer has (a reload meanwhile) is dropped.
+ */
+export async function loadBoardPage(context: TasksContext, location: BoardLocation): Promise<void> {
+  const { store } = context;
+  const generation = store.generation;
+  const key = boardKey(location);
+  const board = store.getState().whiteboards.boards[key];
+  if (board === undefined || board.status === 'loading' || board.next === null) return;
+  const cursor = board.next;
+  setBoardLoading(store, key);
+  try {
+    const { rows, next } = await rowsPage(context, location, cursor);
+    if (store.generation === generation && store.getState().whiteboards.boards[key]!.next === cursor) {
+      appendBoardRows(store, key, rows, next);
+    }
+  } catch (error) {
+    if (store.generation === generation) setBoardError(store, key, sendErrorCode(error));
+  }
+}
+
+/** The server paging of a board's rows for its windowed list. */
+export function boardPaging(context: TasksContext, location: BoardLocation, load: BoardLoad | null): ListPaging {
+  return {
+    hasMore: load !== null && load.next !== null,
+    loading: load?.status === 'loading',
+    loadMore: () => void loadBoardPage(context, location),
+  };
 }
 
 const isStored = (value: unknown): value is StoredEvent =>
@@ -95,13 +145,47 @@ const isStored = (value: unknown): value is StoredEvent =>
   (value.received_at === null || typeof value.received_at === 'string') &&
   'event' in value;
 
-/** Loads every version of an entry of the board at `location` into the reader. */
-export async function loadHistory(context: TasksContext, location: BoardLocation, entry: string): Promise<void> {
+/** Versions per page of a history (the hub's default page). */
+export const HISTORY_PAGE = 50;
+
+/** The request target of a page of a history (`before` null: the newest page); `paged` false: the whole history. */
+export function historyTarget(entry: string, before: number | null, paged = true): string {
+  const path = `/v1/whiteboards/${encodeURIComponent(entry)}/history`;
+  if (!paged) return path;
+  const params = new URLSearchParams({ limit: String(HISTORY_PAGE) });
+  if (before !== null) params.set('before', String(before));
+  return `${path}?${params.toString()}`;
+}
+
+/** Hubs (signed clients) that refused the paging parameters of the history. */
+const unpaged = new WeakSet<object>();
+
+/** One page of a history (module comment: an old hub is asked once more without paging). */
+async function historyPage(context: TasksContext, entry: string, before: number | null): Promise<unknown> {
+  const { client } = context;
+  if (!unpaged.has(client)) {
+    try {
+      return await client.request('GET', historyTarget(entry, before));
+    } catch (error) {
+      if (!(error instanceof HubError && error.code === 'request_invalid')) throw error;
+      unpaged.add(client);
+    }
+  }
+  return await client.request('GET', historyTarget(entry, null, false));
+}
+
+/** Reads one page of a history into the reader and records the next older page. */
+async function readHistory(
+  context: TasksContext,
+  location: BoardLocation,
+  entry: string,
+  before: number | null,
+): Promise<void> {
   const { store } = context;
   const generation = store.generation;
   setHistoryLoad(store, entry, 'loading');
   try {
-    const body = await context.client.request('GET', `/v1/whiteboards/${encodeURIComponent(entry)}/history`);
+    const body = await historyPage(context, entry, before);
     if (!isRecord(body) || !Array.isArray(body.events) || !body.events.every(isStored)) {
       throw new HubError('unavailable', 200);
     }
@@ -109,15 +193,44 @@ export async function loadHistory(context: TasksContext, location: BoardLocation
     // events the reader already settled stay as they are (re-reading would make them pending for a moment)
     const { scopeId } = boardScope(location);
     const known = store.getState().events[scopeId]?.entries;
-    const fresh = body.events.filter((item) => {
-      const status = known?.get(item.scope_seq)?.status;
-      return status !== 'verified' && status !== 'unverifiable';
-    });
+    const fresh = body.events
+      .filter((item) => {
+        const status = known?.get(item.scope_seq)?.status;
+        return status !== 'verified' && status !== 'unverifiable';
+      })
+      .sort((a, b) => a.scope_seq - b.scope_seq);
     await context.ingest(location.org, scopeId, fresh);
-    setHistoryLoad(store, entry, 'ready');
+    const next = Number.isSafeInteger(body.next_before) ? (body.next_before as number) : null;
+    setHistoryLoad(store, entry, 'ready', null, next);
   } catch (error) {
     if (store.generation === generation) setHistoryLoad(store, entry, 'error', sendErrorCode(error));
   }
+}
+
+/** Loads the newest page of the versions of an entry of the board at `location` into the reader. */
+export async function loadHistory(context: TasksContext, location: BoardLocation, entry: string): Promise<void> {
+  await readHistory(context, location, entry, null);
+}
+
+/** Reads the next older page of a history; nothing while it loads or when it is read to its start. */
+export async function loadHistoryPage(context: TasksContext, location: BoardLocation, entry: string): Promise<void> {
+  const load = context.store.getState().whiteboards.histories[entry];
+  if (load === undefined || load.status === 'loading' || load.next === null) return;
+  await readHistory(context, location, entry, load.next);
+}
+
+/** The server paging of a history for its windowed list. */
+export function historyPaging(
+  context: TasksContext,
+  location: BoardLocation,
+  entry: string,
+  load: Load | null,
+): ListPaging {
+  return {
+    hasMore: load !== null && load.next !== null,
+    loading: load?.status === 'loading',
+    loadMore: () => void loadHistoryPage(context, location, entry),
+  };
 }
 
 /** The current key of the board's scope; asks the log and wrap jobs once if it is not in memory yet. */

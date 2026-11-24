@@ -134,6 +134,29 @@ API: `GET /v1/monitoring/overview`, `GET /v1/monitoring/series` (`03-api.md` §4
 monitoring screen is open. Ranges offered: 15 min, 1 h, 6 h, 24 h (raw), 7 d, 30 d, 90 d (rollups). Values shown
 with units; stale data (> 60 s) is greyed with the age. Smartphone: one column, sparklines (`06-web.md`).
 
+### 6.1 UI health of the web clients (early warning, ADR-086 §5, KOR-35)
+
+The web client observes long tasks of its main thread (`PerformanceObserver('longtask')`, else event-loop gaps of a
+1 s timer) and counts, per **view type** – a closed list of route patterns and tabs in
+`contracts/enums/ui-views.json` (e.g. `task.chat`, `monitoring`), never an ID – the blocks over 200 ms (`count`),
+their summed duration (`blocked_ms`) and the bucket of the longest one (`max_bucket`: 200, 500, 1 000, 2 000,
+5 000, 10 000, 30 000 ms). At most once an hour, and only when it counted something, it sends
+`POST /v1/telemetry/ui {version, views}` **anonymously** (no signature, no cookie, `keepalive`).
+
+The hub accepts at most 64 views and 8 KiB per report, clamps each view's values (`count` ≤ 100 000, `blocked_ms` ≤
+3 600 000, `max_bucket` ≤ 6), counts a view type it does not know (a newer client) as `other`, and adds the values to
+`hub.ui_health_daily` per UTC day, version and view type (`reports` counts the reports). Nothing about the sender is
+stored (no user, org, device, address); only the version the hub serves (its own, the web client's `config.version`)
+is kept by name, every other version (a tab of an older build, an invented one) counts as `other`; the reports of a
+day are added under an advisory lock of that day; rows older than 90 days are deleted (job
+`telemetry.ui_health_purge`, hourly); the anonymous rate limit (30/min per source address) applies. With very few users a day's counter may in practice belong to one
+person; it still names no person, task or content.
+
+Platform operators (`platform:inviter`) read the counters with `GET /v1/platform/ui-health?days=` (1–90, default 7;
+newest day first, at most 10 000 rows) or on the hub host with `agent-hub ui-health [--days N]` (one JSON line). A view
+type whose `count` or `max_bucket` rises after a release is the early warning that a list of that view does not
+withstand its amount of data.
+
 ## 7. Tests
 
 - Unit: parsers for every probe command with recorded fixtures (incl. failure outputs), textfile renderer

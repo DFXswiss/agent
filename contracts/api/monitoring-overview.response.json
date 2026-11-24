@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/monitoring-overview.response.json",
   "title": "GET /v1/monitoring/overview response",
-  "description": "Body of a successful response to GET /v1/monitoring/overview (03-api.md section 4.11).",
+  "description": "Body of a successful response to GET /v1/monitoring/overview (03-api.md section 4.11): at most 2 000 sessions, the most recently active first; sessions_total counts all of them and truncated tells whether the list was cut, devices_truncated whether the devices were cut at their cap of 10 000 (ADR-086 section 2, KOR-35; both absent from older hubs).",
   "type": "object",
   "properties": {
     "devices": {
@@ -47,7 +47,7 @@
         "additionalProperties": false
       },
       "minItems": 0,
-      "maxItems": 1000
+      "maxItems": 10000
     },
     "vms": {
       "type": "array",
@@ -218,6 +218,16 @@
       },
       "minItems": 0,
       "maxItems": 10000
+    },
+    "sessions_total": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "devices_truncated": {
+      "type": "boolean",
+      "description": "the devices were cut at the device list's cap of 10 000 (absent from older hubs)"
     }
   },
   "required": [

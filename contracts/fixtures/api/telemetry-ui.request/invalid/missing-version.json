@@ -1,0 +1,14 @@
+{
+  "views": {
+    "task.chat": {
+      "count": 3,
+      "blocked_ms": 1450,
+      "max_bucket": 2
+    },
+    "monitoring": {
+      "count": 1,
+      "blocked_ms": 230,
+      "max_bucket": 0
+    }
+  }
+}

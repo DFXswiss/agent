@@ -13,7 +13,12 @@ import { isRecord } from '../registry';
 import { MEMBER_NAME } from '../tasks/directory';
 import type { TasksContext } from '../tasks/pull';
 import { actorOf, keyRing, refuse } from './batch';
-import { inviteStatuses, revokeInvite } from './invites';
+import { inviteHints, type InviteRow, inviteStatuses, revokeInvite } from './invites';
+import { LIMIT, readPages } from './pages';
+
+/** The pages of the hub's invitation list read for settled invitations (the hub lists at most 1 000). */
+const SETTLED_PAGES = Math.ceil(1000 / LIMIT);
+const inviteKey = (row: InviteRow) => row.invite_id;
 
 /** Seals and sends one org-scope event of the signed-in admin and reads it into the store at once. */
 async function sendName(context: TasksContext, org: string, ref: string, name: string): Promise<void> {
@@ -64,7 +69,10 @@ export async function giveName(context: TasksContext, org: string, subject: stri
  * a denial it can cause anyway by refusing that invitation. Admins only.
  */
 export async function closeSettledInvites(context: TasksContext, org: string, subject: string): Promise<string[]> {
-  const rows = await inviteStatuses(context, org);
+  // the hub's whole bounded list (at most its cap of 1 000, ADR-086 section 2), page by page
+  const listed = await readPages((before) => inviteHints(context, org, before), SETTLED_PAGES, inviteKey);
+  const state = context.store.getState().orgs.byId[org]?.log?.state ?? refuse('log_empty');
+  const rows = inviteStatuses(state, listed.rows, listed.nextBefore === null, context.now());
   const settled = rows
     .filter((row) => row.status === 'settled' && row.acceptedBy === subject)
     .map((row) => row.inviteId);

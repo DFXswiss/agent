@@ -16,6 +16,8 @@ import pytest
 
 from agent_guest.control import ControlContext
 from agent_guest.control_routes import hooks as control_hooks
+from agent_guest.hook_summary import HookSummaries
+from agent_guest.limits import HookLimits
 from agent_guest.state import Session
 from tests.platform.guest.conftest import SESSION_ID, SESSION_TOKEN
 
@@ -112,6 +114,15 @@ def hook_client(api_port: int) -> HookClient:
 @pytest.fixture
 def fixtures_dir(contracts_dir: Path) -> Path:
     return contracts_dir / "fixtures" / "mcp" / "hooks"
+
+
+@pytest.fixture(autouse=True)
+def single_hook_records(request: pytest.FixtureRequest) -> None:
+    """The hook suites check the record of every call; the summaries of routine calls are tested on their own
+    (``tests/platform/guest/test_hook_summary.py``), so they are off here."""
+    if "context" in request.fixturenames:
+        context: ControlContext = request.getfixturevalue("context")
+        context.journal.summaries = HookSummaries(HookLimits(summary_seconds=0))
 
 
 @pytest.fixture

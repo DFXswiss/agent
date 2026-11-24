@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StoredEvent } from '../../../src/core/net/sse';
 import { createStore, type Store } from '../../../src/core/store';
+import { show, skipMark } from '../../../src/core/store/focus';
 import { EventReader, FRAME_MS, type ReaderClock } from '../../../src/core/store/reader';
 import type { EventEntry } from '../../../src/core/store/slices/events';
 
@@ -151,5 +152,38 @@ describe('batched writes', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('live bulk events no view shows (ADR-086)', () => {
+  const live = (seq: number, kind: string, task: string | null, session: string | null): StoredEvent => ({
+    scope_seq: seq,
+    received_at: null,
+    event: { header: { seq, kind, task, session } },
+  });
+
+  it('skips them without decrypting, notes the skip and keeps everything else', async () => {
+    const close = show(store, { scope: SCOPE, task: 'shown' });
+    const before = skipMark(store, { task: 'hidden', session: 's2' });
+    await reader.ingest(
+      ORG,
+      SCOPE,
+      [
+        live(1, 'session.output', 'hidden', 's2'),
+        live(2, 'session.output', 'shown', 's1'),
+        live(3, 'task.meta', 'hidden', null),
+        live(4, 'session.terminal', 'hidden', 's2'),
+        { scope_seq: 5, received_at: null, event: 'raw' },
+      ],
+      { defer: true, skipUnshown: true },
+    );
+    clock.advance(0);
+    expect(statuses()).toEqual([2, 3, 5].map((seq) => [seq, 'verified']));
+    expect(reader.read).toHaveBeenCalledTimes(3);
+    expect(skipMark(store, { task: 'hidden', session: 's2' })).not.toBe(before);
+    // pulls (no `skipUnshown`) store bulk events of any task
+    await reader.ingest(ORG, SCOPE, [live(6, 'session.output', 'hidden', 's2')]);
+    expect(statuses().at(-1)).toEqual([6, 'verified']);
+    close();
   });
 });

@@ -1,5 +1,6 @@
 """Routes of the workgroups area (03-api.md section 4.5): `GET /v1/workgroups/{wg}` (`wg:read`),
-`GET /v1/workgroups/{wg}/device-candidates` (`wg:write`) and `GET /v1/orgs/{org}/devices` (`org:member`).
+`GET /v1/workgroups/{wg}/device-candidates` (`wg:write`) and `GET /v1/orgs/{org}/devices` (`org:member`); both device
+lists take the optional `before`/`limit` of ADR-086 section 2 (`agent_hub.workgroups.read`).
 
 Reads never reveal foreign objects: an unknown, malformed or forbidden ID is `404 not_found` (03-api.md section 1).
 """
@@ -11,6 +12,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from agent_hub.errors import HubError
+from agent_hub.events import paging
 from agent_hub.events.routes import parse_uuid
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import HubRouter
@@ -34,18 +36,18 @@ def _workgroup(context: HubContext, user: UUID, wg: UUID) -> dict[str, Any]:
         return read.workgroup(connection, wg, context.clock(), context.config.device_online_seconds)
 
 
-def _candidates(context: HubContext, user: UUID, wg: UUID) -> dict[str, Any]:
+def _candidates(context: HubContext, user: UUID, wg: UUID, window: paging.Window) -> dict[str, Any]:
     with context.pool.connection() as connection:
         rights.require(connection, user, rights.WG_WRITE, wg_id=wg)
-        found = read.candidates(connection, wg, context.clock(), context.config.device_online_seconds)
-    return {"candidates": found}
+        return read.candidates(connection, wg, context.clock(), context.config.device_online_seconds, window)
 
 
-def _org_devices(context: HubContext, user: UUID, org: UUID) -> dict[str, Any]:
+def _org_devices(context: HubContext, user: UUID, org: UUID, window: paging.Window) -> dict[str, Any]:
     with context.pool.connection() as connection:
         rights.require(connection, user, rights.ORG_MEMBER, org_id=org)
-        found = read.org_devices(connection, org, context.clock(), context.config.device_online_seconds, user)
-    return {"devices": found}
+        return read.org_devices(
+            connection, org, context.clock(), context.config.device_online_seconds, user=user, window=window
+        )
 
 
 @router.get("/v1/workgroups/{wg}", auth="browser", right="wg:read", read_resource="workgroup")
@@ -60,12 +62,18 @@ async def get_workgroup(context: Context, principal: CurrentPrincipal, wg: str) 
     right="wg:write",
     read_resource="workgroup.device_candidates",
 )
-async def get_device_candidates(context: Context, principal: CurrentPrincipal, wg: str) -> dict[str, Any]:
+async def get_device_candidates(
+    context: Context, principal: CurrentPrincipal, wg: str, before: str | None = None, limit: str | None = None
+) -> dict[str, Any]:
     user = cast(UUID, principal.principal_id)
-    return await asyncio.to_thread(_candidates, context, user, path_id(wg))
+    wg_id = path_id(wg)
+    return await asyncio.to_thread(_candidates, context, user, wg_id, read.device_window(before, limit))
 
 
 @router.get("/v1/orgs/{org}/devices", auth="browser", right="org:member", read_resource="org.devices")
-async def get_org_devices(context: Context, principal: CurrentPrincipal, org: str) -> dict[str, Any]:
+async def get_org_devices(
+    context: Context, principal: CurrentPrincipal, org: str, before: str | None = None, limit: str | None = None
+) -> dict[str, Any]:
     user = cast(UUID, principal.principal_id)
-    return await asyncio.to_thread(_org_devices, context, user, path_id(org))
+    org_id = path_id(org)
+    return await asyncio.to_thread(_org_devices, context, user, org_id, read.device_window(before, limit))

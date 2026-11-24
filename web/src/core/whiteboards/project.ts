@@ -16,6 +16,13 @@
 // - entries the hub lists without any event of them in the store (the rows are listed after the board's pull): a
 //   "not available" row.
 //
+// Paged rows (ADR-086 section 2): the rows arrive page by page, newest first by the hub's order (`created_at DESC, id
+// DESC`, where `created_at` is the receive time of the creating event). An entry missing from the rows read so far is
+// only then "not listed" when its row would have been on one of those pages: when every page is read, or when the
+// hub received its creating event (`received_at`, milliseconds) strictly after the `created_at` of the oldest row
+// read – such a row sorts before the cursor in any case. Otherwise (no receive time, e.g. an own write read back, or
+// an equal or older one) the entry is shown from its verified events until the page holding its row is read.
+//
 // Items are newest first by the position of the creating event (`scope_seq`; one board is one scope; a placeholder by
 // the position of the newest event the hub names), ties by key. Readers verify the author's right through the reader
 // (the kind matrix of `log/events.ts`).
@@ -109,6 +116,12 @@ function timeOf(value: unknown): number {
   }
 }
 
+/** Unix ms of a hub time, null when there is none or it is not parseable. */
+function hubTime(value: unknown): number | null {
+  const at = timeOf(value);
+  return at === 0 ? null : at;
+}
+
 const refOf = (header: Readonly<Record<string, unknown>>): string | null =>
   typeof header.ref === 'string' && header.ref !== '' ? header.ref : null;
 
@@ -184,15 +197,20 @@ function apply(drafts: Map<string, Draft>, entry: EventEntry, header: Readonly<R
  * The board at `location` from the events of its scope and the hub's rows. `checked` is null while the board loads;
  * once loaded it is the highest `scope_seq` the store held before the rows were listed: an entry created up to there
  * that the hub does not list was not projected by the hub (its ID was already used on another board or in another
- * scope) and is shown as a neutral `event_conflict` row. A listed entry without events is missing.
+ * scope) and is shown as a neutral `event_conflict` row. While `more` (older pages of rows are not read yet) that
+ * holds only for an entry whose row would be on a read page (module comment). A listed entry without events is
+ * missing.
  */
 export function projectBoard(
   scope: ScopeEvents | undefined,
   location: BoardLocation,
   rows: readonly WhiteboardRow[],
   checked: number | null,
+  more = false,
 ): BoardView {
   const drafts = new Map<string, Draft>();
+  /** The hub's receive time of each entry's creating event (null when unknown). */
+  const received = new Map<string, number | null>();
   const neutral: BoardNeutral[] = [];
   /** Entry IDs claimed by an earlier `whiteboard.entry` of the scope on any board (the first one wins, hub rule). */
   const claimed = new Set<string>();
@@ -214,12 +232,22 @@ export function projectBoard(
     if (elsewhere) neutral.push({ ...item, type: 'unverifiable', code: 'event_conflict' });
     else if (!validBody(kind, entry.body, location))
       neutral.push({ ...item, type: 'unverifiable', code: 'header_invalid' });
-    else apply(drafts, entry, header);
+    else {
+      apply(drafts, entry, header);
+      if (kind === ENTRY && !received.has(item.ref!)) received.set(item.ref!, hubTime(entry.receivedAt));
+    }
   }
   const listed = new Set(rows.map((row) => row.entry_id));
+  // the oldest row read: an entry the hub received strictly after it would be on a read page (module comment)
+  const oldest = more ? hubTime(rows.at(-1)?.created_at) : null;
+  const onReadPage = (id: string): boolean => {
+    if (!more) return true;
+    const at = received.get(id)!;
+    return oldest !== null && at !== null && at > oldest;
+  };
   const entries = new Map<string, BoardEntry>();
   for (const draft of drafts.values()) {
-    if (checked !== null && draft.seq <= checked && !listed.has(draft.id)) {
+    if (checked !== null && draft.seq <= checked && !listed.has(draft.id) && onReadPage(draft.id)) {
       neutral.push({
         type: 'unverifiable',
         key: `n${draft.seq}`,

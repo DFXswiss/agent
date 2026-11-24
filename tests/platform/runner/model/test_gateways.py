@@ -14,6 +14,7 @@ from typing import Any
 
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 from agent_runner.credentials import cache
 from agent_runner.crypto.ids import uuid7
@@ -251,6 +252,12 @@ def test_the_uncounted_items_are_read_up_to_a_limit(store_dsn: str, monkeypatch:
         monkeypatch.setattr(uncounted, "MAX_ITEMS", 1)
         async with env.pool.connection() as conn:
             assert await uncounted.uncounted_micro(conn, env.sync.storage_key, desired().org_id, 0) == 1
+            await conn.execute(
+                "INSERT INTO runner.usage_pending (session_id, item, first_wall) VALUES (%s, %s, 0)",
+                (sid, Jsonb(_usage(sid, 4))),
+            )
+            # a pending merged item is counted although the stored items reach the limit
+            assert await uncounted.uncounted_micro(conn, env.sync.storage_key, desired().org_id, 0) == 5
         assert uncounted.marks(None).keep("org", "2026-11-22", 5) == 5
         assert found is not None
 

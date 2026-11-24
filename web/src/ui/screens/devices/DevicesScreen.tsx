@@ -13,10 +13,18 @@
 // workgroup, assign a device to the whole organization and remove it from there (rotation batch), unassign (rotation
 // batch), unpair (rotation batch) and rename. Controls the user's verified rights do not
 // allow are not rendered (section 1.2).
-import { useEffect, useRef, useState } from 'react';
+//
+// The rows are a `WindowedList` (ADR-086 section 1: at most `MAX_ROWS` rendered), rebuilt when their inputs change and
+// memoized on their content, so a presence poll re-renders only the rows whose presence changed. The hub's list is read
+// page by page (pages of 200, newest enrolment first): while older pages exist the rows end with the last device the
+// loaded pages name and "Load more" reads the next page (`listedRows`); the log change and the presence poll read the
+// whole loaded range again (one request per loaded page), so every shown row has current presence. A capped answer of
+// an old hub says so.
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { formatEventTime } from '../../../core/i18n';
-import { actionErrorCode, submitBatch } from '../../../core/org/batch';
+import { formatEventTime, localTimeZone } from '../../../core/i18n';
+import type { ListPaging } from '../../../core/lists/window';
+import { submitBatch } from '../../../core/org/batch';
 import {
   canAssignToOrg,
   canManageDevices,
@@ -27,6 +35,7 @@ import {
   type DeviceRow,
   hasPlatformAccess,
   type HubDevice,
+  listedRows,
   loadOrgDevices,
   selectDeviceLabels,
   sessionsPerVm,
@@ -36,12 +45,16 @@ import {
 } from '../../../core/org/devices';
 import { keyRing } from '../../../core/org/batch';
 import { pullOnce } from '../../../core/tasks/pull';
-import type { Directory } from '../../../core/tasks/directory';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { useNow } from '../../countdown/useNow';
+import { WindowedList } from '../../lists/WindowedList';
 import { ActionDialog, BUTTON, PRIMARY } from '../members/ActionDialog';
+import { Chips } from '../members/Chips';
+import { MAX_ROWS, PAGE, sameValue } from '../members/lists';
+import { PagedNotes } from '../members/PagedNotes';
+import { type PagedList, usePagedList } from '../members/usePagedList';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 import { AddDevice } from './AddDevice';
 import { AssignOrgDialog, AssignPlatformDialog, AssignToWorkgroupDialog, RenameDialog } from './dialogs';
@@ -50,7 +63,7 @@ import { deviceName } from './parts';
 /** Presence is re-read this often (the hub's online window is 30 s). */
 export const POLL_MS = 15_000;
 
-type Open =
+export type Open =
   | { readonly kind: 'assign' }
   | { readonly kind: 'to-wg'; readonly row: DeviceRow }
   | { readonly kind: 'rename'; readonly row: DeviceRow }
@@ -59,11 +72,15 @@ type Open =
   | { readonly kind: 'unassign-org'; readonly row: DeviceRow }
   | { readonly kind: 'unassign'; readonly row: DeviceRow; readonly wg: string };
 
-/** The hub's device list, read again on every log change and every `POLL_MS` while visible (module comment). */
-function useHubDevices(org: string, head: string | null): { rows: HubDevice[]; code: string | null } {
+const hubKey = (row: HubDevice) => row.device_id;
+
+/**
+ * The hub's device list page by page (`usePagedList`, pages of 200), read again on every log change and every
+ * `POLL_MS` while visible (module comment): a re-read covers the pages loaded so far, so "Load more" keeps the presence
+ * of the older devices current as well.
+ */
+function useHubDevices(org: string, head: string | null): PagedList<HubDevice> {
   const { app } = useAppEnv();
-  const [rows, setRows] = useState<HubDevice[]>([]);
-  const [code, setCode] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const visible = () => document.visibilityState === 'visible';
@@ -79,25 +96,11 @@ function useHubDevices(org: string, head: string | null): { rows: HubDevice[]; c
       document.removeEventListener('visibilitychange', shown);
     };
   }, []);
-  // answers can arrive out of order (a slow poll after a log change): only the newest request's answer is shown
-  const latest = useRef(0);
-  useEffect(() => {
-    if (head === null) return;
-    latest.current += 1;
-    const request = latest.current;
-    loadOrgDevices(app.tasks, org).then(
-      (found) => {
-        if (request !== latest.current) return;
-        setRows(found);
-        setCode(null);
-      },
-      (failure: unknown) => {
-        if (request === latest.current) setCode(actionErrorCode(failure));
-      },
-    );
-  }, [app, org, head, tick]);
-  return { rows, code };
+  const read = useCallback((before: string | null) => loadOrgDevices(app.tasks, org, before), [app, org]);
+  return usePagedList(read, hubKey, `${head}/${tick}`, head !== null);
 }
+
+const NO_HUB: readonly HubDevice[] = [];
 
 function CapacityBar({ hub }: { readonly hub: HubDevice }) {
   const { t } = useI18n();
@@ -170,28 +173,25 @@ function VmList({ hub, wgName }: { readonly hub: HubDevice; readonly wgName: (wg
   );
 }
 
-function DeviceItem(props: {
+/** What a device row shows: the row, the viewer's rights, the workgroup names (one selector for the list). */
+interface DeviceEntry {
   readonly row: DeviceRow;
   readonly admin: boolean;
   /** The user may give devices to the whole organization (admin holding the current `OK`). */
   readonly toOrg: boolean;
-  readonly directory: Directory;
+  readonly names: ReadonlyMap<string, string>;
   readonly onOpen: (open: Open) => void;
-}) {
-  const { row, admin, toOrg, directory, onOpen } = props;
+}
+
+function DeviceRowView({ item }: { readonly item: DeviceEntry }) {
+  const { row, admin, toOrg, names, onOpen } = item;
   const { t, locale } = useI18n();
   const now = useNow(false);
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const name = deviceName(t, row);
   const hub = row.hub;
-  const wgName = (wg: string) => directory.workgroups.get(wg) ?? t('devices.wg.unnamed');
+  const wgName = (wg: string) => names.get(wg) ?? t('devices.wg.unnamed');
   return (
-    <li
-      className="flex flex-col gap-2 border-b border-gray-200 py-3"
-      data-testid="devices.item"
-      data-device={row.id}
-      data-assigned-org={String(row.org)}
-    >
+    <>
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium" data-testid="devices.item.name">
           {name}
@@ -219,7 +219,7 @@ function DeviceItem(props: {
             {hub.last_seen_at === null
               ? t('devices.never-seen')
               : t('devices.last-seen', {
-                  time: formatEventTime(Date.parse(hub.last_seen_at), { locale, timeZone, now }),
+                  time: formatEventTime(Date.parse(hub.last_seen_at), { locale, timeZone: localTimeZone(), now }),
                 })}
           </span>
           <span data-testid="devices.item.version">{t('devices.version', { version: hub.agent_version })}</span>
@@ -228,15 +228,24 @@ function DeviceItem(props: {
       {hub !== null && <CapacityBar hub={hub} />}
       {hub !== null && <CapacityDetails hub={hub} />}
       {hub !== null && <VmList hub={hub} wgName={wgName} />}
-      <ul className="flex flex-wrap gap-2 text-sm" aria-label={t('devices.workgroups')} data-testid="devices.item.wgs">
-        {row.workgroups.length === 0 && <li className="text-gray-600">{t('devices.no-workgroups')}</li>}
-        {row.org && (
-          <li className="rounded border border-gray-200 px-2 font-medium" data-testid="devices.item.org">
-            {t('devices.whole-org')}
-          </li>
-        )}
-        {row.explicit.map((wg) => (
-          <li key={wg} className="flex items-center gap-1 rounded border border-gray-200 px-2" data-wg={wg}>
+      <Chips
+        items={row.explicit}
+        wgOf={sameWg}
+        testId="devices.item.wgs"
+        label={t('devices.workgroups')}
+        more="devices.wgs.more"
+        {...(row.workgroups.length === 0 && {
+          empty: <li className="text-gray-600">{t('devices.no-workgroups')}</li>,
+        })}
+        {...(row.org && {
+          lead: (
+            <li className="rounded border border-gray-200 px-2 font-medium" data-testid="devices.item.org">
+              {t('devices.whole-org')}
+            </li>
+          ),
+        })}
+        render={(wg) => (
+          <>
             <span>{wgName(wg)}</span>
             {admin && (
               <button
@@ -249,9 +258,9 @@ function DeviceItem(props: {
                 ×
               </button>
             )}
-          </li>
-        ))}
-      </ul>
+          </>
+        )}
+      />
       {admin && (
         <div className="flex flex-wrap gap-2">
           {row.kind === 'org' && !row.org && (
@@ -302,7 +311,53 @@ function DeviceItem(props: {
           </button>
         </div>
       )}
-    </li>
+    </>
+  );
+}
+
+const sameWg = (wg: string) => wg;
+const deviceKey = (entry: DeviceEntry) => entry.row.id;
+const deviceAttributes = (entry: DeviceEntry) => ({
+  'data-testid': 'devices.item',
+  'data-device': entry.row.id,
+  'data-assigned-org': String(entry.row.org),
+});
+
+/** The device rows, newest member first, windowed; a presence poll re-renders only rows whose content changed. */
+export function DeviceList(props: {
+  readonly rows: readonly DeviceRow[];
+  readonly admin: boolean;
+  readonly names: ReadonlyMap<string, string>;
+  /** The user may give devices to the whole organization (admin holding the current `OK`). */
+  readonly toOrg: boolean;
+  readonly onOpen: (open: Open) => void;
+  /** "Load more" of the hub's next page, and the number of all devices while only some are shown. */
+  readonly paging?: ListPaging;
+  readonly total?: number;
+}) {
+  const { rows, admin, names, toOrg, onOpen, paging, total } = props;
+  const entries = useMemo(
+    () => rows.map((row): DeviceEntry => ({ row, admin, toOrg, names, onOpen })),
+    [rows, admin, toOrg, names, onOpen],
+  );
+  return (
+    <WindowedList
+      listId="devices"
+      items={entries}
+      getKey={deviceKey}
+      Row={DeviceRowView}
+      same={sameValue}
+      newest="start"
+      page={PAGE}
+      maxRows={MAX_ROWS}
+      testId="devices.list"
+      labels={{ older: 'devices.list.more', newer: 'devices.list.above', newest: 'devices.list.top' }}
+      rowClassName="flex flex-col gap-2 border-b border-gray-200 py-3"
+      rowAttributes={deviceAttributes}
+      rowHeight="lg"
+      {...(paging !== undefined && { hasMore: paging.hasMore, loading: paging.loading, onLoadMore: paging.loadMore })}
+      {...(total !== undefined && { total })}
+    />
   );
 }
 
@@ -348,6 +403,13 @@ export function DevicesScreen() {
   }, [app, org, platformMissing]);
   const hub = useHubDevices(org, state === null ? null : state.head);
   const [open, setOpen] = useState<Open | null>(null);
+  // rebuilt when the log, the platform log, the hub's list or the labels change, not on every render
+  const hubRows = hub.rows ?? NO_HUB;
+  const all = useMemo(
+    () => (state === null ? [] : deviceRows(state, verified, hubRows, labels)),
+    [state, verified, hubRows, labels],
+  );
+  const rows = useMemo(() => listedRows(all, hub.more), [all, hub.more]);
   if (state === null)
     return (
       <p className="p-4" data-testid="devices.loading">
@@ -362,7 +424,6 @@ export function DevicesScreen() {
     );
   const admin = canManageDevices(state, userId);
   const toOrg = admin && canAssignToOrg(state, keyRing(app.store, org));
-  const rows = deviceRows(state, verified, hub.rows, labels);
   const close = () => setOpen(null);
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" data-testid="devices.screen">
@@ -379,16 +440,21 @@ export function DevicesScreen() {
           {error(hub.code).title}
         </p>
       )}
-      {rows.length === 0 && (
+      {all.length === 0 && (
         <p className="text-gray-600" data-testid="devices.empty">
           {t('devices.empty')}
         </p>
       )}
-      <ul data-testid="devices.list">
-        {rows.map((row) => (
-          <DeviceItem key={row.id} row={row} admin={admin} toOrg={toOrg} directory={directory} onOpen={setOpen} />
-        ))}
-      </ul>
+      <PagedNotes list={hub} shown={rows.length} note="devices.truncated" rows="devices.list" testId="devices" />
+      <DeviceList
+        rows={rows}
+        admin={admin}
+        names={directory.workgroups}
+        toOrg={toOrg}
+        onOpen={setOpen}
+        paging={hub.paging}
+        {...(hub.more && { total: all.length })}
+      />
       {open?.kind === 'assign' && (
         <AssignPlatformDialog org={org} state={state} directory={directory} onClose={close} />
       )}

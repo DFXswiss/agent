@@ -646,7 +646,7 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | Event headers (kind, scope, epoch, author, task, session, ref, ts, lh), sizes, receive times | sync, fan-out, audit |
 | Task state, owner, timestamps; session state, device, VM ID, parent session, depth, model access kind, model ID; the GitHub identity (record ID) chosen for a task or session (ADR-078) | countdown, status, limits, identity choice |
 | Operation type, state, decision, error code, dedupe tag, timestamps, actor; the GitHub identity (record ID) an operation acted with and the human who triggered it (ADR-078) | duplicate protection, audit, limits, traceability |
-| Resource metrics, token counters, cost, context-window percentage, subscription quota percentages | monitoring, limits, display (KONZEPT §6, §7) |
+| Resource metrics, token counters, cost, context-window percentage, subscription quota percentages; anonymous UI health counters per day, web client version and view type (`ui_health_daily`, ADR-081: no user, org, device or object ID) | monitoring, limits, display (KONZEPT §6, §7) |
 | Notification records (recipient, kind, target IDs) | notifications |
 | Attention record of a task (category, reason code, ref ID, times, subagent counters), derived from the task, session and operation metadata above; the operation types `human.question` / `human.approval` (the question itself is sealed in `operation.params`) | situation view, notifications (ADR-076, KOR-39) |
 | Audit and read-log rows (actor, action, target IDs, result) | KONZEPT §6, §8 |

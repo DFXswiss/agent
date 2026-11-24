@@ -52,6 +52,7 @@ import type { AgentMember } from './entries';
 import {
   ADMIN,
   AGENT,
+  changedPrincipals,
   DEVICE,
   epochKey,
   type Invite,
@@ -65,6 +66,8 @@ import {
   selfOwed,
   USER,
   WG,
+  withEntry,
+  withoutEntry,
   WRITE,
 } from './state';
 
@@ -125,10 +128,10 @@ async function addAgent(state: OrgState, agent: NewAgent, seq: number): Promise<
     others.every((other) => agent.gen > other.gen!) &&
     (await certValid(user.sig, agent));
   if (!valid) fail('log_agent');
-  const principals = new Map(state.principals);
   const replaced = state.activeAgent(agent.user);
-  if (replaced !== null) principals.set(replaced.id, { ...replaced, removedSeq: seq });
-  principals.set(agent.id, {
+  let principals = state.principals;
+  if (replaced !== null) principals = withEntry(principals, replaced.id, { ...replaced, removedSeq: seq });
+  principals = withEntry(principals, agent.id, {
     ...PLAIN,
     id: agent.id,
     kind: AGENT,
@@ -148,8 +151,8 @@ async function addAgent(state: OrgState, agent: NewAgent, seq: number): Promise<
 
 /** The rotation of `scopes` is owed by `user`, who removed or replaced its agent (ADR-082 section 4). */
 function owe(state: OrgState, scopes: Iterable<string>, user: string): OrgState {
-  const agentOwed = new Map(state.agentOwed);
-  for (const scope of scopes) agentOwed.set(scope, user);
+  let agentOwed = state.agentOwed;
+  for (const scope of scopes) agentOwed = withEntry(agentOwed, scope, user);
   return state.with({ agentOwed });
 }
 
@@ -256,15 +259,15 @@ async function accept(state: OrgState, body: Body, entry: Body, seq: number, now
     ...PLAIN,
     joinAgent: member?.id ?? null,
   };
-  const access = new Map(state.access);
-  const assignments = new Map(state.assignments);
+  let access = state.access;
+  let assignments = state.assignments;
   for (const [wg, level] of Object.entries(invite.wgs)) {
-    if (invite.kind === USER) access.set(pairKey(subject, wg), level);
-    else assignments.set(pairKey(subject, wg), seq);
+    if (invite.kind === USER) access = withEntry(access, pairKey(subject, wg), level);
+    else assignments = withEntry(assignments, pairKey(subject, wg), seq);
   }
   const after = state.with({
-    principals: new Map(state.principals).set(subject, principal),
-    invites: new Map(state.invites).set(invite.inviteId, { ...invite, acceptedSeq: seq }),
+    principals: withEntry(state.principals, subject, principal),
+    invites: withEntry(state.invites, invite.inviteId, { ...invite, acceptedSeq: seq }),
     access,
     assignments,
   });
@@ -289,7 +292,7 @@ function inviteEntry(state: OrgState, body: Body, seq: number): OrgState {
     revokedSeq: null,
     acceptedSeq: null,
   };
-  return state.with({ invites: new Map(state.invites).set(invite.inviteId, invite) });
+  return state.with({ invites: withEntry(state.invites, invite.inviteId, invite) });
 }
 
 function inviteRevoke(state: OrgState, body: Body, seq: number): OrgState {
@@ -297,7 +300,7 @@ function inviteRevoke(state: OrgState, body: Body, seq: number): OrgState {
   if (invite === undefined) fail('invite_not_in_log');
   if (invite.acceptedSeq !== null) fail('invite_consumed');
   if (invite.revokedSeq !== null) fail('invite_revoked');
-  return state.with({ invites: new Map(state.invites).set(invite.inviteId, { ...invite, revokedSeq: seq }) });
+  return state.with({ invites: withEntry(state.invites, invite.inviteId, { ...invite, revokedSeq: seq }) });
 }
 
 function role(state: OrgState, body: Body): OrgState {
@@ -305,7 +308,7 @@ function role(state: OrgState, body: Body): OrgState {
   if (principal === null || principal.kind !== USER || principal.role === body.role) fail('log_rights');
   if (principal.role === ADMIN && state.admins().length === 1) fail('last_admin');
   let after = state.with({
-    principals: new Map(state.principals).set(principal.id, { ...principal, role: body.role as string }),
+    principals: withEntry(state.principals, principal.id, { ...principal, role: body.role as string }),
   });
   if (selfOwed(state, body)) {
     // self-demotion (also through its agent): like leaving, the subject cannot rotate what it no longer reads
@@ -321,10 +324,10 @@ function wgCreate(state: OrgState, body: Body, seq: number): OrgState {
   rights(!state.workgroups.has(wg) && wg !== state.org);
   if (body.epoch !== 1) fail('log_epoch');
   return state.with({
-    workgroups: new Map(state.workgroups).set(wg, { id: wg, isDefault: false, createdSeq: seq, archivedSeq: null }),
-    access: new Map(state.access).set(pairKey(state.acting(by), wg), WRITE),
-    epochs: new Map(state.epochs).set(pairKey(WG, wg), 1),
-    epochAuthors: new Map(state.epochAuthors).set(epochKey(WG, wg, 1), by),
+    workgroups: withEntry(state.workgroups, wg, { id: wg, isDefault: false, createdSeq: seq, archivedSeq: null }),
+    access: withEntry(state.access, pairKey(state.acting(by), wg), WRITE),
+    epochs: withEntry(state.epochs, pairKey(WG, wg), 1),
+    epochAuthors: withEntry(state.epochAuthors, epochKey(WG, wg, 1), by),
   });
 }
 
@@ -332,7 +335,7 @@ function wgArchive(state: OrgState, body: Body, seq: number): OrgState {
   const wg = body.wg as string;
   rights(state.writable(wg) && wg !== state.defaultWg);
   const archived = { ...state.workgroups.get(wg)!, archivedSeq: seq };
-  return state.with({ workgroups: new Map(state.workgroups).set(wg, archived) });
+  return state.with({ workgroups: withEntry(state.workgroups, wg, archived) });
 }
 
 function grant(state: OrgState, body: Body): OrgState {
@@ -346,16 +349,14 @@ function grant(state: OrgState, body: Body): OrgState {
       wg !== state.defaultWg &&
       state.access.get(pairKey(subject, wg)) !== body.access,
   );
-  return state.with({ access: new Map(state.access).set(pairKey(subject, wg), body.access as string) });
+  return state.with({ access: withEntry(state.access, pairKey(subject, wg), body.access as string) });
 }
 
 function ungrant(state: OrgState, body: Body): OrgState {
   const subject = body.subject as string;
   const key = pairKey(subject, body.wg as string);
   rights(state.member(subject) !== null && state.access.has(key));
-  const access = new Map(state.access);
-  access.delete(key);
-  return state.with({ access });
+  return state.with({ access: withoutEntry(state.access, key) });
 }
 
 function platformDevice(state: OrgState, body: Body, seq: number, ctx: Context): Principal {
@@ -398,17 +399,16 @@ function deviceAssign(state: OrgState, body: Body, seq: number, ctx: Context): O
   rights(state.writable(wg) && !state.assignments.has(pairKey(device, wg)) && !state.orgAssignments.has(device));
   const principal = assignable(state, body, seq, ctx);
   return state.with({
-    principals: new Map(state.principals).set(device, principal),
-    assignments: new Map(state.assignments).set(pairKey(device, wg), seq),
+    principals: withEntry(state.principals, device, principal),
+    assignments: withEntry(state.assignments, pairKey(device, wg), seq),
   });
 }
 
 function deviceUnassign(state: OrgState, body: Body): OrgState {
   const key = pairKey(body.device as string, body.wg as string);
+  // only an explicit assignment can be undone here (one through the organization is `device_unassign_org`)
   rights(state.member(body.device as string) !== null && state.assignments.has(key));
-  const assignments = new Map(state.assignments);
-  assignments.delete(key);
-  return state.with({ assignments });
+  return state.with({ assignments: withoutEntry(state.assignments, key) });
 }
 
 async function admit(state: OrgState, body: Body, seq: number, ctx: Context): Promise<OrgState> {
@@ -449,9 +449,9 @@ async function admit(state: OrgState, body: Body, seq: number, ctx: Context): Pr
     consented: false,
     ...PLAIN,
   };
-  const access = new Map(state.access);
-  for (const [wg, level] of Object.entries(wgs)) access.set(pairKey(subject, wg), level);
-  return state.with({ principals: new Map(state.principals).set(subject, principal), access });
+  let access = state.access;
+  for (const [wg, level] of Object.entries(wgs)) access = withEntry(access, pairKey(subject, wg), level);
+  return state.with({ principals: withEntry(state.principals, subject, principal), access });
 }
 
 function deviceAssignOrg(state: OrgState, body: Body, seq: number, ctx: Context): OrgState {
@@ -459,21 +459,21 @@ function deviceAssignOrg(state: OrgState, body: Body, seq: number, ctx: Context)
   rights(!state.orgAssignments.has(device));
   const principal = assignable(state, body, seq, ctx);
   return state.with({
-    principals: new Map(state.principals).set(device, principal),
-    orgAssignments: new Map(state.orgAssignments).set(device, seq),
+    principals: withEntry(state.principals, device, principal),
+    orgAssignments: withEntry(state.orgAssignments, device, seq),
   });
 }
 
 function deviceUnassignOrg(state: OrgState, body: Body): OrgState {
   const device = body.device as string;
   rights(state.orgAssigned(device));
-  const orgAssignments = new Map(state.orgAssignments);
-  orgAssignments.delete(device);
-  return state.with({ orgAssignments });
+  return state.with({ orgAssignments: withoutEntry(state.orgAssignments, device) });
 }
 
-function without<T>(map: ReadonlyMap<string, T>, principal: string): Map<string, T> {
-  return new Map([...map].filter(([key]) => !key.startsWith(`${principal} `)));
+function without<T>(map: ReadonlyMap<string, T>, principal: string): ReadonlyMap<string, T> {
+  let out = map;
+  for (const key of map.keys()) if (key.startsWith(`${principal} `)) out = withoutEntry(out, key);
+  return out;
 }
 
 function remove(state: OrgState, body: Body, seq: number): OrgState {
@@ -486,15 +486,16 @@ function remove(state: OrgState, body: Body, seq: number): OrgState {
   if (found.role === ADMIN && state.admins().length === 1) fail('last_admin');
   // an agent removed by its user, the user's agent or itself is revoked in every log (`wraps.revokedAgents`)
   const byOwner = found.parent !== null && acting === found.parent;
-  const principals = new Map(state.principals).set(subject, { ...found, removedSeq: seq, removedByOwner: byOwner });
+  let principals = withEntry(state.principals, subject, { ...found, removedSeq: seq, removedByOwner: byOwner });
   // "with its user" (ADR-082 section 9.2): the agent may come back when the user rejoins
   const agent = state.activeAgent(subject);
-  if (agent !== null) principals.set(agent.id, { ...agent, removedSeq: seq, removedWithUser: true });
+  if (agent !== null)
+    principals = withEntry(principals, agent.id, { ...agent, removedSeq: seq, removedWithUser: true });
   let after = state.with({
     principals,
     access: without(state.access, subject),
     assignments: without(state.assignments, subject),
-    orgAssignments: new Map([...state.orgAssignments].filter(([device]) => device !== subject)),
+    orgAssignments: withoutEntry(state.orgAssignments, subject),
   });
   if (selfOwed(state, body)) {
     // leaving: the leaver cannot rotate (L8), so the rotation is owed by the remaining holders
@@ -518,13 +519,11 @@ function rotate(state: OrgState, body: Body): OrgState {
   if (body.epoch !== epoch) fail('log_epoch');
   const pending = new Set(state.pending);
   pending.delete(pairKey(scope, scopeId));
-  const agentOwed = new Map(state.agentOwed);
-  agentOwed.delete(pairKey(scope, scopeId));
   return state.with({
-    epochs: new Map(state.epochs).set(pairKey(scope, scopeId), epoch),
-    epochAuthors: new Map(state.epochAuthors).set(epochKey(scope, scopeId, epoch), by),
+    epochs: withEntry(state.epochs, pairKey(scope, scopeId), epoch),
+    epochAuthors: withEntry(state.epochAuthors, epochKey(scope, scopeId, epoch), by),
     pending,
-    agentOwed,
+    agentOwed: withoutEntry(state.agentOwed, pairKey(scope, scopeId)),
   });
 }
 
@@ -595,8 +594,38 @@ export async function apply(
   return after.with({ seq, head: await entryHash(data) });
 }
 
+/** Sets sealed against changes (`HolderSet`). */
+const sealed = new WeakSet<Set<string>>();
+
+/**
+ * The cached answer of `epochHolders`: a set that refuses changes once built, so no caller can alter what the log
+ * answers the next caller (KOR-35).
+ */
+class HolderSet extends Set<string> {
+  constructor(items: Iterable<string>) {
+    super(items);
+    sealed.add(this);
+  }
+
+  override add(value: string): this {
+    if (sealed.has(this)) throw new TypeError('epoch holders are read-only');
+    return super.add(value);
+  }
+
+  override delete(): boolean {
+    throw new TypeError('epoch holders are read-only');
+  }
+
+  override clear(): void {
+    throw new TypeError('epoch holders are read-only');
+  }
+}
+
 /** A verified membership log: its entries and the state after each entry (`states[seq]`). */
 export class VerifiedLog {
+  /** `epochHolders` per epoch key (the log is immutable, so each answer is computed once). */
+  readonly #holders = new Map<string, ReadonlySet<string>>();
+
   constructor(
     readonly entries: readonly Entry[],
     readonly states: readonly OrgState[],
@@ -620,19 +649,29 @@ export class VerifiedLog {
 
   /**
    * Principals that held the key of `(scope, scope_id, epoch)` by the log: its creator and every principal that
-   * could read the scope in some state in which this epoch was current.
+   * could read the scope in some state in which this epoch was current. Computed once per epoch; after the first
+   * state of the epoch only the principals whose rights may have changed are asked (`changedPrincipals`), and a
+   * principal already found is not asked again.
    */
-  epochHolders(scope: string, scopeId: string, epoch: number): Set<string> {
+  epochHolders(scope: string, scopeId: string, epoch: number): ReadonlySet<string> {
+    const key = epochKey(scope, scopeId, epoch);
+    const known = this.#holders.get(key);
+    if (known !== undefined) return known;
     const holders = new Set<string>();
+    let asked: OrgState | null = null;
     for (const state of this.states) {
       if (state.epoch(scope, scopeId) !== epoch) continue;
-      for (const principal of state.principals.keys()) {
-        if (state.canRead(principal, scope, scopeId)) holders.add(principal);
+      const candidates = (asked === null ? null : changedPrincipals(asked, state)) ?? state.principals.keys();
+      asked = state;
+      for (const principal of candidates) {
+        if (!holders.has(principal) && state.canRead(principal, scope, scopeId)) holders.add(principal);
       }
     }
-    const author = this.state.epochAuthors.get(epochKey(scope, scopeId, epoch));
+    const author = this.state.epochAuthors.get(key);
     if (author !== undefined) holders.add(author);
-    return holders;
+    const answer = new HolderSet(holders);
+    this.#holders.set(key, answer);
+    return answer;
   }
 }
 

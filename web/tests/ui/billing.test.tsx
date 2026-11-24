@@ -42,6 +42,10 @@ describe('credit and usage', () => {
     expect(screen.getByTestId('billing.days')).toHaveTextContent('2026-11-21: $0.45 (model $0.45, runtime $0.0030)');
     expect(screen.getByTestId('billing.workgroups')).toHaveTextContent('wg-1 (30 s)');
     expect(screen.queryByTestId('billing.exhausted')).toBeNull();
+    expect(screen.queryByTestId('billing.credits.truncated')).toBeNull();
+    answer = () => ({ ...BILLING, credits_truncated: true });
+    fireEvent.click(screen.getByTestId('billing.reload'));
+    expect(await screen.findByTestId('billing.credits.truncated')).toHaveTextContent('newest 100 credit entries');
     answer = () => ({
       ...BILLING,
       exhausted: true,
@@ -98,11 +102,14 @@ describe('credit badge', () => {
 });
 
 describe('task costs', () => {
+  const session = (id: string) => ({ session_id: id, ...totals });
+
   it('shows the charges per session, nothing to show, failures and reloads', async () => {
     const t = await credWorld();
     let answer: () => unknown = () => ({
-      sessions: [{ session_id: '0190f000-0000-7000-8000-00000000aaaa', ...totals }],
+      sessions: [session('0190f000-0000-7000-8000-00000000aaaa')],
       total_micro_usd: 448_200,
+      next_before: null,
     });
     t.client.on('GET /v1/tasks/task-1/charges', () => answer());
     mount(t, [{ path: '/', element: <ChargesTab orgId={t.org} taskId="task-1" /> }], '/');
@@ -110,7 +117,8 @@ describe('task costs', () => {
     expect(screen.getByTestId('charges.sessions')).toHaveTextContent(
       'Session 0190f000: model $0.45 (1,100,000 tokens), runtime $0.0030 (30 s)',
     );
-    answer = () => ({ sessions: [], total_micro_usd: 0 });
+    expect(screen.queryByTestId('charges.truncated')).toBeNull();
+    answer = () => ({ sessions: [], total_micro_usd: 0, next_before: null });
     fireEvent.click(screen.getByTestId('charges.reload'));
     expect(await screen.findByTestId('charges.empty')).toBeVisible();
     answer = () => {
@@ -118,5 +126,35 @@ describe('task costs', () => {
     };
     fireEvent.click(screen.getByTestId('charges.reload'));
     expect(await screen.findByTestId('charges.load-failed')).toHaveAttribute('data-code', 'unavailable');
+  });
+
+  it('reads the sessions page by page, newest first, and loads more on request', async () => {
+    const t = await credWorld();
+    t.client.on('GET /v1/tasks/task-1/charges', (_body, target) => {
+      const before = new URL(String(target), 'http://hub.invalid').searchParams.get('before');
+      if (before === null) return { sessions: [], total_micro_usd: 900, next_before: 'c1' };
+      if (before === 'c1') return { sessions: [session('s3000000'), session('s2000000')], next_before: 'c2' };
+      return { sessions: [session('s1000000')], next_before: null };
+    });
+    mount(t, [{ path: '/', element: <ChargesTab orgId={t.org} taskId="task-1" /> }], '/');
+    // an empty newest page with older ones: "Load more" without a row
+    fireEvent.click(await screen.findByTestId('charges.sessions.load-more'));
+    expect(await screen.findByTestId('charges.total')).toHaveTextContent('Total $0.0009');
+    expect(screen.getByTestId('charges.sessions')).toHaveTextContent('Session s3000000');
+    expect(screen.queryByTestId('charges.empty')).toBeNull();
+    fireEvent.click(screen.getByTestId('charges.sessions.load-more'));
+    expect(await screen.findByText(/Session s1000000/)).toBeVisible();
+    expect(screen.queryByTestId('charges.sessions.load-more')).toBeNull();
+  });
+
+  it('says when a hub without paging cut the list', async () => {
+    const t = await credWorld();
+    t.client.on('GET /v1/tasks/task-1/charges', (_body, target) => {
+      if (String(target).includes('?')) throw new HubError('request_invalid', 400);
+      return { sessions: [session('s1000000')], total_micro_usd: 1, truncated: true };
+    });
+    mount(t, [{ path: '/', element: <ChargesTab orgId={t.org} taskId="task-1" /> }], '/');
+    expect(await screen.findByTestId('charges.truncated')).toHaveTextContent('only part of the sessions');
+    expect(screen.getByTestId('charges.sessions')).toHaveTextContent('Session s1000000');
   });
 });

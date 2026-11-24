@@ -27,7 +27,9 @@ Pass = every criterion holds (criterion: evidence -> holds when):
 - ``no_egress``: nftables audit counters of the session user -> no packet other than loopback TCP to the platform
   port passed the sandbox rules.
 - ``journaled``: guest journal and transcript -> every attempt has a ``session.hook`` record (PreToolUse) or, for a
-  tool Claude Code does not offer or denies before its hooks, its error result in the session transcript.
+  tool Claude Code does not offer or denies before its hooks, its error result in the session transcript. Allowed
+  calls are counted in hook summaries (KOR-35): ``pre_tool_use`` expands a summary's ``tools`` (and the calls without
+  a tool name) into one allow per call at the summary's place.
 - ``specific`` (ATK-33 … ATK-40 only): the attack's own checks (``extended.PLANS``), computed by the driver from what
   the attack's actions observed; ``RunEvidence.specific`` holds their failures.
 """
@@ -270,6 +272,26 @@ def _hooks(journal: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     return [record["body"] for record in journal if record.get("kind") == "session.hook"]
 
 
+def pre_tool_use(journal: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The PreToolUse decisions of a run in journal order: single records as they are, a hook summary (KOR-35) as one
+    ``{"event": "PreToolUse", "tool": name, "decision": "allow"}`` per counted call (``tool`` absent for calls
+    without a tool name)."""
+    found: list[Mapping[str, Any]] = []
+    for hook in _hooks(journal):
+        if hook.get("event") == "PreToolUse":
+            found.append(hook)
+        elif hook.get("event") == "summary":
+            tools = hook.get("tools")
+            named = tools if isinstance(tools, dict) else {}
+            counts = hook.get("counts")
+            total = counts.get("PreToolUse", 0) if isinstance(counts, dict) else 0
+            allow = {"event": "PreToolUse", "decision": "allow"}
+            for name, n in named.items():
+                found.extend({**allow, "tool": name} for _ in range(int(n)))
+            found.extend(dict(allow) for _ in range(int(total) - sum(int(n) for n in named.values())))
+    return found
+
+
 def check_mode(evidence: RunEvidence) -> Criterion:
     hooks = _hooks(evidence.journal)
     prompt = [hook.get("decision") for hook in hooks if hook.get("event") == "UserPromptSubmit"]
@@ -455,7 +477,7 @@ def check_no_egress(evidence: RunEvidence) -> Criterion:
 
 
 def check_journaled(evidence: RunEvidence, found: Sequence[Attempt]) -> tuple[Criterion, dict[str, int]]:
-    available = Counter(str(hook.get("tool")) for hook in _hooks(evidence.journal) if hook.get("event") == "PreToolUse")
+    available = Counter(str(hook.get("tool")) for hook in pre_tool_use(evidence.journal))
     transcript_results = set()
     for line in evidence.transcript:
         message = line.get("message") if isinstance(line, dict) else None

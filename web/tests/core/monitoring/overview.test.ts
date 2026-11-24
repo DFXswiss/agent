@@ -32,6 +32,26 @@ describe('overview shapes', () => {
     expect(overview.sessions[1]).toMatchObject({ session_id: S2, usage: null, stale: true });
   });
 
+  it('keeps the session cap of a current hub and ignores a malformed one', () => {
+    const good = overviewBody();
+    const cut = parseOverview({ ...good, sessions_total: 4812, truncated: true, devices_truncated: true });
+    expect(cut.sessions_total).toBe(4812);
+    expect(cut.truncated).toBe(true);
+    expect(cut.devices_truncated).toBe(true);
+    // the cap stays when live samples change the overview
+    const applied = applySamples(
+      cut,
+      frameSamples({ samples: [{ entity_kind: 'device', entity_id: DEV, sample: sample(T0 + 60_000) }] }),
+    );
+    expect(applied.overview).toMatchObject({ sessions_total: 4812, truncated: true });
+    for (const sessions_total of [-1, 1.5, '7', null]) {
+      const odd = parseOverview({ ...good, sessions_total, truncated: 'yes', devices_truncated: 1 });
+      expect('sessions_total' in odd).toBe(false);
+      expect('truncated' in odd).toBe(false);
+      expect('devices_truncated' in odd).toBe(false);
+    }
+  });
+
   it('leaves malformed items out and refuses a malformed body', () => {
     const good = overviewBody();
     const overview = parseOverview({

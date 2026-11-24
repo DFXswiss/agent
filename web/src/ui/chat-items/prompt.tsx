@@ -11,7 +11,7 @@ import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
 import { useAppEnv } from '../shell/context';
 import { EventTime } from '../task-tabs/chat/EventTime';
-import { useClipped } from './file/Clipped';
+import { useClipped } from '../lists/Clipped';
 import { knownPersonName } from '../names/names';
 
 function Prompt({ item }: ChatItemProps) {
@@ -26,7 +26,9 @@ function Prompt({ item }: ChatItemProps) {
     author === me
       ? t('task.chat.author.you')
       : (knownPersonName(t, directory, author!) ?? t('task.chat.author.unknown'));
-  const { shown, more } = useClipped(isRecord(body) && typeof body.text === 'string' ? body.text : '');
+  const { shown, more } = useClipped(isRecord(body) && typeof body.text === 'string' ? body.text : '', {
+    controls: 'chat',
+  });
   return (
     <div
       className="ml-auto flex max-w-[85%] flex-col items-end gap-1"

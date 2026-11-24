@@ -44,6 +44,7 @@
   "assign.title": "Plattformgerät zuweisen",
   "assign.workgroup": "Workgroup",
   "assign.candidates": "Verfügbare Plattformgeräte",
+  "assign.candidates.search": "Plattformgeräte suchen",
   "assign.loading": "Plattformgeräte werden geladen…",
   "assign.none": "Für diese Workgroup ist kein Plattformgerät verfügbar.",
   "assign.unverifiable": "Im Plattformlog nicht zertifiziert",
@@ -87,5 +88,12 @@
   "unassign-org.open": "Aus der Organisation entfernen",
   "unassign-org.title": "{name} aus der Organisation entfernen",
   "unassign-org.confirm": "Entfernen",
-  "unassign-org.body": "Das Gerät führt nicht mehr Aufgaben jeder Workgroup aus; Workgroups, denen es einzeln zugewiesen ist, behalten es. Die Schlüssel der übrigen Workgroups werden ersetzt. Inhalte, die es bereits gelesen hat, bleiben auf dem Gerät."
+  "unassign-org.body": "Das Gerät führt nicht mehr Aufgaben jeder Workgroup aus; Workgroups, denen es einzeln zugewiesen ist, behalten es. Die Schlüssel der übrigen Workgroups werden ersetzt. Inhalte, die es bereits gelesen hat, bleiben auf dem Gerät.",
+  "wgs.more": "{count} weitere – anzeigen",
+  "list.more": "{count} weitere Geräte – anzeigen",
+  "list.above": "{count} Geräte darüber – anzeigen",
+  "list.top": "Zurück zum Anfang",
+  "invites.truncated": "Der Hub hat nur die neuesten Geräte-Einladungen einer längeren Liste gesendet.",
+  "truncated": "Der Hub hat nur den Status der neuesten Geräte gesendet; für die übrigen ist er unbekannt.",
+  "assign.truncated": "Der Hub hat nur einen Teil der verfügbaren Plattform-Geräte gesendet."
 }

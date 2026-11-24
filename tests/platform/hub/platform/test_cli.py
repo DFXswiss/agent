@@ -26,6 +26,7 @@ from agent_hub.crypto import invite as invite_codes
 from agent_hub.crypto.encoding import b64u_encode
 from agent_hub.crypto.keys import Identity, ed25519_public_raw, ed25519_seed
 from agent_hub.platform import cli
+from agent_hub.scheduler import waiting as scheduler_waiting
 from agent_hub.users import identity as users_identity
 from tests.platform.hub.conftest import (
     FixedClock,
@@ -228,7 +229,8 @@ def test_a_log_the_root_did_not_sign_is_refused(run: Callable[..., tuple[int, st
     fake_log = forged.chain(forged.body("root", pub=b64u_encode(ed25519_public_raw(forged.root))))
 
     def handler(request: httpx.Request) -> httpx.Response:
-        response = hub.base.request(request.method, request.url.path, content=request.content, headers=request.headers)
+        target = request.url.raw_path.decode("ascii")
+        response = hub.base.request(request.method, target, content=request.content, headers=request.headers)
         if request.url.path == "/v1/platform/enrollments":
             return resign(hub, request, response.status_code, {"enrollments": [], "log": fake_log})
         return httpx.Response(response.status_code, headers=response.headers, content=response.content)
@@ -545,6 +547,24 @@ def _waiting_task(hub: HubHarness, org: str, reason: str) -> str:
     return wg
 
 
+def _own_device(hub: HubHarness, org: str) -> None:
+    """An active device of the organization's own."""
+    device = str(uuid_v7())
+    with hub.pool.connection() as connection, connection.transaction():
+        connection.execute("INSERT INTO hub.principal (id, kind, created_at) VALUES (%s, 'device', now())", (device,))
+        connection.execute(
+            "INSERT INTO hub.device (id, kind, kem_pub, sig_pub, owner_org, state, enrolled_at, agent_version, os,"
+            " arch, capacity, updated_at) VALUES (%s, 'org', %s, %s, %s, 'active', now(), '0.1.0', 'macos', 'arm64',"
+            " '{}', now())",
+            (device, b"k" * 32, b"s" * 32, org),
+        )
+        connection.execute(
+            "INSERT INTO hub.org_member (org_id, principal_id, kind, role, joined_seq)"
+            " VALUES (%s, %s, 'device', 'device', 1)",
+            (org, device),
+        )
+
+
 def test_waiting_lists_the_tasks_the_operator_must_serve(
     run: Callable[..., tuple[int, str, str]], hub: HubHarness, plat: Platform
 ) -> None:
@@ -558,20 +578,7 @@ def test_waiting_lists_the_tasks_the_operator_must_serve(
     # an org with a device of its own, or with a platform device it could get, is not the operator's task
     own = new_org(hub)
     _waiting_task(hub, own, "no_device")
-    device = str(uuid_v7())
-    with hub.pool.connection() as connection, connection.transaction():
-        connection.execute("INSERT INTO hub.principal (id, kind, created_at) VALUES (%s, 'device', now())", (device,))
-        connection.execute(
-            "INSERT INTO hub.device (id, kind, kem_pub, sig_pub, owner_org, state, enrolled_at, agent_version, os,"
-            " arch, capacity, updated_at) VALUES (%s, 'org', %s, %s, %s, 'active', now(), '0.1.0', 'macos', 'arm64',"
-            " '{}', now())",
-            (device, b"k" * 32, b"s" * 32, own),
-        )
-        connection.execute(
-            "INSERT INTO hub.org_member (org_id, principal_id, kind, role, joined_seq)"
-            " VALUES (%s, %s, 'device', 'device', 1)",
-            (own, device),
-        )
+    _own_device(hub, own)
     hub.clock.advance(1)
     credit = _waiting_task(hub, own, "credit_exhausted")  # ADR-079: credit is the operator's as well
     code, out, _ = run("waiting")
@@ -622,3 +629,91 @@ def test_switches_lists_and_the_operator_role(
     ]
     assert run("set-policy", "open_platform_access", "off")[0] == 0
     assert "policy open_platform_access off" in run("settings")[1]
+
+
+def test_waiting_is_capped(
+    run: Callable[..., tuple[int, str, str]], hub: HubHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-086 section 2: at most `WAITING_MAX` workgroups, the longest waiting, and `truncated` when cut."""
+    monkeypatch.setattr(scheduler_waiting, "WAITING_MAX", 1)
+    first = _waiting_task(hub, new_org(hub), "platform_access_required")
+    hub.clock.advance(1)
+    _waiting_task(hub, new_org(hub), "platform_access_required")
+    code, out, _ = run("waiting")
+    assert code == 0
+    lines = out.splitlines()
+    assert [line.split()[3] for line in lines[:-1]] == [first]
+    assert lines[-1] == "only the 1 longest waiting workgroups are shown"
+
+
+def test_the_cap_counts_only_the_rows_the_operator_must_serve(
+    run: Callable[..., tuple[int, str, str]], hub: HubHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review (KOR-35): a `no_device` row someone else could serve is filtered before the cap, so the cap counts kept
+    rows and `truncated` is exact."""
+    monkeypatch.setattr(scheduler_waiting, "WAITING_MAX", 1)
+    served = new_org(hub)
+    _waiting_task(hub, served, "no_device")
+    _own_device(hub, served)
+    hub.clock.advance(1)
+    second = _waiting_task(hub, new_org(hub), "platform_access_required")
+    code, out, _ = run("waiting")
+    assert code == 0
+    assert [line.split()[3] for line in out.splitlines()] == [second]  # no "only the 1 longest …" line
+
+
+def forwarding(hub: HubHarness, refuse: Callable[[httpx.Request], bool]) -> httpx.Client:
+    """A client to the hub that answers the requests `refuse` picks with a signed `400 request_invalid`."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if refuse(request):
+            return resign(hub, request, 400, {"error": "request_invalid"})
+        target = request.url.raw_path.decode("ascii")
+        response = hub.base.request(request.method, target, content=request.content, headers=request.headers)
+        return httpx.Response(response.status_code, headers=response.headers, content=response.content)
+
+    return httpx.Client(base_url="http://localhost:8788", transport=httpx.MockTransport(handler))
+
+
+def test_the_log_is_read_page_by_page(
+    run: Callable[..., tuple[int, str, str]], hub: HubHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-086 section 2 (KOR-35): the CLI reads the platform log of the enrollments page by page."""
+    monkeypatch.setattr(cli, "LOG_PAGE", 2)
+    targets: list[str] = []
+
+    def note(request: httpx.Request) -> bool:
+        targets.append(request.url.raw_path.decode("ascii"))
+        return False
+
+    client = forwarding(hub, note)
+    for seq in (1, 2, 3):
+        assert run("grant-role", "inviter", "--user", str(new_user(hub)), http=client)[1] == (
+            f"appended role_grant (seq {seq})\n"
+        )
+    assert run("grant-role", "inviter", "--user", str(new_user(hub)), http=client)[1] == "appended role_grant (seq 4)\n"
+    reads = [target for target in targets if target.startswith("/v1/platform/enrollments")]
+    assert reads[-2:] == ["/v1/platform/enrollments?limit=2", "/v1/platform/enrollments?after=1&limit=2"]
+
+
+def test_a_hub_without_paging_answers_the_whole_log(run: Callable[..., tuple[int, str, str]], hub: HubHarness) -> None:
+    assert run("grant-role", "inviter", "--user", str(new_user(hub)))[0] == 0
+    old_hub = forwarding(hub, lambda request: request.url.query != b"" and "enrollments" in request.url.path)
+    assert run("grant-role", "inviter", "--user", str(new_user(hub)), http=old_hub) == (
+        0,
+        "appended role_grant (seq 2)\n",
+        "",
+    )
+
+
+def test_a_refused_later_page_is_reported(
+    run: Callable[..., tuple[int, str, str]], hub: HubHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert run("grant-role", "inviter", "--user", str(new_user(hub)))[0] == 0
+    monkeypatch.setattr(cli, "LOG_PAGE", 1)
+    refusing = forwarding(hub, lambda request: b"after=" in request.url.query)
+    assert run("decertify", "--device", uuid_v7(), http=refusing) == (
+        1,
+        "",
+        "agent-hub platform: refused: request_invalid\n",
+    )

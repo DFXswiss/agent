@@ -14,7 +14,8 @@ the host, 00-overview.md section 3 B4: a guest never speaks for another VM's ses
 - `session.output`, `session.tool`, `session.hook`, `session.file`, `session.terminal`: device event of the same kind
   (wg scope, the session's task and session in the header, the record's time when it is a valid contract time),
   sealed at the first push with the current epoch key of the workgroup and the device key (`sync.seal`); size limits
-  of E8 (terminal 64 KiB; a well-formed terminal record beyond it becomes several events, `sync.seal.split_terminal`).
+  of E8 (terminal 64 KiB; a well-formed terminal record beyond it becomes several events, `sync.seal.split_terminal`;
+  a tool or output record beyond 256 KiB is clipped field by field with a marker, `sessions.clip`).
 - `session.hook` with a PreToolUse `deny`: additionally the audit `hook.denied` with tool name and rule number only
   (never the path).
 - `session.tools_ready {tools, at}` (HOT-09): the session's agent listed the platform tools; only measured - the start
@@ -42,6 +43,7 @@ from psycopg import AsyncConnection
 from agent_runner.guestlink.client import JournalRecord
 from agent_runner.model import gateways
 from agent_runner.sessions import records
+from agent_runner.sessions.clip import clip
 from agent_runner.sessions.events import fail, session_event
 from agent_runner.sessions.records import LocalSession
 from agent_runner.sync.seal import split_terminal
@@ -202,7 +204,7 @@ def event_handler(kind: str) -> Callable[[Any, AsyncConnection[Any], JournalReco
         if session is None:
             return
         ts = _ts(record, journal)
-        bodies = split_terminal(record.body) if kind == "session.terminal" else [record.body]
+        bodies = split_terminal(record.body) if kind == "session.terminal" else [clip(kind, record.body)]
         for body in bodies:
             await session_event(conn, journal.env.outbox, session, kind=kind, body=body, ts=ts)
         if kind == "session.hook":

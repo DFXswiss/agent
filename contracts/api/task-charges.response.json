@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/task-charges.response.json",
   "title": "GET /v1/tasks/{task}/charges response",
-  "description": "Body of a successful response to GET /v1/tasks/{task}/charges (03-api.md section 4.11, 12-billing.md section 6). Amounts in micro-USD.",
+  "description": "Body of a successful response to GET /v1/tasks/{task}/charges (03-api.md section 4.11, 12-billing.md section 6). Amounts in micro-USD; total_micro_usd is that of the whole task. Without `before`/`limit` the sessions by their first charge, at most 10 000 (`truncated: true` when cut); with them one page of at most 200 sessions newest first (by the UUIDv7 session ID) and next_before (ADR-086 section 2, KOR-35).",
   "type": "object",
   "properties": {
     "sessions": {
@@ -49,6 +49,13 @@
       "minItems": 0,
       "maxItems": 10000,
       "description": "the consumption per person (ADR-083 section 2), largest amount first"
+    },
+    "next_before": {
+      "$ref": "../common.json#/$defs/next_before"
+    },
+    "truncated": {
+      "type": "boolean",
+      "const": true
     }
   },
   "required": [

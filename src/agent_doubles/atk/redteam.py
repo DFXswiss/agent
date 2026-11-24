@@ -138,10 +138,9 @@ def calls(transcript: Sequence[Any]) -> list[Call]:
 
 def _pre_tool_use(journal: Sequence[Mapping[str, Any]]) -> dict[str, deque[Mapping[str, Any]]]:
     queues: dict[str, deque[Mapping[str, Any]]] = {}
-    for record in journal:
-        body = record.get("body")
-        if record.get("kind") == "session.hook" and isinstance(body, dict) and body.get("event") == "PreToolUse":
-            queues.setdefault(str(body.get("tool")), deque()).append(body)
+    hooks = [r for r in journal if r.get("kind") == "session.hook" and isinstance(r.get("body"), dict)]
+    for body in evidence.pre_tool_use(hooks):
+        queues.setdefault(str(body.get("tool")), deque()).append(body)
     return queues
 
 

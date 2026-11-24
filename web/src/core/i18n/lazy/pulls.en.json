@@ -10,7 +10,7 @@
   "reload": "Try again",
   "empty": "No pull request is linked to a task of this workgroup yet.",
   "empty.task": "No pull request is linked to this task yet.",
-  "more": "Load more",
+  "line.more": "{count} more – all in the task",
   "unavailable": "Pull request (details unavailable)",
   "unavailable.legacy": "This link was registered by an older version; repository and number are not available.",
   "unavailable.body": "The details of this link cannot be verified.",

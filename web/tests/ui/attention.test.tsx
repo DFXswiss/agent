@@ -151,6 +151,8 @@ describe('situation view', () => {
     }));
     putSession(t.store, sessionRow(t, { session_id: 'mw', task_id: 'w', state: 'idle' }) as SessionRow, [], 0);
     putEvents(t.store, t.wg, [verified(t, 1, { kind: 'task.meta', task: 'q', author: t.me.id }, { title: 'Ask me' })]);
+    const profile = { kind: 'member.profile', ref: t.me.id, author: t.me.id };
+    putEvents(t.store, t.org, [{ ...verified(t, 1, profile, { display_name: 'Bob' }), scopeId: t.org }]);
     mount(t);
     await waitFor(() => expect(screen.getAllByTestId('attention.item')).toHaveLength(4));
     expect(screen.getByTestId('attention.screen')).toHaveTextContent('Situation');
@@ -175,6 +177,9 @@ describe('situation view', () => {
       'Nothing finished in the last 7 days.',
     );
     expect(within(entry('q')).getByTestId('tasks.row.title')).toHaveTextContent('Ask me');
+    // the signed author of the title is a member: named; a task without a known author shows the neutral word
+    expect(within(entry('q')).getByTestId('tasks.row.owner')).toHaveTextContent(/^Bob$/);
+    expect(within(entry('r')).getByTestId('tasks.row.owner')).toHaveTextContent(/^Member$/);
     expect(within(entry('q')).getByTestId('attention.item.reason')).toHaveTextContent('The agent has a question');
     expect(within(entry('q')).getByTestId('attention.item.since')).toHaveTextContent(/^Waiting for /);
     expect(within(entry('r')).getByTestId('attention.item.reason')).toHaveTextContent('An action was refused');

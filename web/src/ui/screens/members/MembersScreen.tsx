@@ -6,8 +6,9 @@
 // the key), ungrant an explicit access, remove – each change through the confirmation dialog ("Saving …",
 // `submitBatch`). An access an admin has only by its role shows "reads as admin" and has nothing to ungrant (ADR-058).
 // Every member can leave (hidden for the last admin). Controls the user's verified rights do not allow are not
-// rendered (section 1.2).
-import { useState } from 'react';
+// rendered (section 1.2). The rows are a `WindowedList` (ADR-086 section 1: at most `MAX_ROWS` rendered), built once
+// per log change; a member's workgroup chips show the first `CHIP_LIMIT` and "N more – show".
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { type Planner, submitBatch, type SubmitProgress } from '../../../core/org/batch';
 import {
@@ -16,6 +17,7 @@ import {
   grantable,
   grantPlan,
   leavePlan,
+  type MemberAccess,
   type MemberRow,
   memberRows,
   removePlan,
@@ -25,16 +27,19 @@ import {
 import type { OrgState } from '../../../core/log/state';
 import type { Directory } from '../../../core/tasks/directory';
 import { useI18n } from '../../i18n';
+import { WindowedList } from '../../lists/WindowedList';
 import { useAppEnv } from '../../shell/context';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 import { ActionDialog, BUTTON } from './ActionDialog';
 import { AdmitSection } from './AdmitSection';
+import { Chips } from './Chips';
 import { InviteSection } from './InviteSection';
 import { NameDialog } from './NameDialog';
 import { givenBy } from '../../names/names';
+import { MAX_ROWS, PAGE, sameValue } from './lists';
 
 /** The dialog that is open, with what it acts on. */
-type Open =
+export type Open =
   | { readonly kind: 'role'; readonly member: MemberRow }
   | { readonly kind: 'remove'; readonly member: MemberRow }
   | { readonly kind: 'ungrant'; readonly member: MemberRow; readonly wg: string }
@@ -119,23 +124,23 @@ function GrantDialog({ member, state, directory, onClose, org }: GrantDialogProp
   );
 }
 
-function MemberItem({
-  row,
-  admin,
-  directory,
-  onOpen,
-}: {
+/** What a member row shows: the row, the viewer's rights, the names of the org (one selector for the list). */
+interface MemberEntry {
   readonly row: MemberRow;
   readonly admin: boolean;
   readonly directory: Directory;
   readonly onOpen: (open: Open) => void;
-}) {
+}
+
+function MemberRowView({ item }: { readonly item: MemberEntry }) {
+  const { row, admin, directory, onOpen } = item;
   const { t } = useI18n();
   const manage = admin && !row.lastAdmin;
   const own = row.nameSource?.source === 'own';
   const given = row.name === null || own ? null : givenBy(t, directory, row.id);
+  const wgName = (wg: string) => directory.workgroups.get(wg) ?? t('members.wg.unnamed');
   return (
-    <li className="flex flex-col gap-2 border-b border-gray-200 py-3" data-testid="members.item" data-member={row.id}>
+    <>
       <div className="flex flex-wrap items-center gap-2">
         <span
           className="font-medium"
@@ -164,30 +169,31 @@ function MemberItem({
         <summary className="min-h-11 cursor-pointer">{t('names.id.show')}</summary>
         <code className="break-all">{row.id}</code>
       </details>
-      <ul className="flex flex-wrap gap-2 text-sm" data-testid="members.item.access">
-        {row.access.map((item) => (
-          <li key={item.wg} className="flex items-center gap-1 rounded border border-gray-200 px-2">
-            <span>{directory.workgroups.get(item.wg) ?? t('members.wg.unnamed')}</span>
-            <span className="text-gray-600" data-inherited={item.inherited}>
-              {item.inherited ? t('members.access.inherited') : t(`members.access.${item.access}`)}
+      <Chips
+        items={row.access}
+        wgOf={accessWg}
+        testId="members.item.access"
+        more="members.access.more"
+        render={(access) => (
+          <>
+            <span>{wgName(access.wg)}</span>
+            <span className="text-gray-600" data-inherited={access.inherited}>
+              {access.inherited ? t('members.access.inherited') : t(`members.access.${access.access}`)}
             </span>
-            {admin && !item.isDefault && !item.inherited && (
+            {admin && !access.isDefault && !access.inherited && (
               <button
                 type="button"
                 className="min-h-11 min-w-11 underline"
-                onClick={() => onOpen({ kind: 'ungrant', member: row, wg: item.wg })}
-                aria-label={t('members.ungrant.label', {
-                  name: memberName(t, row),
-                  wg: directory.workgroups.get(item.wg) ?? t('members.wg.unnamed'),
-                })}
+                onClick={() => onOpen({ kind: 'ungrant', member: row, wg: access.wg })}
+                aria-label={t('members.ungrant.label', { name: memberName(t, row), wg: wgName(access.wg) })}
                 data-testid="members.item.ungrant"
               >
                 ×
               </button>
             )}
-          </li>
-        ))}
-      </ul>
+          </>
+        )}
+      />
       {admin && (
         <div className="flex flex-wrap gap-2">
           {!own && !row.isMe && (
@@ -230,7 +236,42 @@ function MemberItem({
           )}
         </div>
       )}
-    </li>
+    </>
+  );
+}
+
+const accessWg = (access: MemberAccess) => access.wg;
+const memberKey = (entry: MemberEntry) => entry.row.id;
+const memberAttributes = (entry: MemberEntry) => ({ 'data-testid': 'members.item', 'data-member': entry.row.id });
+
+/** The member rows in the order of `memberRows` (admins first, then by name), windowed. */
+export function MemberList(props: {
+  readonly rows: readonly MemberRow[];
+  readonly admin: boolean;
+  readonly directory: Directory;
+  readonly onOpen: (open: Open) => void;
+}) {
+  const { rows, admin, directory, onOpen } = props;
+  const entries = useMemo(
+    () => rows.map((row): MemberEntry => ({ row, admin, directory, onOpen })),
+    [rows, admin, directory, onOpen],
+  );
+  return (
+    <WindowedList
+      listId="members"
+      items={entries}
+      getKey={memberKey}
+      Row={MemberRowView}
+      same={sameValue}
+      newest="start"
+      page={PAGE}
+      maxRows={MAX_ROWS}
+      testId="members.list"
+      labels={{ older: 'members.list.more', newer: 'members.list.above', newest: 'members.list.top' }}
+      rowClassName="flex flex-col gap-2 border-b border-gray-200 py-3"
+      rowAttributes={memberAttributes}
+      rowHeight="lg"
+    />
   );
 }
 
@@ -242,6 +283,11 @@ export function MembersScreen() {
   const { state, userId } = useOrgView(org);
   const directory = useDirectory(org, state !== null);
   const [open, setOpen] = useState<Open | null>(null);
+  // rebuilt only when the verified log, the user or the names change, not on every render
+  const rows = useMemo(
+    () => (state === null || userId === null ? [] : memberRows(state, userId, directory)),
+    [state, userId, directory],
+  );
   if (state === null) {
     return (
       <p className="p-4" data-testid="members.loading">
@@ -257,7 +303,6 @@ export function MembersScreen() {
     );
   }
   const admin = canManage(state, userId);
-  const rows = memberRows(state, userId, directory);
   const me = rows.find((row) => row.isMe)!;
   const close = () => setOpen(null);
   const run = (planner: Planner) => (progress: (step: SubmitProgress) => void) =>
@@ -267,11 +312,7 @@ export function MembersScreen() {
       <h1 className="text-xl font-semibold">{t('members.title')}</h1>
       {admin && <AdmitSection org={org} state={state} directory={directory} />}
       {admin && <InviteSection org={org} state={state} directory={directory} />}
-      <ul data-testid="members.list">
-        {rows.map((row) => (
-          <MemberItem key={row.id} row={row} admin={admin} directory={directory} onOpen={setOpen} />
-        ))}
-      </ul>
+      <MemberList rows={rows} admin={admin} directory={directory} onOpen={setOpen} />
       {!me.lastAdmin && (
         <button
           type="button"

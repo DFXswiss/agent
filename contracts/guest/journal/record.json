@@ -271,6 +271,71 @@
       ],
       "additionalProperties": false
     },
+    "body_session_hook_summary": {
+      "type": "object",
+      "description": "Summary of the routine hook calls of a session (ADR-086 section 3): PreToolUse allow and PostToolUse none without a reason are counted instead of journaled one by one and written at most every 10 s and before any other hook or state record of the session. counts per hook event, tools the PreToolUse calls per tool name (the keys are tool names, pattern ^[A-Za-z0-9_.:-]{1,128}$, at most 256; empty when no PreToolUse call with a valid tool name was counted), from/to the journal times of the first and the last counted call.",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "summary"
+        },
+        "decision": {
+          "type": "string",
+          "const": "allow"
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "PreToolUse": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "PostToolUse": {
+              "$ref": "../../common.json#/$defs/positive"
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1
+        },
+        "tools": {
+          "type": "object",
+          "description": "PreToolUse calls per tool name; empty when only PostToolUse calls (or calls without a valid tool name) were counted",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          },
+          "additionalProperties": {
+            "$ref": "../../common.json#/$defs/positive"
+          },
+          "maxProperties": 256
+        },
+        "from": {
+          "$ref": "../../common.json#/$defs/time"
+        },
+        "to": {
+          "$ref": "../../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "event",
+        "decision",
+        "counts",
+        "tools",
+        "from",
+        "to"
+      ],
+      "additionalProperties": false
+    },
+    "body_session_hook_record": {
+      "description": "A session.hook body: one hook call (body_session_hook) or the summary of routine calls (body_session_hook_summary, KOR-35).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/body_session_hook"
+        },
+        {
+          "$ref": "#/$defs/body_session_hook_summary"
+        }
+      ]
+    },
     "body_session_file": {
       "oneOf": [
         {
@@ -381,7 +446,7 @@
     },
     "body_session_terminal": {
       "type": "object",
-      "description": "terminal chunk; at most 16 KiB of data per record (sum checked by the producer)",
+      "description": "terminal chunk; at most 16384 characters of data per event, the body JSON of a record at most 64 KiB - 16 bytes (checked by the producer; the guest writes at most 60 KiB, KOR-35)",
       "properties": {
         "offset_ms_start": {
           "$ref": "../../common.json#/$defs/count"
@@ -1136,7 +1201,7 @@
               "const": "session.hook"
             },
             "body": {
-              "$ref": "#/$defs/body_session_hook"
+              "$ref": "#/$defs/body_session_hook_record"
             }
           },
           "required": [

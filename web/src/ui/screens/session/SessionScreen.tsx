@@ -3,7 +3,7 @@
 // **Children** (its subagent sessions, `children/ChildrenTab.tsx`) and **Browser** (the session's platform browser:
 // live picture and action record, `browser/BrowserTab.tsx`, section 5.4b). The session row comes from
 // `GET /v1/sessions/{id}`, the task (title, sibling and child rows) from `GET /v1/tasks/{task}`; the chat events of the
-// task are pulled like on the task page.
+// session are read newest page first, older pages on "Load more" (`useChatPaging`).
 import { lazy, Suspense, useEffect, useMemo } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { CHAT_KINDS } from '../../../core/chat/actions';
@@ -23,6 +23,7 @@ import { ChildrenTab } from './children/ChildrenTab';
 import { WorkvmPanel } from './WorkvmPanel';
 import { WorkvmRuntime } from './WorkvmRuntime';
 import { Timeline } from '../../task-tabs/chat/Timeline';
+import { useChatPaging } from '../../task-tabs/chat/useChatPaging';
 import { activeTab, Tabs } from '../task/Tabs';
 
 const TerminalView = lazy(() => import('../../terminal/TerminalView'));
@@ -33,10 +34,11 @@ const TAB_IDS = ['terminal', 'chat', 'children', 'browser'] as const;
 function SessionChat({ entry }: { readonly entry: SessionEntry }) {
   const { app } = useAppEnv();
   const { t } = useI18n();
-  const { wg_id: wg, task_id: task, session_id: session } = entry.row;
+  const { wg_id: wg, task_id: task, session_id: session, org_id: org } = entry.row;
   const select = useMemo(() => selectTimeline(wg, task, session), [wg, task, session]);
   const items = useStore(select, app.store);
-  return <Timeline items={items} empty={t('session.chat.empty')} />;
+  const paging = useChatPaging(org, wg, task, session);
+  return <Timeline listId="session.chat" items={items} paging={paging} empty={t('session.chat.empty')} />;
 }
 
 function SessionView({ entry }: { readonly entry: SessionEntry }) {

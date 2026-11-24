@@ -17,6 +17,7 @@ import pytest
 from agent_guest.recorder import Recorder
 from agent_runner.guestlink import cursor
 from agent_runner.guestlink.client import JournalRecord
+from agent_runner.model import merge
 from agent_runner.model import usage as usage_module
 from agent_runner.model.journal import HANDLERS as MODEL_HANDLERS
 from agent_runner.sessions import journal as journal_module
@@ -37,6 +38,12 @@ CONTRACTS = Path(__file__).resolve().parents[4] / "contracts"
 AT = "2026-11-21T12:00:05.000Z"
 # the journal loop of a daemon sees the handlers of every area; `usage` belongs to the model area (RUN-12)
 HANDLERS = {**SESSION_HANDLERS, **MODEL_HANDLERS}
+
+
+@pytest.fixture(autouse=True)
+def immediate_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One `usage` item per record, as before the merge (KOR-35); the merge has its own suite (model/test_merge.py)."""
+    monkeypatch.setattr(merge, "WINDOW_S", 0.0)
 
 
 def run(rig: Rig, body: Any) -> None:

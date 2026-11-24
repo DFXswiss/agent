@@ -338,6 +338,40 @@ def test_list_shows_the_first_lookup_of_each_invitation(world: World) -> None:
     assert opened() == {first.invite_id: looked, second.invite_id: None}
 
 
+def test_list_pages_with_a_stable_order(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-086 section 2 (KOR-35): `before`/`limit` page newest first; invitations of the same time are ordered by ID;
+    without the parameters the list is capped (`truncated: true` when cut)."""
+    draft = world.public_org()
+    older = create_invitation(draft)
+    world.hub.clock.advance(1)
+    same = sorted((create_invitation(draft).invite_id for _ in range(3)), reverse=True)
+    url = f"/v1/orgs/{draft.id}/invites"
+    first = draft.founder.browser.get(url, params={"limit": "2"}).json()
+    assert [item["invite_id"] for item in first["invites"]] == same[:2]
+    second = draft.founder.browser.get(url, params={"limit": "2", "before": first["next_before"]}).json()
+    assert ([item["invite_id"] for item in second["invites"]], second["next_before"] is None) == (
+        [same[2], older.invite_id],
+        True,
+    )
+    whole = draft.founder.browser.get(url).json()
+    assert [item["invite_id"] for item in whole["invites"]] == [*same, older.invite_id]
+    assert set(whole) == {"invites"}
+    monkeypatch.setattr(invite_orgs, "MAX_LISTED", 3)
+    capped = draft.founder.browser.get(url).json()
+    assert ([item["invite_id"] for item in capped["invites"]], capped["truncated"]) == (same, True)
+    empty = world.public_org()
+    assert empty.founder.browser.get(f"/v1/orgs/{empty.id}/invites", params={"limit": "5"}).json() == {
+        "invites": [],
+        "next_before": None,
+    }
+    for before in ("x", "eyJhdCI6MSwiaWQiOjF9"):
+        response = draft.founder.browser.get(url, params={"before": before}, extensions={"contract": False})
+        assert (response.status_code, response.json()) == (
+            400,
+            {"error": "request_invalid", "detail": {"pointers": ["/before"]}},
+        )
+
+
 def test_list_is_for_admins_only(world: World) -> None:
     draft = world.public_org()
     member = world.user()

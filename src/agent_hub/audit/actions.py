@@ -160,6 +160,7 @@ AUDIT_ACTIONS = frozenset(
         "read.community.mutes",
         "read.community.requests",
         "read.platform.waiting",
+        "read.platform.ui_health",
         "read.scope.events",
         "read.session",
         "read.session.get_context",

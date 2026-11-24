@@ -2,10 +2,14 @@
 // archive, rights), the org switcher (names, switching, "Create organization" with its refusal), in jsdom against the org world of tests/core/org/world.ts.
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { withEntry } from '../../src/core/log/state';
+import { VerifiedLog } from '../../src/core/log/verify';
 import { HubError } from '../../src/core/net/signedFetch';
+import { setLog } from '../../src/core/store/slices/orgs';
 import { setProfile } from '../../src/core/store/slices/me';
 import { setActiveOrg } from '../../src/core/store/slices/session';
 import { OrgSwitcher } from '../../src/ui/shell/header/org-switcher';
+import { PICKER_LIMIT } from '../../src/ui/lists/Picker';
 import { WorkgroupsScreen } from '../../src/ui/screens/workgroups/WorkgroupsScreen';
 import { idOf } from '../core/log/world';
 import { orgWorld } from '../core/org/world';
@@ -179,6 +183,30 @@ describe('workgroup screen', () => {
     fireEvent.click(screen.getByTestId('workgroups.archive.confirm'));
     await waitFor(() => expect(within(row()).getByTestId('workgroups.item.archived')).toBeInTheDocument());
     expect(w.world.state.writable(created)).toBe(false);
+  });
+
+  it('searches the member choices of the create dialog by name once there are more than fit (ADR-086)', async () => {
+    const { w } = await wgWorld();
+    const { bob } = w.others;
+    // more members than the picker shows at once (the log's state with extra users; their names are unknown)
+    const log = w.world.log!;
+    let principals = log.state.principals;
+    for (let i = 0; i < PICKER_LIMIT; i += 1) {
+      const id = `0190f000-0000-7000-8000-0000000003${String(i).padStart(2, '0')}`;
+      principals = withEntry(principals, id, { ...log.state.principals.get(bob.id)!, id });
+    }
+    const crowded = log.state.with({ principals });
+    setLog(w.store, w.org, new VerifiedLog(log.entries, [...log.states.slice(0, -1), crowded]));
+    mount(w, at, `/o/${w.org}/workgroups`);
+    fireEvent.click(screen.getByTestId('workgroups.create.open'));
+    const search = screen.getByTestId('workgroups.create.members.search');
+    fireEvent.change(search, { target: { value: 'no such name' } });
+    expect(screen.getByTestId('workgroups.create.members.none')).toBeInTheDocument();
+    expect(screen.queryByTestId(`workgroups.create.member.${bob.id}`)).toBeNull();
+    fireEvent.change(search, { target: { value: '' } });
+    // everyone again: the first ones, and how many more there are
+    expect(screen.queryByTestId('workgroups.create.members.none')).toBeNull();
+    expect(screen.getByTestId('workgroups.create.members.more')).toBeInTheDocument();
   });
 
   it('offers no member or device lists when there are none, and a rename keeps the known name', async () => {

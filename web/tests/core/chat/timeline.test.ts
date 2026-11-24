@@ -2,11 +2,14 @@
 // per main session, unverifiable rows, hidden kinds, subagent nodes, the session chat and the memoized selector; the
 // session tree with depth ≤ 2 and the link rules of rendered Markdown.
 import { describe, expect, it } from 'vitest';
+import { chatList } from '../../../src/core/chat/actions';
 import { buildTimeline, selectTimeline } from '../../../src/core/chat/timeline';
 import { imageLabel, LINK_REL, safeUrl } from '../../../src/core/chat/links';
 import { childrenOf, flatten, selectSessionIndex, sessionMeta, sessionTree } from '../../../src/core/sessions/tree';
 import { createStore } from '../../../src/core/store';
 import { type EventEntry, putEvents } from '../../../src/core/store/slices/events';
+import { setPage } from '../../../src/core/store/slices/pages';
+import { pagesKey } from '../../../src/core/tasks/pages';
 import { putSession, putTasks, type SessionRow, type TaskRow } from '../../../src/core/store/slices/tasks';
 
 const ORG = 'org';
@@ -258,6 +261,74 @@ describe('timeline', () => {
     putSession(store, session(MAIN), [], 0);
     const second = select(store.getState());
     expect(second).not.toBe(first);
+    expect(selectTimeline(WG, TASK, MAIN)(store.getState())).toEqual([]);
+  });
+
+  it('merges changes of the events incrementally and equals a full build', () => {
+    const store = createStore();
+    putTasks(store, [task({ closed_at: '2026-11-21T12:00:09.500Z' })]);
+    putSession(store, session(MAIN), [], 0);
+    const select = selectTimeline(WG, TASK);
+    const full = () =>
+      buildTimeline({
+        scope: store.getState().events[WG],
+        task: store.getState().tasks.tasks[TASK]!,
+        sessions: store.getState().tasks.sessions,
+      });
+    expect(select(store.getState())).toEqual(full());
+    putEvents(store, WG, [event(3, 'prompt'), event(1, 'prompt', { status: 'pending' })]);
+    const first = select(store.getState());
+    expect(first).toEqual(full());
+    // a pending entry settles, a new one arrives, an unrelated one changes nothing in the items
+    putEvents(store, WG, [event(1, 'prompt'), event(5, 'session.output'), event(6, 'prompt', { task: 'other' })]);
+    const second = select(store.getState());
+    expect(second.map((item) => item.key)).toEqual(full().map((item) => item.key));
+    expect(second.find((item) => item.key === 'e3')).toBe(first.find((item) => item.key === 'e3'));
+    putEvents(store, WG, [event(7, 'prompt', { task: 'other' })]);
+    expect(select(store.getState())).toBe(second);
+    // a replaced item and an evicted one
+    putEvents(store, WG, [event(3, 'prompt', { body: { text: 'changed' } })]);
+    expect(select(store.getState()).find((item) => item.key === 'e3')!.body).toEqual({ text: 'changed' });
+    store.update('events', (events) => {
+      const entries = new Map(events[WG]!.entries);
+      entries.delete(5);
+      entries.delete(6);
+      return { ...events, [WG]: { entries } };
+    });
+    expect(select(store.getState()).map((item) => item.key)).toEqual(full().map((item) => item.key));
+    expect(select(store.getState()).some((item) => item.key === 'e5')).toBe(false);
+    // a hidden entry replaced by a hidden one
+    putEvents(store, WG, [event(8, 'task.meta')]);
+    const hidden = select(store.getState());
+    putEvents(store, WG, [event(8, 'task.meta', { body: { title: 'x' } })]);
+    expect(select(store.getState())).toBe(hidden);
+    // the scope disappears (sign-out of the slice)
+    store.update('events', () => ({}));
+    expect(select(store.getState()).map((item) => item.key)).toEqual(full().map((item) => item.key));
+  });
+});
+
+describe('timeline boundary', () => {
+  it('shows only the events at or above the boundary of its paged list (task and session chat)', () => {
+    const store = createStore();
+    putTasks(store, [task()]);
+    putSession(store, session(MAIN), [], 0);
+    putEvents(store, WG, [event(1, 'prompt'), event(5, 'prompt')]);
+    const select = selectTimeline(WG, TASK);
+    const keys = () =>
+      select(store.getState())
+        .filter((item) => item.source === 'event')
+        .map((item) => item.key);
+    expect(keys()).toEqual(['e1', 'e5']);
+    setPage(store, pagesKey(chatList(ORG, WG, TASK)), { status: 'ready', before: 3 });
+    expect(keys()).toEqual(['e5']);
+    // the same boundary, new events: merged incrementally
+    putEvents(store, WG, [event(6, 'prompt'), event(2, 'prompt')]);
+    expect(keys()).toEqual(['e5', 'e6']);
+    setPage(store, pagesKey(chatList(ORG, WG, TASK)), { before: null });
+    expect(keys()).toEqual(['e1', 'e2', 'e5', 'e6']);
+    // the session chat has a boundary of its own
+    setPage(store, pagesKey(chatList(ORG, WG, TASK, MAIN)), { status: 'ready', before: 100 });
     expect(selectTimeline(WG, TASK, MAIN)(store.getState())).toEqual([]);
   });
 });

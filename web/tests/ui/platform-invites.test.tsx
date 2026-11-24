@@ -76,7 +76,8 @@ describe('platform invitations', () => {
       row('expired', { state: 'expired' }),
       row('registered', { registered: true }),
     ];
-    w.client.on('GET /v1/platform/invites', () => ({ invites: rows }));
+    // a fresh array per answer, as JSON over the wire
+    w.client.on('GET /v1/platform/invites', () => ({ invites: [...rows] }));
     let fail = true;
     w.client.on('POST /v1/platform/invites', (raw) => {
       if (fail) {
@@ -166,5 +167,46 @@ describe('platform invitations', () => {
     empty.client.on('GET /v1/platform/invites', () => ({ invites: [] }));
     mount(empty, at, '/platform/invites');
     await waitFor(() => expect(screen.getByTestId('platform-invites.list.empty')).toBeVisible());
+  });
+
+  it('reads the hub list page by page, keeps the loaded range on a re-read and shows a cut answer', async () => {
+    const w = await orgWorld();
+    inviter(w, true);
+    let older = 'b';
+    // a fresh array per answer, as JSON over the wire
+    w.client.on('GET /v1/platform/invites', (_body, target) =>
+      String(target).includes('before=')
+        ? { invites: [row(older, { state: 'used' })], next_before: null }
+        : { invites: [row('a')], next_before: 'c1' },
+    );
+    w.client.on('POST /v1/platform/invites/a/revoke', () => ({}));
+    mount(w, at, '/platform/invites');
+    await waitFor(() => expect(screen.getAllByTestId('platform-invites.item')).toHaveLength(1));
+    fireEvent.click(screen.getByTestId('platform-invites.rows.load-more'));
+    await waitFor(() => expect(screen.getAllByTestId('platform-invites.item')).toHaveLength(2));
+    expect(screen.queryByTestId('platform-invites.rows.load-more')).toBeNull();
+    // a revocation reads both loaded pages again
+    older = 'c';
+    fireEvent.click(screen.getByTestId('platform-invites.item.revoke'));
+    await waitFor(() =>
+      expect(screen.getAllByTestId('platform-invites.item').map((node) => node.dataset.invite)).toEqual(['a', 'c']),
+    );
+    expect(w.client.of('GET /v1/platform/invites').map((call) => call.target)).toEqual([
+      '/v1/platform/invites?limit=100',
+      '/v1/platform/invites?before=c1&limit=100',
+      '/v1/platform/invites?limit=100',
+      '/v1/platform/invites?before=c1&limit=100',
+    ]);
+    expect(screen.queryByTestId('platform-invites.list.truncated')).toBeNull();
+    // an old hub refuses the parameters: the whole list once more, cut at its cap
+    const old = await orgWorld();
+    inviter(old, true);
+    old.client.on('GET /v1/platform/invites', (_body, target) => {
+      if (String(target).includes('?')) throw new HubError('request_invalid', 400);
+      return { invites: [row('x')], truncated: true };
+    });
+    mount(old, at, '/platform/invites');
+    await waitFor(() => expect(screen.getByTestId('platform-invites.list.truncated')).toBeVisible());
+    expect(screen.getByTestId('platform-invites.list.truncated')).toHaveTextContent('only the newest invitations');
   });
 });

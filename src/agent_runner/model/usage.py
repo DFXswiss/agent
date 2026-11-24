@@ -3,7 +3,8 @@ ADR-025).
 
 The guest model gateway writes one `usage` record per model request (tokens from the stream, OpenRouter's
 `usage.cost` and `provider`, the catalog context window of the model). For a session this device runs on that VM the
-handler writes one outbox item `usage` in the journal page's transaction:
+handler turns it into the body of an outbox item `usage` and merges it into the session's pending item in the journal
+page's transaction (`model.merge`: one item per session and 10 s, totals unchanged; KOR-35):
 
 - `delta`: one request and the token counts of the record; `cost_micro_usd` by the cost basis of the session's access
   kind (the recorded `model_access` of the local session):
@@ -55,7 +56,7 @@ from psycopg import AsyncConnection
 from agent_runner.billing import state as billing
 from agent_runner.credentials import acting
 from agent_runner.guestlink.client import JournalRecord
-from agent_runner.model import access, exhaustion, operator
+from agent_runner.model import access, exhaustion, merge, operator
 from agent_runner.prompts import hub_queue
 from agent_runner.sessions.journal import MAX_COUNT, JournalRecordInvalid
 from agent_runner.sessions.records import LocalSession
@@ -158,7 +159,7 @@ async def handle(journal: Any, conn: AsyncConnection[Any], record: JournalRecord
             item["at"] = record.ts
     if hub_queue.api(journal.env.desired):
         item["triggered_by"] = await acting.stamp(conn, session)
-    await journal.env.outbox.enqueue(conn, "usage", item)
+    await merge.add(conn, journal.env, item)
     remembered.last[session.id] = (item["context_used_tokens"], item["context_window_tokens"])
     bound: tuple[str, bool] | None = None
     if session.model_access == "subscription":

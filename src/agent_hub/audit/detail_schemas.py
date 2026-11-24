@@ -1369,6 +1369,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.platform.log": {"properties": {}, "required": []},
     "read.platform.user": {"properties": {}, "required": []},
     "read.platform.waiting": {"properties": {}, "required": []},
+    "read.platform.ui_health": {"properties": {}, "required": []},
     "read.scope.events": {"properties": {}, "required": []},
     "read.session.get_context": {
         "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},

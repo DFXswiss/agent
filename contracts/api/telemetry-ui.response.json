@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/telemetry-ui.response.json",
+  "title": "POST /v1/telemetry/ui response",
+  "description": "Body of a successful response to POST /v1/telemetry/ui (03-api.md section 4.11): empty.",
+  "$ref": "../common.json#/$defs/empty"
+}

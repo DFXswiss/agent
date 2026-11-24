@@ -29,7 +29,8 @@ CATEGORIES: dict[str, str] = {
     "model ID; the GitHub identity (record ID) chosen for a task or session",
     "operations": "Operation type, state, decision, error code, dedupe tag, timestamps, actor; the GitHub identity "
     "(record ID) an operation acted with and the human who triggered it",
-    "metrics": "Resource metrics, token counters, cost, context-window percentage, subscription quota percentages",
+    "metrics": "Resource metrics, token counters, cost, context-window percentage, subscription quota percentages; "
+    "anonymous UI health counters per day, web client version and view type (ADR-086)",
     "notifications": "Notification records (recipient, kind, target IDs)",
     "attention": "Attention record of a task (category, reason code, ref ID, times, subagent counters), derived from "
     "the task, session and operation metadata (ADR-076)",
@@ -191,6 +192,8 @@ usage_counter: metrics | session_id:uuid requests:number input_tokens:number out
   cache_read_tokens:number cache_write_tokens:number thinking_tokens:number cost_micro_usd:number cost_basis:code
   context_used_tokens:number context_window_tokens:number last_provider:code updated_at:time
 usage_daily: metrics | org_id:uuid day:time device_id:uuid cost_micro_usd:number
+ui_health_daily: metrics | day:time version:code view:code reports:number blocks:number blocked_ms:number
+  max_bucket:number
 price_list: billing | version:number valid_from:time document:operator created_at:time
 fx_rate: billing | n:number day:time chf_per_usd_e8:number source:code set_at:time actor:code reason:operator
 credit_account: billing | org_id:uuid balance_micro_usd:number booked_micro_usd:number updated_at:time

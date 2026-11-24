@@ -374,7 +374,12 @@ class ControlService:
             # the threads of the parts (session watchers, capture) end while the journal they write is still open
             self.context.close()
             self.context.pending.close()
-            self.context.journal.close()
+            # a clean stop writes the counted hook records (ADR-086 section 3) right as the journal closes, under its
+            # lock: a hook the still running API threads count until then is written too, no count is lost
+            try:
+                self.context.journal.close(flush=True)
+            except JournalError as error:
+                sys.stderr.write(f"agent-guest-control: hook summaries at stop failed: {error.code}\n")
         for thread in self._threads:
             thread.join(5)
         self._close_servers()

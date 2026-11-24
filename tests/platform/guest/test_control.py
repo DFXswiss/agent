@@ -49,7 +49,7 @@ VM_ID = "vm-0a1b2c3d"
 ORG_ID = "01a1ee56-5e00-7001-8f1b-340691d99f01"
 WG_ID = "01a1ee56-5e00-7002-8f1b-340691d99f02"
 OTHER_ID = "01a1ee56-5e00-7009-8f1b-340691d99f09"
-HOOK = {"event": "PreToolUse", "tool": "Read", "decision": "allow"}
+HOOK = {"event": "Stop", "decision": "none"}  # a routine PreToolUse allow would be counted (hook_summary.py)
 OPERATION = {
     "operation_id": "01a1ee56-5e00-7004-8f1b-340691d99f04",
     "type": "github.comment",
@@ -399,7 +399,7 @@ def test_append_op_refusals(api_client: ApiClient, session: Session, args: dict[
 def test_append_op_details_and_vm_level(api_client: ApiClient, session: Session) -> None:
     with pytest.raises(ApiSockError) as error:
         api_client.append("session.hook", {"event": "PreToolUse", "decision": "nope"}, SESSION_ID)
-    assert error.value.detail == ["/decision"]
+    assert error.value.detail == ["/decision", ""]  # "": no option of the hook record or the summary
     assert api_client.append("guest.error", {"code": "gateway_route"}) == 1
 
 

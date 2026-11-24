@@ -212,7 +212,9 @@ def test_event_header_variants(contracts: Contracts) -> None:
 def test_session_bodies_are_the_journal_bodies(contracts: Contracts, kind: str) -> None:
     """03-api.md section 10: session.* event bodies are the journal bodies of section 7.2 (CTR-02)."""
     name = f"body_{kind.replace('.', '_')}"
-    assert defs(contracts, "events/objects.json")[name] == {"$ref": f"../guest/journal/record.json#/$defs/{name}"}
+    # session.hook: one call or the summary of routine calls (contracts/changes/KOR-35.md)
+    target = f"{name}_record" if kind == "session.hook" else name
+    assert defs(contracts, "events/objects.json")[name] == {"$ref": f"../guest/journal/record.json#/$defs/{target}"}
 
 
 def test_operation_bodies_cover_every_type_and_read_tool(contracts: Contracts) -> None:

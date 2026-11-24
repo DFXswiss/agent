@@ -5,7 +5,8 @@
 // devices carry the `platform_seq` of their certification), its assigned workgroups and – for platform devices – whether
 // the verified platform log still certifies it. The hub's device list (`GET /v1/orgs/{org}/devices`) only adds what the
 // hub may know in plaintext: presence, last seen, agent version and capacity (`capacity_low`, 03-api.md section
-// 4.6.2); a device the hub lists but the log does not know is not shown. Labels come from the newest verified
+// 4.6.2); a device the hub lists but the log does not know is not shown. The hub's list is read page by page
+// (`pages.ts`); while older pages are not read the rows end with the last device they name (`listedRows`). Labels come from the newest verified
 // `device.profile` event of each device (org scope, `ref` = device, written by an admin).
 //
 // Changes (admin only: `device_assign`, `device_unassign` and `remove` are admin entries of the log, 04-crypto.md
@@ -48,7 +49,9 @@ import {
   type SubmitProgress,
   verifiedPlatform,
 } from './batch';
+import { type Capacity, count, isCapacity } from './capacity';
 import { workgroupOrder } from './members';
+import { LIMIT, LIMIT_MAX, type ListPage, readHubPage } from './pages';
 
 export const DEVICE_PROFILE = 'device.profile';
 /** Device labels are 1–100 characters after trimming (`contracts/events/objects.json`, `body_device_profile`). */
@@ -66,31 +69,7 @@ export function deviceLabel(input: string): string | null {
 
 // --- the hub's view ---
 
-export interface Capacity {
-  readonly vm_memory_budget_mib: number;
-  readonly vm_memory_used_mib: number;
-  readonly vm_slots_total: number;
-  readonly vm_slots_free: number;
-  readonly pool_ready: number;
-  // optional counters and settings of a runner that reports them (ADR-075 section 2)
-  readonly cpus?: number;
-  readonly memory_total_mib?: number;
-  readonly disk_free_mib?: number;
-  readonly vms_running?: number;
-  readonly sessions_active?: number;
-  readonly work_vms_running?: number;
-  /** Occupying sessions per VM (0 = no limit). */
-  readonly sessions_per_vm?: number;
-  /** VMs of the device that occupy a slot (0 = only the memory budget decides). */
-  readonly vms_max?: number;
-}
-
-const CAPACITY_FIELDS = ['vm_memory_budget_mib', 'vm_memory_used_mib', 'vm_slots_total', 'vm_slots_free', 'pool_ready'];
-
-const count = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
-
-export const isCapacity = (value: unknown): value is Capacity =>
-  isRecord(value) && CAPACITY_FIELDS.every((field) => count(value[field]));
+export { type Capacity, isCapacity } from './capacity';
 
 /** The optional details of a capacity report that are present and well-formed, in display order. */
 export const DETAIL_FIELDS = [
@@ -165,13 +144,19 @@ const isHubDevice = (value: unknown): value is HubDevice =>
   (value.assigned_org === undefined || typeof value.assigned_org === 'boolean') &&
   (value.vms === undefined || (Array.isArray(value.vms) && value.vms.every(isDeviceVm)));
 
-/** `GET /v1/orgs/{org}/devices` (`unavailable` for a malformed answer). */
-export async function loadOrgDevices(context: Pick<TasksContext, 'client'>, org: string): Promise<HubDevice[]> {
-  const body = await context.client.request('GET', `/v1/orgs/${encodeURIComponent(org)}/devices`);
-  if (!isRecord(body) || !Array.isArray(body.devices) || !body.devices.every(isHubDevice)) {
-    throw new HubError('unavailable', 200);
-  }
-  return body.devices;
+/**
+ * One page of `GET /v1/orgs/{org}/devices` below `before` (null: the newest enrolments; `pages.ts`), pages of
+ * `LIMIT_MAX` (`unavailable` for a malformed answer).
+ */
+export async function loadOrgDevices(
+  context: Pick<TasksContext, 'client'>,
+  org: string,
+  before: string | null = null,
+): Promise<ListPage<HubDevice>> {
+  const path = `/v1/orgs/${encodeURIComponent(org)}/devices`;
+  const page = await readHubPage(context.client, path, 'devices', before, LIMIT_MAX);
+  if (!page.items.every(isHubDevice)) throw new HubError('unavailable', 200);
+  return { rows: [...page.items], nextBefore: page.nextBefore, truncated: page.truncated };
 }
 
 /** Used and total VM slots and the used share (0 for a device without slots). */
@@ -201,6 +186,16 @@ export interface DeviceRow {
   readonly explicit: readonly string[];
   /** What the hub reports (null while its list does not name the device). */
   readonly hub: HubDevice | null;
+}
+
+/**
+ * The rows a device list shows while the hub's list is read only in part (`more`: older pages exist): the devices the
+ * loaded pages name. Both orders are newest first, so the rows end where the loaded pages end and "Load more" (at the
+ * window's end) reads the presence of the next ones. Once the hub's list is complete every row of the log is shown –
+ * a device the hub does not name with presence unknown.
+ */
+export function listedRows(rows: readonly DeviceRow[], more: boolean): readonly DeviceRow[] {
+  return more ? rows.filter((row) => row.hub !== null) : rows;
 }
 
 /** Active devices of the org, newest member first (then by ID), with the hub's presence and capacity. */
@@ -320,14 +315,20 @@ function candidateRow(item: Omit<CandidateRow, 'verified'>, platform: PlatformSt
 }
 
 /**
- * The platform candidates of a workgroup in the hub's order (online, most free capacity first), each checked against
- * the verified platform log (`verified` false: not certified, decertified, or other keys than certified). Refreshes
- * the platform log once if a candidate is not verified (a certification newer than the stored log).
+ * One page of the platform candidates of a workgroup below `before` (null: the first page; `pages.ts`) in the hub's
+ * order (a page: newest enrolment first; an old hub's whole list: online, most free capacity first), each checked
+ * against the verified platform log (`verified` false: not certified, decertified, or other keys than certified).
+ * Refreshes the platform log once if a candidate is not verified (a certification newer than the stored log).
  */
-export async function loadCandidates(context: TasksContext, org: string, wg: string): Promise<CandidateRow[]> {
-  const body = await context.client.request('GET', `/v1/workgroups/${encodeURIComponent(wg)}/device-candidates`);
-  if (!isRecord(body) || !Array.isArray(body.candidates)) throw new HubError('unavailable', 200);
-  const offered: readonly unknown[] = body.candidates;
+export async function loadCandidates(
+  context: TasksContext,
+  org: string,
+  wg: string,
+  before: string | null = null,
+): Promise<ListPage<CandidateRow>> {
+  const path = `/v1/workgroups/${encodeURIComponent(wg)}/device-candidates`;
+  const page = await readHubPage(context.client, path, 'candidates', before, LIMIT);
+  const offered = page.items;
   // a malformed candidate is listed as an unverifiable row, never dropped (06-web.md section 1.1)
   const check = (platform: PlatformState | null) =>
     offered.map((value, index): CandidateRow => {
@@ -342,7 +343,7 @@ export async function loadCandidates(context: TasksContext, org: string, wg: str
     await context.refreshLog(org);
     rows = check(verifiedPlatform(context.store));
   }
-  return rows;
+  return { rows, nextBefore: page.nextBefore, truncated: page.truncated };
 }
 
 // --- planners ---

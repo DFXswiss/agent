@@ -26,13 +26,10 @@ import { setLog } from '../store/slices/orgs';
 import type { Directory } from '../tasks/directory';
 import { type Actor, keyRing, type OrgContext, refuse, verifiedPlatform, withLogRetry } from './batch';
 import type { Access, Role } from './members';
+import { HOUR_MS } from './expiry';
+import { LIMIT, type ListPage, readHubPage } from './pages';
 
-export const HOUR_MS = 3_600_000;
-/** Selectable expiries in hours (1 h – 30 d, ADR-005 / 03-api.md section 12). */
-export const EXPIRY_HOURS = [1, 6, 24, 72, 168, 336, 720] as const;
-/** Defaults: user invitations 72 h, device invitations 24 h. */
-export const USER_EXPIRY_HOURS = 72;
-export const DEVICE_EXPIRY_HOURS = 24;
+export { DEVICE_EXPIRY_HOURS, EXPIRY_HOURS, HOUR_MS, USER_EXPIRY_HOURS } from './expiry';
 
 /** What the admin chooses. */
 export type InviteRequest =
@@ -197,23 +194,33 @@ const isInviteRow = (value: unknown): value is InviteRow =>
   typeof value.expires_at === 'string' &&
   typeof value.created_by === 'string';
 
+/** An open invitation as the list shows it: the hub's row with the expiry and the seq of the signed entry. */
+export type OpenInvite = InviteRow & { readonly seq: number };
+
 /**
- * The open invitations of `kind`, newest first. The hub's list is a hint: only invitations the verified log knows as
- * open (not revoked, not accepted) are listed, with the expiry of the signed entry.
+ * One page of the open invitations of `kind` below `before` (null: the newest page; `pages.ts`), newest first. The
+ * hub's list is a hint: only invitations the verified log knows as open (not revoked, not accepted) are listed, with
+ * the expiry of the signed entry – a page may therefore hold fewer rows than the hub sent, or none.
  */
 export async function openInvites(
   context: OrgContext,
   org: string,
   kind: 'user' | 'device',
-): Promise<(InviteRow & { readonly seq: number })[]> {
-  const body = await context.client.request('GET', `/v1/orgs/${encodeURIComponent(org)}/invites`);
-  if (!isRecord(body) || !Array.isArray(body.invites) || !body.invites.every(isInviteRow)) {
-    throw new HubError('unavailable', 200);
-  }
+  before: string | null = null,
+): Promise<ListPage<OpenInvite>> {
+  const page = await readHubPage(
+    context.client,
+    `/v1/orgs/${encodeURIComponent(org)}/invites`,
+    'invites',
+    before,
+    LIMIT,
+  );
+  const listed = page.items;
+  if (!listed.every(isInviteRow)) throw new HubError('unavailable', 200);
   const state = context.store.getState().orgs.byId[org]?.log?.state ?? refuse('log_empty');
   const now = context.now();
-  return body.invites
-    .flatMap((row) => {
+  const rows = listed
+    .flatMap((row): OpenInvite[] => {
       const known = state.invites.get(row.invite_id);
       const open =
         known !== undefined &&
@@ -224,6 +231,7 @@ export async function openInvites(
       return row.state === 'open' && open ? [{ ...row, expires_at: known.expires, seq: known.seq }] : [];
     })
     .sort((a, b) => b.seq - a.seq);
+  return { rows, nextBefore: page.nextBefore, truncated: page.truncated };
 }
 
 /**
@@ -248,22 +256,48 @@ export interface InviteStatusRow {
 }
 
 /**
- * The user invitations of the org with their state, newest first: open ones (not revoked, not expired) and accepted
- * ones that have not expired yet ("did they accept?"). The verified log decides which invitations exist and whether
- * they were accepted; the hub's list only adds what the log cannot know (opened, registered) and is a hint.
+ * One page of the hub's invitation list below `before` (null: the newest page; `pages.ts`), newest first – the hints
+ * `inviteStatuses` reads beside the verified log (`unavailable` for a malformed answer).
  */
-export async function inviteStatuses(context: OrgContext, org: string): Promise<InviteStatusRow[]> {
-  const body = await context.client.request('GET', `/v1/orgs/${encodeURIComponent(org)}/invites`);
-  if (!isRecord(body) || !Array.isArray(body.invites) || !body.invites.every(isInviteRow)) {
-    throw new HubError('unavailable', 200);
-  }
-  const state = context.store.getState().orgs.byId[org]?.log?.state ?? refuse('log_empty');
-  const now = context.now();
-  const rows = new Map(body.invites.map((row) => [row.invite_id, row]));
+export async function inviteHints(
+  context: Pick<OrgContext, 'client'>,
+  org: string,
+  before: string | null = null,
+): Promise<ListPage<InviteRow>> {
+  const page = await readHubPage(
+    context.client,
+    `/v1/orgs/${encodeURIComponent(org)}/invites`,
+    'invites',
+    before,
+    LIMIT,
+  );
+  if (!page.items.every(isInviteRow)) throw new HubError('unavailable', 200);
+  return { rows: [...page.items], nextBefore: page.nextBefore, truncated: page.truncated };
+}
+
+/**
+ * The user invitations of the org with their state at `now`, newest first: open ones (not revoked, not expired) and
+ * accepted ones that have not expired yet ("did they accept?"). The verified log `state` decides which invitations
+ * exist and whether they were accepted; the hub's rows read so far (`listed`, pages of `inviteHints`) only add what
+ * the log cannot know (opened, registered) and are a hint. While older hub pages are not read (`complete` false) the
+ * rows end with the oldest invitation the read pages name (ADR-086 section 2: no row is shown out of its place before
+ * "Load more"; none while no read row is known to the log).
+ */
+export function inviteStatuses(
+  state: OrgState,
+  listed: readonly InviteRow[],
+  complete: boolean,
+  now: number,
+): InviteStatusRow[] {
+  const rows = new Map(listed.map((row) => [row.invite_id, row]));
   const joined = new Map([...state.principals.values()].map((p) => [p.joinedSeq, p.id]));
+  const boundary = complete
+    ? 0
+    : listed.reduce((low, row) => Math.min(low, state.invites.get(row.invite_id)?.seq ?? Infinity), Infinity);
   return [...state.invites.values()]
     .flatMap((known): InviteStatusRow[] => {
       if (known.kind !== 'user' || known.revokedSeq !== null || Date.parse(known.expires) <= now) return [];
+      if (known.seq < boundary) return [];
       const row = rows.get(known.inviteId);
       const accepted = known.acceptedSeq !== null;
       // an open invitation the hub does not list as open (used, revoked, unknown) is not shown

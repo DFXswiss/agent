@@ -1,7 +1,19 @@
 // Chat actions against the scriptable client of the task world: loading task and chat events, sending prompts with
 // a kept sealed event for retries, session control, closing the task; the session detail load.
-import { describe, expect, it } from 'vitest';
-import { CHAT_KINDS, closeTask, controlSession, loadChat, sendPrompt } from '../../../src/core/chat/actions';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  CHAT_KINDS,
+  chatList,
+  closeTask,
+  controlSession,
+  loadChat,
+  loadEarlierChat,
+  openChat,
+  sendPrompt,
+} from '../../../src/core/chat/actions';
+import { NEWEST } from '../../../src/core/net/pages';
+import { isShown, noteSkipped, refreshShown } from '../../../src/core/store/focus';
+import { selectPages } from '../../../src/core/tasks/pages';
 import { HubError } from '../../../src/core/net/signedFetch';
 import { keepPrompt, setLoad } from '../../../src/core/store/slices/chat';
 import { loadSession } from '../../../src/core/store/slices/sessions';
@@ -17,15 +29,54 @@ describe('loadChat', () => {
       task: taskRow(t),
       sessions: [{ session: sessionRow(t), transitions: [] }],
     }));
-    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_after: null, head: 0 }));
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_before: null, head: 0 }));
     const row = await loadChat(t.context, TASK);
     expect(row!.task_id).toBe(TASK);
     expect(t.store.getState().chat.loads[TASK]).toEqual({ status: 'ready', code: null });
     const pull = new URL(t.client.of(`GET /v1/scopes/${t.wg}/events`)[0]!.target, 'https://h');
     expect(pull.searchParams.get('task')).toBe(TASK);
     expect(pull.searchParams.get('kinds')).toBe(CHAT_KINDS.join(','));
+    expect(pull.searchParams.get('before')).toBe(String(NEWEST));
     await loadChat(t.context, TASK);
     expect(t.client.of(`GET /v1/scopes/${t.wg}/events`)).toHaveLength(1);
+    // a bulk event of the task skipped meanwhile makes the next open read the newest page again
+    noteSkipped(t.store, TASK, null);
+    await loadChat(t.context, TASK);
+    expect(t.client.of(`GET /v1/scopes/${t.wg}/events`)).toHaveLength(2);
+  });
+
+  it('records the code of a failed newest page', async () => {
+    const t = await taskWorld();
+    t.client.on(`GET /v1/tasks/${TASK}`, () => ({ task: taskRow(t), sessions: [] }));
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => {
+      throw new HubError('rate_limited', 429);
+    });
+    expect(await loadChat(t.context, TASK)).toBeNull();
+    expect(t.store.getState().chat.loads[TASK]).toEqual({ status: 'error', code: 'rate_limited' });
+  });
+
+  it('opens a chat view: shown for the reader, newest page, again after resync, earlier pages on demand', async () => {
+    const t = await taskWorld();
+    const targets: string[] = [];
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) => {
+      targets.push(target);
+      return { events: [], next_before: target.includes(`before=${NEWEST}`) ? 50 : null, head: 60 };
+    });
+    const list = chatList(t.org, t.wg, TASK, SESSION);
+    expect(list.query).toEqual({ kinds: CHAT_KINDS, task: TASK, session: SESSION });
+    expect(chatList(t.org, t.wg, TASK).query).toEqual({ kinds: CHAT_KINDS, task: TASK });
+    const close = openChat(t.context, list);
+    expect(isShown(t.store, TASK, null)).toBe(true);
+    expect(isShown(t.store, null, SESSION)).toBe(true);
+    await vi.waitFor(() => expect(selectPages(list)(t.store.getState()).before).toBe(50));
+    await loadEarlierChat(t.context, list);
+    expect(selectPages(list)(t.store.getState()).before).toBeNull();
+    refreshShown(t.store);
+    await vi.waitFor(() => expect(targets).toHaveLength(3));
+    close();
+    expect(isShown(t.store, TASK, SESSION)).toBe(false);
+    const taskOnly = openChat(t.context, { org: t.org, scope: t.wg, query: {} });
+    taskOnly();
   });
 
   it('records the code of a failed load', async () => {

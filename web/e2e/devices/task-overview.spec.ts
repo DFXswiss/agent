@@ -153,7 +153,8 @@ test('the overview loads the next page across workgroups when the end of the lis
   await expect(rows).toHaveCount(50);
   await expect(rows.first().getByTestId('tasks.row.title')).toHaveText('Research 55');
   await expect(rows.first().getByTestId('tasks.row.wg')).toHaveText('Research');
-  await page.getByTestId('tasks.end').scrollIntoViewIfNeeded();
+  // no infinite scroll (ADR-086 section 1): the next page loads on "Load more"
+  await page.getByTestId('tasks.more').click();
   await expect(rows).toHaveCount(56);
   await expect(rows.last().getByTestId('tasks.row.title')).toHaveText('Task 0');
   await expect(rows.last().getByTestId('tasks.row.wg')).toHaveText('Default');

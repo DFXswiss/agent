@@ -2723,6 +2723,40 @@
       "read_resource": "org.quotas",
       "streaming": false,
       "owner": "KOR-50"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/telemetry/ui",
+      "name": "telemetry-ui",
+      "section": "4.11",
+      "auth": "anon",
+      "rights": [
+        "anon"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/telemetry-ui.request.json",
+      "response": "api/telemetry-ui.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-35"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/ui-health",
+      "name": "platform-ui-health",
+      "section": "4.11",
+      "auth": "browser",
+      "rights": [
+        "platform:inviter"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/platform-ui-health.request.json",
+      "response": "api/platform-ui-health.response.json",
+      "read_resource": "platform.ui_health",
+      "streaming": false,
+      "owner": "KOR-35"
     }
   ]
 }

@@ -3,7 +3,6 @@
   "filter.all": "All",
   "reload": "Try again",
   "empty": "No tasks yet.",
-  "more": "Load more",
   "loading": "Loading…",
   "not-found": "This workgroup was not found.",
   "wg.unnamed": "Workgroup",
@@ -29,5 +28,8 @@
   "filter.wg": "Workgroup",
   "filter.wg.all": "All workgroups",
   "filter.mine": "Only my tasks",
-  "filter.reset": "Clear filters"
+  "filter.reset": "Clear filters",
+  "search.scanned": "Searched the {scanned} most recent tasks.",
+  "search.scanned-of": "Searched {scanned} of {total} tasks.",
+  "search.further": "Search further"
 }

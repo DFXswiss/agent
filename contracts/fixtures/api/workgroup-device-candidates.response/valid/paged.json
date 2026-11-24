@@ -1,0 +1,22 @@
+{
+  "candidates": [
+    {
+      "device_id": "01930014-0000-7000-8000-000000000014",
+      "platform_seq": 4,
+      "pub": {
+        "kem": "SUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUk",
+        "sig": "SkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSko"
+      },
+      "online": true,
+      "capacity": {
+        "vm_memory_budget_mib": 65536,
+        "vm_memory_used_mib": 8192,
+        "vm_slots_total": 8,
+        "vm_slots_free": 6,
+        "pool_ready": 2
+      },
+      "capacity_low": false
+    }
+  ],
+  "next_before": "eyJhdCI6MTc2MzcyNjQwMDAwMDAwMCwiaWQiOiJCZ1lHQmdZR0JnWUdCZ1lHQmdZR0JnIn0"
+}

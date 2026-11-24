@@ -3,6 +3,7 @@ fallback (06-web.md sections 2.4, 10.1, 10.2), and the absence of the legacy rou
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -164,10 +165,38 @@ def test_every_spa_route_serves_the_page(web: HubHarness, path: str) -> None:
 
 
 def test_spa_routes_are_the_routes_of_the_web_spec() -> None:
-    assert len(SPA_ROUTES) == 21
+    assert len(SPA_ROUTES) == 26
     assert "/invite" in SPA_ROUTES
     assert "/connect" in SPA_ROUTES
     assert "/o/{org}/s/{session}" in SPA_ROUTES
+    assert "/o/{org}/tasks" in SPA_ROUTES
+
+
+WEB_SCREENS = Path(__file__).resolve().parents[4] / "web" / "src" / "ui" / "screens"
+ROUTE_PATH = re.compile(r"\bpath:\s*'([^']*)'")
+
+
+def route_pattern(path: str) -> str:
+    """A route with its parameters unnamed: `/o/:org/t/:task` and `/o/{org}/t/{task}` are both `/o/{}/t/{}`."""
+    return re.sub(r":[A-Za-z]\w*|\{[A-Za-z]\w*\}", "{}", path)
+
+
+def web_routes() -> set[str]:
+    """The route patterns of the web client's screens (every `path: '…'` of `ui/screens/*/routes.tsx`)."""
+    return {
+        route_pattern(path)
+        for file in sorted(WEB_SCREENS.glob("*/routes.tsx"))
+        for path in ROUTE_PATH.findall(file.read_text(encoding="utf-8"))
+        if path != "*"
+    }
+
+
+def test_spa_routes_are_the_routes_of_the_web_client() -> None:
+    """Every screen route loads directly (KOR-35): a new screen that the hub does not serve fails here."""
+    assert route_pattern("/o/:org/t/:task") == route_pattern("/o/{org}/t/{task}") == "/o/{}/t/{}"
+    routes = web_routes()
+    assert {"/", "/o/{}", "/o/{}/tasks", "/security"} <= routes
+    assert {route_pattern(path) for path in SPA_ROUTES} == routes
 
 
 @pytest.mark.parametrize("path", ["/o", "/unknown", "/o/1/t/2/extra", "/assets", "/favicon.ico"])

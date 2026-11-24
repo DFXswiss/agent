@@ -7,7 +7,7 @@
 // list.
 // The panel has no "release" button: only the session can request operations (decision UI-1 of KOR-29); the VM is
 // torn down when the session releases it, after the idle time or when the session ends.
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { selectTestRuns } from '../../../core/chat/testrun';
 import {
   formatRuntime,
@@ -17,6 +17,7 @@ import {
   START_TARGET_MS,
   workvmPanel,
   workvmRuntime,
+  type WorkvmRun,
   type WorkvmState,
 } from '../../../core/chat/workvm';
 import { parseTime } from '../../../core/encoding/time';
@@ -29,6 +30,7 @@ import { Digits, Ring, useSeconds } from '../../countdown/parts';
 import { TICK_MS, useNow } from '../../countdown/useNow';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
+import { WindowedList } from '../../lists/WindowedList';
 import { useAppEnv } from '../../shell/context';
 
 /** At most this many test runs (the newest) are listed (a long session must not grow the panel without bound). */
@@ -51,6 +53,65 @@ function Facts({ vm, now }: { readonly vm: WorkvmState; readonly now: number }) 
         {t('workvm.state.runtime', { runtime: formatRuntime(workvmRuntime([vm], now).ms) })}
       </span>
     </div>
+  );
+}
+
+/** Runs of the run list rendered at first and per move, and the cap (ADR-086 section 1). */
+export const RUNS_PAGE = 20;
+export const RUNS_MAX = 100;
+
+interface RunEntry {
+  readonly run: WorkvmRun;
+  readonly wg: string;
+  readonly task: string;
+}
+
+const runKey = (entry: RunEntry): string => entry.run.job_id;
+
+function RunRow({ item }: { readonly item: RunEntry }) {
+  const { t } = useI18n();
+  const { run, wg, task } = item;
+  return (
+    <RunView
+      run={run}
+      at={parseTime(run.started_at)}
+      log={
+        (run.log ?? null) === null ? null : (
+          <OpenLog source={{ wg, task, ref: run.job_id, log: run.log! }} label={t('workvm.run.log')} />
+        )
+      }
+    />
+  );
+}
+
+const sameRun = (a: RunEntry, b: RunEntry): boolean => a.run === b.run && a.wg === b.wg && a.task === b.task;
+
+/** The session's runs, newest first, collapsed; the list exists only while open and is windowed. */
+function Runs({ runs, wg, task }: { readonly runs: readonly WorkvmRun[]; readonly wg: string; readonly task: string }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const entries = useMemo(() => runs.map((run) => ({ run, wg, task })), [runs, wg, task]);
+  return (
+    <details data-testid="workvm.panel.runs" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="flex min-h-11 cursor-pointer items-center text-sm text-blue-800">
+        {t('workvm.panel.runs', { count: runs.length })}
+      </summary>
+      {open && (
+        <WindowedList
+          listId="session.workvm.runs"
+          items={entries}
+          getKey={runKey}
+          Row={RunRow}
+          same={sameRun}
+          newest="start"
+          size={RUNS_PAGE}
+          page={RUNS_PAGE}
+          maxRows={RUNS_MAX}
+          className="flex flex-col gap-2"
+          testId="workvm.panel.runs.list"
+        />
+      )}
+    </details>
   );
 }
 
@@ -121,28 +182,7 @@ export function WorkvmPanel({
       <p className="text-xs text-gray-600" data-testid="workvm.panel.note">
         {t(panel.phase === 'none' ? 'workvm.panel.none' : 'workvm.panel.release')}
       </p>
-      {runs.length > 0 && (
-        <details data-testid="workvm.panel.runs">
-          <summary className="flex min-h-11 cursor-pointer items-center text-sm text-blue-800">
-            {t('workvm.panel.runs', { count: runs.length })}
-          </summary>
-          <ul className="flex flex-col gap-2">
-            {runs.map((run) => (
-              <li key={run.job_id}>
-                <RunView
-                  run={run}
-                  at={parseTime(run.started_at)}
-                  log={
-                    (run.log ?? null) === null ? null : (
-                      <OpenLog source={{ wg, task, ref: run.job_id, log: run.log! }} label={t('workvm.run.log')} />
-                    )
-                  }
-                />
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      {runs.length > 0 && <Runs runs={runs} wg={wg} task={task} />}
       {tests.length > 0 && (
         <details data-testid="workvm.panel.tests">
           <summary className="flex min-h-11 cursor-pointer items-center text-sm text-blue-800">

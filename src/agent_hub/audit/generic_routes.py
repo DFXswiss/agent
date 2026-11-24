@@ -12,7 +12,9 @@ A route belongs here only when a success may leave nothing worth a row of its ow
   `POST /v1/device/sessions/{session}/browser/live` (the latest live frame of a watched platform browser, up to five
   per second and replaced by the next; who watches is audited as `read.stream.browser`, KOR-44);
 * it only marks the caller: joining the community and its read position (`POST /v1/community/join`,
-  `PUT /v1/community/read`, KOR-26); the posts, deletions, keys and moderation write their own `community.*` rows.
+  `PUT /v1/community/read`, KOR-26); the posts, deletions, keys and moderation write their own `community.*` rows;
+* it is anonymous UI health telemetry: `POST /v1/telemetry/ui` adds to daily counters that name nobody (ADR-086
+  section 5); a row of its own would add nothing but a trace of the sender.
 
 An idempotent repeat of any other route is declared by its handler (`agent_hub.audit.recorder.unchanged`). For every
 other successful write a request without a row of its own is a defect (`agent_hub.http.writelog`); the pipeline's
@@ -32,5 +34,6 @@ GENERIC: frozenset[tuple[str, str]] = frozenset(
         ("PUT", "/v1/community/read"),
         ("PUT", "/v1/device/contexts/{object}/chunks/{index}"),
         ("POST", "/v1/device/sessions/{session}/browser/live"),
+        ("POST", "/v1/telemetry/ui"),
     }
 )

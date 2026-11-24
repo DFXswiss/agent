@@ -20,7 +20,7 @@ import { addKeys, setLog } from '../../src/core/store/slices/orgs';
 import { type PullStatus, setStatuses } from '../../src/core/pulls/state';
 import { putTasks, type TaskRow } from '../../src/core/store/slices/tasks';
 import { I18nProvider } from '../../src/ui/i18n';
-import { PullLine } from '../../src/ui/screens/home/PullLine';
+import { LINE_MAX, PullLine } from '../../src/ui/screens/home/PullLine';
 import { nav } from '../../src/ui/screens/pulls/nav';
 import { PullsScreen } from '../../src/ui/screens/pulls/PullsScreen';
 import { routes } from '../../src/ui/screens/pulls/routes';
@@ -538,6 +538,24 @@ describe('situation view line', () => {
     expect(await within(a!).findByTestId('attention.fix-conflicts.sent')).toBeInTheDocument();
     expect(within(a!).queryByTestId('attention.fix-conflicts')).toBeNull();
     expect(await prompts(t)).toEqual([fixConflictsInstruction(A), fixConflictsInstruction(A)]);
+  });
+
+  it('names at most LINE_MAX links and counts the rest with a link to the task tab', async () => {
+    const t = await taskWorld();
+    base(t, [taskRow(t, { task_id: TASK }) as TaskRow]);
+    const refs = [1, 2, 3, 4, 5].map((number): PullRef => ({ repo: 'Org/App', number }));
+    const links = await Promise.all(refs.map((ref) => sealedRow(t, { task: TASK, ref })));
+    t.client.on(`GET /v1/workgroups/${t.wg}/pr-links`, () => ({ items: links, next_cursor: null }));
+    statuses(
+      t,
+      refs.map((ref) => [ref, ready(ref)]),
+    );
+    line(t, false);
+    const more = await screen.findByTestId('attention.pulls.more');
+    expect(screen.getAllByTestId('attention.pull')).toHaveLength(LINE_MAX);
+    expect(more).toHaveAttribute('data-count', '2');
+    expect(more).toHaveTextContent('2 more – all in the task');
+    expect(more).toHaveAttribute('href', `/o/${t.org}/t/${TASK}?tab=pulls`);
   });
 
   it('shows nothing for a task without links and no button to a reader', async () => {

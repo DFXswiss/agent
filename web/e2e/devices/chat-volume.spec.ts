@@ -3,12 +3,15 @@
 // composer reacts, the page scrolls, the DOM stays below `MAX_NODES` and the main thread is not kept busy. The same
 // holds for every other chat kind in large numbers (`mixed`: 1 500 long messages, 1 500 tool calls with 8 KB input
 // and output, 1 000 subagent messages). Bounds
-// and measurements: `docs/platform/decisions/HOT-05.md`. Every measurement is printed (`HOT-05 …`) for the report.
+// and measurements: `docs/platform/decisions/HOT-05.md`. Time bounds are multiplied by the slowdown of the tab
+// calibrated in the run (`e2e/volume/speed.ts`, ADR-086 §4), so a busy test device does not fail them; element and row
+// bounds are not, so a real regression still does. Every measurement is printed (`HOT-05 …`) for the report.
 import { devices, type Page } from '@playwright/test';
 import { expect, test } from '../fixtures/test.ts';
 import { mainSession, walk } from '../helpers/director.ts';
 import { childSession, type SessionEvent, sessionEvents } from '../helpers/sessions.ts';
 import { freshUser, sendPrompt, START_STEPS } from '../helpers/tasks.ts';
+import { slowdown } from '../volume/speed.ts';
 
 /** File events, an ordinary item after every `RUN` files (1 000 rows: more than the rendered window of 100). */
 const FILES = 5000;
@@ -107,13 +110,16 @@ async function shownAll(page: Page): Promise<void> {
 }
 
 async function usable(page: Page, label: string, files = true): Promise<void> {
+  // time bounds grow with the slowdown of the tab calibrated now (a busy test device, KOR-35 / ADR-086 §4); the
+  // structural bounds (elements, rows) do not
+  const slow = await slowdown(page);
   // the composer reacts and the page scrolls
   const prompt = page.getByTestId('chat.composer.prompt');
   const typed = Date.now();
   await prompt.fill(`still usable ${label}`);
-  await expect(prompt).toHaveValue(`still usable ${label}`, { timeout: 2000 });
+  await expect(prompt).toHaveValue(`still usable ${label}`, { timeout: MAX_INPUT_MS * slow });
   const input = Date.now() - typed;
-  expect(input).toBeLessThan(MAX_INPUT_MS);
+  expect(input).toBeLessThan(MAX_INPUT_MS * slow);
   // scrolling moves the page: after a turn of the wheel upwards an earlier row is at the top of the viewport. Not
   // `scrollY`: rows above that render for the first time (`content-visibility: auto`) grow from their placeholder
   // height, and the browser's scroll anchoring then raises `scrollY` to keep what the user sees in place (HOT-15).
@@ -130,8 +136,11 @@ async function usable(page: Page, label: string, files = true): Promise<void> {
   const bottom = await view();
   expect(bottom.y).toBeGreaterThan(0);
   expect(bottom.top).toBeGreaterThan(0);
+  // the input moves the page: a state, waited for as long as the slowed-down tab may need
   await page.mouse.wheel(0, -1500);
-  await expect.poll(async () => (await view()).top, { timeout: 30_000 }).toBeLessThan(bottom.top);
+  await expect
+    .poll(async () => (await view()).top, { timeout: Math.max(30_000, MAX_INPUT_MS * slow) })
+    .toBeLessThan(bottom.top);
   console.log(`HOT-15 ${label}: scrolled up from ${JSON.stringify(bottom)} to ${JSON.stringify(await view())}`);
   if (files) {
     await page.getByTestId('chat.files').first().scrollIntoViewIfNeeded();
@@ -143,15 +152,25 @@ async function usable(page: Page, label: string, files = true): Promise<void> {
   const start = await probe(page, 0);
   await page.waitForTimeout(2000);
   const end = await probe(page, start.now);
-  console.log(`HOT-05 ${label}: input ${input} ms, nodes ${end.nodes}, busy ${Math.round(end.busy)} ms in 2 s`);
+  const quiet = Math.max(slow, await slowdown(page));
+  console.log(
+    `HOT-05 ${label}: input ${input} ms, nodes ${end.nodes}, busy ${Math.round(end.busy)} ms in 2 s, ` +
+      `slowdown ${quiet.toFixed(2)}`,
+  );
   expect(end.nodes).toBeLessThan(files ? MAX_NODES : MAX_NODES_RICH);
-  expect(end.busy).toBeLessThan(MAX_IDLE_BUSY_MS);
+  expect(end.busy).toBeLessThan(MAX_IDLE_BUSY_MS * quiet);
 }
 
 /** Opens a task with a working main session; returns its session ID. */
 async function openTask(page: Page, baseURL: string): Promise<string> {
   test.setTimeout(600_000);
   await instrument(page);
+  // the stability proof of ADR-086 §4: CPU throttling inside the browser only; the bounds follow the calibration
+  const stress = Number(process.env.VOLUME_STRESS_CPU ?? 0);
+  if (stress > 1) {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: stress });
+  }
   await freshUser(page, baseURL, { poolReady: 2 });
   const task = await sendPrompt(page, 'Check out the repository');
   const session = await mainSession(task);
@@ -166,6 +185,7 @@ async function burst(
   label: string,
   post: () => Promise<void>,
   done: (page: Page) => Promise<void>,
+  newest: (page: Page) => Promise<void>,
   files: boolean,
 ): Promise<void> {
   const [maxNodes, maxGap] = files ? [MAX_NODES, MAX_FRAME_GAP_MS] : [MAX_NODES_RICH, MAX_FRAME_GAP_RICH_MS];
@@ -186,30 +206,38 @@ async function burst(
   const after = await probe(page, before.now);
   const gap = Math.max(worst, after.gap);
   const busy = after.busy / (after.now - before.now);
+  const slow = await slowdown(page);
   console.log(
     `HOT-05 ${label} live: ${Math.round(after.now - before.now)} ms, busy ${Math.round(busy * 100)} %, ` +
-      `max frame gap ${Math.round(gap)} ms, max nodes ${Math.max(nodes, after.nodes)}, rows ${await rows(page)}`,
+      `max frame gap ${Math.round(gap)} ms, max nodes ${Math.max(nodes, after.nodes)}, rows ${await rows(page)}, ` +
+      `slowdown ${slow.toFixed(2)}`,
   );
-  expect(gap).toBeLessThan(maxGap);
-  expect(busy).toBeLessThan(MAX_BURST_BUSY);
+  expect(gap).toBeLessThan(maxGap * slow);
+  expect(busy).toBeLessThan(Math.min(0.9, MAX_BURST_BUSY * slow));
   expect(Math.max(nodes, after.nodes)).toBeLessThan(maxNodes);
   // the window: far more rows than rendered
   expect(await rows(page)).toBeGreaterThan(await page.getByTestId('chat.item').count());
   await expect(page.getByTestId('chat.earlier')).toBeVisible();
   await usable(page, `${label} live`, files);
 
-  // history: the same task opened anew loads every event from the hub
+  // history: the same task opened anew shows its newest page first (ADR-086 §1) and offers the earlier ones
   await page.reload();
   const loaded = Date.now();
   await page.getByTestId('login.submit').click();
-  await done(page);
+  await newest(page);
+  await expect(page.getByTestId('chat.earlier').or(page.getByTestId('chat.load-more')).first()).toBeVisible();
   console.log(`HOT-05 ${label} history: shown after ${Date.now() - loaded} ms`);
   await usable(page, `${label} history`, files);
 }
 
 async function scenario(page: Page, baseURL: string, label: string): Promise<void> {
   const session = await openTask(page, baseURL);
-  await burst(page, label, () => store(session, events(0)), shownAll, true);
+  const newest = async (shown: Page) => {
+    await expect(shown.getByTestId('chat.output').filter({ hasText: `Run ${FILES - 1}` })).toBeVisible({
+      timeout: 120_000,
+    });
+  };
+  await burst(page, label, () => store(session, events(0)), shownAll, newest, true);
 }
 
 /** Every other chat kind in large numbers: long messages, tool calls with large input and output, a subagent. */
@@ -260,11 +288,16 @@ async function mixed(page: Page, baseURL: string, label: string): Promise<void> 
     await expect(shown.getByTestId('chat.tool.summary').filter({ hasText: `cat ${TOOLS}` })).toBeVisible({
       timeout: 120_000,
     });
-    await expect
-      .poll(() => rows(shown), { timeout: 120_000 })
-      .toBeGreaterThanOrEqual(MESSAGES + TOOLS + 1 + CHILD - 10);
+    // a live burst this large may overflow the live channel; after its `resync` the client reads the newest page
+    // only (ADR-086 §2) – the timeline then holds more rows than it shows, not necessarily every row of the burst
+    await expect.poll(() => rows(shown), { timeout: 120_000 }).toBeGreaterThan(150);
   };
-  await burst(page, `${label} mixed`, post, done, false);
+  const newest = async (shown: Page) => {
+    await expect(shown.getByTestId('chat.tool.summary').filter({ hasText: `cat ${TOOLS}` })).toBeVisible({
+      timeout: 120_000,
+    });
+  };
+  await burst(page, `${label} mixed`, post, done, newest, false);
   // the largest tool call opens with its input and output clipped, the rest behind "Show more"
   const last = page.getByTestId('chat.tool').last();
   await last.locator('summary').click();

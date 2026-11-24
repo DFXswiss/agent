@@ -1,6 +1,7 @@
 // Chat item `file-group` (06-web.md section 5.2, HOT-05): a run of file changes of one session as one row – "483 files
-// changed" with the time span. "Show files" opens the list of paths, `FILES_PAGE` at a time ("Show more files"); each
-// file's patch opens on its own. Nothing of the list is in the DOM while the group is closed.
+// changed" with the time span. "Show files" opens the list of paths, a `WindowedList` (ADR-086 section 1) of
+// `FILES_PAGE` files at a time ("Show more files", at most `FILES_MAX` rendered); each file's patch opens on its own.
+// Nothing of the list is in the DOM while the group is closed.
 import { useId, useState } from 'react';
 import type { FileGroupBody } from '../../core/chat/files';
 import type { TimelineItem } from '../../core/chat/timeline';
@@ -8,9 +9,17 @@ import { formatNumber } from '../../core/i18n';
 import type { ChatItem, ChatItemProps } from '../registries/chat-items';
 import { useI18n } from '../i18n';
 import { EventTime } from '../task-tabs/chat/EventTime';
+import { WindowedList } from '../lists/WindowedList';
 import { FileChange } from './file/FileChange';
 
 export const FILES_PAGE = 50;
+export const FILES_MAX = 200;
+
+const fileKey = (file: TimelineItem): string => file.key;
+
+function File({ item }: { readonly item: TimelineItem }) {
+  return <FileChange item={item} />;
+}
 
 const LINK = 'min-h-11 self-start py-2 text-left text-blue-800 underline';
 
@@ -20,7 +29,6 @@ function FileGroup({ item }: ChatItemProps) {
   const { t, locale } = useI18n();
   const id = useId();
   const [open, setOpen] = useState(false);
-  const [limit, setLimit] = useState(FILES_PAGE);
   return (
     <div className="flex flex-col gap-1 text-sm" data-testid="chat.files" data-count={files.length}>
       <p className="flex flex-wrap items-center gap-2">
@@ -42,24 +50,26 @@ function FileGroup({ item }: ChatItemProps) {
         {t(open ? 'chat-list.files.hide' : 'chat-list.files.show')}
       </button>
       {open && (
-        <div id={id} className="flex flex-col gap-2">
-          <ul className="flex flex-col gap-2 border-l-2 border-gray-200 pl-3" data-testid="chat.files.list">
-            {files.slice(0, limit).map((file) => (
-              <li key={file.key}>
-                <FileChange item={file} />
-              </li>
-            ))}
-          </ul>
-          {files.length > limit && (
-            <button
-              type="button"
-              className={LINK}
-              onClick={() => setLimit(limit + FILES_PAGE)}
-              data-testid="chat.files.more"
-            >
-              {t('chat-list.files.more', { count: formatNumber(files.length - limit, locale) })}
-            </button>
-          )}
+        <div id={id}>
+          {/* in the order of the run: the first files at the start, "Show more files" at the end */}
+          <WindowedList
+            listId="chat.files"
+            items={files}
+            getKey={fileKey}
+            Row={File}
+            newest="start"
+            size={FILES_PAGE}
+            page={FILES_PAGE}
+            maxRows={FILES_MAX}
+            className="flex flex-col gap-2 border-l-2 border-gray-200 pl-3"
+            testId="chat.files.list"
+            testIds={{ older: 'chat.files.more', newer: 'chat.files.previous', newest: 'chat.files.first' }}
+            labels={{
+              older: 'chat-list.files.more',
+              newer: 'chat-list.files.previous',
+              newest: 'chat-list.files.first',
+            }}
+          />
         </div>
       )}
     </div>

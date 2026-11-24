@@ -1,17 +1,28 @@
 // U-WEB-ui-terminal: the session detail (loading, error, tabs, children, session chat) and the read-only terminal view
 // in jsdom with xterm.js replaced by a recording double (jsdom has no canvas): renderer choice, no input handler,
-// hidden cursor, font fitting, geometry from the chunks, Follow writes in order, History replay into the hidden screen
-// and playback, notices (loading, error, empty, unverifiable) and the cancelled paste. The real xterm runs in
+// hidden cursor, the bounded scrollback, font fitting, geometry from the chunks, Follow writes in order (and rewrites the
+// screen when the tail starts anew), History replay into the hidden screen and playback, earlier output loaded on
+// demand, notices (loading, error, empty, unverifiable, earlier output, cut window) and the cancelled paste. The real xterm runs in
 // `e2e/devices/terminal.spec.ts`.
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HubError } from '../../src/core/net/signedFetch';
 import { putSession } from '../../src/core/store/slices/tasks';
 import { putEvents } from '../../src/core/store/slices/events';
-import { applyPage, terminalFailed } from '../../src/core/store/slices/terminal';
+import { terminalFailed } from '../../src/core/store/slices/terminal';
+import { applyNewest, applyPage } from '../../src/core/terminal/entries';
+import { TerminalWatch } from '../../src/core/terminal/watch';
 import { SessionScreen } from '../../src/ui/screens/session/SessionScreen';
 import TerminalView, { offsetLabel } from '../../src/ui/terminal/TerminalView';
-import { clearScreen, fitFont, hasWebgl2, MAX_FONT, MIN_FONT, openScreen } from '../../src/ui/terminal/xterm';
+import {
+  clearScreen,
+  fitFont,
+  hasWebgl2,
+  MAX_FONT,
+  MIN_FONT,
+  openScreen,
+  SCROLLBACK,
+} from '../../src/ui/terminal/xterm';
 import { sessionRow, taskRow, type TaskWorld, taskWorld } from '../core/tasks/world';
 import { MAIN, mount, TASK, verified } from './chat-world';
 
@@ -106,13 +117,30 @@ const chunk = (seq: number, frames: [number, string][], size?: [number, number])
   },
 });
 
-/** The terminal view of the main session with the watch's pull answered from `history`. */
-async function view(t: TaskWorld, history: ReturnType<typeof chunk>[] = []) {
-  t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({
-    events: history.map((item) => ({ scope_seq: item.seq, received_at: null, event: {} })),
-    next_after: null,
-    head: history.at(-1)?.seq ?? 0,
-  }));
+/**
+ * The terminal view of the main session with the watch's reads answered from `history`: newest first below `before`
+ * (pages of `pageSize`), ascending after `after`.
+ */
+async function view(t: TaskWorld, history: ReturnType<typeof chunk>[] = [], pageSize = 1000) {
+  const stored = (item: ReturnType<typeof chunk>) => ({ scope_seq: item.seq, received_at: null, event: {} });
+  t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) => {
+    const params = new URL(target, 'https://hub.example').searchParams;
+    const head = history.at(-1)?.seq ?? 0;
+    if (params.has('before')) {
+      const older = history.filter((item) => item.seq < Number(params.get('before'))).reverse();
+      const page = older.slice(0, pageSize);
+      return {
+        events: page.map(stored),
+        next_before: older.length > page.length ? page.at(-1)!.seq : null,
+        head,
+      };
+    }
+    return {
+      events: history.filter((item) => item.seq > Number(params.get('after'))).map(stored),
+      next_after: null,
+      head,
+    };
+  });
   const mounted = mount(t, [{ path: '/', element: <TerminalView org={t.org} wg={t.wg} session={MAIN} /> }], '/');
   mounted.terminal.read.mockImplementation(async (_org, _scope, items) =>
     items.map((item) => {
@@ -143,7 +171,9 @@ describe('xterm screen', () => {
       cursorBlink: false,
       cursorInactiveStyle: 'none',
       theme: { cursor: 'transparent', cursorAccent: 'transparent' },
+      scrollback: SCROLLBACK,
     });
+    expect(SCROLLBACK).toBe(10_000);
     expect(fake.addons).toEqual(['webgl', 'fit']);
     expect(fake.host).toBe(host);
     expect(fake.writes).toEqual([HIDE]);
@@ -307,7 +337,7 @@ describe('terminal view', () => {
     let release: () => void = () => undefined;
     t.client.on(
       `GET /v1/scopes/${t.wg}/events`,
-      () => new Promise((resolve) => (release = () => resolve({ events: [], next_after: null, head: 0 }))),
+      () => new Promise((resolve) => (release = () => resolve({ events: [], next_before: null, head: 0 }))),
     );
     const mounted = mount(t, [{ path: '/', element: <TerminalView org={t.org} wg={t.wg} session={MAIN} /> }], '/');
     expect(screen.getByTestId('terminal.history-loading')).toBeInTheDocument();
@@ -331,6 +361,74 @@ describe('terminal view', () => {
     expect(mounted.terminal.read).toHaveBeenCalledWith(t.org, t.wg, []);
   });
 
+  it('keeps earlier output on the hub in Follow and loads it page by page in History', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const t = await taskWorld();
+    const history = [chunk(1, [[0, 'a']]), chunk(2, [[100, 'b']]), chunk(3, [[200, 'c']])];
+    await view(t, history, 1);
+    await vi.waitFor(() => expect(text(0)).toBe('c'));
+    expect(screen.getByTestId('terminal.earlier.follow')).toHaveTextContent('Earlier output is not kept here');
+    expect(screen.queryByTestId('terminal.empty')).toBeNull();
+    fireEvent.click(screen.getByTestId('terminal.mode.history'));
+    expect(screen.queryByTestId('terminal.earlier.follow')).toBeNull();
+    expect(screen.getByTestId('terminal.earlier.count')).toHaveTextContent('1 chunks loaded');
+    expect(screen.getByTestId('terminal.slider')).toHaveAttribute('min', '200');
+    const load = screen.getByTestId('terminal.earlier.load');
+    expect(load).toHaveClass('min-h-11', 'min-w-11');
+    fireEvent.click(load);
+    expect(screen.getByTestId('terminal.earlier.load')).toBeDisabled();
+    expect(screen.getByTestId('terminal.earlier.load')).toHaveTextContent('Loading earlier output…');
+    await vi.waitFor(() => expect(screen.getByTestId('terminal')).toHaveAttribute('data-chunks', '2'));
+    expect(screen.getByTestId('terminal.slider')).toHaveAttribute('min', '100');
+    // a failed load is shown and can be repeated
+    const answer = t.client.routes.get(`GET /v1/scopes/${t.wg}/events`)!;
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => {
+      throw new HubError('rate_limited', 429);
+    });
+    fireEvent.click(screen.getByTestId('terminal.earlier.load'));
+    await vi.waitFor(() =>
+      expect(screen.getByTestId('terminal.earlier.error')).toHaveAttribute('data-code', 'rate_limited'),
+    );
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, answer);
+    fireEvent.click(screen.getByTestId('terminal.earlier.load'));
+    await vi.waitFor(() =>
+      expect(screen.getByTestId('terminal.earlier.start')).toHaveTextContent('Start of the recording'),
+    );
+    expect(screen.getByTestId('terminal.earlier.count')).toHaveTextContent('3 chunks loaded');
+    // the replay of an offset covers the loaded earlier output
+    fireEvent.change(screen.getByTestId('terminal.slider'), { target: { value: '150' } });
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(text(1)).toBe('ab');
+    // a cut window says so
+    act(() =>
+      t.store.update('terminal', (state) => {
+        const entry = state.sessions[MAIN]!;
+        return { sessions: { [MAIN]: { ...entry, history: { ...entry.history!, cut: true } } } };
+      }),
+    );
+    expect(screen.getByTestId('terminal.earlier.cut')).toHaveTextContent('Later output was unloaded');
+    // back to Follow: the window leaves memory, the tail is written again
+    fireEvent.click(screen.getByTestId('terminal.mode.follow'));
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(t.store.getState().terminal.sessions[MAIN]!.history).toBeNull();
+    expect(screen.getByTestId('terminal')).toHaveAttribute('data-chunks', '1');
+    expect(text(0)).toBe('c');
+  });
+
+  it('rewrites the Follow screen when the tail starts anew', async () => {
+    const t = await taskWorld();
+    await view(t, [chunk(1, [[0, 'a']])]);
+    await waitFor(() => expect(text(0)).toBe('a'));
+    act(() =>
+      t.store.update('terminal', (state) => ({
+        sessions: { [MAIN]: applyNewest(state.sessions[MAIN]!, [chunk(9, [[900, 'z']])], 9, 9) },
+      })),
+    );
+    expect(text(0)).toBe('z');
+    expect(screens()[0]!.resets).toBe(1);
+    expect(screen.getByTestId('terminal.earlier.follow')).toBeInTheDocument();
+  });
+
   it('works without a terminal entry (the watch has not opened one yet)', async () => {
     const t = await taskWorld();
     const mounted = mount(t, [{ path: '/', element: <TerminalView org={t.org} wg="other" session="none" /> }], '/');
@@ -338,6 +436,39 @@ describe('terminal view', () => {
     expect(screen.getByTestId('terminal')).toHaveAttribute('data-chunks', '0');
     expect(screen.queryByTestId('terminal.history-loading')).toBeNull();
     expect(mounted.terminal.watch).toHaveBeenCalled();
+    // History and back without an entry: an empty window, then an empty replay (no chunk written, no epoch)
+    fireEvent.click(screen.getByTestId('terminal.mode.history'));
+    expect(screen.getByTestId('terminal')).toHaveAttribute('data-mode', 'history');
+    expect(screen.getByTestId('terminal')).toHaveAttribute('data-chunks', '0');
+    act(() => t.store.update('terminal', () => ({ sessions: {} })));
+    fireEvent.click(screen.getByTestId('terminal.mode.follow'));
+    await waitFor(() => expect(screen.getByTestId('terminal')).toHaveAttribute('data-mode', 'follow'));
+    expect(text(0)).toBe('');
+  });
+
+  it('switches to History and back with an entry that has no window and no chunks', async () => {
+    const t = await taskWorld();
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_before: null, head: 0 }));
+    mount(t, [{ path: '/', element: <TerminalView org={t.org} wg={t.wg} session={MAIN} /> }], '/');
+    expect(await screen.findByTestId('terminal.empty')).toBeInTheDocument();
+    // the window does not open (yet): History starts over no chunks
+    vi.spyOn(TerminalWatch.prototype, 'history').mockImplementation(() => undefined);
+    fireEvent.click(screen.getByTestId('terminal.mode.history'));
+    expect(t.store.getState().terminal.sessions[MAIN]!.history).toBeNull();
+    expect(screen.getByTestId('terminal')).toHaveAttribute('data-mode', 'history');
+    expect(screen.queryByTestId('terminal.history')).toBeNull();
+    // back to Follow: the empty tail is replayed, nothing was written yet
+    fireEvent.click(screen.getByTestId('terminal.mode.follow'));
+    await waitFor(() => expect(screen.getByTestId('terminal')).toHaveAttribute('data-mode', 'follow'));
+    expect(t.store.getState().terminal.sessions[MAIN]!.chunks).toEqual([]);
+    expect(text(1)).toBe('');
+    // a first live chunk is then written to the visible screen
+    act(() =>
+      t.store.update('terminal', (state) => ({
+        sessions: { [MAIN]: applyNewest(state.sessions[MAIN]!, [chunk(1, [[0, 'a']])], 1, 1) },
+      })),
+    );
+    expect(text(1)).toBe('a');
   });
 });
 

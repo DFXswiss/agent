@@ -2,8 +2,11 @@
 // whose task has linked pull requests names each with its state and conflict state, and offers "Fix conflicts" right
 // there for a conflict (users who may write in the task's workgroup). The workgroup's links are loaded once
 // (`ensureLinks`); the states are read lazily – only for the entries on the screen (the window of a group), batched
-// into one device request.
+// into one device request. At most `LINE_MAX` links are named (ADR-086 section 1), the rest are counted with a link to
+// the task's "Pull requests" tab (the windowed list of all of them).
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { formatNumber } from '../../../core/i18n';
 import { pullLabel } from '../../../core/pulls/address';
 import { fixConflicts } from '../../../core/pulls/fix';
 import { ensureLinks } from '../../../core/pulls/links';
@@ -16,6 +19,9 @@ import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { usePull } from '../../pulls/hooks';
 import { useAppEnv } from '../../shell/context';
+
+/** The most links one entry names. */
+export const LINE_MAX = 3;
 
 type Status = { kind: 'idle' } | { kind: 'sending' } | { kind: 'sent' } | { kind: 'error'; code: string };
 
@@ -98,18 +104,31 @@ export function PullLine({
   readonly writer: boolean;
 }) {
   const { app } = useAppEnv();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const select = useMemo(() => selectTaskLinks(task.wg_id, task.task_id), [task.wg_id, task.task_id]);
   const links = useStore(select, app.store);
   useEffect(() => {
     void ensureLinks(app.tasks, org, task.wg_id);
   }, [app, org, task.wg_id]);
   if (links.length === 0) return null;
+  const more = links.length - LINE_MAX;
   return (
-    <ul className="flex flex-col gap-1 px-2 pb-2 text-sm" aria-label={t('pulls.tab')} data-testid="attention.pulls">
-      {links.map((link) => (
-        <PullEntry key={`${link.epoch} ${link.tag}`} org={org} link={link} writer={writer} />
-      ))}
-    </ul>
+    <div className="flex flex-col gap-1 px-2 pb-2 text-sm">
+      <ul className="flex flex-col gap-1" aria-label={t('pulls.tab')} data-testid="attention.pulls">
+        {links.slice(0, LINE_MAX).map((link) => (
+          <PullEntry key={`${link.epoch} ${link.tag}`} org={org} link={link} writer={writer} />
+        ))}
+      </ul>
+      {more > 0 && (
+        <Link
+          className="inline-flex min-h-11 items-center self-start text-blue-800 underline"
+          to={`/o/${encodeURIComponent(org)}/t/${encodeURIComponent(task.task_id)}?tab=pulls`}
+          data-testid="attention.pulls.more"
+          data-count={more}
+        >
+          {t('pulls.line.more', { count: formatNumber(more, locale) })}
+        </Link>
+      )}
+    </div>
   );
 }

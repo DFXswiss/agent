@@ -12,7 +12,9 @@ import {
   EXPIRY_HOURS,
   HOUR_MS,
   invitable,
+  inviteHints,
   type InviteInput,
+  type InviteRow,
   inviteStatuses,
   openInvites,
   revokeInvite,
@@ -207,14 +209,44 @@ describe('open invitations and revocation', () => {
     // the hub claims an unknown invitation is open and marks one as used: neither is listed
     w.hub.invites.set('forged', { ...w.hub.invites.get(first.inviteId)!, invite_id: 'forged' });
     const listed = await openInvites(w.context, w.org, 'user');
-    expect(listed.map((row) => row.invite_id)).toEqual([second.inviteId, first.inviteId]);
-    expect(listed[0]!.expires_at).toBe(second.expires);
-    expect((await openInvites(w.context, w.org, 'device')).map((r) => r.invite_id)).toEqual([device.inviteId]);
+    expect(listed.rows.map((row) => row.invite_id)).toEqual([second.inviteId, first.inviteId]);
+    expect(listed.rows[0]!.expires_at).toBe(second.expires);
+    expect(listed).toMatchObject({ nextBefore: null, truncated: false });
+    expect((await openInvites(w.context, w.org, 'device')).rows.map((r) => r.invite_id)).toEqual([device.inviteId]);
     w.hub.invites.get(first.inviteId)!.state = 'used';
-    expect((await openInvites(w.context, w.org, 'user')).map((r) => r.invite_id)).toEqual([second.inviteId]);
+    expect((await openInvites(w.context, w.org, 'user')).rows.map((r) => r.invite_id)).toEqual([second.inviteId]);
     // expired by the clock
     w.hub.now = T0 + 2 * HOUR_MS;
-    expect(await openInvites(w.context, w.org, 'user')).toEqual([]);
+    expect((await openInvites(w.context, w.org, 'user')).rows).toEqual([]);
+  });
+
+  it('reads the hub list page by page and says when the hub cut it', async () => {
+    const { w, input } = await setup();
+    const first = await createInvite(w.context, w.org, input({ kind: 'user', role: 'member', wgs: {}, hours: 72 }));
+    const second = await createInvite(w.context, w.org, {
+      ...input({ kind: 'user', role: 'member', wgs: {}, hours: 72 }),
+      code: () => new Uint8Array(16).fill(5),
+    });
+    const row = (id: string) => {
+      const { package_ct: _p, ...rest } = w.hub.invites.get(id)!;
+      return rest;
+    };
+    w.client.on(`GET /v1/orgs/${w.org}/invites`, (_body, target) =>
+      String(target).includes('before=')
+        ? { invites: [row(first.inviteId)], next_before: null }
+        : { invites: [row(second.inviteId)], next_before: 'older' },
+    );
+    const newest = await openInvites(w.context, w.org, 'user');
+    expect(newest).toMatchObject({ nextBefore: 'older', truncated: false });
+    expect(newest.rows.map((r) => r.invite_id)).toEqual([second.inviteId]);
+    const older = await openInvites(w.context, w.org, 'user', 'older');
+    expect(older.rows.map((r) => r.invite_id)).toEqual([first.inviteId]);
+    expect(w.client.of(`GET /v1/orgs/${w.org}/invites`).map((call) => call.target)).toEqual([
+      `/v1/orgs/${w.org}/invites?limit=100`,
+      `/v1/orgs/${w.org}/invites?before=older&limit=100`,
+    ]);
+    w.client.on(`GET /v1/orgs/${w.org}/invites`, () => ({ invites: [row(first.inviteId)], truncated: true }));
+    expect(await openInvites(w.context, w.org, 'user')).toMatchObject({ nextBefore: null, truncated: true });
   });
 
   it('gives the inviter the state of each user invitation (KOR-36)', async () => {
@@ -236,7 +268,10 @@ describe('open invitations and revocation', () => {
     w.hub.invites.set(registered, { ...w.hub.invites.get(registered)!, registered: true, opened_at: null });
     // the hub no longer lists one as open (used elsewhere, or a lie): not shown while the log has no accept
     w.hub.invites.set(gone, { ...w.hub.invites.get(gone)!, state: 'used' });
-    const rows = await inviteStatuses(w.context, w.org);
+    const log = () => w.store.getState().orgs.byId[w.org]!.log!.state;
+    const hints = await inviteHints(w.context, w.org);
+    expect(hints).toMatchObject({ nextBefore: null, truncated: false });
+    const rows = inviteStatuses(log(), hints.rows, true, w.context.now());
     expect(rows.map((row) => [row.inviteId, row.status, row.acceptedBy, row.openedAt])).toEqual([
       [registered, 'registered', undefined, null],
       [opened, 'opened', undefined, '2026-11-23T20:00:00.000Z'],
@@ -247,8 +282,44 @@ describe('open invitations and revocation', () => {
     ]);
     expect(rows).toHaveLength(5);
     // expired by the clock: nothing is listed any more
-    w.hub.now = T0 + 100 * HOUR_MS;
-    expect(await inviteStatuses(w.context, w.org)).toEqual([]);
+    expect(inviteStatuses(log(), hints.rows, true, T0 + 100 * HOUR_MS)).toEqual([]);
+  });
+
+  it('shows no invitation below the oldest one the read hub pages name while older pages exist', async () => {
+    const { w, input } = await setup();
+    const made: string[] = [];
+    for (const fill of [3, 4, 5])
+      made.push(
+        (
+          await createInvite(w.context, w.org, {
+            ...input({ kind: 'user', role: 'member', wgs: {}, hours: 72 }),
+            code: () => new Uint8Array(16).fill(fill),
+          })
+        ).inviteId,
+      );
+    const [oldest, middle, newest] = made as [string, string, string];
+    const row = (id: string): InviteRow => {
+      const { package_ct: _p, ...rest } = w.hub.invites.get(id)!;
+      return rest as InviteRow;
+    };
+    const state = w.store.getState().orgs.byId[w.org]!.log!.state;
+    const now = w.context.now();
+    const ids = (rows: { inviteId: string }[]) => rows.map((r) => r.inviteId);
+    // the newest page names `middle` and `newest`: the older open one and the accepted admissions wait for "Load more"
+    expect(ids(inviteStatuses(state, [row(newest), row(middle)], false, now))).toEqual([newest, middle]);
+    // a page of rows the log does not know (or none read yet) shows nothing
+    expect(inviteStatuses(state, [{ ...row(newest), invite_id: 'forged' }], false, now)).toEqual([]);
+    expect(inviteStatuses(state, [], false, now)).toEqual([]);
+    // every page read: all of them, the admissions too
+    expect(ids(inviteStatuses(state, [row(newest), row(middle), row(oldest)], true, now))).toHaveLength(5);
+    // the pages are read with `before`/`limit` and checked
+    w.client.on(`GET /v1/orgs/${w.org}/invites`, (_body, target) =>
+      String(target).includes('before=')
+        ? { invites: [row(oldest)], next_before: null, truncated: false }
+        : { invites: [row(newest)], next_before: 'older' },
+    );
+    expect(await inviteHints(w.context, w.org)).toMatchObject({ nextBefore: 'older', rows: [row(newest)] });
+    expect(await inviteHints(w.context, w.org, 'older')).toMatchObject({ nextBefore: null, rows: [row(oldest)] });
   });
 
   it('refuses a malformed list and an unverified org', async () => {
@@ -259,9 +330,8 @@ describe('open invitations and revocation', () => {
     await expect(openInvites(w.context, w.org, 'user')).rejects.toBeInstanceOf(HubError);
     w.client.on(`GET /v1/orgs/other/invites`, () => ({ invites: [] }));
     await expect(openInvites(w.context, 'other', 'user')).rejects.toMatchObject({ code: 'log_empty' });
-    await expect(inviteStatuses(w.context, 'other')).rejects.toMatchObject({ code: 'log_empty' });
-    w.client.on(`GET /v1/orgs/${w.org}/invites`, () => null);
-    await expect(inviteStatuses(w.context, w.org)).rejects.toBeInstanceOf(HubError);
+    w.client.on(`GET /v1/orgs/${w.org}/invites`, () => ({ invites: [{ invite_id: 1 }] }));
+    await expect(inviteHints(w.context, w.org)).rejects.toBeInstanceOf(HubError);
   });
 
   it('revokes once, refuses unknown invitations and checks the answer', async () => {

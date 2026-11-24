@@ -68,7 +68,7 @@ The community tables (`community_*`, migration 0014) are specified in `14-commun
 | Table | Columns | Notes |
 |---|---|---|
 | `scope_head` | `scope_id` PK, `scope` text, `seq` bigint | `UPDATE … SET seq = seq + 1 RETURNING seq` inside the insert transaction ⇒ gapless per scope |
-| `event` [AO] | (`scope_id`,`scope_seq`) PK; `id` UNIQUE; `scope`, `org_id`, `wg_id` NULL, `task_id` NULL, `session_id` NULL, `author_id`, `author_kind` (`user`,`device`,`agent`: an own-identity agent, ADR-082), `kind`, `ref` text, `epoch`, `ts` (header), `lh` int, `header_text` text (canonical), `ct` bytea, `sig` bytea(64), `size` int, `origin_device_id` NULL, `origin_seq` bigint NULL, `received_at` | indexes: (`task_id`,`scope_seq`), (`session_id`,`kind`,`scope_seq`), (`kind`,`ref`), (`received_at`) |
+| `event` [AO] | (`scope_id`,`scope_seq`) PK; `id` UNIQUE; `scope`, `org_id`, `wg_id` NULL, `task_id` NULL, `session_id` NULL, `author_id`, `author_kind` (`user`,`device`,`agent`: an own-identity agent, ADR-082), `kind`, `ref` text, `epoch`, `ts` (header), `lh` int, `header_text` text (canonical), `ct` bytea, `sig` bytea(64), `size` int, `origin_device_id` NULL, `origin_seq` bigint NULL, `received_at` | indexes: (`task_id`,`scope_seq`), (`session_id`,`kind`,`scope_seq`), (`session_id`,`scope_seq`) WHERE `session_id` IS NOT NULL (newest-first pages of a session, KOR-35), (`kind`,`ref`), (`received_at`) |
 | `device_stream` | `device_id` PK, `last_origin_seq` bigint | gapless device outbox (§5) |
 
 Retention: events are kept for the lifetime of the organization (no deletion in v1). Size limits from
@@ -158,6 +158,7 @@ main session failed and no retry is pending; `closed` only by user action.
 | `dfx_issuer` | `device_id` PK, `announced_at` | platform devices that announced a management key (`dfx_key_state`, ADR-081 §7) |
 | `dfx_key` | `request_id` PK, `org_id`, `device_id`, `requested_at`, `issuer_device_id` NULL, `key_ref` NULL UNIQUE, `envelope` NULL (ciphertext to the org device), `issued_at` NULL, `booked_micro_usd` bigint ≥ 0, `booked_at` NULL, `revoked_at` NULL, `closed_at` NULL | one live key per org device and organization; the highest cumulative provider spend booked (`12-billing.md` §3) |
 | `dfx_key_cost` | (`device_id`,`session_id`) PK, `org_id`, `cost_micro_usd` | provider cost the sessions of an org device reported on its key since the last booking (weights of the split) |
+| `ui_health_daily` | (`day` date,`version`,`view`) PK; `reports`, `blocks`, `blocked_ms` bigint; `max_bucket` smallint | anonymous UI health counters of the web clients (`POST /v1/telemetry/ui`, ADR-086 §5, KOR-35): per UTC day, client version and view type (closed list `contracts/enums/ui-views.json`); no user, org, device, address or object ID; only the version the hub serves by name, others count as `other`; kept 90 days (job `telemetry.ui_health_purge`); not exported with an org (hub-wide, `08-monitoring.md` §6.1) |
 
 ### 2.9 Audit and read log
 
@@ -219,7 +220,9 @@ Further runner tables added by later migrations (`profile_event`, `prompt_event`
 `operation_result`, `metric_pending`, `read_event`, `operator_binding` – the operator's token file a session is bound
 to, file name only, ADR-052; KOR-50 / ADR-081: `access_limit` – used-up or blocked subscription accesses kept across
 restarts, `model_pause` – sessions paused for model quota, `dfx_key` – the sealed envelope of an org device's DFX key
-per organization, `dfx_key_issued` – the requests an issuing platform device answered) and added columns are listed in
+per organization, `dfx_key_issued` – the requests an issuing platform device answered; KOR-35: `usage_pending` – the
+usage deltas of a session merged over 10 s before they become one outbox item `usage`, counts only, ADR-086) and added
+columns are listed in
 [`../spec-deviations.md`](../spec-deviations.md#02-data-model).
 
 ## 5. Guest journal (SQLite, `/var/lib/agent-guest/journal.db`, owner root (the `agent-guest-control` process), 0600; the unprivileged `agent-guest-api` process writes only through `api.sock`)

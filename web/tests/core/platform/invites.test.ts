@@ -106,7 +106,7 @@ describe('the list and revocation', () => {
   it('reads valid lists and refuses malformed ones', async () => {
     const rows = [row(), row({ invite_id: 'b', state: 'used', created_by: 'u', used_at: 't', registered: true })];
     const client = new FakeClient().on('GET /v1/platform/invites', () => ({ invites: rows }));
-    expect(await listPlatformInvites(client)).toEqual(rows);
+    expect(await listPlatformInvites(client)).toEqual({ rows, nextBefore: null, truncated: false });
     const bad: unknown[] = [
       null,
       { invites: 'x' },
@@ -124,6 +124,12 @@ describe('the list and revocation', () => {
       client.on('GET /v1/platform/invites', () => body);
       expect(await refusal(listPlatformInvites(client))).toBe('unavailable');
     }
+  });
+
+  it('reads pages below a cursor', async () => {
+    const client = new FakeClient().on('GET /v1/platform/invites', () => ({ invites: [row()], next_before: 'c2' }));
+    expect(await listPlatformInvites(client, 'c1')).toEqual({ rows: [row()], nextBefore: 'c2', truncated: false });
+    expect(client.calls[0]!.target).toBe('/v1/platform/invites?before=c1&limit=100');
   });
 
   it('revokes by ID', async () => {

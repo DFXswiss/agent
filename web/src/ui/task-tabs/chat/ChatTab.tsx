@@ -17,6 +17,7 @@ import { ChatComposer } from './ChatComposer';
 import { ModelAccessCard } from './ModelAccessCard';
 import { PromptQueue } from './PromptQueue';
 import { Timeline } from './Timeline';
+import { useChatPaging } from './useChatPaging';
 import { UsageSlot } from './UsageSlot';
 
 function ChatView({ task }: { readonly task: TaskRow }) {
@@ -24,6 +25,7 @@ function ChatView({ task }: { readonly task: TaskRow }) {
   const { t, error } = useI18n();
   const select = useMemo(() => selectTimeline(task.wg_id, task.task_id), [task.wg_id, task.task_id]);
   const items = useStore(select, app.store);
+  const paging = useChatPaging(task.org_id, task.wg_id, task.task_id);
   const load = useStore((state) => state.chat.loads[task.task_id] ?? null, app.store);
   const main = useStore(
     (state) => (task.main_session_id === null ? null : (state.tasks.sessions[task.main_session_id] ?? null)),
@@ -47,7 +49,12 @@ function ChatView({ task }: { readonly task: TaskRow }) {
           </button>
         </p>
       )}
-      <Timeline items={items} empty={t(load?.status === 'loading' ? 'task.chat.loading' : 'task.chat.empty')} />
+      <Timeline
+        listId="task.chat"
+        items={items}
+        paging={paging}
+        empty={t(load?.status === 'loading' ? 'task.chat.loading' : 'task.chat.empty')}
+      />
       <ModelAccessCard task={task} main={main} userId={userId} />
       <PromptQueue task={task} writer={writer} prompts={promptCount(items)} />
       {writer ? (

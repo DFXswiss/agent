@@ -341,6 +341,8 @@ TABLES = {
     "github_default": ["scope", "scope_id", "identity_id"],
     # 0026 (KOR-46, ADR-083): withdrawals this device carried out and reported
     "prompt_withdrawal": ["event_id", "withdrawn_at"],
+    # 0029 (KOR-35, ADR-086): usage deltas of a session merged over 10 s
+    "usage_pending": ["session_id", "item", "first_wall"],
     "schema_version": ["version", "name", "checksum", "applied_at"],
 }
 OUTBOX_KINDS = [

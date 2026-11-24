@@ -23,6 +23,7 @@ import {
   type HubDevice,
   LABEL_MAX,
   loadCandidates,
+  listedRows,
   loadOrgDevices,
   renameDevice,
   selectDeviceLabels,
@@ -185,7 +186,7 @@ describe('the hub list', () => {
       hubRow('d2', { kind: 'platform', last_seen_at: null }),
     ];
     w.client.on(`GET /v1/orgs/${w.org}/devices`, () => ({ devices: rows }));
-    expect(await loadOrgDevices(w.context, w.org)).toEqual(rows);
+    expect(await loadOrgDevices(w.context, w.org)).toEqual({ rows, nextBefore: null, truncated: false });
     const bad: unknown[] = [
       null,
       { devices: 'x' },
@@ -212,6 +213,26 @@ describe('the hub list', () => {
       w.client.on(`GET /v1/orgs/${w.org}/devices`, () => body);
       expect(await refusal(loadOrgDevices(w.context, w.org))).toBe('unavailable');
     }
+  });
+
+  it('reads pages of 200 below a cursor', async () => {
+    const { w } = await setup();
+    w.client.on(`GET /v1/orgs/${w.org}/devices`, () => ({ devices: [hubRow('d3')], next_before: 'c2' }));
+    expect(await loadOrgDevices(w.context, w.org, 'c1')).toEqual({
+      rows: [hubRow('d3')],
+      nextBefore: 'c2',
+      truncated: false,
+    });
+    expect(w.client.of(`GET /v1/orgs/${w.org}/devices`)[0]!.target).toBe(
+      `/v1/orgs/${w.org}/devices?before=c1&limit=200`,
+    );
+  });
+
+  it('lists only the devices the loaded pages name while older pages exist', async () => {
+    const { w, a } = await setup({ private: true });
+    const rows = deviceRows(w.world.state, null, [hubRow(a.dev1!.id)], new Map());
+    expect(listedRows(rows, true).map((row) => row.id)).toEqual([a.dev1!.id]);
+    expect(listedRows(rows, false)).toBe(rows);
   });
 });
 
@@ -316,7 +337,9 @@ describe('platform candidates', () => {
       { device_id: 'malformed' },
       'not a candidate',
     ]);
-    const rows = await loadCandidates(w.context, w.org, two);
+    const page = await loadCandidates(w.context, w.org, two);
+    expect(page).toMatchObject({ nextBefore: null, truncated: false });
+    const rows = page.rows;
     expect(rows).toHaveLength(4);
     // malformed candidates stay visible as unverifiable rows
     expect(rows[2]).toMatchObject({ device_id: 'malformed', verified: false, platform_seq: -1 });
@@ -333,11 +356,26 @@ describe('platform candidates', () => {
   it('verifies nothing without a platform log and refuses malformed answers', async () => {
     const { w, a } = await setup({ noPlatform: true });
     candidates(w, 'wg', [pdevCandidate(a)]);
-    expect((await loadCandidates(w.context, w.org, 'wg'))[0]!.verified).toBe(false);
+    expect((await loadCandidates(w.context, w.org, 'wg')).rows[0]!.verified).toBe(false);
     for (const body of [null, { candidates: 'x' }]) {
       w.client.on('GET /v1/workgroups/wg/device-candidates', () => body);
       expect(await refusal(loadCandidates(w.context, w.org, 'wg'))).toBe('unavailable');
     }
+  });
+
+  it('reads pages of 100 below a cursor and passes the paging fields on', async () => {
+    const { w, a } = await setup({ private: true });
+    w.client.on('GET /v1/workgroups/wg/device-candidates', () => ({
+      candidates: [pdevCandidate(a)],
+      next_before: null,
+      truncated: true,
+    }));
+    const page = await loadCandidates(w.context, w.org, 'wg', 'c1');
+    expect(page).toMatchObject({ nextBefore: null, truncated: true });
+    expect(page.rows.map((row) => row.device_id)).toEqual([a.pdev!.id]);
+    expect(w.client.of('GET /v1/workgroups/wg/device-candidates')[0]!.target).toBe(
+      '/v1/workgroups/wg/device-candidates?before=c1&limit=100',
+    );
   });
 });
 

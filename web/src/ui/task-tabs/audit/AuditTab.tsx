@@ -3,5 +3,5 @@ import type { TaskTabProps } from '../../registries/task-tabs';
 import { AuditView } from '../../screens/audit/AuditView';
 
 export function AuditTab({ orgId, taskId }: TaskTabProps) {
-  return <AuditView org={orgId} task={taskId} />;
+  return <AuditView org={orgId} task={taskId} listId="task.audit" />;
 }

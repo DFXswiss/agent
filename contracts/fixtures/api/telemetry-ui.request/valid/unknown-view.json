@@ -1,0 +1,10 @@
+{
+  "version": "0.2.0",
+  "views": {
+    "task.newtab": {
+      "count": 1,
+      "blocked_ms": 300,
+      "max_bucket": 1
+    }
+  }
+}

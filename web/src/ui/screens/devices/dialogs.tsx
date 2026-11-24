@@ -1,12 +1,13 @@
 // The device dialogs (06-web.md section 7.3): assign a platform device (a workgroup or the whole organization, then the
-// candidates the verified platform log certifies – for the organization those of the default workgroup; others are
-// shown as not certified and cannot be chosen), assign an org device to a further workgroup (every writable workgroup, ADR-058: key holders deliver what the
-// admin does not hold) or the whole organization,
-// assign a listed device to the whole organization (ADR-075 section 5, with the plain statement of what the device
-// receives), and rename. Each runs through the confirmation dialog with the batch progress of the member screen.
-import { useEffect, useId, useState } from 'react';
+// candidates the verified platform log certifies – for the organization those of the default workgroup –, page by page
+// with "Load more", in a searchable picker that renders a bounded number of them; others are shown as not certified
+// and cannot be chosen), assign an org device to a further workgroup (every writable workgroup, ADR-058: key holders
+// deliver what the admin does not hold) or the whole organization, assign a listed device to the whole organization
+// (ADR-075 section 5, with the plain statement of what the device receives), and rename. Each runs through the
+// confirmation dialog with the batch progress of the member screen.
+import { useCallback, useId, useState } from 'react';
 import type { OrgState } from '../../../core/log/state';
-import { actionErrorCode, keyRing } from '../../../core/org/batch';
+import { keyRing } from '../../../core/org/batch';
 import {
   assignableWorkgroups,
   assignDevice,
@@ -21,8 +22,11 @@ import {
 } from '../../../core/org/devices';
 import type { Directory } from '../../../core/tasks/directory';
 import { useI18n } from '../../i18n';
+import { Picker } from '../../lists/Picker';
+import type { RowProps } from '../../lists/WindowedList';
 import { useAppEnv } from '../../shell/context';
-import { ActionDialog } from '../members/ActionDialog';
+import { ActionDialog, BUTTON } from '../members/ActionDialog';
+import { usePagedList } from '../members/usePagedList';
 import { deviceName } from './parts';
 import { NoName } from '../../names/names';
 
@@ -73,40 +77,71 @@ export function OrgNotice() {
   );
 }
 
+const candidateKey = (row: CandidateRow) => row.device_id;
+
+/** A loaded candidate and the radio group's state. */
+interface CandidateChoice {
+  readonly row: CandidateRow;
+  readonly chosen: boolean;
+  readonly onChoose: (device: string) => void;
+}
+
+const choiceKey = (choice: CandidateChoice) => choice.row.device_id;
+const choiceText = (choice: CandidateChoice) => choice.row.device_id;
+
+function CandidateRowView({ item }: RowProps<CandidateChoice>) {
+  const { t } = useI18n();
+  const { row } = item;
+  const use = row.capacity === null ? null : capacityUse(row.capacity);
+  return (
+    <label
+      className="flex min-h-11 flex-wrap items-center gap-2"
+      data-testid="devices.assign.candidate"
+      data-device={row.device_id}
+      data-verified={String(row.verified)}
+    >
+      <input
+        type="radio"
+        name="candidate"
+        disabled={!row.verified}
+        checked={item.chosen}
+        onChange={() => item.onChoose(row.device_id)}
+      />
+      <NoName t={t} text={t('names.device.unknown')} id={row.device_id} showId />
+      <span>{row.online ? t('devices.online') : t('devices.offline')}</span>
+      {use !== null && <span>{t('devices.capacity', { used: use.used, total: use.total })}</span>}
+      {row.capacity_low && <span>{t('devices.capacity-low')}</span>}
+      {!row.verified && <span className="text-red-800">{t('devices.assign.unverifiable')}</span>}
+    </label>
+  );
+}
+
+/**
+ * The loaded candidates (pages of 100, "Load more" below them) as a radio group in a searchable picker: however many
+ * pages are loaded, a bounded number of rows is rendered; the search matches the device ID.
+ */
 function Candidates(props: {
   readonly rows: readonly CandidateRow[];
   readonly chosen: string;
   readonly onChoose: (device: string) => void;
 }) {
   const { t } = useI18n();
+  const items = props.rows.map((row): CandidateChoice => ({
+    row,
+    chosen: props.chosen === row.device_id,
+    onChoose: props.onChoose,
+  }));
   return (
     <fieldset className="flex flex-col gap-2">
       <legend>{t('devices.assign.candidates')}</legend>
-      {props.rows.map((row) => {
-        const use = row.capacity === null ? null : capacityUse(row.capacity);
-        return (
-          <label
-            key={row.device_id}
-            className="flex min-h-11 flex-wrap items-center gap-2"
-            data-testid="devices.assign.candidate"
-            data-device={row.device_id}
-            data-verified={String(row.verified)}
-          >
-            <input
-              type="radio"
-              name="candidate"
-              disabled={!row.verified}
-              checked={props.chosen === row.device_id}
-              onChange={() => props.onChoose(row.device_id)}
-            />
-            <NoName t={t} text={t('names.device.unknown')} id={row.device_id} showId />
-            <span>{row.online ? t('devices.online') : t('devices.offline')}</span>
-            {use !== null && <span>{t('devices.capacity', { used: use.used, total: use.total })}</span>}
-            {row.capacity_low && <span>{t('devices.capacity-low')}</span>}
-            {!row.verified && <span className="text-red-800">{t('devices.assign.unverifiable')}</span>}
-          </label>
-        );
-      })}
+      <Picker
+        items={items}
+        getKey={choiceKey}
+        text={choiceText}
+        Row={CandidateRowView}
+        testId="devices.assign.candidates"
+        label={t('devices.assign.candidates.search')}
+      />
     </fieldset>
   );
 }
@@ -128,18 +163,15 @@ export function AssignPlatformDialog(props: {
   const [wg, setWg] = useState(choices[0]!);
   // the whole organization takes the platform candidates of the default workgroup
   const source = wg === WHOLE_ORG ? state.defaultWg : wg;
-  // the candidates of the workgroup they were loaded for (a change of the workgroup shows "loading" until its own)
-  const [loaded, setLoaded] = useState<{ wg: string; rows: CandidateRow[] | null; code: string | null } | null>(null);
+  // the candidates of the chosen workgroup, page by page (a change of the workgroup shows "loading" until its own)
   const [chosen, setChosen] = useState('');
-  useEffect(() => {
-    loadCandidates(app.tasks, org, source).then(
-      (found) => setLoaded({ wg: source, rows: found, code: null }),
-      (failure: unknown) => setLoaded({ wg: source, rows: null, code: actionErrorCode(failure) }),
-    );
-  }, [app, org, source]);
-  const current = loaded?.wg === source ? loaded : null;
-  const rows = current?.rows ?? null;
-  const code = current?.code ?? null;
+  const read = useCallback(
+    (before: string | null) => loadCandidates(app.tasks, org, source, before),
+    [app, org, source],
+  );
+  const list = usePagedList(read, candidateKey, source);
+  const rows = list.rows;
+  const code = list.code;
   const candidate = rows?.find((row) => row.device_id === chosen && row.verified);
   return (
     <ActionDialog
@@ -178,6 +210,23 @@ export function AssignPlatformDialog(props: {
         {rows === null && code === null && <p data-testid="devices.assign.loading">{t('devices.assign.loading')}</p>}
         {rows !== null && rows.length === 0 && <p data-testid="devices.assign.none">{t('devices.assign.none')}</p>}
         {rows !== null && rows.length > 0 && <Candidates rows={rows} chosen={chosen} onChoose={setChosen} />}
+        {list.truncated && (
+          <p className="rounded bg-gray-100 p-3 text-gray-800" role="note" data-testid="devices.assign.truncated">
+            {t('devices.assign.truncated')}
+          </p>
+        )}
+        {list.more && (
+          <button
+            type="button"
+            className={`${BUTTON} self-start`}
+            disabled={list.paging.loading}
+            aria-busy={list.paging.loading}
+            onClick={list.paging.loadMore}
+            data-testid="devices.assign.load-more"
+          >
+            {t(list.paging.loading ? 'lists.loading' : 'lists.load-more')}
+          </button>
+        )}
       </div>
     </ActionDialog>
   );

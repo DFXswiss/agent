@@ -12,7 +12,7 @@
 //   Work VMs (KOR-29; agent docs/platform/spec/13-work-vm.md section 10) hang below the session they belong to
 //   (device → VM → session → work VM); an older hub sends no `workvms` list (none).
 import { HubError } from '../net/signedFetch';
-import { isCapacity, type Capacity } from '../org/devices';
+import { isCapacity, type Capacity } from '../org/capacity';
 import { isRecord } from '../registry';
 
 export const STALE_MS = 60_000;
@@ -116,6 +116,12 @@ export interface Overview {
   readonly vms: readonly MonitoredVm[];
   readonly sessions: readonly MonitoredSession[];
   readonly workvms: readonly MonitoredWorkvm[];
+  /** All active sessions when the hub cut the list (ADR-086 section 2: at most 2 000); absent from older hubs. */
+  readonly sessions_total?: number;
+  /** The hub cut the session list. */
+  readonly truncated?: boolean;
+  /** The hub cut the device list at its cap (10 000); absent from older hubs. */
+  readonly devices_truncated?: boolean;
 }
 
 export type EntityKind = 'device' | 'vm' | 'session' | 'workvm';
@@ -204,11 +210,15 @@ function items<T>(value: unknown, parse: (item: unknown) => T | null): T[] {
 /** The body of `GET /v1/monitoring/overview`; malformed items are left out, a malformed body is `unavailable`. */
 export function parseOverview(body: unknown): Overview {
   if (!isRecord(body)) throw new HubError('unavailable', 200);
+  const total = body.sessions_total;
   return {
     devices: items(body.devices, device),
     vms: items(body.vms, vm),
     sessions: items(body.sessions, session),
     workvms: body.workvms === undefined ? [] : items(body.workvms, workvm),
+    ...(typeof total === 'number' && Number.isSafeInteger(total) && total >= 0 && { sessions_total: total }),
+    ...(body.truncated === true && { truncated: true }),
+    ...(body.devices_truncated === true && { devices_truncated: true }),
   };
 }
 
@@ -297,7 +307,7 @@ export function applySamples(
   }
   if (!changed) return { overview, unknown };
   return {
-    overview: { devices: all.device, vms: all.vm, sessions: all.session, workvms: all.workvm },
+    overview: { ...overview, devices: all.device, vms: all.vm, sessions: all.session, workvms: all.workvm },
     unknown,
   };
 }

@@ -615,7 +615,7 @@
       "$ref": "../guest/journal/record.json#/$defs/body_session_tool"
     },
     "body_session_hook": {
-      "$ref": "../guest/journal/record.json#/$defs/body_session_hook"
+      "$ref": "../guest/journal/record.json#/$defs/body_session_hook_record"
     },
     "body_session_file": {
       "$ref": "../guest/journal/record.json#/$defs/body_session_file"

@@ -14,5 +14,12 @@
   "play": "Abspielen",
   "pause": "Pause",
   "speed.label": "Wiedergabegeschwindigkeit",
-  "speed": "{speed}×"
+  "speed": "{speed}×",
+  "earlier.load": "Frühere Ausgabe laden",
+  "earlier.loading": "Frühere Ausgabe wird geladen …",
+  "earlier.loaded": "{count} Abschnitte geladen",
+  "earlier.start": "Beginn der Aufzeichnung",
+  "earlier.failed": "Frühere Ausgabe konnte nicht geladen werden: {reason}",
+  "earlier.cut": "Spätere Ausgabe wurde aus dem Speicher entfernt – wähle Live für die neueste Ausgabe.",
+  "earlier.follow": "Frühere Ausgabe wird hier nicht behalten – wähle Verlauf, um sie zu laden."
 }

@@ -56,7 +56,8 @@ test('loads the next page when the end of the list becomes visible', async ({ pa
   const rows = page.getByTestId('tasks.row');
   await expect(rows).toHaveCount(50);
   await expect(rows.first().getByTestId('tasks.row.title')).toHaveText('Task 55');
-  await page.getByTestId('tasks.end').scrollIntoViewIfNeeded();
+  // no infinite scroll (ADR-086 section 1): the next page loads on "Load more"
+  await page.getByTestId('tasks.more').click();
   await expect(rows).toHaveCount(56);
   await expect(rows.last().getByTestId('tasks.row.title')).toHaveText('Task 0');
   await expect(page.getByTestId('tasks.more')).toHaveCount(0);

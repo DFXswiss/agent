@@ -3,11 +3,13 @@
 - `POST /v1/platform/log` (root): append root-signed entries (`agent_hub.platform.log`); after commit the hint
   `decertified` to every newly decertified device and the signal `device.decertified`;
 - `GET /v1/platform/log` (browser, `user`): `?after=&limit=` gives entries ascending, `head` and `next_after`;
-- `GET /v1/platform/enrollments` (root): verified pending enrollments and the platform log;
+- `GET /v1/platform/enrollments` (root): verified pending enrollments and the platform log (at most
+  `paging.CAP_LARGE` entries with `truncated: true` when cut, or one page `?after=&limit=` with `next_after`,
+  ADR-086 section 2);
 - `GET /v1/platform/waiting` (root): workgroups whose tasks wait for a device the operator must provide
-  (`agent_hub.scheduler.waiting`, ADR-075 section 7);
-- `POST /v1/platform/invites`, `GET /v1/platform/invites`, `POST /v1/platform/invites/{id}/revoke` (browser,
-  `platform:inviter`): platform invitations (`agent_hub.platform.invites`);
+  (`agent_hub.scheduler.waiting`, ADR-075 section 7; at most `WAITING_MAX` workgroups, `truncated: true` when cut);
+- `POST /v1/platform/invites`, `GET /v1/platform/invites` (optional `before`/`limit`), `POST
+  /v1/platform/invites/{id}/revoke` (browser, `platform:inviter`): platform invitations (`agent_hub.platform.invites`);
 - `POST /v1/invites/lookup` (anon): lookup of platform and org invitations (`agent_hub.invites.lookup`).
 
 The request bodies are closed (`extra="forbid"`, strict types): an unknown field or a wrong type is
@@ -29,6 +31,7 @@ from agent_hub import signals
 from agent_hub.agents.notify import account_change
 from agent_hub.db.pool import transaction
 from agent_hub.errors import HubError
+from agent_hub.events import paging
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import HubRouter
 from agent_hub.invites import lookup as invite_lookup
@@ -137,23 +140,35 @@ async def get_log(
 
 
 @router.get("/v1/platform/enrollments", auth="root", right="root", read_resource="platform.enrollments")
-async def get_enrollments(context: Context) -> dict[str, Any]:
+async def get_enrollments(
+    context: Context,
+    after: Annotated[str | None, Query(pattern=Q_SEQ_PATTERN)] = None,
+    limit: Annotated[str | None, Query(pattern=Q_LIMIT_LOG_PATTERN)] = None,
+) -> dict[str, Any]:
     root = context.config.platform_root_key
+    paged = after is not None or limit is not None
+    start = -1 if after is None else int(after)
+    count = (DEFAULT_LOG_LIMIT if limit is None else int(limit)) if paged else paging.CAP_LARGE
 
     def read(connection: Any) -> dict[str, Any]:
         state = platform_log.state(connection, root)
-        log = [entry for _seq, entry in platform_log.stored_entries(connection)]
-        return {"enrollments": enrollments.pending(connection, state), "log": log}
+        rows, more = paging.cut(platform_log.stored_entries(connection, start, count + 1), count)
+        if more and not paged:
+            # an operator CLI older than the paging verifies and extends the whole log: a cut log would give it a wrong
+            # head, so it gets a clear refusal instead (ADR-086 section 2, KOR-35)
+            raise HubError("request_invalid", detail={"paging_required": True})
+        answer: dict[str, Any] = {"enrollments": enrollments.pending(connection, state)}
+        answer["log"] = [entry for _seq, entry in rows]
+        if paged:
+            answer["next_after"] = rows[-1][0] if more else None
+        return answer
 
     return await in_transaction(context, read)
 
 
 @router.get("/v1/platform/waiting", auth="root", right="root", read_resource="platform.waiting")
 async def get_waiting(context: Context) -> dict[str, Any]:
-    now, online = context.clock(), context.config.device_online_seconds
-    return await in_transaction(
-        context, lambda connection: {"waiting": scheduler_waiting.waiting(connection, now, online)}
-    )
+    return await in_transaction(context, scheduler_waiting.waiting)
 
 
 @router.post("/v1/platform/invites", auth="browser", right="platform:inviter")
@@ -174,10 +189,13 @@ async def create_invite(body: CreateInviteRequest, context: Context, principal: 
 
 
 @router.get("/v1/platform/invites", auth="browser", right="platform:inviter", read_resource="platform.invites")
-async def list_invites(context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
+async def list_invites(
+    context: Context, principal: CurrentPrincipal, before: str | None = None, limit: str | None = None
+) -> dict[str, Any]:
+    window = paging.window(before, limit, invites.MAX_LISTED)
     now = context.clock()
     user = user_of(principal)
-    return {"invites": await in_transaction(context, lambda c: invites.listing(c, user, now))}
+    return await in_transaction(context, lambda c: invites.listing(c, user, now, window))
 
 
 @router.post("/v1/platform/invites/{id}/revoke", auth="browser", right="platform:inviter")

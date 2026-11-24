@@ -303,12 +303,41 @@ describe('work VM panel of the session', () => {
     expect(screen.getByTestId('workvm.panel')).toHaveAttribute('data-phase', 'deleted');
     expect(screen.getByTestId('workvm.panel.state')).toHaveTextContent('Arbeits-VM gelöscht (inaktiv)');
     expect(screen.getByTestId('workvm.panel.runtime')).toHaveTextContent('Laufzeit 30 min');
-    const runs = screen.getByTestId('workvm.panel.runs');
+    const runs = screen.getByTestId('workvm.panel.runs') as HTMLDetailsElement;
     expect(within(runs).getByText('Läufe (2)')).toBeInTheDocument();
+    // the list exists only while open (a session may have run thousands of commands)
+    expect(within(runs).queryAllByTestId('chat.workvm.run')).toHaveLength(0);
+    act(() => {
+      runs.open = true;
+      runs.dispatchEvent(new Event('toggle'));
+    });
     const items = within(runs).getAllByTestId('chat.workvm.run');
     expect(items.map((item) => item.getAttribute('data-job'))).toEqual(['j-00000000000b', 'j-0123456789ab']);
     expect(items[1]).toHaveAttribute('data-state', 'exited');
     expect(within(items[1]!).getByTestId('chat.workvm.run.text').textContent).toBe('line 1\n');
+    // a run ends while the list is open: its row shows the new state, the other row stays
+    put(
+      t,
+      verified(
+        t,
+        'workvm.run',
+        job({
+          job_id: 'j-00000000000b',
+          command: 'npm ci',
+          started_at: '2026-11-21T12:01:00.000Z',
+          state: 'exited',
+          exit_code: 0,
+          ended_at: '2026-11-21T12:01:02.000Z',
+          duration_ms: 2000,
+        }),
+        { session: MAIN },
+      ),
+    );
+    const after = within(runs).getAllByTestId('chat.workvm.run');
+    expect(after.map((item) => [item.getAttribute('data-job'), item.getAttribute('data-state')])).toEqual([
+      ['j-00000000000b', 'exited'],
+      ['j-0123456789ab', 'exited'],
+    ]);
   });
 
   it('shows a deletion without a reason', async () => {

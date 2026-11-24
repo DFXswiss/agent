@@ -32,6 +32,7 @@
   "vms.none": "No VMs of your workgroups on this device.",
   "sessions": "Sessions ({count})",
   "workvm": "Work VM",
+  "workvms": "Work VMs ({count})",
   "sessions.none": "No sessions in this VM.",
   "wg.unnamed": "Workgroup",
   "unit.cores": "{value} cores",
@@ -70,5 +71,11 @@
   "vm-state.running": "Running",
   "vm-state.stopping": "Stopping",
   "vm-state.stopped": "Stopped",
-  "vm-state.deleted": "Deleted"
+  "vm-state.deleted": "Deleted",
+  "truncated": "Showing the {shown} most recently active of {total} sessions.",
+  "devicesTruncated": "Showing the first {shown} devices; the hub has more.",
+  "tree.more": "{count} more rows – show",
+  "tree.above": "{count} rows above – show",
+  "tree.top": "Back to the top",
+  "chart.table.cut": "Showing the newest {shown} of {total} points."
 }

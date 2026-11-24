@@ -1,0 +1,10 @@
+{
+  "event": "summary",
+  "decision": "allow",
+  "counts": {
+    "PostToolUse": 3
+  },
+  "tools": {},
+  "from": "2026-11-24T10:00:00.000Z",
+  "to": "2026-11-24T10:00:09.950Z"
+}

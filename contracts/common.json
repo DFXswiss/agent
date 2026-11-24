@@ -686,6 +686,11 @@
                 "used"
               ],
               "additionalProperties": false
+            },
+            "paging_required": {
+              "type": "boolean",
+              "const": true,
+              "description": "request_invalid: the unpaged answer would exceed its cap; repeat with paging (GET /v1/platform/enrollments, ADR-086 section 2)"
             }
           },
           "additionalProperties": false

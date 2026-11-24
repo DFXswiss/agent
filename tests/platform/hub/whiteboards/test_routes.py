@@ -6,6 +6,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+from agent_hub.whiteboards import read
 from tests.platform.hub.conftest import HubHarness
 from tests.platform.hub.orgs.support import Actor, new_id
 from tests.platform.hub.whiteboards.support import Board, id_of, ref_of
@@ -121,6 +124,50 @@ def test_history_lists_the_projected_events_ascending(board: Board) -> None:
     assert [item["scope_seq"] for item in events] == sorted(item["scope_seq"] for item in events)
     listed = _list(scene.reader)["entries"][0]
     assert (listed["deleted"], listed["latest_event"]["scope_seq"]) == (True, events[-1]["scope_seq"])
+
+
+def _history(board: Board) -> tuple[str, list[int]]:
+    """An entry with four edits; its ref and the `scope_seq` of its five events, ascending."""
+    scene = board.scene
+    entry = board.posted(scene.writer, board.entry(scene.writer))[0]
+    ref = ref_of(entry)
+    for _ in range(4):
+        board.posted(scene.writer, board.event(scene.writer, "whiteboard.edit", ref))
+    events = scene.reader.browser.get(f"/v1/whiteboards/{ref}/history").json()["events"]
+    return ref, [item["scope_seq"] for item in events]
+
+
+def test_history_pages_newest_first(board: Board) -> None:
+    """ADR-086 section 2: `before`/`limit` read one page newest first with `next_before` (KOR-35)."""
+    ref, seqs = _history(board)
+    assert len(seqs) == 5
+    url = f"/v1/whiteboards/{ref}/history"
+    first = _status(board.scene.reader, url, limit="2")[1]
+    assert ([item["scope_seq"] for item in first["events"]], first["next_before"]) == (seqs[:2:-1], seqs[3])
+    second = _status(board.scene.reader, url, limit="2", before=str(first["next_before"]))[1]
+    assert ([item["scope_seq"] for item in second["events"]], second["next_before"]) == ([seqs[2], seqs[1]], seqs[1])
+    last = _status(board.scene.reader, url, before=str(second["next_before"]))[1]
+    assert last == {"events": [_status(board.scene.reader, url)[1]["events"][0]], "next_before": None}
+    assert _status(board.scene.reader, url, before=str(seqs[0])) == (200, {"events": [], "next_before": None})
+    assert "next_before" not in _status(board.scene.reader, url)[1]
+
+
+def test_history_is_capped(board: Board, monkeypatch: pytest.MonkeyPatch) -> None:
+    ref, seqs = _history(board)
+    monkeypatch.setattr(read, "HISTORY_MAX", 3)
+    body = _status(board.scene.reader, f"/v1/whiteboards/{ref}/history")[1]
+    assert ([item["scope_seq"] for item in body["events"]], body["truncated"]) == (seqs[:3], True)
+    monkeypatch.setattr(read, "HISTORY_MAX", 5)
+    assert "truncated" not in _status(board.scene.reader, f"/v1/whiteboards/{ref}/history")[1]
+
+
+@pytest.mark.parametrize("query", [{"limit": "0"}, {"limit": "201"}, {"before": "-1"}, {"before": "01"}])
+def test_history_refuses_bad_paging(board: Board, query: dict[str, str]) -> None:
+    ref, _seqs = _history(board)
+    response = board.scene.reader.browser.get(
+        f"/v1/whiteboards/{ref}/history", params=query, extensions={"contract": False}
+    )
+    assert (response.status_code, response.json()["error"]) == (400, "request_invalid")
 
 
 def test_history_needs_the_right_of_the_level(board: Board) -> None:

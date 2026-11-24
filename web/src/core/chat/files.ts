@@ -69,19 +69,3 @@ export function sameItem(a: TimelineItem, b: TimelineItem): boolean {
       sameBody(a, b))
   );
 }
-
-/** Rows rendered at first and kept while new items arrive; "Show earlier" adds `PAGE` rows. */
-export const WINDOW = 100;
-export const PAGE = 50;
-
-/**
- * The index of the first rendered row (a window at the end of the list, so the DOM stays bounded however long the
- * chat is). `start` is the key of the first row rendered before: the window keeps it while new items arrive (no jump
- * under the reader) until `PAGE` more rows than `budget` are rendered; then it moves to the last `budget` rows.
- */
-export function windowStart(items: readonly TimelineItem[], start: string | null, budget: number): number {
-  const floor = Math.max(0, items.length - budget);
-  const at = start === null ? -1 : items.findIndex((item) => item.key === start);
-  if (at < 0 || items.length - at > budget + PAGE) return floor;
-  return Math.min(at, floor);
-}

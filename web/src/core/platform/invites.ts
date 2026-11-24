@@ -11,13 +11,14 @@
 //
 // `preparePlatformInvite` draws the code and fixes the expiry once, so that a retry after a lost answer sends the
 // identical request (the hub answers it like the first one, 03-api.md section 1). The list shows open, used, revoked
-// and expired invitations (newest first, as the hub orders them); open ones can be revoked.
+// and expired invitations (newest first, as the hub orders them, page by page); open ones can be revoked.
 import { formatTime } from '../encoding/time';
 import { formatCode, generateCode, inviteSecrets } from '../crypto/invite';
 import type { PlatformState } from '../log/platform';
 import { HubError, type SignedClient } from '../net/signedFetch';
 import { refuse } from '../org/batch';
-import { EXPIRY_HOURS, HOUR_MS, USER_EXPIRY_HOURS } from '../org/invites';
+import { EXPIRY_HOURS, HOUR_MS, USER_EXPIRY_HOURS } from '../org/expiry';
+import { LIMIT, type ListPage, readHubPage } from '../org/pages';
 import { isRecord } from '../registry';
 
 export const INVITER = 'inviter';
@@ -112,13 +113,17 @@ const isRow = (value: unknown): value is PlatformInviteRow =>
   timeOrNull(value.used_at) &&
   timeOrNull(value.revoked_at);
 
-/** The platform invitations, newest first (`unavailable` for a malformed answer). */
-export async function listPlatformInvites(client: Client): Promise<PlatformInviteRow[]> {
-  const body = await client.request('GET', '/v1/platform/invites');
-  if (!isRecord(body) || !Array.isArray(body.invites) || !body.invites.every(isRow)) {
-    throw new HubError('unavailable', 200);
-  }
-  return body.invites;
+/**
+ * One page of the platform invitations below `before` (null: the newest page; `../org/pages.ts`), newest first
+ * (`unavailable` for a malformed answer).
+ */
+export async function listPlatformInvites(
+  client: Client,
+  before: string | null = null,
+): Promise<ListPage<PlatformInviteRow>> {
+  const page = await readHubPage(client, '/v1/platform/invites', 'invites', before, LIMIT);
+  if (!page.items.every(isRow)) throw new HubError('unavailable', 200);
+  return { rows: [...page.items], nextBefore: page.nextBefore, truncated: page.truncated };
 }
 
 /** Revokes an open platform invitation (repeating is a no-op at the hub; a used one: `invite_consumed`). */

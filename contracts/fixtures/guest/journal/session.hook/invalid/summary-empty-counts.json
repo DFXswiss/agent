@@ -1,0 +1,11 @@
+{
+  "event": "summary",
+  "decision": "allow",
+  "counts": {},
+  "tools": {
+    "Read": 30,
+    "mcp__platform__get_task_messages": 12
+  },
+  "from": "2026-11-24T10:00:00.000Z",
+  "to": "2026-11-24T10:00:09.950Z"
+}

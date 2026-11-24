@@ -27,7 +27,7 @@ from agent_guest.journal import (
 from agent_guest.schema import SchemaSet
 from tests.platform.guest.conftest import SESSION_ID, START, FakeClock
 
-HOOK = {"event": "PreToolUse", "tool": "Read", "decision": "allow"}
+HOOK = {"event": "Stop", "decision": "none"}  # a routine PreToolUse allow would be counted (hook_summary.py)
 ERROR = {"code": "gateway_route"}
 
 
@@ -118,7 +118,7 @@ def test_append_refusals(journal: Journal, kind: str, body: dict[str, str], sess
 def test_body_invalid_names_pointers(journal: Journal) -> None:
     with pytest.raises(JournalError) as error:
         journal.append("session.hook", {"event": "PreToolUse", "decision": "maybe", "extra": 1}, SESSION_ID)
-    assert error.value.detail == ["/decision", "/extra"]
+    assert error.value.detail == ["/decision", "/extra", ""]  # "": no option of the hook record or the summary
 
 
 def test_without_schemas_bodies_are_not_validated(tmp_path: Path, clock: FakeClock) -> None:

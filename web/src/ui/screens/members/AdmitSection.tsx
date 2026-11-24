@@ -4,7 +4,8 @@
 // name is the provisional name every member sees until the person's own one is written (ADR-073, `member.name`); an
 // open invitation the same account registered with is closed right after. The person does nothing; it finds the
 // organization the next time it opens the app. The identity shown before the button is the proven one (checked
-// against the platform log in `core/org/admit.ts`), never the hub's word.
+// against the platform log in `core/org/admit.ts`), never the hub's word. The invited accounts (up to the hub's cap)
+// are a searchable picker that renders a bounded number of them (`lists/Picker.tsx`).
 import { useEffect, useId, useState } from 'react';
 import { formatAccountCode } from '../../../core/crypto/identity';
 import { admitAccount, findAccount, type Invitee, loadInvitees, type ProvenIdentity } from '../../../core/org/admit';
@@ -15,6 +16,8 @@ import { displayName } from '../../../core/account/genesis';
 import type { OrgState } from '../../../core/log/state';
 import type { Directory } from '../../../core/tasks/directory';
 import { useI18n } from '../../i18n';
+import { Picker } from '../../lists/Picker';
+import type { RowProps } from '../../lists/WindowedList';
 import { useAppEnv } from '../../shell/context';
 import { BUTTON, PRIMARY } from './ActionDialog';
 
@@ -23,6 +26,28 @@ interface Admitted {
   readonly identity: ProvenIdentity;
   readonly name: string;
   readonly named: boolean;
+}
+
+/** An account registered through the admin's invitations, offered to pick. */
+interface Pick {
+  readonly identity: ProvenIdentity;
+  readonly pick: (identity: ProvenIdentity) => void;
+}
+
+const pickKey = (item: Pick) => item.identity.userId;
+const pickText = (item: Pick) => formatAccountCode(item.identity.accountCode);
+
+function InviteeRow({ item }: RowProps<Pick>) {
+  return (
+    <button
+      type="button"
+      className={`${BUTTON} self-start font-mono`}
+      onClick={() => item.pick(item.identity)}
+      data-testid="members.admit.invitee"
+    >
+      {pickText(item)}
+    </button>
+  );
 }
 
 interface AdmitFormProps {
@@ -52,6 +77,7 @@ function AdmitForm({ org, state, directory, onDone, onCancel }: AdmitFormProps) 
       () => setInvitees([]),
     );
   }, [app, state]);
+  const picks = invitees.map((row): Pick => ({ identity: row.identity!, pick: setFound }));
   const choices = [...state.workgroups.keys()].filter((wg) => wg !== state.defaultWg && state.writable(wg)).sort();
   const look = async () => {
     setBusy(true);
@@ -121,17 +147,14 @@ function AdmitForm({ org, state, directory, onDone, onCancel }: AdmitFormProps) 
       {invitees.length > 0 && (
         <fieldset className="flex flex-col gap-1" data-testid="members.admit.invitees">
           <legend className="font-medium">{t('members.admit.invitees')}</legend>
-          {invitees.map((row) => (
-            <button
-              key={row.userId}
-              type="button"
-              className={`${BUTTON} self-start font-mono`}
-              onClick={() => setFound(row.identity)}
-              data-testid="members.admit.invitee"
-            >
-              {formatAccountCode(row.identity!.accountCode)}
-            </button>
-          ))}
+          <Picker
+            items={picks}
+            getKey={pickKey}
+            text={pickText}
+            Row={InviteeRow}
+            testId="members.admit.invitees"
+            label={t('members.admit.invitees.search')}
+          />
         </fieldset>
       )}
       {found !== null && (

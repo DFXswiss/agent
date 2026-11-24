@@ -27,6 +27,9 @@ export const ALLOWED_KEYWORDS = new Set([
   "items",
   "minItems",
   "maxItems",
+  "minProperties",
+  "maxProperties",
+  "propertyNames",
   "$ref",
   "$defs",
   "oneOf",
@@ -67,7 +70,7 @@ export function keywordViolations(schema, pointer = "") {
       found.push(...keywordViolations(child, `${pointer}/${key}/${name}`));
     }
   }
-  for (const key of ["items", "additionalProperties"]) {
+  for (const key of ["items", "additionalProperties", "propertyNames"]) {
     found.push(...keywordViolations(schema[key], `${pointer}/${key}`));
   }
   for (const key of ["oneOf", "anyOf"]) {

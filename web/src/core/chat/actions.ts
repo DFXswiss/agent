@@ -1,7 +1,9 @@
 // What the chat does (06-web.md section 5.2, 03-api.md section 4.6):
 //
-// - `loadChat`: the task row with its sessions (`GET /v1/tasks/{task}`) and the task's events of the workgroup scope
-//   (`GET /v1/scopes/{wg}/events?task=…`, once per store generation; live events arrive over the channel);
+// - `loadChat`: the task row with its sessions (`GET /v1/tasks/{task}`) and the newest page of the task's chat events
+//   (`GET /v1/scopes/{wg}/events?task=…&before=…`, `core/tasks/pages.ts`: again only when the reader skipped bulk
+//   events of the task meanwhile; live events arrive over the channel); `loadEarlierChat` reads the next older page
+//   ("Earlier"), `chatList` names the list for `selectPages` (06-web.md section 5.2, ADR-086 section 1);
 // - `sendPrompt`: a further `prompt` (`POST /v1/tasks/{task}/prompts`; the hub resumes or restarts the main session,
 //   section 4.6.3). After a failure a retry can fix, the sealed event is kept and the unchanged text re-sends it;
 // - `controlSession`: `interrupt` (Stop) or `stop` (End session) of a session (`POST /v1/sessions/{id}/control`);
@@ -11,39 +13,56 @@
 // (section 1: not rendered without the right) and again by the hub.
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
+import { show } from '../store/focus';
 import { keepPrompt, setLoad } from '../store/slices/chat';
 import { isTaskRow, putTasks, type TaskRow } from '../store/slices/tasks';
-import { pullOnce, type TasksContext } from '../tasks/pull';
+import { loadEarlier, openNewest, type PagedList, pagesKey, selectPages } from '../tasks/pages';
+import type { TasksContext } from '../tasks/pull';
 import { loadTask, prepareFollowUp, sendErrorCode, sendFollowUp } from '../tasks/send';
+import { chatQuery } from './timeline';
 
-/** The kinds of the chat's pull (everything a chat item may show; `session.terminal` is never pulled here). */
-export const CHAT_KINDS = [
-  'prompt',
-  'session.output',
-  'session.tool',
-  'session.file',
-  'session.hook',
-  'session.status',
-  'session.error',
-  'operation.params',
-  'operation.result',
-  'workvm.run',
-  'workvm.state',
-  'test.run',
-  'browser.state',
-] as const;
+export { CHAT_KINDS } from './timeline';
 
 /** Failures after which the same sealed prompt is sent again (the composer of the home screen uses the same set). */
 export const RETRYABLE: ReadonlySet<string> = new Set(['unavailable', 'rate_limited']);
 
 export type ControlAction = 'interrupt' | 'stop';
 
-/** Loads the task and its chat events; the load state is kept per task in the `chat` slice. */
+/** The paged chat events of a task (with `session`: of one session, the session chat). */
+export function chatList(org: string, wg: string, task: string, session?: string): PagedList {
+  return { org, scope: wg, query: chatQuery(task, session) };
+}
+
+/**
+ * A mounted chat view (task or session chat): its task/session counts as shown for the event reader (`focus.ts`), its
+ * newest page is read, and read again after the live channel's `resync`. The returned function ends the view.
+ */
+export function openChat(context: TasksContext, list: PagedList): () => void {
+  const release = show(context.store, {
+    scope: list.scope,
+    key: pagesKey(list),
+    ...(list.query.task !== undefined && { task: list.query.task }),
+    ...(list.query.session !== undefined && { session: list.query.session }),
+    refresh: () => openNewest(context, list, true),
+  });
+  void openNewest(context, list);
+  return release;
+}
+
+/** Reads the next older page of the chat (06-web.md section 5.2: "Earlier"). */
+export function loadEarlierChat(context: TasksContext, list: PagedList): Promise<void> {
+  return loadEarlier(context, list);
+}
+
+/** Loads the task and the newest page of its chat events; the load state is kept per task in the `chat` slice. */
 export async function loadChat(context: TasksContext, task: string): Promise<TaskRow | null> {
   setLoad(context.store, task, 'loading');
   try {
     const row = await loadTask(context, task);
-    await pullOnce(context, row.org_id, row.wg_id, { kinds: CHAT_KINDS, task });
+    const list = chatList(row.org_id, row.wg_id, task);
+    await openNewest(context, list);
+    const page = selectPages(list)(context.store.getState());
+    if (page.status === 'error') throw new HubError(page.code!, 0);
     setLoad(context.store, task, 'ready');
     return row;
   } catch (error) {

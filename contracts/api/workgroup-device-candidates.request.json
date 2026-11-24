@@ -2,8 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/workgroup-device-candidates.request.json",
   "title": "GET /v1/workgroups/{wg}/device-candidates request",
-  "description": "query parameters",
+  "description": "query parameters; `before`/`limit` (ADR-086 section 2, KOR-35) read one page newest first",
   "type": "object",
-  "properties": {},
+  "properties": {
+    "before": {
+      "$ref": "../common.json#/$defs/q_before"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_list"
+    }
+  },
   "additionalProperties": false
 }

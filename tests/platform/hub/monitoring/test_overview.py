@@ -7,8 +7,11 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
+import pytest
 from psycopg.types.json import Jsonb
 
+from agent_hub.monitoring import read
+from agent_hub.workgroups import read as workgroups_read
 from tests.platform.hub.monitoring.support import Watch
 from tests.platform.hub.orgs.support import new_id
 
@@ -139,7 +142,48 @@ def test_stale_and_capacity_low(watch: Watch) -> None:
 
 def test_an_org_without_entities(watch: Watch) -> None:
     lonely = watch.world.private_org()
-    assert overview(watch, lonely.founder, lonely.id) == {"devices": [], "vms": [], "sessions": [], "workvms": []}
+    assert overview(watch, lonely.founder, lonely.id) == {
+        "devices": [],
+        "vms": [],
+        "sessions": [],
+        "workvms": [],
+        "sessions_total": 0,
+        "truncated": False,
+        "devices_truncated": False,
+    }
+
+
+def test_devices_beyond_the_cap_are_reported(watch: Watch, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-086 section 2 (KOR-35): the devices come from the org's device list; when its cap cuts them the overview
+    says so (`devices_truncated`) instead of hiding the rest silently."""
+    assert overview(watch, watch.admin)["devices_truncated"] is False
+    monkeypatch.setattr(workgroups_read, "DEVICES_MAX", 1)
+    body = overview(watch, watch.admin)
+    assert (len(body["devices"]), body["devices_truncated"]) == (1, True)
+
+
+def test_sessions_are_bounded_most_recently_active_first(watch: Watch, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-086 section 2 (KOR-35): at most `SESSIONS_MAX` sessions, ordered by the hub time of their newest state
+    transition (else their creation), ties by ID, with `sessions_total` and `truncated`."""
+    wg = watch.mine.default_wg
+    first = watch.session(watch.own, wg)[1]
+    watch.hub.clock.advance(5)
+    second = watch.session(watch.own, wg)[1]
+    watch.hub.clock.advance(5)
+    third = watch.session(watch.own, wg)[1]
+    with watch.hub.pool.connection() as connection, connection.transaction():
+        connection.execute(
+            "INSERT INTO hub.session_transition (session_id, seq, state, at, received_at) VALUES (%s, 1, 'working',"
+            " %s, %s)",
+            (first, watch.now(), watch.now() + timedelta(seconds=1)),
+        )
+    body = overview(watch, watch.admin)
+    assert [item["session_id"] for item in body["sessions"]] == [first, third, second]
+    assert (body["sessions_total"], body["truncated"]) == (3, False)
+    monkeypatch.setattr(read, "SESSIONS_MAX", 2)
+    body = overview(watch, watch.admin)
+    assert [item["session_id"] for item in body["sessions"]] == [first, third]
+    assert (body["sessions_total"], body["truncated"]) == (3, True)
 
 
 def test_overview_refusals(watch: Watch) -> None:

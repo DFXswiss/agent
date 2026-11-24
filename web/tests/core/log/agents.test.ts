@@ -6,6 +6,7 @@ import { signCert } from '../../../src/core/crypto/agent';
 import { CryptoError } from '../../../src/core/crypto/errors';
 import { buildEntries, type LogFields, signLogEntry, logBody } from '../../../src/core/log/entries';
 import { agentSlots, confirmedSlots, missingCredWraps, missingWraps } from '../../../src/core/log/catchup';
+import { credentialLosses } from '../../../src/core/credentials/rotation';
 import { checkEvent } from '../../../src/core/log/events';
 import { asJson, checkBatch, losers, lost } from '../../../src/core/log/rotation';
 import { AGENT } from '../../../src/core/log/state';
@@ -495,6 +496,11 @@ describe('credential readers and revoked agents', () => {
     // bobBot is superseded everywhere; org two was joined by it, so its device gets no credential key from there
     expect(credReaders([one.state, replaced.state], bob.id)).toEqual(new Set([bob.id, bobBot2.id, dev.id]));
     expect(credReaders([replaced.state], bob.id)).toEqual(new Set([bob.id, bobBot2.id]));
+    // the replay of the losses (KOR-35): the device counted for bob in org two until the agent that joined bob there
+    // was superseded, and so did that agent itself
+    const losses = credentialLosses([replaced], null, bob.id);
+    expect([...losses.keys()].sort()).toEqual([bobBot.id, dev.id].sort());
+    expect(losses.get(dev.id)!.at).toBe(Date.parse(replaced.entries.at(-1)!.body.ts as string));
   });
 });
 

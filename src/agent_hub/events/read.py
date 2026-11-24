@@ -12,6 +12,10 @@ in ascending `scope_seq` after a cursor, with the optional filters `kinds`, `tas
   `scope_seq`, and `next_before` the smallest returned `scope_seq` when older matching events exist, else None (a
   long record such as a browser's is read page by page from its end).
 
+Both directions are served by an index that yields the order (no sort; ADR-086 section 2): the primary key
+`(scope_id, scope_seq)`, `event_task (task_id, scope_seq)`, `event_session_seq (session_id, scope_seq)` (migration
+0030) and, for one kind of a session, `event_session_kind (session_id, kind, scope_seq)` (one kind is an equality).
+
 Every event is returned exactly as stored: the canonical header text, `ct` and `sig` (b64u), with the hub's
 `scope_seq` and `received_at`. The hub never decrypts; readers verify (04-crypto.md section 5.12).
 """
@@ -100,6 +104,9 @@ def read_events(
     if kinds is None:
         clauses.append("kind <> ALL(%s)")
         params.append(sorted(watched.KINDS))
+    elif len(kinds) == 1:  # an equality lets `event_session_kind` yield the order
+        clauses.append("kind = %s")
+        params.extend(kinds)
     else:
         clauses.append("kind = ANY(%s)")
         params.append(sorted(kinds))

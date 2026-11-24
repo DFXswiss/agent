@@ -22,7 +22,8 @@ import agent_guest
 from agent_guest import tmux, transcript
 from agent_guest.clock import SystemClock
 from agent_guest.journal import Journal
-from agent_guest.recorder import CAST_NAME, TerminalRecorder
+from agent_guest.limits import TERMINAL
+from agent_guest.recorder import CAST_NAME, TerminalRecorder, json_size
 from agent_guest.scanner import WorkspaceScanner
 from agent_guest.schema import SchemaSet
 from agent_guest.state import Session, State
@@ -107,7 +108,8 @@ def test_a_real_pane_is_recorded_through_pipe_pane(area: Path, journal: Journal,
     bodies = records(journal, "session.terminal")
     offsets = [frame[0] for body in bodies for frame in body["frames"]]
     assert offsets == sorted(offsets)
-    assert all(sum(len(frame[2].encode()) for frame in body["frames"]) <= 16384 for body in bodies)
+    # ADR-086 section 3: a record grows under sustained output, bounded by its encoded body (escapes counted).
+    assert all(json_size(body) <= TERMINAL.record_json for body in bodies)
     assert all((body["cols"], body["rows"]) == (160, 48) for body in bodies)
     cast = [json.loads(line) for line in (base / CAST_NAME).read_text(encoding="utf-8").splitlines()]
     assert cast[0]["version"] == 2

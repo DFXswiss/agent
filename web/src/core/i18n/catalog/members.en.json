@@ -21,6 +21,7 @@
   "admit.placeholder": "XXXX-XXXX-XXXX",
   "admit.find": "Find",
   "admit.invitees": "Invited by you",
+  "admit.invitees.search": "Search the accounts invited by you",
   "admit.found": "Account {code} found and verified",
   "admit.submit": "Add",
   "admit.done": "{name} (account {code}) is a member now. Every member sees the name at once; the person sees the organization the next time they open the app.",
@@ -79,5 +80,10 @@
   "invites.for": "Invitation for {name}",
   "invites.for-unnamed": "Invitation without a name",
   "invites.status.settled": "{name} is a member now – this invitation is no longer needed",
-  "invites.close": "Close invitation"
+  "invites.close": "Close invitation",
+  "access.more": "{count} more – show",
+  "list.more": "{count} more members – show",
+  "list.above": "{count} members above – show",
+  "list.top": "Back to the top",
+  "invites.truncated": "The hub sent only the newest invitations of a longer list."
 }

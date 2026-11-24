@@ -20,11 +20,37 @@
 import { parseTime } from '../encoding/time';
 import { isRecord } from '../registry';
 import type { EventEntry, ScopeEvents } from '../store/slices/events';
+import { boundaryOf, type ListQuery } from '../store/slices/pages';
 import type { SessionEntry, TaskRow, TasksState } from '../store/slices/tasks';
 import type { StoreState } from '../store/store';
 import { flatten, type SessionNode, sessionTree } from '../sessions/tree';
+import { pagesKey } from '../tasks/pages';
 import { latestRuns } from './workvm';
 import { foldWaiting, type WaitingCard } from '../github/waiting';
+
+/** The kinds of the chat's pull (everything a chat item may show; `session.terminal` is never pulled here). */
+export const CHAT_KINDS = [
+  'prompt',
+  'session.output',
+  'session.tool',
+  'session.file',
+  'session.hook',
+  'session.status',
+  'session.error',
+  'operation.params',
+  'operation.result',
+  'workvm.run',
+  'workvm.state',
+  'test.run',
+  'browser.state',
+] as const;
+
+/** The query of the paged chat events of a task (with `session`: of one session, the session chat). */
+export const chatQuery = (task: string, session?: string): ListQuery => ({
+  kinds: CHAT_KINDS,
+  task,
+  ...(session !== undefined && { session }),
+});
 
 export const SYSTEM_STATES: ReadonlySet<string> = new Set(['suspended', 'stopped', 'failed']);
 export const HIDDEN_KINDS: ReadonlySet<string> = new Set(['task.meta', 'session.terminal', 'browser.action']);
@@ -140,26 +166,25 @@ export interface TimelineInput {
   readonly sessions: TasksState['sessions'];
   /** Restrict to one session's own `session.*` events (the session chat). */
   readonly session?: string;
+  /** The boundary of the chat's paged list: events below it are not shown (`core/store/slices/pages.ts`). */
+  readonly floor?: number;
 }
 
-/** The ordered timeline (module comment). */
-export function buildTimeline(input: TimelineInput): TimelineItem[] {
-  const { scope, task, sessions } = input;
+interface Parts {
+  readonly nodes: ReadonlyMap<string, SessionNode>;
+  /** The system rows (transitions, countdowns, the close), sorted; none for a session chat. */
+  readonly system: TimelineItem[];
+}
+
+function partsOf(input: TimelineInput): Parts {
+  const { task, sessions } = input;
   const tree = sessionTree(sessions, task.task_id);
   const nodes = new Map(flatten(tree).map((node) => [node.entry.row.session_id, node]));
-  const items: TimelineItem[] = [];
-  for (const entry of scope?.entries.values() ?? []) {
-    if (entry.status === 'pending' || entry.status === 'locked' || !belongs(entry, task.task_id)) continue;
-    const item = entry.status === 'verified' ? eventItem(entry, nodes) : unverifiableItem(entry);
-    if (item !== null) items.push(item);
-  }
-  if (input.session !== undefined) {
-    const session = input.session;
-    return foldWaiting(latestRuns(items.filter((item) => item.sessionId === session).sort(compare)));
-  }
-  for (const node of flatten(tree)) items.push(...systemItems(node.entry));
+  if (input.session !== undefined) return { nodes, system: [] };
+  const system: TimelineItem[] = [];
+  for (const node of flatten(tree)) system.push(...systemItems(node.entry));
   for (const node of tree) {
-    items.push({
+    system.push({
       key: `c${node.entry.row.session_id}`,
       kind: 'countdown',
       source: 'countdown',
@@ -173,7 +198,7 @@ export function buildTimeline(input: TimelineInput): TimelineItem[] {
     });
   }
   if (task.closed_at !== null) {
-    items.push({
+    system.push({
       key: 'closed',
       kind: 'session.status',
       source: 'task',
@@ -186,24 +211,136 @@ export function buildTimeline(input: TimelineInput): TimelineItem[] {
       subagent: null,
     });
   }
-  return foldWaiting(latestRuns(items.sort(compare)));
+  return { nodes, system: system.sort(compare) };
+}
+
+/** The timeline item of one stored entry for the task (null if it shows none). */
+function itemOf(entry: EventEntry, input: TimelineInput, nodes: ReadonlyMap<string, SessionNode>): TimelineItem | null {
+  if (entry.status === 'pending' || entry.status === 'locked' || entry.scopeSeq < (input.floor ?? 0)) return null;
+  if (!belongs(entry, input.task.task_id)) return null;
+  const item = entry.status === 'verified' ? eventItem(entry, nodes) : unverifiableItem(entry);
+  if (item === null || (input.session !== undefined && item.sessionId !== input.session)) return null;
+  return item;
+}
+
+/** Merges two sorted lists (linear). */
+function merge(a: readonly TimelineItem[], b: readonly TimelineItem[]): TimelineItem[] {
+  if (b.length === 0) return [...a];
+  if (a.length === 0) return [...b];
+  const out: TimelineItem[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) out.push(compare(a[i]!, b[j]!) <= 0 ? a[i++]! : b[j++]!);
+  while (i < a.length) out.push(a[i++]!);
+  while (j < b.length) out.push(b[j++]!);
+  return out;
+}
+
+/** The ordered timeline (module comment). */
+export function buildTimeline(input: TimelineInput): TimelineItem[] {
+  const { nodes, system } = partsOf(input);
+  const items: TimelineItem[] = [];
+  for (const entry of input.scope?.entries.values() ?? []) {
+    const item = itemOf(entry, input, nodes);
+    if (item !== null) items.push(item);
+  }
+  return foldWaiting(latestRuns(merge(items.sort(compare), system)));
+}
+
+interface Built {
+  readonly scope: ScopeEvents | undefined;
+  readonly floor: number | undefined;
+  readonly row: TaskRow;
+  readonly sessions: TasksState['sessions'];
+  readonly parts: Parts;
+  /** Per `scope_seq`: the entry the item was made from and the item (null: the entry shows none). */
+  readonly byEntry: Map<number, { readonly entry: EventEntry; readonly item: TimelineItem | null }>;
+  /** The event items, sorted. */
+  readonly events: TimelineItem[];
+  readonly items: TimelineItem[];
+}
+
+/** A full build (the task row or the sessions changed). */
+function build(input: TimelineInput): Built {
+  const parts = partsOf(input);
+  const byEntry: Built['byEntry'] = new Map();
+  const events: TimelineItem[] = [];
+  for (const entry of input.scope?.entries.values() ?? []) {
+    const item = itemOf(entry, input, parts.nodes);
+    byEntry.set(entry.scopeSeq, { entry, item });
+    if (item !== null) events.push(item);
+  }
+  events.sort(compare);
+  return {
+    scope: input.scope,
+    floor: input.floor,
+    row: input.task,
+    sessions: input.sessions,
+    parts,
+    byEntry,
+    events,
+    items: foldWaiting(latestRuns(merge(events, parts.system))),
+  };
+}
+
+/**
+ * Only the scope's events changed: the entries that are new or replaced are turned into items, sorted among
+ * themselves and merged into the previous sorted list (linear), instead of sorting every event again (ADR-086).
+ */
+function update(last: Built, input: TimelineInput): Built {
+  const byEntry: Built['byEntry'] = new Map();
+  const added: TimelineItem[] = [];
+  const gone = new Set<string>();
+  let reused = 0;
+  for (const entry of input.scope?.entries.values() ?? []) {
+    const known = last.byEntry.get(entry.scopeSeq);
+    if (known !== undefined) reused += 1;
+    if (known !== undefined && known.entry === entry) {
+      byEntry.set(entry.scopeSeq, known);
+      continue;
+    }
+    if (known !== undefined && known.item !== null) gone.add(known.item.key);
+    const item = itemOf(entry, input, last.parts.nodes);
+    byEntry.set(entry.scopeSeq, { entry, item });
+    if (item !== null) added.push(item);
+  }
+  // entries of the previous build that left the store (evicted or dropped)
+  if (reused < last.byEntry.size) {
+    for (const [seq, known] of last.byEntry) {
+      if (!byEntry.has(seq) && known.item !== null) gone.add(known.item.key);
+    }
+  }
+  const kept = gone.size === 0 ? last.events : last.events.filter((item) => !gone.has(item.key));
+  const events = added.length === 0 ? [...kept] : merge(kept, added.sort(compare));
+  const unchanged = added.length === 0 && gone.size === 0;
+  return {
+    ...last,
+    scope: input.scope,
+    byEntry,
+    events: unchanged ? last.events : events,
+    items: unchanged ? last.items : foldWaiting(latestRuns(merge(events, last.parts.system))),
+  };
 }
 
 /**
  * A selector of the timeline of `task` (optionally of one session), memoized on the scope's events, the task row and
- * the session rows, so a component re-renders only when one of them changed.
+ * the session rows, so a component re-renders only when one of them changed; a change of the events alone is merged
+ * incrementally (`update`).
  */
 export function selectTimeline(wg: string, task: string, session?: string): (state: StoreState) => TimelineItem[] {
-  let last: { scope: unknown; row: unknown; sessions: unknown; items: TimelineItem[] } | null = null;
+  let last: Built | null = null;
   const empty: TimelineItem[] = [];
+  const key = pagesKey({ org: '', scope: wg, query: chatQuery(task, session) });
   return (state) => {
     const scope = state.events[wg];
     const row = state.tasks.tasks[task];
     if (row === undefined) return empty;
     const sessions = state.tasks.sessions;
-    if (last !== null && last.scope === scope && last.row === row && last.sessions === sessions) return last.items;
-    const items = buildTimeline({ scope, task: row, sessions, ...(session !== undefined && { session }) });
-    last = { scope, row, sessions, items };
-    return items;
+    const floor = boundaryOf(state.pages[key]);
+    const same = last !== null && last.row === row && last.sessions === sessions && last.floor === floor;
+    if (same && last!.scope === scope) return last!.items;
+    const input: TimelineInput = { scope, task: row, sessions, floor, ...(session !== undefined && { session }) };
+    last = same ? update(last!, input) : build(input);
+    return last.items;
   };
 }

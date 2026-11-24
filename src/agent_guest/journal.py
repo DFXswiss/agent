@@ -14,6 +14,11 @@ Interface:
 * ``Journal.insert(db, kind, body, session_id=None) -> int`` - append inside a transaction; ``append(...)`` is the
   same in its own transaction. Bodies are validated against ``guest/journal/<kind>.json`` when a ``SchemaSet`` is
   given (``body_invalid`` with pointers); kinds other than ``metrics``/``guest.error`` need a ``session_id``
+* routine hook records (``PreToolUse`` allow, ``PostToolUse`` none) are counted by ``Journal.summaries``
+  (``hook_summary.HookSummaries``) instead of appended, and written as one ``session.hook`` summary per session at
+  most every 10 s and before any other hook or state record of the session; ``insert`` returns the head for a counted
+  record. ``flush_summaries(every=False)`` writes the due summaries (all with ``every``); ``wait_closed(timeout)``
+  waits for ``close()`` (the ticker of ``control_routes/hook_summary.py``)
 * ``Journal.read(after, limit, wait) -> (records, head)`` - records with ``seq > after`` ascending; waits up to
   ``wait`` seconds for the first record (long poll), returns early on ``close()``
 * ``Journal.ack(through)`` - marks records ``seq <= through`` acknowledged (``state_conflict`` if beyond the head)
@@ -38,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_guest.clock import Clock, iso_ms
+from agent_guest.hook_summary import FLUSHING_KINDS, HookSummaries, counted
 from agent_guest.schema import SchemaSet, pointers
 
 SCHEMA_VERSION = 1
@@ -90,6 +96,7 @@ class Journal:
         self._closed = False
         self._appended = False
         self._after_commit: list[Callable[[], None]] = []
+        self.summaries = HookSummaries()
         row = self._db.execute("SELECT seq FROM sqlite_sequence WHERE name = 'journal'").fetchone()
         self._head = int(row[0]) if row else 0
 
@@ -132,19 +139,23 @@ class Journal:
             self._db.execute("BEGIN IMMEDIATE")
             self._appended = False
             self._after_commit = []
+            self.summaries.begin()
             head = self._head
             try:
                 yield self._db
             except BaseException:
                 self._db.execute("ROLLBACK")
                 self._head = head
+                self.summaries.rollback()
                 raise
             try:
                 self._db.execute("COMMIT")
             except BaseException:
                 self._db.execute("ROLLBACK")
                 self._head = head
+                self.summaries.rollback()
                 raise
+            self.summaries.commit()
             if self._appended:
                 self._cond.notify_all()
             callbacks, self._after_commit = self._after_commit, []
@@ -157,15 +168,33 @@ class Journal:
         self._after_commit.append(callback)
 
     def insert(self, db: sqlite3.Connection, kind: str, body: dict[str, Any], session_id: str | None = None) -> int:
-        """Append one record inside ``transaction()``; returns its ``seq``."""
+        """Append one record inside ``transaction()``; returns its ``seq`` (the head for a counted hook record)."""
         if kind not in KINDS:
             raise JournalError("kind_invalid")
         if session_id is None and kind not in VM_LEVEL_KINDS:
             raise JournalError("session_required")
+        self._check(kind, body)
+        if session_id is not None:
+            if self.summaries.enabled and counted(kind, body):
+                summary = self.summaries.count(session_id, body, self._clock.now())
+                return self._head if summary is None else self._summary(db, session_id, summary)
+            if kind in FLUSHING_KINDS:
+                summary = self.summaries.take(session_id)
+                if summary is not None:
+                    self._summary(db, session_id, summary)
+        return self._write(db, kind, body, session_id)
+
+    def _check(self, kind: str, body: dict[str, Any]) -> None:
         if self._schemas is not None:
             found = self._schemas.errors(f"guest/journal/{kind}.json", body)
             if found:
                 raise JournalError("body_invalid", pointers(found))
+
+    def _summary(self, db: sqlite3.Connection, session_id: str, body: dict[str, Any]) -> int:
+        self._check("session.hook", body)
+        return self._write(db, "session.hook", body, session_id)
+
+    def _write(self, db: sqlite3.Connection, kind: str, body: dict[str, Any], session_id: str | None) -> int:
         cursor = db.execute(
             "INSERT INTO journal (ts, session_id, kind, body) VALUES (?, ?, ?, ?)",
             (iso_ms(self._clock.now()), session_id, kind, canonical(body)),
@@ -178,6 +207,26 @@ class Journal:
     def append(self, kind: str, body: dict[str, Any], session_id: str | None = None) -> int:
         with self.transaction() as db:
             return self.insert(db, kind, body, session_id)
+
+    def flush_summaries(self, every: bool = False) -> int:
+        """Write the hook summaries that are due (``every``: all of them); returns their number."""
+        with self._cond:
+            if not (self.summaries.sessions if every else self.summaries.due(self._clock.now())):
+                return 0
+            with self.transaction() as db:
+                sessions = self.summaries.sessions if every else self.summaries.due(self._clock.now())
+                for session_id in sessions:
+                    body = self.summaries.take(session_id)
+                    assert body is not None
+                    self._summary(db, session_id, body)
+            return len(sessions)
+
+    def wait_closed(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds (or until a commit appended records); True once the journal is closed."""
+        with self._cond:
+            if not self._closed:
+                self._cond.wait(timeout)
+            return self._closed
 
     def read(self, after: int, limit: int, wait: float = 0) -> tuple[list[dict[str, Any]], int]:
         limit = max(1, min(limit, MAX_LIMIT))
@@ -229,10 +278,16 @@ class Journal:
             db.execute("DELETE FROM pending WHERE state = 'answered' AND answered_at <= ?", (cutoff,))
         return [pending_id for pending_id, _ in expired]
 
-    def close(self) -> None:
+    def close(self, flush: bool = False) -> None:
+        """Close the journal; ``flush`` first writes every counted hook record under the journal lock, so no hook
+        counted by another thread can fall between the flush and the close (it is closed also when that fails)."""
         with self._cond:
             if self._closed:
                 return
-            self._closed = True
-            self._cond.notify_all()
-            self._db.close()
+            try:
+                if flush:
+                    self.flush_summaries(every=True)
+            finally:
+                self._closed = True
+                self._cond.notify_all()
+                self._db.close()

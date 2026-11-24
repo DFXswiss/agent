@@ -70,10 +70,43 @@ e2e/                      Playwright specs for web-only flows against a hub test
 
 One store in `core/store` holds: config, me, orgs (verified log state, rights, keys in memory as non-extractable
 `CryptoKey` or raw bytes in closures), workgroups, tasks, sessions, operations, notifications, devices,
-decrypted event bodies (bounded LRU per scope: 5 000 events; terminal chunks kept only for watched sessions),
-metrics, connection state, job state. Scope keys and the identity private keys live only in memory; a page reload
-requires the passkey (or recovery code / device key) again. The store is updated only by core modules; React reads
-via selectors.
+decrypted event bodies, metrics, connection state, job state. Scope keys and the identity private keys live only in
+memory; a page reload requires the passkey (or recovery code / device key) again. The store is updated only by core
+modules; React reads via selectors.
+
+Volume bounds (ADR-086 §1, `decisions/KOR-35.md` §4):
+- **Event store.** A bounded store per scope in two classes with a bound each: the bulk kinds of sessions (`session.output`,
+  `session.tool`, `session.file`, `session.hook`, `session.terminal`, `usage`) and every other kind (titles,
+  whiteboards, profiles, prompts, statuses, operations); each class holds at most 5 000 events and 64 MiB
+  (ciphertext plus decrypted body), so chat traffic never evicts titles or whiteboards. A class over its bound drops
+  its oldest events (lowest `scope_seq`) first. Eviction never leaves a silent gap: every list's page state (`pages`
+  slice: scope, query, boundary = its `before` cursor) whose boundary lies at or below an evicted event is raised
+  just above it, so "Earlier" reads the evicted rows again; every mounted list (the newest page a view just opened
+  as much as pages read back with "Earlier") keeps its rows at or above its boundary up to twice the bound before
+  the oldest go, so bulk inflow of other tasks never empties a chat that was just opened. Task titles keep their read position in the same
+  slice, so an evicted title is read again. Terminal chunks of watched sessions are kept in the `terminal` slice
+  (§5.5).
+- **Shown tasks.** Mounted views register the tasks and sessions they show (`core/store/focus.ts`,
+  reference-counted). A live event of a bulk kind whose header names neither is not decrypted and not stored (only
+  the channel's cursor moves); the view that opens such a task later reads its newest page.
+- **Loading.** Chat, session chat and operations read the **newest** page of their query
+  (`GET /v1/scopes/{scope}/events?before=…`, `core/net/pages.ts`) and older pages only on "Earlier"
+  (`core/tasks/pages.ts`, state in the `pages` slice); stored bulk events below a newest page read again after a
+  skip lie before a gap and are dropped (except what another mounted list shows at or above its boundary); a view
+  renders only events at or above its list's boundary, and a re-read of
+  the newest page raises the boundaries of overlapping lists of the same scope (e.g. the session chat). A forced
+  refresh (after `resync`) while a read runs queues one fresh read after it instead of joining the running one. Single pulls (profiles, one task's title or prompts, an operation's events)
+  read one newest page; a board at most 10; task titles of a list are read per workgroup, newest pages first, at
+  most 10 pages per call. Nothing loops over all pages. An old hub that refuses `before` (`400 request_invalid`) is
+  asked once more without it and served by bounded ascending windows from then on: the scope head is cached per
+  client and scope (only the first page reads it); when the windows below the head find nothing, a search by halves
+  finds the newest older match, so a chat whose content lies far below the head never opens empty (the view shows
+  its loading state meanwhile; an emulated page is empty only when nothing older exists).
+- **After `resync`** the channel pulls only the non-bulk kinds up to the head; every mounted view reads its newest
+  page again. A `resync` that arrives while an earlier one still waits in the channel's queue is dropped (the waiting
+  one covers both): a burst of oversized frames brings hundreds of them.
+- **Timeline.** A change of the events alone is merged into the sorted timeline (new and replaced items only); a
+  change of the task or its sessions rebuilds it.
 
 ### 2.4 Routing
 
@@ -97,6 +130,7 @@ via selectors.
 | `/o/:org/devices` | devices (§7.3) | org:member (edit: admin / private-org writer) |
 | `/o/:org/monitoring` | monitoring (§9.1) | org:member |
 | `/o/:org/audit` | audit (§9.2) | org:member (scope per `03-api.md` §4.11) |
+| `/o/:org/github` | company GitHub accounts of the organization (§8.1, KOR-47) | org:admin |
 | `/notifications` | notification center (§6.2) | user |
 | `/settings` | account: passkeys, recovery code, language, model access, credentials, GitHub, quotas, connected agents (§3.6, §8, §8.3) | user |
 | `/platform/invites` | platform invitations (§7.4) | platform:inviter |
@@ -328,8 +362,14 @@ with `task.set_title` (shown as "renamed by session").
 ### 5.1 Task list (`/o/:org/w/:wg`)
 
 Newest activity first (`GET /v1/workgroups/{wg}/tasks?order=activity`, KOR-32), with decrypted title, state badge,
-owner display name, last activity; filter by state; infinite scroll (`next_before`). Composer at the top (same as §4.1) for users with
-`wg:write`. Task creation is possible in any workgroup with write access.
+owner display name, last activity; filter by state. Composer at the top (same as §4.1) for users with `wg:write`. Task
+creation is possible in any workgroup with write access.
+
+**Volume (ADR-086 §1).** The rows are a windowed list (`tasks.list`; the home screen's recent tasks use the same list
+with 5 rows and no paging): newest first, 100 rows at first, 50 more per "older" move, at most 200 rows rendered;
+"Load more" (`next_before`, 50 per page) appears only when the window reaches the loaded end and loads on request only
+– no automatic infinite scroll. Titles and owners of the rows come from one store selector per list; rows are memoized
+on their content; time formats are created once per locale.
 
 **Being unlocked (ADR-058 §2).** When the user may read a workgroup but holds no key of its current epoch (typically an
 admin reading it by inheritance before a key holder has delivered the key by catch-up), the task list keeps its
@@ -347,8 +387,16 @@ line appears only once the org's job queue has run and is idle (`core/org/unlock
 Navigation entry "Tasks" directly below Home (sidebar, navigation row, phone bottom bar). All tasks of the workgroups
 the user can read (from the verified log; others are never requested), newest activity first: the lists of §5.1 per
 workgroup merged with per-workgroup cursors (a row is shown only when no unloaded row can precede it). Columns as
-§5.1 plus the workgroup. Filters: state, workgroup, "only mine" (signed owner), title search (in the browser). Empty
-state explains how to create a task. Details: `decisions/KOR-32.md`.
+§5.1 plus the workgroup; the same window and "Load more" as §5.1 (list `tasks.overview`). Filters: state, workgroup,
+"only mine" (signed owner), title search (in the browser). Empty state explains how to create a task. Details:
+`decisions/KOR-32.md`.
+
+**Bounded search.** Titles are encrypted, so "only mine" and the title search filter the loaded rows. One search request
+(a new search text or filter) loads at most 10 further pages, one page of the binding list at a time, and stops earlier
+once 50 rows match or no list has a further page; a load already running is awaited, a replaced request stops. Then the
+list says "Searched the N most recent tasks." ("Searched X of N tasks." once the hub reports a total) with a "Search
+further" button that starts the next request of at most 10 pages. While a search is active, "Search further" replaces
+"Load more".
 
 ### 5.1b Resume notice (task page, KOR-33, ADR-072 §7)
 
@@ -395,7 +443,8 @@ after a reconnect; without a switch, or when the audit cannot be read, nothing i
   - `session.file` – "Changed `path`" with an expandable patch (monospace, no syntax highlighting dependency). The
     patch is rendered only while expanded and at most 20 000 characters at a time ("Show more"). Two or more
     consecutive `session.file` items of one session are one row "N files changed" with the time span (HOT-05); it
-    expands to the list of files, 50 at a time ("Show more files"), each with its own expandable patch.
+    expands to the list of files, 50 at a time ("Show more files", at most 200 rendered; beyond that the first files
+    give way behind "Show previous files"), each with its own expandable patch.
   - `session.hook` with `deny` – muted row "Blocked: <tool> (<reason>)".
   - `session.status` errors and task/session state changes – system rows.
   - `session.status` `waiting` (KOR-25, `03-api.md` §10) – a card for the task owner only: "waiting for the GitHub
@@ -408,13 +457,19 @@ after a reconnect; without a switch, or when the audit cannot be read, nothing i
     for the owner, request the organisation's approval, authorise SSO, open the repository), or the pre-filled token
     link plus the token way (`new_token`); a new connection does not end it, the registered operation does.
   - Countdown summaries (§4.4).
-- Long prompts, messages and tool inputs/outputs show 20 000 characters at a time ("Show more"); a tool row renders its
-  details only while expanded.
-- Long chats (HOT-05): only a window at the end of the timeline is rendered (100 rows; "Show earlier items" adds 50;
-  the window keeps its first row while new items arrive; "Jump to the latest item" scrolls to and focuses the last
-  row); rows are memoized on their content, so a new event renders only the new row; rows off screen skip layout and
-  paint (`content-visibility: auto`; rendered rows stay in the accessibility tree and in the browser's find-in-page,
-  which does not reach rows outside the window, closed details or text beyond the shown characters). Kinds
+- Long prompts, messages, patches and tool inputs/outputs show 20 000 characters at a time ("Show more") with
+  "Download the full text" (§12.4); a tool row renders its details only while expanded; the Markdown of a message is
+  built only once its row comes within one screen of the viewport (before that: its first line).
+- Long chats (HOT-05, ADR-086): the timeline is a windowed list (§12.4) in follow mode at the end: 100 rows at first,
+  "Show earlier items" adds 50, at most 150 rows are rendered. While following, the window keeps its first row as new
+  items arrive and drops the oldest rows beyond 150; once a move drops rows at the newest end, the window is anchored
+  (new items stay hidden behind "N newer entries – show"). "Jump to the latest item" returns to 100 rows at the end
+  and scrolls to and focuses the last row. Rows are memoized on their content, so a new event renders only the new
+  row; rows off screen skip layout and paint (`content-visibility: auto`; rendered rows stay in the accessibility tree
+  and in the browser's find-in-page, which does not reach rows outside the window, closed details or text beyond the
+  shown characters). The chat reads the newest page of its events when it opens; when the window reaches the oldest
+  loaded item and the hub has older events, "Load more" reads the next older page (never all pages). The session
+  detail's chat (§5.5) is the same list. Kinds
   with a verified body but without a renderer are skipped and do not break a run of file changes; an event kind the
   client's kind matrix does not know yet stays the neutral row "Unverifiable item (kind_not_allowed)". The
   reader writes settled events to the store at most once per frame (16 ms), so a burst of thousands of events costs
@@ -439,12 +494,21 @@ after a reconnect; without a switch, or when the audit cannot be read, nothing i
 ### 5.3 Sessions tab
 
 Tree of sessions (main session, subagent children by `parent_session_id`, depth ≤ 2) with state, device, model,
-usage; each node links to `/o/:org/s/:session`.
+usage; each node links to `/o/:org/s/:session`. The tree is flattened depth first (the depth indents a row) into a
+windowed list `task.sessions` (100 rows at first, 50 per move, at most 200 rendered); one selector delivers the task's
+sessions and their usage, rows are memoized. The reachability of the sessions' devices is read once for the list
+(`useDevicePresence`: pages of the device list until every shown device is found, the list ends or the hub's cap of
+10 000 is read), not per row.
 
 ### 5.4 Operations tab
 
 `GET /v1/tasks/{task}/operations`, newest first; detail drawer shows transitions, decrypted params and result, with
 the same readable views of issue and pull request lists and of a read issue as the chat card (§5.2).
+The rows are a windowed list `task.operations` (100 rows at first, 50 per move, at most 200 rendered); older pages
+(50 each) are loaded by "Load more" when the window reaches the loaded end. One selector builds the views of the task's
+operations (memoized per row and per operation's events). The detail's params and result are pretty-printed JSON,
+clipped to 20 000 characters with "Show more" and "Download" (`operation-params.json`, `operation-result.json`), built
+only while the detail is open.
 
 ### 5.4a Test runs and logs (KOR-43, ADR-080)
 
@@ -486,11 +550,16 @@ of its VM and **"Watch live"**, which opens the session's **Browser** tab. The o
   handlers, no clipboard paste; selection + copy allowed. Size from the asciicast header (`cols`/`rows`, 160 × 48 by
   default); `addon-fit` scales the font to the container width; on narrow screens the terminal scrolls horizontally
   instead of reflowing (no resize is ever sent).
-- Data: history via `GET /v1/scopes/{wg}/events?session=…&kinds=session.terminal` (paged), live via SSE
-  `terminal=<session>` (max 3 watched sessions). Chunks are applied strictly in `scope_seq` order; a gap triggers a
-  pull before further rendering.
-- Modes: **Follow** (default, live tail) and **History** (a time slider over the session's recording range; moving it
-  replays from the start into an off-screen terminal up to the chosen offset, then shows it; playback speed 1×/4×/16×).
+- Data: on open the newest page of `GET /v1/scopes/{wg}/events?session=…&kinds=session.terminal&before=…` (newest
+  first, old-hub fallback, §2.3), live via SSE `terminal=<session>` (max 3 watched sessions); the view registers the
+  session as shown. Chunks are applied strictly in `scope_seq` order; a gap triggers an ascending pull of at most 3
+  pages before further rendering – a longer gap (or a `resync`) reads the newest page again. Chunk lists grow by push
+  (no copy per chunk); Follow keeps the newest 8 MiB of output, older output stays on the hub and is read again on
+  demand, never lost.
+- Modes: **Follow** (default, live tail; xterm scrollback 10 000 lines) and **History** (a window over the loaded
+  output, at most 16 MiB: "Load earlier output" reads the previous page newest first; a time slider replays up to the
+  chosen offset – at most 2 MiB from a chunk boundary – into an off-screen terminal, then shows it; playback
+  1×/4×/16×).
 - An explicit label "Read-only view – prompts are entered in the chat" is always visible.
 
 ### 5.6 Pull requests and "Fix conflicts" (KOR-48, ADR-084)
@@ -523,11 +592,15 @@ of its VM and **"Watch live"**, which opens the session's **Browser** tab. The o
   `<owner>/<repo>#<n>`, writers) looks the pull request up under every epoch the browser holds first: a linked one
   is shown with its task and nothing changes; else `POST /v1/workgroups/{wg}/pr-links` under the current epoch. A
   person's link can be removed ("Unlink"); a device's link stays.
+- **Volume** (ADR-086 §1): the rows of the view and of the tab are windowed lists (lists `pulls` and `task.pulls`,
+  50 rows added per move, at most 200 rendered; only rendered rows read their state) over the hub's cursor pages
+  ("Load more"). A situation-view entry names at most 3 links of its task and counts the rest with a link to the
+  task's tab; the task choice of "Paste a pull-request address" offers the first page of the workgroup's tasks (50).
 - Test IDs: `pulls.screen`, `pulls.level`, `pulls.item` (`data-pull`, `data-state`, `data-conflict`), `pulls.state`,
   `pulls.conflict`, `pulls.github`, `pulls.task`, `pulls.fix`, `pulls.fix.sent`, `pulls.recheck`, `pulls.fixed`,
   `pulls.fork`, `pulls.connect`, `pulls.unlink`, `pulls.unavailable`, `pulls.more`, `pulls.link.input`,
   `pulls.link.task`, `pulls.link.submit`, `pulls.link.created`, `pulls.link.exists`, `pulls.link.invalid`,
-  `task.pulls`, `attention.pull`, `attention.fix-conflicts`.
+  `pulls.list`, `task.pulls`, `attention.pull`, `attention.pulls.more`, `attention.fix-conflicts`.
 
 ## 6. Whiteboards and notifications
 
@@ -538,8 +611,21 @@ of its VM and **"Watch live"**, which opens the session's **Browser** tab. The o
   "edited" marker.
 - Create/edit/delete only with the right of `04-crypto.md` §4.3 (org level: admin; wg/task level: wg write). Create
   form has an optional checkbox **"Notify participants"** (sends `notify:true`, `03-api.md` §4.9).
-- History drawer: all versions (`GET /v1/whiteboards/{entry}/history`) with author and time, diff to the previous
-  version (line-based, client-side).
+- History drawer: the versions (`GET /v1/whiteboards/{entry}/history`) newest first with author and time, diff to the
+  previous version (line-based, client-side).
+- Volume (ADR-086 §1): the board selects only the `whiteboard.*` events of its scope (chat traffic in a workgroup
+  scope does not re-render it). Entries are a windowed list (`whiteboard.entries`, newest first, 40 rows at first,
+  20 more per move, at most 60 rendered), rows memoized on their content, the Markdown parsed only near the viewport;
+  the board reads its events (newest 10 pages) and the first page of rows (`limit=200`); older pages of rows only via
+  "Load more" (`before=<next_before>`, ADR-086 §2), never all pages in a loop. An entry known from its events but
+  missing from the rows read so far counts as unlisted (`event_conflict`) only when every page is read or the hub
+  received its creating event strictly (ms) after the `created_at` of the oldest row read (the hub orders rows by
+  `created_at DESC`); otherwise it is shown from its verified events. The history reads pages newest first
+  (`limit=50`, then `before=<next_before>` via "Load more"); a hub that refuses `before`/`limit`
+  (`400 request_invalid`) is asked once more without them (whole history, capped) and remembered per client. The
+  history is a windowed list (`whiteboard.history`, newest first, same sizes); each version's diff is collapsed
+  ("Show changes") and computed only when expanded; it shows only the changed hunks with 3 lines of context under
+  `@@ -a,b +c,d @@` headers and is clipped at 20 000 characters ("Show more", "Download").
 
 ### 6.2 Notifications
 
@@ -556,6 +642,9 @@ of its VM and **"Watch live"**, which opens the session's **Browser** tab. The o
   subscription" –, `api_key`, `platform`; a malformed ref: "Task Y: model switched"), to the task, ADR-081 §5); click
   marks read and navigates
   (`task.attention`: to the situation view entry); "Mark all read".
+  The rows are a windowed list (ADR-086 §1): 100 rows at first, 50 more per "show older" or loaded page, at most 200
+  rendered; older pages come from the hub (`before` cursor) only through "Load more", offered when the window reaches the
+  loaded end. The names of all rows come from one selector of the list.
 - Toasts for live notifications (auto-dismiss 6 s, accessible live region).
 - `prompt.waiting_for_device` (KOR-46): "Your instruction in task Y waits for the device of its session", opening the
   task.
@@ -573,6 +662,18 @@ of its VM and **"Watch live"**, which opens the session's **Browser** tab. The o
   closes it by itself). Opening an org whose log has no own `member.profile` of the user writes the user's own name
   from another org, without a dialog. An access a
   member has only because it is an admin (ADR-058) is shown as "reads as admin" and has no ungrant control.
+- Volume (ADR-086 §1): the members, the open invitations and every other list of §7.1–§7.4 are windowed lists
+  (§12.4: 100 rows at first, "show" adds 50, at most 200 rendered) in the order stated here (members: admins first,
+  then by name). The rows are built once per change of their inputs (log, names, the hub's list) and re-render only
+  when their content changed. A row's workgroup chips show the first 8 and "N more – show". The members come
+  complete with `GET /v1/orgs/{org}` (ADR-086 §2) and are not paged.
+- Hub paging (ADR-086 §2, `core/org/pages.ts`): the open invitations (§7.1, §7.3), the devices (§7.3), the platform
+  candidates (§7.3) and the platform invitations (§7.4) read the hub's list page by page (`before`/`limit`; 100 rows,
+  devices 200) – the first page, the next one only on "Load more" (also offered while a page holds no row the
+  verified log keeps open). A re-read (log change, creation, revocation, the device presence poll) reads the loaded
+  range again: the same number of pages from the newest one. An old hub that refuses the parameters
+  (`400 request_invalid`) is asked once more without them and remembered (per loaded configuration); its whole
+  answer is one page, and a note says when its cap cut the list (`truncated`).
 - Admin actions:
   - **Invite user:** role (member default, admin), workgroups with read/write (default workgroup always write),
     expiry (72 h default, 1 h–30 d), an optional personal message for the invitee (one line, up to 500 characters,
@@ -605,25 +706,31 @@ of its VM and **"Watch live"**, which opens the session's **Browser** tab. The o
 
 ### 7.2 Workgroups (`/o/:org/workgroups`)
 
-List with names (decrypted `wg.profile`), my access, devices, archived flag. Admin: create (new `WK_1`, one batch with `wg_create` (the creating admin gets write), `grant` entries for chosen
+List (windowed, §7.1; default workgroup first, archived last) with names (decrypted `wg.profile`), my access,
+devices, archived flag. Admin: create (new `WK_1`, one batch with `wg_create` (the creating admin gets write), `grant` entries for chosen
 members, self-wrap + wraps for those members, every other admin and chosen devices (`device_assign`), `wg.profile`
 event); the note says "Every admin of the organization can read it. You can write." (ADR-058), rename
 (`wg.profile`), archive (not the default workgroup).
 
 ### 7.3 Devices (`/o/:org/devices`)
 
-- List: label (decrypted `device.profile`), kind (platform/org), online state, last seen, agent version, assigned
-  workgroups or **"Whole organization"**, capacity bar, **capacity-low badge** when `capacity_low` (`03-api.md`
-  §4.6.2), and the details CPUs, memory, free disk, running VMs, active sessions, the limits "sessions per VM" and
-  "VMs" and, per VM, its workgroup and sessions ("vm-… · Research · 3 of 16 sessions") (ADR-075).
+- List (windowed, §7.1; newest device first): label (decrypted `device.profile`), kind (platform/org), online state,
+  last seen, agent version, assigned workgroups (chips bounded as in §7.1) or **"Whole organization"**, capacity bar,
+  **capacity-low badge** when `capacity_low` (`03-api.md` §4.6.2), and the details CPUs, memory, free disk, running
+  VMs, active sessions, the limits "sessions per VM" and "VMs" and, per VM, its workgroup and sessions ("vm-… ·
+  Research · 3 of 16 sessions") (ADR-075). The rows come from the verified log, the presence from the hub's list (pages of
+  200, newest enrolment first, §7.1): while older pages exist the list ends with the last device the loaded pages
+  name, and "Load more" reads the next page; once the hub's list is complete every device of the log is shown (one
+  the hub did not send with "status unknown"). The presence poll (every 15 s while visible) and a log change read
+  the loaded pages again (one request per page) and re-render only rows whose presence changed.
 - **Add org device** (admin): choose workgroups → code + instructions block:
   `agent-runner enroll --hub <origin> --code <code>` (copy button), expiry 24 h default; the device appears live when
   it accepts.
   Invitations carry the keys of the chosen workgroups, so only workgroups whose current key the admin holds are
   offered ("You can add a device as soon as a workgroup is unlocked for you").
 - **Assign platform device** / **assign to a further workgroup** (admin; any writer in a private org): every
-  workgroup that is not archived; candidate list (`GET /v1/workgroups/{wg}/device-candidates`), platform-log
-  verification, batch. The batch wraps the keys the admin holds; the transition rule of ADR-058 §2 (`compatSkip`)
+  workgroup that is not archived; candidate list (`GET /v1/workgroups/{wg}/device-candidates`, pages of 100 in the
+  hub's order with "Load more", §7.1), platform-log verification, batch. The batch wraps the keys the admin holds; the transition rule of ADR-058 §2 (`compatSkip`)
   withholds a workgroup key the admin reads only by inheritance and did not create, which the key holders deliver by
   catch-up.
 - **Assign to the whole organization** (admin; ADR-075 §5): one batch `device_assign_org` + wraps (`OK`, the `WK`s
@@ -641,7 +748,7 @@ event); the note says "Every admin of the organization can read it. You can writ
 
 Shown to users with the role `inviter` and, while the root-signed switch `open_platform_invites` is on, to every user
 (both read from the verified platform log, ADR-079); a user without the role sees only its own invitations. Create (code generated client-side, `POST /v1/platform/invites` with `invite_id` and expiry), show link/code once,
-list open/used/revoked/expired, revoke.
+list open/used/revoked/expired (windowed, newest first, paged with "Load more", §7.1), revoke.
 
 ### 7.5 Org switcher
 
@@ -727,6 +834,8 @@ newest `CK` after a rotation.
   all access at once and keeps what it has already read. The notice after a pairing (`?agent=connected|failed`) is
   only a hint; the state shown is always the hub's list.
 - The audit view (§9.2) marks rows with `agent_id` "by agent <name>" ("by agent" when the name is not the user's).
+- "Security activity" (`GET /v1/me/audit`) is a windowed list like §9.2 (100 rows at first, 50 per move or page, at
+  most 200 rendered, "Load more" with the hub's cursor).
 
 ## 9. Monitoring and audit
 
@@ -734,9 +843,18 @@ newest `CK` after a rotation.
 
 - Overview (`GET /v1/monitoring/overview?org=`, live via SSE with `monitoring=1`): devices (CPU, RAM, disk, network,
   uptime, reachability, state, free capacity), drill-down to VMs of own workgroups, then sessions (CPU, memory,
-  tasks, workspace size, state, usage: tokens, cost, context %).
+  tasks, workspace size, state, usage: tokens, cost, context %), below a session its work VMs (KOR-29: CPU, memory,
+  disk, network, runtime, charts).
+- Volume (ADR-086 §1): the tree is flattened into rows (device, its VMs and their sessions while opened, each
+  session's work VM rows right after it, then the entries not linked to a listed device or VM) and shown as the windowed list `monitoring.tree`: 100 rows at first,
+  50 per move, at most 200 rendered; rows are memoized on their content. The ages ("Updated 5 s ago") count in their
+  own cells on one shared one-second clock; the tree re-renders only when its data changes or an entity turns stale.
+  Task titles come from one selector for the whole list. When the hub cut the overview (at most 2 000 sessions,
+  `truncated`, ADR-086 §2) the screen says "Showing the 2,000 most recently active of N sessions"; when it cut the
+  devices at 10 000 (`devices_truncated`) it says "Showing the first N devices; the hub has more".
 - Charts (uPlot) via `GET /v1/monitoring/series`: ranges 1 h, 6 h, 24 h (raw), 7 d, 30 d, 90 d (rollups); legend and
-  tooltips; values with units; accessible data table toggle.
+  tooltips; values with units; accessible data table toggle. The data table shows at most the bucket count of the
+  longest range (360 rows, newest first) and says how many points it shows when a series has more.
 
 ### 9.2 Audit
 
@@ -744,6 +862,11 @@ newest `CK` after a rotation.
   name, action, result, target names (decrypted where available), link to the referenced event. Admin: "Verify chain"
   (`GET /v1/orgs/{org}/audit/verify`) with result.
 - Task tab Audit: same view filtered by task.
+- Volume (ADR-086 §1): the rows are a windowed list (lists `audit` and `task.audit`): 100 rows at first, 50 more per
+  "show older" or loaded page, at most 200 rendered; "Load more" (hub cursor) appears when the window reaches the
+  loaded end, or alone while a time filter hides every loaded row. Task titles are pulled once per distinct task of
+  the loaded rows and read, like agent names, with one selector per list; rows are memoized and never subscribe to
+  the store themselves.
 
 ## 10. Build, reproducibility, CSP, SRI, security page
 
@@ -800,7 +923,8 @@ how to compare the build hash with the published one; that execution devices pro
 
 ## 11. Background jobs (`core/jobs`)
 
-Run while signed in and unlocked; serialized per org; status visible in a small "Sync" indicator.
+Run while signed in and unlocked; serialized per org; status visible in a small "Sync" indicator. The long-task monitor
+(§12.9) is not one of these jobs: it runs from the start of the page, signed in or not.
 
 1. **Log verification** (`log/`): on login, on SSE `log` frames and on events with `lh` > verified head. Rollback
    (`log_rollback`) or fork (`log_fork`) → **blocking error screen** for that org ("The server presented an
@@ -875,7 +999,25 @@ respected (countdown ring without animation).
 
 ### 12.4 Lists and time
 
-Lists newest first (repository rule) with stable tie-breaker; chat and logs ascending. Event times (chat items,
+Lists newest first (repository rule) with stable tie-breaker; chat and logs ascending.
+
+Every list of the client is the shared windowed list (`ui/lists/WindowedList.tsx`, ADR-086 §1; a source test,
+`tests/scripts/list-markup.test.ts`, allows other list markup only for fixed small lists named there): only a window
+of at most `maxRows` rows is rendered (chat 150, tables 200, heavy rows fewer), in follow mode at the newest end or
+anchored after a move away from it. The hidden rows at either end are buttons with their count ("4 812 more entries –
+show", "Show 12 newer entries"), plus "Jump to the newest"; when the window reaches the loaded end and the hub has
+more, "Load more" loads the next page (no automatic infinite scroll, never all pages in a loop) and the page is shown
+when it arrives – its rows may land anywhere in the list (a chat ordered by time is paged by scope seq; rows of one
+millisecond), so the window and its focus target are always taken from the rows actually shown, never from an index
+of the page. Buttons are at least 44 × 44 px. After a move the focus goes to the first newly shown row (after a loaded
+page that fit into the window: its first shown row; no such row: focus stays) and the reading position is kept by correcting the scroll offset; rows carry `aria-setsize`/`aria-posinset`; a polite live
+region announces the shown range ("Showing entries 51–200 of 4 862") after a user action only, never on live inflow.
+Every list has an id of the closed set `core/lists/ids.ts` (the volume gate measures each). Heavy row content
+(Markdown, patches, diffs, JSON) is built when its row comes within one screen of the viewport and stays while the
+row is rendered; before that the row shows the first line of the text. A large single text shows 20 000 characters at
+a time ("Show more"); "Download the full text" saves it as a file made in the browser (`blob:` URL of a download
+link; the CSP of §10.2 restricts fetches and embedded content, not downloads); JSON is pretty-printed before it is
+clipped. Event times (chat items,
 tool calls, operations, status steps, terminal positions, audit rows, whiteboard history) are shown as absolute
 local time `HH:MM:SS.mmm` (user time zone, `Intl.DateTimeFormat().resolvedOptions().timeZone`), prefixed with the
 date when not today; a relative label ("2 min ago") is only a secondary label in lists.
@@ -905,6 +1047,18 @@ Firefox also that a changed lazy chunk or stylesheet is refused (§10.2, automat
 
 The community screen (`/community`), its navigation entry with the unread badge, the settings section "Account" and
 the background job are specified in `14-community.md` §6 (KOR-26, ADR-069).
+
+### 12.9 UI health (early warning, ADR-086 §5)
+
+`core/monitoring/longtasks.ts` counts main-thread blocks over 200 ms (`PerformanceObserver('longtask')`; where the
+browser lacks it, the lateness of a 1 s timer; hidden pages and gaps over 60 s are ignored) per view type of
+`contracts/enums/ui-views.json` (`core/monitoring/views.ts` maps the route pattern and tab to it; anything else is
+`other`) – never an ID, a path or content. Per view: `count`, `blocked_ms`, `max_bucket` (index into the contract's
+`buckets_ms`). At most once an hour and only when something was counted (checked every minute and on page hide) it
+sends `{version, views}` to `POST /v1/telemetry/ui` with a plain `fetch` (`credentials: 'omit'`, `keepalive`), without
+a signature; `version` is `config.version`. A failed report keeps its counters (clamped to the contract's limits);
+the time of the last report and unsent counters are kept best effort in `localStorage` on page hide. It starts once
+after the configuration check (`ui/app/boot.tsx`).
 
 ## 13. Test hooks
 

@@ -1,0 +1,8 @@
+{
+  "event": "summary",
+  "decision": "allow",
+  "counts": {
+    "PostToolUse": 3
+  },
+  "tools": {}
+}

@@ -6,7 +6,7 @@
 // `ensureOwnName` writes the own name into an org the user opens without having one there (ADR-073): no dialog, no
 // question – a display name is no access credential. It writes only after the org's profiles were pulled completely
 // (a failed pull writes nothing), only with the current org key, and at most once per org and sign-in.
-import { memberProfile } from './join';
+import { memberProfile } from './member-profile';
 import { ORG } from '../log/state';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';

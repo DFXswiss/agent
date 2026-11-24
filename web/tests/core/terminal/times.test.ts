@@ -1,7 +1,7 @@
 // Terminal positions as absolute local times (06-web.md section 12.4): a chunk carries the header time of its event
 // (written at its last frame); the time of a recording offset is derived from the first chunk that reaches it.
 import { describe, expect, it } from 'vitest';
-import { openTerminal, receive, type ChunkVerdict, verdictOf } from '../../../src/core/store/slices/terminal';
+import { openTerminal, receive, type ChunkVerdict, verdictOf } from '../../../src/core/terminal/entries';
 import { createStore } from '../../../src/core/store';
 import { formatTime, parseTime } from '../../../src/core/encoding/time';
 import { absoluteAt, chunkAt } from '../../../src/core/terminal/chunks';

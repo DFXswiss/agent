@@ -210,7 +210,7 @@ describe('task overview', () => {
     expect(screen.queryByTestId('tasks.more')).toBeNull();
   });
 
-  it('loads older pages on its own while the title search or "only mine" finds too few rows', async () => {
+  it('loads older pages on its own (bounded) while the title search or "only mine" finds too few rows', async () => {
     const t = await taskWorld();
     const pages: string[] = [];
     t.client.on(`GET /v1/workgroups/${t.wg}/tasks`, (_body, target) => {
@@ -244,7 +244,7 @@ describe('task overview', () => {
     t.client.on(`GET /v1/workgroups/${t.wg}/tasks`, () => new Promise((resolve) => (answer = resolve)));
     mount(t);
     expect(await screen.findByTestId('tasks.list-loading')).toBeInTheDocument();
-    expect(screen.getByTestId('tasks.list')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('tasks.table')).toHaveAttribute('aria-busy', 'true');
     await act(async () => answer({ tasks: [], next_before: null }));
     await waitFor(() => expect(screen.queryByTestId('tasks.list-loading')).toBeNull());
   });

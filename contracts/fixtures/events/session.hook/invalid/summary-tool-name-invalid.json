@@ -1,0 +1,13 @@
+{
+  "event": "summary",
+  "decision": "allow",
+  "counts": {
+    "PreToolUse": 42,
+    "PostToolUse": 41
+  },
+  "tools": {
+    "Read file": 1
+  },
+  "from": "2026-11-24T10:00:00.000Z",
+  "to": "2026-11-24T10:00:09.950Z"
+}

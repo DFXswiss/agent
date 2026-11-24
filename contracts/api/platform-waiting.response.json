@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/platform-waiting.response.json",
   "title": "GET /v1/platform/waiting response",
-  "description": "Body of a successful response to GET /v1/platform/waiting: workgroups whose tasks wait for the operator: a device it must provide, or credit (ADR-079) (03-api.md section 4.3, ADR-075 section 7).",
+  "description": "Body of a successful response to GET /v1/platform/waiting: workgroups whose tasks wait for the operator: a device it must provide, or credit (ADR-079) (03-api.md section 4.3, ADR-075 section 7); at most 10 000 workgroups, the longest waiting, `truncated: true` when cut (ADR-086 section 2, KOR-35).",
   "type": "object",
   "properties": {
     "waiting": {
@@ -46,6 +46,11 @@
       },
       "minItems": 0,
       "maxItems": 10000
+    },
+    "truncated": {
+      "type": "boolean",
+      "const": true,
+      "description": "the list was cut at its cap of 10 000 workgroups (ADR-086 section 2)"
     }
   },
   "required": [

@@ -10,16 +10,21 @@ root-only directory ``FIFO_DIR`` and is opened read-write, so it never reports e
 * events ``[t_ms, "o", data]`` with ``t_ms`` in milliseconds since the session's recording started, never
   decreasing; a restart of the recorder (control process restarted, session resumed) continues at the last written
   offset and writes a marker ``[t_ms, "m", "recorder restarted"]`` instead of a new header
+* an event's data is cut into pieces of at most ``MAX_PIECE`` UTF-8 bytes and as many bytes of JSON (the contract
+  allows 16384 characters per event)
 * ``take()`` groups the buffered events into ``session.terminal {offset_ms_start, frames, cols, rows}`` bodies of at
-  most ``MAX_RECORD`` UTF-8 bytes of data (an event longer than that is split), ``MAX_FRAMES`` events and
-  ``MAX_BODY_JSON`` bytes of body JSON: the runner encrypts exactly that JSON, and JSON escapes a control character
-  as six bytes (``\u001b``), so the raw data alone does not bound the sealed event (E8: 64 KiB, 04-crypto.md
-  section 6.4; decisions/KOR-02.md)
+  most ``MAX_FRAMES`` events and ``TerminalLimits.record_json`` bytes of body JSON (never more than
+  ``MAX_BODY_JSON``): the runner encrypts exactly that JSON, and JSON escapes a control character as six bytes
+  (``\u001b``), so only the encoded size bounds the sealed event (E8: 64 KiB, 04-crypto.md section 6.4;
+  decisions/KOR-02.md). ``take(whole=True)`` returns only the bodies that reached a bound and keeps the rest.
 
-``TerminalRecorder`` (one per session, a thread): flushes every ``FLUSH_MS`` after the first buffered event or as
-soon as ``MAX_RECORD`` bytes are buffered, journals the bodies and appends the same events to the session's
-asciicast v2 file ``<session base>/terminal.cast`` (root 0600; times in seconds = ``t_ms / 1000``), the copy the
-history is compared with (E2E-12). The first output of the pane calls ``on_output`` (the "TUI up" signal).
+``TerminalRecorder`` (one per session, a thread; ADR-086 section 3, ``limits.TerminalLimits``): a record is written
+once the output has been quiet for ``quiet_ms`` (100 ms); under sustained output the buffered events grow until the
+first of them is ``max_age_ms`` old (1 s) - then everything is written - or until they fill a record of
+``record_json`` bytes (60 KiB) - then the full records are written and the rest keeps growing. The same bytes in far
+fewer events, in their order, nothing dropped. The bodies are journaled and the same events appended to the
+session's asciicast v2 file ``<session base>/terminal.cast`` (root 0600; times in seconds = ``t_ms / 1000``), the
+copy the history is compared with (E2E-12). The first output of the pane calls ``on_output`` (the "TUI up" signal).
 """
 
 from __future__ import annotations
@@ -40,13 +45,14 @@ from typing import Any
 
 from agent_guest import tmux
 from agent_guest.journal import Journal
+from agent_guest.limits import TERMINAL, TerminalLimits
 
-FLUSH_MS = 100
-MAX_RECORD = 16 * 1024
+MAX_PIECE = 16 * 1024
+"""UTF-8 bytes of the data of one event (contract: at most 16384 characters)."""
 AEAD_TAG_BYTES = 16
 MAX_BODY_JSON = 64 * 1024 - AEAD_TAG_BYTES
 """Body JSON of one record: the sealed ``session.terminal`` (body JSON plus the 16-byte tag) stays within E8."""
-MAX_PIECE_JSON = MAX_RECORD
+MAX_PIECE_JSON = MAX_PIECE
 """JSON-escaped size of the data of one event."""
 MAX_FRAMES = 4096
 READ_CHUNK = 64 * 1024
@@ -67,7 +73,7 @@ def json_size(value: object) -> int:
     return len(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
 
-def split(text: str, limit: int = MAX_RECORD, json_limit: int = MAX_PIECE_JSON) -> list[str]:
+def split(text: str, limit: int = MAX_PIECE, json_limit: int = MAX_PIECE_JSON) -> list[str]:
     """``text`` in pieces of at most ``limit`` UTF-8 bytes and ``json_limit`` bytes as a JSON string (without the
     quotes), cut at character boundaries."""
     pieces = []
@@ -94,17 +100,26 @@ def split(text: str, limit: int = MAX_RECORD, json_limit: int = MAX_PIECE_JSON) 
 
 
 class Recorder:
-    def __init__(self, base_ms: int = 0, cols: int = tmux.COLS, rows: int = tmux.ROWS) -> None:
+    def __init__(
+        self, base_ms: int = 0, cols: int = tmux.COLS, rows: int = tmux.ROWS, record_json: int = TERMINAL.record_json
+    ) -> None:
         self.cols = cols
         self.rows = rows
         self.last_ms = base_ms
+        self.record_json = min(record_json, MAX_BODY_JSON)
         self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self._frames: list[Frame] = []
-        self._bytes = 0
+        self._json = 0
 
     @property
-    def pending_bytes(self) -> int:
-        return self._bytes
+    def pending_json(self) -> int:
+        """Body JSON bytes of the buffered events (each event's JSON and its separator, without the body's keys)."""
+        return self._json
+
+    @property
+    def full(self) -> bool:
+        """The buffered events fill at least one record."""
+        return self._json >= self.record_json or len(self._frames) > MAX_FRAMES
 
     @property
     def pending(self) -> bool:
@@ -121,33 +136,33 @@ class Recorder:
             return
         self.last_ms = max(self.last_ms, t_ms)
         for piece in split(text):
-            self._frames.append([self.last_ms, code, piece])
-            self._bytes += len(piece.encode("utf-8"))
+            frame: Frame = [self.last_ms, code, piece]
+            self._frames.append(frame)
+            self._json += json_size(frame) + 1
 
-    def take(self, final: bool = False) -> list[dict[str, Any]]:
-        """The buffered events as journal bodies; ``final`` also ends a character left incomplete."""
+    def take(self, final: bool = False, whole: bool = False) -> list[dict[str, Any]]:
+        """The buffered events as journal bodies; ``final`` also ends a character left incomplete; ``whole`` keeps
+        the events of a last record that reached no bound buffered."""
         if final:
             self._add(self.last_ms, "o", self._decoder.decode(b"", final=True))
         bodies: list[dict[str, Any]] = []
         group: list[Frame] = []
-        size = encoded = 0
+        encoded = 0
         for frame in self._frames:
-            length = len(frame[2].encode("utf-8"))
             frame_json = json_size(frame)
-            if group and (
-                size + length > MAX_RECORD or len(group) == MAX_FRAMES or encoded + 1 + frame_json > MAX_BODY_JSON
-            ):
+            if group and (len(group) == MAX_FRAMES or encoded + 1 + frame_json > self.record_json):
                 bodies.append(self._body(group))
-                group, size = [], 0
+                group = []
             if not group:
                 encoded = json_size(self._body([frame]))
             else:
                 encoded += 1 + frame_json
             group.append(frame)
-            size += length
-        if group:
+        if group and not whole:
             bodies.append(self._body(group))
-        self._frames, self._bytes = [], 0
+            group = []
+        self._frames = group
+        self._json = sum(json_size(frame) + 1 for frame in group)
         return bodies
 
     def _body(self, frames: list[Frame]) -> dict[str, Any]:
@@ -213,8 +228,10 @@ class TerminalRecorder:
         fifo_dir: str = FIFO_DIR,
         monotonic: Callable[[], float] = time.monotonic,
         on_output: Callable[[], None] | None = None,
+        limits: TerminalLimits = TERMINAL,
     ) -> None:
         self.journal = journal
+        self.limits = limits
         self.session_id = session_id
         self.terminal = terminal
         self.run = run
@@ -222,11 +239,13 @@ class TerminalRecorder:
         self.cast = CastFile(f"{base}/{CAST_NAME}")
         self.monotonic = monotonic
         self.on_output = on_output
-        self.recorder = Recorder()
+        self.recorder = Recorder(record_json=limits.record_json)
         self._fd = -1
         self._started = 0.0
         self._base_ms = 0
-        self._due: float | None = None
+        self._first: float | None = None
+        self._last = 0.0
+        self._now = False
         self._seen_output = False
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -251,10 +270,10 @@ class TerminalRecorder:
         """Cast file, FIFO and ``pipe-pane``; raises ``OSError``/``TmuxError`` when the pane cannot be piped."""
         base_ms, restarted = self.cast.open(self.journal.clock.now())
         self._base_ms, self._started = base_ms, self.monotonic()
-        self.recorder = Recorder(base_ms)
+        self.recorder = Recorder(base_ms, record_json=self.limits.record_json)
         if restarted:
             self.recorder.marker(base_ms)
-            self._due = self.monotonic()
+            self._now = True
         os.makedirs(os.path.dirname(self.fifo), mode=0o700, exist_ok=True)
         with contextlib.suppress(FileNotFoundError):
             os.unlink(self.fifo)
@@ -280,11 +299,13 @@ class TerminalRecorder:
             total += len(data)
             with self._lock:
                 self.recorder.output(data, self.now_ms())
-                if self._due is None:
-                    self._due = self.monotonic() + FLUSH_MS / 1000
+                self._last = self.monotonic()
+                if self._first is None:
+                    self._first = self._last
             if len(data) < READ_CHUNK or total >= MAX_DRAIN:
                 # The FIFO is open for writing as well, so it never reads as ended; a short read means empty for now.
-                # A bounded amount per call keeps flushes (16 KiB) and the stop check going under constant output.
+                # A bounded amount per call keeps flushes (full records) and the stop check going under constant
+                # output.
                 break
         if total and not self._seen_output:
             self._seen_output = True
@@ -292,19 +313,35 @@ class TerminalRecorder:
                 self.on_output()
         return total
 
+    def _deadline(self) -> float | None:
+        """When the buffered events are due by time (quiet or old enough); None without buffered output."""
+        if self._first is None:
+            return None
+        return min(self._last + self.limits.quiet_ms / 1000, self._first + self.limits.max_age_ms / 1000)
+
+    def _timed(self) -> bool:
+        with self._lock:
+            deadline = self._deadline()
+            return self._now or (deadline is not None and self.monotonic() >= deadline)
+
+    def _full(self) -> bool:
+        with self._lock:
+            return self.recorder.full
+
     def due(self) -> bool:
+        """Something is to be written now (a full record, quiet or old output, the restart marker)."""
         with self._lock:
             if not self.recorder.pending:
                 return False
-            return self.recorder.pending_bytes >= MAX_RECORD or (
-                self._due is not None and self.monotonic() >= self._due
-            )
+        return self._full() or self._timed()
 
-    def flush(self, final: bool = False) -> int:
-        """Journal the buffered events and append them to the cast file; returns the number of records."""
+    def flush(self, final: bool = False, whole: bool = False) -> int:
+        """Journal the buffered events (``whole``: only full records) and append them to the cast file; returns the
+        number of records."""
         with self._lock:
-            bodies = self.recorder.take(final)
-            self._due = None
+            bodies = self.recorder.take(final, whole)
+            if not self.recorder.pending:
+                self._first, self._now = None, False
         if bodies:
             # The cast file first: a restart continues at its last offset, which then is never below a journaled one.
             self.cast.append([frame for body in bodies for frame in body["frames"]])
@@ -320,13 +357,17 @@ class TerminalRecorder:
 
     def _timeout(self) -> float:
         with self._lock:
-            due = self._due
-        return FLUSH_MS / 1000 if due is None else due - self.monotonic()
+            if self._now:
+                return 0.0
+            deadline = self._deadline()
+        return self.limits.quiet_ms / 1000 if deadline is None else deadline - self.monotonic()
 
     def step(self) -> None:
         if self.wait(self._timeout()):
             self.drain()
-        if self.due():
+        if self._full():
+            self.flush(whole=True)
+        if self._timed():
             self.flush()
 
     def start(self) -> None:
@@ -341,7 +382,7 @@ class TerminalRecorder:
             except Exception:
                 sys.stderr.write("agent-guest-control: terminal capture failed\n")
                 traceback.print_exc(file=sys.stderr)
-                self._stop.wait(FLUSH_MS / 1000)
+                self._stop.wait(self.limits.quiet_ms / 1000)
 
     def stop(self) -> None:
         """Last read and flush; the pipe is closed and the FIFO removed."""

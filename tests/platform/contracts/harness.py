@@ -50,6 +50,9 @@ ASSERTION_KEYWORDS = frozenset(
         "items",
         "minItems",
         "maxItems",
+        "minProperties",
+        "maxProperties",
+        "propertyNames",
         "$ref",
         "$defs",
         "oneOf",
@@ -104,7 +107,7 @@ def subschemas(schema: object, pointer: str = "") -> Iterator[tuple[str, Schema]
         if isinstance(children, dict):
             for name, child in children.items():
                 yield from subschemas(child, f"{pointer}/{key}/{name}")
-    for key in ("items", "additionalProperties"):
+    for key in ("items", "additionalProperties", "propertyNames"):
         yield from subschemas(schema.get(key), f"{pointer}/{key}")
     for key in ("oneOf", "anyOf"):
         for index, child in enumerate(schema.get(key) or []):

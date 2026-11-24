@@ -10,7 +10,7 @@
 // the current org key, decision WEB-08 8): once the user holds the current org key (catch-up of another member), the
 // job sends the event (`POST /v1/events`). A queue belongs to the user who joined: a run for anybody else (sign-out
 // and another sign-in in the same tab) drops it unused; a run that started before a sign-out sends nothing.
-import { memberProfile } from '../account/join';
+import { memberProfile } from '../account/member-profile';
 import { buildWraps } from '../log/catchup';
 import { excludedFor } from '../log/platform';
 import { epochKey, ORG } from '../log/state';

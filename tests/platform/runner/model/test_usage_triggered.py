@@ -9,10 +9,11 @@ from typing import Any
 from ..model.kit import FLASH, Env
 from ..reconcile.rig import pid
 from ..sessions.kit import session_id
-from .test_usage import TOKENS, consume, record, run, started
+from .test_usage import TOKENS, consume, immediate_usage, record, run, started
 
 QUEUE: dict[str, Any] = {"prompt_queue": {"via_agent": [], "withdrawn": []}}
 ALICE = pid("alice")
+__all__ = ["immediate_usage"]  # one `usage` item per record (KOR-35): the autouse fixture of test_usage.py
 
 
 def test_usage_names_the_acting_user_of_the_turn(store_dsn: str) -> None:

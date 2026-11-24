@@ -182,7 +182,7 @@ SPEC_JOURNAL = {
 JOURNAL_ADDITIONS = {
     "session.state": "harness_version",
     "session.output": "truncated",
-    "session.hook": "rule",
+    "session.hook": "rule counts tools from to",  # contracts/changes/KOR-35.md (summary of routine calls)
     "usage": "provider_outside_allowlist",  # contracts/changes/GST-04.md
     "operation.request": "local_check local_error",  # contracts/changes/GST-07.md (05-runner.md section 12 step 1)
     "session.file": "files deleted bytes paths reason",  # contracts/changes/HOT-06.md (summary of many files)

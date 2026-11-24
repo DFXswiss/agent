@@ -2,8 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/platform-enrollments.request.json",
   "title": "GET /v1/platform/enrollments request",
-  "description": "query parameters",
+  "description": "query parameters; `after`/`limit` (ADR-086 section 2, KOR-35) read the platform log page by page",
   "type": "object",
-  "properties": {},
+  "properties": {
+    "after": {
+      "$ref": "../common.json#/$defs/q_seq"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_log"
+    }
+  },
   "additionalProperties": false
 }

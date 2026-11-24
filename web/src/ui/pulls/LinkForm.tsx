@@ -3,12 +3,12 @@
 // first, decrypted titles). The address is `https://github.com/<owner>/<repo>/pull/<n>` or `<owner>/<repo>#<n>`; a
 // pull request linked already (under any epoch the browser holds) is shown with its task and nothing is changed.
 // Only for users who may write in the workgroup.
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { parsePullAddress } from '../../core/pulls/address';
 import { linkErrorCode, linkPull, type LinkOutcome } from '../../core/pulls/links';
 import type { TaskRow } from '../../core/store/slices/tasks';
-import { loadTasks, selectListRows } from '../../core/tasks/list';
+import { loadTasks, PAGE_SIZE, selectListRows } from '../../core/tasks/list';
 import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
 import { useAppEnv } from '../shell/context';
@@ -28,7 +28,10 @@ function TaskOption({ row }: { readonly row: TaskRow }) {
   return <option value={row.task_id}>{title.status === 'verified' ? title.text : t('pulls.task.untitled')}</option>;
 }
 
-/** The workgroup's tasks to choose from (the first page of its list, newest activity first). */
+/**
+ * The workgroup's tasks to choose from: the first page of its list (`PAGE_SIZE`, newest activity first), also when the
+ * task list has loaded further pages (ADR-086 section 1: a bounded choice).
+ */
 function TaskChoice({
   wg,
   value,
@@ -41,7 +44,8 @@ function TaskChoice({
   const { app } = useAppEnv();
   const { t } = useI18n();
   const id = useId();
-  const rows = useStore(selectListRows(wg, null), app.store);
+  const loaded = useStore(selectListRows(wg, null), app.store);
+  const rows = useMemo(() => loaded.slice(0, PAGE_SIZE), [loaded]);
   useTitles(rows);
   useEffect(() => {
     void loadTasks(app.tasks, wg, null);

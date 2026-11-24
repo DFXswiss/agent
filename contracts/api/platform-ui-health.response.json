@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/platform-ui-health.response.json",
+  "title": "GET /v1/platform/ui-health response",
+  "description": "Body of a successful response to GET /v1/platform/ui-health (03-api.md section 4.11, 08-monitoring.md section 6.1): the daily UI health counters from the day `from` on, newest day first, then by version and view; at most 10 000 rows (`truncated: true` when cut). `reports`: reports that named the view; `count`: main-thread blocks over 200 ms; `blocked_ms`: their summed duration; `max_bucket`: the largest bucket of the longest block (enums/ui-views.json).",
+  "type": "object",
+  "properties": {
+    "from": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "day": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+          },
+          "version": {
+            "$ref": "../common.json#/$defs/version_text"
+          },
+          "view": {
+            "type": "string",
+            "pattern": "^[a-z]+(-[a-z]+)*(\\.[a-z]+(-[a-z]+)*)?$",
+            "maxLength": 64
+          },
+          "reports": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "count": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "blocked_ms": {
+            "$ref": "../common.json#/$defs/count"
+          },
+          "max_bucket": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6
+          }
+        },
+        "required": [
+          "day",
+          "version",
+          "view",
+          "reports",
+          "count",
+          "blocked_ms",
+          "max_bucket"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    },
+    "truncated": {
+      "type": "boolean",
+      "const": true
+    }
+  },
+  "required": [
+    "from",
+    "rows"
+  ],
+  "additionalProperties": false
+}

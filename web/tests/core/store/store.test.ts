@@ -21,7 +21,7 @@ import {
   setLiveState,
   setOnline,
 } from '../../../src/core/store/slices/connection';
-import { type EventEntry, findEvents, MAX_EVENTS, putEvents, touchEvents } from '../../../src/core/store/slices/events';
+import { type EventEntry, findEvents, MAX_EVENTS, putEvents } from '../../../src/core/store/slices/events';
 import { setQueue, syncing } from '../../../src/core/store/slices/jobs';
 import { setIdentity, setProfile, setSession } from '../../../src/core/store/slices/me';
 import {
@@ -230,7 +230,7 @@ describe('base slices', () => {
     expect(store.getState().orgs.platform).toBe(platform);
   });
 
-  it('events: insert, replace, LRU bound, touch and find', () => {
+  it('events: insert, replace, bound and find', () => {
     const store = createStore();
     putEvents(store, 'a', []);
     expect(store.getState().events).toEqual({});
@@ -241,11 +241,6 @@ describe('base slices', () => {
       [2, 'verified'],
     ]);
     expect([...store.getState().events.a!.entries.keys()]).toEqual([1, 2]);
-    touchEvents(store, 'a', [1, 7]);
-    expect([...store.getState().events.a!.entries.keys()]).toEqual([2, 1]);
-    const untouched = store.getState().events;
-    touchEvents(store, 'zz', [1]);
-    expect(store.getState().events).toBe(untouched);
 
     putEvents(
       store,

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/workgroup-charges.response.json",
   "title": "GET /v1/workgroups/{wg}/charges response",
-  "description": "Body of a successful response to GET /v1/workgroups/{wg}/charges (03-api.md section 4.11, 12-billing.md section 6; last 30 days, by total descending). Amounts in micro-USD.",
+  "description": "Body of a successful response to GET /v1/workgroups/{wg}/charges (03-api.md section 4.11, 12-billing.md section 6; last 30 days). Amounts in micro-USD; total_micro_usd is that of the whole workgroup. Without `before`/`limit` the tasks by total descending, at most 200 (`truncated: true` when cut); with them one page of at most 200 tasks newest first (by the UUIDv7 task ID) and next_before (ADR-086 section 2, KOR-35).",
   "type": "object",
   "properties": {
     "tasks": {
@@ -40,6 +40,13 @@
     },
     "total_micro_usd": {
       "$ref": "../common.json#/$defs/count"
+    },
+    "next_before": {
+      "$ref": "../common.json#/$defs/next_before"
+    },
+    "truncated": {
+      "type": "boolean",
+      "const": true
     }
   },
   "required": [

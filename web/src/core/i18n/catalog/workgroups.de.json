@@ -17,6 +17,8 @@
   "create.note": "Alle Admins der Organisation können sie lesen. Du kannst schreiben.",
   "create.members": "Mitglieder",
   "create.devices": "Geräte",
+  "create.members.search": "Mitglieder suchen",
+  "create.devices.search": "Geräte suchen",
   "rename.open": "Umbenennen",
   "rename.title": "Workgroup umbenennen",
   "rename.confirm": "Umbenennen",
@@ -33,5 +35,8 @@
   "placement.save": "Speichern",
   "placement.cancel": "Abbrechen",
   "placement.auto": "Automatisch",
-  "placement.line": "Standardgerät: {device}"
+  "placement.line": "Standardgerät: {device}",
+  "list.more": "{count} weitere Workgroups – anzeigen",
+  "list.above": "{count} Workgroups darüber – anzeigen",
+  "list.top": "Zurück zum Anfang"
 }

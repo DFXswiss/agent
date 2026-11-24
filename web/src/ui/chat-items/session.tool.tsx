@@ -8,7 +8,7 @@ import type { ChatItem, ChatItemProps } from '../registries/chat-items';
 import { useSeconds } from '../countdown/parts';
 import { useI18n } from '../i18n';
 import { EventTime } from '../task-tabs/chat/EventTime';
-import { Clipped } from './file/Clipped';
+import { Clipped } from '../lists/Clipped';
 
 const text = (body: unknown, field: string): string =>
   isRecord(body) && typeof body[field] === 'string' ? body[field] : '';
@@ -52,12 +52,14 @@ function Tool({ item }: ChatItemProps) {
             text={text(body, 'input')}
             className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs"
             testId="chat.tool.input"
+            controls="chat"
           />
           <h4 className="text-xs font-semibold">{t('task.chat.tool.result')}</h4>
           <Clipped
             text={text(body, 'result_summary')}
             className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs"
             testId="chat.tool.result"
+            controls="chat"
           />
         </div>
       )}

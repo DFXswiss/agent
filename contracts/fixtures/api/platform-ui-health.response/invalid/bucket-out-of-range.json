@@ -1,0 +1,14 @@
+{
+  "from": "2026-11-18",
+  "rows": [
+    {
+      "day": "2026-11-24",
+      "version": "0.1.0",
+      "view": "task.chat",
+      "reports": 4,
+      "count": 9,
+      "blocked_ms": 5200,
+      "max_bucket": 7
+    }
+  ]
+}

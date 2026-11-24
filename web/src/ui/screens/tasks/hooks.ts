@@ -1,9 +1,11 @@
 // Hooks shared by the home screen, the task list and the task page: the verified org state with the user's rights,
-// the org's names (profiles pulled once and read by the event reader) and task titles.
-import { useEffect } from 'react';
+// the org's names (profiles pulled once and read by the event reader) and task titles. A list reads the titles and
+// owners of its rows with one selector (`useRowInfo`), never one store subscription per row.
+import { useEffect, useMemo } from 'react';
 import type { OrgState } from '../../../core/log/state';
 import { orgEntry } from '../../../core/store/slices/orgs';
 import type { TaskRow } from '../../../core/store/slices/tasks';
+import type { StoreState } from '../../../core/store/store';
 import {
   type Directory,
   PROFILE_KINDS,
@@ -44,10 +46,56 @@ export function useTitle(row: TaskRow): Title {
   return useStore(selectTitle(row.wg_id, row.task_id, row.title_event_id), app.store);
 }
 
-/** The task's owner: the signed author of its first user-written `task.meta`, not the hub's `owner_id` (KOR-04). */
+/** The owner of one task (the signed author of its first user-written `task.meta`, KOR-04), e.g. for a single card. */
 export function useOwner(row: TaskRow): string | null {
   const { app } = useAppEnv();
   return useStore(selectOwner(row.org_id, row.wg_id, row.task_id), app.store);
+}
+
+/** What a list row shows of the store: the title and the owner (the signed author, not the hub's `owner_id`, KOR-04). */
+export interface RowInfo {
+  readonly title: Title;
+  readonly owner: string | null;
+}
+
+export const sameTitle = (a: Title, b: Title): boolean =>
+  (a.status === 'verified' && b.status === 'verified' && a.text === b.text) ||
+  (a.status === 'unverifiable' && b.status === 'unverifiable' && a.code === b.code) ||
+  (a.status === 'missing' && b.status === 'missing');
+
+/**
+ * One selector for the rows of a list: task ID → title and owner. It returns the same map while no row's title or
+ * owner changed (a stable snapshot for `useStore`); create it once per row array.
+ */
+export function selectRowInfo(
+  org: string,
+  rows: readonly TaskRow[],
+): (state: StoreState) => ReadonlyMap<string, RowInfo> {
+  let last: ReadonlyMap<string, RowInfo> | null = null;
+  return (state) => {
+    const next = new Map<string, RowInfo>();
+    for (const row of rows) {
+      next.set(row.task_id, {
+        title: selectTitle(row.wg_id, row.task_id, row.title_event_id)(state),
+        owner: selectOwner(org, row.wg_id, row.task_id)(state),
+      });
+    }
+    // the keys are the same in every call (the same rows): only the values can differ
+    const unchanged =
+      last !== null &&
+      [...next].every(([id, info]) => {
+        const old = last!.get(id)!;
+        return old.owner === info.owner && sameTitle(old.title, info.title);
+      });
+    if (!unchanged) last = next;
+    return last!;
+  };
+}
+
+export function useRowInfo(org: string, rows: readonly TaskRow[]): ReadonlyMap<string, RowInfo> {
+  const { app } = useAppEnv();
+  const select = useMemo(() => selectRowInfo(org, rows), [org, rows]);
+  return useStore(select, app.store);
 }
 
 /** Pulls the titles of `rows` that are not in the store yet. */

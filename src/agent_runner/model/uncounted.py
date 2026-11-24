@@ -4,7 +4,8 @@
 `platform_budget.spent_today_by_org` and `last_origin_seq` of `GET /v1/device/state` come from one repeatable-read
 snapshot, and the hub adds the cost of an outbox item `usage` of platform work to that amount in the transaction that
 stores the item: the amount contains exactly this device's platform `usage` items up to `last_origin_seq`.
-`budget(...)` therefore adds the cost (`delta.cost_micro_usd`) of the stored `usage` items above it that the hub will
+`budget(...)` therefore adds the cost (`delta.cost_micro_usd`) of the stored `usage` items above it - and of the
+merged items not yet written (`runner.usage_pending`, `model.merge`; KOR-35) - that the hub will
 count for the organization - the hub's rule `platform_work`: a session with `model_access` `platform`, or without a
 known access and with `cost_basis` `provider` - and names the guest journal position the runner had taken into its
 outbox (`journal_through`, the cursor of the session's VM; read after the items, so a page committed in between is in
@@ -19,10 +20,10 @@ new day. The highest amount of the day is still a lower bound of the day's spend
 
 Without a known `last_origin_seq`, without the storage key, or for a session without VM nothing is added (but the
 day's highest amount still applies) and no position is named (the gateway then keeps only its `old spent + observed`
-bound). At most `MAX_ITEMS` items are read and a row that does not open is skipped (a lower bound still); only the
-session ID, the cost basis and the cost of the opened bodies are used. A store that cannot be read leaves the hub's
-amount. The opening runs on the event loop (one AEAD open per uncounted item; the items above the hub's position are
-few while the hub is reachable).
+bound). At most `MAX_ITEMS` stored items (plus every pending merged item, one per session) are read and a row that
+does not open is skipped (a lower bound still); only the session ID, the cost basis and the cost of the opened bodies
+are used. A store that cannot be read leaves the hub's amount. The opening runs on the event loop (one AEAD open per
+uncounted item; the items above the hub's position are few while the hub is reachable).
 """
 
 from __future__ import annotations
@@ -98,15 +99,17 @@ async def uncounted_micro(conn: Any, storage_key: bytes, org_id: str, after: int
         (org_id,),
     )
     access = {str(sid): kind for sid, kind in await cur.fetchall()}
+    # One statement, one snapshot: an item the merge moves from `usage_pending` to the outbox meanwhile is in one part.
+    # The pending rows (at most one per session) are always read; `MAX_ITEMS` bounds the stored items only.
     cur = await conn.execute(
-        "SELECT origin_seq, body_ct FROM runner.outbox WHERE item_kind = 'usage' AND origin_seq > %s"
-        " ORDER BY origin_seq LIMIT %s",
+        "(SELECT origin_seq, body_ct, NULL::jsonb FROM runner.outbox WHERE item_kind = 'usage' AND origin_seq > %s"
+        " ORDER BY origin_seq LIMIT %s) UNION ALL SELECT NULL, NULL, item FROM runner.usage_pending",
         (after, MAX_ITEMS),
     )
     total = 0
-    for seq, blob in await cur.fetchall():
+    for seq, blob, pending in await cur.fetchall():
         try:
-            body = outbox.open_item(storage_key, seq, "usage", bytes(blob))
+            body = pending if seq is None else outbox.open_item(storage_key, seq, "usage", bytes(blob))
         except CryptoError:
             continue
         sid = body.get("session_id")

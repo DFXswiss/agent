@@ -17,7 +17,7 @@ import pytest
 
 from agent_runner import registry
 from agent_runner.guestlink.client import JournalRecord
-from agent_runner.model import usage
+from agent_runner.model import merge, usage
 from agent_runner.model.catalog import load_catalog
 from agent_runner.sessions.consume import VmJournal
 from agent_runner.sessions.journal import JournalRecordInvalid
@@ -29,6 +29,12 @@ from .kit import FLASH, OPUS, Env, Kit, api_key_body, model_env, model_kit, stor
 
 Body = Callable[[Env], Awaitable[None]]
 ZERO = dict.fromkeys(usage.USAGE_COUNTS, 0)
+
+
+@pytest.fixture(autouse=True)
+def immediate_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One `usage` item per record, as before the merge (KOR-35); the merge has its own suite (model/test_merge.py)."""
+    monkeypatch.setattr(merge, "WINDOW_S", 0.0)
 
 
 def run(dsn: str, body: Body) -> None:

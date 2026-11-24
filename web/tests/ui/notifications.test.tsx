@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HubError } from '../../src/core/net/signedFetch';
 import { setProfile } from '../../src/core/store/slices/me';
 import { receive } from '../../src/core/store/slices/notifications';
-import { NotificationsScreen } from '../../src/ui/screens/notifications/NotificationsScreen';
+import { MAX_ROWS, NotificationsScreen, PAGE, WINDOW } from '../../src/ui/screens/notifications/NotificationsScreen';
 import { Bell, headerItem, TOAST_MS } from '../../src/ui/shell/header/bell';
 import { boardWorld } from '../core/whiteboards/world';
 import { notification } from '../core/notifications/rows';
@@ -84,6 +84,40 @@ describe('notification center', () => {
     fireEvent.click(items()[0]!);
     await waitFor(() => expect(router.state.location.pathname).toMatch(/\/t\//));
     expect(w.client.of('POST /v1/notifications/read')).toHaveLength(calls);
+  });
+
+  it('windows many rows newest first and pages with the cursor (ADR-086 section 1)', async () => {
+    const w = await world();
+    const page = (newest: number, count: number) =>
+      Array.from({ length: count }, (_, i) => {
+        const n = newest - i;
+        return notification(`n${String(n).padStart(4, '0')}`, {
+          org_id: w.org,
+          created_at: new Date(Date.UTC(2026, 10, 21, 12) + n * 1000).toISOString(),
+        });
+      });
+    w.client.on('GET /v1/notifications', (_body, target) =>
+      target.includes('before=')
+        ? { notifications: page(100, 100), next_before: null }
+        : { notifications: page(250, 150), next_before: 'more' },
+    );
+    mount(w, ROUTES, '/notifications');
+    const items = () => screen.getAllByTestId('notifications.item');
+    await waitFor(() => expect(items()).toHaveLength(WINDOW));
+    const list = screen.getByTestId('notifications.list');
+    expect(list.closest('[data-list]')).toHaveAttribute('data-list', 'notifications');
+    // newest first, and only the window is rendered
+    expect(within(list).getAllByRole('listitem')).toHaveLength(WINDOW);
+    expect(items()[0]!.closest('li')).toHaveAttribute('data-key', 'n0250');
+    expect(screen.queryByTestId('notifications.more')).toBeNull();
+    fireEvent.click(screen.getByTestId('notifications.list.older'));
+    expect(items()).toHaveLength(150);
+    fireEvent.click(screen.getByTestId('notifications.more'));
+    await waitFor(() => expect(items()).toHaveLength(150 + PAGE));
+    fireEvent.click(screen.getByTestId('notifications.list.older'));
+    expect(items()).toHaveLength(MAX_ROWS);
+    expect(items()[0]!.closest('li')).toHaveAttribute('data-key', 'n0200');
+    expect(screen.queryByTestId('notifications.more')).toBeNull();
   });
 
   it('navigates even when marking read fails', async () => {

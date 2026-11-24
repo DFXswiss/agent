@@ -15,6 +15,7 @@ from agent_hub.crypto.encoding import format_time
 from agent_hub.notifications import signals as notification_signals
 from agent_hub.sessions import prompts
 from agent_hub.stream.publish import MemoryPublisher
+from agent_hub.tasks import queue as task_queue
 from tests.platform.hub.agents.support import agent_client
 from tests.platform.hub.conftest import SignedClient
 from tests.platform.hub.device.support import Fleet
@@ -447,3 +448,14 @@ def test_a_device_going_offline_notifies_the_authors_of_its_waiting_prompts(desk
     finally:
         notification_signals.wait()
         notification_signals.bind(None)
+
+
+def test_the_queue_is_capped(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-086 section 2: at most `QUEUE_MAX` prompts, the oldest, and `truncated` when cut."""
+    monkeypatch.setattr(task_queue, "QUEUE_MAX", 1)
+    task, _session = desk.started()
+    first = first_prompt(desk, task)
+    follow(desk, task)
+    found = queue(desk, task, desk.scene.reader)
+    assert [entry["event_id"] for entry in found["prompts"]] == [first]
+    assert found["truncated"] is True

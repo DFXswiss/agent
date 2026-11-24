@@ -16,11 +16,8 @@
 // the log through a new lookup (it must extend the verified one) and rebuilds; an `accept` the hub already stored
 // (answer lost) is recognized by the membership in `GET /v1/me`.
 import { b64uDecode } from '../encoding/b64u';
-import { uuid7 } from '../encoding/ids';
-import { bodyJson } from '../encoding/json';
 import { formatTime } from '../encoding/time';
 import { fail } from '../crypto/errors';
-import { newHeader, sealEvent } from '../crypto/event';
 import { inviteSecrets, openPackage, parseCode } from '../crypto/invite';
 import type { Identity } from '../crypto/keys';
 import { Secret } from '../crypto/secret';
@@ -34,6 +31,7 @@ import { requireHead } from '../org/batch';
 import { isRecord } from '../registry';
 import type { AnonRequest } from './anon';
 import { displayName } from './genesis';
+import { memberProfile } from './member-profile';
 import type { Lookup } from './register';
 
 /** A scope key of the package. */
@@ -301,30 +299,7 @@ export interface AcceptInput {
   readonly now?: () => number;
 }
 
-/** The `member.profile` event of `joiner` in `org`, sealed with the org key of `epoch` at log head `lh`. */
-export async function memberProfile(
-  org: string,
-  epoch: number,
-  orgKey: Secret,
-  joiner: Joiner,
-  name: string,
-  lh: number,
-  at: number,
-): Promise<unknown> {
-  const header = newHeader({
-    id: uuid7(at),
-    org,
-    scope: ORG,
-    scope_id: org,
-    epoch,
-    author: joiner.userId,
-    kind: 'member.profile',
-    ts: formatTime(at),
-    lh,
-    ref: joiner.userId,
-  });
-  return sealEvent(orgKey, header, bodyJson({ display_name: name }), joiner.identity.sig.privateKey);
-}
+export { memberProfile } from './member-profile';
 
 /** Builds `accept` (both signatures), the self-wraps of the current package keys and the `member.profile` event. */
 export async function prepareAccept(input: AcceptInput): Promise<PreparedAccept> {

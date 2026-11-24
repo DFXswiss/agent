@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/task-queue.response.json",
   "title": "GET /v1/tasks/{task}/queue response",
-  "description": "Body of a successful response to GET /v1/tasks/{task}/queue (03-api.md section 4.6, ADR-083 section 3): the prompts not yet delivered, in event order.",
+  "description": "Body of a successful response to GET /v1/tasks/{task}/queue (03-api.md section 4.6, ADR-083 section 3): the prompts not yet delivered, in event order; at most 10 000 prompts, the oldest, `truncated: true` when cut (ADR-086 section 2, KOR-35).",
   "type": "object",
   "properties": {
     "task_id": {
@@ -46,6 +46,11 @@
       },
       "minItems": 0,
       "maxItems": 100
+    },
+    "truncated": {
+      "type": "boolean",
+      "const": true,
+      "description": "the queue was cut at 10 000 prompts (ADR-086 section 2)"
     }
   },
   "required": [

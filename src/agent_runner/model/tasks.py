@@ -11,13 +11,16 @@ bound to a token file of the operator's pool are renewed (`model.gateways.refres
 moves to another one. A renewal with an unchanged file changes nothing (the stamp compares the file's identity; the
 file is not read again). The task ends at once when the pool is not configured. A failing round is logged and the loop
 goes on.
+
+Daemon task `usage_merge` (KOR-35): every second the merged usage items that are due go to the outbox
+(`model.merge.run`).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from agent_runner.model import fallback, operator
+from agent_runner.model import fallback, merge, operator
 from agent_runner.model.gateways import RENEWED, live_sessions, refresh, running_service
 from agent_runner.prompts.deliver import deliverer_for
 from agent_runner.registry import TaskSpec
@@ -67,4 +70,8 @@ async def run_fallback(context: Any) -> None:
         await context.host.sleep(fallback.TICK_S)
 
 
-TASKS = [TaskSpec("operator_subscriptions", run), TaskSpec("model_fallback", run_fallback)]
+TASKS = [
+    TaskSpec("operator_subscriptions", run),
+    TaskSpec("model_fallback", run_fallback),
+    TaskSpec("usage_merge", merge.run),
+]

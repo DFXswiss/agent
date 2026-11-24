@@ -19,9 +19,9 @@ import {
 } from './records';
 import { buildWraps } from '../log/catchup';
 import { excludedFor, type VerifiedPlatformLog } from '../log/platform';
-import { AGENT, DEVICE, type OrgState } from '../log/state';
+import { AGENT, changedPrincipals, DEVICE, type OrgState } from '../log/state';
 import type { VerifiedLog } from '../log/verify';
-import { compareSlots, CRED, credReaders } from '../log/wraps';
+import { compareSlots, CRED, credDevice, credReaders, revokedAgents } from '../log/wraps';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import { deviceKeys, type RequestsContext } from '../requests/client';
@@ -40,6 +40,56 @@ export interface Loss {
   readonly key: string;
 }
 
+/**
+ * Whether the devices of `state` count for the owner's `CK` in `credReaders([state], owner)`: always for an
+ * organization; for a user while it is a member that joined by its own entry not signed by a revoked agent.
+ */
+function devicesCount(state: OrgState, owner: string): boolean {
+  if (state.org === owner) return true;
+  const user = state.member(owner);
+  if (user === null || !user.consented) return false;
+  return user.joinAgent === null || !revokedAgents([state]).has(user.joinAgent);
+}
+
+/**
+ * `[seq, principal]` for every principal of `credReaders([states[seq - 1]], owner)` that is not in
+ * `credReaders([states[seq]], owner)`, in that order. The readers are kept from state to state: after an entry only
+ * the principals whose rights may have changed are asked again (`changedPrincipals`, which names the agents of every
+ * named user too). Everything is asked again when the owner itself or one of its agents is named (the owner's agents,
+ * their revocation and whether the owner's devices count depend on them), or for an unknown change (KOR-35: asking
+ * every principal after every entry made the first sign-in into a big org quadratic).
+ */
+function replayLosses(log: VerifiedLog, owner: string): [number, string][] {
+  const lost: [number, string][] = [];
+  let readers = credReaders([log.states[0]!], owner);
+  let counting = devicesCount(log.states[0]!, owner);
+  for (let seq = 1; seq < log.states.length; seq += 1) {
+    const before = log.states[seq - 1]!;
+    const state = log.states[seq]!;
+    const changed = changedPrincipals(before, state);
+    const ownerChanged = (p: string) =>
+      p === owner || before.principals.get(p)?.parent === owner || state.principals.get(p)?.parent === owner;
+    let gone: string[];
+    if (changed === null || [...changed].some(ownerChanged)) {
+      const after = credReaders([state], owner);
+      gone = [...credReaders([before], owner)].filter((principal) => !after.has(principal));
+      readers = after;
+      counting = devicesCount(state, owner);
+    } else {
+      // only principals other than the owner and its agents changed: of those only devices can be readers, and an
+      // entry names at most one device (its subject), so `gone` is in the order of `credReaders` as well
+      const reader = (p: string) => counting && credDevice(state, owner, p);
+      gone = [...changed].filter((p) => readers.has(p) && !reader(p));
+      for (const p of changed) {
+        if (reader(p)) readers.add(p);
+        else readers.delete(p);
+      }
+    }
+    for (const principal of gone) lost.push([seq, principal]);
+  }
+  return lost;
+}
+
 /** Devices that lost eligibility for the owner's `CK` in the verified logs and are not entitled now (module comment). */
 export function credentialLosses(
   logs: readonly VerifiedLog[],
@@ -55,12 +105,7 @@ export function credentialLosses(
       losses.set(device, { at, key: `${device} ${at}` });
   };
   for (const log of logs) {
-    for (let seq = 1; seq < log.states.length; seq += 1) {
-      const after = credReaders([log.states[seq]!], owner);
-      for (const device of credReaders([log.states[seq - 1]!], owner)) {
-        if (!after.has(device)) note(device, Date.parse(log.entries[seq]!.body.ts as string));
-      }
-    }
+    for (const [seq, lost] of replayLosses(log, owner)) note(lost, Date.parse(log.entries[seq]!.body.ts as string));
   }
   const certifications = platform?.entries ?? [];
   for (const device of credReaders(states, owner)) {

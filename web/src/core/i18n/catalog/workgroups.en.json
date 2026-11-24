@@ -17,6 +17,8 @@
   "create.note": "Every admin of the organization can read it. You can write.",
   "create.members": "Members",
   "create.devices": "Devices",
+  "create.members.search": "Search members",
+  "create.devices.search": "Search devices",
   "rename.open": "Rename",
   "rename.title": "Rename workgroup",
   "rename.confirm": "Rename",
@@ -33,5 +35,8 @@
   "placement.save": "Save",
   "placement.cancel": "Cancel",
   "placement.auto": "Automatic",
-  "placement.line": "Default device: {device}"
+  "placement.line": "Default device: {device}",
+  "list.more": "{count} more workgroups – show",
+  "list.above": "{count} workgroups above – show",
+  "list.top": "Back to the top"
 }

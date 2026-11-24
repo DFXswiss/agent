@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from agent_hub.crypto.encoding import b64u_encode, format_time
+from agent_hub.platform import invites as platform_invites
 from agent_hub.platform.invites import state_of
 from tests.platform.hub.auth.authenticator import INVITES, new_invite
 from tests.platform.hub.conftest import HubHarness, SignedClient
@@ -37,6 +38,30 @@ def create(
         json={"invite_id": invite_id, "pk_inv": key, "kind": "user", "expires_at": expires},
         **kwargs,
     )
+
+
+def test_the_list_pages_and_is_capped(plat: Platform, hub: HubHarness, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-086 section 2 (KOR-35): `before`/`limit` page newest first (ties by ID); without them at most
+    `MAX_LISTED` with `truncated: true` when cut."""
+    client = inviter(plat, hub)
+    assert client.get("/v1/platform/invites", params={"limit": "3"}).json() == {"invites": [], "next_before": None}
+    older = new_invite_id()
+    create(client, hub, older)
+    hub.clock.advance(1)
+    same = [new_invite_id() for _ in range(3)]
+    for invite_id in same:
+        create(client, hub, invite_id)
+    order = [*sorted(same, reverse=True), older]
+    first = client.get("/v1/platform/invites", params={"limit": "3"}).json()
+    assert [item["invite_id"] for item in first["invites"]] == order[:3]
+    rest = client.get("/v1/platform/invites", params={"before": first["next_before"]}).json()
+    assert ([item["invite_id"] for item in rest["invites"]], rest["next_before"]) == (order[3:], None)
+    assert set(client.get("/v1/platform/invites").json()) == {"invites"}
+    monkeypatch.setattr(platform_invites, "MAX_LISTED", 2)
+    capped = client.get("/v1/platform/invites").json()
+    assert ([item["invite_id"] for item in capped["invites"]], capped["truncated"]) == (order[:2], True)
+    response = client.get("/v1/platform/invites", params={"limit": "0"}, extensions={"contract": False})
+    assert (response.status_code, response.json()["error"]) == (400, "request_invalid")
 
 
 def test_an_inviter_creates_lists_and_revokes(plat: Platform, hub: HubHarness) -> None:

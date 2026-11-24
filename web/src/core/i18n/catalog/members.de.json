@@ -21,6 +21,7 @@
   "admit.placeholder": "XXXX-XXXX-XXXX",
   "admit.find": "Suchen",
   "admit.invitees": "Von dir eingeladen",
+  "admit.invitees.search": "Von dir eingeladene Konten suchen",
   "admit.found": "Konto {code} gefunden und geprüft",
   "admit.submit": "Aufnehmen",
   "admit.done": "{name} (Konto {code}) ist jetzt Mitglied. Alle Mitglieder sehen den Namen sofort; die Person sieht die Organisation beim nächsten Öffnen.",
@@ -79,5 +80,10 @@
   "invites.for": "Einladung für {name}",
   "invites.for-unnamed": "Einladung ohne Namen",
   "invites.status.settled": "{name} ist inzwischen Mitglied – diese Einladung wird nicht mehr gebraucht",
-  "invites.close": "Einladung schließen"
+  "invites.close": "Einladung schließen",
+  "access.more": "{count} weitere – anzeigen",
+  "list.more": "{count} weitere Mitglieder – anzeigen",
+  "list.above": "{count} Mitglieder darüber – anzeigen",
+  "list.top": "Zurück zum Anfang",
+  "invites.truncated": "Der Hub hat nur die neuesten Einladungen einer längeren Liste gesendet."
 }

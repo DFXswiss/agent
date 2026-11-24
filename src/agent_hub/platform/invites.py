@@ -31,6 +31,7 @@ from agent_hub.audit.recorder import unchanged
 from agent_hub.config import LIMITS
 from agent_hub.crypto.encoding import b64u_decode, format_time, parse_time
 from agent_hub.errors import HubError
+from agent_hub.events import paging
 
 MAX_LISTED = 1000
 
@@ -128,16 +129,25 @@ def _time(value: datetime | None) -> str | None:
     return None if value is None else format_time(value)
 
 
-def listing(connection: psycopg.Connection[Any], user: UUID, now: datetime) -> list[dict[str, object]]:
-    """The platform user invitations, newest first (a user without the role: only its own)."""
+def listing(connection: psycopg.Connection[Any], user: UUID, now: datetime, window: paging.Window) -> dict[str, Any]:
+    """The platform user invitations, newest first (`created_at DESC, id DESC`): at most `MAX_LISTED` (`truncated:
+    true` when cut), or one page of `window` with `next_before` (`agent_hub.events.paging`, ADR-086 section 2); a user
+    without the role sees only its own."""
     every = require_inviter(connection, user)
-    rows = connection.execute(
-        "SELECT id, created_by, created_at, expires_at, registered_user, used_at, revoked_at FROM hub.invite"
-        " WHERE scope = 'platform' AND kind = 'user' AND (%s OR created_by = %s)"
-        " ORDER BY created_at DESC, id DESC LIMIT %s",
-        (every, user, MAX_LISTED),
-    ).fetchall()
-    return [
+    clauses = ["scope = 'platform'", "kind = 'user'", "(%(every)s OR created_by = %(user)s)"]
+    params: dict[str, Any] = {"limit": window.limit + 1, "every": every, "user": user}
+    if window.before is not None:
+        clauses.append("(created_at, id) < (%(at)s, %(id)s)")
+        params["at"], params["id"] = window.before
+    rows, more = paging.cut(
+        connection.execute(
+            "SELECT id, created_by, created_at, expires_at, registered_user, used_at, revoked_at FROM hub.invite"
+            f" WHERE {' AND '.join(clauses)} ORDER BY created_at DESC, id DESC LIMIT %(limit)s",
+            params,
+        ).fetchall(),
+        window.limit,
+    )
+    invites = [
         {
             "invite_id": invite_id,
             "kind": "user",
@@ -151,6 +161,7 @@ def listing(connection: psycopg.Connection[Any], user: UUID, now: datetime) -> l
         }
         for invite_id, created_by, created_at, expires_at, registered_user, used_at, revoked_at in rows
     ]
+    return {"invites": invites, **window.extra((rows[-1][2], rows[-1][0]) if more else None)}
 
 
 def revoke(connection: psycopg.Connection[Any], user: UUID, invite_id: str, now: datetime) -> None:

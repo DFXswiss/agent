@@ -174,6 +174,7 @@ EXCLUDED: Mapping[str, str] = {
     "device_presence": "runtime state: a device is online again once it reconnects to the restored hub",
     "browser_watch": "runtime state: watch leases end within 30 s and the open streams write them again (KOR-44)",
     "browser_live": "runtime state: the latest live frame of a watched browser, replaced by the next one (KOR-44)",
+    "ui_health_daily": "anonymous hub-wide counters of the web clients (ADR-086 section 5): no org's data",
 }
 
 RULE_BY_TABLE: Mapping[str, TableRule] = {rule.table: rule for rule in RULES}

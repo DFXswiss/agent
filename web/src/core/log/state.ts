@@ -35,6 +35,170 @@ export const WRITE = 'write';
 export const ORG = 'org';
 export const WG = 'wg';
 
+// --- maps shared between states ---
+//
+// Immutable maps that share their contents with the map they were derived from (KOR-35). A verified log keeps the
+// state after every entry (`VerifiedLog.states`), and an entry that changes one invitation, principal, access or
+// assignment used to copy the whole map, so verifying a log cost time and memory quadratic in its length (an org with
+// a few thousand entries did not finish its first sign-in). `withEntry` and `withoutEntry` return a map that reads
+// exactly like the copy `new Map(map).set(key, value)` or `.delete(key)` – the same `get`, `has`, `size` and the same
+// iteration order (first insertion order; a replaced value stays in place, a deleted and added again key moves to the
+// end). All maps of one lineage share an append-only store of every write with its version; a map is a version of it
+// and reads the latest write of a key at or before its version. A write from the newest version appends (O(1)
+// amortized); a write from an older version (a second child of one state) copies the map into a new store first.
+// `changedKeys` names the keys written between two versions of a store, so the readers of the rights questions over
+// every state of a log only look at the principals an entry touched (`changedPrincipals`). A store copies the map it
+// is built from, and `OrgState` turns every plain map it is given into such a copy: what a state answers (and every
+// index built for it) can never change because a caller still holds and changes the plain map.
+
+/** The mark of a deleted key in the store. */
+const DELETED: unique symbol = Symbol('deleted');
+
+/** The writes of one key: ascending versions, their values, and the versions at which it was (again) inserted. */
+interface Slot<V> {
+  readonly versions: number[];
+  readonly values: (V | typeof DELETED)[];
+  readonly inserted: number[];
+}
+
+/** The index of the last element `<= version` of an ascending list, -1 if none. */
+function lastAtMost(list: readonly number[], version: number): number {
+  let low = 0;
+  let high = list.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (list[middle]! <= version) low = middle + 1;
+    else high = middle - 1;
+  }
+  return high;
+}
+
+class Store<K, V> {
+  /** The newest version; writes are numbered from 1. */
+  latest = 0;
+  readonly slots = new Map<K, Slot<V>>();
+  /** `[version, key]` of every insertion, in version order (the iteration order of every version). */
+  readonly inserts: [number, K][] = [];
+  /** `writes[version - 1]`: the key written at `version`. */
+  readonly writes: K[] = [];
+
+  /** A store holding a copy of `contents` (its newest version). */
+  constructor(contents: Iterable<readonly [K, V]>) {
+    for (const [key, value] of contents) this.write(key, value, true);
+  }
+
+  write(key: K, value: V | typeof DELETED, insert: boolean): number {
+    const version = ++this.latest;
+    let slot = this.slots.get(key);
+    if (slot === undefined) {
+      slot = { versions: [], values: [], inserted: [] };
+      this.slots.set(key, slot);
+    }
+    slot.versions.push(version);
+    slot.values.push(value);
+    if (insert) {
+      slot.inserted.push(version);
+      this.inserts.push([version, key]);
+    }
+    this.writes.push(key);
+    return version;
+  }
+
+  /** The value of `key` at `version`; `DELETED` also for a key not written by then. */
+  at(key: K, version: number): V | typeof DELETED {
+    const slot = this.slots.get(key);
+    if (slot === undefined) return DELETED;
+    const index = lastAtMost(slot.versions, version);
+    return index < 0 ? DELETED : slot.values[index]!;
+  }
+}
+
+class VersionedMap<K, V> implements ReadonlyMap<K, V> {
+  constructor(
+    readonly store: Store<K, V>,
+    readonly version: number,
+    readonly size: number,
+  ) {}
+
+  get(key: K): V | undefined {
+    const value = this.store.at(key, this.version);
+    return value === DELETED ? undefined : value;
+  }
+
+  has(key: K): boolean {
+    return this.store.at(key, this.version) !== DELETED;
+  }
+
+  *entries(): MapIterator<[K, V]> {
+    const { store, version } = this;
+    for (const [inserted, key] of store.inserts) {
+      if (inserted > version) return;
+      // a key counts at its last insertion up to this version (a deleted and added again key moves to the end)
+      const slot = store.slots.get(key)!;
+      if (slot.inserted[lastAtMost(slot.inserted, version)] !== inserted) continue;
+      const value = store.at(key, version);
+      if (value !== DELETED) yield [key, value];
+    }
+  }
+
+  *keys(): MapIterator<K> {
+    for (const [key] of this.entries()) yield key;
+  }
+
+  *values(): MapIterator<V> {
+    for (const [, value] of this.entries()) yield value;
+  }
+
+  [Symbol.iterator](): MapIterator<[K, V]> {
+    return this.entries();
+  }
+
+  forEach(callback: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: unknown): void {
+    for (const [key, value] of this.entries()) callback.call(thisArg, value, key, this);
+  }
+}
+
+/** The newest version of a store holding `map` (a new store, a copy, for a plain map or an older version). */
+function writable<K, V>(map: ReadonlyMap<K, V>): VersionedMap<K, V> {
+  if (map instanceof VersionedMap && map.version === map.store.latest) return map as VersionedMap<K, V>;
+  const store = new Store<K, V>(map);
+  return new VersionedMap(store, store.latest, map.size);
+}
+
+/** `map` as an immutable shared map: itself if it is one, else a copy (section comment). */
+export function sharedMap<K, V>(map: ReadonlyMap<K, V>): ReadonlyMap<K, V> {
+  if (map instanceof VersionedMap) return map;
+  const store = new Store<K, V>(map);
+  return new VersionedMap(store, store.latest, map.size);
+}
+
+/** `new Map(map).set(key, value)` as an immutable map that shares `map`'s contents (section comment). */
+export function withEntry<K, V>(map: ReadonlyMap<K, V>, key: K, value: V): ReadonlyMap<K, V> {
+  const from = writable(map);
+  const present = from.has(key);
+  const version = from.store.write(key, value, !present);
+  return new VersionedMap(from.store, version, present ? from.size : from.size + 1);
+}
+
+/** `new Map(map)` without `key`, as an immutable map that shares `map`'s contents (section comment). */
+export function withoutEntry<K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> {
+  if (!map.has(key)) return map;
+  const from = writable(map);
+  return new VersionedMap(from.store, from.store.write(key, DELETED, false), from.size - 1);
+}
+
+/**
+ * Keys whose value (or presence) may differ between `a` and `b` – none for the same map, the keys written between
+ * their versions for two versions of one store – or null if the maps share nothing known (a plain map, two stores;
+ * the caller then compares everything).
+ */
+export function changedKeys<K, V>(a: ReadonlyMap<K, V>, b: ReadonlyMap<K, V>): Iterable<K> | null {
+  if (a === b) return [];
+  if (!(a instanceof VersionedMap && b instanceof VersionedMap && a.store === b.store)) return null;
+  const [first, second] = [a.version, b.version];
+  return new Set((a.store as Store<K, V>).writes.slice(Math.min(first, second), Math.max(first, second)));
+}
+
 /** `[scope, scope_id]` with scope `org` or `wg`. */
 export type Scope = readonly [scope: string, scopeId: string];
 
@@ -142,6 +306,47 @@ export interface OrgStateFields {
   readonly agentOwed: ReadonlyMap<string, string>;
 }
 
+/** `device -> workgroups` of every key a store of assignments ever inserted, extended as the store grows. */
+const storeIndexes = new WeakMap<Store<string, number>, { seen: number; index: Map<string, string[]> }>();
+
+function storeIndex(store: Store<string, number>): ReadonlyMap<string, readonly string[]> {
+  let found = storeIndexes.get(store);
+  if (found === undefined) {
+    found = { seen: 0, index: new Map() };
+    storeIndexes.set(store, found);
+  }
+  for (; found.seen < store.inserts.length; found.seen += 1) {
+    const [device, wg] = splitKey(store.inserts[found.seen]![1]);
+    const wgs = found.index.get(device);
+    if (wgs === undefined) found.index.set(device, [wg]);
+    else if (!wgs.includes(wg)) wgs.push(wg);
+  }
+  return found.index;
+}
+
+/** `user -> agents` of every principal a store of principals ever wrote with a `parent`, extended as the store grows. */
+const agentIndexes = new WeakMap<Store<string, Principal>, { seen: number; index: Map<string, string[]> }>();
+
+function agentIndex(principals: ReadonlyMap<string, Principal>): ReadonlyMap<string, readonly string[]> {
+  // the constructor keeps every map as a shared map
+  const store = (principals as VersionedMap<string, Principal>).store;
+  let found = agentIndexes.get(store);
+  if (found === undefined) {
+    found = { seen: 0, index: new Map() };
+    agentIndexes.set(store, found);
+  }
+  for (; found.seen < store.writes.length; found.seen += 1) {
+    const id = store.writes[found.seen]!;
+    // the principals of a log are never deleted; a user or device has the parent null
+    const parent = (store.at(id, found.seen + 1) as Partial<Principal>).parent;
+    if (typeof parent !== 'string') continue;
+    const agents = found.index.get(parent);
+    if (agents === undefined) found.index.set(parent, [id]);
+    else if (!agents.includes(id)) agents.push(id);
+  }
+  return found.index;
+}
+
 /** The key of an epoch author. */
 export const epochKey = (scope: string, scopeId: string, epoch: number): string => `${scope} ${scopeId} ${epoch}`;
 
@@ -164,8 +369,19 @@ export class OrgState implements OrgStateFields {
   declare readonly pending: ReadonlySet<string>;
   declare readonly agentOwed: ReadonlyMap<string, string>;
 
+  /** Every map of `fields` is kept as an immutable shared map (a plain map is copied, section "maps shared"). */
   constructor(fields: OrgStateFields) {
-    Object.assign(this, fields);
+    Object.assign(this, fields, {
+      principals: sharedMap(fields.principals),
+      invites: sharedMap(fields.invites),
+      workgroups: sharedMap(fields.workgroups),
+      access: sharedMap(fields.access),
+      assignments: sharedMap(fields.assignments),
+      orgAssignments: sharedMap(fields.orgAssignments),
+      epochs: sharedMap(fields.epochs),
+      epochAuthors: sharedMap(fields.epochAuthors),
+      agentOwed: sharedMap(fields.agentOwed),
+    });
     Object.freeze(this);
   }
 
@@ -191,14 +407,17 @@ export class OrgState implements OrgStateFields {
     return this.principals.get(principal)?.parent ?? principal;
   }
 
-  /** The active agent of `user`, else null. */
+  /** The active agent of `user`, else null (a user has at most one: a new agent replaces the active one). */
   activeAgent(user: string): Principal | null {
-    return [...this.principals.values()].find((p) => p.parent === user && this.member(p.id) !== null) ?? null;
+    return this.agentsOf(user).find((p) => this.member(p.id) !== null) ?? null;
   }
 
-  /** Every agent (active or not) of `user`. */
+  /** Every agent (active or not) of `user`, in the order they were added (an index of the store of principals, which
+   *  also knows agents of later states, not a scan of every principal). */
   agentsOf(user: string): Principal[] {
-    return [...this.principals.values()].filter((p) => p.parent === user);
+    return (agentIndex(this.principals).get(user) ?? [])
+      .map((id) => this.principals.get(id))
+      .filter((p): p is Principal => p?.parent === user);
   }
 
   /** Active admin, or an active agent of one. */
@@ -254,10 +473,11 @@ export class OrgState implements OrgStateFields {
   deviceWgs(device: string): string[] {
     if (this.member(device) === null) return [];
     if (this.orgAssignments.has(device)) return [...this.workgroups.keys()].sort();
-    return [...this.assignments.keys()]
-      .map(splitKey)
-      .filter(([dev]) => dev === device)
-      .map(([, wg]) => wg)
+    // every workgroup the store ever assigned the device to that is assigned in this version (the constructor keeps
+    // every map as a shared map)
+    const assignments = this.assignments as VersionedMap<string, number>;
+    return (storeIndex(assignments.store as Store<string, number>).get(device) ?? [])
+      .filter((wg) => assignments.has(pairKey(device, wg)))
       .sort();
   }
 
@@ -372,6 +592,46 @@ export class OrgState implements OrgStateFields {
           }),
     };
   }
+}
+
+/**
+ * The principals whose rights may differ between two states of one log, or null for "any". Every right of a
+ * principal – `member`, `acting`, `isAdmin`, `admins`, `explicitAccess`, `wgAccess`, `inherited`, `orgAssigned`,
+ * `assigned`, `deviceWgs`, `writable`, `canWriteWg`, `canRead`, `readers`, and `credDevice` of `wraps.ts` – is derived
+ * from exactly these fields: the org and the default workgroup (fixed by `genesis`), the workgroups (created,
+ * archived), the principal's own entry in `principals` (kind, role, `removedSeq`, `platformSeq`, `consented`, and for
+ * an agent `parent`), its own keys in `access` and `assignments` (`pairKey(principal, …)`) and its own key in
+ * `orgAssignments` (`device_assign_org` and `device_unassign_org` change nothing else). An agent (a sub-principal) has
+ * no role, access or assignment of its own: its rights resolve through its parent (`acting`), so every agent of a
+ * named principal is named as well (an agent added, replaced or revoked writes its own entry; a parent whose role,
+ * access or membership changes names all its agents). The user that owes the rotation of a scope (`agentOwed`) and its
+ * agents are named when that changes (the right to rotate without admin or write right). The other fields
+ * (`invites`, `epochs`, `epochAuthors`, `pending`) grant no right; the epochs of a scope are read per state by their
+ * users (`epochHolders`), decertified platform devices are passed as exclusions per call. Which agent of a user is
+ * revoked (`wraps.revokedAgents`) and whether the user's devices count for its credential key depend on the user and
+ * all its agents: a caller asking that (`credentials/rotation.ts`) asks everything again when the user or one of its
+ * agents is named. So a principal that is not named here has the same rights in both states. Another org or default
+ * workgroup, a change of the workgroups, or maps that share nothing known give null (the caller asks every principal
+ * again). A new field that rights depend on must be added here.
+ */
+export function changedPrincipals(a: OrgState, b: OrgState): Set<string> | null {
+  if (a.org !== b.org || a.defaultWg !== b.defaultWg || a.workgroups !== b.workgroups) return null;
+  const principals = changedKeys(a.principals, b.principals);
+  const access = changedKeys(a.access, b.access);
+  const assignments = changedKeys(a.assignments, b.assignments);
+  const orgAssignments = changedKeys(a.orgAssignments, b.orgAssignments);
+  const owed = changedKeys(a.agentOwed, b.agentOwed);
+  if (principals === null || access === null || assignments === null || orgAssignments === null || owed === null)
+    return null;
+  const found = new Set([...principals, ...orgAssignments]);
+  for (const key of [...access, ...assignments]) found.add(splitKey(key)[0]);
+  for (const key of owed) {
+    for (const user of [a.agentOwed.get(key), b.agentOwed.get(key)]) if (user !== undefined) found.add(user);
+  }
+  // the sub-principals of every named principal (both states share the store of principals, so one index)
+  const agents = agentIndex(b.principals);
+  for (const principal of [...found]) for (const agent of agents.get(principal) ?? []) found.add(agent);
+  return found;
 }
 
 /**

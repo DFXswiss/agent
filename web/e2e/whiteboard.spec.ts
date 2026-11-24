@@ -1,8 +1,9 @@
 // Whiteboards on the org and workgroup level (06-web.md section 6.1, KONZEPT section 12) against the real hub: the
 // admin writes, edits and deletes on the org board, a member reads without controls and sees every change live in a
 // second browser context, the workgroup boards follow wg write/read (a reader of "Research" gets no controls there,
-// but writes the default workgroup's board), the history drawer lists all versions with the line diff, and the hub
-// stores only ciphertext. The task level runs in `devices/whiteboard-task.spec.ts` (a task needs a device).
+// but writes the default workgroup's board), the history drawer lists all versions newest first, each with its line
+// diff on demand (the toggle per version), and the hub stores only ciphertext. The entries and the versions are
+// windowed lists (`whiteboard.list`, `whiteboard.history.list`) whose rows keep their test ids. The task level runs in `devices/whiteboard-task.spec.ts` (a task needs a device).
 import { devices } from '@playwright/test';
 import { expect, test } from './fixtures/test.ts';
 import { uuid7 } from '../src/core/encoding/ids';
@@ -51,16 +52,27 @@ test('the admin writes the org board; a member reads it live without controls @R
   await page.getByTestId('whiteboard.editor.save').click();
   await expect(adaEntry.getByTestId('whiteboard.item.edited')).toHaveText('edited');
   await expect(bobEntry.locator('strong')).toHaveText('Monday');
-  // history with the line diff, also for the reader
+  // history newest first, the line diff per version on demand, also for the reader
   await bobEntry.getByTestId('whiteboard.item.history').click();
-  const versions = bob.page.getByTestId('whiteboard.history.version');
+  const history = bob.page.getByTestId('whiteboard.history');
+  const versions = history.getByTestId('whiteboard.history.version');
   await expect(versions).toHaveCount(2);
-  await expect(versions.nth(0).getByTestId('whiteboard.history.action')).toHaveText('Created');
-  await expect(versions.nth(1).getByTestId('whiteboard.history.action')).toHaveText('Edited');
-  await expect(versions.nth(1).getByTestId('whiteboard.history.author')).toHaveText('Ada Admin');
-  await expect(versions.nth(1).getByTestId('whiteboard.diff.stats')).toHaveText('+1 / −1 lines');
-  await expect(versions.nth(1).locator('[data-op="del"]')).toHaveText('− Ship **Friday**');
-  await expect(versions.nth(1).locator('[data-op="add"]')).toHaveText('+ Ship **Monday**');
+  await expect(history.getByTestId('whiteboard.history.list')).toBeVisible();
+  await expect(versions.nth(0).getByTestId('whiteboard.history.action')).toHaveText('Edited');
+  await expect(versions.nth(1).getByTestId('whiteboard.history.action')).toHaveText('Created');
+  await expect(versions.nth(0).getByTestId('whiteboard.history.author')).toHaveText('Ada Admin');
+  // every page of versions is read: no "Load more"
+  await expect(history.getByTestId('whiteboard.history.list.load-more')).toHaveCount(0);
+  const toggle = versions.nth(0).getByTestId('whiteboard.history.diff.toggle');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(history.getByTestId('whiteboard.diff')).toHaveCount(0);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(versions.nth(0).getByTestId('whiteboard.diff.stats')).toHaveText('+1 / −1 lines');
+  await expect(versions.nth(0).locator('[data-op="del"]')).toHaveText('− Ship **Friday**');
+  await expect(versions.nth(0).locator('[data-op="add"]')).toHaveText('+ Ship **Monday**');
+  await toggle.click();
+  await expect(history.getByTestId('whiteboard.diff')).toHaveCount(0);
   await bob.page.getByTestId('whiteboard.history.close').click();
   await expect(bob.page.getByTestId('whiteboard.history')).toHaveCount(0);
   // delete: confirmation, then a muted row in both browsers; the history stays
@@ -74,7 +86,7 @@ test('the admin writes the org board; a member reads it live without controls @R
   await expect(bob.page.getByTestId('whiteboard.item.deleted')).toBeVisible();
   await deleted.getByTestId('whiteboard.item.history').click();
   await expect(page.getByTestId('whiteboard.history.version')).toHaveCount(3);
-  await expect(page.getByTestId('whiteboard.history.action').nth(2)).toHaveText('Deleted');
+  await expect(page.getByTestId('whiteboard.history.action')).toHaveText(['Deleted', 'Edited', 'Created']);
   await page.keyboard.press('Escape');
   // the hub holds only ciphertext of the board
   const stored = JSON.stringify(
@@ -85,6 +97,8 @@ test('the admin writes the org board; a member reads it live without controls @R
   expect(stored).not.toContain('Monday');
   const rows = (await ada.user.request('GET', `/v1/whiteboards?org=${org}&level=org`)) as { entries: unknown[] };
   expect(rows.entries).toHaveLength(1);
+  // the board read its rows as one page (nothing older to load)
+  await expect(page.getByTestId('whiteboard.list.load-more')).toHaveCount(0);
 });
 
 test('workgroup boards follow wg write and read; no project level @R-12.1 @R-12.2 @R-12.3 @R-12.4', async ({

@@ -107,7 +107,9 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
 }
 
 # The detail keys of `contracts/common.json#/$defs/error` (closed).
-DETAIL_KEYS = frozenset({"pointers", "expected_seq", "expected", "candidates_available", "devices", "quota", "orgs"})
+DETAIL_KEYS = frozenset(
+    {"pointers", "expected_seq", "expected", "candidates_available", "devices", "quota", "orgs", "paging_required"}
+)
 INTERNAL_ERROR = "unavailable"
 
 

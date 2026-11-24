@@ -19,6 +19,7 @@ import { boardEvent, boardWorld, deliver, entryId } from './world';
 
 const TASK = '0190f000-0000-7000-8000-00000000000c';
 const BASE = '0190f000-0000-7000-8000-0000000000b0';
+const OLDEST = '2026-11-21T12:00:01.000Z';
 
 const row = (entry: string, seq: number, overrides: Partial<WhiteboardRow> = {}): WhiteboardRow => ({
   entry_id: entry,
@@ -237,6 +238,45 @@ describe('projectBoard', () => {
     ]);
     expect((view.items[1] as { code: string }).code).toBe('event_conflict');
     expect(view.entries.has(foreign)).toBe(false);
+  });
+
+  it('takes an entry for unlisted while rows are paged only when its row would be on a read page', async () => {
+    const w = await boardWorld();
+    const board = orgBoard(w.org);
+    const ids = [await entryId('p-listed'), await entryId('p-newer'), await entryId('p-same'), await entryId('p-own')];
+    await deliver(
+      w,
+      board,
+      await Promise.all(ids.map((id) => boardEvent(w, board, 'whiteboard.entry', id, { level: 'org', text: id }))),
+    );
+    const times = [OLDEST, '2026-11-21T12:00:01.001Z', OLDEST, null];
+    const entries = new Map(
+      [...w.store.getState().events[w.org]!.entries].map(([seq, item]) => [
+        seq,
+        { ...item, receivedAt: times[seq - 1]! },
+      ]),
+    );
+    const rows = [row(ids[0]!, 1, { created_at: OLDEST })];
+    const kinds = (view: ReturnType<typeof projectBoard>) =>
+      view.items.map((item) => [item.type, 'ref' in item ? item.ref : item.id]);
+    // older pages unread: only the entry received strictly after the oldest read row is unlisted
+    expect(kinds(projectBoard({ entries }, board, rows, 4, true))).toEqual([
+      ['entry', ids[3]],
+      ['entry', ids[2]],
+      ['unverifiable', ids[1]],
+      ['entry', ids[0]],
+    ]);
+    // every page read: each entry the hub does not list is a conflict
+    expect(kinds(projectBoard({ entries }, board, rows, 4, false)).map(([type]) => type)).toEqual([
+      'unverifiable',
+      'unverifiable',
+      'unverifiable',
+      'entry',
+    ]);
+    // no row read yet, or an oldest row without a usable time: nothing is taken for unlisted
+    for (const read of [[], [row(ids[0]!, 1, { created_at: 'later' })]]) {
+      expect(projectBoard({ entries }, board, read, 4, true).items.every((item) => item.type === 'entry')).toBe(true);
+    }
   });
 
   it('ignores unverifiable events of other boards', async () => {

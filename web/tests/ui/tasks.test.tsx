@@ -601,6 +601,9 @@ describe('task list and home', () => {
     expect(screen.getAllByTestId('tasks.row.title')[0]).toHaveTextContent('Unverifiable title (signature_invalid)');
     fireEvent.change(screen.getByTestId('tasks.filter'), { target: { value: 'failed' } });
     await waitFor(() => expect(t.client.calls.some((call) => call.target.includes('state=failed'))).toBe(true));
+    // "All" again: the filter is cleared
+    fireEvent.change(screen.getByTestId('tasks.filter'), { target: { value: '' } });
+    expect(screen.getByTestId('tasks.filter')).toHaveValue('');
   });
 
   it('formats relative activity labels', () => {

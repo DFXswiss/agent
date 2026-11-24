@@ -10,7 +10,7 @@
   "reload": "Erneut versuchen",
   "empty": "Mit den Aufgaben dieser Workgroup ist noch kein Pull Request verknüpft.",
   "empty.task": "Mit dieser Aufgabe ist noch kein Pull Request verknüpft.",
-  "more": "Mehr laden",
+  "line.more": "{count} weitere – alle in der Aufgabe",
   "unavailable": "Pull Request (Details nicht verfügbar)",
   "unavailable.legacy": "Diese Verknüpfung stammt von einer älteren Version; Repository und Nummer sind nicht verfügbar.",
   "unavailable.body": "Die Details dieser Verknüpfung lassen sich nicht prüfen.",

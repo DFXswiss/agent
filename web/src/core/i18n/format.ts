@@ -1,19 +1,35 @@
 // Numbers, money and times through Intl with the active locale (06-web.md sections 2.5 and 12.4).
 import type { Locale } from './locale';
 
+/** Number formats per locale and kind, created once (ADR-086 section 1: lists format thousands of numbers). */
+const numberFormats = new Map<string, Intl.NumberFormat>();
+
+function numberFormat(key: string, create: () => Intl.NumberFormat): Intl.NumberFormat {
+  let format = numberFormats.get(key);
+  if (format === undefined) {
+    format = create();
+    numberFormats.set(key, format);
+  }
+  return format;
+}
+
 export function formatNumber(value: number, locale: Locale): string {
-  return new Intl.NumberFormat(locale).format(value);
+  return numberFormat(locale, () => new Intl.NumberFormat(locale)).format(value);
 }
 
 /** US dollars; four decimals below one dollar, otherwise two. */
 export function formatMoney(usd: number, locale: Locale): string {
   const digits = Math.abs(usd) < 1 ? 4 : 2;
-  return new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(usd);
+  return numberFormat(
+    `${locale} usd ${digits}`,
+    () =>
+      new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
+      }),
+  ).format(usd);
 }
 
 export interface TimeOptions {

@@ -412,7 +412,12 @@ describe('work VM panel with test runs', () => {
     expect(items[0]).toHaveAttribute('data-run', `tr-${String(PANEL_TESTS + 1).padStart(12, '0')}`);
     expect(within(items[0]!).getByTestId('log.open')).toBeInTheDocument();
     expect(within(items[1]!).queryByTestId('log.open')).toBeNull();
-    const jobs = screen.getByTestId('workvm.panel.runs');
+    const jobs = screen.getByTestId('workvm.panel.runs') as HTMLDetailsElement;
+    // the job list exists only while open (ADR-086 section 1)
+    act(() => {
+      jobs.open = true;
+      jobs.dispatchEvent(new Event('toggle'));
+    });
     expect(within(jobs).getAllByTestId('log.open')).toHaveLength(1);
     fireEvent.click(within(items[0]!).getByTestId('log.open'));
     await waitFor(() => expect(screen.getByTestId('log.viewer')).toHaveAttribute('data-status', 'failed'));

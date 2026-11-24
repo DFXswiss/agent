@@ -4,11 +4,22 @@
 import { describe, expect, it } from 'vitest';
 import { HubError } from '../../../src/core/net/signedFetch';
 import { setLog } from '../../../src/core/store/slices/orgs';
-import { type EventEntry, putEvents } from '../../../src/core/store/slices/events';
+import { dropEvents, type EventEntry, putEvents } from '../../../src/core/store/slices/events';
+import { setPage } from '../../../src/core/store/slices/pages';
+import { pagesKey } from '../../../src/core/tasks/pages';
 import { listLoading, taskList, type TaskRow } from '../../../src/core/store/slices/tasks';
 import { EMPTY_DIRECTORY, selectDirectory, selectOwner, selectTitle } from '../../../src/core/tasks/directory';
-import { listTarget, loadTasks, PAGE_SIZE, selectListRows, titles } from '../../../src/core/tasks/list';
-import { pullEvents, pullOnce, pullTarget } from '../../../src/core/tasks/pull';
+import {
+  listTarget,
+  loadTasks,
+  PAGE_SIZE,
+  selectListRows,
+  TITLE_PAGES,
+  titleList,
+  titles,
+} from '../../../src/core/tasks/list';
+import { eventsTarget, NEWEST, PAGE_MAX } from '../../../src/core/net/pages';
+import { pullEvents, pullOnce } from '../../../src/core/tasks/pull';
 import { signCert } from '../../../src/core/crypto/agent';
 import { actor } from '../log/world';
 import { taskRow, taskWorld, type TaskWorld } from './world';
@@ -147,32 +158,35 @@ describe('loadTasks', () => {
 });
 
 describe('pulls', () => {
-  it('pulls every page of a query into the reader', async () => {
+  it('pulls the newest page of a query, or a bounded number of pages, into the reader', async () => {
     const t = await taskWorld();
-    expect(pullTarget('s 1', { kinds: ['a', 'b'], task: 't' }, 7)).toBe(
-      '/v1/scopes/s%201/events?after=7&limit=1000&kinds=a%2Cb&task=t',
+    const targets: string[] = [];
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) => {
+      targets.push(target);
+      return target.includes(`before=${NEWEST}`)
+        ? {
+            events: [
+              { scope_seq: 3, received_at: 'x', event: {} },
+              { scope_seq: 2, event: {} },
+            ],
+            next_before: 2,
+            head: 3,
+          }
+        : { events: [{ scope_seq: 1, received_at: null, event: {} }], next_before: null, head: 3 };
+    });
+    expect(await pullEvents(t.context, t.org, t.wg, { kinds: ['prompt'], task: 't' })).toBe(2);
+    expect(targets).toEqual([eventsTarget(t.wg, { kinds: ['prompt'], task: 't' }, { before: NEWEST }, PAGE_MAX)]);
+    expect(t.ingested.map((item) => item.items.map((i) => i.scope_seq))).toEqual([[2, 3]]);
+    expect(await pullEvents(t.context, t.org, t.wg, { kinds: ['prompt'], pages: 5 })).toBe(3);
+    expect(targets.slice(1)).toEqual([
+      eventsTarget(t.wg, { kinds: ['prompt'] }, { before: NEWEST }, PAGE_MAX),
+      eventsTarget(t.wg, { kinds: ['prompt'] }, { before: 2 }, PAGE_MAX),
+    ]);
+    // the events of one operation (KOR-39): the `ref` reaches the hub
+    expect(await pullEvents(t.context, t.org, t.wg, { kinds: ['operation.params'], task: 't', ref: 'op' })).toBe(2);
+    expect(targets.at(-1)).toBe(
+      eventsTarget(t.wg, { kinds: ['operation.params'], task: 't', ref: 'op' }, { before: NEWEST }, PAGE_MAX),
     );
-    expect(pullTarget('s', { kinds: ['operation.params'], task: 't', ref: 'op' }, null)).toBe(
-      '/v1/scopes/s/events?limit=1000&kinds=operation.params&task=t&ref=op',
-    );
-    t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) =>
-      target.includes('after=')
-        ? { events: [{ scope_seq: 2, received_at: 'x', event: {} }], next_after: null, head: 2 }
-        : { events: [{ scope_seq: 1, received_at: null, event: {} }], next_after: 1, head: 2 },
-    );
-    expect(await pullEvents(t.context, t.org, t.wg, { kinds: ['prompt'] })).toBe(2);
-    expect(t.ingested.map((item) => item.items.map((i) => i.scope_seq))).toEqual([[1], [2]]);
-    for (const answer of [
-      null,
-      { events: [{ scope_seq: -1 }], next_after: null },
-      { events: [{ scope_seq: 1, received_at: 1, event: {} }], next_after: null },
-      { events: [{ scope_seq: 1, received_at: null }], next_after: null },
-      { events: [], next_after: 'x' },
-      { events: ['x'], next_after: null },
-    ]) {
-      t.client.on(`GET /v1/scopes/${t.wg}/events`, () => answer);
-      await expect(pullEvents(t.context, t.org, t.wg, { kinds: ['prompt'] })).rejects.toThrow('unavailable');
-    }
   });
 
   it('shares one pull per query and generation and forgets failed pulls', async () => {
@@ -181,7 +195,7 @@ describe('pulls', () => {
     t.client.on(`GET /v1/scopes/${t.wg}/events`, () => {
       calls += 1;
       if (calls === 1) throw new HubError('unavailable', 503);
-      return { events: [], next_after: null, head: 0 };
+      return { events: [], next_before: null, head: 0 };
     });
     await expect(pullOnce(t.context, t.org, t.wg, { kinds: ['task.meta'] })).rejects.toThrow('unavailable');
     const first = pullOnce(t.context, t.org, t.wg, { kinds: ['task.meta'] });
@@ -291,28 +305,80 @@ describe('directory and titles', () => {
     expect([...selectDirectory(t.org)(t.store.getState()).agents]).toEqual([[bot.id, t.me.id]]);
   });
 
-  it('pulls the titles of the workgroup once, then those of single tasks still without one', async () => {
+  it('pulls the titles of a list once per workgroup, newest pages first, bounded per call and never per row', async () => {
     const t = await taskWorld();
     const rows = [taskRow(t, { task_id: 't1' }), taskRow(t, { task_id: 't2' })] as TaskRow[];
     const targets: string[] = [];
+    let seq = 100;
     t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) => {
       targets.push(target);
-      if (target.includes('task=t2')) throw new HubError('unavailable', 503);
-      return { events: [], next_after: null, head: 0 };
+      seq -= 1;
+      return { events: [], next_before: seq, head: 100 };
     });
     t.context.ingest.mockImplementation(async () => {
-      putEvents(t.store, t.wg, [entry(t.wg, 1, { kind: 'task.meta', task: 't1' }, { title: 'One' })]);
+      if (targets.length === 1)
+        putEvents(t.store, t.wg, [entry(t.wg, 1, { kind: 'task.meta', task: 't1' }, { title: 'One' })]);
     });
     await titles(t.context, rows);
-    expect(targets).toEqual([
-      pullTarget(t.wg, { kinds: ['task.meta'] }, null),
-      pullTarget(t.wg, { kinds: ['task.meta'], task: 't2' }, null),
-    ]);
+    // t2 stays missing: at most TITLE_PAGES pages, all of the workgroup (no `task=`)
+    expect(targets).toHaveLength(TITLE_PAGES);
+    expect(targets[0]).toBe(eventsTarget(t.wg, { kinds: ['task.meta'] }, { before: NEWEST }, PAGE_MAX));
+    expect(targets[1]).toBe(eventsTarget(t.wg, { kinds: ['task.meta'] }, { before: 99 }, PAGE_MAX));
+    expect(targets.some((target) => target.includes('task='))).toBe(false);
+    // the next call continues where the last one stopped; a title in the store needs no pull
+    await titles(t.context, rows);
+    expect(targets[TITLE_PAGES]).toBe(eventsTarget(t.wg, { kinds: ['task.meta'] }, { before: 90 }, PAGE_MAX));
     targets.length = 0;
+    await titles(t.context, [rows[0]!]);
+    expect(targets).toEqual([]);
+    // the end of the pages and failures end the reads; a sign-out starts over at the newest page
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) => {
+      targets.push(target);
+      return { events: [], next_before: null, head: 100 };
+    });
+    await titles(t.context, rows);
+    await titles(t.context, rows);
+    expect(targets).toHaveLength(1);
     t.client.on(`GET /v1/scopes/${t.wg}/events`, () => {
       throw new HubError('unavailable', 503);
     });
     await titles(t.context, [taskRow(t, { task_id: 't3', wg_id: 'other' }) as TaskRow]);
-    await titles(t.context, [rows[0]!]);
+    targets.length = 0;
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) => {
+      targets.push(target);
+      t.store.reset();
+      return { events: [], next_before: 5, head: 100 };
+    });
+    t.store.reset();
+    await titles(t.context, rows);
+    expect(targets).toEqual([eventsTarget(t.wg, { kinds: ['task.meta'] }, { before: NEWEST }, PAGE_MAX)]);
+  });
+
+  it('reads an evicted title again: the event store raises where the title pages go on', async () => {
+    const t = await taskWorld();
+    const rows = [taskRow(t, { task_id: 't1' })] as TaskRow[];
+    const targets: string[] = [];
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) => {
+      targets.push(target);
+      return { events: [], next_before: null, head: 100 };
+    });
+    await titles(t.context, rows);
+    await titles(t.context, rows);
+    expect(targets).toHaveLength(1);
+    const key = pagesKey(titleList(t.org, t.wg));
+    expect(t.store.getState().pages[key]).toMatchObject({ before: null, list: { scope: t.wg } });
+    // the title of t1 was held and is evicted (here: dropped): the next call reads from just above it
+    putEvents(t.store, t.wg, [entry(t.wg, 30, { kind: 'task.meta', task: 't1' }, { title: 'One' })]);
+    dropEvents(t.store, t.wg, () => true);
+    expect(t.store.getState().pages[key]!.before).toBe(31);
+    // an eviction during the read raises the cursor again: the answer does not lower it
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) => {
+      targets.push(target);
+      setPage(t.store, key, { before: 77 });
+      return { events: [], next_before: null, head: 100 };
+    });
+    await titles(t.context, rows);
+    expect(targets[1]).toBe(eventsTarget(t.wg, { kinds: ['task.meta'] }, { before: 31 }, PAGE_MAX));
+    expect(targets[2]).toBe(eventsTarget(t.wg, { kinds: ['task.meta'] }, { before: 77 }, PAGE_MAX));
   });
 });

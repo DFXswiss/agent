@@ -10,6 +10,7 @@ import { AppSession } from '../../../src/core/account/session';
 import type { LiveConnection, LiveWiring } from '../../../src/core/net/live';
 import { Persist } from '../../../src/core/persist';
 import { createStore } from '../../../src/core/store';
+import { show } from '../../../src/core/store/focus';
 import { FakeAuthenticator } from './authenticator';
 import { CONFIG, ORIGIN, SimHub, T0 } from './hub';
 
@@ -100,6 +101,18 @@ describe('watched terminals of the app session', () => {
     release();
     app.watchTerminal(org, 'new');
     await vi.waitFor(() => expect(lists.at(-1)).toEqual(['kept', 'new']));
+  });
+
+  it('makes the mounted views read their newest page after resync', async () => {
+    const { app, store, wirings, org } = await setup();
+    app.activate(org);
+    const refresh = vi.fn();
+    const release = show(store, { scope: org, task: 't1', refresh });
+    wirings[0]!.onFrame!('task', {});
+    expect(refresh).not.toHaveBeenCalled();
+    wirings[0]!.onFrame!('resync', { reason: 'buffer_overflow' });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    release();
   });
 
   it('reads pulled events with the reader and stores nothing', async () => {

@@ -16,7 +16,8 @@ the path; the log rules refuse a used (`invite_consumed`) or revoked (`invite_re
 
 The package is also deleted when the invitation is used (the `accept` of the orgs area) and when it expires (job
 `invites.expire_packages`, `agent_hub.invites.jobs`). Admins list the org's invitations newest first with the state
-`used` > `revoked` > `expired` > `open` (the precedence of the platform invitations, `agent_hub.platform.invites`).
+`used` > `revoked` > `expired` > `open` (the precedence of the platform invitations, `agent_hub.platform.invites`):
+at most `MAX_LISTED`, or page by page with `before`/`limit` (ADR-086 section 2, `agent_hub.events.paging`).
 Audit: `invite.create`/`invite.revoke` (metadata only) next to the `log.<type>` rows of the log service.
 """
 
@@ -38,6 +39,7 @@ from agent_hub.audit.recorder import unchanged
 from agent_hub.config import LIMITS
 from agent_hub.crypto.encoding import format_time, parse_time
 from agent_hub.errors import HubError
+from agent_hub.events import paging
 from agent_hub.orgs import logs, rights
 from agent_hub.orgs.append import Appender, AppendResult, Extra, append_batch
 from agent_hub.platform.invites import state_of
@@ -253,20 +255,32 @@ def _opened(connection: Connection, org_id: UUID, invite_ids: list[str]) -> dict
     return {str(target): cast(datetime, at) for target, at in rows}
 
 
-def listing(connection: Connection, *, org_id: UUID, user: UUID, now: datetime) -> list[dict[str, Any]]:
-    """The org's invitations, newest first (at most 1000), with the time of the first lookup (`opened_at`) and the
-    account that registered with the invitation once it is an active member of the org (`registered_user`, ADR-073:
-    an invitation of a person admitted directly is settled by the admitting client; no other account is named)."""
+def listing(
+    connection: Connection, *, org_id: UUID, user: UUID, now: datetime, window: paging.Window
+) -> dict[str, Any]:
+    """The org's invitations, newest first (`created_at DESC, id DESC`): at most `MAX_LISTED` (`truncated: true` when
+    cut), or one page of `window` with `next_before` (`agent_hub.events.paging`); with the time of the first lookup
+    (`opened_at`) and the account that registered with the invitation once it is an active member of the org
+    (`registered_user`, ADR-073: an invitation of a person admitted directly is settled by the admitting client; no
+    other account is named)."""
     rights.require(connection, user, rights.ORG_ADMIN, org_id=org_id)
-    rows = connection.execute(
-        "SELECT id, kind, log_seq, created_by, created_at, expires_at, registered_user, used_at, used_by, revoked_at,"
-        " EXISTS (SELECT 1 FROM hub.org_member m WHERE m.org_id = i.org_id AND m.principal_id = i.registered_user"
-        " AND m.removed_seq IS NULL)"
-        " FROM hub.invite i WHERE org_id = %s ORDER BY created_at DESC, id DESC LIMIT %s",
-        (org_id, MAX_LISTED),
-    ).fetchall()
+    clauses = ["org_id = %(org)s"]
+    params: dict[str, Any] = {"org": org_id, "limit": window.limit + 1}
+    if window.before is not None:
+        clauses.append("(created_at, id) < (%(at)s, %(id)s)")
+        params["at"], params["id"] = window.before
+    rows, more = paging.cut(
+        connection.execute(
+            "SELECT id, kind, log_seq, created_by, created_at, expires_at, registered_user, used_at, used_by,"
+            " revoked_at, EXISTS (SELECT 1 FROM hub.org_member m WHERE m.org_id = i.org_id"
+            " AND m.principal_id = i.registered_user AND m.removed_seq IS NULL)"
+            f" FROM hub.invite i WHERE {' AND '.join(clauses)} ORDER BY created_at DESC, id DESC LIMIT %(limit)s",
+            params,
+        ).fetchall(),
+        window.limit,
+    )
     opened = _opened(connection, org_id, [str(row[0]) for row in rows])
-    return [
+    invites = [
         {
             "invite_id": invite_id,
             "kind": kind,
@@ -297,3 +311,4 @@ def listing(connection: Connection, *, org_id: UUID, user: UUID, now: datetime) 
             member,
         ) in rows
     ]
+    return {"invites": invites, **window.extra((rows[-1][4], rows[-1][0]) if more else None)}

@@ -4,13 +4,23 @@ ADR-062 section 3)."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
+
+from agent_runner.model import merge
 
 from ..model.kit import FLASH, OPUS, Env
 from ..model.test_usage import TOKENS, consume, record, run, started
 from ..sessions.kit import session_id
 
 BILLING = {"billing": {"api": 1, "active": True, "orgs": {}}}
+
+
+async def flush(found: Any) -> None:
+    """Write the merged usage items at once (`model.merge`, KOR-35)."""
+    async with found.session_env.transaction() as conn:
+        await merge.flush(conn, found.session_env, every=True)
 
 
 @pytest.mark.parametrize(
@@ -36,8 +46,14 @@ def test_the_origin_is_reported_to_a_billing_hub(
         found.guest.emit(sid, "usage", record(model, **TOKENS))
         found.guest.emit(sid, "usage", record(model, **TOKENS), ts="not a time")
         await consume(found, reader)
-        first, second = await found.of_kind("usage")
+        await flush(found)  # the two deltas were merged (model.merge): the second has no time and keeps the first's
+        (first,) = await found.of_kind("usage")
         assert (first["model"], first["access_origin"], first["at"]) == (model, origin, "2026-11-21T12:00:01.000Z")
+        assert first["delta"]["requests"] == 2
+        found.guest.emit(sid, "usage", record(model, **TOKENS), ts="not a time")
+        await consume(found, reader)
+        await flush(found)
+        _, second = await found.of_kind("usage")
         assert "at" not in second
         await env.sync.pusher.drain()  # the hub checks the items against contracts/outbox/usage.json
 
@@ -49,6 +65,7 @@ def test_an_older_hub_gets_no_billing_fields(store_dsn: str) -> None:
         found, reader = await started(env, "platform")
         found.guest.emit(session_id(), "usage", record(FLASH, **TOKENS))
         await consume(found, reader)
+        await flush(found)
         (item,) = await found.of_kind("usage")
         assert not {"model", "access_origin", "at"} & set(item)
 

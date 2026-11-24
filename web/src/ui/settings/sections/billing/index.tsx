@@ -1,7 +1,9 @@
 // Settings section "Credit and usage" (12-billing.md section 9, ADR-062 section 7): the active organization's balance,
 // a clear notice when the credit is used up, the prices in force, the credit history and the consumption per day, per
 // workgroup and, when the hub sends it, per person (ADR-083) (`GET /v1/orgs/{org}/billing`). There is no payment and
-// no top-up: the operator adds credit.
+// no top-up: the operator adds credit. The lists are small by construction (ADR-086 section 1): the price list in
+// force, the newest 100 credit entries (a note says when older ones exist), 30 days, one row per workgroup of the
+// organization and one per person.
 import { useCallback, useEffect, useState } from 'react';
 import {
   formatRuntime,
@@ -97,6 +99,11 @@ function Details({ billing, org }: { readonly billing: OrgBilling; readonly org:
               </li>
             ))}
           </ul>
+        )}
+        {billing.creditsTruncated && (
+          <p className="text-sm text-gray-600" role="note" data-testid="billing.credits.truncated">
+            {t('billing.credits.truncated')}
+          </p>
         )}
       </section>
       <section>

@@ -1,7 +1,8 @@
 """Standard-library JSON Schema validator for the subset used in ``contracts/`` (03-api.md, 05-runner.md §4.6 no. 3).
 
 The keyword whitelist is the one of ``contracts/README.md``: ``type properties required additionalProperties enum
-const pattern minLength maxLength minimum maximum items minItems maxItems $ref $defs oneOf anyOf`` plus the
+const pattern minLength maxLength minimum maximum items minItems maxItems minProperties maxProperties propertyNames
+$ref $defs oneOf anyOf`` plus the
 annotations ``$schema $id title description $comment``. A schema file with any other keyword is refused when it is
 loaded (``SchemaError``), so the guest never silently ignores a rule.
 
@@ -51,6 +52,9 @@ ASSERTIONS = frozenset(
         "items",
         "minItems",
         "maxItems",
+        "minProperties",
+        "maxProperties",
+        "propertyNames",
         "$ref",
         "$defs",
         "oneOf",
@@ -166,7 +170,7 @@ def keyword_violations(schema: object, where: str = "") -> Iterator[str]:
                 continue
             for name, child in value.items():
                 yield from keyword_violations(child, f"{where}/{key}/{escape(name)}")
-        elif key in ("items", "additionalProperties"):
+        elif key in ("items", "additionalProperties", "propertyNames"):
             if not isinstance(value, bool):
                 yield from keyword_violations(value, f"{where}/{key}")
         elif key in ("oneOf", "anyOf"):
@@ -301,6 +305,14 @@ class _Walk:
                 self.validate(base, items, item, f"{where}/{index}", depth + 1)
 
     def mapping(self, base: str, schema: Schema, value: dict[str, Any], where: str, depth: int) -> None:
+        if "minProperties" in schema and len(value) < schema["minProperties"]:
+            self.out.append(Violation(where, "minProperties"))
+        if "maxProperties" in schema and len(value) > schema["maxProperties"]:
+            self.out.append(Violation(where, "maxProperties"))
+        names = schema.get("propertyNames")
+        if isinstance(names, dict):
+            for name in value:
+                self.validate(base, names, name, f"{where}/{escape(name)}", depth + 1)
         properties: Mapping[str, Any] = schema.get("properties", {})
         for name in schema.get("required", ()):
             if name not in value:

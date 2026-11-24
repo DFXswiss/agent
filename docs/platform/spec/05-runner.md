@@ -483,7 +483,12 @@ timeout).
 The 18 events: `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, `PermissionRequest`, `PermissionDenied`, `Notification`, `Stop`, `StopFailure`,
 `SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact`, `ConfigChange`, `InstructionsLoaded`, `CwdChanged`.
-Every call is journaled as `session.hook` (`03-api.md` §7.2). `SessionStart` is not delivered over HTTP in
+Every call is journaled as `session.hook` (`03-api.md` §7.2), except the routine ones: `PreToolUse` `allow` and
+`PostToolUse` `none` (without a reason) are counted per session in the journal of control and written as one
+`session.hook` summary `{event:"summary", decision:"allow", counts, tools, from, to}` at most every 10 s, before any
+other hook or state record of the session and by a one-second ticker (ADR-086 §3, `agent_guest/hook_summary.py`,
+setting `limits.HookLimits`; 0 turns it off). Denies, blocks, faults, `UserPromptSubmit`, `Stop` and every other
+event stay single records in their place. `SessionStart` is not delivered over HTTP in
 2.1.330; the session start is journaled by control when the unit starts. `SubagentStart` must never occur (tools
 denied); if it does it is journaled with `decision:"none"` and raises `guest.error subagent_hook_seen`.
 
@@ -674,10 +679,12 @@ processed (a child: its inherited stamp), for a work VM the acting user when it 
 
 - tmux server (root, socket `/run/agent-guest/tmux.sock`), one tmux session `s-<id>` per session, size 160×48,
   `remain-on-exit off`. `pipe-pane -O` → recorder (part of control, reads a FIFO): incremental UTF-8 decoding,
-  output events `[t_ms, "o", data]` with offsets in ms since session start, monotonic across restarts; batches
-  flushed every 100 ms or at 16 KiB → journal `session.terminal` → runner → encrypted events (≤ 64 KiB). A record
-  holds ≤ 16 KiB data and its body JSON ≤ 64 KiB − 16 bytes (JSON escapes count); the runner splits a well-formed
-  record whose sealed event would still be too large into several `session.terminal` events (KOR-02).
+  output events `[t_ms, "o", data]` with offsets in ms since session start, monotonic across restarts; a record is
+  written once the output has been quiet for 100 ms, under sustained output when its first event is 1 s old or its
+  **encoded** body (JSON escapes count) reaches 60 KiB – then the full records are written and the rest keeps
+  growing (ADR-086 §3, `limits.TerminalLimits`) → journal `session.terminal` → runner → encrypted events (≤ 64 KiB).
+  An event holds ≤ 16 KiB data, a record's body JSON ≤ 64 KiB − 16 bytes; the runner splits a well-formed record
+  of an older guest whose sealed event would still be too large into several `session.terminal` events (KOR-02).
 - Read-only by construction: no API accepts terminal input; the only writers to the pane are the prompt
   delivery and interrupt of §6 (driven by verified prompt events and authorised control requests); nobody
   attaches to tmux. Latency target pane → browser p95 < 1 s.
@@ -806,6 +813,16 @@ Per request (journal `usage` → outbox `usage` delta): tokens from the stream; 
 (`cost_basis:provider`); API key: catalog list price × tokens (`list_price`); subscription: list price as
 equivalent (`subscription_equivalent`). Claude Code's own cost fields are never used (Spike C). Context:
 `input + cache_read + cache_write` of the latest request ÷ catalog `context_window`.
+The deltas of a session are merged over 10 s into one outbox `usage` item (`runner.usage_pending`, written in the
+journal page's transaction; the daemon task `usage_merge` writes due items every second and at once when the
+session has ended; counters added, the other fields the newest – the hub's totals are unchanged; ADR-086 §3,
+`model/merge.py`). Only deltas with the same session, `model`, `access_origin` and UTC day of `at` merge (the hub
+bills an item under its model and origin and prices and books it at its `at`, 12-billing.md §§2-4; a delta without
+`at` has no day and merges): a delta with another model, origin or day writes the pending item first and starts a new
+one. The merged item's `at` is the time of its newest request that has a valid time (at most 10 s after its first,
+never on another UTC day). The runner does not know the price list versions (`billing.active` only), so a price list
+whose `valid_from` falls inside a merge window prices at most 10 s of requests before it with the newer list. The
+platform budget counts the pending cost (§10.2), every pending item besides the bounded stored ones.
 
 ### 10.5 Model catalog (`model-catalog.json`, schema `contracts/model-catalog.json`)
 

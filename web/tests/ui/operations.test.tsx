@@ -12,6 +12,8 @@ import { TaskScreen } from '../../src/ui/screens/task/TaskScreen';
 import { SessionScreen } from '../../src/ui/screens/session/SessionScreen';
 import { originOf } from '../../src/ui/screens/session/children/ChildrenTab';
 import { tab } from '../../src/ui/task-tabs/operations';
+import { MAX_ROWS, PAGE, selectTaskOperations, WINDOW } from '../../src/ui/task-tabs/operations/OperationsTab';
+import { CLIP_CHARS } from '../../src/ui/lists/Clipped';
 import { actor } from '../core/log/world';
 import { sessionRow, taskRow, type TaskWorld, taskWorld } from '../core/tasks/world';
 import { MAIN, mount, TASK } from './chat-world';
@@ -633,6 +635,124 @@ describe('Operations tab', () => {
     mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}?tab=operations`);
     expect(await screen.findByTestId('operations.failed')).toBeVisible();
     expect(screen.queryByTestId('operations.loading')).toBeNull();
+  });
+});
+
+const at = (n: number) => new Date(Date.UTC(2026, 10, 20) + n * 1000).toISOString();
+
+describe('Operations tab under volume', () => {
+  it('renders a window of the newest rows, moves it and loads the next page at the end', async () => {
+    const COUNT = 500;
+    let pages = 0;
+    let arrive: () => void = () => undefined;
+    const { t } = await page('?tab=operations', (w) => {
+      putOperations(w.store, [
+        ...Array.from({ length: COUNT }, (_, n) => row(w, { operation_id: `op-${n}`, created_at: at(n + 10) })),
+        row(w, { operation_id: 'op-foreign', task_id: '0190f000-0000-7000-8000-000000000002' }),
+      ]);
+      w.client.on(`GET /v1/tasks/${TASK}/operations`, () => {
+        pages += 1;
+        if (pages === 1) return { operations: [], next_before: 'c1' };
+        return new Promise((resolve) => {
+          arrive = () =>
+            resolve({ operations: [row(w, { operation_id: 'op-old', created_at: at(0) })], next_before: null });
+        });
+      });
+    });
+    const list = await screen.findByTestId('operations.list');
+    expect(within(list).getAllByTestId('operations.item')).toHaveLength(WINDOW);
+    expect(within(list).getAllByTestId('operations.item')[0]).toHaveAttribute('data-operation', `op-${COUNT - 1}`);
+    expect(list).toHaveAttribute('data-total', String(COUNT));
+    await waitFor(() => expect(t.store.getState().operations.tasks[TASK]?.nextBefore).toBe('c1'));
+    expect(screen.getByTestId('operations.list.older')).toHaveTextContent(String(COUNT - WINDOW));
+    expect(screen.queryByTestId('operations.more')).toBeNull();
+    fireEvent.click(screen.getByTestId('operations.list.older'));
+    expect(within(list).getAllByTestId('operations.item')).toHaveLength(WINDOW + PAGE);
+    while (screen.queryByTestId('operations.list.older') !== null) {
+      fireEvent.click(screen.getByTestId('operations.list.older'));
+      expect(within(list).getAllByTestId('operations.item').length).toBeLessThanOrEqual(MAX_ROWS);
+    }
+    // the window reached the loaded end: the next page from the hub
+    fireEvent.click(screen.getByTestId('operations.more'));
+    await waitFor(() => expect(screen.getByTestId('operations.more')).toBeDisabled());
+    act(() => arrive());
+    await waitFor(() => expect(list.querySelector('[data-operation="op-old"]')).not.toBeNull());
+    expect(screen.queryByTestId('operations.more')).toBeNull();
+    expect(list.querySelector('[data-operation="op-foreign"]')).toBeNull();
+  });
+
+  it('clips a large result in the detail and offers "Show more" and "Download"', async () => {
+    const { t } = await page(`?tab=operations&op=${OP}`, (w) => {
+      w.client.on(`GET /v1/tasks/${TASK}/operations`, () => ({
+        operations: [row(w, { state: 'succeeded' })],
+        next_before: null,
+      }));
+      w.client.on(`GET /v1/operations/${OP}`, () => ({ operation: row(w, { state: 'succeeded' }), transitions: [] }));
+    });
+    const big = 'x'.repeat(CLIP_CHARS * 2);
+    act(() =>
+      putEvents(t.store, t.wg, [
+        event(t, 'operation.result', { operation_id: OP, status: 'succeeded', result: { log: big } }),
+      ]),
+    );
+    const detail = await screen.findByTestId('operations.detail');
+    const result = within(detail).getByTestId('operations.detail.result');
+    expect(result.textContent).toHaveLength(CLIP_CHARS);
+    expect(within(detail).getByTestId('operations.detail.result.download')).toBeVisible();
+    fireEvent.click(within(detail).getByTestId('operations.detail.result.more'));
+    expect(within(detail).getByTestId('operations.detail.result').textContent!.length).toBeGreaterThan(CLIP_CHARS);
+  });
+});
+
+describe('selectTaskOperations', () => {
+  it('builds the views of the task once and keeps them while their row and events are the same', async () => {
+    const t = await taskWorld();
+    const select = selectTaskOperations(t.wg, TASK);
+    putOperations(t.store, [row(t), row(t, { operation_id: OP2, created_at: at(99_999_999) })]);
+    // no events of the workgroup yet
+    const first = select(t.store.getState());
+    expect(first.map((view) => view.id)).toEqual([OP2, OP]);
+    expect(first[1]!.params.status).toBe('missing');
+    expect(select(t.store.getState())).toBe(first);
+    const pending: EventEntry = { ...event(t, 'operation.params', prParams()), status: 'pending', header: null };
+    const broken: EventEntry = { ...event(t, 'operation.params', null), status: 'unverifiable', event: null };
+    const noRef: EventEntry = {
+      ...event(t, 'operation.params', null),
+      status: 'unverifiable',
+      code: 'signature_invalid',
+      header: null,
+      event: { header: { kind: 'operation.params', ref: 7 } },
+    };
+    act(() =>
+      putEvents(t.store, t.wg, [
+        event(t, 'chat.prompt', { text: 'hi' }),
+        pending,
+        broken,
+        noRef,
+        event(t, 'operation.params', prParams()),
+        event(t, 'operation.result', prResult()),
+        {
+          ...event(t, 'operation.params', null, OP2),
+          status: 'unverifiable',
+          code: 'signature_invalid',
+          header: null,
+        },
+      ]),
+    );
+    const second = select(t.store.getState());
+    expect(second[1]!.params.status).toBe('verified');
+    expect(second[1]!.facts[0]!.label).toBe('pull_request');
+    expect(second[0]!.params).toEqual({ status: 'unverifiable', code: 'signature_invalid' });
+    // another task's operation and events of other operations: the same array
+    putOperations(t.store, [row(t, { operation_id: 'op-x', task_id: '0190f000-0000-7000-8000-000000000002' })]);
+    act(() => putEvents(t.store, t.wg, [event(t, 'operation.params', prParams('op-x'), 'op-x')]));
+    expect(select(t.store.getState())).toBe(second);
+    // a changed row: a new array, the other view stays
+    putOperations(t.store, [row(t, { operation_id: OP2, created_at: at(99_999_999), state: 'succeeded' })]);
+    const third = select(t.store.getState());
+    expect(third).not.toBe(second);
+    expect(third[0]!.state).toBe('succeeded');
+    expect(third[1]).toBe(second[1]);
   });
 });
 

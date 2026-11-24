@@ -32,6 +32,7 @@
   "vms.none": "Keine VMs Ihrer Workgroups auf diesem Gerät.",
   "sessions": "Sessions ({count})",
   "workvm": "Arbeits-VM",
+  "workvms": "Arbeits-VMs ({count})",
   "sessions.none": "Keine Sessions in dieser VM.",
   "wg.unnamed": "Workgroup",
   "unit.cores": "{value} Kerne",
@@ -70,5 +71,11 @@
   "vm-state.running": "Läuft",
   "vm-state.stopping": "Wird gestoppt",
   "vm-state.stopped": "Gestoppt",
-  "vm-state.deleted": "Gelöscht"
+  "vm-state.deleted": "Gelöscht",
+  "truncated": "Angezeigt werden die {shown} zuletzt aktiven von {total} Sessions.",
+  "devicesTruncated": "Angezeigt werden die ersten {shown} Geräte; der Hub hat weitere.",
+  "tree.more": "{count} weitere Zeilen – anzeigen",
+  "tree.above": "{count} Zeilen darüber – anzeigen",
+  "tree.top": "Zurück zum Anfang",
+  "chart.table.cut": "Angezeigt werden die neuesten {shown} von {total} Punkten."
 }

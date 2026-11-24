@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { createStore } from '../../../src/core/store';
 import {
+  appendBoardRows,
   isWhiteboardRow,
   putBoardRows,
   setBoardError,
@@ -41,6 +42,7 @@ describe('whiteboards slice', () => {
       code: 'unavailable',
       rows: [],
       checked: null,
+      next: null,
     });
     putBoardRows(store, 'k', [row('a')], 7);
     setBoardError(store, 'k', 'rate_limited');
@@ -49,6 +51,23 @@ describe('whiteboards slice', () => {
       code: 'rate_limited',
       rows: [row('a')],
       checked: 7,
+      next: null,
     });
+  });
+
+  it('appends older pages without repeating a listed row, also to an unknown board', () => {
+    const store = createStore();
+    appendBoardRows(store, 'n', [row('a')], 'c');
+    expect(store.getState().whiteboards.boards.n).toEqual({
+      status: 'ready',
+      code: null,
+      rows: [row('a')],
+      checked: null,
+      next: 'c',
+    });
+    putBoardRows(store, 'k', [row('a')], 3, 'c1');
+    appendBoardRows(store, 'k', [row('a'), row('b')], null);
+    expect(store.getState().whiteboards.boards.k!.rows.map((item) => item.entry_id)).toEqual(['a', 'b']);
+    expect(store.getState().whiteboards.boards.k!.next).toBeNull();
   });
 });

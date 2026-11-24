@@ -26,7 +26,11 @@ test('the task board and its history @R-12.1 @R-12.3 @R-12.7', async ({ page, ba
   await page.getByTestId('whiteboard.editor.save').click();
   await expect(entry.locator('li')).toHaveCount(3);
   await entry.getByTestId('whiteboard.item.history').click();
-  const last = page.getByTestId('whiteboard.history.version').nth(1);
+  // newest first: the edit, then the creation; its diff once expanded
+  const versions = page.getByTestId('whiteboard.history.version');
+  await expect(page.getByTestId('whiteboard.history.action')).toHaveText(['Edited', 'Created']);
+  const last = versions.nth(0);
+  await last.getByTestId('whiteboard.history.diff.toggle').click();
   await expect(last.getByTestId('whiteboard.diff.stats')).toHaveText('+1 / −0 lines');
   await expect(last.locator('[data-op="add"]')).toHaveText('+ - release');
   await page.getByTestId('whiteboard.history.close').click();

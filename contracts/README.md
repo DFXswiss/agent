@@ -92,6 +92,9 @@ Assertions and applicators:
 - `items`
 - `minItems`
 - `maxItems`
+- `minProperties`
+- `maxProperties`
+- `propertyNames`
 - `$ref`
 - `$defs`
 - `oneOf`

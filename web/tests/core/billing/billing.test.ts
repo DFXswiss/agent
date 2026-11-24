@@ -5,11 +5,11 @@ import {
   formatRuntime,
   formatUsd,
   loadOrgBilling,
-  loadTaskCharges,
+  loadTaskChargesPage,
   orgBilling,
   people,
   priceRows,
-  taskCharges,
+  sessionCharges,
 } from '../../../src/core/billing/billing';
 import { HubError } from '../../../src/core/net/signedFetch';
 import { credWorld } from '../credentials/world';
@@ -43,6 +43,8 @@ describe('org billing', () => {
     ]);
     expect(people(undefined)).toBeNull();
     expect(people([])).toEqual([]);
+    expect(found?.creditsTruncated).toBe(false);
+    expect(orgBilling({ ...BILLING, credits_truncated: true })?.creditsTruncated).toBe(true);
   });
 
   it('accepts an answer without price list and lists, and refuses malformed answers', () => {
@@ -75,28 +77,11 @@ describe('org billing', () => {
 
 describe('task charges', () => {
   it('parses sessions and refuses malformed answers', () => {
-    expect(
-      taskCharges({
-        sessions: [{ session_id: 's1', ...totals }, { ...totals }, { session_id: 's2' }],
-        total_micro_usd: 1,
-      }),
-    ).toEqual({
-      totalMicroUsd: 1,
-      sessions: [
-        { sessionId: 's1', tokensMicroUsd: 445_200, runtimeMicroUsd: 3000, tokens: 1_100_000, runtimeMs: 30_000 },
-      ],
-      people: null,
-    });
-    expect(taskCharges({ sessions: 'x', total_micro_usd: 0 })).toEqual({
-      totalMicroUsd: 0,
-      sessions: [],
-      people: null,
-    });
-    expect(taskCharges({ sessions: [], total_micro_usd: 0, people: PEOPLE })?.people?.map((row) => row.userId)).toEqual(
-      ['u-1', null],
-    );
-    expect(taskCharges({ sessions: [] })).toBeNull();
-    expect(taskCharges(null)).toBeNull();
+    expect([{ session_id: 's1', ...totals }, { ...totals }, { session_id: 's2' }].map(sessionCharges)).toEqual([
+      { sessionId: 's1', tokensMicroUsd: 445_200, runtimeMicroUsd: 3000, tokens: 1_100_000, runtimeMs: 30_000 },
+      null,
+      null,
+    ]);
   });
 });
 
@@ -107,10 +92,58 @@ describe('loaders', () => {
     expect((await loadOrgBilling(t.context, 'o/1')).version).toBe(1);
     t.client.on('GET /v1/orgs/o%2F1/billing', () => ({}));
     await expect(loadOrgBilling(t.context, 'o/1')).rejects.toBeInstanceOf(HubError);
-    t.client.on('GET /v1/tasks/t1/charges', () => ({ sessions: [], total_micro_usd: 0 }));
-    expect(await loadTaskCharges(t.context, 't1')).toEqual({ sessions: [], totalMicroUsd: 0, people: null });
     t.client.on('GET /v1/tasks/t1/charges', () => null);
-    await expect(loadTaskCharges(t.context, 't1')).rejects.toBeInstanceOf(HubError);
+    await expect(loadTaskChargesPage(t.context, 't1', null)).rejects.toBeInstanceOf(HubError);
+    t.client.on('GET /v1/tasks/t1/charges', () => ({ sessions: [] }));
+    await expect(loadTaskChargesPage(t.context, 't1', null)).rejects.toBeInstanceOf(HubError);
+  });
+
+  it('reads the charges of a task page by page, the total from the newest page', async () => {
+    const t = await credWorld();
+    t.client.on('GET /v1/tasks/t%2F1/charges', (_body, target) =>
+      String(target).includes('before=')
+        ? { sessions: [{ session_id: 's1', ...totals }], next_before: null }
+        : { sessions: [{ session_id: 's2', ...totals }, 'x'], total_micro_usd: 9, next_before: 'c1', people: PEOPLE },
+    );
+    const newest = await loadTaskChargesPage(t.context, 't/1', null);
+    expect(newest).toMatchObject({
+      rows: [{ sessionId: 's2' }],
+      nextBefore: 'c1',
+      truncated: false,
+      totalMicroUsd: 9,
+    });
+    // the consumption per person of the whole task comes with the newest page (ADR-083)
+    expect(newest.people?.map((row) => row.userId)).toEqual(['u-1', null]);
+    expect(await loadTaskChargesPage(t.context, 't/1', 'c1')).toMatchObject({
+      rows: [{ sessionId: 's1' }],
+      nextBefore: null,
+      totalMicroUsd: null,
+    });
+    expect(t.client.of('GET /v1/tasks/t%2F1/charges').map((call) => call.target)).toEqual([
+      '/v1/tasks/t%2F1/charges?limit=100',
+      '/v1/tasks/t%2F1/charges?before=c1&limit=100',
+    ]);
+  });
+
+  it('reads the whole list once on a hub without paging', async () => {
+    const t = await credWorld();
+    t.client.on('GET /v1/tasks/t1/charges', (_body, target) => {
+      if (String(target).includes('?')) throw new HubError('request_invalid', 400);
+      return { sessions: [{ session_id: 's1', ...totals }], total_micro_usd: 5, truncated: true };
+    });
+    expect(await loadTaskChargesPage(t.context, 't1', null)).toMatchObject({
+      rows: [{ sessionId: 's1' }],
+      nextBefore: null,
+      truncated: true,
+      totalMicroUsd: 5,
+    });
+    expect(await loadTaskChargesPage(t.context, 't1', 'c')).toEqual({
+      rows: [],
+      nextBefore: null,
+      truncated: false,
+      totalMicroUsd: null,
+      people: null,
+    });
   });
 });
 

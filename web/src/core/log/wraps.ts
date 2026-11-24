@@ -98,11 +98,7 @@ export function credReaders(states: Iterable<OrgState>, owner: string, excluded:
   const list = [...states];
   const org = list.find((state) => state.org === owner);
   if (org !== undefined) {
-    return new Set(
-      [...org.principals.values()]
-        .filter((device) => device.kind === DEVICE && !skip.has(device.id) && org.deviceWgs(device.id).length > 0)
-        .map((device) => device.id),
-    );
+    return new Set([...org.principals.keys()].filter((device) => !skip.has(device) && credDevice(org, owner, device)));
   }
   const found = new Set([owner]);
   const revoked = revokedAgents(list);
@@ -112,12 +108,22 @@ export function credReaders(states: Iterable<OrgState>, owner: string, excluded:
     const agent = state.activeAgent(owner);
     if (agent !== null && !revoked.has(agent.id)) found.add(agent.id);
     if (!user.consented || (user.joinAgent !== null && revoked.has(user.joinAgent))) continue;
-    for (const device of state.principals.values()) {
-      const eligible = state.deviceWgs(device.id).some((wg) => state.explicitAccess(owner, wg) !== null);
-      if (device.kind === DEVICE && !skip.has(device.id) && eligible) found.add(device.id);
+    for (const device of state.principals.keys()) {
+      if (!skip.has(device) && credDevice(state, owner, device)) found.add(device);
     }
   }
   return found;
+}
+
+/**
+ * The device test of `credReaders` for one principal in one state, without the owner's own conditions and without
+ * exclusions: a device of the state assigned to a workgroup in which the owner (a user) has explicit access, or for an
+ * organization `owner` (`state.org`) assigned to any workgroup.
+ */
+export function credDevice(state: OrgState, owner: string, principal: string): boolean {
+  if (state.principals.get(principal)?.kind !== DEVICE) return false;
+  const wgs = state.deviceWgs(principal);
+  return state.org === owner ? wgs.length > 0 : wgs.some((wg) => state.explicitAccess(owner, wg) !== null);
 }
 
 /** W1/W2 for an `org` or `wg` scope of this log. */
@@ -125,10 +131,15 @@ export function mayWrap(log: VerifiedLog, slot: WrapSlot, wrappedBy: string, exc
   const state = log.state;
   if (!(slot.scope === ORG || slot.scope === WG)) return false;
   if (!(slot.epoch >= 1 && slot.epoch <= state.epoch(slot.scope, slot.scope_id))) return false;
-  const readers = state.readers(slot.scope, slot.scope_id, excluded);
-  if (!readers.includes(slot.recipient)) return false;
-  const holders = log.epochHolders(slot.scope, slot.scope_id, slot.epoch);
-  return wrappedBy === slot.recipient || holders.has(wrappedBy) || readers.includes(wrappedBy);
+  // `state.readers(…).includes(p)`, without listing and sorting every reader per slot
+  const skip = new Set(excluded);
+  const reader = (principal: string) => !skip.has(principal) && state.canRead(principal, slot.scope, slot.scope_id);
+  if (!reader(slot.recipient)) return false;
+  return (
+    wrappedBy === slot.recipient ||
+    reader(wrappedBy) ||
+    log.epochHolders(slot.scope, slot.scope_id, slot.epoch).has(wrappedBy)
+  );
 }
 
 /**

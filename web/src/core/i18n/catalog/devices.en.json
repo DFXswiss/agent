@@ -44,6 +44,7 @@
   "assign.title": "Assign a platform device",
   "assign.workgroup": "Workgroup",
   "assign.candidates": "Available platform devices",
+  "assign.candidates.search": "Search the platform devices",
   "assign.loading": "Loading platform devices…",
   "assign.none": "No platform device is available for this workgroup.",
   "assign.unverifiable": "Not certified in the platform log",
@@ -87,5 +88,12 @@
   "unassign-org.open": "Remove from the organization",
   "unassign-org.title": "Remove {name} from the organization",
   "unassign-org.confirm": "Remove",
-  "unassign-org.body": "The device no longer runs tasks of every workgroup; workgroups it is assigned to on their own keep it. The keys of the other workgroups are replaced. Content it already read stays on the device."
+  "unassign-org.body": "The device no longer runs tasks of every workgroup; workgroups it is assigned to on their own keep it. The keys of the other workgroups are replaced. Content it already read stays on the device.",
+  "wgs.more": "{count} more – show",
+  "list.more": "{count} more devices – show",
+  "list.above": "{count} devices above – show",
+  "list.top": "Back to the top",
+  "invites.truncated": "The hub sent only the newest device invitations of a longer list.",
+  "truncated": "The hub sent the status of the newest devices only; for the others it is unknown.",
+  "assign.truncated": "The hub sent only part of the available platform devices."
 }

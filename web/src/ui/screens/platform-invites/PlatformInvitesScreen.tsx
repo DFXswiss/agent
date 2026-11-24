@@ -2,9 +2,12 @@
 // comes from the verified platform log; anyone else gets a neutral "not available" page (06-web.md section 12.6,
 // without revealing more). An inviter creates an invitation – the code is drawn in the browser and only its ID and the
 // expiry are sent – and sees the link `<origin>/invite#<code>` and the code once (copy buttons, confidentiality
-// warning); the list shows open, used, revoked and expired invitations, open ones can be revoked.
-import { useEffect, useRef, useState } from 'react';
-import { formatEventTime } from '../../../core/i18n';
+// warning); the list shows open, used, revoked and expired invitations, open ones can be revoked. The rows are a
+// `WindowedList` (ADR-086 section 1: at most `MAX_ROWS` rendered) over the hub's list read page by page ("Load more");
+// a capped answer of an old hub says so.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { formatEventTime, localTimeZone } from '../../../core/i18n';
+import type { ListPaging } from '../../../core/lists/window';
 import { actionErrorCode } from '../../../core/org/batch';
 import {
   createPlatformInvite,
@@ -20,7 +23,10 @@ import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { NotAvailable } from '../errors/pages';
 import { useNow } from '../../countdown/useNow';
+import { WindowedList } from '../../lists/WindowedList';
 import { BUTTON, PRIMARY } from '../members/ActionDialog';
+import { MAX_ROWS, PAGE, sameValue } from '../members/lists';
+import { usePagedList } from '../members/usePagedList';
 import { CopyButton, ExpirySelect } from '../devices/parts';
 import { useInviter } from './useInviter';
 
@@ -120,23 +126,20 @@ function Result(props: { readonly created: PreparedPlatformInvite; readonly onDo
   );
 }
 
-function InviteItem(props: {
+/** What an invitation row shows. */
+interface InviteEntry {
   readonly row: PlatformInviteRow;
   readonly busy: boolean;
   readonly onRevoke: (id: string) => void;
-}) {
-  const { row } = props;
+}
+
+function InviteRowView({ item }: { readonly item: InviteEntry }) {
+  const { row } = item;
   const { t, locale } = useI18n();
   const now = useNow(false);
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const time = (text: string) => formatEventTime(Date.parse(text), { locale, timeZone, now });
+  const time = (text: string) => formatEventTime(Date.parse(text), { locale, timeZone: localTimeZone(), now });
   return (
-    <li
-      className="flex flex-col gap-1 border-b border-gray-200 py-3"
-      data-testid="platform-invites.item"
-      data-invite={row.invite_id}
-      data-state={row.state}
-    >
+    <>
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded bg-gray-100 px-2 text-sm" data-testid="platform-invites.item.state">
           {t(`platform-invites.state.${row.state}`)}
@@ -153,43 +156,78 @@ function InviteItem(props: {
         <button
           type="button"
           className={`${BUTTON} self-start`}
-          disabled={props.busy}
-          onClick={() => props.onRevoke(row.invite_id)}
+          disabled={item.busy}
+          onClick={() => item.onRevoke(row.invite_id)}
           data-testid="platform-invites.item.revoke"
         >
           {t('platform-invites.revoke')}
         </button>
       )}
-    </li>
+    </>
   );
 }
 
+const inviteKey = (entry: InviteEntry) => entry.row.invite_id;
+const inviteAttributes = (entry: InviteEntry) => ({
+  'data-testid': 'platform-invites.item',
+  'data-invite': entry.row.invite_id,
+  'data-state': entry.row.state,
+});
+
+/** The invitation rows in the hub's order (newest first), windowed, with "Load more" of the hub's next page. */
+export function PlatformInviteRows(props: {
+  readonly rows: readonly PlatformInviteRow[];
+  readonly busy: boolean;
+  readonly onRevoke: (id: string) => void;
+  readonly paging?: ListPaging;
+}) {
+  const { rows, busy, onRevoke, paging } = props;
+  const entries = useMemo(() => rows.map((row): InviteEntry => ({ row, busy, onRevoke })), [rows, busy, onRevoke]);
+  return (
+    <WindowedList
+      listId="platform-invites"
+      items={entries}
+      getKey={inviteKey}
+      Row={InviteRowView}
+      same={sameValue}
+      newest="start"
+      page={PAGE}
+      maxRows={MAX_ROWS}
+      testId="platform-invites.rows"
+      rowClassName="flex flex-col gap-1 border-b border-gray-200 py-3"
+      rowAttributes={inviteAttributes}
+      {...(paging !== undefined && { hasMore: paging.hasMore, loading: paging.loading, onLoadMore: paging.loadMore })}
+    />
+  );
+}
+
+const platformKey = (row: PlatformInviteRow) => row.invite_id;
+const NO_ROWS: readonly PlatformInviteRow[] = [];
+
+/** The hub's list page by page (`usePagedList`); the loaded range is read again after a creation or a revocation. */
 function InviteList({ version }: { readonly version: number }) {
   const { app } = useAppEnv();
   const { t, error } = useI18n();
-  const [rows, setRows] = useState<PlatformInviteRow[] | null>(null);
-  const [code, setCode] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
-  useEffect(() => {
-    listPlatformInvites(app.client).then(
-      (found) => {
-        setRows(found);
-        setCode(null);
-      },
-      (failure: unknown) => setCode(actionErrorCode(failure)),
-    );
-  }, [app, version, reload]);
-  const revoke = async (id: string) => {
-    setBusy(true);
-    try {
-      await revokePlatformInvite(app.client, id);
-      setReload((n) => n + 1);
-    } catch (failure) {
-      setCode(actionErrorCode(failure));
-    }
-    setBusy(false);
-  };
+  const read = useCallback((before: string | null) => listPlatformInvites(app.client, before), [app]);
+  const list = usePagedList(read, platformKey, `${version}/${reload}`);
+  const revoke = useCallback(
+    (id: string) => {
+      setBusy(true);
+      setFailed(null);
+      void revokePlatformInvite(app.client, id)
+        .then(
+          () => setReload((n) => n + 1),
+          (failure: unknown) => setFailed(actionErrorCode(failure)),
+        )
+        .finally(() => setBusy(false));
+    },
+    [app],
+  );
+  const code = failed ?? list.code;
+  const rows = list.rows ?? NO_ROWS;
   return (
     <section className="flex flex-col gap-2" data-testid="platform-invites.list">
       <h2 className="font-semibold">{t('platform-invites.list.title')}</h2>
@@ -198,16 +236,17 @@ function InviteList({ version }: { readonly version: number }) {
           {error(code).title}
         </p>
       )}
-      {rows !== null && rows.length === 0 && (
+      {list.rows !== null && rows.length === 0 && (
         <p className="text-gray-600" data-testid="platform-invites.list.empty">
           {t('platform-invites.list.empty')}
         </p>
       )}
-      <ul>
-        {(rows ?? []).map((row) => (
-          <InviteItem key={row.invite_id} row={row} busy={busy} onRevoke={(id) => void revoke(id)} />
-        ))}
-      </ul>
+      {list.truncated && (
+        <p className="rounded bg-gray-100 p-3 text-gray-800" role="note" data-testid="platform-invites.list.truncated">
+          {t('platform-invites.list.truncated')}
+        </p>
+      )}
+      <PlatformInviteRows rows={rows} busy={busy} onRevoke={revoke} paging={list.paging} />
     </section>
   );
 }

@@ -30,5 +30,7 @@
   "task.empty": "No charges for this task.",
   "task.total": "Total {amount}",
   "task.session": "Session {session}: model {tokens} ({count} tokens), runtime {runtime} ({duration})",
-  "no-topup": "Credit is added by the operator; there is no payment in the interface."
+  "no-topup": "Credit is added by the operator; there is no payment in the interface.",
+  "task.truncated": "The hub sent only part of the sessions (an older hub without paging).",
+  "credits.truncated": "Only the newest 100 credit entries are shown."
 }

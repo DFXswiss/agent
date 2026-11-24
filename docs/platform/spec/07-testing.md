@@ -222,6 +222,56 @@ Rules:
 - Enforcement: the CI jobs of §8 fail below 100 %; `make platform-ci` fails locally; the A38 local CI report
   (`.github/a38.json` style) lists the platform jobs, so the PR guard cannot mark a PR ready without them.
 
+### 3.1 Volume gate (KOR-35, ADR-086 §4)
+
+Every view of the web client must stay usable under a fixed data volume; the gate is part of `npm run test:e2e` and
+therefore of `make platform-web`/`make platform-ci` of every package.
+
+- **Projects** (`web/playwright.config.ts`): `volume-seed` (once per run), then `volume` (Desktop Chrome) and
+  `volume-mobile` (Pixel 7 with 4× CPU throttling over CDP `Emulation.setCPUThrottlingRate`), one worker each, specs
+  `web/e2e/volume/*.spec.ts`. In a full run `volume-seed` depends on the last projects of the other suites, so the
+  gate measures on a quiet machine; selected alone (`npx playwright test --project volume --project volume-mobile`)
+  it starts at once. Browser coverage is not collected in these projects (the precise V8 counters would distort the
+  times); the CSP listener applies.
+- **Data set** (`scripts/hub_test_volume.py`, routes `/volume/*` of the device double): a non-private org with
+  platform access, built as the clients build it (real identities, log batches through `append_batch`, every event
+  sealed, signed and stored through `append_events`; rows without content inserted directly): one task with 10 000
+  items of each chat kind (prompts, messages, tool calls, files and file groups, denied hooks, status items, operation
+  cards and results, subagent items), items at the contracts' bounds (64 KiB texts and lines, a 64 KiB tool input and
+  result, an operation result of about 160 KB), 10 000 terminal chunks, a task with 1 000 items per kind (scaling
+  check), 5 000 tasks in the workgroup, 2 000 notifications, 200 members, 150 org devices, 200 open org and 1 000
+  open platform invitations, 300 whiteboard entries on each level and 200 versions of one 64 KiB entry, a subagent
+  chain deeper than the hub's limit with more siblings than it allows, and the audit rows of all of it. Each volume
+  worker onboards its own user, who joins the org as admin (`POST /volume/invite`, `joinWithCode`) and gets the
+  notifications and the platform role `inviter` (`POST /volume/joined`); it signs in once and opens every view by
+  client-side navigation (the sign-in itself is the view `flow:unlock`). Ids the data set cannot contain because the
+  hub refuses them are listed with the reason in `seed.json` (`unseedable`) and printed by the teardown. `VOLUME_COUNTS` (JSON) shrinks the set
+  while a spec is developed. The ids go to `web/test-results/.volume/seed.json`.
+- **Budget** (`web/e2e/volume/budget.ts`, reasons in `decisions/KOR-35.md`): the primary control visible and enabled
+  within 10 s (desktop) / 20 s (phone) of the unlock gesture; fewer than 6 000 DOM elements; used JS heap after a
+  garbage collection below 300 MB (CDP `Performance.getMetrics`, `JSHeapUsedSize`); at most 300 ms of long tasks in
+  a quiet 2 s window; scrolling moves the page with frame gaps below 500 ms; under live load (20 sessions in other
+  tasks writing 200 events per second, `POST /volume/live`) less than 50 % long-task time; the chat at 10 000 items
+  per kind costs at most twice the chat at 1 000 (time until usable, heap). `measure(page, info, id, …)` prints
+  `KOR-35 <project> <id>: …` with every value and appends the measurement to `web/test-results/.volume/measured.jsonl`.
+- **Load independence** (ADR-086 §4): before the count, `measure` uses the list's window controls up to five times
+  (earlier rows, next page), so a list that is not windowed exceeds the element bound; the time budgets are
+  multiplied by the slowdown of the tab calibrated in the run (`web/e2e/volume/speed.ts`: a fixed piece of work timed
+  in the tab before the unlock gesture and after the measurement, against `REFERENCE_MS` of the idle device, factor
+  1–8); element and heap bounds are never scaled; scrolling is checked on the position change after each input.
+  `e2e/devices/chat-volume.spec.ts` (HOT-05) uses the same calibration.
+  Stability is proven inside the browser only: `VOLUME_STRESS_CPU=<rate>` throttles every measured tab by CDP
+  (`Emulation.setCPUThrottlingRate`); no load is put on the device itself.
+- **Completeness**: each spec declares `export const COVERS = [...]` with `route:<pattern>` (every `path` of
+  `web/src/ui/screens/*/routes.tsx`), `tab:<id>` (task tabs), `chat:<kind>` (chat items), `settings:<id>`,
+  `header:<name>` and `list:<id>` (`web/src/core/lists/ids.ts`, once it exists). The Vitest node test
+  `web/tests/scripts/volume-completeness.test.ts` fails for every registered id that no spec covers; the global
+  teardown fails for every covered id that was not measured in both volume projects (checked when the data set was
+  seeded in the run).
+- **Known gaps**: a view over budget today is listed in `web/e2e/volume/gaps.ts`; its test is marked
+  `test.fail(true, 'KOR-35 gap: <reason>')`, so the gate stays green, the gap stays visible, and a fixed view fails
+  as "expected to fail" until its entry is removed. The budgets are never relaxed.
+
 ## 4. Contract tests
 
 **Amendment (INF-06, ADR-061):** one repository, one `contracts/`; the copy in `agent/contracts/`, its
@@ -356,4 +406,5 @@ heads without `log_rollback`/`log_fork`; a follow-up prompt works; `rebuild-proj
 | GitHub double (`agent_doubles.github`) | Device flow (`/login/device/code`, `/login/oauth/access_token` with `authorization_pending`, `slow_down`, `expired_token`, `access_denied`); REST subset used by `03-api.md` §9: `GET /user`, `GET /user/installations` + repositories, `GET /user/repos`; personal tokens without the App (refused the installation routes with `403`, `X-OAuth-Scopes`; KOR-27), `GET /repos/{o}/{r}`, tarball, refs (get/create/update fast-forward), Git Data API (blobs, trees, commits), pulls (create/list/get/files), issue comments (create/list); in-memory repositories seeded per test; fault injection: 5xx, 429 with `Retry-After`, secondary rate limit, slow responses; journal of all calls. |
 | Mail double (`agent_doubles.mail`) | SMTP receive (for test fixtures), IMAPS/IMAP with INBOX and a `\Junk` folder, LIST flags, SEARCH by sender, FETCH; TLS with a test CA; journal. |
 | Login-CLI double (`agent_doubles.login_cli`) | Mimics `claude setup-token` as recorded at the golden's pin (KOR-21): opens the authorize URL of the auth-page double through `BROWSER`, draws like the real program (cursor positioning instead of spaces, frames overwritten cell by cell, spinner, raw input mode), shows its input field only after a delay and drops what is typed before, keeps running after a refused code ("OAuth error … Press Enter to retry"), shows the token and ends by itself shortly after; auth-page double serves the e-mail form, sends the magic link via the mail double (optionally into Junk), renders an "Authorize" page and a code page. |
+| Volume data set (`scripts/hub_test_volume.py`, KOR-35) | The data set of the volume gate (§3.1) through the device double: `POST`/`GET /volume/seed` (background seeding, once per hub), `POST /volume/invite` (an admin invitation with a real package), `POST /volume/joined` (notifications, platform role `inviter`), `POST /volume/live` (live load of the live sessions, announced like the outbox). |
 | Fault switches | Orchestrator control routes: cut/restore hub ↔ runner, hub ↔ browser, runner ↔ GitHub double; force guest hooks to HTTP 500; empty the warm pool; stop/start runner; advance fake clocks. |

@@ -38,7 +38,7 @@ import {
   signatureValid,
   succeeds,
 } from './entries';
-import { compareText, type OrgState, pairKey, splitKey } from './state';
+import { compareText, type OrgState, pairKey, splitKey, withEntry, withoutEntry } from './state';
 
 export const CERTIFIED = 'certified';
 export const DECERTIFIED = 'decertified';
@@ -270,8 +270,8 @@ function invite(state: PlatformState, body: Body, seq: number): PlatformState {
   const pkInv = body.pk_inv as string;
   const expires = body.expires as string;
   const found: PlatformInvite = { inviteId, kind, pkInv, expires, seq, certifiedSeq: null, ts: body.ts as string };
-  const userInvites = kind === 'user' ? new Map(state.userInvites).set(seq, inviteId) : state.userInvites;
-  return state.with({ invites: new Map(state.invites).set(inviteId, found), userInvites });
+  const userInvites = kind === 'user' ? withEntry(state.userInvites, seq, inviteId) : state.userInvites;
+  return state.with({ invites: withEntry(state.invites, inviteId, found), userInvites });
 }
 
 async function certify(state: PlatformState, body: Body, seq: number): Promise<PlatformState> {
@@ -291,9 +291,9 @@ async function certify(state: PlatformState, body: Body, seq: number): Promise<P
     decertifiedSeq: null,
   };
   return state.with({
-    invites: new Map(state.invites).set(found.inviteId, { ...found, certifiedSeq: seq }),
-    certifications: new Map(state.certifications).set(seq, cert),
-    devices: new Map(state.devices).set(device, seq),
+    invites: withEntry(state.invites, found.inviteId, { ...found, certifiedSeq: seq }),
+    certifications: withEntry(state.certifications, seq, cert),
+    devices: withEntry(state.devices, device, seq),
   });
 }
 
@@ -302,17 +302,14 @@ function decertify(state: PlatformState, body: Body, seq: number): PlatformState
   if (state.status(device) !== CERTIFIED) fail('log_rights');
   const latest = state.devices.get(device)!;
   const ended = { ...state.certifications.get(latest)!, decertifiedSeq: seq };
-  return state.with({ certifications: new Map(state.certifications).set(latest, ended) });
+  return state.with({ certifications: withEntry(state.certifications, latest, ended) });
 }
 
 function role(state: PlatformState, body: Body, seq: number): PlatformState {
   const key = pairKey(body.subject as string, body.role as string);
   const grant = body.type === 'role_grant';
   if (state.roles.has(key) === grant) fail('log_rights');
-  const roles = new Map(state.roles);
-  if (grant) roles.set(key, seq);
-  else roles.delete(key);
-  return state.with({ roles });
+  return state.with({ roles: grant ? withEntry(state.roles, key, seq) : withoutEntry(state.roles, key) });
 }
 
 function policy(state: PlatformState, body: Body): PlatformState {
@@ -325,7 +322,7 @@ function operatorSubscriptions(state: PlatformState, body: Body): PlatformState 
 }
 
 function orgAccess(state: PlatformState, body: Body): PlatformState {
-  return state.with({ orgAccess: new Map(state.orgAccess).set(body.org as string, body.granted as boolean) });
+  return state.with({ orgAccess: withEntry(state.orgAccess, body.org as string, body.granted as boolean) });
 }
 
 function userCertify(state: PlatformState, body: Body, seq: number): PlatformState {
@@ -334,8 +331,8 @@ function userCertify(state: PlatformState, body: Body, seq: number): PlatformSta
   if (state.userCertified(user) || state.devices.has(user)) fail('log_rights');
   const cert: UserCertification = { user, kem: pub.kem, sig: pub.sig, seq, decertifiedSeq: null };
   return state.with({
-    userCertifications: new Map(state.userCertifications).set(seq, cert),
-    users: new Map(state.users).set(user, seq),
+    userCertifications: withEntry(state.userCertifications, seq, cert),
+    users: withEntry(state.users, user, seq),
   });
 }
 
@@ -344,7 +341,7 @@ function userDecertify(state: PlatformState, body: Body, seq: number): PlatformS
   if (!state.userCertified(user)) fail('log_rights');
   const latest = state.users.get(user)!;
   const ended = { ...state.userCertifications.get(latest)!, decertifiedSeq: seq };
-  return state.with({ userCertifications: new Map(state.userCertifications).set(latest, ended) });
+  return state.with({ userCertifications: withEntry(state.userCertifications, latest, ended) });
 }
 
 type Transition = (state: PlatformState, body: Body, seq: number) => PlatformState | Promise<PlatformState>;

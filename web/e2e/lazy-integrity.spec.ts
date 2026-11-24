@@ -26,8 +26,9 @@ test('a lazily loaded chunk whose bytes were changed is refused and does not run
   await expect(page.getByTestId('error.reload')).toBeVisible();
   await expect(page.getByTestId('security.build-hash')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.dataset.tampered)).toBeUndefined();
-  // the link the check went through names the chunk's hash from index.html
-  const link = page.locator('link[rel="modulepreload"][href*="/assets/screens-"]');
+  // the link the check went through names the chunk's hash from index.html (a refused file is checked again on the
+  // next import, so a second link for it may follow; the first is the one the refusal went through)
+  const link = page.locator('link[rel="modulepreload"][href*="/assets/screens-"]').first();
   await expect(link).toHaveAttribute('integrity', /^sha384-/);
   await expect(link).toHaveAttribute('crossorigin', 'anonymous');
 });

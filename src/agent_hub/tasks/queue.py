@@ -29,6 +29,8 @@ task (the per-task prompt lock of `agent_hub.tasks.service`, then the task row):
 
 The answer is `{state}`; the audit row `prompt.withdraw {state}` names the author and the prompt event, and the
 `session` frame of the holding session tells the browsers to read the queue again.
+
+The queue lists at most `QUEUE_MAX` prompts, the oldest; a longer one adds `truncated: true` (ADR-086 section 2).
 """
 
 from __future__ import annotations
@@ -55,6 +57,7 @@ from agent_hub.tasks.service import PROMPT_LOCK, Outcome
 
 Connection = psycopg.Connection[Any]
 WITHDRAWALS_MAX = 100
+QUEUE_MAX = 10_000
 RECONCILE_HINT = "reconcile"
 CONFLICT = "version_conflict"
 
@@ -84,13 +87,14 @@ def queued(
 def queue_json(connection: Connection, task_id: UUID, now: datetime, window: int) -> dict[str, Any]:
     """The answer of `GET /v1/tasks/{task}/queue` (module docstring)."""
     held, queue = queued(connection, task_id)
-    ids = [prompt.event_id for prompt, _session, _device in queue]
+    shown = queue[:QUEUE_MAX]
+    ids = [prompt.event_id for prompt, _session, _device in shown]
     agent, withdrawing = prompts.via_agent(connection, ids), prompts.withdrawing(connection, ids)
     online = presence.online_devices(
-        connection, [device for _p, _s, device in queue if device is not None], now, window
+        connection, [device for _p, _s, device in shown if device is not None], now, window
     )
     entries = []
-    for prompt, session, device in queue:
+    for prompt, session, device in shown:
         if prompt.event_id in withdrawing:
             state = "withdrawing"
         elif device is None or device not in online:
@@ -125,6 +129,7 @@ def queue_json(connection: Connection, task_id: UUID, now: datetime, window: int
             }
             for event, requested, withdrawn in withdrawals
         ],
+        **({"truncated": True} if len(queue) > QUEUE_MAX else {}),
     }
 
 
