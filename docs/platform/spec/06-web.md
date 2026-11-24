@@ -623,6 +623,10 @@ Run while signed in and unlocked; serialized per org; status visible in a small 
 
 Initial JS ≤ 300 KiB gzip (route-level code splitting: terminal, charts, markdown and settings load lazily); time to
 interactive ≤ 3 s on a mid-range phone profile (Playwright CPU throttling ×4, "Fast 3G"); measured in the E2E suite.
+Temporary measurement tolerance (HOT-16, until its second stage has slimmed the initial bundle): the budget stays
+3 s, but the E2E check fails only when the median of three runs exceeds 3 s by more than 5 % (3150 ms); a median
+between 3000 and 3150 ms passes with a visible "over budget within tolerance" annotation. Reason: the throttled
+measurement varies by a few per cent between identical builds (2933 to 3109 ms in seven runs on one test device).
 
 ### 12.3 Accessibility
 

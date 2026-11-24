@@ -17,6 +17,12 @@ import { CSP_BINDING, type CspViolation } from './fixtures/test.ts';
 
 /** Time to interactive of 06-web.md section 12.2. */
 export const TTI_BUDGET_MS = 3000;
+/**
+ * Temporary measurement tolerance of 06-web.md section 12.2 (HOT-16 stage 1, removed again in stage 2): the throttled
+ * measurement varies by a few per cent between identical builds (2933 to 3109 ms on one test device), so the median
+ * fails only above the budget plus 5 %; a median between the budget and that limit passes with a warning annotation.
+ */
+export const TTI_TOLERANCE = 0.05;
 /** Chrome DevTools "Fast 3G": 1.6 Mbit/s down and 750 kbit/s up at 90 %, 150 ms latency × 3.75. */
 export const FAST_3G = {
   offline: false,
@@ -128,5 +134,10 @@ test('the first screen is interactive within 3 s with CPU ×4 and Fast 3G', asyn
   const description = `median ${median} ms of ${runs.join(', ')} ms`;
   info.annotations.push({ type: 'time to interactive', description });
   console.log(`time to interactive (${info.project.name}): ${description}`);
-  expect(median).toBeLessThanOrEqual(TTI_BUDGET_MS);
+  if (median > TTI_BUDGET_MS) {
+    const over = `over budget within tolerance: ${median} ms > ${TTI_BUDGET_MS} ms (limit ${TTI_BUDGET_MS * (1 + TTI_TOLERANCE)} ms)`;
+    info.annotations.push({ type: 'warning', description: over });
+    console.warn(`WARNING time to interactive (${info.project.name}): ${over}`);
+  }
+  expect(median).toBeLessThanOrEqual(TTI_BUDGET_MS * (1 + TTI_TOLERANCE));
 });
