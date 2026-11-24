@@ -13,6 +13,7 @@ from agent_runner.billing import state as billing
 from agent_runner.guestlink.errors import GuestRefused, GuestUnreachable
 from agent_runner.prompts.resume import RESUMED
 from agent_runner.reconcile.engine import Run
+from agent_runner.sessions import records
 
 from ..prompts.kit import PromptGuest, add_prompt, pull, run, setup
 from ..reconcile.rig import Rig
@@ -129,13 +130,24 @@ def test_a_failing_suspend_leaves_the_session_and_an_ended_session_is_released(r
     run(rig, body)
 
 
-def test_org_devices_and_inactive_billing_never_pause(rig: Rig) -> None:
+def test_org_devices_pause_only_sessions_on_the_dfx_key_and_inactive_billing_never_pauses(rig: Rig) -> None:
+    """KOR-50, ADR-080 section 7: on own hardware the credit pause acts on the sessions whose access is `platform`
+    (the DFX key); sessions on the owner's own access are never touched."""
+
     async def body(env: Any) -> None:
         pk = await setup(env, device_kind="org")
-        sid = await pk.add_session(1, state="working")
+        own = await pk.add_session(1, state="working")
+        dfx = await pk.add_session(2, state="idle")
+        async with env.pool.connection() as conn:
+            await records.update(conn, own, model_access="api_key")
+        await pause.enforce(pk.deliverer, desired(True, active=False))
+        assert pk.guest.calls == []
         await pause.enforce(pk.deliverer, desired(True))
-        assert pk.guest.calls == [] or ("control", (sid, "suspend")) not in pk.guest.calls
-        assert not pause.deferred(pk.kit.session_env, await pk.session(sid))
+        assert ("control", (own, "suspend")) not in pk.guest.calls
+        assert ("control", (dfx, "suspend")) in pk.guest.calls
+        pk.kit.session_env.desired = desired(True)
+        assert not pause.deferred(pk.kit.session_env, await pk.session(own))
+        assert pause.deferred(pk.kit.session_env, await pk.session(dfx))
 
     run(rig, body)
 

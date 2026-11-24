@@ -19,10 +19,10 @@ it (decisions/RUN-15.md).
 (decisions/RUN-15.md, decisions/RUN-12.md).
 
 The operator's subscriptions (KOR-23, ADR-052; only while `OPERATOR_SUBSCRIPTION_DIR` is set, passed by the sampler as
-`operator`): `agent_runner_operator_subscription_files{state}` (usable, blocked, deferred, ignored),
-`agent_runner_operator_subscription_sessions{file}` (the label is the file name without `.token`, chosen by the
-operator; never a token or an organization) and `agent_runner_operator_subscription_newest_change_age_seconds`
-(left out when no file was seen).
+`operator`): `agent_runner_operator_subscription_files{state}` (usable, blocked, exhausted - used up, KOR-50 -,
+deferred, ignored), `agent_runner_operator_subscription_sessions{file}` (the label is the file name without
+`.token`, chosen by the operator; never a token or an organization) and
+`agent_runner_operator_subscription_newest_change_age_seconds` (left out when no file was seen).
 """
 
 from __future__ import annotations

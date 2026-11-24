@@ -16,7 +16,7 @@ import pytest
 
 from agent_runner.login import setup_token
 from agent_runner.model import operator
-from agent_runner.model.operator import BLOCKED, DEFERRED, IGNORED, USABLE, Pool
+from agent_runner.model.operator import BLOCKED, DEFERRED, EXHAUSTED, IGNORED, USABLE, Pool
 
 ORG = "0b9c6a52-4a35-4c1e-9d8e-8f3a0e8d5b11"
 MARKER = "OPERATORMARKER"
@@ -340,7 +340,7 @@ def test_the_summary_counts_states_and_sessions_and_the_newest_change(tmp_path: 
     pool.observe("b", 429, None, "s2")
     pool.bindings = {"s1": "b", "s2": "b"}
     summary = pool.summary()
-    assert summary.states == {USABLE: 1, BLOCKED: 1, DEFERRED: 1, IGNORED: 1}
+    assert summary.states == {USABLE: 1, BLOCKED: 1, EXHAUSTED: 0, DEFERRED: 1, IGNORED: 1}
     assert summary.sessions == {"a": 0, "b": 2, "c": 0}
     assert summary.newest_age_s == pytest.approx(50.0)  # wall 5000 - newest change 4950
     pool.wall = lambda: 1.0

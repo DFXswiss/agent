@@ -267,8 +267,12 @@ def test_item_kinds_match_the_table_check() -> None:
     folder = Path(__file__).resolve().parents[4] / "src/agent_runner/store/migrations"
     sql = (folder / "0001_runner.sql").read_text()
     table = sql.split("CREATE TABLE runner.outbox", 1)[1].split(");", 1)[0]
-    # the newest form of the check: `runtime` was added by the billing migration (KOR-31)
-    widened = (folder / "0013_billing.sql").read_text().split("ADD CONSTRAINT outbox_item_kind_check", 1)[1]
+    # the newest form of the check: `runtime` was added by the billing migration (KOR-31), the items of the model
+    # fallback and the DFX key by KOR-50
+    marker = "ADD CONSTRAINT outbox_item_kind_check"
+    newest = [path for path in sorted(folder.glob("*.sql")) if marker in path.read_text()][-1]
+    widened = newest.read_text().split(marker, 1)[1]
+    later = {"runtime", "operator_quota", "dfx_key_state", "dfx_key_issued", "dfx_key_usage"}
     for kind in ITEM_KINDS:
         assert f"'{kind}'" in widened
-        assert f"'{kind}'" in table or kind == "runtime"
+        assert f"'{kind}'" in table or kind in later

@@ -20,8 +20,10 @@ runner log and the metrics.
   the format check of the subscription login); a refresh token or anything else is ignored with `reason=format`.
   A file is read again only when its identity (device, inode, modification time, size) changed, so a renewed token is
   picked up at the next scan and an unchanged file costs one `open`/`fstat`.
-- **Choice** (`Pool.choose`): among the usable files the one with the fewest bound sessions, then the one unused the
-  longest (bound or answered last), then by name.
+- **Choice** (`Pool.choose`): among the usable files (not used up, ADR-080) the one with the most room in its quota
+  (the lowest `used_percent` of its fullest window of the last reading, `quota.operator`; files without a known quota
+  after those with one), then the one with the fewest bound sessions, then the one unused the longest (bound or
+  answered last), then by name.
 - **Binding** (`bind`, table `runner.operator_binding`): a session is bound to a file, never to a value. The gateway
   of the guest holds the token it was provisioned with; whenever the identity of the bound file changes the runner
   provisions the current content again (`model.gateways`, the task `operator_subscriptions` checks every
@@ -32,7 +34,15 @@ runner log and the metrics.
   got a token, so a late record of a replaced token blocks nothing; at most one block or deferral per session within
   `LIMIT_S`, so a forged record of an untrusted guest cannot take the whole pool); the session's next renewal moves it
   to another usable file when there is one. `429` defers the file for `DEFER_S` for new choices only (the runner sees
-  the status, not the `retry-after` header; a running session stays on its file, ADR-052 section 6).
+  the status, not the `retry-after` header; a running session stays on its file, ADR-052 section 6). A `429` that is
+  held against the file also counts towards its streak (`observe` answers True; `model.exhaustion`, ADR-080 section
+  2): further `429` of the session that deferred the file count against the same file, never against another one
+  within `LIMIT_S`. The blocks are kept in `runner.access_limit` with the file's identity (`model.limits`), so a
+  restart keeps them until the file changes.
+- **Used up** (ADR-080): a file whose access key `operator:<name>` is marked used up (`model.limits`) is
+  `exhausted`: no new binding, and a bound session is moved to another usable file by its renewal (in place, the
+  model stays); without one the gateway keeps what it holds and the reconcile step `model_fallback` pauses the
+  session.
 - Tokens are kept in memory only (the cache of the current content of each file) and handed to the guest in the
   provisioning body; they never appear in a log line, a metric, an error or the store.
 """
@@ -51,6 +61,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_runner.crypto.log.platform import PlatformState
+from agent_runner.model import limits
 from agent_runner.orgs.book import book_for
 from agent_runner.orgs.db import session as store_session
 
@@ -74,12 +85,22 @@ FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 USABLE = "usable"
 BLOCKED = "blocked"
+EXHAUSTED = "exhausted"
 DEFERRED = "deferred"
 IGNORED = "ignored"
-STATES = (USABLE, BLOCKED, DEFERRED, IGNORED)
+STATES = (USABLE, BLOCKED, EXHAUSTED, DEFERRED, IGNORED)
 
 Identity = tuple[int, int, int, int]
 """Device, inode, modification time (ns) and size of a token file."""
+
+
+def identity_text(identity: Identity) -> str:
+    return ":".join(str(part) for part in identity)
+
+
+def parse_identity(text: str) -> Identity:
+    first, second, third, fourth = (int(part) for part in text.split(":"))
+    return first, second, third, fourth
 
 
 @dataclass(frozen=True)
@@ -153,6 +174,12 @@ class Pool:
     """Session ID -> time its gateway last got a token of the pool."""
     acted_at: dict[str, float] = field(default_factory=dict)
     """Session ID -> time a refusal of its requests last blocked or deferred a file."""
+    acted_on: dict[str, str] = field(default_factory=dict)
+    """Session ID -> the file of that last block or deferral."""
+    exhausted: Callable[[str], bool] = lambda _name: False
+    """The file's access is marked used up (`model.limits`; wired by `pool_for`)."""
+    quota: dict[str, float] = field(default_factory=dict)
+    """File name -> `used_percent` of its fullest window of the last reading (`model.limits.fullest`)."""
     reported: dict[str, object] = field(default_factory=dict)
     platform: Callable[[], PlatformState | None] = lambda: None
     """The verified platform state of the daemon (`orgs.book`), None before the first verification."""
@@ -241,6 +268,8 @@ class Pool:
             return IGNORED
         if self.blocked.get(name) == entry.identity:
             return BLOCKED
+        if self.exhausted(name):
+            return EXHAUSTED
         if self.deferred.get(name, 0.0) > self.clock():
             return DEFERRED
         return USABLE
@@ -262,35 +291,51 @@ class Pool:
         if not usable:
             return None
         counts = Counter(self.bindings.values())
-        return min(usable, key=lambda name: (counts[name], self.last_used.get(name, float("-inf")), name))
+
+        def order(name: str) -> tuple[bool, float, int, float, str]:
+            room = self.quota.get(name)
+            used = (room is None, room or 0.0)
+            return (*used, counts[name], self.last_used.get(name, float("-inf")), name)
+
+        return min(usable, key=order)
 
     # -- refusals ----------------------------------------------------------------------------------------------------
 
-    def observe(self, name: str, status: object, provisioned: Identity | None, session_id: str) -> None:
+    def observe(self, name: str, status: object, provisioned: Identity | None, session_id: str) -> bool:
         """The upstream answered a request of `session_id`, bound to `name`, with `status`; `provisioned` is the
-        identity of the content that session's gateway holds (module docstring: refusals)."""
+        identity of the content that session's gateway holds (module docstring: refusals). True when a `429` is held
+        against the file (it counts towards the file's streak)."""
         now = self.clock()
         self.last_used[name] = now
         if isinstance(status, bool) or not isinstance(status, int) or (status not in REFUSED and status != LIMITED):
-            return
+            return False
         if now - self.delivered_at.get(session_id, float("-inf")) < GRACE_S:
-            return
+            return False
         last = self.acted_at.get(session_id)
-        if last is not None and now - last < LIMIT_S:
+        acting = last is not None and now - last < LIMIT_S
+        repeated = acting and status == LIMITED and self.acted_on.get(session_id) == name
+        if acting and not repeated:
             self.note(f"limited:{session_id}", last, f"operator_refusal_ignored session_id={session_id} file={name}")
-            return
+            return False
         self.scan()
         entry = self.files.get(name)
         if entry is None or entry.identity is None:
-            return
+            return False
         if status == LIMITED:
-            self.deferred[name] = now + DEFER_S
-            self.acted_at[session_id] = now
-            self.log(f"runner.model operator_file_deferred file={name} seconds={int(DEFER_S)} session_id={session_id}")
-        elif entry.identity == provisioned:
+            if not repeated:
+                self.deferred[name] = now + DEFER_S
+                self.acted_at[session_id] = now
+                self.acted_on[session_id] = name
+                self.log(
+                    f"runner.model operator_file_deferred file={name} seconds={int(DEFER_S)} session_id={session_id}"
+                )
+            return True
+        if entry.identity == provisioned:
             self.blocked[name] = entry.identity
             self.acted_at[session_id] = now
+            self.acted_on[session_id] = name
             self.log(f"runner.model operator_file_blocked file={name} status={status} session_id={session_id}")
+        return False
 
     # -- summary -----------------------------------------------------------------------------------------------------
 
@@ -337,22 +382,52 @@ def pool_for(context: Any) -> Pool | None:
         context.log.flush()
 
     created = Pool(directory=settings[0], orgs=settings[1], log=log, platform=platform_of(context))
+    attach(context, created)
     setattr(context, ATTRIBUTE, created)
     return created
+
+
+def attach(context: Any, pool: Pool) -> None:
+    """Wire the pool to the daemon's limits (`model.limits`): a file marked used up is `exhausted`."""
+    found = limits.limits_for(context)
+    pool.exhausted = lambda name: found.active(limits.operator_key(name)) is not None
 
 
 # -- bindings (`runner.operator_binding`) ------------------------------------------------------------------------------
 
 
 async def load(context: Any, pool: Pool) -> None:
-    """The bindings of the store, once per daemon."""
+    """The bindings and the persisted blocks of the store, once per daemon."""
     if pool.loaded:
         return
     async with store_session(context.pool) as conn:
         cursor = await conn.execute("SELECT session_id::text, file_name FROM runner.operator_binding")
         rows = await cursor.fetchall()
     pool.bindings.update({row[0]: row[1] for row in rows})
+    found = await limits.load(context)
+    for name, identity in found.blocks().items():
+        pool.blocked.setdefault(name, parse_identity(identity))
     pool.loaded = True
+
+
+async def keep_blocks(context: Any, pool: Pool) -> None:
+    """Persist the pool's blocks (`runner.access_limit`): new ones are written, ended ones (a renewed or removed
+    file, `scan`) are deleted."""
+    found = await limits.load(context)
+    stored = found.blocks()
+    for name, identity in pool.blocked.items():
+        text = identity_text(identity)
+        if stored.get(name) != text:
+            limit = limits.Limit(
+                key=limits.operator_key(name),
+                kind=limits.BLOCKED,
+                until=None,
+                readable=False,
+                limited_at=found.wall(),
+                identity=text,
+            )
+            await limits.mark(context, limit)
+    await limits.release(context, [limits.operator_key(name) for name in stored if name not in pool.blocked])
 
 
 async def bound(context: Any, session_id: str) -> str | None:
@@ -405,6 +480,7 @@ async def prune(context: Any, keep: set[str]) -> None:
     if pool is None:
         return
     await load(context, pool)
+    await keep_blocks(context, pool)
     gone = [sid for sid in pool.bindings if sid not in keep]
     if not gone:
         return
@@ -416,15 +492,24 @@ async def prune(context: Any, keep: set[str]) -> None:
         pool.reported.pop(f"limited:{sid}", None)
         pool.delivered_at.pop(sid, None)
         pool.acted_at.pop(sid, None)
+        pool.acted_on.pop(sid, None)
 
 
-async def observed(context: Any, session_id: str, status: object, provisioned: Identity | None) -> None:
-    """The gateway's `usage` record of a request of `session_id` (module docstring: refusals)."""
+async def observed(
+    context: Any, session_id: str, status: object, provisioned: Identity | None
+) -> tuple[str, bool] | None:
+    """The gateway's `usage` record of a request of `session_id` (module docstring: refusals): the file the session
+    is bound to and whether a `429` counts towards its streak; None when the session is not bound."""
     name = await bound(context, session_id)
-    if name is not None:
-        pool = pool_for(context)
-        assert pool is not None
-        pool.observe(name, status, provisioned, session_id)
+    if name is None:
+        return None
+    pool = pool_for(context)
+    assert pool is not None
+    blocked = dict(pool.blocked)
+    counts = pool.observe(name, status, provisioned, session_id)
+    if pool.blocked != blocked:
+        await keep_blocks(context, pool)
+    return name, counts
 
 
 async def pick(context: Any, org_id: str) -> tuple[str, str, Identity] | None:
@@ -442,3 +527,40 @@ async def pick(context: Any, org_id: str) -> tuple[str, str, Identity] | None:
     current = pool.current(name)
     assert current is not None
     return name, *current
+
+
+async def peek(context: Any, org_id: str) -> str | None:
+    """The file `pick` would take for a session of `org_id` now, without binding or logging (ADR-080: what a resume
+    would get)."""
+    pool = pool_for(context)
+    if pool is None or not pool.allows(org_id):
+        return None
+    await load(context, pool)
+    pool.scan()
+    return pool.choose()
+
+
+def used_up(context: Any, org_id: str) -> list[tuple[float, str]]:
+    """`(release time, name)` of the used-up files of the pool for a session of `org_id`, earliest first; empty when
+    the organization may not use the pool (ADR-080 section 3: the pool's step waits for the earliest release)."""
+    pool = pool_for(context)
+    if pool is None or not pool.allows(org_id):
+        return []
+    found = limits.limits_for(context)
+    released: list[tuple[float, str]] = []
+    for name in pool.files:
+        limit = found.active(limits.operator_key(name))
+        if pool.state(name) == EXHAUSTED and limit is not None and limit.until is not None:
+            released.append((limit.until, name))
+    return sorted(released)
+
+
+def held(context: Any, name: str) -> tuple[str, Identity] | None:
+    """The token and identity of a used-up file a waiting session starts on (ADR-080 section 3), else None."""
+    pool = pool_for(context)
+    entry = None if pool is None else pool.files.get(name)
+    if pool is None or entry is None or pool.state(name) != EXHAUSTED:
+        return None
+    assert entry.token is not None
+    assert entry.identity is not None
+    return entry.token, entry.identity

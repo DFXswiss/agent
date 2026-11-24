@@ -152,7 +152,7 @@ def test_a_credential_that_cannot_be_used_now_is_provisioned_by_the_next_renewal
         found, gateway = await running(env, "platform")
         sid = session_id()
         key = found.session_env.platform_key
-        found.session_env.platform_key = lambda: None
+        found.session_env.platform_key = lambda *_: None
         gateway.restart()
         assert gateway.request(sid) == 503
         await consume(found)

@@ -306,7 +306,7 @@ def test_a_platform_key_that_cannot_be_read_now_keeps_the_provisioning(store_dsn
         found = await running(env, "platform")
         attach(found)
         key = found.session_env.platform_key
-        found.session_env.platform_key = lambda: None
+        found.session_env.platform_key = lambda *_: None
         await step(found)
         assert credentials(found) == []
         assert (await found.stored(session_id())).state == "agent_starting"
@@ -453,7 +453,7 @@ def test_a_failing_refresh_is_logged_and_the_others_go_on(store_dsn: str) -> Non
         found = await running(env, "platform")
         attach(found)
 
-        def broken() -> str:
+        def broken(*_args: object) -> str:
             raise RuntimeError("key")
 
         found.session_env.platform_key = broken

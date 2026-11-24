@@ -23,7 +23,8 @@ import httpx
 
 from agent_runner.model.provision import read_platform_key
 from agent_runner.quota.parsers import UsageInvalid, spend_snapshot
-from agent_runner.quota.subscription import POLL_S, RATE_LIMIT_MIN_S, ClientFactory, default_client, retry_after
+from agent_runner.quota.reader import ClientFactory, default_client
+from agent_runner.quota.subscription import POLL_S, RATE_LIMIT_MIN_S, retry_after
 
 STALE_S = 3 * POLL_S
 METRIC_WINDOWS = ("daily", "weekly", "monthly", "total")

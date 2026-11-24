@@ -1,6 +1,8 @@
 """Daemon task `quota` (05-runner.md sections 1.1 and 10.6): every `TICK_S` the subscription quota polling
-(`subscription.SubscriptionPoller`) for the owners of the last desired state and the spend of the platform key
-(`openrouter.SpendPoller`). Each poller keeps its own 900 s schedule per owner or key; a tick only checks what is due.
+(`subscription.SubscriptionPoller`) for the owners of the last desired state, the spend of the platform key
+(`openrouter.SpendPoller`) and, on a platform device with the operator's pool, the quotas of the operator's
+subscriptions and their snapshot `operator_quota` (`operator.OperatorPoller`, `operator.report`; KOR-50, ADR-080
+section 6). Each poller keeps its own 900 s schedule per owner, key or file; a tick only checks what is due.
 A failing round is logged and the loop goes on. The task ends at once on a device that is not enrolled.
 
 Tests set `quota_options` (`QuotaOptions`) on the context to inject the HTTP client factory.
@@ -8,21 +10,19 @@ Tests set `quota_options` (`QuotaOptions`) on the context to inject the HTTP cli
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from agent_runner.model.gateways import running_service
+from agent_runner.quota import operator
 from agent_runner.quota.openrouter import spend_poller
-from agent_runner.quota.subscription import ClientFactory, SubscriptionPoller, default_client
+from agent_runner.quota.reader import QuotaOptions, client_of
+from agent_runner.quota.subscription import SubscriptionPoller
 from agent_runner.registry import TaskSpec
 from agent_runner.sync.runtime import runtime
 
 TICK_S = 30.0
-
-
-@dataclass
-class QuotaOptions:
-    client: ClientFactory = default_client
+__all__ = ["TASKS", "TICK_S", "QuotaOptions", "run", "tick"]
+OPERATOR = "quota_operator_poller"
 
 
 def _line(context: Any, text: str) -> None:
@@ -38,6 +38,11 @@ async def tick(context: Any, subscriptions: SubscriptionPoller, wall: Any) -> No
     if spend is not None:
         spend.client = subscriptions.client
         await spend.tick(wall())
+    found = getattr(context, OPERATOR, None)
+    poller = found if isinstance(found, operator.OperatorPoller) else operator.OperatorPoller(context=context)
+    setattr(context, OPERATOR, poller)
+    await poller.tick(wall())
+    await operator.report(context, desired, wall())
 
 
 async def run(context: Any) -> None:
@@ -45,9 +50,9 @@ async def run(context: Any) -> None:
     if sync is None:
         _line(context, "not_enrolled")
         return
-    options = getattr(context, "quota_options", None)
-    client = options.client if isinstance(options, QuotaOptions) else default_client
-    subscriptions = SubscriptionPoller(context=context, url=context.config.anthropic_usage_url, client=client)
+    subscriptions = SubscriptionPoller(
+        context=context, url=context.config.anthropic_usage_url, client=client_of(context)
+    )
     while not context.stopping.is_set():
         try:
             await tick(context, subscriptions, sync.wall)

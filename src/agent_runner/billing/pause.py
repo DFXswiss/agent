@@ -1,8 +1,9 @@
 """Controlled stop when an organization's credit is used up, and the continuation after a credit (KOR-31, ADR-062
 section 6, 12-billing.md section 7; AUD-04 W12: suspend, never stop, so the session stays resumable).
 
-Only a **platform device** (DFX hardware) acts: every session there costs runtime. An org device (own hardware) never
-stops, defers or refuses anything for credit (idea 45).
+A **platform device** (DFX hardware) acts on every session: every session there costs runtime. An **org device** (own
+hardware) acts only on the sessions whose access is `platform` - its DFX key, charged by the provider's figures
+(KOR-50, ADR-080 section 7); sessions on the owner's own access there are never touched (idea 45).
 
 `enforce(deliverer, desired)` (reconcile step `billing`, after the sessions step, on every desired state - the hub
 sends `reconcile {}` when an org's `exhausted` changes). Each session is paused under the deliverer's lock of that
@@ -21,9 +22,17 @@ session, so no prompt is handed over in between:
    `CONTINUATION` (no user text; a stable prompt ID derived from the pause, so a repeated hand-over is the same prompt
    for the guest); a session that was idle stays suspended until its next prompt. `resumed_at` marks the pause done.
 
-`deferred(env, session)`: while its org is exhausted no prompt is handed to a session of a platform device - neither
+`deferred(env, session)`: while its org is exhausted no prompt is handed to a session this device acts on - neither
 to a suspended one (no resume) nor to one that is still idle before the pause; the prompt stays pending and is
-delivered once credit is back (`deliver.Deliverer`).
+delivered once credit is back (`deliver.Deliverer`). The same holds while the session waits for model quota
+(`model.pauses.holding`, KOR-50, ADR-080 section 4).
+
+**Credit first** (ADR-080 section 4.6): a session paused for credit and for model quota keeps both records. A session
+already suspended for model quota gets its credit record too (no guest call; `interrupted` as recorded for the model
+pause), so the credit reason is shown first by the hub while both hold. The credit pause is continued only while no
+model pause holds the session (`model.pauses.holding`); when it is continued, an open model pause of the session ends
+with it (one continuation, not two). `credit_holds(env, session)` tells the model fallback that the credit pause still
+holds the session.
 """
 
 from __future__ import annotations
@@ -39,6 +48,7 @@ from agent_runner.billing import state
 from agent_runner.crypto.ids import uuid7
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError, GuestRefused
+from agent_runner.model import pauses as model_pauses
 from agent_runner.prompts.resume import RESUMED, vm_running
 from agent_runner.sessions import records
 from agent_runner.sessions.env import SessionEnv
@@ -59,9 +69,28 @@ def platform(env: SessionEnv) -> bool:
     return env.device_kind == "platform"
 
 
+def charged(env: SessionEnv, session: LocalSession) -> bool:
+    """The credit rules act on the session: every session of a platform device, a `platform` session (DFX key) of an
+    org device."""
+    return platform(env) or session.model_access == "platform"
+
+
 def deferred(env: SessionEnv, session: LocalSession) -> bool:
     """A follow-up must not resume the session now (module docstring)."""
-    return platform(env) and state.exhausted(env.desired, session.org_id)
+    if session.id in model_pauses.holding(env.context):
+        return True
+    return charged(env, session) and state.exhausted(env.desired, session.org_id)
+
+
+async def credit_holds(env: SessionEnv, session: LocalSession) -> bool:
+    """The credit pause holds the session: its org is exhausted, or its recorded credit pause has not ended."""
+    if charged(env, session) and state.exhausted(env.desired, session.org_id):
+        return True
+    async with env.transaction() as conn:
+        cursor = await conn.execute(
+            "SELECT 1 FROM runner.credit_pause WHERE session_id = %s AND resumed_at IS NULL", (session.id,)
+        )
+        return await cursor.fetchone() is not None
 
 
 def prompt_id(session_id: str, paused_at: datetime) -> str:
@@ -70,7 +99,11 @@ def prompt_id(session_id: str, paused_at: datetime) -> str:
     return uuid7(int(paused_at.timestamp() * 1000), seed)
 
 
-async def _guest(env: SessionEnv, session: LocalSession, action: str, tries: int = 1) -> bool:
+async def guest_control(
+    env: SessionEnv, session: LocalSession, action: str, tries: int = 1, *, label: str = "credit"
+) -> bool:
+    """Guest control `action` for the session (a `suspend` refused while the interrupted turn ends is asked again up
+    to `tries` times); False when it was not carried out (logged `<label>_<action>_failed`)."""
     row = await vm_running(env, session)
     if row is None:
         return False
@@ -88,11 +121,12 @@ async def _guest(env: SessionEnv, session: LocalSession, action: str, tries: int
             code = exc.code
         except (GuestError, RunnerError) as exc:
             code = exc.code
-        env.line(f"credit_{action}_failed session_id={session.id} code={code}")
+        env.line(f"{label}_{action}_failed session_id={session.id} code={code}")
         return False
 
 
-async def _pause(env: SessionEnv, session: LocalSession) -> None:
+async def _record(env: SessionEnv, session: LocalSession, interrupted: bool) -> None:
+    """Open (or carry on) the credit pause of the session (`runner.credit_pause`)."""
     async with env.transaction() as conn:
         await conn.execute(
             "INSERT INTO runner.credit_pause (session_id, org_id, interrupted, paused_at) VALUES (%s, %s, %s, %s)"
@@ -100,12 +134,16 @@ async def _pause(env: SessionEnv, session: LocalSession) -> None:
             " THEN runner.credit_pause.interrupted OR EXCLUDED.interrupted ELSE EXCLUDED.interrupted END,"
             " paused_at = CASE WHEN runner.credit_pause.resumed_at IS NULL"
             " THEN runner.credit_pause.paused_at ELSE EXCLUDED.paused_at END, resumed_at = NULL",
-            (session.id, session.org_id, session.state == "working", datetime.fromtimestamp(env.wall(), UTC)),
+            (session.id, session.org_id, interrupted, datetime.fromtimestamp(env.wall(), UTC)),
         )
+
+
+async def _pause(env: SessionEnv, session: LocalSession) -> None:
+    await _record(env, session, session.state == "working")
     interrupted = session.state == "working"
-    if interrupted and not await _guest(env, session, "interrupt"):
+    if interrupted and not await guest_control(env, session, "interrupt"):
         return
-    if not await _guest(env, session, "suspend", SUSPEND_TRIES if interrupted else 1):
+    if not await guest_control(env, session, "suspend", SUSPEND_TRIES if interrupted else 1):
         return
     async with env.transaction() as conn:
         await records.advance(conn, env.outbox, session.id, "suspended", at=env.at(), reason=REASON)
@@ -118,8 +156,15 @@ async def stop_for_credit(
     """Step 1 of the module docstring."""
     async with env.transaction() as conn:
         local = await records.listed(conn)
+        model = {pause.session_id: pause for pause in await model_pauses.open_pauses(conn)}
     for found in local:
-        if found.state not in STOPPED_STATES or not state.exhausted(desired, found.org_id):
+        if not charged(env, found) or not state.exhausted(desired, found.org_id):
+            continue
+        held = model.get(found.id)
+        if found.state == "suspended" and held is not None and held.suspended:
+            await _record(env, found, held.interrupted)  # credit first: both records, no guest call
+            continue
+        if found.state not in STOPPED_STATES:
             continue
         if found.depth > 0:
             await stop_session(env, found.id, reason=REASON)
@@ -146,7 +191,7 @@ async def continue_after_credit(
         )
         pauses = await cursor.fetchall()
     for session_id, org_id, interrupted, paused_at in pauses:
-        if state.exhausted(desired, org_id):
+        if state.exhausted(desired, org_id) or session_id in model_pauses.holding(env.context):
             continue
         async with lock(session_id):
             await _continue(env, resumer, session_id, interrupted, paused_at)
@@ -176,12 +221,13 @@ async def _continue(env: SessionEnv, resumer: Any, session_id: str, interrupted:
             "UPDATE runner.credit_pause SET resumed_at = %s WHERE session_id = %s",
             (datetime.fromtimestamp(env.wall(), UTC), session_id),
         )
+        await model_pauses.end(conn, session_id, env.wall())  # one continuation for both pauses
 
 
 async def enforce(deliverer: Any, desired: Mapping[str, Any] | None) -> None:
-    """Both steps on a platform device (module docstring); `deliverer`: the daemon's `deliver.Deliverer`."""
+    """Both steps (module docstring); `deliverer`: the daemon's `deliver.Deliverer`."""
     env: SessionEnv = deliverer.env
-    if not platform(env) or not state.active(desired):
+    if not state.active(desired):
         return
     await stop_for_credit(env, deliverer.lock, desired)
     await continue_after_credit(env, deliverer.lock, deliverer.resumer, desired)

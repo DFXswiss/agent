@@ -43,6 +43,8 @@ from agent_runner.vm.records import VmRow
 from ..reconcile.rig import DEVICE, Env, pid, scope_key
 
 KEY = "test-platform-key-SECRETMARKER-0123456789abcdef"
+PLATFORM_ONLY = object()
+"""`kit(key=...)` default: the platform key on a platform device, none on an org device."""
 GOLDEN = "g1"
 CLAUDE = "2.1.330"
 NOW = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
@@ -306,7 +308,7 @@ async def kit(
     env: Env,
     *,
     device_kind: str = "platform",
-    key: str | None = KEY,
+    key: str | object | None = PLATFORM_ONLY,
     guest: FakeGuest | None = None,
     prompt: InitialPrompt | None = None,
     desired_state: Mapping[str, Any] | None = None,
@@ -314,6 +316,9 @@ async def kit(
 ) -> Kit:
     await verify_world(env)
     await add_golden(env)
+    # the platform key of a platform device; an org device has none unless a test gives it one (its DFX key)
+    platform_key = (KEY if device_kind == "platform" else None) if key is PLATFORM_ONLY else key
+    assert platform_key is None or isinstance(platform_key, str)
     guest = guest or FakeGuest()
     vms = FakeVms(db=env.pool, guest=guest)
     lines: list[str] = []
@@ -337,7 +342,7 @@ async def kit(
         catalog=load_catalog(None),
         strategies=BUILTIN,
         storage_key=env.sync.storage_key,
-        platform_key=lambda: key,
+        platform_key=lambda *_: platform_key,
         upstream_openrouter="https://openrouter.ai/api",
         context=env.context,
         notify=env.sync.pusher.notify,

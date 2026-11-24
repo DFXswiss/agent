@@ -21,12 +21,16 @@ owner that is due:
 - **result**: `200` with a valid document -> `parsers.windows_snapshot` -> one outbox item `quota {owner_id, windows,
   fetched_at}` (none when the document reports no window); a malformed document, another status or a transport
   error is logged (status or error type only) and polled again after the interval.
+- **limits** (KOR-50, ADR-080 sections 2 and 6): every reading marks the owner's subscription used up, or releases
+  it, by the rule of a readable quota (`model.limits.apply`, also without any `429`); towards a hub whose device
+  state carries `model_fallback.api` each item carries the latest observed limit of this device (`limited: {at,
+  until, readable}`, `runner.access_limit`).
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -34,10 +38,14 @@ from typing import Any
 import httpx
 
 from agent_runner.credentials import cache
+from agent_runner.model import exhaustion, limits, policy
 from agent_runner.model.provision import owner_secret
 from agent_runner.orgs.book import book_for
 from agent_runner.orgs.db import session as store_session
 from agent_runner.quota.parsers import UsageInvalid, windows_snapshot
+from agent_runner.quota.reader import ClientFactory, Reading, default_client
+
+__all__ = ["POLL_S", "ClientFactory", "SubscriptionPoller", "default_client", "retry_after"]
 from agent_runner.reconcile import logs, state, wire
 from agent_runner.reconcile.engine import Run
 from agent_runner.sessions.records import time_text
@@ -48,17 +56,10 @@ KIND = "claude_subscription"
 POLL_S = 900.0
 RATE_LIMIT_MIN_S = 300.0
 UNAVAILABLE_S = 24 * 3600.0
-TIMEOUT_S = 8.0
 OAUTH_BETA = "oauth-2025-04-20"
 MAX_RETRY_AFTER_S = 24 * 3600.0
 _DELTA_RE = re.compile(r"^[0-9]{1,9}$")
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-
-ClientFactory = Callable[[], httpx.AsyncClient]
-
-
-def default_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=False, trust_env=False)
 
 
 def retry_after(value: str | None, now: float) -> float:
@@ -90,6 +91,7 @@ class SubscriptionPoller:
     owners: dict[str, OwnerState] = field(default_factory=dict)
     # last fetch attempt of a named owner's record that was not cached (the `now` of `tick`, wall seconds)
     fetched: dict[str, float] = field(default_factory=dict)
+    desired: Mapping[str, Any] | None = None
 
     def line(self, text: str) -> None:
         self.context.log.write(f"runner.quota {text}\n")
@@ -146,6 +148,7 @@ class SubscriptionPoller:
         return run.halted is None
 
     async def tick(self, desired: Mapping[str, Any] | None, now: float) -> None:
+        self.desired = desired
         polled = await self.eligible(desired, now)
         for owner in [name for name in self.owners if name not in {o for o, _ in polled}]:
             del self.owners[owner]
@@ -189,6 +192,7 @@ class SubscriptionPoller:
             state.unavailable_version = version
             state.unavailable_until = now + UNAVAILABLE_S
             self.line(f"quota_unavailable owner={owner} status={status}")
+            await limits.apply(self.context, limits.own_key(owner), Reading(readable=False, fetched_at=now))
             await self.enqueue({"owner_id": owner, "unavailable": True, "fetched_at": time_text(now)})
             return
         if status == 429:
@@ -204,6 +208,7 @@ class SubscriptionPoller:
             detail = exc.field if isinstance(exc, UsageInvalid) else "json"
             self.line(f"usage_invalid owner={owner} field={detail}")
             return
+        await limits.apply(self.context, limits.own_key(owner), Reading(True, tuple(windows), now))
         if not windows:
             self.line(f"no_windows owner={owner}")
             return
@@ -218,6 +223,9 @@ class SubscriptionPoller:
         sync = runtime(self.context)
         if sync is None:
             return False
+        limit = limits.limits_for(self.context).rows.get(limits.own_key(item["owner_id"]))
+        if limit is not None and policy.api(self.desired):
+            item = {**item, "limited": exhaustion.limited_body(limit)}
         async with store_session(self.context.pool) as conn, conn.transaction():
             await sync.enqueue(conn, "quota", item)
         sync.pusher.notify()

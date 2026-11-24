@@ -85,7 +85,7 @@ async def target(env: SessionEnv, session: LocalSession) -> tuple[Stamp, dict[st
     change the body is not built (no decryption)."""
     kind, owner = session.model_access, session.owner_id or ""
     if kind == "platform":
-        key = env.platform_key() if env.device_kind == "platform" else None
+        key = env.platform_key(session.org_id)
         if key is None:
             _line(env, f"platform_key_unusable session_id={session.id}")
             return KEEP

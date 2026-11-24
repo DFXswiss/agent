@@ -368,7 +368,7 @@ def test_the_operator_subscriptions_are_listed_by_state_and_file_without_tokens(
     """KOR-23 (ADR-052): only while the operator's pool is configured; the label `file` is the file name."""
     summary = Summary(
         problem=None,
-        states={"usable": 2, "blocked": 1, "deferred": 0, "ignored": 1},
+        states={"usable": 2, "blocked": 1, "exhausted": 3, "deferred": 0, "ignored": 1},
         sessions={"b": 2, "a": 0},
         newest_age_s=12.34567,
     )
@@ -380,6 +380,7 @@ def test_the_operator_subscriptions_are_listed_by_state_and_file_without_tokens(
         "# TYPE agent_runner_operator_subscription_files gauge",
         'agent_runner_operator_subscription_files{state="usable"} 2',
         'agent_runner_operator_subscription_files{state="blocked"} 1',
+        'agent_runner_operator_subscription_files{state="exhausted"} 3',
         'agent_runner_operator_subscription_files{state="deferred"} 0',
         'agent_runner_operator_subscription_files{state="ignored"} 1',
         "# HELP agent_runner_operator_subscription_sessions Sessions bound to a token file of the operator's "
@@ -392,8 +393,8 @@ def test_the_operator_subscriptions_are_listed_by_state_and_file_without_tokens(
         "# TYPE agent_runner_operator_subscription_newest_change_age_seconds gauge",
         "agent_runner_operator_subscription_newest_change_age_seconds 12.346",
     ]
-    empty = Summary(problem="mode", states=dict.fromkeys(("usable", "blocked", "deferred", "ignored"), 0), sessions={},
-                    newest_age_s=None)  # fmt: skip
+    states = dict.fromkeys(("usable", "blocked", "exhausted", "deferred", "ignored"), 0)
+    empty = Summary(problem="mode", states=states, sessions={}, newest_age_s=None)
     text = textfile.render(textfile.metrics_of(snapshot(), operator=empty))
     assert "agent_runner_operator_subscription_files" in text
     assert "agent_runner_operator_subscription_sessions{" not in text

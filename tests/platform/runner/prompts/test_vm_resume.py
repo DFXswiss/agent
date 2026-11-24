@@ -188,7 +188,7 @@ async def scenario(env: Any, manager: VmManager, machine: lima.Lima, scratch: Pa
         catalog=parse_catalog(CATALOG),
         strategies=BUILTIN,
         storage_key=env.sync.storage_key,
-        platform_key=lambda: KEY,
+        platform_key=lambda *_: KEY,
         upstream_openrouter=f"http://127.0.0.1:{port}",
         context=env.context,
         notify=env.sync.pusher.notify,

@@ -177,15 +177,22 @@ def test_a_record_this_device_cannot_use_makes_the_kind_unavailable(store_dsn: s
     run(store_dsn, body)
 
 
-def test_a_hub_failure_while_fetching_makes_the_kind_unavailable_and_auto_goes_on(store_dsn: str) -> None:
+def test_a_hub_failure_while_fetching_makes_the_kind_unavailable_and_never_falls_back_silently(store_dsn: str) -> None:
+    """ADR-080 section 1: the hub answered something else than "missing", so the owner belongs to `own`; a DFX access
+    only with the owner's setting (or the task's consent)."""
+
     async def body(env: Env) -> None:
         env.hub.get_refusals.append((503, {"error": "unavailable"}))
         found = await model_kit(env)
-        report = await start(found)  # auto: subscription fetch fails, no API key, platform
-        assert report.started
-        assert credentials(found)[0][1]["access"] == "platform"
+        report = await start(found)  # auto: subscription fetch fails, no API key, platform barred
+        assert (report.started, report.reason) == (False, "model_access_unavailable")
         assert "credential_fetch_failed" in "\n".join(found.lines)
         assert "error=HubRefusal" in "\n".join(found.lines)
+        env.hub.get_refusals.append((503, {"error": "unavailable"}))
+        entry = {"session_id": session_id(2), "fallback": {"own_to_dfx": True, "operator_to_platform": True}}
+        found.session_env.desired = {"sessions": [entry]}
+        assert (await start(found, 2)).started
+        assert credentials(found)[0][1]["access"] == "platform"
 
     run(store_dsn, body)
 
