@@ -133,7 +133,7 @@ test('@E2E-40 @R-6.3 @R-P.5 @needs-vm a checkout of 3000 files adds no file chan
   await expect(page.getByTestId('chat.file.path')).toHaveText([`${DIR}/NOTES.md`]);
   await expect(page.getByTestId('chat.file.path').filter({ hasText: /src\/pkg-/ })).toHaveCount(0);
   await expect(page.getByTestId('chat.file.patch')).toBeHidden();
-  await item.locator('summary').click();
+  await page.getByTestId('chat.file.toggle').click();
   await expect(page.getByTestId('chat.file.patch')).toBeVisible();
   await expect(page.getByTestId('chat.file.patch')).toContainText('+kz40-file-r5t9w2b6');
 

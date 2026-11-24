@@ -27,7 +27,7 @@ def _previous(tmp_path: Path) -> Path:
     previous = tmp_path / "previous"
     previous.mkdir()
     for path in sorted(MIGRATIONS.glob("*.sql")):
-        if not path.name.startswith("0011_"):
+        if path.name < "0011_":
             shutil.copy(path, previous / path.name)
     return previous
 

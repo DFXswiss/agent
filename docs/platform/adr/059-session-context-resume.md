@@ -3,14 +3,14 @@
 Status: Accepted (2026-11-23)
 
 ## Context
-- [Idea 40](https://github.com/DFXswiss/agent/blob/develop/docs/platform/KONZEPT.md#k-idee-40): on a later change request the platform finds the earlier task/session and restores
+- [Idea 40](../KONZEPT.md#k-idee-40): on a later change request the platform finds the earlier task/session and restores
   **the original Claude Code session with its complete context**, also on another suitable Lima VM; "it is not enough
-  to start a new session with a summary". [Idea 43](https://github.com/DFXswiss/agent/blob/develop/docs/platform/KONZEPT.md#k-idee-43) (sentence 4): continuing a task uses the original
-  session and its context. [Idea 39](https://github.com/DFXswiss/agent/blob/develop/docs/platform/KONZEPT.md#k-idee-39): after the task is closed, logs, results **and context** are
-  kept. [§16 point 3](https://github.com/DFXswiss/agent/blob/develop/docs/platform/KONZEPT.md#k-16-b3): "the session is resumable after completion"; [§16 point 7](https://github.com/DFXswiss/agent/blob/develop/docs/platform/KONZEPT.md#k-16-b7): still to
-  be checked "session restore across devices". [Idea 44](https://github.com/DFXswiss/agent/blob/develop/docs/platform/KONZEPT.md#k-idee-44) (basis only): sessions are synchronised
+  to start a new session with a summary". [Idea 43](../KONZEPT.md#k-idee-43) (sentence 4): continuing a task uses the original
+  session and its context. [Idea 39](../KONZEPT.md#k-idee-39): after the task is closed, logs, results **and context** are
+  kept. [§16 point 3](../KONZEPT.md#k-16-b3): "the session is resumable after completion"; [§16 point 7](../KONZEPT.md#k-16-b7): still to
+  be checked "session restore across devices". [Idea 44](../KONZEPT.md#k-idee-44) (basis only): sessions are synchronised
   continuously so that they continue on another device without losing the last synchronised context. The concept
-  lives in the agent repository ([KONZEPT.md](https://github.com/DFXswiss/agent/blob/develop/docs/platform/KONZEPT.md)); the links are absolute so that they resolve from both
+  lives in the agent repository ([KONZEPT.md](../KONZEPT.md)); the links are absolute so that they resolve from both
   repositories.
 - Before this ADR the platform continued the original Claude Code session only while the main session was `idle` or
   `suspended` on **the same VM** (`claude --resume`, `agent_runner.prompts.resume`, ADR-025). After `stopped`/`failed`,

@@ -1,0 +1,47 @@
+{
+  "name": "e2e-40-session-context-resume",
+  "description": "E2E-40 (KOR-33, ADR-059): one turn that writes ledger.md and answers; after the session ended (closed task, stop, failure, guest retention) a follow-up in a NEW main session that continues the SAME Claude Code conversation (--resume after a restore from the context checkpoint): the earlier turn is in the request (min_messages; the spec also reads the request from the journal) and the restored ledger.md is read from the new work directory. Canary texts for the plaintext scan.",
+  "steps": [
+    {
+      "id": "work",
+      "expect": { "user_text_contains": "E2E40-WORK", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "I will keep the ledger first." },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": { "file_path": "${cwd}/ledger.md", "content": "# Ledger\nkz40r-file-p3w8n5c1\n" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "worked",
+      "expect": { "tool_result_is_error": false, "tool_result_contains": "ledger.md" },
+      "reply": { "content": [{ "type": "text", "text": "The ledger is written kz40r-answer-g6t2m9x4." }] }
+    },
+    {
+      "id": "follow-read",
+      "expect": { "user_text_contains": "E2E40-AGAIN", "has_tool_result": false, "min_messages": 5 },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Reading the ledger again." },
+          { "type": "tool_use", "name": "Read", "input": { "file_path": "${cwd}/ledger.md" } }
+        ]
+      }
+    },
+    {
+      "id": "follow-answer",
+      "expect": { "tool_result_is_error": false, "tool_result_contains": "kz40r-file-p3w8n5c1" },
+      "reply": { "content": [{ "type": "text", "text": "Continued: the ledger still holds kz40r-file-p3w8n5c1." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Ledger" }] }
+    }
+  ]
+}
