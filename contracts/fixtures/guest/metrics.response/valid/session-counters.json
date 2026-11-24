@@ -24,6 +24,7 @@
       "oom_kills": 1,
       "hook_denies": 2,
       "hook_errors": 0,
+      "sandbox_denials": 1,
       "egress_denied": 7,
       "model_input_tokens": 1200,
       "model_output_tokens": 300,

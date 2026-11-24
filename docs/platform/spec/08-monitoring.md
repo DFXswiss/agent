@@ -74,7 +74,7 @@ than 48 h are dropped before push, counted in `agent_runner_device_metrics_dropp
 | `agent_runner_vm_network_receive_bytes_total` / `_transmit_bytes_total` | counter | `vm`, `wg` |
 | `agent_runner_vm_sessions` | gauge | `vm`, `wg`, `state` |
 | `agent_runner_session_cpu_ratio`, `agent_runner_session_memory_bytes`, `agent_runner_session_memory_limit_bytes`, `agent_runner_session_workspace_bytes`, `agent_runner_session_runtime_seconds` | gauge | `vm`, `session` |
-| `agent_runner_session_io_read_bytes_total` / `_write_bytes_total`, `agent_runner_session_oom_kills_total`, `agent_runner_session_hook_denies_total`, `agent_runner_session_hook_errors_total`, `agent_runner_session_egress_denied_total`, `agent_runner_session_model_tokens_total` (`direction`) | counter | `vm`, `session` |
+| `agent_runner_session_io_read_bytes_total` / `_write_bytes_total`, `agent_runner_session_oom_kills_total`, `agent_runner_session_hook_denies_total`, `agent_runner_session_hook_errors_total`, `agent_runner_session_sandbox_denials_total`, `agent_runner_session_egress_denied_total`, `agent_runner_session_model_tokens_total` (`direction`) | counter | `vm`, `session` |
 
 Device-level host metrics (CPU, RAM, disk, network, boot time) are **not** duplicated: they come from the
 existing node_exporter + `macos-memory-free.sh` series under the same `server` label.

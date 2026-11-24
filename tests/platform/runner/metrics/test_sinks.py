@@ -51,6 +51,7 @@ FULL = {
     "oom_kills": 1,
     "hook_denies": 2,
     "hook_errors": 0,
+    "sandbox_denials": 3,
     "egress_denied": 9,
     "model_input_tokens": 1200,
     "model_output_tokens": 300,
@@ -131,7 +132,8 @@ def test_every_metric_has_help_and_type_and_labels_are_ids() -> None:
         "agent_runner_session_runtime_seconds", "agent_runner_session_io_read_bytes_total",
         "agent_runner_session_io_write_bytes_total", "agent_runner_session_oom_kills_total",
         "agent_runner_session_hook_denies_total", "agent_runner_session_hook_errors_total",
-        "agent_runner_session_egress_denied_total", "agent_runner_session_model_tokens_total",
+        "agent_runner_session_sandbox_denials_total", "agent_runner_session_egress_denied_total",
+        "agent_runner_session_model_tokens_total",
     }  # fmt: skip
     assert names == expected
     labelled = [line[line.index("{") + 1 : line.index("}")] for line in text.splitlines() if "{" in line]

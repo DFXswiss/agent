@@ -90,6 +90,7 @@ def snapshot(wall: float, step: int = 0, capacity_low: bool = False) -> Snapshot
         "oom_kills": 1,
         "hook_denies": 2,
         "hook_errors": 0,
+        "sandbox_denials": 1,
         "egress_denied": 9,
         "model_input_tokens": 1200 + 100 * step,
         "model_output_tokens": 300 + 25 * step,

@@ -210,6 +210,18 @@ def usage(**counts: int) -> dict[str, Any]:
     return body
 
 
+def tool_record(result: str, is_error: bool) -> dict[str, Any]:
+    return {
+        "tool_use_id": "toolu_1",
+        "name": "Read",
+        "input_summary": "x",
+        "input": "{}",
+        "result_summary": result,
+        "is_error": is_error,
+        "duration_ms": 3,
+    }
+
+
 def test_journal_counters_count_each_record_once(context: ControlContext) -> None:
     context.state.save_session(make_session())
     journal = context.journal
@@ -232,11 +244,22 @@ def test_journal_counters_count_each_record_once(context: ControlContext) -> Non
         SESSION_ID,
     )
     journal.append("session.state", {"state": "idle", "at": "2026-11-21T10:00:00.000Z"}, SESSION_ID)
+    # Kernel refusals that reach a tool result (KOR-60): only errors naming EACCES/EPERM or their texts count.
+    for result, is_error in (
+        ("EACCES: permission denied, open '/srv/sessions/x/work/locked.txt'", True),
+        ("EPERM: operation not permitted, open '/srv/sessions/x/work/dev'", True),
+        ("cat: locked.txt: Permission denied", True),
+        ("Operation not permitted", True),
+        ("File does not exist.", True),
+        ("Permission denied", False),
+    ):
+        journal.append("session.tool", tool_record(result, is_error), SESSION_ID)
     counters = metrics.JournalCounters()
     counters.update(context)
     expected = {
         "hook_denies": 2,
         "hook_errors": 1,
+        "sandbox_denials": 4,
         "model_input_tokens": 123,
         "model_output_tokens": 42,
         "model_request_bytes": 900,
@@ -415,6 +438,7 @@ def test_route_answers_the_contract_shape(
         "state": "working",
         "hook_denies": 1,
         "hook_errors": 0,
+        "sandbox_denials": 0,
         "model_input_tokens": 0,
         "model_output_tokens": 0,
         "model_request_bytes": 0,

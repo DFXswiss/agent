@@ -78,6 +78,7 @@ SESSION_OPTIONAL = (
     "oom_kills",
     "hook_denies",
     "hook_errors",
+    "sandbox_denials",
     "egress_denied",
     "model_input_tokens",
     "model_output_tokens",

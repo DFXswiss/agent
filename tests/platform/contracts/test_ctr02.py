@@ -94,9 +94,11 @@ SPEC_GUEST_NESTED = {
     ("guest/sessions-create.request.json", "/properties/limits"): "memory_max cpu_quota tasks_max runtime_max_sec",
     ("guest/objects.json", "/$defs/vm_metrics"): "cpu_usage_usec mem_used_bytes mem_total_bytes disk_used_bytes"
     " disk_total_bytes net_rx_bytes net_tx_bytes uptime_seconds load1",
-    # The optional counters after `state` were added by RUN-15 (contracts/changes/RUN-15.md).
+    # The optional counters after `state` were added by RUN-15 (contracts/changes/RUN-15.md), `sandbox_denials` by
+    # KOR-60 (contracts/changes/KOR-60.md).
     ("guest/objects.json", "/$defs/session_metrics"): "session_id cpu_usage_usec mem_current_bytes mem_max_bytes"
-    " tasks_current io_read_bytes io_write_bytes workspace_bytes state oom_kills hook_denies hook_errors egress_denied"
+    " tasks_current io_read_bytes io_write_bytes workspace_bytes state oom_kills hook_denies hook_errors"
+    " sandbox_denials egress_denied"
     " model_input_tokens model_output_tokens model_request_bytes model_response_bytes",
 }
 

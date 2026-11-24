@@ -22,12 +22,14 @@ The control process (root) reads everything itself; nothing here runs inside a s
   every call.
 * Counters (additive contract fields, contracts/changes/RUN-15.md), counted over the journal records of the session:
   ``hook_denies`` (``session.hook`` with decision ``deny`` or ``block``), ``hook_errors`` (``guest.error``
-  ``hook_handler_failed``), ``model_input_tokens`` (input + cache read + cache write), ``model_output_tokens``
-  (output + thinking), ``model_request_bytes`` and ``model_response_bytes`` of the ``usage`` records. The journal is
-  read incrementally (records after the last one seen); records are pruned only 24 h after the runner acknowledged
-  them, so a 15 s sampler never misses one. After a restart of this process the counting starts again from the records
-  the journal still holds; when older records were pruned meanwhile the value is lower, a counter reset Prometheus
-  handles. The counts of sessions that are no longer active are forgotten.
+  ``hook_handler_failed``), ``sandbox_denials`` (``session.tool`` with ``is_error`` whose result names a refusal of the
+  kernel - ``EACCES``/``EPERM`` or their texts: the hook let the call through and the second layer, Landlock, the unit's
+  device policy or the file modes, refused it; KOR-60, decision D16), ``model_input_tokens`` (input + cache read + cache
+  write), ``model_output_tokens`` (output + thinking), ``model_request_bytes`` and ``model_response_bytes`` of the
+  ``usage`` records. The journal is read incrementally (records after the last one seen); records are pruned only 24 h
+  after the runner acknowledged them, so a 15 s sampler never misses one. After a restart of this process the counting
+  starts again from the records the journal still holds; when older records were pruned meanwhile the value is lower, a
+  counter reset Prometheus handles. The counts of sessions that are no longer active are forgotten.
 * ``egress_denied``: packets of the session user that the egress filter of 05-runner.md section 4.3 refuses
   (``EgressCounters``). The production table counts all session users together, so this module keeps its own
   count-only table ``inet agent_metrics``: a base chain at priority -10 (before the filter at 0) jumps for the
@@ -73,14 +75,18 @@ NFT_PRIORITY = -10
 NFT_TIMEOUT = 5.0
 PLATFORM_PORT = 7700
 MAX_COUNT = 2**53 - 1
-COUNTED_KINDS = ("session.hook", "usage", "guest.error")
+COUNTED_KINDS = ("session.hook", "usage", "guest.error", "session.tool")
 DENY_DECISIONS = frozenset({"deny", "block"})
 HOOK_ERROR = "hook_handler_failed"
+# The texts with which the kernel's refusals (EACCES, EPERM) reach a tool result: Node's error codes and messages
+# (Read, Write, Edit, Glob, Grep of Claude Code) and the C library's strerror texts.
+KERNEL_REFUSALS = re.compile(r"\bEACCES\b|\bEPERM\b|[Pp]ermission denied|[Oo]peration not permitted")
 INPUT_TOKENS = ("input_tokens", "cache_read_tokens", "cache_write_tokens")
 OUTPUT_TOKENS = ("output_tokens", "thinking_tokens")
 COUNTERS = (
     "hook_denies",
     "hook_errors",
+    "sandbox_denials",
     "model_input_tokens",
     "model_output_tokens",
     "model_request_bytes",
@@ -283,6 +289,10 @@ def _number(body: Mapping[str, Any], key: str) -> int:
     return value if type(value) is int and value >= 0 else 0
 
 
+def _kernel_refusal(body: Mapping[str, Any]) -> bool:
+    return body.get("is_error") is True and KERNEL_REFUSALS.search(str(body.get("result_summary", ""))) is not None
+
+
 class JournalCounters:
     """Per-session counters of the journal records after ``last_seq`` (see the module docstring)."""
 
@@ -299,6 +309,8 @@ class JournalCounters:
             self._add(session_id, "hook_denies", 1 if body.get("decision") in DENY_DECISIONS else 0)
         elif kind == "guest.error":
             self._add(session_id, "hook_errors", 1 if body.get("code") == HOOK_ERROR else 0)
+        elif kind == "session.tool":
+            self._add(session_id, "sandbox_denials", 1 if _kernel_refusal(body) else 0)
         else:
             self._add(session_id, "model_input_tokens", sum(_number(body, key) for key in INPUT_TOKENS))
             self._add(session_id, "model_output_tokens", sum(_number(body, key) for key in OUTPUT_TOKENS))

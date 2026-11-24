@@ -544,7 +544,7 @@
     },
     {
       "id": 10,
-      "title": "Hook denies and errors (15 min)",
+      "title": "Hook denies, errors and kernel refusals (15 min)",
       "description": "",
       "type": "timeseries",
       "gridPos": {
@@ -576,6 +576,16 @@
           },
           "expr": "increase(agent_runner_session_hook_errors_total{server=~\"$server\", vm=~\"$vm\", session=~\"$session\"}[15m])",
           "legendFormat": "{{session}} errors",
+          "range": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(agent_runner_session_sandbox_denials_total{server=~\"$server\", vm=~\"$vm\", session=~\"$session\"}[15m])",
+          "legendFormat": "{{session}} kernel refusals",
           "range": true
         }
       ],

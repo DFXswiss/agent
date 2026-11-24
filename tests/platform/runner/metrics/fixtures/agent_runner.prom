@@ -185,6 +185,10 @@ agent_runner_session_hook_denies_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7
 # TYPE agent_runner_session_hook_errors_total counter
 agent_runner_session_hook_errors_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 0
 agent_runner_session_hook_errors_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04"} 0
+# HELP agent_runner_session_sandbox_denials_total Tool calls of the session that the kernel refused (EACCES/EPERM) after the hook let them through.
+# TYPE agent_runner_session_sandbox_denials_total counter
+agent_runner_session_sandbox_denials_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 3
+agent_runner_session_sandbox_denials_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f04"} 3
 # HELP agent_runner_session_egress_denied_total Refused egress packets of the session.
 # TYPE agent_runner_session_egress_denied_total counter
 agent_runner_session_egress_denied_total{vm="vm-0a1b2c3d",session="01a1ee56-5e00-7003-8f1b-340691d99f03"} 9

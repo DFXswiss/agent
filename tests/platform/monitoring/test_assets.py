@@ -251,7 +251,8 @@ def test_dashboards_cover_the_levels_of_section_5() -> None:
         "agent_runner_session_memory_limit_bytes", "agent_runner_session_workspace_bytes",
         "agent_runner_session_io_read_bytes_total", "agent_runner_session_io_write_bytes_total",
         "agent_runner_session_oom_kills_total", "agent_runner_session_hook_denies_total",
-        "agent_runner_session_egress_denied_total", "agent_runner_session_model_tokens_total",
+        "agent_runner_session_sandbox_denials_total", "agent_runner_session_egress_denied_total",
+        "agent_runner_session_model_tokens_total",
     } <= metrics("agent-platform-sessions")  # fmt: skip
     vm_var = next(v for v in assets.dashboard("agent-platform-vms")["templating"]["list"] if v["name"] == "vm")
     assert vm_var["query"] == 'label_values(agent_runner_vm_state{server=~"$server"}, vm)'
