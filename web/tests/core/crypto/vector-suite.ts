@@ -148,6 +148,24 @@ const target = (a: Any): wrap.WrapTarget => ({
 });
 const saltNonce = (header: Any) => [b(header.salt), b(header.nonce)] as const;
 const kem = (raw: unknown) => keys.x25519KeyPair(b(raw));
+const accountFields = (a: Any): agent.AccountFields => ({
+  agentId: a.agent_id,
+  agentKem: b(a.agent_pub.kem),
+  agentSig: b(a.agent_pub.sig),
+  inviteId: a.invite_id,
+  method: a.method,
+  userId: a.user_id,
+  userKem: b(a.pub.kem),
+  userSig: b(a.pub.sig),
+});
+const recoverFields = (a: Any): agent.RecoverFields => ({
+  agentId: a.agent_id,
+  agentKem: b(a.agent_pub.kem),
+  agentSig: b(a.agent_pub.sig),
+  challenge: b(a.challenge),
+  method: a.method,
+  userId: a.user_id,
+});
 
 /** The TypeScript twin of `agent_hub.crypto.vectors.OPS` (the operations negative vectors name). */
 export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
@@ -187,6 +205,8 @@ export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
   check_label: async (a) => agent.checkLabel(a.label),
   agent_code: async (a) => agent.agentCode(a.pairing_id, a.fp, b(a.nonce), a.origin),
   open_handover: async (a) => agent.openHandover(await kem(a.agent_kem_sk), a.agent_id, a.user_id, a.sealed),
+  verify_account: async (a) => agent.verifyText(b(a.signer), a.signature, agent.accountText(accountFields(a))),
+  verify_recover: async (a) => agent.verifyText(b(a.signer), a.signature, agent.recoverText(recoverFields(a))),
 };
 
 /** Operations whose name one vector file uses for its own function (`agent.json` `parse_code`: the agent and return
@@ -276,6 +296,37 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
     same(await agent.returnCode(b(sec.secret), ag.id, user.id), rem.return_code, 'return code');
     same(agent.formatCode(rem.return_code), rem.return_code_shown, 'return code shown');
     for (const item of rem.typed) same(agent.parseCode(item.text, item.length), item.code, `typed ${item.text}`);
+    const own = data.own_account;
+    same(agent.PROOF_METHODS, own.methods, 'proof methods');
+    const acc = own.account;
+    const secrets = await invite.inviteSecrets(b(acc.invite_code));
+    same(secrets.inviteId, acc.invite_id, 'account invite_id');
+    same(secrets.pkInv, acc.pk_inv, 'account pk_inv');
+    same(acc.agent_pub, { kem: ag.kem, sig: ag.sig }, 'account agent keys');
+    same(acc.pub, { kem: user.kem, sig: user.sig }, 'account user keys');
+    const accountText = agent.accountText(accountFields(acc));
+    same(accountText, acc.text, 'account text');
+    const alice = await identity('alice');
+    const accountSigners: [keys.KeyPair, string, string][] = [
+      [secrets.signing, acc.inv_sig, 'inv_sig'],
+      [alice.sig, acc.id_sig, 'id_sig'],
+      [signer, acc.agent_sig, 'agent_sig'],
+    ];
+    for (const [pair, signature, what] of accountSigners) {
+      await agent.verifyText(pair.publicKey, signature, accountText);
+      same(await keys.ed25519Sign(pair.privateKey, accountText), signature, `account ${what}`);
+    }
+    const rec = own.recover;
+    const recoverText = agent.recoverText(recoverFields(rec));
+    same(recoverText, rec.text, 'recover text');
+    const recoverSigners: [keys.KeyPair, string, string][] = [
+      [alice.sig, rec.id_sig, 'id_sig'],
+      [signer, rec.agent_sig, 'agent_sig'],
+    ];
+    for (const [pair, signature, what] of recoverSigners) {
+      await agent.verifyText(pair.publicKey, signature, recoverText);
+      same(await keys.ed25519Sign(pair.privateKey, recoverText), signature, `recover ${what}`);
+    }
   },
   encoding: async (data) => {
     for (const item of data.b64u) {

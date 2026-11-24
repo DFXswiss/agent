@@ -19,6 +19,14 @@
 //   confirmation; the agent accepts the handover only when the user gives it this code.
 // - `parseCode`: the typed form of a code (lower case, spaces and dashes; `I`/`L` read as `1`, `O` as `0`);
 //   `formatCode` shows it in two groups.
+//
+// An account of an agent alone (rule E-27, KOR-62, 11-agent-access.md sections 3 and 5.5): the agent tool creates the
+// user's identity itself, with no passkey, and proves possession with signatures; the proof names its method
+// (`PROOF_METHODS`, today only `agent-signature-v1`; `checkProofMethod`).
+// - `accountText`: `P || "agent-account\0" || canonical({"agent","agent_pub":{kem,sig},"invite_id","method",
+//   "pub":{kem,sig},"user"})`, signed by `sk_inv`, the new identity and the new agent key (`verifyText`).
+// - `recoverText`: `P || "agent-recover\0" || canonical({"agent","agent_pub":{kem,sig},"challenge","method","user"})`
+//   with the 32-byte challenge of `recovery/begin`, signed by the recovered identity and the new agent key.
 import { b64uDecode, b64uEncode } from '../encoding/b64u';
 import { concat, equalBytes } from '../encoding/bytes';
 import { bodyJson, canonical, parseJson } from '../encoding/json';
@@ -42,6 +50,9 @@ export const MODE_REMOTE = 'remote';
 export const NONCE_BYTES = 16;
 export const AGENT_CODE_LENGTH = 10;
 export const RETURN_CODE_LENGTH = 8;
+export const METHOD_AGENT_SIGNATURE = 'agent-signature-v1';
+export const PROOF_METHODS: readonly string[] = [METHOD_AGENT_SIGNATURE];
+export const CHALLENGE_BYTES = 32;
 export const CROCKFORD32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const CODE_ALIASES: Readonly<Record<string, string>> = { I: '1', L: '1', O: '0' };
 const HANDOVER_KEYS = ['k', 'r'];
@@ -303,4 +314,67 @@ export async function openHandover(
   const rootKey = value.k as string;
   if (!equalBytes(handoverPlaintext(secret, rootKey), plaintext)) fail('header_invalid');
   return { secret, rootKey };
+}
+
+/** The fields of `accountText` (raw 32-byte public keys). */
+export interface AccountFields {
+  readonly agentId: string;
+  readonly agentKem: Uint8Array;
+  readonly agentSig: Uint8Array;
+  readonly inviteId: string;
+  readonly method: unknown;
+  readonly userId: string;
+  readonly userKem: Uint8Array;
+  readonly userSig: Uint8Array;
+}
+
+/** The fields of `recoverText` (raw 32-byte public keys and challenge). */
+export interface RecoverFields {
+  readonly agentId: string;
+  readonly agentKem: Uint8Array;
+  readonly agentSig: Uint8Array;
+  readonly challenge: Uint8Array;
+  readonly method: unknown;
+  readonly userId: string;
+}
+
+const publicKeys = (kemPub: Uint8Array, sigPub: Uint8Array) => ({
+  kem: b64uEncode(requireRaw(kemPub, RAW_KEY_BYTES)),
+  sig: b64uEncode(requireRaw(sigPub, RAW_KEY_BYTES)),
+});
+
+/** A proof method of `PROOF_METHODS` (`header_invalid` otherwise). */
+export function checkProofMethod(method: unknown): string {
+  if (!(PROOF_METHODS as readonly unknown[]).includes(method)) fail('header_invalid');
+  return method as string;
+}
+
+/** The text the invitation key, the new identity and the new agent key sign for an account of an agent alone. */
+export function accountText(f: AccountFields): Uint8Array<ArrayBuffer> {
+  const fields = {
+    agent: f.agentId,
+    agent_pub: publicKeys(f.agentKem, f.agentSig),
+    invite_id: f.inviteId,
+    method: checkProofMethod(f.method),
+    pub: publicKeys(f.userKem, f.userSig),
+    user: f.userId,
+  };
+  return concat(L.label(L.LABEL_AGENT_ACCOUNT), canonical(fields));
+}
+
+/** The text the recovered identity and the new agent key sign to make the new agent the main orchestrator. */
+export function recoverText(f: RecoverFields): Uint8Array<ArrayBuffer> {
+  const fields = {
+    agent: f.agentId,
+    agent_pub: publicKeys(f.agentKem, f.agentSig),
+    challenge: b64uEncode(requireRaw(f.challenge, CHALLENGE_BYTES)),
+    method: checkProofMethod(f.method),
+    user: f.userId,
+  };
+  return concat(L.label(L.LABEL_AGENT_RECOVER), canonical(fields));
+}
+
+/** `signature_invalid` unless `signature` (b64u) is the signature of `sigPub` over `text`. */
+export function verifyText(sigPub: Uint8Array, signature: unknown, text: Uint8Array): Promise<void> {
+  return ed25519VerifyB64u(sigPub, signature, text);
 }

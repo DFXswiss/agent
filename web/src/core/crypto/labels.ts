@@ -57,3 +57,6 @@ export const LABEL_AGENT_CLAIM_HASH = 'agent-claim-hash\0';
 export const LABEL_AGENT_CODE = 'agent-code\0';
 export const LABEL_AGENT_HANDOVER = 'agent-handover\0';
 export const LABEL_AGENT_RETURN = 'agent-return\0';
+// An account of an agent alone (rule E-27, KOR-62, 11-agent-access.md section 3), without the prefix P.
+export const LABEL_AGENT_ACCOUNT = 'agent-account\0';
+export const LABEL_AGENT_RECOVER = 'agent-recover\0';
