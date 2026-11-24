@@ -246,3 +246,12 @@ MON-3. **Runner measures only from outside** (`agent_runner.metrics.workvm`): th
     and the pool keeps room for one more standard disk. The organization RAM share needs a queue per organization
     (one FIFO queue cannot let a later request of another organization pass a blocked head without starving it);
     the per-organization VM count (`WORKVM_MAX_PER_ORG`) bounds an organization meanwhile.
+32. **Findings of the root rehearsal (2026-11-24 08:00).** The boundary held in every phase; three defects:
+    `workvm firewall check` (and with it the runner's admission, `service.Boundary`) compared the live rules in
+    order, but pfctl's optimizer regroups a slot's rules by protocol - no work VM would ever have started. The rules
+    are now compared as a multiset of signatures (each exactly as often as rendered) against the live tunnel
+    interface read from the loaded pass rule; the table check accepts pf's printing (indented, hosts without length,
+    dotted mapped addresses) and counts a range covered by a wider entry, and names what is missing
+    (`workvm.firewall.table_missing`). The rehearsal sets its runner home to 0700 itself (no global mask, which would
+    also narrow what `install` creates) and saves every pf state from stdout only, like its later comparisons; on a
+    failing check it saves pf's rules with counters and the table for the diagnosis.

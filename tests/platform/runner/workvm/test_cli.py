@@ -346,6 +346,20 @@ def test_check_as_root_with_problems(fake: FakeMachine, cli: Callable[..., tuple
     assert not any(call[:2] == SUDO for call in fake.calls)
 
 
+def test_check_names_the_missing_table_ranges(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
+    fake.uids.update({"wvm00": 602, "wvm01": 603})
+    fake.answers[firewall.READ_COMMANDS[4]] = (0, "   10.0.0.0/8\n")
+    code, out, _ = cli("firewall", "check")
+    assert code == 1
+    lines = out.splitlines()
+    assert lines[:2] == [
+        "runner.workvm.firewall ok=no internet=no egress=utun3",
+        "runner.workvm.firewall.problem code=table_stale",
+    ]
+    assert lines[2].startswith("runner.workvm.firewall.table_missing entries=0.0.0.0/8,100.64.0.0/10,")
+    assert "10.0.0.0/8," not in lines[2]
+
+
 def test_status_with_boundary(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
     fake.uids.update({"wvm00": 602, "wvm01": 603})
     fake.egress = None

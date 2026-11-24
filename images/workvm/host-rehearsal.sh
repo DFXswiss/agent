@@ -59,7 +59,8 @@ case "$deadline" in '' | *[!0-9]*) usage ;; esac
 log=${log:-/var/tmp/agent-workvm-rehearsal-$(date +%Y%m%d-%H%M%S)}
 mkdir -p "$log" && chmod 0700 "$log"
 home="$log/runner-home"
-mkdir -p "$home"
+# the runner refuses a home that others can read (`config.check_home`); set it here, whatever mode mask the caller has
+mkdir -p "$home" && chmod 0700 "$home"
 account="${prefix}wvm00"
 # Never on a device that already has an installation: the rehearsal's uninstall would remove it.
 installed=
@@ -110,10 +111,11 @@ main_rules() { pfctl -sr 2>/dev/null | grep -v '^anchor "com.cloudflare'; }
 
 # 1. Save the state before anything changes.
 say "1 state before"
-pfctl -s info >"$log/before.info" 2>&1
-pfctl -sr >"$log/before.rules" 2>&1
+# pfctl prints ALTQ notices on stderr: every saved pf state takes stdout only, like the comparisons later
+pfctl -s info >"$log/before.info" 2>/dev/null
+pfctl -sr >"$log/before.rules" 2>/dev/null
 main_rules >"$log/before.main"
-pfctl -sA >"$log/before.anchors" 2>&1
+pfctl -sA >"$log/before.anchors" 2>/dev/null
 pfctl -a com.cloudflare.warp_svc -sr 2>/dev/null | grep -c . >"$log/before.client-rules"
 shasum -a 256 /etc/pf.conf >"$log/before.pf-conf"
 dscl . -list /Users >"$log/before.users"
@@ -168,6 +170,9 @@ check_all() { # phase
     report "firewall_check_$1" pass "$(grep -o 'egress=[a-z0-9-]*' "$log/check-$1.txt" | head -1)"
   else
     report "firewall_check_$1" fail "see check-$1.txt"
+    # what pf holds, for the diagnosis (rules with their counters and the table as pf prints them)
+    { pfctl -a com.apple/000.agent.workvm -vsr; echo "== table"; pfctl -a com.apple/000.agent.workvm -t workvm_blocked -T show; } \
+      >"$log/pf-$1.txt" 2>/dev/null
   fi
   "$egress_check" --account "$account" --site-ip "$site_ip" >"$log/egress-$1.txt" 2>&1
   bad=$(grep -c 'result=fail' "$log/egress-$1.txt")

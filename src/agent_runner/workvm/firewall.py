@@ -440,13 +440,27 @@ def _table_entries() -> set[ipaddress.IPv4Network | ipaddress.IPv6Network]:
 
 
 def _live_entries(output: str) -> set[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+    """The networks of `pfctl -t … -T show` (one per line, indented; a host without a prefix length; other lines such
+    as pfctl's notices are skipped)."""
     entries: set[ipaddress.IPv4Network | ipaddress.IPv6Network] = set()
     for raw in output.splitlines():
         try:
-            entries.add(ipaddress.ip_network(raw.strip(), strict=False))
-        except ValueError:
+            entries.add(ipaddress.ip_network(raw.strip().lstrip("!").split()[0], strict=False))
+        except (ValueError, IndexError):
             continue
     return entries
+
+
+Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+def _missing(expected: set[Network], live: set[Network]) -> list[Network]:
+    """The expected networks no live entry covers (pf may print an entry in another but equal form)."""
+    return [
+        entry
+        for entry in expected
+        if not any(entry.version == found.version and entry.subnet_of(found) for found in live)  # type: ignore[arg-type]
+    ]
 
 
 def hooked(main_rules: str) -> bool:
@@ -476,6 +490,8 @@ class Status:
 
     problems: tuple[str, ...]
     egress: str | None
+    table_missing: tuple[str, ...] = ()
+    """With `table_stale`: the blocked networks the live table does not cover (`unreadable`: no table output)."""
 
     @property
     def internet(self) -> bool:
@@ -506,7 +522,9 @@ def check(run: Run, slots: Sequence[Slot], bandwidth_mbit: int) -> Status:
     expected_rules = _rule_signatures(rendered)
     if anchor.returncode != 0 or (expected_rules and not live):
         problems.append("anchor_missing")
-    elif live != expected_rules:
+    elif sorted(live) != sorted(expected_rules):
+        # pfctl's ruleset optimizer regroups the rules of a slot (by protocol) without changing what they decide, so
+        # the live rules are compared as a set of signatures, each signature exactly as often as rendered
         problems.append("anchor_mismatch")
     main = run(READ_COMMANDS[2], PFCTL_TIMEOUT)
     if main.returncode != 0 or not hooked(main.stdout):
@@ -518,9 +536,10 @@ def check(run: Run, slots: Sequence[Slot], bandwidth_mbit: int) -> Status:
     if interfaces.returncode != 0 or _skips_lo0(interfaces.stdout):
         problems.append("skip_lo0")
     table = run(READ_COMMANDS[4], PFCTL_TIMEOUT)
-    if table.returncode != 0 or not _table_entries() <= _live_entries(table.stdout):
+    missing = tuple(sorted(str(entry) for entry in _missing(_table_entries(), _live_entries(table.stdout))))
+    if table.returncode != 0 or missing:
         problems.append("table_stale")
-    return Status(tuple(problems), egress)
+    return Status(tuple(problems), egress, missing if table.returncode == 0 else ("unreadable",))
 
 
 def without_legacy_lines(current: str) -> str:

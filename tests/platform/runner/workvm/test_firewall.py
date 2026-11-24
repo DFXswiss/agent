@@ -269,7 +269,7 @@ def test_check_fails_closed_on_failing_commands() -> None:
     answers = {key: (1, out) for key, (_, out) in healthy().items()}
     answers[("/sbin/pfctl", "-s", "info")] = (0, LIVE_INFO)
     assert firewall.check(FakeRun(answers), SLOTS, 500) == firewall.Status(
-        ("anchor_missing", "not_hooked", "not_first", "skip_lo0", "table_stale"), None
+        ("anchor_missing", "not_hooked", "not_first", "skip_lo0", "table_stale"), None, ("unreadable",)
     )
 
 
@@ -281,7 +281,6 @@ def test_check_fails_closed_on_failing_commands() -> None:
         LIVE_ANCHOR.replace("on utun4 proto udp", "on utun5 proto udp", 1),
         LIVE_ANCHOR.replace("pass out quick on utun4 proto tcp", "pass out quick on en0 proto tcp", 1),
         "\n".join(live_rules(601, 47200)) + "\n",
-        "\n".join(live_rules(602, 47201) + live_rules(601, 47200)) + "\n",
         LIVE_ANCHOR.replace("block return out quick all user = 602", "block drop out quick all user = 602"),
         "\n".join(live_rules(601, 47200) + live_rules(602, 47201, None)) + "\n",
     ],
@@ -356,6 +355,62 @@ def test_preflight_needs_the_hook_and_reads_only() -> None:
         "not_hooked"
     ]
     assert firewall.preflight(FakeRun({("/sbin/pfctl", "-sr"): (1, "")})) == ["pfctl_failed"]
+
+
+# `pfctl -a com.apple/000.agent.workvm -sr` of one slot as loaded on a test device whose client interface is utun4
+# (KOR-29 rehearsal 2026-11-24): pfctl's optimizer regroups the rules by protocol and prints its own state options.
+PF_LOADED = """\
+pass out quick on lo0 inet proto tcp from 127.0.0.1 to 127.0.0.1 port = 47200 user = 601 flags S/SA keep state
+pass out quick on lo0 inet proto tcp from 127.0.0.1 port = 47200 to 127.0.0.1 user = 601 no state
+block return out quick on lo0 proto tcp all user = 601
+block return out quick proto tcp from any to <workvm_blocked> user = 601
+block return out quick proto tcp from any to any port = 25 user = 601
+block return out quick on lo0 proto udp all user = 601
+block return out quick proto udp from any to <workvm_blocked> user = 601
+pass out quick on utun4 proto tcp all user = 601 flags S/SA keep state (max 4096, source-track rule, \
+max-src-conn 2048, max-src-conn-rate 2000/10, if-bound, adaptive.start 2454, adaptive.end 4908, src.track 10)
+pass out quick on utun4 proto udp all user = 601 keep state (max 4096, source-track rule, max-src-conn 2048, \
+max-src-conn-rate 2000/10, if-bound, adaptive.start 2454, adaptive.end 4908, src.track 10)
+block return out quick all user = 601
+""".replace("\\\n", "")
+# `pfctl -t workvm_blocked -T show` as pf prints it: indented, hosts without a length, mapped addresses dotted
+PF_TABLE = "".join(
+    f"   {entry}\n"
+    for entry in (
+        *(e.removesuffix("/32") for e in firewall.BLOCKED_V4),
+        *(e.removesuffix("/128").replace("::ffff:0:0/96", "::ffff:0.0.0.0/96") for e in firewall.BLOCKED_V6),
+    )
+)
+
+
+@pytest.mark.parametrize("egress", ["utun4", "utun0", "utun17"])
+def test_check_passes_on_pf_output_with_any_tunnel_name(egress: str) -> None:
+    slot = [Slot(0, "agentwvm00", 601, 47200)]
+    answers = healthy()
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-sr")] = (0, PF_LOADED.replace("utun4", egress))
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show")] = (0, PF_TABLE)
+    assert firewall.check(FakeRun(answers), slot, 500) == firewall.Status((), egress)
+    # the same rules in another grouping are the same filter; a missing rule is not
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-sr")] = (0, "".join(reversed(PF_LOADED.splitlines(keepends=True))))
+    assert firewall.check(FakeRun(answers), slot, 500).problems == ()
+    broken = PF_LOADED.replace("block return out quick proto udp from any to <workvm_blocked> user = 601\n", "")
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-sr")] = (0, broken)
+    assert firewall.check(FakeRun(answers), slot, 500).problems == ("anchor_mismatch",)
+
+
+def test_check_names_the_ranges_the_table_lacks() -> None:
+    answers = healthy()
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show")] = (
+        0,
+        PF_TABLE.replace("   10.0.0.0/8\n", "   10.0.0.0/9\n"),
+    )
+    status = firewall.check(FakeRun(answers), SLOTS, 500)
+    assert (status.problems, status.table_missing) == (("table_stale",), ("10.0.0.0/8",))
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show")] = (0, "   10.0.0.0/7\n" + PF_TABLE)
+    assert firewall.check(FakeRun(answers), SLOTS, 500).problems == ()  # a wider entry covers it
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show")] = (1, "")
+    status = firewall.check(FakeRun(answers), SLOTS, 500)
+    assert (status.problems, status.table_missing) == (("table_stale",), ("unreadable",))
 
 
 def test_check_table_ignores_noise_and_needs_every_range() -> None:

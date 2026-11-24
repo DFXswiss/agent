@@ -220,6 +220,8 @@ def _boundary(ctx: Any, run: firewall.Run, slots: Sequence[firewall.Slot], probl
     )
     for code in status.problems:
         ctx.out.fact("workvm.firewall.problem", {"code": code})
+    if status.table_missing:
+        ctx.out.fact("workvm.firewall.table_missing", {"entries": ",".join(status.table_missing)})
     return EXIT_FAILURE if status.problems else EXIT_OK
 
 

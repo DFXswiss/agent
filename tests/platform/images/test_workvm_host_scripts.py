@@ -87,3 +87,13 @@ def test_after_reboot_check_is_read_only_and_refuses_without_root() -> None:
         pytest.fail("the hermetic suite never runs as root")
     done = subprocess.run(["/bin/sh", str(REBOOT)], capture_output=True, text=True, check=False)
     assert (done.returncode, done.stderr) == (2, "after-reboot-check: run as root\n")
+
+
+def test_rehearsal_sets_the_runner_home_private_and_saves_pf_state_from_stdout_only() -> None:
+    text = REHEARSAL.read_text(encoding="utf-8")
+    assert 'mkdir -p "$home" && chmod 0700 "$home"' in text  # the runner refuses a readable home, whatever the umask
+    assert "umask" not in text  # a global umask would also narrow what `install` creates
+    saved = [line for line in text.splitlines() if line.startswith("pfctl ") and '>"$log/before.' in line]
+    assert saved
+    assert all("2>/dev/null" in line and "2>&1" not in line for line in saved)  # as the comparisons (ALTQ notices)
+    assert 'pfctl -sA 2>/dev/null | cmp -s - "$log/before.anchors"' in text
