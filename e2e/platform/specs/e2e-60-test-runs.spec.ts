@@ -159,19 +159,19 @@ test('@E2E-60 @needs-vm @needs-workvm tests run red then green in fresh VMs, the
 
   // The chat shows both runs; the log of the red run opens in the browser with its last line, and downloads whole.
   await expect(page.getByTestId('chat.test.run')).toHaveCount(2, { timeout: 30_000 });
-  await page.getByTestId('chat.test.run').first().getByTestId('testrun.log.open').click();
+  await page.getByTestId('chat.test.run').first().getByTestId('log.open').click();
   const viewer = page.getByTestId('log.viewer');
   await expect(viewer).toBeVisible();
-  await viewer.getByTestId('log.viewer.end').click();
+  await viewer.getByTestId('log.last').click();
   await expect(viewer).toContainText(`${LOG_LINE}${LINES}`, { timeout: 60_000 });
   const download = page.waitForEvent('download');
-  await viewer.getByTestId('log.viewer.download').click();
+  await viewer.getByTestId('log.download').click();
   const file = await (await download).path();
   const text = readFileSync(file, 'utf8');
   expect(text.startsWith(`${LOG_LINE}1\n${LOG_LINE}2\n`)).toBe(true);
   expect(text).toContain(`${LOG_LINE}${LINES}\n`);
   expect(Buffer.byteLength(text)).toBe(red.log!.bytes);
-  await viewer.getByTestId('log.viewer.close').click();
+  await viewer.getByTestId('log.close').click();
 
   // 2. Closing the task deletes its work VM at once (`task_closed`).
   await page.getByTestId('task.close').click();
