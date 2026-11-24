@@ -92,14 +92,22 @@ export class PageUser {
     return new PageUserRequests(this.page).request(method, target, body);
   }
 
-  /** The org's log, verified with the user as founder (the user's private org) and the verified platform log. */
+  /** The org's log, verified with the user as founder (the user's private org) and the verified platform log; reads
+   *  every page (`next_after`, 200 entries each), as the web client does - with one page only, the 201st entry of a
+   *  long log (about 100 workgroups with a device each, PERF-06) was appended with a stale `seq` (`seq_conflict`). */
   async log(org: string): Promise<VerifiedLog> {
-    const page = (await this.request('GET', `/v1/orgs/${org}/log`)) as { entries: { entry: unknown }[] };
-    return verifyLog(
-      page.entries.map((item) => item.entry),
-      this.identity.public().sig,
-      await this.platform(),
-    );
+    const entries: unknown[] = [];
+    let after: number | null = null;
+    for (;;) {
+      const page = (await this.request('GET', `/v1/orgs/${org}/log${after === null ? '' : `?after=${after}`}`)) as {
+        entries: { entry: unknown }[];
+        next_after: number | null;
+      };
+      entries.push(...page.entries.map((item) => item.entry));
+      if (page.next_after === null) break;
+      after = page.next_after;
+    }
+    return verifyLog(entries, this.identity.public().sig, await this.platform());
   }
 
   /** The platform state of the verified platform log (certified and decertified platform devices); reads every page
