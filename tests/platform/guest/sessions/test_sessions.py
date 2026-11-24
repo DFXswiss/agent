@@ -584,10 +584,15 @@ def test_stop_stops_the_unit_closes_the_window_and_keeps_the_directories(
 ) -> None:
     manager.create(request())
     manager.start(SESSION)
+    watcher = manager._running[SESSION].thread
+    assert watcher is not None
     manager.stop(SESSION)
     finish(manager, -15)
+    watcher.join(5)  # the watcher polls `has-session` until it sees the end of the pane: let it finish first
+    assert not watcher.is_alive()
     assert fake_system.stopped == [f"agent-session-{SESSION}"] * 2
-    assert tmux_runner.subcommands()[-1] == "kill-session"
+    # after the closed window nothing but the watcher's polling reaches tmux
+    assert [sub for sub in tmux_runner.subcommands() if sub != "has-session"][-1] == "kill-session"
     assert states(context) == ["sandbox_ready", "agent_starting", "stopping", "stopped"]
     assert Path(session_paths.sessions_root, SESSION, "work").is_dir()
     assert Path(session_paths.harness_file(SESSION)).exists()
@@ -599,7 +604,6 @@ def test_stop_stops_the_unit_closes_the_window_and_keeps_the_directories(
     assert meta["stopped_at"] == context.journal.clock.now()
     manager.stop(SESSION)
     assert fake_system.stopped == [f"agent-session-{SESSION}"] * 2
-    time.sleep(0.1)
     assert states(context)[-1] == "stopped"
 
 
