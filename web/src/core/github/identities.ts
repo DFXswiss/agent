@@ -55,7 +55,7 @@ import { RequestError, type RequestView, type RequestsContext } from '../request
 import { noteCompanyLogin, setGithubIdentities } from '../store/slices/githubIdentities';
 import { orgEntry } from '../store/slices/orgs';
 import { putTasks } from '../store/slices/tasks';
-import { authorKey, KIND, REVOCABLE_PREFIX } from './connection';
+import { authorKey, isRevocable, KIND } from './connection';
 
 export type OwnerKind = 'user' | 'org';
 export type DefaultScope = 'org' | 'wg';
@@ -222,7 +222,7 @@ export function accountOf(body: GithubBody): IdentityAccount {
     githubUserId: body.user_id,
     signingKey: body.signing_key !== undefined,
     connectedAt: body.created_at,
-    revocable: body.token.startsWith(REVOCABLE_PREFIX),
+    revocable: isRevocable(body),
   };
 }
 

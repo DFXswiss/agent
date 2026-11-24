@@ -46,14 +46,10 @@ export const CODE_RE = /^[!-~]+$/;
 export const TOKEN_RE = /^[!-~]{1,4096}$/;
 /** A scope of a classic token (`X-OAuth-Scopes`). */
 export const SCOPE_RE = /^[a-z0-9:_-]{1,64}$/;
-<<<<<<< HEAD
-export const SOURCES = ['device_flow', 'token'] as const;
+export const SOURCES = ['device_flow', 'token', 'operator'] as const;
 /** The device flows `github.connect` may name (`app`, KOR-65). */
 export const APPS = ['oauth_app', 'github_app'] as const;
 export type App = (typeof APPS)[number];
-=======
-export const SOURCES = ['device_flow', 'token', 'operator'] as const;
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 export type Source = (typeof SOURCES)[number];
 /** Outcomes of `signing_key` in the final answer of `github.connect` (KOR-47). */
 export const SIGNING_OUTCOMES = ['registered', 'scope_missing', 'refused'] as const;
@@ -158,24 +154,16 @@ export function validRequestBody(kind: RequestKind, body: unknown, followUp: boo
   if (!isRecord(body)) return false;
   switch (kind) {
     case 'github.connect':
-<<<<<<< HEAD
       // without `token` the device flow runs (of the app `app` names, KOR-65); with it the device checks and stores an
-      // existing token (KOR-25); never both
+      // existing token (KOR-25), never both; KOR-47 adds the identity, the organization and the signing key
       return (
         !followUp &&
-        keysAre(body, [], ['token', 'app']) &&
+        keysAre(body, [], ['token', 'app', 'org_id', 'signing_key', 'identity_id']) &&
         (body.token === undefined || matches(body.token, TOKEN_RE)) &&
-        (body.app === undefined || (body.token === undefined && (APPS as readonly unknown[]).includes(body.app)))
-=======
-      // without `token` the device flow runs; with it the device checks and stores an existing token (KOR-25)
-      return (
-        !followUp &&
-        keysAre(body, [], ['token', 'org_id', 'signing_key', 'identity_id']) &&
-        (body.token === undefined || matches(body.token, TOKEN_RE)) &&
+        (body.app === undefined || (body.token === undefined && (APPS as readonly unknown[]).includes(body.app))) &&
         optionalUuid(body.org_id) &&
         optionalUuid(body.identity_id) &&
         (body.signing_key === undefined || typeof body.signing_key === 'boolean')
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
       );
     case 'mailbox.check':
       return !followUp && keysAre(body, []);

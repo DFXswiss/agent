@@ -98,7 +98,10 @@ describe('own accounts in the settings', () => {
     own(
       hub,
       SECOND,
-      await sealed(t, { id: SECOND, body: { ...BODY, login: 'octo-two', name: 'Octo Two', signing_key: key } }),
+      await sealed(t, {
+        id: SECOND,
+        body: { ...BODY, token: 'ghp_transferred', login: 'octo-two', name: 'Octo Two', signing_key: key },
+      }),
     );
     t.client.on(`PUT /v1/github-identities/${SECOND}/primary`, () => ({}));
     let deletes = 0;

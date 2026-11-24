@@ -45,11 +45,7 @@ import { setGithub } from '../store/slices/github';
 import type { Store } from '../store/store';
 import { ensureDevice } from '../tasks/send';
 import type { TasksContext } from '../tasks/pull';
-<<<<<<< HEAD
-import { type App, isScopes, LOGIN_RE, REQUEST_FAILED, type Source, SOURCES, TOKEN_RE } from '../requests/bodies';
-=======
-import { isGithubBody, REQUEST_FAILED, type SigningOutcome, type Source, TOKEN_RE } from '../requests/bodies';
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+import { type App, isGithubBody, REQUEST_FAILED, type SigningOutcome, type Source, TOKEN_RE } from '../requests/bodies';
 import {
   deviceKeys,
   type EligibleDevice,
@@ -152,10 +148,16 @@ export async function openGithubRecord(context: RequestsContext, record: unknown
     source: body.source ?? 'device_flow',
     createdAt: body.created_at,
     version: checked.version as number,
-    revocable:
-      (body.source ?? 'device_flow') === 'device_flow' &&
-      REVOCABLE_PREFIXES.some((prefix) => body.token.startsWith(prefix)),
+    revocable: isRevocable(body),
   };
+}
+
+/** A token of a device flow the devices revoke at GitHub on disconnect (module comment; also for `github/identities.ts`). */
+export function isRevocable(body: { readonly token: string; readonly source?: Source }): boolean {
+  return (
+    (body.source ?? 'device_flow') === 'device_flow' &&
+    REVOCABLE_PREFIXES.some((prefix) => body.token.startsWith(prefix))
+  );
 }
 
 const listed = (body: unknown): boolean =>
@@ -274,12 +276,10 @@ export function tokenInput(text: string): string | null {
   return TOKEN_RE.test(token) ? token : null;
 }
 
-<<<<<<< HEAD
-/** Seals and posts the `github.connect` request to `device` (with `token`: store that token; with `app`: that device
- *  flow, KOR-65; module comment). */
-=======
-/** What a `github.connect` request asks for besides the way (KOR-47, `contracts/requests/github.connect.request.json`). */
+/** What a `github.connect` request asks for besides the token (KOR-47, `contracts/requests/github.connect.request.json`). */
 export interface ConnectOptions {
+  /** The device flow of this app (`app`, KOR-65); never together with a token. */
+  readonly app?: App | undefined;
   /** Reconnect into this own identity record (same ID, version + 1). */
   readonly identityId?: string;
   /** A company account of this organization (admins; the answer carries the body, `github/identities.ts`). */
@@ -290,24 +290,18 @@ export interface ConnectOptions {
 
 /**
  * Seals and posts the `github.connect` request to `device` (with `token`: store that token, module comment); `options`
- * add the identity to reconnect, the organization of a company account (also in plaintext for the hub) and the
- * signing key.
+ * add the device flow's app (KOR-65), the identity to reconnect, the organization of a company account (also in
+ * plaintext for the hub) and the signing key.
  */
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 export async function startConnect(
   context: RequestsContext,
   device: string,
   token?: string,
-<<<<<<< HEAD
-  app?: App,
-): Promise<PreparedRequest> {
-  const body = token !== undefined ? { token } : app !== undefined ? { app } : {};
-  const prepared = await prepareRequest(context, { device, kind: 'github.connect', body });
-=======
   options: ConnectOptions = {},
 ): Promise<PreparedRequest> {
   const body = {
     ...(token !== undefined && { token }),
+    ...(token === undefined && options.app !== undefined && { app: options.app }),
     ...(options.orgId !== undefined && { org_id: options.orgId }),
     ...(options.identityId !== undefined && { identity_id: options.identityId }),
     ...(options.signingKey === true && { signing_key: true }),
@@ -318,7 +312,6 @@ export async function startConnect(
     body,
     ...(options.orgId !== undefined && { orgId: options.orgId }),
   });
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
   await submitRequest(context, prepared);
   return prepared;
 }

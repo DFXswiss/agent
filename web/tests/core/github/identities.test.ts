@@ -143,12 +143,12 @@ describe('openIdentity and accountOf', () => {
       githubUserId: 42,
       signingKey: false,
       connectedAt: BODY.created_at,
-      revocable: false,
+      revocable: true,
     });
     const key = { alg: 'ssh-ed25519' as const, seed: 'A'.repeat(43), public: `ssh-ed25519 ${'A'.repeat(68)}` };
     expect(
       accountOf({ ...BODY, token: 'ghu_x', name: 'Octo Cat', source: 'operator', signing_key: key }),
-    ).toMatchObject({ name: 'Octo Cat', source: 'operator', signingKey: true, revocable: true });
+    ).toMatchObject({ name: 'Octo Cat', source: 'operator', signingKey: true, revocable: false });
   });
 });
 

@@ -268,8 +268,7 @@ export function ConnectFlow({
   useEffect(() => {
     if (phase.kind !== 'devices') return;
     // while the devices load the flow offers only "Close", which unmounts it: a late answer changes nothing
-<<<<<<< HEAD
-    connectDevices(env.tasks).then(
+    connectDevices(env.tasks, options.orgId).then(
       (found) => {
         const devices =
           method === 'token'
@@ -281,19 +280,7 @@ export function ConnectFlow({
       },
       (error: unknown) => setPhase({ kind: 'error', code: requestErrorCode(error) }),
     );
-  }, [env, phase, method, app]);
-=======
-    connectDevices(app.tasks, options.orgId).then(
-      (found) =>
-        setPhase(
-          found.preselected === null
-            ? { kind: 'none' }
-            : { kind: 'choose', devices: found.devices, selected: found.preselected },
-        ),
-      (error: unknown) => setPhase({ kind: 'error', code: requestErrorCode(error) }),
-    );
-  }, [app, phase, options.orgId]);
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+  }, [env, phase, method, app, options.orgId]);
   const start = async (device: string) => {
     let token: string | undefined;
     if (method === 'token') {
@@ -306,11 +293,10 @@ export function ConnectFlow({
     }
     setPhase({ kind: 'starting' });
     try {
-<<<<<<< HEAD
-      setPhase({ kind: 'request', prepared: await startConnect(env.tasks, device, token, app) });
-=======
-      setPhase({ kind: 'request', prepared: await startConnect(app.tasks, device, token, options) });
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+      setPhase({
+        kind: 'request',
+        prepared: await startConnect(env.tasks, device, token, { ...options, app }),
+      });
     } catch (error) {
       setPhase({ kind: 'error', code: requestErrorCode(error) });
     }

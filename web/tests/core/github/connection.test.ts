@@ -387,7 +387,7 @@ describe('startConnect and connectProgress', () => {
       fromUtf8(await openRequest(t.device.identity.kem, prepared.envelope, t.me.identity.sigPublic())),
     );
     expect(opened).toEqual({ token: 'ghp_not_a_real_token' });
-    const signIn = await startConnect(t.context, t.device.id, undefined, 'oauth_app');
+    const signIn = await startConnect(t.context, t.device.id, undefined, { app: 'oauth_app' });
     const named = JSON.parse(
       fromUtf8(await openRequest(t.device.identity.kem, signIn.envelope, t.me.identity.sigPublic())),
     );
