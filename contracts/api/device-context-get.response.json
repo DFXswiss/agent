@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-context-get.response.json",
+  "title": "GET /v1/device/contexts/{object} response",
+  "description": "Body of a successful response to GET /v1/device/contexts/{object} (03-api.md section 6.1): a complete checkpoint's manifest and signature.",
+  "type": "object",
+  "properties": {
+    "manifest": {
+      "$ref": "../common.json#/$defs/context_manifest"
+    },
+    "sig": {
+      "$ref": "../common.json#/$defs/b64u_64"
+    },
+    "created_at": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "completed_at": {
+      "$ref": "../common.json#/$defs/time"
+    }
+  },
+  "required": [
+    "manifest",
+    "sig",
+    "created_at",
+    "completed_at"
+  ],
+  "additionalProperties": false
+}

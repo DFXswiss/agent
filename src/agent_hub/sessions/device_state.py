@@ -3,11 +3,14 @@
 
 - `sessions`: every session placed on the device that has not ended (`stopped`/`failed` are left out: the runner
   stops local sessions that are not desired) in a workgroup the device is still assigned to, oldest first, with the
-  owner's model preference (`user_settings`, default `auto`) and, for a main session that replaces an earlier main
-  session of the task on the same device that had ended when the new one was created (`stopped`/`failed`; a
-  session still `stopping` is never resumed from), `resume_from` = that session (03-api.md section 4.6.3); a session
-  the device refused for lack of capacity before it ever worked ran no agent and is skipped: the session before it
-  counts (KOR-14).
+  owner's model preference (`user_settings`, default `auto`). A main session names
+  - `resume_from`: the task's previous main session when it had ended (`stopped`/`failed`) by the time the new one
+    was created, **on any device** (a session still `stopping` is never resumed from); a session a device refused
+    for lack of capacity before it ever worked ran no agent and is skipped: the session before it counts (KOR-14);
+  - `context`: the newest complete context checkpoint of the task's main sessions `{object_id, session_id,
+    created_at, size}` (`agent_hub.contexts.store.newest`), from which the runner restores the same conversation
+    on whatever VM or device it starts the session (03-api.md section 4.6.3, ADR-058 sections 5 and 7). Old runners
+    ignore the field; without it a new runner reports the emergency path.
 - `pending_prompts` / `delivered_prompt_event_ids`: the prompt routing of `agent_hub.sessions.prompts` for the main
   sessions in `sessions` (pending only while the session is not `stopping`).
 """
@@ -17,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from agent_hub.contexts import store as contexts
 from agent_hub.device.state import Section, StateRequest
 from agent_hub.sessions import prompts
 from agent_hub.sessions.derive import STOPPING
@@ -24,12 +28,12 @@ from agent_hub.sessions.derive import STOPPING
 
 def _resume_from(request: StateRequest, task_id: str, session_id: str) -> str | None:
     row = request.connection.execute(
-        "SELECT p.id, p.device_id = %s AND p.ended_at IS NOT NULL AND p.ended_at <= s.created_at"
+        "SELECT p.id, p.ended_at IS NOT NULL AND p.ended_at <= s.created_at"
         " FROM hub.session s JOIN hub.session p ON p.task_id = s.task_id AND p.depth = 0"
         " AND (p.created_at, p.id) < (s.created_at, s.id) WHERE s.id = %s AND s.task_id = %s"
         " AND (p.first_working_at IS NOT NULL OR p.state <> 'failed' OR p.state_reason <> 'capacity_exhausted')"
         " ORDER BY p.created_at DESC, p.id DESC LIMIT 1",
-        (request.device_id, session_id, task_id),
+        (session_id, task_id),
     ).fetchone()
     return str(row[0]) if row is not None and row[1] else None
 
@@ -63,6 +67,9 @@ def provide(request: StateRequest) -> Mapping[str, Any]:
             previous = _resume_from(request, item["task_id"], item["session_id"])
             if previous is not None:
                 item["resume_from"] = previous
+            checkpoint = contexts.newest(request.connection, item["task_id"])
+            if checkpoint is not None:
+                item["context"] = checkpoint
         sessions.append(item)
     mains = [item for item in sessions if item["depth"] == 0]
     routed = prompts.routing(request.connection, sorted({item["task_id"] for item in mains}))

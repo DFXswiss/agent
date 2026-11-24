@@ -1,0 +1,10 @@
+{
+  "error": "quota_exceeded",
+  "detail": {
+    "quota": {
+      "scope": "org",
+      "limit": 214748364800,
+      "used": 214748000000
+    }
+  }
+}

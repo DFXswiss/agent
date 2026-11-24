@@ -1763,6 +1763,124 @@
             "detail"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "session.context_restored"
+            },
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "denied",
+                "rejected",
+                "duplicate",
+                "failed"
+              ]
+            },
+            "task_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "session_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "target_kind": {
+              "type": "string",
+              "pattern": "^[a-z_]{1,32}$"
+            },
+            "target_id": {
+              "type": "string",
+              "description": "an ID (UUID, vm-..., key or code), never content",
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+            },
+            "detail": {
+              "description": "detail of audit rows with action session.context_restored: the runner restored the task's context checkpoint into this session (ADR-058 section 7): the checkpoint, what came back of the workspace (partial and omitted are stored on the session as context_reason workspace_partial/workspace_omitted) and whether the checkpoint was stale (the final checkpoint of the previous session did not arrive in time, the newest one available was used). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+              "type": "object",
+              "properties": {
+                "object_id": {
+                  "$ref": "../common.json#/$defs/uuid"
+                },
+                "workspace": {
+                  "$ref": "../common.json#/$defs/context_workspace"
+                },
+                "stale": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "object_id",
+                "workspace",
+                "stale"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "result",
+            "target_kind",
+            "target_id",
+            "detail"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "session.context_fallback"
+            },
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "denied",
+                "rejected",
+                "duplicate",
+                "failed"
+              ]
+            },
+            "task_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "session_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "target_kind": {
+              "type": "string",
+              "pattern": "^[a-z_]{1,32}$"
+            },
+            "target_id": {
+              "type": "string",
+              "description": "an ID (UUID, vm-..., key or code), never content",
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+            },
+            "detail": {
+              "description": "detail of audit rows with action session.context_fallback: the session continued with a new conversation because its checkpoint could not be restored; reason from the closed list (ADR-058 section 7). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "$ref": "../common.json#/$defs/context_fallback_reason"
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "result",
+            "target_kind",
+            "target_id",
+            "detail"
+          ],
+          "additionalProperties": false
         }
       ]
     },

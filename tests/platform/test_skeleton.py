@@ -19,6 +19,7 @@ AREAS = [
     "auth",
     "backup",
     "config_api",
+    "contexts",
     "credentials",
     "crypto",
     "db",

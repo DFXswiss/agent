@@ -39,6 +39,7 @@ SPEC_ERRORS: dict[int, str] = {
     409: "id_conflict event_conflict seq_conflict version_conflict origin_seq_gap origin_seq_conflict no_device"
     " already_assigned rotation_required no_device_available invite_registered",
     410: "invite_expired",
+    413: "quota_exceeded",  # KOR-33 (ADR-058 section 6): a context checkpoint over its quota
     429: "rate_limited",
     503: "unavailable",
 }
@@ -67,7 +68,8 @@ SPEC_SESSION_FAILURES = (
 SPEC_OUTBOX_KINDS = "event session_transition vm_state operation_transition usage quota metrics audit wrap"
 SPEC_OUTBOX_AUDIT = (
     "hook.denied read.session.<tool> ping.delivered session.prompt_refused model.provider_outside_allowlist"
-    " runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert"
+    " runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert session.context_restored"
+    " session.context_fallback"
 )
 # 03-api.md section 8.1: the session platform tools that read (request_operation writes).
 SPEC_MCP_TOOLS = (
@@ -80,7 +82,8 @@ SPEC_AUDIT_FIXED = (
     " event.append task.create task.close session.control credential.put credential.delete device.enroll"
     " device.certify device.connect device.disconnect whiteboard.notify ping.delivered hook.denied"
     " session.prompt_refused model.provider_outside_allowlist runner.inbound_rejected runner.log_rollback"
-    " runner.log_fork runner.alert"
+    " runner.log_fork runner.alert session.context_restored session.context_fallback session.context_saved"
+    " session.context_refused"
 )
 SPEC_AUDIT_PATTERNS = {
     # 04-crypto.md section 4.7

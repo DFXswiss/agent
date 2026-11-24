@@ -105,6 +105,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "no_device_available",
                         "invite_registered",
                         "invite_expired",
+                        "quota_exceeded",
                         "rate_limited",
                         "unavailable",
                         "decrypt_failed",
@@ -816,6 +817,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "no_device_available",
                         "invite_registered",
                         "invite_expired",
+                        "quota_exceeded",
                         "rate_limited",
                         "unavailable",
                         "decrypt_failed",
@@ -888,6 +890,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["seq"],
     },
     "read.agent.me": {"properties": {}, "required": []},
+    "read.device.context.chunk": {"properties": {}, "required": []},
+    "read.device.context": {"properties": {}, "required": []},
     "read.device.credential": {"properties": {}, "required": []},
     "read.device.logs": {"properties": {}, "required": []},
     "read.device.platform_log": {"properties": {}, "required": []},
@@ -966,12 +970,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["result_count"],
     },
+    "read.task.contexts": {"properties": {}, "required": []},
     "read.task": {"properties": {}, "required": []},
     "read.task.operations": {"properties": {}, "required": []},
     "read.whiteboard.history": {"properties": {}, "required": []},
     "read.whiteboards": {"properties": {}, "required": []},
     "read.workgroup.device_candidates": {"properties": {}, "required": []},
     "read.workgroup": {"properties": {}, "required": []},
+    "read.workgroup.pr_link": {"properties": {}, "required": []},
     "read.workgroup.tasks": {"properties": {}, "required": []},
     "read.wraps": {"properties": {}, "required": []},
     "runner.alert": {
@@ -1014,6 +1020,51 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "model_id": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"}, {"type": "null"}],
         },
         "required": ["reason", "model_access", "model_id"],
+    },
+    "session.context_fallback": {
+        "properties": {
+            "reason": [
+                {
+                    "type": "string",
+                    "enum": [
+                        "context_missing",
+                        "context_invalid",
+                        "context_unavailable",
+                        "version_incompatible",
+                        "restore_failed",
+                    ],
+                }
+            ]
+        },
+        "required": ["reason"],
+    },
+    "session.context_refused": {
+        "properties": {
+            "reason": [{"type": "string", "enum": ["quota_exceeded"]}],
+            "scope": [{"type": "string", "enum": ["object", "org"]}],
+            "limit": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "used": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "requested": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+        },
+        "required": ["reason", "scope", "limit", "used", "requested"],
+    },
+    "session.context_restored": {
+        "properties": {
+            "object_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ],
+            "workspace": [{"type": "string", "enum": ["full", "partial", "omitted", "empty"]}],
+            "stale": [{"type": "boolean"}],
+        },
+        "required": ["object_id", "workspace", "stale"],
+    },
+    "session.context_saved": {
+        "properties": {
+            "chunks": [{"type": "integer", "minimum": 1, "maximum": 1000000}],
+            "size": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+            "pruned": [{"type": "integer", "minimum": 0, "maximum": 1000000}],
+        },
+        "required": ["chunks", "size", "pruned"],
     },
     "session.control": {
         "properties": {"action": [{"type": "string", "enum": ["interrupt", "stop", "suspend"]}]},

@@ -112,6 +112,32 @@
     },
     {
       "method": "POST",
+      "path": "/v1/sessions/{id}/context/export",
+      "name": "session-context-export",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "guest/session-context-export.request.json",
+      "response_kind": "tar",
+      "response": "guest/session-context-export.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/contexts/{id}/stage",
+      "name": "context-stage",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query+tar",
+      "request": "guest/context-stage.request.json",
+      "response_kind": "json",
+      "response": "guest/context-stage.response.json"
+    },
+    {
+      "method": "POST",
       "path": "/v1/sessions/{id}/pings",
       "name": "session-pings",
       "section": "7.1",

@@ -1,0 +1,7 @@
+{
+  "reason": "quota_exceeded",
+  "scope": "object",
+  "limit": 1,
+  "used": 1,
+  "requested": 0
+}

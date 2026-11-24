@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-context-chunk-put.response.json",
+  "title": "PUT /v1/device/contexts/{object}/chunks/{index} response",
+  "description": "Body of a successful response to PUT /v1/device/contexts/{object}/chunks/{index} (03-api.md section 6.1); replayed: the identical chunk was stored before.",
+  "type": "object",
+  "properties": {
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "replayed"
+  ],
+  "additionalProperties": false
+}

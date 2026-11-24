@@ -62,6 +62,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "no_device_available": (409,),
     "invite_registered": (409,),
     "invite_expired": (410,),
+    "quota_exceeded": (413,),
     "rate_limited": (429,),
     "unavailable": (503,),
     "decrypt_failed": (400,),
@@ -88,7 +89,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
 }
 
 # The detail keys of `contracts/common.json#/$defs/error` (closed).
-DETAIL_KEYS = frozenset({"pointers", "expected_seq", "expected", "candidates_available"})
+DETAIL_KEYS = frozenset({"pointers", "expected_seq", "expected", "candidates_available", "quota"})
 INTERNAL_ERROR = "unavailable"
 
 

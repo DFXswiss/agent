@@ -4,7 +4,9 @@
 Rows carry metadata only (02-data-model.md section 2.4): the title of a task lives in its `task.meta` events, prompts
 and output in events. In a task row `main_session_id` is the **current** main session (the newest session of depth
 0: a follow-up prompt after `stopped`/`failed` creates a new one, 03-api.md section 4.6.3) and `title_event_id` the
-newest `task.meta` event of the task.
+newest `task.meta` event of the task. A session row also names how a new main session continued the conversation
+(`context_restore`: `restored` from the task's checkpoint, `fallback` with `context_reason` when it had to start a new
+conversation, null while nothing was reported; ADR-058 section 7).
 """
 
 from __future__ import annotations
@@ -61,11 +63,13 @@ SESSION_FIELDS = (
     "ready_at",
     "first_working_at",
     "ended_at",
+    "context_restore",
+    "context_reason",
 )
 SESSION_COLUMNS = (
     "id, task_id, org_id, wg_id, owner_id, device_id, vm_id, parent_session_id, origin_operation_id, depth, state,"
     " state_reason, model_access, model_id, agent_kind, agent_version, estimate_ms, created_at, ready_at,"
-    " first_working_at, ended_at"
+    " first_working_at, ended_at, context_restore, context_reason"
 )
 USAGE_FIELDS = (
     "requests",

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/context-stage.response.json",
+  "title": "guest POST /v1/contexts/{id}/stage response",
+  "description": "Response of POST /v1/contexts/{id}/stage (03-api.md section 7.1, ADR-058 section 7): regular files and their bytes staged.",
+  "type": "object",
+  "properties": {
+    "files": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "bytes": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "files",
+    "bytes"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,12 @@
+{
+  "fallback": "This task was continued by a new AI because {reason}.",
+  "reason.context_missing": "no saved context existed for the earlier session",
+  "reason.context_invalid": "the saved context was damaged or could not be verified",
+  "reason.context_unavailable": "the saved context could not be retrieved",
+  "reason.version_incompatible": "the saved context belongs to an incompatible version",
+  "reason.restore_failed": "restoring it on the VM failed",
+  "reason.unknown": "the earlier context could not be restored",
+  "restored": "Continued with the full context of the original session",
+  "restored.workspace_omitted": "Continued with the full conversation; the workspace was too large and was not restored.",
+  "restored.workspace_partial": "Continued with the full conversation; the workspace was only partly restored."
+}

@@ -412,7 +412,8 @@ def test_no_pull_request_table(ops: Ops) -> None:
         "SELECT table_name FROM information_schema.tables WHERE table_schema = 'hub'"
         " AND (table_name LIKE '%%pull%%' OR table_name LIKE 'pr\\_%%' OR table_name LIKE '%%\\_pr')"
     )
-    assert tables == []
+    # `pr_link` holds only an opaque HMAC tag of a pull request and its task (KOR-33, ADR-058 section 8)
+    assert tables == [("pr_link",)]
     columns = ops.desk.rows(
         "SELECT column_name FROM information_schema.columns WHERE table_schema = 'hub' AND table_name = 'operation'"
     )

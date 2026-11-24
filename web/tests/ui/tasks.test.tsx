@@ -561,6 +561,106 @@ describe('task page', () => {
     expect(await screen.findByTestId('task.error')).toHaveTextContent('Not available');
   });
 
+  it('tells how the main session took over the context after a resume (KOR-33)', async () => {
+    const t = await taskWorld();
+    const row = taskRow(t);
+    putTasks(t.store, [row as TaskRow]);
+    const path = `/o/${t.org}/t/${row.task_id}`;
+    const route = [{ path: '/o/:org/t/:task', element: <TaskScreen /> }];
+    // an older hub sends neither field: nothing is shown
+    putSession(t.store, sessionRow(t, { state: 'working' }) as never, [], 0);
+    mount(t, route, path);
+    expect(screen.queryByTestId('task.context.fallback')).toBeNull();
+    expect(screen.queryByTestId('task.context.restored')).toBeNull();
+    act(() => putSession(t.store, sessionRow(t, { state: 'working', context_restore: 'restored' }) as never, [], 0));
+    expect(screen.getByTestId('task.context.restored')).toHaveTextContent(
+      'Continued with the full context of the original session',
+    );
+    expect(screen.getByTestId('task.context.restored')).toHaveAttribute('data-workspace', 'full');
+    // the conversation is complete, the workspace only partly or not at all (review 1 decision 5)
+    for (const [reason, text] of [
+      ['workspace_partial', 'Continued with the full conversation; the workspace was only partly restored.'],
+      ['workspace_omitted', 'Continued with the full conversation; the workspace was too large and was not restored.'],
+    ] as const) {
+      act(() =>
+        putSession(
+          t.store,
+          sessionRow(t, { state: 'working', context_restore: 'restored', context_reason: reason }) as never,
+          [],
+          0,
+        ),
+      );
+      expect(screen.getByTestId('task.context.restored')).toHaveTextContent(text);
+      expect(screen.getByTestId('task.context.restored')).toHaveAttribute(
+        'data-workspace',
+        reason.replace('workspace_', ''),
+      );
+    }
+    act(() =>
+      putSession(
+        t.store,
+        sessionRow(t, { state: 'working', context_restore: 'fallback', context_reason: 'context_missing' }) as never,
+        [],
+        0,
+      ),
+    );
+    const notice = screen.getByTestId('task.context.fallback');
+    expect(notice).toHaveAttribute('role', 'status');
+    expect(notice).toHaveAttribute('data-reason', 'context_missing');
+    expect(notice).toHaveTextContent(
+      'This task was continued by a new AI because no saved context existed for the earlier session.',
+    );
+    expect(screen.queryByTestId('task.context.restored')).toBeNull();
+    act(() =>
+      putSession(
+        t.store,
+        sessionRow(t, { state: 'working', context_restore: 'fallback', context_reason: 'later_code' }) as never,
+        [],
+        0,
+      ),
+    );
+    expect(screen.getByTestId('task.context.fallback')).toHaveAttribute('data-reason', 'unknown');
+  });
+
+  it('shows the resume notice in German and nothing for a task without a main session', async () => {
+    const t = await taskWorld();
+    const row = taskRow(t);
+    putTasks(t.store, [row as TaskRow]);
+    putSession(
+      t.store,
+      sessionRow(t, { state: 'working', context_restore: 'fallback', context_reason: 'restore_failed' }) as never,
+      [],
+      0,
+    );
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}`, 'de');
+    expect(screen.getByTestId('task.context.fallback')).toHaveTextContent(
+      'Diese Aufgabe wurde mit einer neuen KI fortgesetzt, weil die Wiederherstellung auf der VM fehlschlug.',
+    );
+    for (const [reason, text] of [
+      [
+        'workspace_partial',
+        'Fortgesetzt mit dem vollständigen Gesprächsverlauf; der Arbeitsstand wurde nur teilweise wiederhergestellt.',
+      ],
+      [
+        'workspace_omitted',
+        'Fortgesetzt mit dem vollständigen Gesprächsverlauf; der Arbeitsstand war zu groß und wurde nicht wiederhergestellt.',
+      ],
+    ] as const) {
+      act(() =>
+        putSession(
+          t.store,
+          sessionRow(t, { state: 'working', context_restore: 'restored', context_reason: reason }) as never,
+          [],
+          0,
+        ),
+      );
+      expect(screen.getByTestId('task.context.restored')).toHaveTextContent(text);
+    }
+    act(() => putTasks(t.store, [{ ...(row as TaskRow), main_session_id: null }]));
+    expect(screen.queryByTestId('task.context.fallback')).toBeNull();
+    expect(screen.queryByTestId('task.context.restored')).toBeNull();
+  });
+
   it('shows a prompt that is not text as an empty bubble', async () => {
     const t = await taskWorld();
     const row = taskRow(t);

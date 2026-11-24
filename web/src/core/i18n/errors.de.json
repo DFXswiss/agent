@@ -399,6 +399,11 @@
     "body": "Der Prompt konnte nicht geprüft werden und wurde nicht zugestellt.",
     "action": "Sende den Prompt noch einmal."
   },
+  "quota_exceeded": {
+    "title": "Speichergrenze erreicht",
+    "body": "Der gesicherte Kontext dieser Aufgabe überschreitet die Speichergrenze.",
+    "action": "Bitte den Betreiber, die Grenze zu erhöhen; das Gerät behält seine lokale Kopie."
+  },
   "rate_limited": {
     "title": "Zu viele Versuche",
     "body": "Zu viele Anfragen in kurzer Zeit.",

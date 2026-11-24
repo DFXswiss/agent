@@ -297,6 +297,22 @@ workgroup merged with per-workgroup cursors (a row is shown only when no unloade
 §5.1 plus the workgroup. Filters: state, workgroup, "only mine" (signed owner), title search (in the browser). Empty
 state explains how to create a task. Details: `decisions/KOR-32.md`.
 
+### 5.1b Resume notice (task page, KOR-33, ADR-058 §7)
+
+Below the task header, `ContextNotice` reads `context_restore`/`context_reason` of the task's current main session
+(`core/sessions/context.ts`; an older hub sends neither field and nothing is shown):
+
+| `context_restore` / `context_reason` | Shown (en / de) |
+|---|---|
+| `restored` / null | muted line "Continued with the full context of the original session" / "Fortgesetzt mit vollem Kontext der ursprünglichen Sitzung" |
+| `restored` / `workspace_partial` | amber line "Continued with the full conversation; the workspace was only partly restored." / "Fortgesetzt mit dem vollständigen Gesprächsverlauf; der Arbeitsstand wurde nur teilweise wiederhergestellt." |
+| `restored` / `workspace_omitted` | amber line "Continued with the full conversation; the workspace was too large and was not restored." / "Fortgesetzt mit dem vollständigen Gesprächsverlauf; der Arbeitsstand war zu groß und wurde nicht wiederhergestellt." |
+| `fallback` / reason | warning box (`role="status"`) "This task was continued by a new AI because {reason}." / "Diese Aufgabe wurde mit einer neuen KI fortgesetzt, weil {reason}." with the reason texts of `catalog/resume.*.json` (`context_missing`, `context_invalid`, `context_unavailable`, `version_incompatible`, `restore_failed`; an unknown code gets the generic text) |
+
+A restored row with a reason the client does not know counts as a full restore (the conversation is complete). The
+error catalog has texts for `quota_exceeded` (a checkpoint over its quota; shown only where a device error reaches a
+user).
+
 ### 5.2 Chat (`/o/:org/t/:task`, tab Chat)
 
 - Timeline from events of the wg scope filtered by `task` (`GET /v1/scopes/{wg}/events?task=…` + SSE), ordered by

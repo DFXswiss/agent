@@ -119,7 +119,9 @@ def test_a_restart_on_the_same_device_resumes(world: World, fleet: Fleet) -> Non
     assert answer["delivered_prompt_event_ids"] == {second: []}
 
 
-def test_a_restart_on_another_device_starts_fresh(world: World, fleet: Fleet) -> None:
+def test_a_restart_on_another_device_resumes_too(world: World, fleet: Fleet) -> None:
+    """The conversation continues on any device (ADR-058): the next main session names the previous one wherever it
+    ran; the runner restores the task's checkpoint there."""
     desk = org_desk(world)
     task, first = desk.started()
     desk.transition(first, "stopped")
@@ -129,8 +131,8 @@ def test_a_restart_on_another_device_starts_fresh(world: World, fleet: Fleet) ->
     second = desk.prompt(desk.scene.writer, task).json()["session_id"]
     answer = state(fleet, desk.scene.other_device)
     assert [item["session_id"] for item in answer["sessions"]] == [second]
-    assert "resume_from" not in answer["sessions"][0]
-    # a third main session back on the first device resumes from the second only if that one ran there
+    assert answer["sessions"][0]["resume_from"] == first
+    # a third main session back on the first device resumes from the second, which ran on the other device
     desk.transition(second, "stopped", device=desk.scene.other_device)
     desk.offline(desk.scene.other_device)
     desk.online(desk.scene.device)
@@ -138,7 +140,7 @@ def test_a_restart_on_another_device_starts_fresh(world: World, fleet: Fleet) ->
     third = desk.prompt(desk.scene.writer, task).json()["session_id"]
     found = state(fleet, desk.scene.device)["sessions"]
     assert [item["session_id"] for item in found] == [third]
-    assert "resume_from" not in found[0]
+    assert found[0]["resume_from"] == second
 
 
 def test_children_and_unassigned_workgroups(world: World, fleet: Fleet) -> None:

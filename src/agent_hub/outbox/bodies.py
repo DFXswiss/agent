@@ -56,6 +56,8 @@ OUTBOX_AUDIT_ACTIONS = (
     "runner.log_rollback",
     "runner.log_fork",
     "runner.alert",
+    "session.context_restored",
+    "session.context_fallback",
 )
 """A copy of `contracts/enums/outbox-audit-actions.json` (a test compares them)."""
 OPERATION_ERROR_CODES = (
@@ -381,6 +383,18 @@ class RunnerAlert(Strict):
     value: Count | None
 
 
+class ContextRestored(Strict):
+    object_id: Uuid7
+    workspace: Literal["full", "partial", "omitted", "empty"]
+    stale: bool
+
+
+class ContextFallback(Strict):
+    reason: Literal[
+        "context_missing", "context_invalid", "context_unavailable", "version_incompatible", "restore_failed"
+    ]
+
+
 AUDIT_DETAILS: dict[str, type[Strict]] = {
     "hook.denied": HookDenied,
     **{action: ReadCount for action in OUTBOX_AUDIT_ACTIONS if action.startswith("read.session.")},
@@ -391,6 +405,8 @@ AUDIT_DETAILS: dict[str, type[Strict]] = {
     "runner.log_rollback": LogMismatch,
     "runner.log_fork": LogMismatch,
     "runner.alert": RunnerAlert,
+    "session.context_restored": ContextRestored,
+    "session.context_fallback": ContextFallback,
 }
 
 
@@ -417,6 +433,8 @@ class AuditBody(Strict):
         "runner.log_rollback",
         "runner.log_fork",
         "runner.alert",
+        "session.context_restored",
+        "session.context_fallback",
     ]
     result: Literal["ok", "denied", "rejected", "duplicate", "failed"]
     task_id: Uuid7 | None = None

@@ -1,0 +1,71 @@
+{
+  "description": "Endpoints added by KOR-33 (ADR-058): the context checkpoints of main sessions (device upload, commit and download, the task's list for browsers) and the opaque pull-request links; 03-api.md sections 4.6 and 6.1.",
+  "rights": [
+    "device:session",
+    "device:wg",
+    "task:read",
+    "wg:read"
+  ],
+  "auth": [
+    "browser",
+    "device"
+  ],
+  "endpoints": [
+    {
+      "method": "PUT",
+      "path": "/v1/device/contexts/{object}/chunks/{index}",
+      "rights": [
+        "device:session"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/contexts/{object}/commit",
+      "rights": [
+        "device:session"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/contexts/{object}",
+      "rights": [
+        "device:wg"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/contexts/{object}/chunks/{index}",
+      "rights": [
+        "device:wg"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/pr-links",
+      "rights": [
+        "device:session"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task}/contexts",
+      "rights": [
+        "task:read"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/pr-links/{epoch}/{tag}",
+      "rights": [
+        "wg:read"
+      ],
+      "section": "4.6"
+    }
+  ]
+}

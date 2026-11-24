@@ -1,5 +1,5 @@
-// U-WEB-crypto (formats): bundle, wrap, event, credential record, device request, invitation, recovery, enrollment and
-// dedupe – the refusal paths and round trips beyond the shared vectors.
+// U-WEB-crypto (formats): bundle, wrap, event, credential record, device request, invitation, recovery, enrollment,
+// dedupe and context checkpoints – the refusal paths and round trips beyond the shared vectors.
 import { describe, expect, it } from 'vitest';
 import { b64uDecode, b64uEncode } from '../../../src/core/encoding/b64u';
 import { utf8 } from '../../../src/core/encoding/bytes';
@@ -7,6 +7,7 @@ import { uuid7 } from '../../../src/core/encoding/ids';
 import { bodyJson, canonical } from '../../../src/core/encoding/json';
 import * as aead from '../../../src/core/crypto/aead';
 import * as bundle from '../../../src/core/crypto/bundle';
+import * as context from '../../../src/core/crypto/context';
 import * as credential from '../../../src/core/crypto/credential';
 import * as dedupe from '../../../src/core/crypto/dedupe';
 import * as enroll from '../../../src/core/crypto/enroll';
@@ -278,5 +279,34 @@ describe('dedupe', () => {
     const dk = await kdf.dedupeKey(Secret.random());
     expect(b64uDecode(await dedupe.dedupeTag(dk, 'github.push', fields)).length).toBe(32);
     expect(bodyJson(dedupe.DEDUPE_TYPES)).toEqual(bodyJson([...dedupe.DEDUPE_TYPES].sort()));
+  });
+});
+
+describe('context checkpoints', () => {
+  it('round-trips chunks with a fresh nonce and refuses malformed keys, chunks and repositories', async () => {
+    const data = VECTOR_FILES.context;
+    const object = data.manifest.object as string;
+    const wk = Secret.of(b64uDecode(data.workgroup_key));
+    expect(await codeOf(() => context.contextKey(Secret.of(zero(31)), zero(32), object))).toBe('header_invalid');
+    expect(await codeOf(() => context.contextKey(wk, zero(31), object))).toBe('header_invalid');
+    expect(await codeOf(() => context.prLinkKey(Secret.of(zero(33))))).toBe('header_invalid');
+    const key = await context.contextKey(wk, b64uDecode(data.salt), object);
+    const sealed = await context.sealChunk(key, object, 3, utf8('part'));
+    expect(await context.openChunk(key, object, 3, sealed)).toEqual(utf8('part'));
+    for (const size of [0, context.CHUNK_BYTES + 1]) {
+      expect(await codeOf(() => context.sealChunk(key, object, 0, zero(size)))).toBe('size_exceeded');
+    }
+    const oversized = zero(context.CHUNK_CT_BYTES + 1);
+    expect(await codeOf(() => context.openChunk(key, object, 0, oversized))).toBe('size_exceeded');
+    expect(await codeOf(() => context.chunkAad(object, -1))).toBe('header_invalid');
+    const chunks = data.chunks.map((chunk: string) => b64uDecode(chunk));
+    const checked = context.checkManifest(data.manifest);
+    expect(await codeOf(() => context.checkChunks(checked, [oversized]))).toBe('size_exceeded');
+    expect(await codeOf(() => context.checkChunks({ ...checked, size: 1 }, chunks))).toBe('header_invalid');
+    expect(await codeOf(() => context.checkChunks({ ...checked, digest: data.salt }, chunks))).toBe('header_invalid');
+    await context.checkChunks(checked, chunks);
+    const linkKey = await context.prLinkKey(wk);
+    expect(await codeOf(() => context.prLinkTag(linkKey, 7, 1))).toBe('header_invalid');
+    expect(await codeOf(() => context.prLinkTag(linkKey, 'a/b', true))).toBe('header_invalid');
   });
 });

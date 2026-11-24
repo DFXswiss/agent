@@ -133,7 +133,7 @@ class Estate:
     def _rows(self) -> None:
         scene, now = self.scene, self.hub.clock()
         writer, device, wg, org = scene.writer, scene.device, scene.wg, scene.org
-        operation, request = new_id(), new_id()
+        operation, request, context_object = new_id(), new_id(), new_id()
         credential_key = secrets.token_bytes(32)
         statements: list[tuple[str, tuple[object, ...]]] = [
             (
@@ -284,6 +284,21 @@ class Estate:
                 "INSERT INTO hub.outbox_receipt (device_id, origin_seq, item_kind, item_sha256, status, received_at)"
                 " VALUES (%s, 1, 'event', %s, 'ok', %s)",
                 (device.id, hashlib.sha256(b"item").digest(), now),
+            ),
+            (
+                "INSERT INTO hub.context_object (id, org_id, wg_id, task_id, session_id, author_id, state, chunks,"
+                " size, epoch, digest, manifest_text, sig, created_at, updated_at, completed_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, 'complete', 1, 40, 1, 'digest', '{}', %s, %s, %s, %s)",
+                (context_object, org, wg, self.task, self.session, device.id, bytes(64), now, now, now),
+            ),
+            (
+                "INSERT INTO hub.context_chunk (object_id, chunk_index, ct, sha256) VALUES (%s, 0, %s, %s)",
+                (context_object, bytes(40), hashlib.sha256(bytes(40)).digest()),
+            ),
+            (
+                "INSERT INTO hub.pr_link (wg_id, epoch, tag, task_id, session_id, created_at)"
+                " VALUES (%s, 1, 'tag', %s, %s, %s)",
+                (wg, self.task, self.session, now),
             ),
             (
                 "INSERT INTO hub.device_stream (device_id, last_origin_seq) VALUES (%s, 1)"

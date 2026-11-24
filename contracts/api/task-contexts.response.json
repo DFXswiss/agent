@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-contexts.response.json",
+  "title": "GET /v1/tasks/{task}/contexts response",
+  "description": "Body of a successful response to GET /v1/tasks/{task}/contexts (03-api.md section 4.6): the complete checkpoints of the task, newest first.",
+  "type": "object",
+  "properties": {
+    "contexts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "metadata of one complete context checkpoint (ADR-058 section 5)",
+        "properties": {
+          "object_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "session_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "author_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "epoch": {
+            "$ref": "../common.json#/$defs/epoch"
+          },
+          "chunks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "size": {
+            "$ref": "../common.json#/$defs/positive"
+          },
+          "digest": {
+            "$ref": "../common.json#/$defs/b64u_32"
+          },
+          "created_at": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "completed_at": {
+            "$ref": "../common.json#/$defs/time"
+          }
+        },
+        "required": [
+          "object_id",
+          "session_id",
+          "author_id",
+          "epoch",
+          "chunks",
+          "size",
+          "digest",
+          "created_at",
+          "completed_at"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    }
+  },
+  "required": [
+    "contexts"
+  ],
+  "additionalProperties": false
+}

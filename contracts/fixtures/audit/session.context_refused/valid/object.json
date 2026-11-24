@@ -1,0 +1,7 @@
+{
+  "reason": "quota_exceeded",
+  "scope": "object",
+  "limit": 8589934592,
+  "used": 8589000000,
+  "requested": 2097180
+}

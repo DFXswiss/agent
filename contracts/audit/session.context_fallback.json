@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/session.context_fallback.json",
+  "title": "audit detail session.context_fallback",
+  "description": "detail of audit rows with action session.context_fallback: the session continued with a new conversation because its checkpoint could not be restored; reason from the closed list (ADR-058 section 7). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "$ref": "../common.json#/$defs/context_fallback_reason"
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false
+}

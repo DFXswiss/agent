@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/session-context-export.response.json",
+  "title": "guest POST /v1/sessions/{id}/context/export response",
+  "description": "context.json, the first member of the application/x-tar answer of POST /v1/sessions/{id}/context/export (ADR-058 section 2, context archive v1); transcript/<path> and work/<path> members follow.",
+  "type": "object",
+  "properties": {
+    "v": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1
+    },
+    "agent_kind": {
+      "type": "string",
+      "enum": [
+        "claude-code"
+      ]
+    },
+    "agent_version": {
+      "type": "string",
+      "pattern": "^[ -~]+$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "claude_session_id": {
+      "$ref": "objects.json#/$defs/claude_session_id"
+    },
+    "session_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "task_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "cwd": {
+      "type": "string",
+      "description": "the session's work directory at export time",
+      "pattern": "^/[^\u0000-\u001f]*$",
+      "minLength": 2,
+      "maxLength": 4096
+    },
+    "created_at": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "transcript_files": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/rel_path"
+      },
+      "minItems": 1,
+      "maxItems": 100000,
+      "description": "exported transcript paths relative to the session's home/.claude (sorted)"
+    },
+    "workspace": {
+      "type": "string",
+      "enum": [
+        "included",
+        "omitted_too_large",
+        "empty"
+      ]
+    },
+    "workspace_files": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "workspace_bytes": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "v",
+    "agent_kind",
+    "agent_version",
+    "claude_session_id",
+    "session_id",
+    "task_id",
+    "cwd",
+    "created_at",
+    "transcript_files",
+    "workspace",
+    "workspace_files",
+    "workspace_bytes"
+  ],
+  "additionalProperties": false
+}

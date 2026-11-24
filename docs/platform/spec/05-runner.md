@@ -64,6 +64,7 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `OPERATOR_SUBSCRIPTION_DIR` | empty | platform devices only (refused on org devices); directory 0700 of the runner account, not a symlink, holding the operator's subscription token files `<name>.token` (§10.1, ADR-052); only together with `OPERATOR_SUBSCRIPTION_ORGS` |
 | `OPERATOR_SUBSCRIPTION_ORGS` | empty = nobody | comma-separated organization IDs whose sessions may use the operator's subscriptions; only together with `OPERATOR_SUBSCRIPTION_DIR` (one without the other: `config_invalid`) |
 | `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` | empty / empty | the operator's GitHub token (absolute path) and the approved user IDs (comma-separated UUIDs); both or neither, platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
+| `CONTEXT_INTERVAL_SECONDS` / `CONTEXT_CACHE_MIB` / `CONTEXT_WORKSPACE_MIB` / `CONTEXT_TRANSCRIPT_MIB` | 600 / 20480 / 4096 / 4096 | context checkpoints (§6.6, KOR-33): interval while working (30–86400), local encrypted cache cap, workspace above the limit is left out, transcript above the limit cannot be checkpointed |
 | `GITHUB_CLIENT_ID` | required for the device flow | public client ID of the GitHub App; users approved for the operator's GitHub account (§11.4) connect without it |
 | `GITHUB_API_URL` / `GITHUB_WEB_URL` | `https://api.github.com` / `https://github.com` | doubles in tests |
 | `MODEL_UPSTREAM_ANTHROPIC` / `MODEL_UPSTREAM_OPENROUTER` | `https://api.anthropic.com` / `https://openrouter.ai/api` | doubles in tests |
@@ -270,8 +271,10 @@ the refused session ID is never started again).
   observed or immediately when removed from the org.
 - Golden upgrade: a workgroup VM keeps its golden version for its lifetime. At the next start of a stopped VM
   whose golden is not the newest ready one and which has no `suspended` session, the runner deletes it and assigns
-  a fresh pool/clone VM of the newest golden instead. Sessions that were `stopped` restart fresh (no `--resume`);
-  their harness says to read the history with `get_task_messages` (`03-api.md` §4.6.3).
+  a fresh pool/clone VM of the newest golden instead. A later main session of the task, and a `suspended` session
+  whose VM is gone, continues the original conversation from the task's newest context checkpoint (§6.6, ADR-058);
+  only when no checkpoint can be restored does its harness say to read the history with `get_task_messages`
+  (reported emergency path, `03-api.md` §4.6.3).
 - Pool VMs of a retired golden are deleted and refilled.
 - Startup reconciliation: `limactl list --json` vs `runner.vm`; unknown `arp-*` instances are deleted (one Lima
   refuses to delete is logged, `vm.unknown_delete_failed`, and reconciliation continues; the empty directory of an
@@ -380,6 +383,18 @@ Different UIDs, 0700 directories, `TemporaryFileSystem=/srv/sessions` + own bind
 `ProtectProc=invisible`, separate cgroups with limits, one token per session; the API process maps the token to
 exactly one session and serves only that session's data.
 
+Context checkpoints (ADR-058 §§2, 7; `agent_guest/contexts.py`): the export reads only the conversation's own files
+below `home/.claude` (`projects/<cwd key>/<id>.jsonl`, its companion directory, `todos/<id>*`,
+`file-history/<id>/`) and the workspace, as root with `O_NOFOLLOW` and only files of the session user; it never
+exports settings, `.claude.json`, commands, agents, skills or credentials. A staged context lives in
+`/srv/sessions/.contexts/<id>` (root 0700, hidden from sessions by `TemporaryFileSystem=/srv/sessions`, removed
+after 6 h unused). A restore moves it into the new sandbox before `sandbox_ready`, replaces the old session directory
+and cwd key byte for byte with the new ones in the transcript files and names (entries are never filtered or
+reordered), hands everything to the new session user and starts `claude --resume <id>` (same conversation ID, the
+same file is continued). The workspace scanner starts afterwards and takes the restored tree as its baseline; the
+transcript follower skips the records of the restored transcript (`transcript-baseline.json`), so a restore posts
+neither `session.file` nor earlier turns again.
+
 ### 4.5 Sandbox self-test
 
 `agent_guest.sandbox.selftest` runs at golden build, when a pool VM is filled (before it is marked ready) and when the
@@ -412,7 +427,7 @@ Failure ⇒ guest health `state:"broken"`, VM never assigned.
 
 | Service | User | Listens | Duties |
 |---|---|---|---|
-| `agent-guest-control` | root | `/run/agent-guest/control.sock` (root:`agent-ctl`, 0660) and `/run/agent-guest/api.sock` (root:`platform`, 0660) | control protocol `03-api.md` §7; session users, directories, units; tmux server on `/run/agent-guest/tmux.sock` (root 0600); recorder; transcript reader; file import/export; workspace scanner; journal owner (SQLite); pending MCP calls; pings; metrics (cgroup files) |
+| `agent-guest-control` | root | `/run/agent-guest/control.sock` (root:`agent-ctl`, 0660) and `/run/agent-guest/api.sock` (root:`platform`, 0660) | control protocol `03-api.md` §7; session users, directories, units; tmux server on `/run/agent-guest/tmux.sock` (root 0600); recorder; transcript reader; file import/export; context export, staging and restore (ADR-058, `contexts.py`); workspace scanner; journal owner (SQLite); pending MCP calls; pings; metrics (cgroup files) |
 | `agent-guest-api` | `platform` (system user, no login) | `127.0.0.1:7700` | `/mcp`, `/hooks/<Event>`, `/model/…`; forwards journal records and pending calls to control over `api.sock` (JSON lines request/response); the API process may journal only `session.hook`, `usage`, `ping.delivered`, `guest.error` and `platform.refused`, every other kind is written by control (KOR-07) |
 
 Group `agent-ctl` contains the Lima default user (so Lima's socket forwarder can connect) and nobody else.
@@ -505,7 +520,9 @@ Prompts for a session are delivered strictly in event order; a prompt arriving w
 - Interrupt: `tmux send-keys Escape`. Stop: `systemctl stop agent-session-<id>` (SIGTERM, 10 s, SIGKILL), close
   window → `stopped`.
 - Idle: `idle` for `SESSION_IDLE_SECONDS` → `suspend`: stop the unit, keep directories and transcript →
-  `suspended`. Next prompt → `resuming` → start with `--resume <claude_session_id>` → deliver.
+  `suspended`. Next prompt → `resuming` → start with `--resume <claude_session_id>` → deliver. When the workgroup's
+  VM is no longer the session's VM (deleted, replaced, another VM), the session moves to it and is restored from its
+  newest checkpoint (§6.6) instead of failing `vm_start_failed`.
 - Task closed → all sessions `stopping` → `stopped`; directories kept 7 days, then deleted by control.
 - Failure reasons: the closed list `contracts/enums/session-failure-reasons.json` (`03-api.md` §11):
   `model_access_unavailable`, `vm_start_failed`, `guest_unreachable`, `sandbox_failed`, `agent_start_failed`,
@@ -528,6 +545,29 @@ Prompts for a session are delivered strictly in event order; a prompt arriving w
 ### 6.5 Task title
 
 `task.set_title` operation (03 §9) → runner writes a device-authored `task.meta` event.
+
+### 6.6 Context checkpoints and restore (KOR-33, ADR-058)
+
+- Area `agent_runner/contexts/`. A checkpoint of a main session is due when the guest reports `idle`, `suspended`,
+  `stopped` or `failed` (observer `contexts.checkpoint`) and every `CONTEXT_INTERVAL_SECONDS` (600) while it is
+  `working`; the daemon task `contexts` takes due checkpoints one after the other (requests are coalesced).
+- Steps: guest export `POST /v1/sessions/{id}/context/export` (workspace limit `CONTEXT_WORKSPACE_MIB`, transcript
+  limit `CONTEXT_TRANSCRIPT_MIB`, 4096 each) into the runner's `tmp/`; an archive byte-identical to the previous one
+  ends there; untrusted-archive checks (`github.tarsafe`), every transcript line must parse; gzip level 6, 2 MiB
+  pieces sealed with `k_ctx` under the workgroup's current epoch (`crypto.context`); signed manifest; local cache
+  `<home>/contexts/` (`CONTEXT_CACHE_MIB`, 20480; objects not uploaded yet are never evicted); upload
+  `PUT /v1/device/contexts/{object}/chunks/{i}` then `POST …/commit` with backoff. Tables `runner.context_session`,
+  `runner.context_object`, `runner.context_pr_link` (migration `0014_context.sql`).
+- Restore (request amender `contexts.restore`, also for a resume whose VM changed): the desired entry's `context` or
+  the newest cached object of the task; manifest signature with the author device's key from the verified log,
+  IDs, digest, AEAD, archive checks, `context.json`; version rule: target Claude Code ≥ the highest `version` of the
+  transcript lines; `POST /v1/contexts/{session}/stage`, then `restore {claude_session_id, object_id}` in
+  `POST /v1/sessions` and one harness sentence about what changed. Audit `session.context_restored`; otherwise
+  `RESTART_LINE` and audit `session.context_fallback {reason}` (`context_missing`, `context_invalid`,
+  `context_unavailable`, `version_incompatible`, `restore_failed`). A checkpoint whose restored agent failed to start
+  is not used again on this device.
+- Pull requests: every succeeded `github.create_pull_request` of the device is registered once as an opaque tag
+  (`POST /v1/device/pr-links`, ADR-058 §8).
 
 ## 7. Terminal recording (ADR-016)
 

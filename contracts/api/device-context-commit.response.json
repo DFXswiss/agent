@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-context-commit.response.json",
+  "title": "POST /v1/device/contexts/{object}/commit response",
+  "description": "Body of a successful response to POST /v1/device/contexts/{object}/commit (03-api.md section 6.1); replayed: the object was committed with the same manifest before.",
+  "type": "object",
+  "properties": {
+    "completed_at": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "completed_at",
+    "replayed"
+  ],
+  "additionalProperties": false
+}

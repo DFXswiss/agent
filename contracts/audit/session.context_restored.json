@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/session.context_restored.json",
+  "title": "audit detail session.context_restored",
+  "description": "detail of audit rows with action session.context_restored: the runner restored the task's context checkpoint into this session (ADR-058 section 7): the checkpoint, what came back of the workspace (partial and omitted are stored on the session as context_reason workspace_partial/workspace_omitted) and whether the checkpoint was stale (the final checkpoint of the previous session did not arrive in time, the newest one available was used). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "object_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "workspace": {
+      "$ref": "../common.json#/$defs/context_workspace"
+    },
+    "stale": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "object_id",
+    "workspace",
+    "stale"
+  ],
+  "additionalProperties": false
+}

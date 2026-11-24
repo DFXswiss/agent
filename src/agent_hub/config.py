@@ -42,6 +42,9 @@ MODEL_CATALOG = "AGENT_HUB_MODEL_CATALOG"
 TRUSTED_PROXIES = "AGENT_HUB_TRUSTED_PROXIES"
 IPV4_MAPPED = ipaddress.IPv6Network("::ffff:0:0/96")
 FORWARDED_HEADER = "AGENT_HUB_FORWARDED_HEADER"
+CONTEXT_MAX_OBJECT_BYTES = "AGENT_HUB_CONTEXT_MAX_OBJECT_BYTES"
+CONTEXT_KEEP = "AGENT_HUB_CONTEXT_KEEP"
+CONTEXT_ORG_BYTES = "AGENT_HUB_CONTEXT_ORG_BYTES"
 
 TEST_PREFIX = "AGENT_HUB_TEST_"
 KNOWN_VARIABLES = frozenset(
@@ -59,6 +62,9 @@ KNOWN_VARIABLES = frozenset(
         MODEL_CATALOG,
         TRUSTED_PROXIES,
         FORWARDED_HEADER,
+        CONTEXT_MAX_OBJECT_BYTES,
+        CONTEXT_KEEP,
+        CONTEXT_ORG_BYTES,
     }
 )
 
@@ -67,6 +73,12 @@ DEFAULT_DEVICE_ONLINE_SECONDS = 30
 MAX_DEVICE_ONLINE_SECONDS = 3600
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_CATALOG_BYTES = 1024 * 1024
+GIB = 1024**3
+DEFAULT_CONTEXT_MAX_OBJECT_BYTES = 8 * GIB
+DEFAULT_CONTEXT_KEEP = 3
+MAX_CONTEXT_KEEP = 1000
+DEFAULT_CONTEXT_ORG_BYTES = 200 * GIB
+MAX_CONTEXT_BYTES = 2**53 - 1
 
 # Limits of 03-api.md section 12 and section 1 that the hub enforces and `/v1/config` publishes.
 LIMITS: Mapping[str, int] = MappingProxyType(
@@ -94,6 +106,7 @@ _HOST_NAME_RE = re.compile(rf"{_LABEL}(?:\.{_LABEL})*")
 _NUMERIC_LABEL_RE = re.compile(r"[0-9]+|0x.*")
 _PORT_RE = re.compile(r"[0-9]{1,5}")
 _SECONDS_RE = re.compile(r"[0-9]{1,6}")
+_BYTES_RE = re.compile(r"[0-9]{1,16}")
 _BUDGET_RE = re.compile(r"(?:0|[1-9][0-9]{0,8})(?:\.[0-9]{1,6})?")
 _MODEL_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}")
 _LABEL_TEXT_RE = re.compile(r"[ -~]{1,64}")
@@ -152,6 +165,12 @@ class HubConfig:
     model_catalog: ModelCatalog
     trusted_proxies: tuple[Network, ...] = ()
     forwarded_header: str = X_FORWARDED_FOR
+    context_max_object_bytes: int = DEFAULT_CONTEXT_MAX_OBJECT_BYTES
+    """`AGENT_HUB_CONTEXT_MAX_OBJECT_BYTES`: the sealed bytes of one context checkpoint (ADR-058 section 6)."""
+    context_keep: int = DEFAULT_CONTEXT_KEEP
+    """`AGENT_HUB_CONTEXT_KEEP`: complete checkpoints kept per task; older ones are deleted on a commit."""
+    context_org_bytes: int = DEFAULT_CONTEXT_ORG_BYTES
+    """`AGENT_HUB_CONTEXT_ORG_BYTES`: the sealed checkpoint bytes of all tasks of one organisation."""
 
     def signer(self) -> HubSigner:
         """The hub's response and checkpoint signer (reused `agent_core.signing.HubSigner`)."""
@@ -422,4 +441,11 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
         model_catalog=load_model_catalog(Path(_require(environ, MODEL_CATALOG))),
         trusted_proxies=trusted,
         forwarded_header=_forwarded_header(environ, trusted),
+        context_max_object_bytes=_bounded_int(
+            environ, CONTEXT_MAX_OBJECT_BYTES, DEFAULT_CONTEXT_MAX_OBJECT_BYTES, _BYTES_RE, MAX_CONTEXT_BYTES
+        ),
+        context_keep=_bounded_int(environ, CONTEXT_KEEP, DEFAULT_CONTEXT_KEEP, _SECONDS_RE, MAX_CONTEXT_KEEP),
+        context_org_bytes=_bounded_int(
+            environ, CONTEXT_ORG_BYTES, DEFAULT_CONTEXT_ORG_BYTES, _BYTES_RE, MAX_CONTEXT_BYTES
+        ),
     )

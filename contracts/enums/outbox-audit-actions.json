@@ -19,6 +19,8 @@
     "runner.inbound_rejected",
     "runner.log_rollback",
     "runner.log_fork",
-    "runner.alert"
+    "runner.alert",
+    "session.context_restored",
+    "session.context_fallback"
   ]
 }

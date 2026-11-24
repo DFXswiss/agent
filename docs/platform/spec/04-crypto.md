@@ -65,12 +65,15 @@ in `agent-core` (uses `agent_hub.crypto`); `contracts/` is owned by `agent-core`
 | `k_event` | `HKDF(ikm=scope_key, salt=header.salt (32 B), info=P‖"event")` |
 | `dk_e` **(new)** | `HKDF(ikm=WK_e, info=P‖"dedupe")` |
 | `k_cred` **(new)** | `HKDF(ikm=CK_e, salt=header.salt, info=P‖"credential")` |
+| `k_ctx` **(new, KOR-33)** | `HKDF(ikm=WK_e, salt=manifest.salt (32 B random per object), info=P‖"context\0"‖object_id)`: the key of one context checkpoint (§4.11) |
+| `pk_e` **(new, KOR-33)** | `HKDF(ikm=WK_e, info=P‖"pr-link")`: the HMAC key of pull-request tags (§4.11) |
 | storage key **(new)** | `HKDF(ikm=device_sig_seed, info=P‖"runner-storage")` |
 | Code text | 16 B → base32 (RFC 4648, no padding, uppercase) 26 chars, shown as `XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX`; parser strips `-` and spaces, uppercases; wrong length → `invite_code_length`, bad alphabet → `invite_code_invalid`. Same text form for recovery codes. |
 
 Signature/AAD labels (all prefixed with `P`): `invite-register\0` (registration proof, ADR-043), `bundle\0`, `wrap\0`, `event-sig\0`, `log\0`, `platform-log\0`
 **(new)**, `invite-package\0`, `credential-sig\0` **(new)**, `request-wrap\0` **(new)**, `request-sig\0`
-**(new)**, `dedupe\0` **(new)**, `recovery-proof\0` **(new)**, `enroll\0` **(new)**.
+**(new)**, `dedupe\0` **(new)**, `recovery-proof\0` **(new)**, `enroll\0` **(new)**, `context\0` (manifest signature)
+and `context-chunk\0` (chunk AAD) **(new, KOR-33)**.
 
 Enrollment text **(new)**: `P‖"enroll\0"‖canonical(enrollment body without enroll_sig and inv_sig)` (body of
 `POST /v1/device/enroll`). `enroll_sig` = Ed25519 of the device identity, `inv_sig` = Ed25519 of `sk_inv`, both over
@@ -253,6 +256,32 @@ text fields replaced by their `sha256_hex`). An idempotency key never replaces t
 rule applies with any key. Only a type without dedupe fields gets a slot from the key, `fields =
 {"idempotency_key":key,"task":task_id}`. The hub stores `(wg, epoch, tag)`; tags of different epochs never
 match (documented limitation: a rotation inside a window re-allows one duplicate).
+
+### 4.11 Context checkpoint and pull-request tag **(new, KOR-33)**
+
+A context checkpoint (ADR-058 §§2-3) is the gzip-compressed context archive of one main session, split into chunks of
+at most 2 MiB compressed bytes:
+
+- chunk `i` = `nonce12‖AES-256-GCM(k_ctx, chunk, AAD = P‖"context-chunk\0"‖canonical({"index":i,"object":object_id}))`
+  (29 B to 2 MiB + 28 B);
+- manifest (canonical JSON, in clear): exactly `{"v":1,"object","org","wg","task","session","author","epoch","salt",
+  "chunks","size","digest","ts"}`; `size` = sum of the sealed chunk lengths, `digest` = b64u SHA-256 over the
+  concatenation of the SHA-256 of every sealed chunk in index order, `epoch` = the workgroup epoch of `WK_e`;
+- `sig = Ed25519_author(P‖"context\0"‖canonical(manifest))` by the authoring device.
+
+The hub checks the manifest format, that it names exactly the object's IDs and the uploading device as author, an
+epoch of the workgroup, the signature with the device's key, and `chunks`/`size`/`digest` against the stored chunks
+(`03-api.md` §6.1); it holds no key. A reader (the runner of the restoring device) checks the signature with the
+author's key from its verified membership log, that the author was assigned to the workgroup, that `org`/`wg`/`task`
+are the restoring session's, chunk count, size and digest, every chunk's AEAD tag, and the archive itself (ADR-058
+§3). Check order in every implementation: manifest keys (`header_invalid`), canonical JSON (`non_ascii`), field
+formats (`header_invalid`), signature (`signature_invalid`), chunk count, size and digest (`header_invalid`), a chunk
+above the limit (`size_exceeded`), decryption (`decrypt_failed`). Implementations: `agent_hub.crypto.context`, the
+runner's `agent_runner.crypto.context`; vectors `contracts/vectors/context.json`.
+
+Pull-request tag (ADR-058 §8): `tag = b64u(HMAC-SHA256(pk_e, canonical({"number":n,"repo":"<owner>/<name>"})))`
+with the repository name in lower case. The hub stores `(wg, epoch, tag)`; only a holder of `WK_e` who knows
+repository and number can compute it.
 
 ## 5. Flows
 
@@ -476,6 +505,7 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | Audit and read-log rows (actor, action, target IDs, result) | KONZEPT §6, §8 |
 | Credential metadata (owner, kind, version) | lifecycle |
 | User settings (model access preference, model choice, locale) | session start |
+| Context checkpoints (ADR-058): object, task, session, author device and workgroup IDs, epoch, chunk count, sizes, digest and chunk hashes, the manifest (salt, times), upload and commit times; pull-request links: opaque tag, epoch, task and session; restore outcomes (`context_restore`, `context_reason`: restored, workspace partial/omitted, fallback reason) | storage, quotas, pruning, the newest checkpoint for a restore, PR → task lookup, the notice on the task |
 | Agents of a user (`11-agent-access.md` §2): agent ID, public keys, state, times, claim hash, the source address of an open pairing (≤ 70 min), which login confirmed which pairing, which actions were taken by an agent (`agent_id` of audit rows); the sealed identity and the sealed label are ciphertexts the hub cannot open | delegated agent access (ADR-056) |
 
 Not visible: everything listed as confidential in `00-overview.md` §3, invitation and recovery codes, PRF
