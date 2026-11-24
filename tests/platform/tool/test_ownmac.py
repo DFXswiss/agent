@@ -742,6 +742,7 @@ def test_device_remove_without_a_device_to_unpair(
         "unpaired": False,
         "removed": ["/Library/Application Support/DFXAgentRunner"],
         "leftovers": ["/Volumes/P/a/x"],
+        "admin": "dialog",
         "dialog": admin.UNINSTALL_SENTENCE,
     }
     assert {org: item.log.head.seq for org, item in hub.orgs.items()} == seq
