@@ -359,6 +359,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "platform.read",
                         "workvm.run",
                         "workvm.state",
+                        "test.run",
                     ],
                 }
             ],

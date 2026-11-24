@@ -123,6 +123,7 @@ class Checkpoints:
         session: str,
         ct: bytes | str,
         device: Actor | None = None,
+        *,
         kind: str | None = None,
         **options: Any,
     ) -> httpx.Response:
@@ -147,7 +148,7 @@ class Checkpoints:
     def upload(self, sealed: Sealed, session: str, device: Actor | None = None) -> None:
         kind = None if sealed.kind == "context" else sealed.kind
         for index, chunk in enumerate(sealed.chunks):
-            response = self.put(sealed.object_id, index, session, chunk, device, kind)
+            response = self.put(sealed.object_id, index, session, chunk, device, kind=kind)
             assert response.status_code == 200, response.text
 
     def saved(self, task: str, session: str, parts: list[bytes] | None = None, device: Actor | None = None) -> Sealed:

@@ -4,6 +4,7 @@ ignored."""
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -70,6 +71,8 @@ def test_the_step_closes_tasks_and_stops_the_vms_of_an_exhausted_organization(
         return []
 
     monkeypatch.setattr(reconcile, "runs_of", lambda context, workvms: SimpleNamespace(cancel=cancel))
+
+    world.settings = dataclasses.replace(world.settings, slots=4)
 
     async def body(vms: WorkVms) -> list[dict[str, Any]]:
         context = SimpleNamespace()

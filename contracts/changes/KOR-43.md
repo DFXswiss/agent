@@ -15,3 +15,5 @@ ADR-027 section 3. Additive only (ADR-078).
   `task:read`, read log `read.task.log`, `read.task.log.chunk`; `enums/audit-actions.json`).
 - `api/device-state.response.json`: optional `task_closed` per session.
 - `audit/read.task.log.json`, `audit/read.task.log.chunk.json` (read log); `audit/session.context_saved.json` also for logs (`target_kind` `log`).
+- `common.json` `log_manifest` (04-crypto.md section 4.12); `api/device-context-commit.request.json` takes either
+  manifest; `api/task-log.response.json` names the log manifest.

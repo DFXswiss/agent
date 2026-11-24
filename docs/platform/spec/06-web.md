@@ -418,6 +418,19 @@ usage; each node links to `/o/:org/s/:session`.
 `GET /v1/tasks/{task}/operations`, newest first; detail drawer shows transitions, decrypted params and result, with
 the same readable views of issue and pull request lists and of a read issue as the chat card (§5.2).
 
+### 5.4a Test runs and logs (KOR-43, ADR-078)
+
+A `test.run` event is a chat card: kind, command, state (running, passed, failed, error, timed out, cancelled), exit
+code, duration and start time of its VM, the summary ("Tests: 3 failed, 12 passed") and the tail (collapsed); the
+operation card of `test.run` shows the same summary and "Open log". `workvm.run` items whose job kept a full log offer
+"Open full log". The work VM panel of a session lists its runs (latest per run, newest first). The log viewer reads
+the log's manifest and its chunks on demand (`GET /v1/tasks/{task}/logs/{object}` and `.../chunks/{index}`, 256 KiB of
+output each), checks that the manifest's `ref` and object are those of the event that named it, opens each chunk
+with the workgroup key of the manifest's epoch (`src/core/crypto/runlog.ts`, `04-crypto.md` §4.12), shows a window of
+lines (never the whole log in the page), jumps to the end and downloads the whole log as a file chunk by chunk. A
+truncated log says how much was kept. A work VM that starts implicitly (`workvm.state` `starting`) counts down like an
+open `workvm.request`; a stopped one (paused session) reads "stopped – starts again on the next use".
+
 ### 5.5 Session detail and read-only terminal (`/o/:org/s/:session`)
 
 - Tabs: **Terminal**, **Chat** (outputs of this session only), **Children**.

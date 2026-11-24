@@ -208,7 +208,7 @@ def test_a_vm_whose_helper_never_answers_is_removed(world: World) -> None:
     world.fail.add("delete")
     with pytest.raises(OperationFailed):
         world.run(request)
-    assert [row["state"] for row in rows(world)] == ["deleted"]
+    assert [row["state"] for row in rows(world)] == ["deleting"]  # the sweep deletes it again (KOR-43)
     assert any("delete_failed" in line for line in world.logs)
     assert world.sleeps[-1] == 0.5
 
@@ -517,6 +517,9 @@ def test_idle_pass_tears_down_only_idle_vms_without_running_jobs(world: World) -
         world.helper_fail["list"] = ShellResult(1, b"", False)  # an unreadable job list counts as no job
         world.fail.add("delete")
         removed = await vms.idle_pass()
+        assert (await records.get(vms.deps.db, created["workvm_id"])).state == "deleting"  # type: ignore[union-attr]
+        world.fail.discard("delete")
+        assert await vms.sweep() == 1  # KOR-43: a failed deletion is repeated by the sweep
         assert (await records.get(vms.deps.db, created["workvm_id"])).state == "deleted"  # type: ignore[union-attr]
         return [first, busy, removed]
 

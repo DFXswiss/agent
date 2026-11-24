@@ -1,0 +1,23 @@
+{
+  "manifest": {
+    "v": 1,
+    "kind": "log",
+    "ref": "tr-0123456789ab",
+    "object": "01930043-0000-7000-8000-000000000001",
+    "org": "01930043-0000-7000-8000-000000000002",
+    "wg": "01930043-0000-7000-8000-000000000003",
+    "task": "01930043-0000-7000-8000-000000000004",
+    "session": "01930043-0000-7000-8000-000000000005",
+    "author": "01930043-0000-7000-8000-000000000006",
+    "epoch": 2,
+    "salt": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+    "chunks": 2,
+    "size": 262236,
+    "digest": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+    "bytes": 300000,
+    "stored": 262200,
+    "ts": "2026-11-24T12:00:00.000Z"
+  },
+  "created_at": "2026-11-24T12:00:00.000Z",
+  "completed_at": "2026-11-24T12:00:02.000Z"
+}

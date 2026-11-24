@@ -960,7 +960,7 @@
         },
         "cwd": {
           "type": "string",
-          "pattern": "^/[^\\u0000]*$",
+          "pattern": "^/[^\u0000]*$",
           "maxLength": 4096
         },
         "timeout_seconds": {
@@ -1069,6 +1069,9 @@
         },
         {
           "$ref": "#/$defs/result_workvm_release"
+        },
+        {
+          "$ref": "#/$defs/result_test_run"
         },
         {
           "$ref": "#/$defs/result_github_list_issues"

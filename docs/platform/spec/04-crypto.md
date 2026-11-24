@@ -73,6 +73,7 @@ their vectors: [key model](../key-model.md)** (§11).
 | `k_cred` **(new)** | `HKDF(ikm=CK_e, salt=header.salt, info=P‖"credential")` |
 | `k_ctx` **(new, KOR-33)** | `HKDF(ikm=WK_e, salt=manifest.salt (32 B random per object), info=P‖"context\0"‖object_id)`: the key of one context checkpoint (§4.11) |
 | `pk_e` **(new, KOR-33)** | `HKDF(ikm=WK_e, info=P‖"pr-link")`: the HMAC key of pull-request tags (§4.11) |
+| `k_log` **(new, KOR-43)** | `HKDF(ikm=WK_e, salt=manifest.salt (32 B random per object), info=P‖"run-log\0"‖object_id)`: the key of one log of a test run or work VM job (§4.12) |
 | storage key **(new)** | `HKDF(ikm=device_sig_seed, info=P‖"runner-storage")` |
 | Code text | 16 B → base32 (RFC 4648, no padding, uppercase) 26 chars, shown as `XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX`; parser strips `-` and spaces, uppercases; wrong length → `invite_code_length`, bad alphabet → `invite_code_invalid`. Same text form for recovery codes. |
 
@@ -329,6 +330,27 @@ runner's `agent_runner.crypto.context`; vectors `contracts/vectors/context.json`
 Pull-request tag (ADR-072 §8): `tag = b64u(HMAC-SHA256(pk_e, canonical({"number":n,"repo":"<owner>/<name>"})))`
 with the repository name in lower case. The hub stores `(wg, epoch, tag)`; only a holder of `WK_e` who knows
 repository and number can compute it.
+
+### 4.12 Log of a test run or work VM job **(new, KOR-43)**
+
+A log (ADR-078 §3) is the kept output of one `test.run` or one long work VM job: at most `LOG_MAX_MIB` (the last part
+of a longer output), split into pieces of at most 256 KiB **uncompressed** bytes, so a reader can fetch any window:
+
+- chunk `i` = `nonce12‖AES-256-GCM(k_log, piece, AAD = P‖"run-log-chunk\0"‖canonical({"index":i,"object":object_id}))`
+  (29 B to 256 KiB + 28 B);
+- manifest (canonical JSON, in clear): exactly `{"v":1,"kind":"log","ref","object","org","wg","task","session",
+  "author","epoch","salt","chunks","size","digest","bytes","stored","ts"}`; `ref` = the `run_id` (`tr-<12 hex>`) or
+  `job_id` (`j-<12 hex>`) the log belongs to, `bytes` = the full output length, `stored` = the kept bytes (between
+  `(chunks−1)·256 KiB + 1` and `chunks·256 KiB`, at most `bytes`), `size`/`digest` as in §4.11;
+- `sig = Ed25519_author(P‖"run-log\0"‖canonical(manifest))` by the authoring device.
+
+The labels differ from §4.11 in the key, the AAD and the signature, and the manifests differ in their key sets: a log
+never passes for a context checkpoint or the reverse. The hub checks a log like a checkpoint (§4.11, by the kind
+stored with its first chunk) without a key. A reader (browser, `agent-platform`) checks the manifest, that `ref`
+equals the run or job ID of the encrypted event that named the log and `object` the named object, and opens each
+chunk with `k_log` of the manifest's epoch. Same check order as §4.11. Implementations: `agent_hub.crypto.runlog`,
+the runner's copy `agent_runner.crypto.runlog`, the web's `src/core/crypto/runlog.ts`; vectors
+`contracts/vectors/runlog.json`.
 
 ## 5. Flows
 

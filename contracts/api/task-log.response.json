@@ -6,7 +6,7 @@
   "type": "object",
   "properties": {
     "manifest": {
-      "$ref": "../common.json#/$defs/context_manifest"
+      "$ref": "../common.json#/$defs/log_manifest"
     },
     "sig": {
       "$ref": "../common.json#/$defs/b64u_64"

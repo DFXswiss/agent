@@ -20,6 +20,7 @@ time, lifetime, capacity, monitoring; (c) browser and web search; (d) web views,
 |---|---|---|---|
 | `workvm.request` | `{size?: "standard"\|"large"\|"xlarge", scope?: "task"\|"session"}` | `{workvm_id, state, scope, size, cpus, memory_mib, disk_gib, created, ready_ms}` | none (idempotent: an existing VM of the scope is returned with `created:false`) |
 | `workvm.release` | `{scope?: "task"\|"session"}` | `{released, workvm_id?}` | none (idempotent: nothing to release is `released:false`) |
+| `test.run` (KOR-43, §12) | `{kind, command, cwd?, timeout_seconds?, size?}` | `{run_id, state, exit_code, duration_ms, ready_ms, summary, log, tail, reason}` | none at the hub; the runner joins a run of the same session on the same workspace while it runs (§12) |
 
 - Sizes: `standard` 4 CPU / 8192 MiB / 50 GiB (default), `large` 8 / 16384 / 100, `xlarge` 16 / 32768 / 200. A size
   above `AGENT_RUNNER_WORKVM_MAX_SIZE` (default `large`) is `limit_exceeded`. An existing VM keeps its size.
@@ -236,11 +237,26 @@ machine-id at first boot (cloud-init new instance-id).
 - **Teardown** (`limactl delete -f`, row `deleted`, `workvm.state` `deleted` with reason and runtime): `released`
   (`workvm.release`), `idle` (no call and no running job for `WORKVM_IDLE_SECONDS`, default 1800), `session_ended`
   (scope `session`: its session reached a final state or `stopped`; scope `task`: no session of the task is in an
-  active state any more), `task_closed`, `failed` (start failure, unhealthy helper), `restart` (the runner started and
-  found it: no resume, KONZEPT idea 44). Runs still `running` at teardown are recorded with state `lost`.
+  active state any more), `task_closed` (the device state names the session's task closed, `task_closed: true`: the
+  reconcile step `workvm` deletes every VM of the task at once, KOR-43), `failed` (start failure, unhealthy helper),
+  `restart` (the runner started and found it: no resume, KONZEPT idea 44), `run_ended` (the VM of one test run, §12),
+  `credit_exhausted` (a run VM whose run the credit ended), `session_paused` (a stopped VM that stood
+  `WORKVM_IDLE_SECONDS` or gave its slot to a waiting request). Runs still `running` at teardown are recorded with
+  state `lost`. The teardown is shielded from cancellation and waits (at most 300 s) for the log captures of the VM.
+  When Lima fails to delete, the row stays `deleting` (its slot is not given back) and the daemon task's sweep deletes
+  it again every minute; the sweep also deletes own `wvm-` instances without a live row or pool entry.
+- **Paused sessions** (KOR-43, ADR-078 §4): a session the guest reports `suspended` stops the VMs it works in
+  (`limactl stop`, state `stopped`, `workvm.state` `stopped` with reason `session_paused`) – its session VM, and the
+  task VM when no other session of the task is active – unless a job still runs in it. On a platform device the
+  reconcile step `workvm` stops every running work VM of an organization whose credit is used up (reason
+  `credit_exhausted`). A stopped VM holds no RAM and costs no runtime; the next call or `workvm.request` of the session
+  starts it again (state `created` again; without credit: `credit_exhausted` / `unavailable`), or deletes it and gets a
+  new one when its RAM does not fit. It is deleted after `WORKVM_IDLE_SECONDS` stopped.
 - Implicit request: `workvm_exec` and `workvm_browse` of a session without a VM create a standard task VM first
-  (same limits, queue and boundary checks as `workvm.request`; recorded by the `workvm.state` `created` event with
-  `implicit: true`). The tool waits within its `wait_seconds`; a queued request answers `unavailable` with "capacity
+  (same limits, queue and boundary checks as `workvm.request`; announced by the `workvm.state` `starting` event, so
+  the panel counts down, and recorded by the `created` event with `implicit: true`).
+- Credit (KOR-43): on a platform device an organization whose credit is used up gets no new work VM or run VM
+  (`credit_exhausted`). The tool waits within its `wait_seconds`; a queued request answers `unavailable` with "capacity
   queue" text and keeps the place.
 - Disk (built): with `WORKVM_DISK_QUOTA_GIB` set (to the `--quota-gib` of the installation; 0 = not checked), the
   allocated disk of all live work VMs plus 50 GiB per pool entry plus the request must stay within it; a request
@@ -273,12 +289,18 @@ machine-id at first boot (cloud-init new instance-id).
   "timed_out"|"lost", exit_code, started_at, ended_at (null while running), duration_ms, output (tail ≤ 65536
   characters), output_bytes}`; written when the job starts and when the runner sees it final (a call, the idle pass
   or the teardown).
-- Event `workvm.state` (same scope, author and right): `{workvm_id, state: "created"|"deleted", scope, size, cpus,
-  memory_mib, disk_gib, implicit, reason (deleted only), started_at, ended_at, runtime_ms}`.
+- Event `workvm.state` (same scope, author and right): `{workvm_id, state: "starting"|"created"|"stopped"|"deleted",
+  scope, size, cpus, memory_mib, disk_gib, implicit, reason (deleted and stopped), started_at, ended_at, runtime_ms}`;
+  `starting` announces an implicit start, `stopped` a paused session's VM (KOR-43). Run VMs write none (§12).
+- `workvm.run` of a job whose output is longer than its tail (64 KiB) carries `log` `{object_id, bytes, stored_bytes,
+  truncated}`: the runner keeps the complete output (at most `LOG_MAX_MIB`, its last part) as an encrypted log object
+  (§12.3) and writes the final event once it is stored.
 - Both kinds are new in `enums/event-kinds.json` (hub before runner).
 
 ## 9. Harness
-RULES.md says: the session never executes anything in its own sandbox; for everything that needs execution it has a
+RULES.md says (KOR-43): tests, lint and formatting checks go through `test.run` (a fresh VM with a copy of the
+workspace; bring files changed in the work VM back with `workvm_sync from_vm` first); everything else runs in the work
+VM without asking. Further: the session never executes anything in its own sandbox; for everything that needs execution it has a
 work VM – request it with `workvm.request`, then use the `workvm_*` tools; root, internet, installing, services,
 browser are allowed there without asking; it must never say it cannot execute something; results come back with
 `workvm_sync from_vm` and leave through the GitHub operations; the VM holds no platform credentials; what the
@@ -306,6 +328,13 @@ session puts there itself is its own business (addendum 1).
   workgroup, until 15 minutes after its last sample), in the series and the live `metrics` frames; the web shows it
   below its session (device → VM → session → work VM: CPU, RAM, disk, network, runtime, charts).
 
+- Test runs (KOR-43): the chat item of `test.run` (state, kind, command, summary "Tests: 3 failed, 12 passed", exit code,
+  duration, start time, tail) with "Open log"; the operation card of `test.run`; `workvm.run` items with `log` open the
+  full log; the work VM panel lists the session's runs. The log viewer fetches chunks on demand (`GET
+  /v1/tasks/{task}/logs/{object}` and `.../chunks/{index}`), opens them with the workgroup key, shows a window of lines
+  and downloads the whole log as a file; it never renders the whole log at once. A `starting` event counts down like an
+  open `workvm.request`; `stopped` is shown as "stopped – starts again on the next use".
+
 ## 11. Tests
 - Unit/integration (100 % lines and branches): contracts, guest tools, runner area `workvm` with real PostgreSQL and
   a fake `limactl` plus a fake `workvm-job` (`tests/platform/runner/workvm/`), pf rendering and check, harness.
@@ -317,3 +346,65 @@ session puts there itself is its own business (addendum 1).
   (environment, files, `/mnt/lima-cidata`; the session's own are its business), resource exhaustion (fork bomb, disk
   fill bounded by the volume quota), request abuse (size, count, foreign task), egress address = Cloudflare, never the
   site address.
+
+## 12. Test runs (KOR-43, ADR-078)
+Concept idea 27, interpretations A6, A8, A9: every test run is its own operation in its own throw-away VM; result, log
+and exit code are kept outside the VM. The work VM stays unrestricted (E-08).
+
+### 12.1 Operation `test.run`
+- Params: `kind` (`lint`, `format`, `unit`, `integration`, `security`, `custom`), `command` (1–65536 characters, run
+  as `bash -lc` as root like `workvm_exec`), `cwd` (absolute, default `/workspace`), `timeout_seconds` (1–86400,
+  default 3600), `size` (`standard`, default, `large`, `xlarge`; capped by `WORKVM_MAX_SIZE`).
+- Result: `run_id` (`tr-<12 hex>`), `state` (`passed` = exit code 0, `failed` = another exit code, `timed_out`,
+  `cancelled`, `error`), `exit_code`, `duration_ms`, `ready_ms` (request to a running VM), `summary` (`{passed,
+  failed, skipped, errors}` from the last recognised summary line of the tail: pytest, vitest/jest, go test, cargo
+  test, mocha, ESLint/ruff problems; else null), `log` (`log_ref` or null without output), `tail` (last ≤ 8192
+  characters), `reason` (`credit_exhausted`, `restart`, `start_failed`, `transfer_failed`, `vm_lost`, `cancelled`, or
+  null).
+- The operation fails only when nothing ran: `credit_exhausted`, `limit_exceeded` (size cap; the organization and
+  owner VM limits – a run VM does not count against the per-task limit), `workvm_unavailable`, `timeout` of the
+  capacity queue, `upstream_error` (workspace not readable, VM did not start; retryable). Once the command started the
+  operation succeeds with the run's state.
+- Duplicates (§11 of the concept): a request of the same session with the same `kind`, `command`, `cwd`, `size`,
+  `timeout_seconds` and workspace digest (SHA-256 over the export manifest's paths and hashes) while a run is queued,
+  starting or running joins it (same `run_id` and result). A finished run is never joined.
+
+### 12.2 The run VM
+- A `runner.workvm` row of scope `run` (`session_id` = the requesting session): warm pool, queue, slot, RAM, disk,
+  boundary (§6, including the known limit §6.6), monitoring (device → VM → session) and billing as any work VM.
+- The workspace export is mirrored into `/workspace` (all files of the export). The command installs what it needs;
+  the image carries the toolchains. No dependency cache across runs yet.
+- The runner polls the job every 5 s. The time limit is enforced on the runner's clock (the job is killed with `KILL`,
+  `timed_out`), additionally by `RuntimeMaxSec` in the VM. A session that ends (`session_ended`), a task that closes
+  (`task_closed`) and credit that runs out (`credit_exhausted`) end the run `cancelled` within one poll.
+- Always, in a `finally` shielded from cancellation: the tail is read, the complete output stored as a log (§12.3,
+  at most 300 s), the VM deleted (`run_ended`, or the cancel reason), then the row and the final event written.
+- `runner.test_run` (migration 0020) keeps every run (`running` until it ended, then its result). After a restart every
+  run still `running` ends `error` (`restart`) with its final event; the VM goes with the work VM reconciliation and
+  the pipeline fails the operation found `executing` (`timeout`): a run is never executed twice.
+- Log line `runner.testrun ready run_id= ready_ms= workvm_id=` (the start time of a run VM, A9) and `runner.testrun
+  ended run_id= state= exit_code= output_bytes= logged=`.
+
+### 12.3 Logs
+- The output is read from the VM as raw bytes (pieces of 1 MiB, `workvm-job wait` with offset) and sealed into the
+  context object cache as an object of kind `log` (04-crypto.md §4.12): chunks of 256 KiB uncompressed output under
+  `k_log` of the current epoch, manifest with `ref` = the run or job ID, signed by the device. `LOG_MAX_MIB` (default
+  256) per log; a longer output keeps its last part (`truncated`).
+- Upload with the context upload loop (`PUT /v1/device/contexts/{object}/chunks/{index}` with `kind: "log"`, then the
+  commit); a log may belong to a subagent session. A log the hub expired is uploaded again under the same ID; a log
+  the hub refuses for good leaves the cache; a log leaves the cache once the hub holds it and is never evicted before.
+- The hub keeps `AGENT_HUB_LOG_KEEP` (default 500) complete logs per task and `AGENT_HUB_LOG_ORG_BYTES` (default 100
+  GiB) of logs per organization apart from the checkpoints. Members with `task:read` read a log with `GET
+  /v1/tasks/{task}/logs/{object}` and `.../chunks/{index}` and open it in the browser or `agent-platform test log`.
+  The hub sees sizes, never content.
+
+### 12.4 Event `test.run`
+Scope `wg`, author the device, right `device_assigned_wg_session`, header `session` and `task` set: `{run_id,
+operation_id, kind, command (≤ 4096), cwd, size, state, exit_code, started_at, ended_at, duration_ms, ready_ms,
+summary, log, tail, reason}`, written when the run starts (`running`) and when it ends.
+
+### 12.5 Tests
+`tests/platform/runner/workvm/test_testrun.py` and `test_lifecycle.py` (fake Lima, fake helper, real PostgreSQL),
+`tests/platform/runner/contexts/test_logs.py`, the hub's log routes and pruning, the crypto vectors, the web log
+reader and viewer, and the hermetic E2E scenario of test runs (red run → change → green run → pull request; a log over
+1 MiB; VMs gone after failure and time limit; restart; duplicate; credit; closing the task).

@@ -508,7 +508,8 @@
         "operation.result",
         "platform.read",
         "workvm.run",
-        "workvm.state"
+        "workvm.state",
+        "test.run"
       ]
     },
     "credential_kind": {
@@ -969,7 +970,8 @@
             "operation.result",
             "platform.read",
             "workvm.run",
-            "workvm.state"
+            "workvm.state",
+            "test.run"
           ]
         },
         "ref": {
@@ -3406,6 +3408,94 @@
         "chunks",
         "size",
         "digest",
+        "ts"
+      ],
+      "additionalProperties": false
+    },
+    "log_manifest": {
+      "type": "object",
+      "description": "manifest of a log of a test run or work VM job (04-crypto.md section 4.12, ADR-078 section 3): canonical JSON, signed by the author device; ref = the run_id or job_id, bytes = the full output length, stored = the kept bytes",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "kind": {
+          "type": "string",
+          "const": "log"
+        },
+        "ref": {
+          "type": "string",
+          "pattern": "^(?:tr|j)-[0-9a-f]{12}$"
+        },
+        "object": {
+          "$ref": "#/$defs/uuid"
+        },
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid"
+        },
+        "task": {
+          "$ref": "#/$defs/uuid"
+        },
+        "session": {
+          "$ref": "#/$defs/uuid"
+        },
+        "author": {
+          "$ref": "#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "salt": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "chunks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 29,
+          "maximum": 9007199254740991
+        },
+        "digest": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "stored": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 262144000000
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "required": [
+        "v",
+        "kind",
+        "ref",
+        "object",
+        "org",
+        "wg",
+        "task",
+        "session",
+        "author",
+        "epoch",
+        "salt",
+        "chunks",
+        "size",
+        "digest",
+        "bytes",
+        "stored",
         "ts"
       ],
       "additionalProperties": false

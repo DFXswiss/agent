@@ -317,6 +317,10 @@ agent-platform session interrupt --session <session_id>        # stop the curren
 agent-platform session stop --session <session_id>
 agent-platform session terminal --session <session_id> [--after <next_after>]   # the terminal output as text
 agent-platform session workvm --session <session_id>          # its work VM: state, size, runtime, command runs
+agent-platform test list --session <session_id>               # its test runs (or --task <task_id>), newest first
+agent-platform test show <run_id> --session <session_id>      # one run: state, summary, end of the output, log
+agent-platform test log <run_id> --session <session_id> [--offset 0] [--limit 65536]   # the full output, decrypted
+agent-platform test log <run_id> --session <session_id> --output run.log                  # the whole log into a file
 ```
 
 When an operation of a session needs GitHub and your user has no usable GitHub connection, or the connection does not
@@ -329,6 +333,13 @@ for `github_access` the `action` and its link `url` (`install_app`, `approve_app
 access). Tell your user the link when it needs their account at GitHub; the task goes on by itself once GitHub allows
 it. `reconnect: true` means the stored connection could not be used (expired or revoked). `task show` also gives the task's `runtime_s`, `session show`
 the session's `runtime_s` and whether the hub reaches its device (`device_reachable`).
+
+Sessions run lint, formatting and tests as test runs (operation `test.run`, each in a fresh VM). `test list` gives the
+runs (`run_id` `tr-…`, `state` `running|passed|failed|error|timed_out|cancelled`, `summary` counts, `duration_ms`,
+`log` with its size); `test show` adds the last 8 KiB of the output (`tail`). `test log` decrypts the complete output:
+a window of `--limit` bytes from `--offset` (`next_offset` goes on; `truncated` means only the last `stored_bytes` of
+`bytes` were kept), or with `--output FILE` the whole kept log. It also reads the full output of a long work VM command
+(its `j-…` job id from `session workvm`). A log that does not match its run is refused (`hub_refused`).
 
 **Whiteboards** (one per organization, workgroup and task; `--wg` and `--task` choose the level):
 
