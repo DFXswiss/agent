@@ -58,6 +58,10 @@ MANDATORY = [
     "wait for it with get_operation and do not request it again or explain what is missing.",
     'The newest issue is the first entry of `{"repo": "example-org/example-repo"}`',
     "content-free hint",
+    # HOT-09: a missing or connecting platform tool never ends the turn with an announcement
+    "wait a few seconds and call the tool again",
+    "Never end your turn with an announcement of what you will do once the tools are there",
+    "`per_page` and `page` count issues",
     "Use `mcp__platform__get_notifications`",
     "Every blocked attempt",
     "is recorded",

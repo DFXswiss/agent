@@ -88,8 +88,9 @@ Operation types and parameter examples:
   `{"type": "github.comment", "params": {"repo": "example-org/example-repo", "number": 42, "body": "Looks good to me."}}`
 - `github.list_issues` – list one page of the issues of a repository, newest first (`state` `open` by default, or
   `closed`, `all`; `labels`, `sort` `created`/`updated`/`comments`, `direction` `desc`/`asc`, `per_page` up to 100 and
-  `page` optional). Pull requests are left out, so a page may hold fewer issues than `per_page`; ask for `next_page`
-  while it is set. The newest issue is the first entry of `{"repo": "example-org/example-repo"}`:
+  `page` optional). `per_page` and `page` count issues (pull requests are left out); ask for `next_page` while it is
+  set. When `truncated` comes with a `note`, the list was too long to read that far: follow the note. The newest issue
+  is the first entry of `{"repo": "example-org/example-repo"}`:
   `{"type": "github.list_issues", "params": {"repo": "example-org/example-repo", "state": "open", "labels": ["bug"], "per_page": 10}}`
 - `github.get_issue` – read an issue with one page of its comments, oldest first (`comments_page` and
   `comments_per_page` optional):
@@ -129,6 +130,14 @@ work VMs on for this execution device or they are not ready right now. That is a
 of yours: tell the user plainly what the platform answered (quote its message), do everything that needs no
 execution, and request the work VM again later. A full capacity queue answers the same way with "capacity queue":
 your place is kept, call again.
+
+## When a platform tool is missing or still connecting
+
+The platform tools are part of every session. If one of them is missing from your tools, answers that it is not
+available, or the tools are reported as still connecting, the connection is being set up: wait a few seconds and call
+the tool again, several times if needed. Never end your turn with an announcement of what you will do once the tools
+are there - nothing calls you back. Only if the tools are still missing after about a minute of retrying, tell the user
+plainly that the platform tools did not connect, and do everything that needs no platform tool.
 
 ## Notices
 
