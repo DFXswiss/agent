@@ -41,8 +41,9 @@ export function AttentionGroup({ org, category, state, userId, directory, now, c
   const group = useStore((store) => attentionGroup(store.attention, org, category), app.store);
   const [view, setView] = useState<{ start: string | null; from: number }>({ start: null, from: 0 });
   const span = groupWindow(group.ids, view.start, view.from);
-  // the window keeps its place when its first entry leaves the group (state derived during render, no effect)
-  if (span.from !== view.from) setView(windowAt(group.ids, span.from));
+  // the window follows its first entry and keeps its place when that entry leaves (state derived during render)
+  const want = windowAt(group.ids, span.from);
+  if (want.start !== view.start || want.from !== view.from) setView(want);
   const end = useRef<HTMLLIElement>(null);
   const shownKey = group.ids.slice(span.from, span.to).join(' ');
   const select = useMemo(() => selectTaskRows(shownKey === '' ? [] : shownKey.split(' ')), [shownKey]);
