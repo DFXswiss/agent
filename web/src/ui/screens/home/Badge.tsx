@@ -7,7 +7,7 @@ import { useI18n } from '../../i18n';
 export function AttentionBadge({ org }: { readonly org: string }) {
   const { t } = useI18n();
   const summary = useSummary(org);
-  const count = summary?.needs_decision_mine ?? 0;
+  const count = summary === null ? 0 : summary.needs_decision_mine;
   if (count === 0) return null;
   return (
     <span

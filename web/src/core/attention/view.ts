@@ -145,16 +145,22 @@ export function groupWindow(ids: readonly string[], start: string | null, fallba
   return { from, to: Math.min(ids.length, from + WINDOW) };
 }
 
-/** The start entry after "Show later entries": `STEP` further, never beyond the last full window. */
-export function laterStart(ids: readonly string[], from: number): string | null {
-  const next = Math.min(from + STEP, Math.max(0, ids.length - WINDOW));
-  return next <= 0 ? null : ids[next]!;
+/** The first index after "Show later entries": `STEP` further, never beyond the last full window. */
+export function laterFrom(ids: readonly string[], from: number): number {
+  return Math.max(0, Math.min(from + STEP, ids.length - WINDOW));
 }
 
-/** The start entry after "Show earlier entries": `STEP` back, the top as null. */
-export function earlierStart(ids: readonly string[], from: number): string | null {
-  const next = from - STEP;
-  return next <= 0 ? null : ids[next]!;
+/** The first index after "Show earlier entries": `STEP` back, at least the top. */
+export function earlierFrom(from: number): number {
+  return Math.max(0, from - STEP);
+}
+
+/** The window state that starts at index `from`: its first entry (null at the top, so new entries there show). */
+export function windowAt(
+  ids: readonly string[],
+  from: number,
+): { readonly start: string | null; readonly from: number } {
+  return { start: from === 0 ? null : ids[from]!, from };
 }
 
 /**

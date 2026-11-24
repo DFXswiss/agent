@@ -6,7 +6,7 @@
 // events bring them; a pull per new entry would cost a request each).
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { loadGroup, loadGroupMore } from '../../../core/attention/load';
-import { earlierStart, groupWindow, laterStart, selectTaskRows, STEP } from '../../../core/attention/view';
+import { earlierFrom, groupWindow, laterFrom, selectTaskRows, STEP, windowAt } from '../../../core/attention/view';
 import type { OrgState } from '../../../core/log/state';
 import { attentionGroup, type Category } from '../../../core/store/slices/attention';
 import type { Directory } from '../../../core/tasks/directory';
@@ -42,7 +42,7 @@ export function AttentionGroup({ org, category, state, userId, directory, now, c
   const [view, setView] = useState<{ start: string | null; from: number }>({ start: null, from: 0 });
   const span = groupWindow(group.ids, view.start, view.from);
   // the window keeps its place when its first entry leaves the group (state derived during render, no effect)
-  if (span.from !== view.from) setView({ start: span.from === 0 ? null : group.ids[span.from]!, from: span.from });
+  if (span.from !== view.from) setView(windowAt(group.ids, span.from));
   const end = useRef<HTMLLIElement>(null);
   const shownKey = group.ids.slice(span.from, span.to).join(' ');
   const select = useMemo(() => selectTaskRows(shownKey === '' ? [] : shownKey.split(' ')), [shownKey]);
@@ -60,8 +60,7 @@ export function AttentionGroup({ org, category, state, userId, directory, now, c
     const loaded = () => attentionGroup(app.store.getState().attention, org, category);
     if (loaded().ids.length - span.to < STEP) await loadGroupMore(app.tasks, org, category);
     const ids = loaded().ids;
-    const start = laterStart(ids, span.from);
-    setView({ start, from: start === null ? 0 : ids.indexOf(start) });
+    setView(windowAt(ids, laterFrom(ids, span.from)));
   };
   const latest = useRef(more);
   useEffect(() => {
@@ -77,10 +76,8 @@ export function AttentionGroup({ org, category, state, userId, directory, now, c
     observer.observe(target);
     return () => observer.disconnect();
   }, [later]);
-  const earlier = () => {
-    const start = earlierStart(group.ids, span.from);
-    setView({ start, from: start === null ? 0 : group.ids.indexOf(start) });
-  };
+  const earlier = () => setView(windowAt(group.ids, earlierFrom(span.from)));
+
   const headingId = `attention-group-${category}`;
   return (
     <section

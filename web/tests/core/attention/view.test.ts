@@ -7,9 +7,9 @@ import { describe, expect, it } from 'vitest';
 import {
   actionOf,
   approvalText,
-  earlierStart,
+  earlierFrom,
   groupWindow,
-  laterStart,
+  laterFrom,
   reasonKey,
   REASONS,
   selectTaskRows,
@@ -17,6 +17,7 @@ import {
   selectQuestion,
   STEP,
   WINDOW,
+  windowAt,
 } from '../../../src/core/attention/view';
 import { createStore } from '../../../src/core/store';
 import { CATEGORIES, groupPage } from '../../../src/core/store/slices/attention';
@@ -175,12 +176,14 @@ describe('window', () => {
     expect(groupWindow([], 'x', 5)).toEqual({ from: 0, to: 0 });
   });
 
-  it('moves by STEP entries', () => {
-    expect(laterStart(ids, 0)).toBe(`t${STEP}`);
-    expect(laterStart(ids, 60)).toBe(`t${120 - WINDOW}`);
-    expect(laterStart(ids.slice(0, 10), 0)).toBeNull();
-    expect(earlierStart(ids, 60)).toBe(`t${60 - STEP}`);
-    expect(earlierStart(ids, STEP)).toBeNull();
+  it('moves by STEP entries and starts at the top as null', () => {
+    expect(laterFrom(ids, 0)).toBe(STEP);
+    expect(laterFrom(ids, 60)).toBe(120 - WINDOW);
+    expect(laterFrom(ids.slice(0, 10), 0)).toBe(0);
+    expect(earlierFrom(60)).toBe(60 - STEP);
+    expect(earlierFrom(STEP - 1)).toBe(0);
+    expect(windowAt(ids, 0)).toEqual({ start: null, from: 0 });
+    expect(windowAt(ids, 30)).toEqual({ start: 't30', from: 30 });
   });
 });
 
