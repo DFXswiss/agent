@@ -117,6 +117,8 @@ TABLES = {
         "held_credential",
         # 0016 (HOT-14): the acting user stamped at the receipt
         "actor_id",
+        # 0019 (KOR-65): the next step of an operation held for repository access
+        "held_next",
     ],
     "guest_cursor": ["vm_id", "journal_seq"],
     "credential_cache": ["owner_id", "kind", "version", "record"],
