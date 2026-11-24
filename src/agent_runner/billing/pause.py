@@ -20,7 +20,8 @@ session, so no prompt is handed over in between:
 2. **Credit back**: a recorded pause whose org is no longer exhausted ends. An interrupted session is resumed
    (`Resumer.resume`, the same path a follow-up prompt takes) and gets the fixed continuation prompt
    `CONTINUATION` (no user text; a stable prompt ID derived from the pause, so a repeated hand-over is the same prompt
-   for the guest); a session that was idle stays suspended until its next prompt. `resumed_at` marks the pause done.
+   for the guest) with the platform's sender line `CONTINUATION_LINE` (ADR-083; an older guest gets it without); a
+   session that was idle stays suspended until its next prompt. `resumed_at` marks the pause done.
 
 `deferred(env, session)`: while its org is exhausted no prompt is handed to a session this device acts on - neither
 to a suspended one (no resume) nor to one that is still idle before the pause; the prompt stays pending and is
@@ -49,6 +50,7 @@ from agent_runner.crypto.ids import uuid7
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.model import pauses as model_pauses
+from agent_runner.prompts import speaker
 from agent_runner.prompts.resume import RESUMED, vm_running
 from agent_runner.sessions import records
 from agent_runner.sessions.env import SessionEnv
@@ -60,6 +62,8 @@ CONTINUATION = (
     "The platform paused this session because the organization's credit was used up. Credit is available again:"
     " continue the interrupted work where you stopped."
 )
+CONTINUATION_LINE = speaker.check(speaker.PLATFORM_CONTINUATION)
+"""Its sender line (ADR-083 section 1): the platform, not a person."""
 STOPPED_STATES = frozenset({"working", "idle"})
 SUSPEND_TRIES = 10
 SUSPEND_WAIT_S = 0.5
@@ -211,7 +215,15 @@ async def _continue(env: SessionEnv, resumer: Any, session_id: str, interrupted:
             return
         try:
             async with await env.client(row) as guest:
-                await guest.register_prompt(session_id, prompt_id(session_id, paused_at), CONTINUATION)
+                await speaker.register(
+                    env,
+                    guest,
+                    vm_id=row.id,
+                    session_id=session_id,
+                    prompt_id=prompt_id(session_id, paused_at),
+                    text=CONTINUATION,
+                    line=CONTINUATION_LINE,
+                )
         except (GuestError, RunnerError) as exc:
             env.line(f"credit_continue_failed session_id={session_id} code={exc.code}")
             return

@@ -203,6 +203,22 @@ def device_pending(connection: Connection, device_id: UUID | str) -> list[str]:
     return [prompt.event_id for row in sessions for prompt in found[str(row[0])].pending]
 
 
+def device_holder(connection: Connection, device_id: UUID | str, task_id: UUID | str, event_id: str) -> str | None:
+    """The main session of the device that holds the prompt undelivered now (it is pending there and the session is
+    neither `stopping` nor ended: exactly when `GET /v1/device/state` lists it in that device's `pending_prompts`),
+    None otherwise."""
+    sessions = connection.execute(
+        "SELECT id FROM hub.session WHERE device_id = %s AND task_id = %s AND depth = 0"
+        " AND state NOT IN ('stopping', 'stopped', 'failed') ORDER BY created_at, id",
+        (device_id, task_id),
+    ).fetchall()
+    found = routing(connection, [task_id])
+    for row in sessions:
+        if any(prompt.event_id == event_id for prompt in found[str(row[0])].pending):
+            return str(row[0])
+    return None
+
+
 def session_of(connection: Connection, task_id: UUID | str, received_at: datetime) -> str | None:
     """The main session a prompt received at `received_at` belongs to."""
     row = connection.execute(

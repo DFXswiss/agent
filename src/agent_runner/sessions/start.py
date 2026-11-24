@@ -11,7 +11,8 @@
 3. model access and its credential (`model.access`: the owner's subscription or API key, or the platform key);
 4. `sandbox_ready`: `POST /v1/sessions` (harness context, model, initial prompt with its sender line, limits; then
    changed by the request amenders of `sessions.extensions`; an older guest that refuses the sender line with
-   `400 request_invalid` gets the same request once more without it, logged `speaker_unsupported`, ADR-083), then
+   `400 request_invalid` gets the same request once more without it, logged and reported once per VM,
+   `prompts.speaker.unsupported`, ADR-083), then
    `PUT .../credential` (the transition follows both);
 5. `agent_starting`: the guest registers the prompt hash and starts the agent once the credential is there.
 
@@ -54,6 +55,7 @@ from agent_runner.errors import RunnerError
 from agent_runner.guestlink.client import GuestClient
 from agent_runner.guestlink.errors import GuestError, GuestRefused, GuestUnreachable
 from agent_runner.model import access, selection
+from agent_runner.prompts import speaker
 from agent_runner.sessions import harness, profiles, records
 from agent_runner.sessions.desired import Desired
 from agent_runner.sessions.env import SessionEnv
@@ -82,7 +84,7 @@ def without_speaker(request: Mapping[str, Any], refused: GuestRefused) -> dict[s
     prompt = request.get("initial_prompt")
     if not isinstance(prompt, Mapping) or "speaker" not in prompt:
         return None
-    if refused.status != 400 or refused.error != "request_invalid":
+    if not speaker.refused_by_older_guest(refused):
         return None
     return {**request, "initial_prompt": {key: value for key, value in prompt.items() if key != "speaker"}}
 
@@ -237,7 +239,7 @@ class Starter:
                 self.observe(sid, "model")
                 request = await self._request(desired, choice)
                 created_guest = True
-                await self._create(guest, request)
+                await self._create(guest, request, row.id)
                 await self._provision(guest, sid, credential)
                 # 05 section 6.1 step 4: the sandbox is ready once the session exists and holds its credential
                 await self._step(sid, "sandbox_ready")
@@ -375,7 +377,7 @@ class Starter:
             await amender.amend(env.context, session, request)
         return request
 
-    async def _create(self, guest: GuestClient, request: Mapping[str, Any]) -> None:
+    async def _create(self, guest: GuestClient, request: Mapping[str, Any], vm_id: str) -> None:
         try:
             try:
                 answer = await guest.create_session(request)
@@ -383,7 +385,7 @@ class Starter:
                 older = without_speaker(request, refused)
                 if older is None:
                     raise
-                self.env.log(f"runner.prompts speaker_unsupported session_id={request['session_id']} channel=start")
+                await speaker.unsupported(self.env, vm_id, f"session_id={request['session_id']} channel=start")
                 answer = await guest.create_session(older)
         except GuestUnreachable:
             raise StartFailed("guest_unreachable") from None

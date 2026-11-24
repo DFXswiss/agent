@@ -70,6 +70,9 @@ def test_an_exhausted_org_is_paused_and_continues_after_a_credit(rig: Rig) -> No
         # credit is back: the interrupted session is resumed with the continuation, the idle one stays suspended
         await pause.enforce(pk.deliverer, desired(False))
         assert pk.guest.texts() == [pause.CONTINUATION]
+        # the platform's own sender line, never a person's (ADR-083)
+        assert pk.guest.speakers() == [pause.CONTINUATION_LINE]
+        assert pause.CONTINUATION_LINE.startswith("agent.dfx.swiss instruction from: the platform (not a person): ")
         assert (await pk.session(working)).state == "resuming"
         assert (await pk.session(idle)).state == "suspended"
         rows = await env.rows("SELECT session_id::text FROM runner.credit_pause WHERE resumed_at IS NOT NULL")
@@ -99,6 +102,20 @@ def test_guest_failures_are_retried_on_the_next_run(rig: Rig) -> None:
         await pause.enforce(pk.deliverer, desired(False))
         assert pk.guest.texts().count(pause.CONTINUATION) == 2  # the same prompt ID both times
         assert len(set(pk.guest.sent())) == 1
+
+    run(rig, body)
+
+
+def test_an_older_guest_gets_the_continuation_without_the_line(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        pk = await setup(env, guest=PromptGuest())
+        await pk.add_session(1, state="working")
+        await pause.enforce(pk.deliverer, desired(True))
+        pk.guest.prompt_errors.append(GuestRefused("prompts", 400, "request_invalid"))
+        await pause.enforce(pk.deliverer, desired(False))
+        assert pk.guest.speakers() == [pause.CONTINUATION_LINE, None]
+        assert any("speaker_unsupported" in line for line in pk.lines)
+        assert not any("credit_continue_failed" in line for line in pk.lines)
 
     run(rig, body)
 

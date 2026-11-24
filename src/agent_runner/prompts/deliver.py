@@ -23,7 +23,7 @@
 - **Sender line** (ADR-083 section 1, `speaker.py`): every prompt handed to a guest carries the line of its verified
   author (`speaker`, also the first prompt of a start). An older guest refuses the unknown field with
   `400 request_invalid` (the line passed the contract, so nothing else can be meant): the same registration is sent
-  once more without it and logged `speaker_unsupported`.
+  once more without it, logged and reported once per VM (`speaker.register`).
 - **Hand-over by session state**:
   * `idle`, `prompt_delivering` (a start without initial prompt): write-ahead `registered`, decrypt into memory,
     `POST /v1/sessions/{id}/prompts` (hash registered first, the guest then types it), `typed`;
@@ -63,7 +63,6 @@ from psycopg import AsyncConnection
 
 from agent_runner.billing import pause
 from agent_runner.errors import RunnerError
-from agent_runner.guestlink.client import GuestClient
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.inbox.pull import load_cursors
 from agent_runner.orgs import audit
@@ -460,7 +459,9 @@ class Deliverer:
             return
         try:
             async with await env.client(row) as guest:
-                await self._register(guest, session, head, text, line)
+                await speaker.register(
+                    env, guest, vm_id=row.id, session_id=session.id, prompt_id=head.event_id, text=text, line=line
+                )
         except GuestRefused as exc:
             await self._guest_refused(session, head, exc.error)
             return
@@ -473,19 +474,6 @@ class Deliverer:
             await records.update(conn, session.id, last_prompt_at=datetime.fromtimestamp(env.wall(), UTC))
         self._settled(session.id)
         self.line(f"sent session_id={session.id} event_id={head.event_id}")
-
-    async def _register(
-        self, guest: GuestClient, session: LocalSession, head: queue.Delivery, text: str, line: str | None
-    ) -> None:
-        """`POST /v1/sessions/{id}/prompts` with the sender line; once more without it for an older guest (module
-        docstring)."""
-        try:
-            await guest.register_prompt(session.id, head.event_id, text, line)
-        except GuestRefused as refused:
-            if line is None or refused.status != 400 or refused.error != "request_invalid":
-                raise
-            self.line(f"speaker_unsupported session_id={session.id} event_id={head.event_id} channel=prompt")
-            await guest.register_prompt(session.id, head.event_id, text)
 
     async def _guest_refused(self, session: LocalSession, head: queue.Delivery, error: str | None) -> None:
         """The guest refused the registration: `state_conflict` (accepted before, or its session ended - the journal

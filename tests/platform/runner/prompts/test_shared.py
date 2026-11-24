@@ -106,15 +106,35 @@ def test_an_older_guest_gets_the_prompt_again_without_the_line(rig: Rig) -> None
     async def body(env: Any) -> None:
         pk = await setup(env)
         sid = await pk.add_session()
-        event_id = add_prompt(env, 1, "p1")
+        ids = [add_prompt(env, seq, f"p{seq}") for seq in (1, 2)]
         await pull(env)
-        await pk.route(sid, 1, event_id)
-        pk.guest.prompt_errors = [GuestRefused("prompts", 400, "request_invalid")]
+        for seq, event_id in enumerate(ids, 1):
+            await pk.route(sid, seq, event_id)
+        refused = GuestRefused("prompts", 400, "request_invalid")
+        pk.guest.prompt_errors = [refused]
         await pk.deliverer.advance(sid)
-        assert pk.guest.sent() == [event_id, event_id]
+        assert pk.guest.sent() == [ids[0], ids[0]]
         assert [line is None for line in pk.guest.speakers()] == [False, True]
-        assert (await pk.row(event_id)).state == "typed"
-        assert any(line.startswith("runner.prompts speaker_unsupported") for line in pk.lines)
+        assert (await pk.row(ids[0])).state == "typed"
+        vm = (await pk.vm()).id
+        assert f"runner.prompts speaker_unsupported vm_id={vm} session_id={sid} event_id={ids[0]} channel=prompt" in (
+            pk.lines
+        )
+        # reported once per VM: the next refusal on the same VM is only logged
+        await accept(pk, sid, ids[0])
+        pk.guest.prompt_errors = [refused]
+        await pk.deliverer.advance(sid)
+        assert sum("speaker_unsupported" in line for line in pk.lines) == 2
+        alerts = [item for item in await env.audits() if item["action"] == "runner.alert"]
+        assert alerts == [
+            {
+                "action": "runner.alert",
+                "result": "failed",
+                "target_kind": "vm",
+                "target_id": vm,
+                "detail": {"alert": "speaker_unsupported", "value": None},
+            }
+        ]
 
     run(rig, body)
 

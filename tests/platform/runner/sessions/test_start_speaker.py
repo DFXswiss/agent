@@ -4,16 +4,20 @@ refuses the unknown field (`400 request_invalid`) gets the same request once mor
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from agent_guest.schema import SchemaSet
 from agent_runner.guestlink.errors import GuestRefused
 from agent_runner.sessions.extensions import InitialPrompt
 from agent_runner.sessions.start import Starter, without_speaker
 
 from ..reconcile.rig import Rig, standard_world
-from .kit import FakeGuest, desired, kit, session_id
+from .kit import ORG, WG, FakeGuest, desired, kit, session_id
+
+SCHEMAS = SchemaSet(Path(__file__).resolve().parents[4] / "contracts")
 
 LINE = "agent.dfx.swiss instruction from: an unnamed member (member x)."
 PROMPT = InitialPrompt(prompt_id="01930006-0000-7000-8000-000000000001", text="What is 2+2?", speaker=LINE)
@@ -53,7 +57,19 @@ def test_an_older_guest_gets_the_start_again_without_the_line(rig: Rig) -> None:
         assert {key: value for key, value in second.items() if key != "initial_prompt"} == {
             key: value for key, value in first.items() if key != "initial_prompt"
         }
-        assert f"runner.prompts speaker_unsupported session_id={session_id()} channel=start" in found.lines
+        vm = (await found.vms.ensure_vm(ORG, WG)).id
+        assert f"runner.prompts speaker_unsupported vm_id={vm} session_id={session_id()} channel=start" in found.lines
+        alerts = [item for item in await found.of_kind("audit") if item["action"] == "runner.alert"]
+        assert alerts == [
+            {
+                "action": "runner.alert",
+                "result": "failed",
+                "target_kind": "vm",
+                "target_id": vm,
+                "detail": {"alert": "speaker_unsupported", "value": None},
+            }
+        ]
+        assert SCHEMAS.errors("outbox/objects.json#/$defs/body_audit", alerts[0]) == []
 
     run(rig, body)
 

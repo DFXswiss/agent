@@ -20,9 +20,10 @@ Each charge is one row of `hub.charge` (unique per device, `origin_seq` and `par
 and the key refuses a second row should one ever run twice; an item that books several rows - the split of a
 per-device DFX key, `agent_hub.models.dfx` - numbers them), added to `hub.charge_daily` (org, UTC day of the
 measurement, workgroup, device, kind: amount and quantity; with its CHF equivalent at the rate of its day,
-`agent_hub.billing.fx`) and to `hub.charge_person_daily` (org, UTC day, the person the item names as `triggered_by` -
-the nil UUID `UNATTRIBUTED` for none -, kind; KOR-46, ADR-083 section 2: a breakdown only, the charge stays the org's;
-the bookings of a per-device DFX key name nobody and count as unattributed), and left in `hub.charge_pending` for the
+`agent_hub.billing.fx`) and to `hub.charge_person_daily` (org, UTC day, the person the item names as `triggered_by`
+when that person is the author of a prompt event of the session's task - else, and for a charge without a session,
+the nil UUID `UNATTRIBUTED` -, kind; KOR-46, ADR-083 section 2: a breakdown only, the charge stays the org's; the
+bookings of a per-device DFX key name nobody and count as unattributed), and left in `hub.charge_pending` for the
 settle job, which takes it from the org's credit (`agent_hub.billing.credit`); the push never locks the org's account.
 A charge without a session (the share of a per-device key no session reported, ADR-081 section 7) has no workgroup,
 task or session and is summed per day under the nil workgroup ID `NO_WG`. Without a price list in force nothing is
@@ -95,6 +96,17 @@ def measured(item: ItemContext, text: str | None) -> datetime:
     return min(parse_time(text), item.now)
 
 
+def attributed(item: ItemContext, task: UUID | None, person: str | None) -> str | None:
+    """The `triggered_by` of an item when it is the author of a prompt event of the task, else None (a runner cannot
+    attribute consumption to an arbitrary member; a charge without a task names nobody; module docstring)."""
+    if person is None or task is None:
+        return None
+    found = item.connection.execute(
+        "SELECT 1 FROM hub.event WHERE task_id = %s AND kind = 'prompt' AND author_id = %s LIMIT 1", (task, person)
+    ).fetchone()
+    return None if found is None else person
+
+
 def book(
     item: ItemContext,
     ids: tuple[UUID, UUID | None, UUID | None, UUID | None],
@@ -112,6 +124,7 @@ def book(
     """Insert the charge, add it to the day and leave it pending for the credit (module docstring); `daily_device` is
     the device of the day's row when it is not the pushing one (a per-device key's org device)."""
     org, wg, task, session = ids
+    triggered_by = attributed(item, task, triggered_by)
     inserted = item.connection.execute(
         INSERT_CHARGE,
         (

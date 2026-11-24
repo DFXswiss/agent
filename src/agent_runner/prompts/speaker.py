@@ -15,14 +15,23 @@ produce it.
   * `SAME_NAME` after the name when another member of the organisation has a stored profile whose name is equal after
     NFKC and case folding (`name_key`);
   * `CHANGED` when the previous accepted prompt of the same task on this device came from another person;
-  * `IMITATION` when the text contains a look-alike of a platform line (`IMITATIONS`, case-insensitive after NFKC).
+  * `IMITATION` when the text contains a look-alike of a platform line (`IMITATIONS`), matched after `fold`: NFKC,
+    case folding, format characters (zero-width and the like) removed, every run of white space and punctuation one
+    space - so `Agent DFX-Swiss  instruction\u200b from` and `<system_reminder>` are caught as well.
 
 - **Child session** (`for_child`): never a person's line - its instructions are written by its parent session. The
   person is the acting user of the `subagent.request` (`operation.actor_id`); without one the line says that the
   parent works on instructions of several people or none. `IMITATION` applies to the child's text as well.
 - **Names** (`clean_name`): NFC; control, format, surrogate and line/paragraph separator characters become spaces;
-  `"` becomes `'`; white space collapsed; at most `NAME_MAX` characters. Without a usable name the line reads
+  `"` becomes `'`, `(` and `)` become `[` and `]` (a name cannot imitate the `(member ...)` part); white space
+  collapsed; at most `NAME_MAX` characters. Without a usable name the line reads
   `an unnamed member` (unquoted, so it is never mistaken for a chosen name).
+- **Platform** (`PLATFORM_CONTINUATION`): the continuation prompt the runner itself writes after a credit
+  (`billing.pause`) names the platform, never a person.
+- **Older guest** (`register`, `unsupported`): a guest whose golden does not know the field refuses it with
+  `400 request_invalid` (the line passed the contract, so nothing else can be meant). The registration is sent once
+  more without it; this is logged (`runner.prompts speaker_unsupported ...`) and reported once per VM and daemon as
+  outbox audit `runner.alert` `{alert: "speaker_unsupported", value: null}` with target the VM.
 - **Contract** (`check`): `guest/objects.json#/$defs/speaker_line` - one line starting with `PREFIX`, at most
   `MAX_LENGTH` characters. `fit` shortens the names until the line fits, so a current guest never refuses it.
 """
@@ -36,6 +45,7 @@ from typing import Any
 
 from psycopg import AsyncConnection
 
+from agent_runner.guestlink.errors import GuestRefused
 from agent_runner.sessions import profiles
 
 PREFIX = "agent.dfx.swiss instruction from: "
@@ -59,7 +69,14 @@ CHILD = (
 )
 CHILD_PERSON = "an instruction of {name} (member {user_id})"
 CHILD_NOBODY = "instructions of several people or none"
-IMITATIONS = ("agent.dfx.swiss instruction from", "hook additional context", "system-reminder")
+IMITATIONS = ("agent dfx swiss instruction from", "hook additional context", "system reminder")
+"""The markers in the form of `fold`."""
+PLATFORM_CONTINUATION = (
+    PREFIX + "the platform (not a person): the organization's credit is available again and the interrupted"
+    " instruction continues."
+)
+UNSUPPORTED = "speaker_unsupported"
+_SEPARATORS_RE = re.compile(r"[\W_]+")
 _LINE_RE = re.compile(r"agent\.dfx\.swiss instruction from: [^\n\r]+")
 _BLANKED = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
@@ -69,7 +86,8 @@ def clean_name(raw: str | None) -> str | None:
     if raw is None:
         return None
     text = unicodedata.normalize("NFC", raw)
-    text = "".join(" " if unicodedata.category(char) in _BLANKED else char for char in text).replace('"', "'")
+    text = "".join(" " if unicodedata.category(char) in _BLANKED else char for char in text)
+    text = text.replace('"', "'").replace("(", "[").replace(")", "]")
     text = " ".join(text.split())[:NAME_MAX].rstrip()
     return text or None
 
@@ -79,8 +97,15 @@ def name_key(name: str) -> str:
     return unicodedata.normalize("NFKC", name).casefold()
 
 
-def imitates(text: str) -> bool:
+def fold(text: str) -> str:
+    """NFKC, case-folded, format characters removed, every run of white space and punctuation one space."""
     folded = name_key(text)
+    folded = "".join(char for char in folded if unicodedata.category(char) != "Cf")
+    return _SEPARATORS_RE.sub(" ", folded)
+
+
+def imitates(text: str) -> bool:
+    folded = fold(text)
     return any(marker in folded for marker in IMITATIONS)
 
 
@@ -219,3 +244,45 @@ async def for_child(
 ) -> str:
     name = None if actor_id is None else await member_name(conn, storage_key, org_id, actor_id)
     return child_line(parent_id=parent_id, user_id=actor_id, name=name, text=text)
+
+
+# -- an older guest ------------------------------------------------------------------------------------------------
+
+ATTRIBUTE = "speaker_unsupported_vms"
+
+
+def refused_by_older_guest(refused: GuestRefused) -> bool:
+    return refused.status == 400 and refused.error == "request_invalid"
+
+
+async def unsupported(env: Any, vm_id: str, text: str) -> None:
+    """Log an older guest (`text`: the fact line's fields) and report it once per VM and daemon (module docstring)."""
+    env.log(f"runner.prompts {UNSUPPORTED} vm_id={vm_id} {text}")
+    holder = env.context if env.context is not None else env
+    seen: set[str] = getattr(holder, ATTRIBUTE, None) or set()
+    setattr(holder, ATTRIBUTE, seen)
+    if vm_id in seen:
+        return
+    seen.add(vm_id)
+    alert = {
+        "action": "runner.alert",
+        "result": "failed",
+        "target_kind": "vm",
+        "target_id": vm_id,
+        "detail": {"alert": UNSUPPORTED, "value": None},
+    }
+    async with env.transaction() as conn:
+        await env.outbox.enqueue(conn, "audit", alert)
+
+
+async def register(
+    env: Any, guest: Any, *, vm_id: str, session_id: str, prompt_id: str, text: str, line: str | None
+) -> None:
+    """`POST /v1/sessions/{id}/prompts` with the sender line; once more without it for an older guest."""
+    try:
+        await guest.register_prompt(session_id, prompt_id, text, line)
+    except GuestRefused as refused:
+        if line is None or not refused_by_older_guest(refused):
+            raise
+        await unsupported(env, vm_id, f"session_id={session_id} event_id={prompt_id} channel=prompt")
+        await guest.register_prompt(session_id, prompt_id, text)

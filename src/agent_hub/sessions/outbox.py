@@ -4,12 +4,15 @@ ADR-083 section 3).
 It runs after the base handler of the item kind `audit` (which checked the action, its empty detail and the scope and
 wrote the audit row) in the same savepoint. For `session.prompt_withdrawn` - the device withdrew a prompt its author
 took back before it reached the guest; the target is the prompt event - it confirms the requested withdrawal of that
-event (`hub.prompt_withdrawal.withdrawn_at` = the receive time) when the reporting device is the device of a main
-session of the withdrawal's task (only main sessions hold prompts), and records the `session` frame of the device's
-newest main session of that task, so the browsers read the queue again. The confirmed prompt leaves the routing
-(`agent_hub.sessions.prompts`). A report for a prompt without a requested withdrawal, a confirmed one or one of another
-device's task changes nothing beyond the audit row. The target must be an event (`target_kind` `event`, a UUID; `400
-request_invalid` otherwise, the item is `rejected`). Other audit actions pass unchanged.
+event (`hub.prompt_withdrawal.withdrawn_at` = the receive time) only while the reporting device still holds the prompt
+undelivered (`agent_hub.sessions.prompts.device_holder`: a main session of that device that is neither `stopping` nor
+ended has it pending - exactly the condition that lists it in that device's `prompt_queue.withdrawn`), and records the
+`session` frame of that session, so the browsers read the queue again. The confirmed prompt leaves the routing
+(`agent_hub.sessions.prompts`). A report for a prompt without a requested withdrawal, a confirmed one, one delivered
+meanwhile or one the device does not hold changes nothing beyond the audit row (a late report can never make a
+delivered prompt leave the routing, which would count the next one as delivered). The target must be an event
+(`target_kind` `event`, a UUID; `400 request_invalid` otherwise, the item is `rejected`). Other audit actions pass
+unchanged.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from uuid import UUID
 from agent_hub.errors import HubError
 from agent_hub.outbox.base import Handler, ItemContext
 from agent_hub.outbox.bodies import AuditBody
-from agent_hub.sessions import rows
+from agent_hub.sessions import prompts, rows
 
 ACTION = "session.prompt_withdrawn"
 
@@ -39,16 +42,18 @@ def prompt_withdrawn(item: ItemContext, body: AuditBody) -> None:
     if body.action != ACTION:
         return
     event = _event(body)
-    found = item.connection.execute(
-        "UPDATE hub.prompt_withdrawal w SET withdrawn_at = %s WHERE w.event_id = %s AND w.withdrawn_at IS NULL"
-        " AND EXISTS (SELECT 1 FROM hub.session s WHERE s.task_id = w.task_id AND s.device_id = %s AND s.depth = 0)"
-        " RETURNING (SELECT s.id FROM hub.session s WHERE s.task_id = w.task_id AND s.device_id = %s AND s.depth = 0"
-        " ORDER BY s.created_at DESC, s.id DESC LIMIT 1), (SELECT org_id FROM hub.task WHERE id = w.task_id)",
-        (item.now, event, item.device, item.device),
+    requested = item.connection.execute(
+        "SELECT w.task_id, t.org_id FROM hub.prompt_withdrawal w JOIN hub.task t ON t.id = w.task_id"
+        " WHERE w.event_id = %s AND w.withdrawn_at IS NULL FOR UPDATE OF w",
+        (event,),
     ).fetchone()
-    if found is None:
+    if requested is None:
         return
-    item.effects.org_frame(found[1], "session", rows.session_frame(item.connection, found[0]))
+    holder = prompts.device_holder(item.connection, item.device, requested[0], str(event))
+    if holder is None:
+        return
+    item.connection.execute("UPDATE hub.prompt_withdrawal SET withdrawn_at = %s WHERE event_id = %s", (item.now, event))
+    item.effects.org_frame(requested[1], "session", rows.session_frame(item.connection, holder))
 
 
 HANDLERS: Mapping[str, Handler] = {"audit": prompt_withdrawn}

@@ -221,6 +221,34 @@ def test_a_requested_withdrawal_is_confirmed_by_the_device(
     assert [prompt.event_id for prompt in routed.delivered] == [first, third]
 
 
+def test_a_late_report_confirms_nothing(desk: Desk, fleet: Fleet) -> None:
+    """A report after the prompt was delivered, or of a device whose session no longer holds the prompt, leaves the
+    withdrawal open: the delivered prompt stays in the routing and the next one is not counted as delivered."""
+    outbox = Outbox(desk, fleet)
+    writer = desk.scene.writer.browser
+    announce(desk, desk.scene.device, desk.scene.other_device)
+    task, session = desk.started()
+    first = first_prompt(desk, task)
+    desk.walk(session, "prompt_delivering", "working")
+    second, third = follow(desk, task), follow(desk, task)
+    assert withdraw(writer, task, second).json() == {"state": "withdrawing"}
+    desk.walk(session, "idle", "working")  # the guest had it already: delivered
+    seq = outbox.position() + 1
+    assert outbox.statuses(item(seq, "audit", withdrawn_report(task, second, session))) == [(seq, "ok", None)]
+    assert desk.rows("SELECT withdrawn_at FROM hub.prompt_withdrawal WHERE event_id = %s", second) == [(None,)]
+    assert desk.rows("SELECT count(*) FROM hub.audit WHERE action = 'session.prompt_withdrawn'") == [(1,)]
+    with desk.hub.pool.connection() as connection:
+        routed = prompts.routing(connection, [task])[session]
+    assert ([p.event_id for p in routed.delivered], [p.event_id for p in routed.pending]) == ([first, second], [third])
+    assert withdrawals(desk, task) == [(second, "too_late")]
+    # the session that holds the third prompt is stopping: the device does not hold it any more
+    assert withdraw(writer, task, third).json() == {"state": "withdrawing"}
+    desk.transition(session, "stopping")
+    seq = outbox.position() + 1
+    assert outbox.statuses(item(seq, "audit", withdrawn_report(task, third, session))) == [(seq, "ok", None)]
+    assert desk.rows("SELECT withdrawn_at FROM hub.prompt_withdrawal WHERE event_id = %s", third) == [(None,)]
+
+
 def test_a_device_without_the_feature_is_outdated(desk: Desk, published: MemoryPublisher) -> None:
     task, _session = desk.started()
     first = first_prompt(desk, task)
