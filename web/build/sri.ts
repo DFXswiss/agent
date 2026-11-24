@@ -269,8 +269,9 @@ function initialGraph(html: string, read: ReadAsset): Set<string> {
 
 /**
  * Every dynamic `import()` must be checked (`src/core/assets/integrity.ts`): a literal chunk path passed to the
- * in-repo preload helper together with a dependency list that names every static import of the chunk the first load
- * did not already check (the helper checks the chunk itself). The bundler's own helper must be gone. Anything else –
+ * in-repo preload helper together with a dependency list that names every static import of the chunk that neither the
+ * first load nor the importing chunk (with its own static imports) already checked (the helper checks the chunk
+ * itself). The bundler's own helper must be gone. Anything else –
  * a non-literal `import()`, an unknown list format, a missing file – fails the build.
  */
 export function dynamicImportProblems(html: string, assets: readonly string[], read: ReadAsset): string[] {
@@ -300,8 +301,10 @@ export function dynamicImportProblems(html: string, assets: readonly string[], r
         problems.push(`${url}: import() of ${target}, which the build did not write`);
         continue;
       }
+      // the importing chunk and its static imports are loaded (and were checked) before its code runs
+      const loaded = closure(read, [url]);
       for (const needed of closure(read, [target])) {
-        if (needed !== target && !initial.has(needed) && !listed.has(needed))
+        if (needed !== target && !initial.has(needed) && !loaded.has(needed) && !listed.has(needed))
           problems.push(`${url}: import() of ${target} would load ${needed} without integrity`);
       }
     }

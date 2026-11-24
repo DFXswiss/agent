@@ -77,6 +77,20 @@ describe('dynamic imports', () => {
     // the chunk itself may be left out (the helper checks it), and a chunk needing nothing new may have no list
     expect(problems(`${MAP}${HELPER};f(()=>import("./Lazy-b.js"),__vite__mapDeps([1]))`)).toEqual([]);
     expect(problems(`${HELPER};f(()=>import('./lib-c.js'),[]);g(()=>import("./lib-c.js"),void 0)`)).toEqual([]);
+    // a chunk that imports back from its lazily loaded importer (code the bundler placed there) needs no list for it
+    const back = {
+      '/assets/Lazy-b.js': `import{c}from"./lib-c.js";${HELPER};f(()=>import("./Chart-e.js"),[]);export const b=c`,
+      '/assets/Chart-e.js': 'import{b}from"./Lazy-b.js";import{c}from"./lib-c.js";export const e=b+c',
+    };
+    const withBack = { ...FILES, ...back };
+    const assets = Object.keys(withBack).sort();
+    expect(dynamicImportProblems(PAGE, assets, reader(withBack))).toEqual([]);
+    // from the first load the same chunk needs both in its list
+    const fromIndex = { ...withBack, '/assets/index-a.js': `${HELPER};f(()=>import("./Chart-e.js"),[])` };
+    expect(dynamicImportProblems(PAGE, assets, reader(fromIndex))).toEqual([
+      '/assets/index-a.js: import() of /assets/Chart-e.js would load /assets/lib-c.js without integrity',
+      '/assets/index-a.js: import() of /assets/Chart-e.js would load /assets/Lazy-b.js without integrity',
+    ]);
   });
 
   it('fail for a missing static import, a bypass, a non-literal import, an unknown chunk or the wrong helper', () => {
