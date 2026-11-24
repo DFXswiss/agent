@@ -35,7 +35,8 @@ CATEGORIES: dict[str, str] = {
     "settings": "User settings (model access preference, model choice, locale)",
     "ciphertext": "Encrypted content (ADR-003): sealed under scope, credential or recipient keys the hub never holds",
     "agents": "Agents of a user (11-agent-access.md section 2): agent ID, public keys, state, times, claim hash, the "
-    "source address of an open pairing, which login confirmed which pairing, which actions were taken by an agent",
+    "source address of an open pairing, which login confirmed which pairing, which actions were taken by an agent, "
+    "the mode of a pairing and its nonce (ADR-062)",
     "internal": "Hub bookkeeping without user data (applied schema migrations)",
     "billing": "Usage charges and prepaid credit (ADR-062, AUD-04 A4): amounts, token and runtime quantities, model, "
     "access origin and VM size of each charge, balances, credit history, the price list versions, the USD/CHF rates "
@@ -67,6 +68,7 @@ audit: audit | seq:number at:time actor_id:uuid actor_kind:code action:code resu
 agent: agents | id:uuid user_id:uuid kem_pub:bytes sig_pub:bytes state:code bundle_ct:bytes@ciphertext
   label_ct:bytes@ciphertext claim_hash:bytes claim_misses:number source:code source_net:code created_at:time
   expires_at:time confirmed_at:time claimed_at:time last_used_at:time revoked_at:time replaces:uuid
+  remote:flag nonce:bytes handover_ct:bytes@ciphertext
 audit_checkpoint: audit | hub_key_id:code seq:number hash:code published_at:time signature:bytes
 browser_session: auth | key_id:code user_id:uuid@ids credential_id:bytes public_key:bytes statement:lines
   created_at:time expires_at:time ended_at:time pairing_id:uuid@agents
