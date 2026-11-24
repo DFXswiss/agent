@@ -27,8 +27,21 @@ deadline killed the process group, so the test failed with `FileNotFoundError` (
 Correction: the deadline is controlled by the test instead of by process start-up time. A `subprocess.Popen` subclass
 (only for the login command) lets `communicate` wait until the command has written its pid file, then the unchanged
 production code applies its deadline, kills the group and warns. The pid file is written atomically (`mv`). The
-bound for the processes to disappear after `SIGKILL` is 30 s instead of 5 s (a maximum, not a delay). The production
-code is unchanged; no defect was found there.
+bound for the processes to disappear after `SIGKILL` is 30 s instead of 5 s (a maximum, not a delay); the child now
+sleeps 600 s, so only the killed group - never the child's own end - can make it disappear within the bound (a
+production change to `process.kill()`, which kills only the shell, fails the test every time). On failure the test
+kills what is left. The production code is unchanged; no defect was found there.
+
+A controllable clock for the deadline itself was not introduced: the deadline is the timeout of
+`Popen.communicate` on a real process and is the behaviour under test. What depended on the machine's speed was the
+start of the process; that is now an event the test waits for.
+
+## Review findings not changed
+- The terminal capture shares the tmux double and fails to start because its FIFO directory is not writable in the
+  unit suite (the line "terminal capture could not start"). It started failing before this package and does not
+  affect the result here; the capture is covered by its own tests (`tests/platform/guest/capture/`).
+- `time.sleep(0.1)` before negative checks (`test_sessions.py`, `test_restart.py`) cannot turn red through timing;
+  they are listed in the report as candidates, not changed.
 
 ## Verification helpers
 The repetition plugin and the load script used for the 300x evidence are not committed (the suite has no

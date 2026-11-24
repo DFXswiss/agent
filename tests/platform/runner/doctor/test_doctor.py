@@ -5,6 +5,7 @@ contract-checking fake hub with signed answers and a shell script as the login c
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import plistlib
@@ -502,19 +503,25 @@ def test_a_version_that_does_not_come_in_time_warns_and_the_command_is_killed(
     case: Case, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pids = case.bin / "pids"
-    case.claude(f"sleep 30 &\necho $$ $! > {pids}.new\nmv {pids}.new {pids}\nwait")
+    # the child sleeps far longer than the bound below: only the killed group, not its own end, makes it disappear
+    case.claude(f"sleep 600 &\necho $$ $! > {pids}.new\nmv {pids}.new {pids}\nwait")
     case.login_timeout = 0.3
     released = running_before_the_deadline(monkeypatch, pids)
     assert login_cli(case) == (0, [("warn", "version_unknown", None)])
     assert time.monotonic() - released[0] < 10
+    found = [int(text) for text in pids.read_text().split()]
     deadline = time.monotonic() + 30
-    for found in pids.read_text().split():  # the command and its child: the whole process group is gone
+    for each in found:  # the command and its child: the whole process group is gone
         while True:
             try:
-                os.kill(int(found), 0)
+                os.kill(each, 0)
             except ProcessLookupError:
                 break
-            assert time.monotonic() < deadline, f"process {found} still runs"
+            if time.monotonic() >= deadline:
+                for rest in found:  # do not leave a ten-minute sleep behind
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(rest, signal.SIGKILL)
+                pytest.fail(f"process {each} still runs")
             time.sleep(0.05)
 
 
