@@ -96,6 +96,7 @@ RULES: tuple[TableRule, ...] = (
     TableRule("org_device", ORG_ROWS),
     TableRule("wg_placement", WG_ROWS),
     TableRule("platform_role", ALL_ROWS),
+    TableRule("platform_policy", ALL_ROWS),  # the switches of the platform log (ADR-077)
     TableRule("scope_epoch", SCOPE_ROWS),
     TableRule("key_wrap", SCOPE_ROWS),
     TableRule("scope_head", "scope_id = %(org)s OR scope_id = ANY(%(wgs)s)"),

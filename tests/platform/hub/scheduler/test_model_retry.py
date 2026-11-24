@@ -106,6 +106,6 @@ def test_a_failure_without_pending_prompts_or_a_closed_task_starts_nothing(desk:
         first,
     )
     assert _store(desk, desk.scene.writer.id, "claude_subscription") == 0
-    desk.execute("UPDATE hub.task SET state = 'closed' WHERE id = %s", task)
+    desk.execute("UPDATE hub.task SET state = 'closed', closed_at = now() WHERE id = %s", task)
     assert _store(desk, desk.scene.writer.id, "anthropic_api_key") == 0
     assert len(mains(desk, task)) == 1

@@ -310,7 +310,7 @@ def test_an_admins_task_assigns_a_platform_device_first(tool: Tool, hub: HubFake
     device, seq = hub.certify_device()
     hub.candidates[wg] = [{"device_id": device, "platform_seq": seq}]
     created = tool.run("task", "create", "--wg", wg, "--text", "Fix the login bug")[1]
-    assert created["assigned_device"] == device, created
+    assert created.get("assigned_device") == device, created
     assert hub.orgs[org].log.state.assigned(device, wg)
     assert tool.run("task", "create", "--wg", wg, "--text", "More")[1]["assigned_device"] is None  # assigned already
     chosen = tool.run("task", "create", "--wg", wg, "--text", "There", "--device", device)[1]
@@ -321,7 +321,8 @@ def test_an_admins_task_assigns_a_platform_device_first(tool: Tool, hub: HubFake
     hub.candidates[team_wg] = [{"device_id": device, "platform_seq": seq}]
     assert tool.run("task", "create", "--wg", team_wg, "--text", "Fix it")[1]["assigned_device"] is None
     platform_entry(hub, type="platform_policy", name="open_platform_access", on=True)
-    assert tool.run("task", "create", "--wg", team_wg, "--text", "Fix it")[1]["assigned_device"] == device
+    opened = tool.run("task", "create", "--wg", team_wg, "--text", "Fix it")[1]
+    assert opened.get("assigned_device") == device, opened
     # no candidate: the task is created and waits
     empty_wg = tool.run("wg", "create", "--org", team_org, "--name", "Ops")[1]["wg_id"]
     assert tool.run("task", "create", "--wg", empty_wg, "--text", "Wait")[1]["assigned_device"] is None

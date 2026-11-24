@@ -32,7 +32,6 @@ from agent_runner.github import checkout, tarsafe
 from agent_runner.model.catalog import load_catalog
 from agent_runner.operations.checks import CheckRequest, check
 from agent_runner.operations.extensions import CheckFailed
-from agent_runner.operations.rules import DEFAULT_PROTECTED
 from agent_runner.operations.settings import WorkgroupSettings
 from agent_runner.sessions.records import LocalSession
 from tests.platform.atk.fixtures import tarballs
@@ -59,10 +58,14 @@ SESSION = LocalSession(
 )
 
 
+PROTECTED = ("main", "master", "develop", "release/*")
+"""The workgroup's own protected branches (the platform sets no default since ADR-077; the attacks need a list)."""
+
+
 class RunnerStandIn:
     def __init__(self) -> None:
         self.settings = WorkgroupSettings(
-            repositories=REPOSITORIES, protected_branches=DEFAULT_PROTECTED, pr_draft_default=True
+            repositories=REPOSITORIES, protected_branches=PROTECTED, pr_draft_default=True
         )
         self.catalog = load_catalog(None)
         self.github = GitHubDouble().start()

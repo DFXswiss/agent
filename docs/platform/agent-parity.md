@@ -287,7 +287,7 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | next:claim_lost | `agents revoke --id` (by the account's current agent), `recover --hub` | built |
 | next:setup_token_failed | `claude connect`, `credentials set-api-key` | outside |
 | next:no_write_access | `wg grant` (an admin of the organization, person or agent) | built |
-| next:not_inviter | `platform invite` (an agent whose account holds the role, or any agent while the switch `open_platform_invites` is on, creates invitations itself; `platform settings` shows which; the operator grants the role as for a person) | built |
+| next:not_inviter | `platform invite` (an agent whose account holds the role, or any agent while the switch of open invitations is on, creates invitations itself; `platform settings` shows which; the operator grants the role as for a person) | built |
 | next:rotation_pending | `org rotate` (an admin or writer of the workgroup, person or agent) | built |
 | next:community_key_missing | `community key --wait` (the client of any online member, person or agent, hands the key over) | built |
 | next:not_own_account | the person's passkey approval of a new main orchestrator of an account with a passkey (concept idea 34): `pair --remote` | person |

@@ -106,7 +106,7 @@ def install(hub: HubFake) -> None:
             wrapped_by=user,
             platform=platform,
             now=now,
-            platform_access=found.platform_access,
+            platform_access=found.platform_access or platform.platform_access(org, private=False),
             excluded=platform.excluded(found.log.state),
         )
         times = dict(state.rotated_at)

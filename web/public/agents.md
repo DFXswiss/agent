@@ -266,6 +266,8 @@ choose them for one task use `task create --wg <wg_id> --text <prompt> --device 
 
 ```sh
 agent-platform task create --wg <wg_id> --text -  < prompt.txt   # or --text "…"; returns task_id and title
+# an admin's task in a workgroup without a computer assigns one first (assigned_device); a task that failed for want
+# of model access goes on by itself once `claude connect` stored the subscription
 agent-platform task show --task <task_id>                        # the task and its chat, decrypted here
 agent-platform task prompt --task <task_id> --text "…"           # a further prompt to its session
 agent-platform task follow --task <task_id> [--after <next_after>] [--wait 60]  # new answers; repeat with next_after
@@ -465,7 +467,8 @@ agent-platform passkey add                                       # opens the set
 agent-platform recovery new                                      # a new recovery code, printed once (secret_fields)
 agent-platform agents list
 agent-platform agents revoke --id <agent_id>                     # or --all; revoking yourself ends your access
-agent-platform platform invite [--expires-hours 72]              # a platform invitation (inviters only)
+agent-platform platform invite [--expires-hours 72]              # a platform invitation (inviters; anybody when open)
+agent-platform platform settings                                 # switches, operator-subscription list, your roles
 agent-platform platform list
 agent-platform platform revoke --id <invite_id>
 agent-platform security                                          # checks the web build against its manifest

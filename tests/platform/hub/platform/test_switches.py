@@ -62,7 +62,7 @@ def test_the_operator_list_needs_a_known_org_and_changes_no_projection(plat: Pla
     assert plat.query("SELECT type, subject_id::text FROM hub.platform_entry ORDER BY seq DESC LIMIT 1") == [
         ("org_operator_subscriptions", org)
     ]
-    assert plat.query("SELECT action FROM hub.audit WHERE action LIKE 'platform.org_operator%'") == [
+    assert plat.query("SELECT action FROM hub.audit WHERE action = 'platform.org_operator_subscriptions'") == [
         ("platform.org_operator_subscriptions",)
     ]
 

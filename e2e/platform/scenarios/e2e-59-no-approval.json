@@ -1,0 +1,242 @@
+{
+  "name": "e2e-59-no-approval",
+  "description": "E2E-59: no approval as a precondition. A team organization works at once on the platform device with the switch open_platform_access on; the operator's subscription pool serves an organization granted in the platform log and stops after the revocation, without a runner restart; a task that failed for want of model access continues by itself once the owner stores an API key; a push to main goes through without a workgroup list and a commit to main is refused branch_protected once the workgroup lists main.",
+  "steps": [
+    {
+      "id": "open",
+      "expect": {
+        "user_text_contains": "E2E59-OPEN",
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Open platform kz59-open-a3f7."
+          }
+        ]
+      }
+    },
+    {
+      "id": "sub-before",
+      "expect": {
+        "user_text_contains": "E2E59-SUB-BEFORE",
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Before the grant kz59-before-b4g8."
+          }
+        ]
+      }
+    },
+    {
+      "id": "sub-granted",
+      "expect": {
+        "user_text_contains": "E2E59-SUB-GRANTED",
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "With the operator subscription kz59-granted-c5h9."
+          }
+        ]
+      }
+    },
+    {
+      "id": "sub-revoked",
+      "expect": {
+        "user_text_contains": "E2E59-SUB-REVOKED",
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "After the revocation kz59-revoked-d6j1."
+          }
+        ]
+      }
+    },
+    {
+      "id": "own",
+      "expect": {
+        "user_text_contains": "E2E59-OWN",
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Own access at last kz59-own-e7k2."
+          }
+        ]
+      }
+    },
+    {
+      "id": "push-checkout",
+      "expect": {
+        "user_text_contains": "E2E59-PUSH",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "octo-org/hello"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push-write",
+      "expect": {
+        "tool_result_contains": "\"dir\":\"repos/octo-org/hello\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/octo-org/hello/NOTES.md",
+              "content": "Notes kz59-file-k2q6\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push-commit",
+      "expect": {
+        "tool_result_is_error": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "main",
+                "message": "Add the notes."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push-push",
+      "expect": {
+        "tool_result_contains": "\"files_changed\":1"
+      },
+      "capture": {
+        "sha": {
+          "regex": "\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "main",
+                "commit_sha": "${sha}"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push-done",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/octo-org/hello/tree/main\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Pushed to main kz59-pushed-f8m3."
+          }
+        ]
+      }
+    },
+    {
+      "id": "protected-commit",
+      "expect": {
+        "user_text_contains": "E2E59-PROTECTED",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "octo-org/hello",
+                "branch": "main",
+                "message": "Change the notes again."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "protected-done",
+      "expect": {
+        "tool_result_contains": "\"branch_protected\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Main is protected kz59-protected-g9n4."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "No approval"
+          }
+        ]
+      }
+    }
+  ]
+}

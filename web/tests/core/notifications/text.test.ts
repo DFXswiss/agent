@@ -14,6 +14,7 @@ import {
   notificationMessage,
   notificationNames,
   notificationTarget,
+  OPERATOR_REASONS,
 } from '../../../src/core/notifications/text';
 import { notification } from './rows';
 
@@ -221,6 +222,41 @@ describe('notificationNames caching', () => {
     putEvents(store, ORG, [verified(ORG, { kind: 'org.profile' }, { name: 'Acme' })]);
     expect(notificationNames(store.getState(), row)).not.toBe(first);
     expect(notificationNames(store.getState(), row).org).toBe('Acme');
+  });
+});
+
+describe('requests to the operator and computers needed (ADR-077)', () => {
+  const request = (ref: string | null) => notification('n1', { kind: 'operator.request', org_id: null, ref });
+
+  it('names the reason and the organization by its ID; an unknown or missing reason generically', () => {
+    for (const reason of OPERATOR_REASONS) {
+      expect(notificationMessage(request(`${reason}:${ORG}`), NAMES, FALLBACK)).toEqual({
+        key: `notifications.text.operator.${reason}`,
+        params: { org: ORG },
+      });
+    }
+    expect(notificationMessage(request(`later_reason:${ORG}`), NAMES, FALLBACK)).toEqual({
+      key: 'notifications.text.operator.unknown',
+      params: { org: ORG },
+    });
+    expect(notificationMessage(request(null), NONE, FALLBACK)).toEqual({
+      key: 'notifications.text.operator.unknown',
+      params: { org: '' },
+    });
+    expect(notificationTarget(request(`credit_exhausted:${ORG}`))).toBe('/settings');
+  });
+
+  it('asks the admins for a computer of the workgroup and leads to the devices', () => {
+    const row = notification('n1', { kind: 'device.needed', org_id: ORG, wg_id: WG });
+    expect(notificationMessage(row, NAMES, FALLBACK)).toEqual({
+      key: 'notifications.text.device.needed',
+      params: { wg: 'Research', org: 'Acme' },
+    });
+    expect(notificationMessage(row, NONE, FALLBACK)).toEqual({
+      key: 'notifications.text.device.needed',
+      params: { wg: 'a workgroup', org: 'an organization' },
+    });
+    expect(notificationTarget(row)).toBe(`/o/${ORG}/devices`);
   });
 });
 

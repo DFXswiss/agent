@@ -323,6 +323,8 @@ export async function spawnRunner(
     readonly vm_idle_seconds?: number;
     readonly sessions_per_vm?: number;
     readonly max_vms?: number;
+    /** A pool of the operator's subscriptions (one token file; which orgs use it comes from the platform log). */
+    readonly operator_subscriptions?: boolean;
   } = {},
 ): Promise<Spawned> {
   const taken = Object.keys(await orchestrator.runners()).map((name) => Number(/^runner-(\d+)$/.exec(name)?.[1] ?? 0));

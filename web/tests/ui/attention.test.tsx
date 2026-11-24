@@ -368,7 +368,9 @@ describe('situation view', () => {
     });
     mount(t);
     await waitFor(() => expect(screen.getAllByTestId('attention.item')).toHaveLength(2));
-    expect(within(entry('d')).getByTestId('attention.assign.hint')).toHaveTextContent('An administrator');
+    expect(within(entry('d')).getByTestId('attention.assign.hint')).toHaveTextContent(
+      'The administrators of the organization have been asked',
+    );
     expect(within(entry('d')).queryByTestId('attention.assign')).toBeNull();
     expect(within(entry('ro')).queryByTestId('attention.actions')).toBeNull();
     expect(within(entry('ro')).getByTestId('attention.open')).toBeInTheDocument();

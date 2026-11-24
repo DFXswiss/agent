@@ -69,6 +69,42 @@ describe('platform log state', () => {
   });
 });
 
+describe('platform switches and operator subscriptions (ADR-077)', () => {
+  it('are off without an entry, follow the latest entry and fall back to the access switch', async () => {
+    const plat = await platformWith([]);
+    const [a, b, f, o] = await Promise.all(['org a', 'org b', 'org f', 'org o'].map((label) => idOf(label)));
+    expect(plat.state.policy('open_platform_access')).toBe(false);
+    expect(plat.state.operatorSubscribed(a!)).toBe(false);
+    const root = await ed25519KeyPair(await seed('platform root'));
+    const fresh = await appendPlatform(null, plat.entries, plat.root);
+    const entries = await buildPlatformEntries(plat.state.headValue(), root.privateKey, [
+      { type: 'platform_policy', name: 'open_platform_access', on: true },
+      { type: 'org_platform_access', org: f, granted: false },
+      { type: 'org_operator_subscriptions', org: b, granted: true },
+      { type: 'org_operator_subscriptions', org: a, granted: false },
+      { type: 'role_grant', subject: bob.id, role: 'operator' },
+    ]);
+    const log = await appendPlatform(fresh, entries, plat.root);
+    const after = log.state;
+    expect(after.policy('open_platform_access')).toBe(true);
+    expect(after.policy('open_platform_invites')).toBe(false);
+    // without an entry of its own an org follows the switch; an explicit entry wins
+    expect(after.platformAccess(o!, false)).toBe(true);
+    expect(after.platformAccess(f!, false)).toBe(false);
+    expect(after.platformAccess(f!, true)).toBe(true);
+    expect(after.operatorSubscribed(b!)).toBe(true);
+    expect(after.operatorSubscribed(a!)).toBe(false);
+    expect(after.hasRole(bob.id, 'operator')).toBe(true);
+    const projection = after.projection();
+    expect(projection.policies).toEqual({ open_platform_access: true });
+    expect(projection.operator_subscriptions).toEqual({ [a!]: false, [b!]: true });
+    const off = await buildPlatformEntries(after.headValue(), root.privateKey, [
+      { type: 'platform_policy', name: 'open_platform_access', on: false },
+    ]);
+    expect((await appendPlatform(log, off, plat.root)).state.platformAccess(o!, false)).toBe(false);
+  });
+});
+
 describe('platform devices in an org', () => {
   it('keeps the certification of an assigned platform device and refuses another one', async () => {
     const plat = await platformWith([pdev]);

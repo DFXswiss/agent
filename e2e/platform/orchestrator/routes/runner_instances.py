@@ -12,10 +12,13 @@ runner instances with separate `AGENT_RUNNER_HOME`").
   devices, 05-runner.md section 1.3). `session_idle_seconds` / `vm_idle_seconds` (60 s minimum) let an idle session
   be suspended and then its VM stop quickly (E2E-38: the scheduler's stopped-VM path). `sessions_per_vm` and
   `max_vms` set `AGENT_RUNNER_SESSIONS_PER_VM` / `AGENT_RUNNER_MAX_VMS` (E2E-57: a full VM, a second VM, a full
-  device; ADR-075). Answers
-  `{name, state, vm_prefix, home}`.
-- `POST /runners/{name}/remove`: stops a spawned runner, deletes its VMs (names with its prefix) and its home and
-  forgets it, so the final checks do not expect it running (a decertified or unpaired device's runner ends itself).
+  device; ADR-075). `operator_subscriptions: true` gives it a pool of the operator's subscriptions
+  (`AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR`, a 0700 directory beside its home with one 0600 token file of the
+  subscription token shape, random per spawn; E2E-59: which organizations use it comes from the platform log, ADR-077).
+  Answers `{name, state, vm_prefix, home}`.
+- `POST /runners/{name}/remove`: stops a spawned runner, deletes its VMs (names with its prefix), its home and its
+  operator-subscription directory and forgets it, so the final checks do not expect it running (a decertified or
+  unpaired device's runner ends itself).
   The run's own runners cannot be removed. Answers `{name, deleted}`.
 - `POST /runners/{name}/cli` (`{"args": ["doctor"]}`): `agent-runner doctor` or `agent-runner status [--json]` once
   with the runner's environment (the facts the device prints, 05-runner.md section 1.2). Answers `{rc, stdout, stderr}`.
@@ -24,6 +27,7 @@ runner instances with separate `AGENT_RUNNER_HOME`").
 from __future__ import annotations
 
 import re
+import secrets
 from typing import Any
 
 from orchestrator import vms
@@ -47,6 +51,9 @@ IDLE_RANGE = (60, 604_800)
 LIMIT_VARIABLES = {"sessions_per_vm": "AGENT_RUNNER_SESSIONS_PER_VM", "max_vms": "AGENT_RUNNER_MAX_VMS"}
 MAX_LIMIT = 1000
 KEY_FILE = "AGENT_RUNNER_OPENROUTER_KEY_FILE"
+OPERATOR_DIR = "AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"
+OPERATOR_TOKEN_PREFIX = "-".join(("sk", "ant", "oat01", ""))
+"""The shape of a subscription access token (assembled: no source file spells a token-shaped literal)."""
 _NAME_RE = re.compile(r"^runner-([1-9])$")
 
 
@@ -72,6 +79,30 @@ def _golden(ctx: Context) -> str | None:
         if note.startswith(GOLDEN_NOTE):
             return note[len(GOLDEN_NOTE) :]
     return None
+
+
+def _operator_env(ctx: Context, options: dict[str, Any], kind: str, home: str) -> dict[str, str]:
+    """The variable of the spawn option `operator_subscriptions` (platform devices only), else nothing."""
+    operator = options.get("operator_subscriptions", False)
+    if not isinstance(operator, bool):
+        raise RouteError(400, "invalid", "operator_subscriptions must be a boolean")
+    if not operator:
+        return {}
+    if kind == "org":
+        raise RouteError(400, "invalid", "operator subscriptions are for platform devices only")
+    return {OPERATOR_DIR: _operator_pool(ctx, f"{home}-operator-subscriptions")}
+
+
+def _operator_pool(ctx: Context, directory: str) -> str:
+    """The operator-subscription directory (0700) with one token file (0600) on the runner device."""
+    script = 'umask 077 && mkdir -p "$1" && chmod 700 "$1" && printf %s "$E2E_TOKEN" > "$1/e2e.token"'
+    token = OPERATOR_TOKEN_PREFIX + secrets.token_urlsafe(32)
+    done = ctx.runner_node.run(
+        ["/bin/sh", "-c", script, "sh", directory], env={"E2E_TOKEN": token, "PATH": "/usr/bin:/bin"}
+    )
+    if done["rc"] != 0:
+        raise RouteError(500, "failed", f"operator subscriptions not written: {str(done['stderr']).strip()[-300:]}")
+    return directory
 
 
 def post_spawn(ctx: Context, params: dict[str, str], body: Any) -> tuple[int, Any]:
@@ -107,6 +138,7 @@ def post_spawn(ctx: Context, params: dict[str, str], body: Any) -> tuple[int, An
         limit = _number(options, key, MAX_LIMIT)
         if limit is not None:
             env[variable] = str(limit)
+    env.update(_operator_env(ctx, options, kind, home))
     runner = Runner(ctx.runner_node, name, template.python, env)
     golden = _golden(ctx)
     if golden is not None:
@@ -126,6 +158,8 @@ def post_remove(ctx: Context, params: dict[str, str], _body: Any) -> tuple[int, 
     prefix = runner.env["AGENT_RUNNER_VM_PREFIX"]
     deleted = vms.cleanup(ctx.runner_node, prefix)
     ctx.runner_node.run(["rm", "-rf", runner.env["AGENT_RUNNER_HOME"]])
+    if OPERATOR_DIR in runner.env:
+        ctx.runner_node.run(["rm", "-rf", runner.env[OPERATOR_DIR]])
     del ctx.runners[name]
     return 200, {"name": name, "deleted": deleted}
 

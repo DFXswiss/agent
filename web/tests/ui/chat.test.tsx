@@ -363,6 +363,30 @@ describe('chat timeline and items', () => {
     expect(screen.queryAllByTestId('countdown.panel')).toHaveLength(1);
   });
 
+  it('shows the owner the card that connects model access, others that the owner was asked (ADR-077)', async () => {
+    const { t } = await taskPage({
+      session: { state: 'failed', state_reason: 'model_access_unavailable' },
+      task: { state: 'failed' },
+    });
+    const card = screen.getByTestId('chat.model-access');
+    expect(card).toHaveTextContent('Connect your Claude subscription');
+    expect(within(card).getByTestId('chat.model-access.connect')).toHaveAttribute('href', '/settings');
+    expect(within(card).getByTestId('chat.model-access.connect')).toHaveTextContent('Connect Claude subscription');
+    act(() => t.store.update('me', (me) => ({ ...me, userId: 'reader' })));
+    expect(screen.getByTestId('chat.model-access')).toHaveTextContent('the owner has been asked');
+    expect(screen.queryByTestId('chat.model-access.connect')).toBeNull();
+    // another failure reason or a working session shows no card
+    act(() => putSession(t.store, sessionRow(t, { state: 'failed', state_reason: 'oom' }) as never, [], 0));
+    expect(screen.queryByTestId('chat.model-access')).toBeNull();
+    act(() => putSession(t.store, sessionRow(t, { state: 'working' }) as never, [], 0));
+    expect(screen.queryByTestId('chat.model-access')).toBeNull();
+  });
+
+  it('shows no model-access card without a main session', async () => {
+    await taskPage({ session: null, task: { main_session_id: null } });
+    expect(screen.queryByTestId('chat.model-access')).toBeNull();
+  });
+
   it('shows the load failure with a working "Try again" and the loading text', async () => {
     const { t } = await taskPage({ session: null, task: { main_session_id: null } });
     act(() => setLoad(t.store, TASK, 'error', 'unavailable'));

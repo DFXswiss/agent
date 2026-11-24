@@ -149,6 +149,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("log_head_seq", INT),
         ("log_head_hash", T),
         ("rotation_pending", J),
+        ("platform_access_grant", BOOL),  # 0022 (ADR-077)
     ],
     "membership_entry": [
         ("org_id", U),
@@ -191,6 +192,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     "org_device": [("org_id", U), ("device_id", U), ("assigned_seq", INT), ("unassigned_seq", INT)],
     "wg_placement": [("wg_id", U), ("device_id", U), ("vm_id", T), ("set_by", U), ("set_at", TS)],
     "platform_role": [("user_id", U), ("role", T), ("granted_seq", INT), ("revoked_seq", INT)],
+    "platform_policy": [("name", T), ("on", BOOL), ("seq", INT)],  # 0022 (ADR-077)
     "scope_epoch": [("scope", T), ("scope_id", U), ("epoch", INT), ("created_at", TS), ("created_seq", INT)],
     "key_wrap": [
         ("scope", T),
@@ -891,6 +893,8 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
                 "rotation.required",
                 "agent.account_change",
                 "org.admitted",
+                "operator.request",
+                "device.needed",
             ],
         ),
         ("device_request", "kind", ["github.connect", "claude.login", "credential.check", "mailbox.check"]),
