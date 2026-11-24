@@ -108,11 +108,12 @@ test('@E2E-08 @R-0.2 @R-2.6 @R-2.7 @R-2.8 @R-2.9 @R-2.10 @R-P.5 @needs-vm two qu
     [second, true],
   ]);
 
-  // The task list shows both tasks by title.
+  // The task list shows both tasks by title, newest activity first (06-web.md section 5.1, KOR-32): the follow-up
+  // made the first task the most recently active one.
   await home(page);
   await page.getByTestId('home.all-tasks').click();
   await expect(page).toHaveURL(new RegExp(`/o/${onboarded.org}/w/${tasks[0]!.wg_id}$`));
-  await expect(page.getByTestId('tasks.row.title')).toHaveText(['Who wrote Hamlet?', 'What is the capital of France?']);
+  await expect(page.getByTestId('tasks.row.title')).toHaveText(['What is the capital of France?', 'Who wrote Hamlet?']);
 
   // No project object: not in the schema, not in the task API, not on the screens.
   expect(
