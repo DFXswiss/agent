@@ -165,3 +165,144 @@ def test_private_has_no_default() -> None:
 
     sig = inspect.signature(admits)
     assert sig.parameters["private"].default is inspect.Parameter.empty
+
+
+def test_an_owner_wildcard_admits_every_repo_of_that_owner() -> None:
+    policy = _policy(repos_allow=["example-owner/*"])
+    for repo in ("example-owner/one", "example-owner/two"):
+        v = admits(
+            policy, actor="davidleomay", repo=repo, job_type="pr-review", private=False
+        )
+        assert v.admitted, v.reason
+    for repo in ("other-owner/one", "example-ownerx/one"):
+        v = admits(
+            policy, actor="davidleomay", repo=repo, job_type="pr-review", private=False
+        )
+        assert not v.admitted
+
+
+def test_an_owner_wildcard_ignores_case() -> None:
+    policy = _policy(repos_allow=["Example-Owner/*"])
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="EXAMPLE-OWNER/Example-Repository",
+        job_type="pr-review",
+        private=False,
+    )
+    assert v.admitted, v.reason
+
+
+@pytest.mark.parametrize(
+    "pattern", ["*", "*/*", "owner/prefix*", "owner/", "/*"]
+)
+def test_a_pattern_that_is_not_owner_wildcard_admits_nothing(pattern: str) -> None:
+    # A typo must not widen the allow-list to every repository.
+    policy = _policy(repos_allow=[pattern])
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="owner/name",
+        job_type="pr-review",
+        private=False,
+    )
+    assert not v.admitted
+
+
+def test_an_owner_containing_a_star_names_nothing() -> None:
+    # `*/*` ends in `/*` with owner `*`; without checking the owner it would
+    # name a repository literally called `*/name`.
+    policy = _policy(repos_allow=["*/*"])
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="*/name",
+        job_type="pr-review",
+        private=False,
+    )
+    assert not v.admitted
+
+
+def test_an_owner_wildcard_does_not_reach_a_deeper_path() -> None:
+    # `owner/name/*` has two slashes, so it is not the one-level owner
+    # wildcard and may not admit a repository below `owner/name`.
+    policy = _policy(repos_allow=["owner/name/*"])
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="owner/name/child",
+        job_type="pr-review",
+        private=False,
+    )
+    assert not v.admitted
+
+
+def test_an_entry_with_a_star_owner_names_nothing_on_the_exact_path() -> None:
+    # A repository name cannot contain `*`, so `*/name` is never a literal
+    # entry. The exact comparison must not accept it either.
+    policy = _policy(repos_allow=["*/name"])
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="*/name",
+        job_type="pr-review",
+        private=False,
+    )
+    assert not v.admitted
+
+
+def test_an_owner_wildcard_in_private_repos_allow_admits_nothing() -> None:
+    # `private_repos_allow` stays exact: a wildcard there does not become the
+    # second statement a private repository is meant to require.
+    policy = _policy(
+        repos_allow=["owner/*"],
+        agent_identity={"private_repos_allow": ["owner/*"]},
+    )
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="owner/name",
+        job_type="pr-review",
+        private=True,
+    )
+    assert not v.admitted
+    assert "private_repos_allow" in v.reason
+
+
+def test_an_owner_wildcard_in_repos_deny_denies_every_repo_of_that_owner() -> None:
+    # Denying is the stricter direction: `owner/*` means the whole owner.
+    policy = _policy(repos_allow=["example-owner/*", "other/one"], repos_deny=["Example-Owner/*"])
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="example-owner/any",
+        job_type="pr-review",
+        private=False,
+    )
+    assert not v.admitted
+    assert "denied" in v.reason
+
+
+def test_a_private_repo_under_an_owner_wildcard_still_needs_naming_twice() -> None:
+    # `private_repos_allow` stays exact: the wildcard does not become the
+    # second statement a private repository is meant to require.
+    policy = _policy(repos_allow=["owner/*"])
+    v = admits(
+        policy,
+        actor="davidleomay",
+        repo="owner/name",
+        job_type="pr-review",
+        private=True,
+    )
+    assert not v.admitted
+    assert "private_repos_allow" in v.reason
+
+    policy["agent_identity"] = {"private_repos_allow": ["owner/name"]}
+    v2 = admits(
+        policy,
+        actor="davidleomay",
+        repo="owner/name",
+        job_type="pr-review",
+        private=True,
+    )
+    assert v2.admitted

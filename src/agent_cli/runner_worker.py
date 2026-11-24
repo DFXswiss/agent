@@ -93,6 +93,7 @@ FAILED_REPO = "job has no usable repository"
 FAILED_REF = "job has no usable pull-request number"
 FAILED_SESSION = "job has no usable session"
 FAILED_ATTEMPTS = "job has no usable attempt count"
+FAILED_CREATED_AT = "job has no usable creation time"
 FAILED_WORKTREE = "job worktree does not match this directory"
 FAILED_EXPECTED_LOGIN = "policy expected_gh_user is missing"
 FAILED_HEAD = "job worktree has no full commit"
@@ -553,17 +554,22 @@ def _diff_of(
     return diff
 
 
-def _review_activity_id(*, job_id: str, attempts: int, head: str) -> str:
-    """Deterministic id for one review attempt on one head of one job.
+def _review_activity_id(
+    *, job_id: str, created_at: str, attempts: int, head: str
+) -> str:
+    """Deterministic id for one review attempt on one head of one generation.
 
     A retried worker with a new attempt count derives a new id, so a retry after
     a failed post produces a new review instead of finding the previous
-    attempt's completed activity. Re-running the same attempt finds its own row.
+    attempt's completed activity. A re-queued job starts a new generation with
+    its own `created_at`, so a later review at a head an earlier generation
+    already reviewed does not find that generation's completed row and skip the
+    post. Re-running the same attempt of the same generation finds its own row.
     """
     return str(
         uuid.uuid5(
             uuid.NAMESPACE_URL,
-            f"runner-review:{job_id}:{attempts}:{head}",
+            f"runner-review:{job_id}:{created_at}:{attempts}:{head}",
         )
     )
 
@@ -751,6 +757,9 @@ def _run_worker_body(
     attempts = row.get("attempts")
     if not isinstance(attempts, int) or isinstance(attempts, bool):
         raise _WorkerError(FAILED_ATTEMPTS)
+    created_at = row.get("created_at")
+    if not isinstance(created_at, str) or not created_at:
+        raise _WorkerError(FAILED_CREATED_AT)
     worktree = str(paths.work / job_id)
     if row.get("worktree") != worktree:
         raise _WorkerError(FAILED_WORKTREE)
@@ -857,7 +866,9 @@ def _run_worker_body(
     if len(final_body) > MAX_REVIEW_CHARS:
         raise _WorkerError(FAILED_REVIEW_TOO_LONG)
 
-    activity_id = _review_activity_id(job_id=job_id, attempts=attempts, head=head)
+    activity_id = _review_activity_id(
+        job_id=job_id, created_at=created_at, attempts=attempts, head=head
+    )
     try:
         needs_post = _queue_review(
             store,
