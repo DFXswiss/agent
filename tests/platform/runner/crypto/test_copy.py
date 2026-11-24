@@ -98,7 +98,7 @@ def test_copies_are_current() -> None:
 TOOL_IMPORTS = {"__future__", "argparse", "collections.abc", "dataclasses", "hashlib", "json", "pathlib", "re", "sys"}
 # Values that change from run to run without a reference change.
 VARYING = re.compile(
-    r"\bcommit\b|\bat [0-9a-f]{7,40}\b|\b[0-9a-f]{40}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{2}:\d{2}:\d{2}\b|\.local\b"
+    r"\b[0-9a-f]{7,40}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{2}:\d{2}:\d{2}\b|\.local\b"
     r"|agent-core|/Users/|/home/",
     re.IGNORECASE,
 )
@@ -110,6 +110,9 @@ def test_nothing_in_the_copy_varies_without_a_reference_change() -> None:
     assert set(data) == {"about", "files", "tests"}
     assert all(set(entry) == {"adaptations", "copy", "sha256", "source"} for entry in data["files"])
     assert all(set(entry) == {"copy", "copy_sha256", "sha256", "source"} for entry in data["tests"])
+    for key in ("files", "tests"):
+        copies = [entry["copy"] for entry in data[key]]
+        assert copies == sorted(copies), f"ORIGIN.json {key} not sorted by copy"
     without_adaptations = {**data, "files": [{**entry, "adaptations": []} for entry in data["files"]]}
     assert not VARYING.search(json.dumps(without_adaptations)), "ORIGIN.json carries a varying value"
     for entry in data["files"] + [item for item in data["tests"] if item["copy"].endswith(".py")]:
@@ -266,6 +269,7 @@ def test_main_check_and_write(
 
 def test_tree_reference_reads_the_working_tree(tmp_path: Path) -> None:
     (tmp_path / "d" / "__pycache__").mkdir(parents=True)
+    (tmp_path / "d" / ".hidden.py").write_text("H\n", encoding="utf-8")
     (tmp_path / "d" / "b.py").write_text("B\n", encoding="utf-8")
     (tmp_path / "d" / "a.py").write_text("A\n", encoding="utf-8")
     reference = tool.tree_reference(tmp_path)

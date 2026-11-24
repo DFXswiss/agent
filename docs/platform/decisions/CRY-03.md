@@ -18,8 +18,8 @@ ADR-027 §2).
    (import order after renaming, required by ruff's isort). No rule or format differs.
 3. `ORIGIN.json` stores, per module, the sha256 of the **reference file bytes** (no commit since HOT-08)
    ("normalisation of the import lines" = undoing (a)–(c)). `test_copy_matches_reference` normalises every copy and
-   compares the hash, so any other edit of a copy fails; the hash can also be checked directly with
-   `shasum -a 256 <source>`. `test_origin_lists_every_copied_module` refuses an unlisted
+   compares the hash, so any other edit of a copy fails; the hash is the sha256 of the UTF-8 text of the reference
+   (for the LF files of this repository the same as `shasum -a 256 <source>`). `test_origin_lists_every_copied_module` refuses an unlisted
    module; `storage.py` is the only runner-only module.
 4. The reference unit tests are copied too (`tests/platform/runner/crypto/` and `…/crypto/log/`), with renamed
    import lines and `TEST_ADAPTATIONS`: `test_make_vectors_script_is_a_thin_caller` is dropped (the synced

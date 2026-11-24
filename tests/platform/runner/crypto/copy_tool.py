@@ -166,10 +166,10 @@ class Reference:
 
 
 def tree_reference(root: Path) -> Reference:
-    """The reference files in the working tree at `root` (committed or not)."""
+    """The reference files in the working tree at `root` (committed or not; hidden entries are skipped)."""
 
     def list_dir(directory: str) -> list[str]:
-        return sorted(f"{directory}/{path.name}" for path in (root / directory).iterdir())
+        return sorted(f"{directory}/{path.name}" for path in (root / directory).iterdir() if path.name[0] != ".")
 
     def read(path: str) -> str:
         return (root / path).read_text(encoding="utf-8")
@@ -308,8 +308,8 @@ def build(reference: Reference) -> tuple[dict[str, str], dict[str, object]]:
         "about": "Copies of src/agent_hub/{crypto,log}, src/agent_hub/agents/vectors.py and of their tests "
         "(ADR-027 section 2). sha256 is the hash of the reference file, copy_sha256 the hash of a copied test file; "
         "tests/platform/runner/crypto/copy_tool.py (make runner-crypto-copy) writes and checks the copies.",
-        "files": entries,
-        "tests": tests,
+        "files": sorted(entries, key=lambda entry: str(entry["copy"])),
+        "tests": sorted(tests, key=lambda entry: str(entry["copy"])),
     }
     return files, origin
 
