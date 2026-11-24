@@ -172,7 +172,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 | R-10.9 | [§10 b6](../KONZEPT.md#k-10-b6) | Only explicitly defined, authorised actions; no arbitrary shell execution. | Closed list of operation types; no exec-like type. ADR-012. | GST, RUN | 03 §9 | E2E-22, ATK-33 |
 | R-10.10 | [§10 b7](../KONZEPT.md#k-10-b7) | Actions are checked deterministically and formally, not by content. | Schema, allow-lists, size and pattern rules only. | RUN, HUB | 03 §8.3, §9 | E2E-22 |
 | R-10.11 | [§10 b7](../KONZEPT.md#k-10-b7) | Execution by controlled platform components. | Runner host executor outside the VM. | RUN | 00 §3.1 | E2E-21 |
-| R-10.12 | [§10 b8](../KONZEPT.md#k-10-b8) | Blocked attempts are logged. | `session.hook` events + `hook.denied` audit rows. | GST, RUN, HUB | 02 §2.9 | E2E-23, E2E-15 |
+| R-10.12 | [§10 b8](../KONZEPT.md#k-10-b8) | Blocked attempts are logged. | `session.hook` events + `hook.denied` audit rows; a refusal of the kernel after an allowed call is counted per session in the monitoring (`agent_runner_session_sandbox_denials_total`, KOR-60). | GST, RUN, HUB | 02 §2.9 | E2E-23, E2E-15, E2E-51 |
 
 ## R-11 Operation management and duplicate protection
 
