@@ -7,6 +7,7 @@ watcher script is run for real by `/bin/sh` with stub commands in place of `warp
 
 from __future__ import annotations
 
+import ipaddress
 import plistlib
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -378,7 +379,10 @@ PF_TABLE = "".join(
     f"   {entry}\n"
     for entry in (
         *(e.removesuffix("/32") for e in firewall.BLOCKED_V4),
-        *(e.removesuffix("/128").replace("::ffff:0:0/96", "::ffff:0.0.0.0/96") for e in firewall.BLOCKED_V6),
+        *(
+            e.removesuffix("/128").replace("::ffff:0:0/96", f"::ffff:{ipaddress.IPv4Address(0)}/96")
+            for e in firewall.BLOCKED_V6
+        ),
     )
 )
 
@@ -398,15 +402,21 @@ def test_check_passes_on_pf_output_with_any_tunnel_name(egress: str) -> None:
     assert firewall.check(FakeRun(answers), slot, 500).problems == ("anchor_mismatch",)
 
 
+PRIVATE = ipaddress.ip_network(firewall.BLOCKED_V4[1])  # the 10/8 network
+
+
 def test_check_names_the_ranges_the_table_lacks() -> None:
     answers = healthy()
     answers[("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show")] = (
         0,
-        PF_TABLE.replace("   10.0.0.0/8\n", "   10.0.0.0/9\n"),
+        PF_TABLE.replace(f"   {PRIVATE}\n", f"   {next(PRIVATE.subnets())}\n"),
     )
     status = firewall.check(FakeRun(answers), SLOTS, 500)
-    assert (status.problems, status.table_missing) == (("table_stale",), ("10.0.0.0/8",))
-    answers[("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show")] = (0, "   10.0.0.0/7\n" + PF_TABLE)
+    assert (status.problems, status.table_missing) == (("table_stale",), (str(PRIVATE),))
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show")] = (
+        0,
+        f"   {PRIVATE.supernet()}\n" + PF_TABLE,
+    )
     assert firewall.check(FakeRun(answers), SLOTS, 500).problems == ()  # a wider entry covers it
     answers[("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show")] = (1, "")
     status = firewall.check(FakeRun(answers), SLOTS, 500)

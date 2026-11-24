@@ -255,3 +255,16 @@ MON-3. **Runner measures only from outside** (`agent_runner.metrics.workvm`): th
     (`workvm.firewall.table_missing`). The rehearsal sets its runner home to 0700 itself (no global mask, which would
     also narrow what `install` creates) and saves every pf state from stdout only, like its later comparisons; on a
     failing check it saves pf's rules with counters and the table for the diagnosis.
+33. **Second rehearsal (2026-11-24 08:50).** `::/128` is gone from the table: pf does not keep the unspecified
+    address in a table (the loaded table held `::1` but not `::`), and it is never a destination; the rehearsal
+    reads pf's own handling back from a scratch table. `uninstall` removes the empty mount point
+    `/var/agent-workvm` (unless `--keep-volume`) and reports it as left over when it stays. Finding A (the device's
+    loopback reached once by the slot account, after a reconnect, other phases blocked; the anchor's counters show
+    the loopback block working in another phase): the rules match the slot by `user`, which pf resolves through a
+    socket lookup per packet. A packet whose lookup fails matches none of the anchor's rules and falls through to the
+    client's anchor, which passes `lo0`. That is a per-connection race, not a window of the watcher. It is a
+    hypothesis until the rehearsal's continuous prober (every ~100 ms as the slot account: a listening port over
+    loopback and over the site address, the internet while disconnected; a snapshot of pf at every hit) shows the
+    counters of a hit. A boundary that does not depend on `user`: work VMs on Apple's vmnet (Lima `vzNAT`) instead
+    of the user network, filtered by the bridge interface - open, to be decided (no installation on the execution
+    device before).

@@ -35,6 +35,9 @@ class FakeMachine:
     uids: dict[str, int] = field(default_factory=lambda: {"runner": 501})
     gid: int | None = None
     mounted: bool = False
+    dirs: set[str] = field(default_factory=set)
+    """Directories that exist (`remove_dir` removes one only when it is not in `full_dirs`)."""
+    full_dirs: set[str] = field(default_factory=set)
     visudo_ok: bool = True
     egress: str | None = "utun3"
     answers: dict[tuple[str, ...], tuple[int, str]] = field(default_factory=dict)
@@ -116,7 +119,11 @@ class FakeMachine:
         self.removed.append(path)
 
     def exists(self, path: str) -> bool:
-        return path in self.files
+        return path in self.files or path in self.dirs
+
+    def remove_dir(self, path: str) -> None:
+        if path not in self.full_dirs:
+            self.dirs.discard(path)
 
     def machine(self) -> workvm_cli.Machine:
         return workvm_cli.Machine(
@@ -127,6 +134,7 @@ class FakeMachine:
             is_mount=self.is_mount,
             remove_file=self.remove_file,
             exists=self.exists,
+            remove_dir=self.remove_dir,
         )
 
 
@@ -348,7 +356,7 @@ def test_check_as_root_with_problems(fake: FakeMachine, cli: Callable[..., tuple
 
 def test_check_names_the_missing_table_ranges(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
     fake.uids.update({"wvm00": 602, "wvm01": 603})
-    fake.answers[firewall.READ_COMMANDS[4]] = (0, "   10.0.0.0/8\n")
+    fake.answers[firewall.READ_COMMANDS[4]] = (0, f"   {firewall.BLOCKED_V4[1]}\n")
     code, out, _ = cli("firewall", "check")
     assert code == 1
     lines = out.splitlines()
@@ -356,8 +364,9 @@ def test_check_names_the_missing_table_ranges(fake: FakeMachine, cli: Callable[.
         "runner.workvm.firewall ok=no internet=no egress=utun3",
         "runner.workvm.firewall.problem code=table_stale",
     ]
-    assert lines[2].startswith("runner.workvm.firewall.table_missing entries=0.0.0.0/8,100.64.0.0/10,")
-    assert "10.0.0.0/8," not in lines[2]
+    first, private, cgnat = firewall.BLOCKED_V4[:3]
+    assert lines[2].startswith(f"runner.workvm.firewall.table_missing entries={first},{cgnat},")
+    assert f"{private}," not in lines[2]
 
 
 def test_status_with_boundary(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
@@ -498,6 +507,7 @@ def test_install_plan_with_present_parts_and_without_hook(
 
 def installed(fake: FakeMachine) -> None:
     fake.mounted = True
+    fake.dirs.add(accounts.HOME_ROOT)
     fake.gid = 650
     fake.uids.update({"wvm00": 700, "wvm01": 701})
     for path in (
@@ -743,3 +753,32 @@ def test_image_lima_is_the_runner_lima() -> None:
     from agent_runner.vm import cli as vm_cli  # noqa: PLC0415
 
     assert workvm_cli.image_lima is vm_cli.make_lima
+
+
+def test_uninstall_removes_the_empty_mount_point_and_reports_one_that_stays(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]
+) -> None:
+    installed(fake)
+    assert cli("uninstall")[0] == 0
+    assert accounts.HOME_ROOT not in fake.dirs
+    installed(fake)
+    fake.full_dirs.add(accounts.HOME_ROOT)  # something was left inside: it stays and is reported
+    code, out, _ = cli("uninstall")
+    assert code == 1
+    assert f"runner.workvm.uninstall.problem code=dir:{accounts.HOME_ROOT}" in out.splitlines()
+    assert out.splitlines()[-1] == "runner.workvm.uninstall result=incomplete"
+    fake.full_dirs.clear()
+    fake.dirs.add(accounts.HOME_ROOT)
+    assert cli("uninstall", "--keep-volume")[0] == 0  # a kept volume keeps its mount point
+    assert accounts.HOME_ROOT in fake.dirs
+
+
+def test_remove_empty_dir_removes_only_an_empty_directory(tmp_path: Path) -> None:
+    empty, full = tmp_path / "empty", tmp_path / "full"
+    empty.mkdir()
+    full.mkdir()
+    (full / "x").write_text("x")
+    workvm_cli.remove_empty_dir(str(empty))
+    workvm_cli.remove_empty_dir(str(full))
+    workvm_cli.remove_empty_dir(str(tmp_path / "missing"))
+    assert (empty.exists(), full.exists()) == (False, True)

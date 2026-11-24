@@ -42,6 +42,7 @@ Commands and file writes go through `Machine` (`default_machine()`, replaced by 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import os
 import subprocess
@@ -107,6 +108,12 @@ def remove_file(path: str) -> None:
     Path(path).unlink(missing_ok=True)
 
 
+def remove_empty_dir(path: str) -> None:
+    """Remove `path` when it is an empty directory; anything else stays (and `uninstall` reports it)."""
+    with contextlib.suppress(OSError):
+        Path(path).rmdir()
+
+
 @dataclass(frozen=True)
 class Machine:
     """What the commands touch on the host."""
@@ -118,6 +125,7 @@ class Machine:
     is_mount: Callable[[str], bool]
     remove_file: firewall.RemoveFile
     exists: Callable[[str], bool]
+    remove_dir: Callable[[str], None]
 
 
 def default_machine() -> Machine:
@@ -130,6 +138,7 @@ def default_machine() -> Machine:
         is_mount=os.path.ismount,
         remove_file=remove_file,
         exists=os.path.lexists,
+        remove_dir=remove_empty_dir,
     )
 
 
@@ -467,6 +476,8 @@ def cmd_uninstall(args: argparse.Namespace, ctx: Any) -> int:
     if not args.keep_volume and machine.is_mount(accounts.HOME_ROOT):
         _run_all(run, [accounts.delete_volume_command()])
         volume = "removed"
+    if not args.keep_volume:
+        machine.remove_dir(accounts.HOME_ROOT)  # the mount point `install` created (only when empty)
     out.fact("workvm.uninstall", {"step": "volume", "action": volume, "path": accounts.HOME_ROOT})
     left = _left_over(machine, names, group, volume=not args.keep_volume)
     for code in left:
@@ -506,6 +517,8 @@ def _left_over(machine: Machine, names: Sequence[str], group: str, *, volume: bo
         left.append("pf_conf")
     if volume and machine.is_mount(accounts.HOME_ROOT):
         left.append("volume")
+    elif volume and machine.exists(accounts.HOME_ROOT):
+        left.append(f"dir:{accounts.HOME_ROOT}")
     return left
 
 

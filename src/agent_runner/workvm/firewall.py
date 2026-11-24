@@ -148,8 +148,9 @@ BLOCKED_V4: tuple[str, ...] = tuple(
     )
 )
 # Special-purpose IPv6 ranges; unique-local and link-local are joined from parts for the same hygiene rule.
+# Not `::/128`: the unspecified address is never a destination, and pf leaves it out of a table (rehearsal of
+# 2026-11-24: the loaded table held `::1` but not `::`), so `check` would never see it.
 BLOCKED_V6: tuple[str, ...] = (
-    "::/128",
     "::1/128",
     "::ffff:0:0/96",
     "64:ff9b::/96",

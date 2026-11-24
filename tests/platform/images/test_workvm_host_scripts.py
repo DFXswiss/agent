@@ -30,7 +30,9 @@ def test_parses_is_executable_and_never_touches_the_main_ruleset(script: Path) -
     )
     assert not re.search(r"pfctl[^\n|;]*-f\s+/etc/pf\.conf", code)
     assert not re.search(r"pfctl[^\n|;]*\s-d\b", code)
-    assert not re.search(r"pfctl[^\n|;]*\s-F\b", code)  # the rehearsal flushes only through `workvm uninstall`
+    # the rehearsal flushes only through `workvm uninstall`, and its own scratch probe table (a child without rules)
+    flushes = re.findall(r"pfctl[^\n|;]*\s-F\b[^\n]*", code)
+    assert all("com.apple/zzz.agent-workvm-probe" in line for line in flushes)
 
 
 @pytest.mark.parametrize("script", [REHEARSAL, EGRESS], ids=["rehearsal", "egress"])
@@ -97,3 +99,25 @@ def test_rehearsal_sets_the_runner_home_private_and_saves_pf_state_from_stdout_o
     assert saved
     assert all("2>/dev/null" in line and "2>&1" not in line for line in saved)  # as the comparisons (ALTQ notices)
     assert 'pfctl -sA 2>/dev/null | cmp -s - "$log/before.anchors"' in text
+
+
+def test_rehearsal_probes_continuously_and_saves_the_state_of_every_hit() -> None:
+    text = REHEARSAL.read_text(encoding="utf-8")
+    loop = text[text.index('sudo -n -u "$account" /bin/sh -c \'') :]
+    assert "sleep 0.1" in loop  # about every 100 ms
+    for target in ("hit loopback", "hit site_address", "hit internet_disconnected"):
+        assert target in loop
+    snapshot = text[text.index("snapshot() {") : text.index('if [ -n "$port" ]; then')]
+    for saved in (
+        "anchor.txt",
+        "table.txt",
+        "children.txt",
+        "main.txt",
+        "client.txt",
+        "states.txt",
+        "info.txt",
+        "watcher.txt",
+    ):
+        assert saved in snapshot
+    assert text.index("stop_prober\n") < text.index('"$runner" workvm uninstall >"$log/uninstall.txt"')
+    assert "pf-table-probe.txt" in text  # how pf takes `::` into a table, read back from pf itself
