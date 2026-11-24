@@ -22,14 +22,15 @@ The control process (root) reads everything itself; nothing here runs inside a s
   every call.
 * Counters (additive contract fields, contracts/changes/RUN-15.md), counted over the journal records of the session:
   ``hook_denies`` (``session.hook`` with decision ``deny`` or ``block``), ``hook_errors`` (``guest.error``
-  ``hook_handler_failed``), ``sandbox_denials`` (``session.tool`` with ``is_error`` whose result names a refusal of the
-  kernel - ``EACCES``/``EPERM`` or their texts: the hook let the call through and the second layer, Landlock, the unit's
-  device policy or the file modes, refused it; KOR-60, decision D16), ``model_input_tokens`` (input + cache read + cache
-  write), ``model_output_tokens`` (output + thinking), ``model_request_bytes`` and ``model_response_bytes`` of the
-  ``usage`` records. The journal is read incrementally (records after the last one seen); records are pruned only 24 h
-  after the runner acknowledged them, so a 15 s sampler never misses one. After a restart of this process the counting
-  starts again from the records the journal still holds; when older records were pruned meanwhile the value is lower, a
-  counter reset Prometheus handles. The counts of sessions that are no longer active are forgotten.
+  ``hook_handler_failed``), ``sandbox_denials`` (``session.tool`` of a tool other than ``mcp__*`` with ``is_error``
+  whose result names ``EACCES``/``EPERM`` or their texts: the hook let the call through and the kernel - file modes,
+  Landlock, the unit's device policy - refused it; a text match, so an error that merely quotes such a text counts too;
+  KOR-60, decision D16), ``model_input_tokens`` (input + cache read + cache write), ``model_output_tokens`` (output +
+  thinking), ``model_request_bytes`` and ``model_response_bytes`` of the ``usage`` records. The journal is read
+  incrementally (records after the last one seen); records are pruned only 24 h after the runner acknowledged them, so a
+  15 s sampler never misses one. After a restart of this process the counting starts again from the records the journal
+  still holds; when older records were pruned meanwhile the value is lower, a counter reset Prometheus handles. The
+  counts of sessions that are no longer active are forgotten.
 * ``egress_denied``: packets of the session user that the egress filter of 05-runner.md section 4.3 refuses
   (``EgressCounters``). The production table counts all session users together, so this module keeps its own
   count-only table ``inet agent_metrics``: a base chain at priority -10 (before the filter at 0) jumps for the
@@ -80,6 +81,8 @@ DENY_DECISIONS = frozenset({"deny", "block"})
 HOOK_ERROR = "hook_handler_failed"
 # The texts with which the kernel's refusals (EACCES, EPERM) reach a tool result: Node's error codes and messages
 # (Read, Write, Edit, Glob, Grep of Claude Code) and the C library's strerror texts.
+# Platform tools (MCP) answer from the runner, not from the session's own file system: their errors never count.
+MCP_PREFIX = "mcp__"
 KERNEL_REFUSALS = re.compile(r"\bEACCES\b|\bEPERM\b|[Pp]ermission denied|[Oo]peration not permitted")
 INPUT_TOKENS = ("input_tokens", "cache_read_tokens", "cache_write_tokens")
 OUTPUT_TOKENS = ("output_tokens", "thinking_tokens")
@@ -290,7 +293,9 @@ def _number(body: Mapping[str, Any], key: str) -> int:
 
 
 def _kernel_refusal(body: Mapping[str, Any]) -> bool:
-    return body.get("is_error") is True and KERNEL_REFUSALS.search(str(body.get("result_summary", ""))) is not None
+    if body.get("is_error") is not True or str(body.get("name", "")).startswith(MCP_PREFIX):
+        return False
+    return KERNEL_REFUSALS.search(str(body.get("result_summary", ""))) is not None
 
 
 class JournalCounters:

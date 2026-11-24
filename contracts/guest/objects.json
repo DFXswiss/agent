@@ -150,7 +150,7 @@
     },
     "session_metrics": {
       "type": "object",
-      "description": "per-session cgroup counters; mem_max_bytes null = no limit (cgroup 'max'); the optional counters (RUN-15) are counted by the guest since its control process started: oom_kills from memory.events, hook_denies (session.hook deny/block), hook_errors (guest.error hook_handler_failed), sandbox_denials (session.tool errors whose result names a kernel refusal EACCES/EPERM, KOR-60), egress_denied (packets of the session user refused by the egress filter), model tokens and bytes from the usage records",
+      "description": "per-session cgroup counters; mem_max_bytes null = no limit (cgroup 'max'); the optional counters (RUN-15) are counted by the guest since its control process started: oom_kills from memory.events, hook_denies (session.hook deny/block), hook_errors (guest.error hook_handler_failed), sandbox_denials (session.tool errors of non-MCP tools whose result names a kernel refusal EACCES/EPERM, KOR-60), egress_denied (packets of the session user refused by the egress filter), model tokens and bytes from the usage records",
       "properties": {
         "session_id": {
           "$ref": "../common.json#/$defs/uuid"

@@ -19,11 +19,12 @@ Package: evidence for a fresh context per task (KONZEPT idea 43), the live view 
    makes the first task the most recently active one. The spec expected creation order and was red on every device
    since KOR-32 (noted in the INF-07 report); fixed in the spec (E-19: the test was wrong, not the product).
 5. **Live view in E2E-24 by holding the child's final answer back.** The step `child-done` answers after 40 s
-   (`delay_ms`); the parent waits with four `get_subagent_result` calls of 30 s (sequential in Claude Code, as E2E-17
+   (`delay_ms`); the parent waits with five `get_subagent_result` calls of 30 s (sequential in Claude Code, as E2E-17
    already relies on). While the child waits, Claude Code's TUI keeps redrawing, so the terminal grows; the child's
    first answer reaches its chat tab (the transcript follower writes it before the turn ends); the monitoring
    overview lists the child with its own sample in state `working`. After each of the three checks the spec reads the
-   child's state from the hub and requires it to be unfinished. The "pending" note in the header is gone.
+   child's state from the hub and requires it to be unfinished (`idle` counts as finished: a child's first `idle` is
+   the end of its only turn). The "pending" note in the header is gone.
 6. **PERF-06 measures; it sets no target.** Bounds per step (start p95 ≤ 30 s, first answer p95 ≤ 45 s, hub health
    p95 ≤ 1 s, runner status p95 ≤ 10 s, device memory ≤ 85 %, the sessions of one VM ≤ 80 % of its memory, no failed
    session). The capacity is the last step within every bound; the first broken bound, or the device's VM slots,
@@ -37,11 +38,12 @@ Package: evidence for a fresh context per task (KONZEPT idea 43), the live view 
    earlier sessions plus the new ones - the realistic case of many open tasks.
 9. **The kernel-refusal counter counts what reaches a tool result.** The guest image runs Linux 6.8 (Ubuntu 24.04),
    which has no Landlock audit records (from 6.15); the image has no auditd and no eBPF tooling, and a kernel audit
-   client over netlink would not be "small". The guest counts the `session.tool` journal records with `is_error`
-   whose result names `EACCES`/`EPERM` or their texts as `sandbox_denials` (contracts/changes/KOR-60.md); the runner
+   client over netlink would not be "small". The guest counts the `session.tool` journal records of Claude Code's own
+   tools (platform tools `mcp__*` answer from the runner and are left out) with `is_error` whose result names
+   `EACCES`/`EPERM` or their texts as `sandbox_denials` (contracts/changes/KOR-60.md); the runner
    exports `agent_runner_session_sandbox_denials_total{vm,session}`; the sessions dashboard shows it next to the hook
-   denies. A refusal that a program swallows without reporting it to Claude Code is not counted - named as a residual
-   point with a package proposal in the report.
+   denies. It is a text match: a refusal that a program swallows is not counted, an error that merely quotes such a
+   text is - named as a residual point with a package proposal in the report.
 10. **The attack case is E2E-51, not an ATK case.** The PreToolUse policy only allows reads and writes inside the
     workspace, which Landlock allows as well, and hooks fail closed (KOR-40); a refusal by Landlock itself therefore
     needs a failed hook, which the ATK suite covers without counting. A call that the hook rightly allows and the

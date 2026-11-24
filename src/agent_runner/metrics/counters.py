@@ -102,7 +102,7 @@ SESSION_COUNTERS = (
     SessionCounter("agent_runner_session_hook_errors_total", "Hook handler failures of the session.", "hook_errors"),
     SessionCounter(
         "agent_runner_session_sandbox_denials_total",
-        "Tool calls of the session that the kernel refused (EACCES/EPERM) after the hook let them through.",
+        "Failed tool calls of the session whose result names a kernel refusal (EACCES/EPERM).",
         "sandbox_denials",
     ),
     SessionCounter(

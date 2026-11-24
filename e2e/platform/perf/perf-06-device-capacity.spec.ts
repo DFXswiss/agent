@@ -23,11 +23,20 @@ import { PageUser } from '../../../web/e2e/helpers/user.ts';
 import { evaluate, PROMPT } from './measure.ts';
 import { assignPlatformDevice, load, paced, probeWhile, series, type Summary } from './parallel.ts';
 
-/** Step sizes and maxima; the defaults measure a device with 256 GiB and 8 GiB VMs in about 40 minutes. */
-const VM_STEP = Number(process.env.E2E_PERF_CAPACITY_VM_STEP ?? '4');
-const VM_MAX = Number(process.env.E2E_PERF_CAPACITY_VM_MAX ?? '32');
-const STEP = Number(process.env.E2E_PERF_CAPACITY_STEP ?? '6');
-const MAX = Number(process.env.E2E_PERF_CAPACITY_MAX ?? '60');
+/** A positive whole number from the environment (a typo must not skip a part or loop without progress). */
+function count(name: string, fallback: number): number {
+  const text = process.env[name] ?? String(fallback);
+  if (!/^[1-9][0-9]{0,3}$/.test(text)) throw new Error(`${name} must be a positive whole number, not ${text}`);
+  return Number(text);
+}
+
+/** PERF-06 fills a device: it runs only when asked for, in the exclusive measuring mode of the tools. */
+const ENABLED = process.env.E2E_PERF_CAPACITY === '1';
+/** Step sizes and maxima; the defaults measure a device with 256 GiB and 8 GiB VMs in about 15 minutes. */
+const VM_STEP = count('E2E_PERF_CAPACITY_VM_STEP', 4);
+const VM_MAX = count('E2E_PERF_CAPACITY_VM_MAX', 32);
+const STEP = count('E2E_PERF_CAPACITY_STEP', 6);
+const MAX = count('E2E_PERF_CAPACITY_MAX', 60);
 
 /** The fixed bounds of a step (exported to the report as they are). */
 export const BOUNDS = {
@@ -102,6 +111,11 @@ export interface Step {
   readonly runner_ms: Summary;
   readonly probe_failures: number;
   readonly failed_sessions: number;
+  readonly unanswered_sessions: number;
+  /** Sessions of the part not yet ended or suspended (the load the step measured). */
+  readonly alive_sessions: number;
+  /** Samples taken after the step: device (0/1), VMs and sessions found / expected. */
+  readonly samples: { device: number; vms: string; sessions: string };
   readonly device: { cpu_ratio: number | null; mem_used_gib: number | null; mem_ratio: number | null } | null;
   readonly free_vm_slots: number | null;
   readonly vm_rss_gib: number | null;
@@ -160,6 +174,7 @@ test('@PERF-06 @needs-vm the capacity of one device: sessions per VM and VMs per
   e2e,
 }) => {
   test.skip(e2e.topology !== 't1', 'PERF-06 measures the runner device alone (T1, 07-testing.md section 2.2)');
+  test.skip(!ENABLED, 'PERF-06 fills the device: only with E2E_PERF_CAPACITY=1 in the exclusive measuring mode');
   test.setTimeout(10_800_000);
   await orchestrator.loadScenario('model', SCENARIO);
   const device = await platformDevice(orchestrator);
@@ -192,16 +207,15 @@ test('@PERF-06 @needs-vm the capacity of one device: sessions per VM and VMs per
         await Promise.all(groups.map(({ wg, prompts }) => paced(() => user.createTasks(org, wg, prompts))))
       ).flat();
       all.push(...tasks);
-      await expect
-        .poll(
-          async () => {
-            const rows = await sessionsOf(orchestrator, tasks);
-            const failed = rows.filter((row) => row.state === 'failed').length;
-            return failed > 0 || rows.filter((row) => row.answered).length === tasks.length;
-          },
-          { timeout: STEP_WAIT_MS, intervals: [2000] },
-        )
-        .toBe(true);
+      // Until every new session answered, one failed, or the wait is over (then the unanswered ones break the step).
+      const deadline = Date.now() + STEP_WAIT_MS;
+      for (;;) {
+        const rows = await sessionsOf(orchestrator, tasks);
+        const failed = rows.filter((row) => row.state === 'failed').length;
+        const answered = rows.filter((row) => row.answered).length;
+        if (failed > 0 || answered === tasks.length || Date.now() > deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+      }
     } finally {
       done = true;
     }
@@ -252,9 +266,17 @@ test('@PERF-06 @needs-vm the capacity of one device: sessions per VM and VMs per
         : null;
     const vmRatio = part === 'sessions-in-one-vm' && vmLimit > 0 ? sum / vmLimit : null;
     const failed = rows.filter((row) => row.state === 'failed').length;
+    const newRows = rows.filter((row) => tasks.includes(row.task_id));
+    const unanswered = tasks.length - newRows.filter((row) => row.answered).length;
+    const alive = rows.filter((row) => !['suspended', 'stopping', 'stopped', 'failed'].includes(row.state)).length;
+    const samplesComplete =
+      deviceSample !== undefined && vmSamples.length === vms.length && sessionSamples.length === rows.length;
     const broken: string[] = [];
     const p95 = (summary: Summary) => summary.p95 ?? Number.POSITIVE_INFINITY;
     if (failed > 0) broken.push(`failed sessions ${failed}`);
+    if (unanswered > 0) broken.push(`unanswered sessions ${unanswered}`);
+    // Without every sample the memory bounds cannot be judged; a missing sample is a finding of its own.
+    if (!samplesComplete) broken.push('samples incomplete');
     if (p95(startSeries.summary) > BOUNDS.start_p95_s) broken.push('start_p95_s');
     if (p95(answerSeries.summary) > BOUNDS.answer_p95_s) broken.push('answer_p95_s');
     if (hub.durations.length > 0 && p95(hubSeries.summary) > BOUNDS.hub_p95_ms) broken.push('hub_p95_ms');
@@ -273,6 +295,13 @@ test('@PERF-06 @needs-vm the capacity of one device: sessions per VM and VMs per
       runner_ms: runnerSeries.summary,
       probe_failures: hub.failures + runner.failures,
       failed_sessions: failed,
+      unanswered_sessions: unanswered,
+      alive_sessions: alive,
+      samples: {
+        device: deviceSample === undefined ? 0 : 1,
+        vms: `${vmSamples.length}/${vms.length}`,
+        sessions: `${sessionSamples.length}/${rows.length}`,
+      },
       device:
         deviceSample === undefined
           ? null
@@ -327,16 +356,16 @@ test('@PERF-06 @needs-vm the capacity of one device: sessions per VM and VMs per
   let stopB = `reached ${MAX} VMs`;
   for (let vms = 0; vms < MAX;) {
     const add = Math.min(STEP, MAX - vms);
-    const [capacity] = await orchestrator.hubQuery<{ free: number; total: number }>(
-      `SELECT (capacity->>'vm_slots_free')::int AS free, (capacity->>'vm_slots_total')::int AS total
+    // The pool VMs count as used slots but take the next first tasks (05-runner.md section 3.4).
+    const [capacity] = await orchestrator.hubQuery<{ free: number | null; total: number | null; ready: number | null }>(
+      `SELECT (capacity->>'vm_slots_free')::int AS free, (capacity->>'vm_slots_total')::int AS total,
+              (capacity->>'pool_ready')::int AS ready
          FROM hub.device WHERE id = '${uuid(device)}'`,
     );
-    // The pool VMs count as used slots but take the next first tasks (05-runner.md section 3.4).
-    const [pool] = await orchestrator.hubQuery<{ ready: number }>(
-      `SELECT coalesce((capacity->>'pool_ready')::int, 0) AS ready FROM hub.device WHERE id = '${uuid(device)}'`,
-    );
-    if (capacity!.free + pool!.ready < add) {
-      stopB = `VM slots: ${capacity!.free} free + ${pool!.ready} pool of ${capacity!.total} for ${add} more VMs`;
+    expect(capacity?.free ?? null, "the device's free VM slots").not.toBeNull();
+    const { free, total, ready } = capacity!;
+    if (free! + (ready ?? 0) < add) {
+      stopB = `VM slots: ${free} free + ${ready ?? 0} pool of ${total} for ${add} more VMs`;
       break;
     }
     const groups: { wg: string; prompts: string[] }[] = [];

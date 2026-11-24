@@ -99,7 +99,7 @@ the end: no outbound connection except to the doubles (egress log of the orchest
 | PERF-03 | Event latency | runner outbox write → browser frame, 1000 events: p95 < 300 ms (T1 and T2) |
 | PERF-04 | Terminal live latency | recorder write → xterm render: p95 < 1 s |
 | PERF-05 | 30 parallel VMs | 30 workgroups with one session each on the runner device; all reach `working`; hub and runner stay responsive (PERF-03 holds) |
-| PERF-06 | Device capacity (KOR-60) | Stepwise load on one runner device with the model double, exclusive measuring mode: sessions in one workgroup VM, then workgroup VMs with one session each, until a fixed bound breaks (start p95 ≤ 30 s, first answer p95 ≤ 45 s, hub health p95 ≤ 1 s, runner status p95 ≤ 10 s, device memory ≤ 85 %, session memory of one VM ≤ 80 % of the VM) or no VM slot is left. Records the capacity statement (section 2.2.1), no target: fails only when no step stayed within the bounds |
+| PERF-06 | Device capacity (KOR-60) | Stepwise load on one runner device with the model double, only with `E2E_PERF_CAPACITY=1` in the exclusive measuring mode: sessions in one workgroup VM, then workgroup VMs with one session each, until a fixed bound breaks (start p95 ≤ 30 s, first answer p95 ≤ 45 s, hub health p95 ≤ 1 s, runner status p95 ≤ 10 s, device memory ≤ 85 %, session memory of one VM ≤ 80 % of the VM, every new session answered, every sample present) or no VM slot is left. Records the capacity statement (section 2.2.1), no target: fails only when no step stayed within the bounds |
 
 ### 2.3 Attack suite (ATK)
 

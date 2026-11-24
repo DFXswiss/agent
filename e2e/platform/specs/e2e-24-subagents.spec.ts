@@ -57,8 +57,8 @@ interface MonitoredSession {
   readonly latest: { readonly state: string; readonly mem_used_bytes: number | null } | null;
 }
 
-/** States after which a session no longer runs. */
-const ENDED = ['stopping', 'stopped', 'failed'];
+/** States after which a child no longer runs: its first `idle` is the end of its only turn (05-runner.md section 13). */
+const ENDED = ['idle', 'stopping', 'stopped', 'failed'];
 
 interface JournalEntry {
   readonly path: string;

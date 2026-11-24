@@ -31,8 +31,8 @@ request that does not satisfy the next step's ``expect`` is a failure: it is ans
 ``invalid_request_error`` naming the mismatch, so Claude Code stops instead of drifting. ``max_user_messages``
 bounds the messages with role ``user`` (a fresh conversation has exactly one; Claude Code adds a ``system`` message
 with its environment); ``text_absent`` lists texts that must appear
-nowhere in the request, neither in the system prompt nor in any message (text or tool result) - together they show
-that a request carries no history of another conversation. ``side`` steps are never
+neither in the system prompt nor in the text and tool-result blocks of any message - together they show that a
+request carries no history of another conversation. ``side`` steps are never
 consumed: a request that matches one of them (checked before the ordered steps) is answered by it; they serve
 background requests (title generation and the like) that are not part of the conversation under test.
 

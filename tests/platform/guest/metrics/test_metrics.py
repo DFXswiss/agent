@@ -254,6 +254,8 @@ def test_journal_counters_count_each_record_once(context: ControlContext) -> Non
         ("Permission denied", False),
     ):
         journal.append("session.tool", tool_record(result, is_error), SESSION_ID)
+    platform_error = {**tool_record("GitHub: Permission denied", True), "name": "mcp__platform__request_operation"}
+    journal.append("session.tool", platform_error, SESSION_ID)
     counters = metrics.JournalCounters()
     counters.update(context)
     expected = {

@@ -1,6 +1,6 @@
 {
   "name": "e2e-24-subagents",
-  "description": "E2E-24: controlled subagents. The parent requests a reviewer through subagent.request and waits with get_subagent_result; the child requests a grandchild the same way; the grandchild's own request exceeds the depth limit (limit_exceeded). Then the parent requests four children at once: three run, the fourth exceeds the limit of running children per task. The parallel children answer through a side step (their order is not fixed). The parallel children answer after 8 s, so all three are still running when the fourth request is checked. The child's final answer comes 40 s late (KOR-60): meanwhile the child is running and the spec watches it live - its terminal grows, its chat shows its first answer and the monitoring has its own samples - before it ends; the parent waits up to 4 x 30 s for it.",
+  "description": "E2E-24: controlled subagents. The parent requests a reviewer through subagent.request and waits with get_subagent_result; the child requests a grandchild the same way; the grandchild's own request exceeds the depth limit (limit_exceeded). Then the parent requests four children at once: three run, the fourth exceeds the limit of running children per task. The parallel children answer through a side step (their order is not fixed). The parallel children answer after 8 s, so all three are still running when the fourth request is checked. The child's final answer comes 40 s late (KOR-60): meanwhile the child is running and the spec watches it live - its terminal grows, its chat shows its first answer and the monitoring has its own samples - before it ends; the parent waits up to 5 x 30 s for it.",
   "steps": [
     {
       "id": "parent-request",
@@ -42,6 +42,14 @@
       },
       "reply": {
         "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${child}",
+              "wait_seconds": 30
+            }
+          },
           {
             "type": "tool_use",
             "name": "mcp__platform__get_subagent_result",

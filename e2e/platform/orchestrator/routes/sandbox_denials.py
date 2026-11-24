@@ -22,14 +22,15 @@ from orchestrator.control import Route, RouteError
 
 MAX_TEXT = 4096
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-# Root: write the file with the mode set before any byte is in it, then hand it to root:root.
+# Root: create the file (never through a link the session user may have put there), owner and mode on the open file
+# descriptor, then the text.
 LOCK_SCRIPT = """import os, sys
 path, text = sys.argv[1], sys.argv[2]
 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+os.fchown(fd, 0, 0)
+os.fchmod(fd, 0o600)
 with os.fdopen(fd, "w", encoding="utf-8") as handle:
     handle.write(text)
-os.chown(path, 0, 0)
-os.chmod(path, 0o600)
 """
 # Root: `GET /v1/metrics` on the guest's control socket with the control token.
 METRICS_SCRIPT = """import http.client, json, socket, sys
@@ -79,8 +80,12 @@ def post_locked_file(ctx: Context, params: dict[str, str], body: Any) -> tuple[i
 def get_guest_metrics(ctx: Context, params: dict[str, str], _body: Any) -> tuple[int, Any]:
     session = params["session"]
     vm = _vm(ctx, session)
-    answer = json.loads(_checked(ctx, vm, ["python3", "-I", "-c", METRICS_SCRIPT]))
-    found = [item for item in answer.get("sessions", []) if item.get("session_id") == session]
+    text = _checked(ctx, vm, ["python3", "-I", "-c", METRICS_SCRIPT])
+    try:
+        answer = json.loads(text)
+        found = [item for item in answer["sessions"] if item["session_id"] == session]
+    except (ValueError, TypeError, KeyError) as exc:
+        raise RouteError(500, "failed", f"GET /v1/metrics in {vm}: unexpected answer ({exc!r})") from None
     return 200, {"vm": vm, "session": found[0] if found else None}
 
 

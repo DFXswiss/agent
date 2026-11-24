@@ -40,5 +40,14 @@ def test_guest_metrics(tmp_path: Path) -> None:
     assert call(ctx, "GET", f"/sessions/{SESSION}/guest-metrics") == (200, {"vm": VM1, "session": entry})
     answer["sessions"] = []
     assert call(ctx, "GET", f"/sessions/{SESSION}/guest-metrics") == (200, {"vm": VM1, "session": None})
+    for broken in ("not json", "{}", '{"sessions": [1]}', '{"sessions": [{}]}'):
+
+        def answering(_vm: str, _argv: list[str], text: str = broken) -> Result | None:
+            return ok(text)
+
+        ctx, _ = scripted(tmp_path, session_handler(answering))
+        found = call(ctx, "GET", f"/sessions/{SESSION}/guest-metrics")
+        assert found[0] == 500
+        assert "unexpected answer" in found[1]["detail"]
     ctx, _ = scripted(tmp_path, session_handler(lambda vm, argv: failed(1, "GET /v1/metrics: 503")))
     assert call(ctx, "GET", f"/sessions/{SESSION}/guest-metrics")[0] == 500
