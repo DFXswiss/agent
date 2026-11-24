@@ -1,8 +1,9 @@
 # INF-09 – test fixes so that the gate steps run reliably in a Linux VM
 
-The work-package tools run `platform-web`, `platform-e2e` and `platform-contracts` inside a Linux VM with fixed vCPUs on
-the large test device (fixed resources per run, no overbooking). Four tests depended on timing that differs between
-macOS and Linux; they now wait for the condition or cover the branch deterministically. No product code changed.
+The work-package tools are to run `platform-web`, `platform-e2e` and `platform-contracts` inside a Linux VM with fixed
+vCPUs on the large test device (fixed resources per run, no overbooking). Three places in the tests depended on timing
+that differs between macOS and Linux; they now wait for the condition or cover the branch deterministically. No
+product code changed.
 
 1. `web/tests/core/store/reader.test.ts`: three cases waited a fixed 20 event-loop turns (`settle()`) for WebCrypto
    work that needs more turns on Linux. They now wait for the expected state (`vi.waitFor`, 5 s limit, 10 ms interval).

@@ -19,8 +19,7 @@ describe('joined notice', () => {
     act(() => noteJoined(w.store, { org: w.org, orgName: '' }));
     const notice = screen.getByTestId('shell.joined');
     expect(notice).toHaveAttribute('data-org', w.org);
-    expect(notice.textContent).not.toContain('undefined');
-    expect(notice.textContent).toMatch(/^You are now a member of /);
+    expect(notice).toHaveTextContent('You are now a member of an organization.');
     fireEvent.click(screen.getByTestId('shell.joined.close'));
     expect(screen.queryByTestId('shell.joined')).toBeNull();
   });
