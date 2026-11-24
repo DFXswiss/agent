@@ -128,4 +128,14 @@ describe('lazy screens', () => {
     fireEvent.click(screen.getByTestId('error.reload'));
     expect(onReload).toHaveBeenCalledOnce();
   });
+
+  it('reloads the document by default', () => {
+    render(
+      <I18nProvider value={createI18n('en')}>
+        <ScreenUnavailable />
+      </I18nProvider>,
+    );
+    // jsdom cannot navigate; as for the error page (tests/ui/app.test.tsx), the default handler runs without failing
+    expect(() => fireEvent.click(screen.getByTestId('error.reload'))).not.toThrow();
+  });
 });
