@@ -27,7 +27,12 @@
    compares every written file byte for byte.
 6. `decisions/CRY-03.md` items 2, 3 and 6 and `acceptance/CRY-03.md` described the old stamp and invocation; they
    now point here.
-7. **Untracked files (review, medium, not changed).** The tool reads every `.py` and `.json` file in the reference
+7. **Former call accepted.** The rebase step of the work-package merge tool (outside this repository) calls
+   `copy_tool.py --agent-core . --rev HEAD [--check]`. The tool accepts exactly these values (hidden options) and reads
+   the working tree, which equals `HEAD` in that clean rebase tree; any other value ends with a usage error, so no
+   caller silently gets the tree instead of another commit. The options can go once the merge tool calls
+   `copy_tool.py [--check]`.
+8. **Untracked files (review, medium, not changed).** The tool reads every `.py` and `.json` file in the reference
    directories, tracked or not, and skips hidden entries and `__pycache__`. Reading the index through `git` would
    bring back a subprocess and the work package asks for an uncommitted reference to be copyable (a new module before
    `git add`). A stray file there is also collected by the hub's own test run, so it is visible in the same place;

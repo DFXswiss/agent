@@ -267,6 +267,18 @@ def test_main_check_and_write(
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
 
 
+def test_main_accepts_only_the_former_call_for_this_tree(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(REPO_ROOT)
+    assert tool.main(["--agent-core", ".", "--rev", "HEAD", "--check"]) == 0
+    for argv in (["--rev", "origin/develop", "--check"], ["--agent-core", "..", "--check"]):
+        with pytest.raises(SystemExit) as exited:
+            tool.main(argv)
+        assert exited.value.code == 2
+        assert "only accepted as . HEAD" in capsys.readouterr().err
+
+
 def test_tree_reference_reads_the_working_tree(tmp_path: Path) -> None:
     (tmp_path / "d" / "__pycache__").mkdir(parents=True)
     (tmp_path / "d" / ".hidden.py").write_text("H\n", encoding="utf-8")

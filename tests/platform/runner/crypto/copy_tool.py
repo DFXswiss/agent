@@ -321,7 +321,15 @@ def render_origin(origin: dict[str, object]) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     parser.add_argument("--check", action="store_true", help="report differences, write nothing")
+    # The former call `--agent-core . --rev HEAD` (the rebase step of the work-package merge tool still uses it) is
+    # accepted in exactly that form and reads the working tree like every call; any other value is refused.
+    parser.add_argument("--agent-core", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--rev", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.rev not in (None, "HEAD") or (args.agent_core is not None and args.agent_core.resolve() != REPO_ROOT):
+        parser.error(
+            "the reference is the working tree of this repository; --agent-core/--rev are only accepted as . HEAD"
+        )
     files, origin = build(tree_reference(REPO_ROOT))
     files[ORIGIN_FILE] = render_origin(origin)
     differing = []
