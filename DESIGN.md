@@ -1156,9 +1156,12 @@ untrusted guidance; cancellation ends the order. The proposed approach is not
 passed to the implementer. Without `<first>:check`, an issue-only worker stores
 the opinion as `unavailable`.
 
-Every order pull request has review 1 and review 2. The roles bound to
-`<first>:implementer`, `<first>:reviewer`, `<first>:pr-reviewer-quality`, and
-`<first>:pr-reviewer-logic` must name the same model. Review 2 uses the distinct
+Every order pull request has review 1 and review 2. Without a separate
+implementer, the roles bound to `<first>:implementer`, `<first>:reviewer`,
+`<first>:pr-reviewer-quality`, and `<first>:pr-reviewer-logic` must name the
+same model. With a separate implementer, `<first>:reviewer`,
+`<first>:pr-reviewer-quality`, and `<first>:pr-reviewer-logic` must name one
+model, and `<implementer>:implementer` may name another. Review 2 uses the distinct
 provider in model slot `second`. The fact `review_2` means that review is free
 of findings on the current head, or a human waived it for this order. It is
 required by CI and readiness.

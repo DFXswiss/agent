@@ -17,6 +17,7 @@ from .model_slots import (
     ModelSlotsError,
     canonical_checklist,
     canonical_stage,
+    implementer_for_new_record,
     implementer_from_snapshot,
     models_from_snapshot,
 )
@@ -880,6 +881,13 @@ def pin_owner_repository(
         # Check and bind before pinning anything, so a refusal leaves accept re-runnable.
         ai = load_ai_accounts(store.home)
         if ai.models.as_dict() != task.get("models") or worker.a38 != bool(c.get("a38")):
+            raise CoordinatorError("task model configuration changed before acceptance")
+        # The binding hashes a separate implementer; the lane launches from the pin.
+        try:
+            pinned_implementer = implementer_for_new_record(task)
+        except ModelSlotsError as exc:
+            raise CoordinatorError(str(exc)) from exc
+        if ai.implementer != pinned_implementer:
             raise CoordinatorError("task model configuration changed before acceptance")
         binding = execution_binding(
             store,

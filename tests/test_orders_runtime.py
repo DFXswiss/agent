@@ -814,6 +814,42 @@ def test_pin_owner_repository_without_base_matches_the_issue_path(tmp_path: Path
     assert source["repository_config"]["base"] == "main"
 
 
+def test_pin_owner_repository_refuses_an_implementer_changed_after_creation(
+    tmp_path: Path,
+) -> None:
+    store, worker, task, scoped_runner = owner_pin_fixture(tmp_path)
+    assert "implementer" not in task
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["implementer"] = "driver-c"
+    data["accounts"]["driver-c-w"] = {
+        "provider": "driver-c",
+        "config_dir": "/test/driver-c",
+    }
+    data["roles"]["driver-c-impl"] = {
+        "account": "driver-c-w",
+        "model": "driver-c-model",
+        "access": "workspace-write",
+    }
+    data["sessions"]["worker-session"]["lanes"]["driver-c:implementer"] = (
+        "driver-c-impl"
+    )
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(
+        CoordinatorError, match="task model configuration changed before acceptance"
+    ):
+        pin_owner_repository(
+            store,
+            worker,
+            task,
+            lambda _argv: pytest.fail("unscoped runner must not be called"),
+            scoped_runner,
+            SimpleNamespace(login="worker-bot"),
+        )
+    assert "repository_config" not in coord(task)["source"]
+    assert "execution_binding" not in coord(task)
+
+
 def test_pin_owner_repository_refuses_an_invalid_base(tmp_path: Path) -> None:
     store, worker, task, scoped_runner = owner_pin_fixture(tmp_path)
     with pytest.raises(StoreError, match="invalid base branch"):
