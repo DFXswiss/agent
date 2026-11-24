@@ -9,6 +9,11 @@ the agent passes can become shell syntax.
 refused), the digest checked **on that copy**, the request moved into the spool (0700 root) together with the name
 of the request file's owner (the account the runner will run as), then `installer`; the directory is removed on
 exit. `UNINSTALL` runs the root helper of the installed payload.
+
+Without a dialog (E-27): a caller that is root, or whose `sudo -n true` succeeds (it may already act as
+administrator without a password, e.g. on a Mac reached over ssh), runs the same script with the same arguments
+through `/bin/sh` (`direct_argv`, under `sudo -n` unless it is root). No right is added: only what the caller has is
+used.
 """
 
 from __future__ import annotations
@@ -16,6 +21,9 @@ from __future__ import annotations
 from agent_runner.install.layout import Layout
 
 OSASCRIPT = "/usr/bin/osascript"
+SUDO = "/usr/bin/sudo"
+SHELL = "/bin/sh"
+SCRIPT_NAME = "dfx-agent-runner"
 INSTALL = """set -eu
 umask 077
 package=$1
@@ -57,6 +65,12 @@ INSTALL_PROMPT = "DFX Agent wants to install the DFX execution service on this M
 UNINSTALL_PROMPT = "DFX Agent wants to remove the DFX execution service from this Mac."
 INSTALL_SENTENCE = "macOS asks once for your password: this installs the DFX execution service on this Mac."
 UNINSTALL_SENTENCE = "macOS asks once for your password: this removes the DFX execution service from this Mac."
+DIRECT_INSTALL_SENTENCE = (
+    "No dialog: this account already has administrator rights, so this installs the DFX execution service on this Mac."
+)
+DIRECT_UNINSTALL_SENTENCE = (
+    "No dialog: this account already has administrator rights, so this removes the DFX execution service from this Mac."
+)
 
 
 def install_script(layout: Layout | None = None) -> str:
@@ -83,3 +97,10 @@ def install_argv(package: str, digest: str, request: str, layout: Layout | None 
 
 def uninstall_argv(layout: Layout | None = None) -> list[str]:
     return osascript_argv(uninstall_script(layout), ("", "", ""), UNINSTALL_PROMPT)
+
+
+def direct_argv(script: str, arguments: tuple[str, str, str], *, root: bool) -> list[str]:
+    """The administrator step without a dialog: the same script and arguments through `/bin/sh`, under `sudo -n`
+    (never asks, fails instead) unless the caller is root."""
+    command = [SHELL, "-c", script, SCRIPT_NAME, *arguments]
+    return command if root else [SUDO, "-n", *command]

@@ -100,7 +100,10 @@ The two ways only differ in how the code reaches the spool:
   quoted with `quoted form of`. As root it makes a root-only directory, copies the package (`cp -P`) and the request
   into it, checks the digest of the copy, moves the request and the name of its owner into the spool and runs
   `installer -pkg <copy> -target /`. The agent says in one sentence what the dialog means: "macOS asks once for your
-  password: this installs the DFX execution service on this Mac." Installing again is idempotent.
+  password: this installs the DFX execution service on this Mac." Installing again is idempotent. Amended by HOT-19
+  (E-27): a caller that already has the rights takes no dialog - root runs the same script directly, a caller whose
+  `sudo -n true` succeeds runs it under `sudo -n` (the result names the way as `admin`); no right is added. The owner
+  stays the owner of the request file, so the calling account, also without anybody at the screen.
 - **Download** (device screen): the screen shows the code once and a "Download for Mac" link. Installer.app shows its
   own dialog; `postinstall` (not a command-line install) asks the logged-in owner for the code in a dialog of the
   owner's session (`launchctl asuser`), writes it to the spool and enrolls. Cancelling leaves an installed, unenrolled

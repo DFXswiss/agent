@@ -72,3 +72,20 @@ Decision (one place each, not per route):
   skip `HEAD` or expect it next to `GET`; `test_head.py` checks it for every route as discovered.
 - A route whose answer changes with every call (`GET /v1/me/audit` lists the read it just recorded) cannot have equal
   lengths in two calls; the test compares its status and other headers and pins this list.
+
+## Part 2: `device add` and `device remove` without a dialog (E-27)
+
+- Way (`ownmac.admin_way`): root caller → `root` (the script runs through `/bin/sh` directly); otherwise
+  `sudo -n true` succeeds → `sudo` (the same script and arguments through `sudo -n /bin/sh -c …`, never prompting);
+  otherwise the `osascript` dialog as before. The test seam stands in for the dialog and keeps the dialog way. The
+  result names the way (`admin`) and returns the sentence for it (`dialog`: the dialog sentence, or "No dialog: …").
+  No right is added; the script is the constant of `agent_runner.install.admin`, its arguments as before.
+- Owner without a screen session: `owner.resolve` takes the recorded owner, then the spooled one (the owner of the
+  request file, recorded by the administrator script), then the user at the screen; on the agent way the spooled owner
+  always exists, so nobody at the screen is needed and `owner_unknown` cannot occur there. The runner is a
+  LaunchDaemon with `UserName` (`RunAtLoad`, `KeepAlive`), so it starts without a login and after a restart.
+- A root caller of `device add` is refused before anything happens (`invalid_argument`, `owner_root`): the request
+  file would belong to root, which the administrator script refuses as owner, and root never owns a device; the
+  next step tells the agent to run as the account that is to own the device. `device remove` works as root.
+- `sudo -n true` is asked once per command; if the cached rights expire before the step, the step fails with
+  `install_failed` (`admin_step`/`removal_step`) and the command can be run again.

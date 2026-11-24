@@ -710,6 +710,27 @@ def test_publish_without_a_state_or_a_runner(kit: Kit) -> None:
     )
 
 
+def test_publish_keeps_the_device_while_the_status_cannot_be_read(kit: Kit) -> None:
+    """Right after an enrollment and at boot the runner's store is still starting and `status` fails: that is no
+    removal (HOT-19, measured in a macOS guest). The device stays as last known; an enrollment of this run names it."""
+    write_state(kit.layout.state_file, {"enrolled": True, "device_id": "dev-9", "enrollment": "enrolled"})
+    runner_commands(kit.run, {"status": "not json"})
+    fields = root.publish(context(kit), MANIFEST, Maintenance())
+    assert (fields["enrolled"], fields["device_id"], fields["revoked"]) == (True, "dev-9", "unknown")
+    write_state(kit.layout.state_file, {"enrolled": False, "device_id": "stale"})
+    fields = root.publish(context(kit), MANIFEST, Maintenance())
+    assert (fields["enrolled"], fields["device_id"]) == (False, "")
+    enrolled = {"enrollment": "enrolled", "device_id": "dev-10"}
+    fields = root.publish(context(kit), MANIFEST, Maintenance(), enrollment=enrolled)
+    assert (fields["enrolled"], fields["device_id"], fields["enrollment"]) == (True, "dev-10", "enrolled")
+    # an enrollment without a device ID changes nothing; a readable status decides
+    fields = root.publish(context(kit), MANIFEST, Maintenance(), enrollment={"enrollment": "enrolled"})
+    assert (fields["enrolled"], fields["device_id"]) == (True, "dev-10")
+    runner_commands(kit.run, {"status": status_doc()})
+    fields = root.publish(context(kit), MANIFEST, Maintenance(), enrollment={"enrollment": "failed"})
+    assert (fields["enrolled"], fields["device_id"]) == (True, "dev-1")
+
+
 # --- removal --------------------------------------------------------------------------------------------------------
 
 

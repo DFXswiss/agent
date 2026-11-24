@@ -11,7 +11,12 @@
   device screen does), then runs the helper's removal in one dialog (cancelled: the maintenance daemon removes the
   installation itself after the verified `remove`); prints what was removed and what is left.
 
-The administrator step is `osascript`; tests and the E2E suite replace it with the program named in
+The administrator step is the `osascript` dialog, unless the caller already has the rights without one (E-27): a
+root caller runs the script directly, a caller whose `sudo -n true` succeeds runs it under `sudo -n` (`admin_way`; the
+output names the way as `admin`: `dialog`, `sudo` or `root`). The runner's owner is the owner of the request file,
+so on these ways too it is the calling account, also without anybody logged in at the screen; `device add` therefore
+refuses a root caller (`invalid_argument`, `owner_root`): it is run as the account that is to own the device. Tests
+and the E2E suite replace the step with the program named in
 `AGENT_PLATFORM_DEVICE_ADMIN`, and the layout's root with `AGENT_PLATFORM_DEVICE_ROOT` (both only together; the program
 gets the same three arguments as the root script); with them `AGENT_PLATFORM_DEVICE_KEYS` (comma-separated) adds
 release keys of a test release. Nothing here runs as root itself.
@@ -61,6 +66,7 @@ NOTICE = (
     "workgroups you are not a member of - including what is kept on the Mac after a task ran."
 )
 LOGIN_ITEMS = "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
+DIALOG, SUDO, ROOT = "dialog", "sudo", "root"
 
 
 @dataclass
@@ -131,17 +137,31 @@ def read_state(machine: Machine) -> dict[str, Any] | None:
     return read_json(machine.layout.state_file)
 
 
-def _admin_argv(machine: Machine, install: bool, arguments: tuple[str, str, str]) -> list[str]:
+def admin_way(machine: Machine) -> str:
+    """How the administrator step runs: `root` for a root caller, `sudo` when `sudo -n true` succeeds (the caller may
+    act as administrator without a password now), else `dialog` (also for the test seam, which stands in for it)."""
+    if machine.admin is not None:
+        return DIALOG
+    if machine.system.geteuid() == machine.system.root_uid:
+        return ROOT
+    return SUDO if machine.system.run([admin.SUDO, "-n", "true"]).returncode == 0 else DIALOG
+
+
+def _admin_argv(machine: Machine, install: bool, arguments: tuple[str, str, str], way: str) -> list[str]:
     if machine.admin is not None:
         return [*machine.admin, "install" if install else "uninstall", *arguments]
+    if way != DIALOG:
+        script = admin.install_script(machine.layout) if install else admin.uninstall_script(machine.layout)
+        return admin.direct_argv(script, arguments, root=way == ROOT)
     if install:
         return admin.install_argv(*arguments, layout=machine.layout)
     return admin.uninstall_argv(machine.layout)
 
 
-def run_admin(machine: Machine, install: bool, arguments: tuple[str, str, str]) -> str:
-    """Run the one administrator step; its standard output. A cancelled dialog is `admin_cancelled`."""
-    done = machine.system.run(_admin_argv(machine, install, arguments))
+def run_admin(machine: Machine, install: bool, arguments: tuple[str, str, str], way: str = DIALOG) -> str:
+    """Run the one administrator step the `way` of `admin_way`; its standard output. A cancelled dialog is
+    `admin_cancelled`."""
+    done = machine.system.run(_admin_argv(machine, install, arguments, way))
     if done.returncode != 0:
         if "-128" in done.stderr or "User canceled" in done.stderr:
             raise PlatformError("admin_cancelled")
@@ -179,6 +199,10 @@ def devices_org_of(account: Account, wg: str) -> str:
 
 def device_add(account: Account, machine: Machine, org: str | None, wgs: list[str]) -> dict[str, Any]:
     checks = check_mac(machine)
+    way = admin_way(machine)
+    if way == ROOT:
+        # The runner runs as the owner of the request file, and root can never own a device.
+        raise PlatformError("invalid_argument", reason="owner_root")
     state = read_state(machine)
     if state is not None and state.get("enrolled") is True:
         raise PlatformError("device_installed", device_id=str(state.get("device_id", "")))
@@ -200,7 +224,7 @@ def device_add(account: Account, machine: Machine, org: str | None, wgs: list[st
             handle.write(str(invitation["code"]) + "\n")
         started = machine.system.now().strftime(update.TIME_FORMAT)
         try:
-            run_admin(machine, True, (str(package_path), feed.package_sha256, str(request)))
+            run_admin(machine, True, (str(package_path), feed.package_sha256, str(request)), way)
         except PlatformError:
             # A cancelled or failed dialog leaves no open invitation behind (best effort; it expires in an hour).
             membership.follow_up(lambda: membership.invite_revoke(account, chosen_org, str(invitation["invite_id"])))
@@ -221,7 +245,8 @@ def device_add(account: Account, machine: Machine, org: str | None, wgs: list[st
         "golden": final.get("golden", "unknown"),
         "owner": final.get("owner", ""),
         "checks": checks,
-        "dialog": admin.INSTALL_SENTENCE,
+        "admin": way,
+        "dialog": admin.INSTALL_SENTENCE if way == DIALOG else admin.DIRECT_INSTALL_SENTENCE,
         "notice": NOTICE,
     }
 
@@ -242,7 +267,8 @@ def device_remove(account: Account, machine: Machine) -> dict[str, Any]:
                 raise
         else:
             unpaired = {**membership.member_remove(account, org, device), "device_id": device, "unpaired": True}
-    output = run_admin(machine, False, ("", "", ""))
+    way = admin_way(machine)
+    output = run_admin(machine, False, ("", "", ""), way)
     lines = [line for line in output.strip().splitlines() if line.startswith("{")]
     try:
         removal = json.loads(lines[-1]) if lines else {}
@@ -254,7 +280,8 @@ def device_remove(account: Account, machine: Machine) -> dict[str, Any]:
         **unpaired,
         "removed": removal.get("removed", []),
         "leftovers": removal.get("leftovers", []),
-        "dialog": admin.UNINSTALL_SENTENCE,
+        "admin": way,
+        "dialog": admin.UNINSTALL_SENTENCE if way == DIALOG else admin.DIRECT_UNINSTALL_SENTENCE,
     }
 
 
@@ -271,11 +298,13 @@ def _remove(account: Account, args: argparse.Namespace, context: Context) -> dic
 
 ADD_LOOKUP = {
     "example": "agent-platform device add --this-computer [--org <org_id>] [--wg <wg_id> ...]",
-    "words": "eigener mac rechner computer gerät anbinden installieren own mac computer device connect install",
+    "words": "eigener mac rechner computer gerät anbinden installieren dialog ohne dialog sudo ssh fernzugriff "
+    "own mac computer device connect install dialog without dialog sudo ssh remote headless",
 }
 REMOVE_LOOKUP = {
     "example": "agent-platform device remove --this-computer",
-    "words": "eigener mac rechner gerät entfernen deinstallieren own mac device remove uninstall",
+    "words": "eigener mac rechner gerät entfernen deinstallieren dialog ohne dialog sudo ssh "
+    "own mac device remove uninstall dialog without dialog sudo ssh headless",
 }
 
 
@@ -291,7 +320,7 @@ def register(tree: Tree) -> None:
         group,
         "add",
         _add,
-        "make this Mac an execution device of the organization (one macOS dialog)",
+        "make this Mac an execution device of the organization (one macOS dialog; none with sudo rights)",
         writes=True,
         **lookup(tree, ADD_LOOKUP),
     )
@@ -302,7 +331,7 @@ def register(tree: Tree) -> None:
         group,
         "remove",
         _remove,
-        "unpair this Mac and remove the installation (one macOS dialog)",
+        "unpair this Mac and remove the installation (one macOS dialog; none with sudo rights)",
         writes=True,
         **lookup(tree, REMOVE_LOOKUP),
     )

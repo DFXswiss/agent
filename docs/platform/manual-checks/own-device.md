@@ -27,10 +27,11 @@ that serves a release (runbook `own-device-release.md`).
 
 | # | Step | Expected |
 |---|---|---|
-| 1 | The person's agent runs `agent-platform device add --this-computer` | the agent says the dialog sentence; **one** macOS dialog naming DFX; after it the command returns `device_id`, the workgroup and the notice |
+| 1 | The person's agent runs `agent-platform device add --this-computer` (the account's `sudo -n true` fails, so the dialog way is taken) | the agent says the dialog sentence; **one** macOS dialog naming DFX; after it the command returns `device_id`, the workgroup, the notice and `admin: "dialog"` |
 | 2 | Devices page of the organization | the Mac is listed as own device, online, in the workgroup |
 | 3 | A task in that workgroup | it starts on the Mac (first start includes building the golden image) and answers |
 | 4 | System Settings → General → Login Items | `dfx-agent-runner` listed; switching it off makes `state.json` show `disabled_in_login_items: true` and the agent open that pane on its next `device add` |
 | 5 | The agent runs `agent-platform device remove --this-computer` | one dialog; `leftovers` empty; the Mac is gone from the devices page; `~/.local/share/dfx-agent-runner`, `~/.lima/dfx-*`, `/Library/Application Support/DFXAgentRunner`, both plists and `pkgutil --pkgs` entry gone |
 | 6 | Without an agent: devices page → Add device → Download for Mac; open the package | Installer.app with one password dialog, then a dialog asking for the code; after pasting, step 2 holds |
 | 7 | Devices page → Unpair | within 15 minutes the Mac removed its installation (as in step 5) |
+| 8 | Without a dialog (E-27): over ssh to the same Mac, an account whose `sudo -n true` succeeds (e.g. after `sudo -v`, or a `NOPASSWD` rule), nobody needed at the screen; its agent runs `agent-platform device add --this-computer`, then restarts the Mac without logging in, then `device remove --this-computer` | no dialog; `admin` is `sudo` in both results; `owner` is that account; after the restart the device is online again without anybody logged in; `leftovers` empty |

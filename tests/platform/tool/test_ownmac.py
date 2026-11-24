@@ -388,6 +388,49 @@ def test_run_admin_failed(mac: Mac, install: bool, reason: str) -> None:
         ownmac.run_admin(mac.machine, install, ARGS)
 
 
+SUDO_TRUE = [admin.SUDO, "-n", "true"]
+
+
+def real_step(mac: Mac, *, euid: int = 501, sudo: bool) -> None:
+    """The machine without the seam: the caller's user ID and whether `sudo -n true` succeeds."""
+    mac.machine.admin = None
+    mac.machine.system.geteuid = lambda: euid
+    mac.run.answer(SUDO_TRUE, rc=0 if sudo else 1, stderr="" if sudo else "sudo: a password is required")
+
+
+@pytest.mark.parametrize(("euid", "sudo", "way"), [(0, False, "root"), (501, True, "sudo"), (501, False, "dialog")])
+def test_admin_way(mac: Mac, euid: int, sudo: bool, way: str) -> None:
+    real_step(mac, euid=euid, sudo=sudo)
+    assert ownmac.admin_way(mac.machine) == way
+    # root never asks sudo; anyone else asks without ever prompting (-n)
+    assert mac.run.called(*SUDO_TRUE) == ([] if euid == 0 else [SUDO_TRUE])
+
+
+def test_admin_way_of_the_seam_is_the_dialog_it_stands_in_for(mac: Mac) -> None:
+    mac.machine.system.geteuid = lambda: 0
+    assert ownmac.admin_way(mac.machine) == "dialog"
+    assert mac.run.calls == []
+
+
+@pytest.mark.parametrize(("way", "prefix"), [("sudo", [admin.SUDO, "-n"]), ("root", [])])
+def test_run_admin_without_a_dialog(mac: Mac, way: str, prefix: list[str]) -> None:
+    real_step(mac, sudo=True)
+    ownmac.run_admin(mac.machine, True, ARGS, way)
+    script = admin.install_script(mac.layout)
+    assert mac.run.calls[-1] == [*prefix, admin.SHELL, "-c", script, "dfx-agent-runner", *ARGS]
+    ownmac.run_admin(mac.machine, False, ("", "", ""), way)
+    script = admin.uninstall_script(mac.layout)
+    assert mac.run.calls[-1] == [*prefix, admin.SHELL, "-c", script, "dfx-agent-runner", "", "", ""]
+    assert mac.run.called(admin.OSASCRIPT) == []
+
+
+def test_run_admin_without_a_dialog_failed(mac: Mac) -> None:
+    real_step(mac, sudo=True)
+    mac.run.answer([admin.SUDO, "-n", admin.SHELL], rc=1, stderr="sudo: a password is required")
+    with refused("install_failed", reason="admin_step"):
+        ownmac.run_admin(mac.machine, True, ARGS, "sudo")
+
+
 def test_wait_for_a_newer_accepted_state(mac: Mac) -> None:
     mac.state(updated_at="2026-11-24T11:59:59Z", enrollment="enrolled")
     steps = [
@@ -479,6 +522,7 @@ def test_device_add_to_the_default_workgroup(mac: Mac, hub: HubFake, account: Us
         "golden": "unknown",
         "owner": "",
         "checks": result["checks"],
+        "admin": "dialog",
         "dialog": admin.INSTALL_SENTENCE,
         "notice": ownmac.NOTICE,
     }
@@ -486,6 +530,43 @@ def test_device_add_to_the_default_workgroup(mac: Mac, hub: HubFake, account: Us
     assert "every task" in result["notice"]
     assert seen.code.strip() not in json.dumps(result)
     assert mac.run.called(ownmac.OPEN) == []
+
+
+def test_device_add_without_a_dialog_through_sudo(mac: Mac, hub: HubFake, account: User, opened: Account) -> None:
+    org = private_org(hub, account)
+    mac.fetch.files = feed_files(mac.keys, hub.origin)
+    real_step(mac, sudo=True)
+    seen = Seen()
+
+    def hook(argv: list[str]) -> None:
+        seen.argv = argv
+        seen.code = Path(argv[-1]).read_text(encoding="utf-8")
+        mac.state(updated_at=STARTED, enrolled=True, enrollment="enrolled", device_id="dev-3", owner=USER)
+
+    mac.run.on([admin.SUDO, "-n", admin.SHELL], hook)
+    result = ownmac.device_add(opened, mac.machine, None, [])
+    folder = mac.folders[0]
+    package = str(folder / f"DFX-Agent-Runner-{VERSION}.pkg")
+    script = admin.install_script(mac.layout)
+    digest = hashlib.sha256(PACKAGE).hexdigest()
+    request = str(folder / "enroll.request")
+    assert seen.argv == [admin.SUDO, "-n", admin.SHELL, "-c", script, "dfx-agent-runner", package, digest, request]
+    assert invite_of(hub, org, seen.code).kind == "device"
+    assert (result["device_id"], result["owner"], result["admin"]) == ("dev-3", USER, "sudo")
+    assert result["dialog"] == admin.DIRECT_INSTALL_SENTENCE
+    assert mac.run.called(admin.OSASCRIPT) == []
+
+
+def test_device_add_as_root_is_refused_before_anything(mac: Mac, hub: HubFake, account: User, opened: Account) -> None:
+    private_org(hub, account)
+    real_step(mac, euid=0, sudo=False)
+    with refused("invalid_argument", reason="owner_root"):
+        ownmac.device_add(opened, mac.machine, None, [])
+    assert mac.fetch.urls == []
+    assert mac.folders == []
+    assert "Run `device add` as the account" in str(
+        PlatformError("invalid_argument", reason="owner_root").to_json()["next"]
+    )
 
 
 def test_device_add_to_named_workgroups(tool: Tool, mac: Mac, hub: HubFake, account: User, opened: Account) -> None:
@@ -631,8 +712,19 @@ def test_device_remove_unpairs_and_removes(tool: Tool, mac: Mac, hub: HubFake, a
     assert result["changed"] is True
     assert result["removed"] == ["/Library/Application Support/DFXAgentRunner"]
     assert result["leftovers"] == ["/Volumes/P/a/x"]
-    assert result["dialog"] == admin.UNINSTALL_SENTENCE
+    assert (result["admin"], result["dialog"]) == ("dialog", admin.UNINSTALL_SENTENCE)
     assert mac.run.calls[-1] == [SEAM, "uninstall", "", "", ""]
+
+
+@pytest.mark.parametrize(("euid", "way"), [(0, "root"), (501, "sudo")])
+def test_device_remove_without_a_dialog(mac: Mac, opened: Account, euid: int, way: str) -> None:
+    mac.state(enrolled=False, device_id="d")
+    real_step(mac, euid=euid, sudo=True)
+    mac.run.answer([admin.SUDO, "-n", admin.SHELL] if euid else [admin.SHELL], stdout=REMOVED + "\n")
+    result = ownmac.device_remove(opened, mac.machine)
+    assert (result["admin"], result["dialog"]) == (way, admin.DIRECT_UNINSTALL_SENTENCE)
+    assert result["leftovers"] == ["/Volumes/P/a/x"]
+    assert mac.run.called(admin.OSASCRIPT) == []
 
 
 @pytest.mark.parametrize(

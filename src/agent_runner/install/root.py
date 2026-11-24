@@ -243,16 +243,27 @@ def publish(
     golden: str = "",
     enrollment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Write `state.json` from the runner's status and launchd; returns what was written."""
+    """Write `state.json` from the runner's status and launchd; returns what was written.
+
+    When the status cannot be read (the runner's store is starting: right after an enrollment, at boot), the device
+    stays as last known, and an enrollment of this run names its device: an unreadable status is no removal."""
     system = ctx.system
     layout = system.layout
     found = _safe_status(ctx)
+    old = read_json(layout.state_file) or {}
+    if found is not None:
+        enrolled, device = found.enrolled, found.device_id if found.enrolled else ""
+    else:
+        enrolled = old.get("enrolled") is True
+        device = str(old.get("device_id", "")) if enrolled else ""
+    if enrollment is not None and enrollment.get("enrollment") == "enrolled" and enrollment.get("device_id"):
+        enrolled, device = True, str(enrollment["device_id"])
     fields: dict[str, Any] = {
         "version": manifest.version,
         "hub": manifest.hub,
         "owner": ctx.owner.name,
-        "enrolled": bool(found and found.enrolled),
-        "device_id": found.device_id if found and found.enrolled else "",
+        "enrolled": enrolled,
+        "device_id": device,
         "connected": bool(found and found.last_connect != "never"),
         "revoked": found.revoked if found else "unknown",
         "removed": found.removed if found else "unknown",
@@ -261,7 +272,6 @@ def publish(
         "update": {"feed": memory.feed, "pending": memory.pending is not None, "bad": list(memory.bad)},
         "updated_at": system.now().strftime(update.TIME_FORMAT),
     }
-    old = read_json(layout.state_file) or {}
     fields["golden"] = golden or old.get("golden", "unknown")
     fields["host_tools"] = host_tools or old.get("host_tools", "unknown")
     last = enrollment or {key: old[key] for key in ("enrollment", "enrollment_error") if key in old}

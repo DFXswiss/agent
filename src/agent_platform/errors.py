@@ -113,6 +113,10 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
         "connected although it kept nothing. Ask your user to disconnect it in the settings (Connected agents), "
         "then pair again."
     ),
+    ("invalid_argument", "owner_root"): (
+        "Run `device add` as the account that is to own the device, not as root; if that account may use sudo "
+        "without a password, it needs no dialog."
+    ),
     ("invalid_argument", "recovery_code_unknown"): (
         "The hub knows no account with this recovery code; check the code and the hub address (a code stops working "
         "once a new one is made)."
