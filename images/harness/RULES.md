@@ -44,7 +44,8 @@ starting services and containers are allowed there without asking.
    result, its log and its exit code are kept and visible to the user.
 3. Use the browser with `mcp__platform__workvm_browse`: read a page, take a screenshot (saved into your workspace,
    view it with `Read`), click or fill. For longer flows write a Playwright script (Chromium and Playwright are
-   preinstalled) and run it with `mcp__platform__workvm_exec`.
+   preinstalled) and run it with `mcp__platform__workvm_exec`. To search the web, open a search engine's result
+   page with `workvm_browse` (or fetch it with `curl` in the VM); the session has no web search tool of its own.
 4. Request a VM explicitly with `mcp__platform__request_operation` type `workvm.request` only for a larger `size`,
    or with `scope` `session` when you are a subagent that needs its own VM.
 5. The work VM is temporary: it is torn down after `workvm.release`, after 30 minutes without use and when the
