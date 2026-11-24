@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/wrap.py at 5016e752bda4.
+"""Copied from src/agent_hub/crypto/wrap.py.
 
 Key wrap (04-crypto.md section 4.2), after Spike D `e2ee.wrap_info`/`wrap_scope_key`/`unwrap_scope_key`.
 

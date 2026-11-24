@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/crypto/test_agent.py at 5016e752bda4.
+"""Copied from tests/platform/hub/crypto/test_agent.py.
 
 CON-02 for the delegated agent access (11-agent-access.md section 3, ADR-056): `contracts/vectors/agent.json` is the
 byte-for-byte output of the generator, every positive vector is reproduced and opened with independent code

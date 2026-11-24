@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/crypto/test_vectors.py at 5016e752bda4.
+"""Copied from tests/platform/hub/crypto/test_vectors.py.
 
 CON-02 (Python part): the vector files are current, every negative vector fails with its code, the positive vectors
 open with independent code, and the formats unchanged since Spike D reproduce the spike's vectors."""

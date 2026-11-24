@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/test_platform.py at 5016e752bda4.
+"""Copied from tests/platform/hub/log/test_platform.py.
 
 U-HUB-log (platform part): P1-P4, certification state, platform access (agent_hub.log.platform)."""
 

@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/dedupe.py at 5016e752bda4.
+"""Copied from src/agent_hub/crypto/dedupe.py.
 
 Dedupe tags (04-crypto.md section 4.10, new; field sets of 03-api.md section 9).
 

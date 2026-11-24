@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/aead.py at 5016e752bda4.
+"""Copied from src/agent_hub/crypto/aead.py.
 
 AES-256-GCM with a 12-byte nonce and a 16-byte tag (04-crypto.md section 1).
 
