@@ -168,18 +168,20 @@ def _check_hub_rules(connection: psycopg.Connection[Any], body: dict[str, object
         if found is None:
             raise HubError("not_found", detail={"pointers": [pointer + "/body/org"]})
     if kind in USER_TYPES:
-        _require_feature(connection, LOG_ADMIT)
+        _require_feature(connection, LOG_ADMIT, "platform")
     elif kind in POLICY_TYPES or (kind in ROLE_TYPES and body["role"] == OPERATOR_ROLE):
-        _require_feature(connection, LOG_POLICY)
+        _require_feature(connection, LOG_POLICY, None)
 
 
-def _require_feature(connection: psycopg.Connection[Any], feature: str) -> None:
+def _require_feature(connection: psycopg.Connection[Any], feature: str, kind: str | None) -> None:
     """ADR-060, ADR-077: an older runner verifies the whole platform log and would stop at an unknown type or value
-    (and so miss every later decertification); every active platform device must have announced `feature` first."""
+    (and so miss every later decertification); every active device (of `kind`, or of every kind: organization devices
+    verify the platform log too) must have announced `feature` first."""
     active = [
         str(row[0])
         for row in connection.execute(
-            "SELECT id FROM hub.device WHERE kind = 'platform' AND state = 'active' ORDER BY id"
+            "SELECT id FROM hub.device WHERE state = 'active' AND (%s::text IS NULL OR kind = %s) ORDER BY id",
+            (kind, kind),
         )
     ]
     outdated = outdated_devices(connection, active, feature)

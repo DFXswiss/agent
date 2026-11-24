@@ -5,6 +5,9 @@ connection and serves **exactly one user, the operator** - `OPERATOR_GITHUB_USER
 `config_invalid` (`OPERATOR_GITHUB_USERS:one_user_only`). A personal connection must never be used on behalf of
 another person nor handed to one; "approved users" below therefore means the one operator user. Handing the token to
 further users, as the consequences below describe, is no longer possible.
+Amended by ADR-077 (2026-11-24): the platform no longer protects `main`, `master`, `develop` and `release/*` by
+default; for the operator's account, as for every account, GitHub's own branch protection applies, and a workgroup may
+set its own list.
 
 ## Context
 - ADR-015 connects a user's GitHub account through the device flow of a GitHub App. It needs a registered App

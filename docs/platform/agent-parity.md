@@ -136,7 +136,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | notifications-read | screens/notifications | `notifications read --id --all` | done |
 | monitoring | screens/monitoring (devices, VMs, sessions, work VMs) | `monitoring --org --entity-kind --entity-id --metric --range` | done |
 | audit | screens/audit | `audit --org --verify --action --actor --wg --task --session --before` | done |
-| platform-invites | screens/platform-invites | `platform invite\|list\|revoke` | done |
+| platform-invites | screens/platform-invites (every user while the switch `open_platform_invites` is on, ADR-077) | `platform invite\|list\|revoke` | done |
+| platform-settings | screens/platform-invites (whether the user may invite: role or switch of the verified platform log, ADR-077) | `platform settings` | done |
+| task-model-access | screens/task (the card that connects the Claude subscription after `model_access_unavailable`; the hub continues the task, ADR-077) | `task show`, `claude connect` | done |
+| task-auto-assign | screens/home (an admin's first task in a workgroup without a device assigns a platform device, ADR-077) | `task create` | done |
 | security | screens/security | `security` | done |
 | community-read | screens/community (messages, key, unread count) | `community status`, `community messages --before --after --limit --mark-read` | done |
 | community-post | screens/community | `community post --text --name` | done |
@@ -284,7 +287,7 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | next:claim_lost | `agents revoke --id` (by the account's current agent), `recover --hub` | built |
 | next:setup_token_failed | `claude connect`, `credentials set-api-key` | outside |
 | next:no_write_access | `wg grant` (an admin of the organization, person or agent) | built |
-| next:not_inviter | `platform invite` (an agent whose account holds the role creates invitations itself; the operator grants the role as for a person) | built |
+| next:not_inviter | `platform invite` (an agent whose account holds the role, or any agent while the switch `open_platform_invites` is on, creates invitations itself; `platform settings` shows which; the operator grants the role as for a person) | built |
 | next:rotation_pending | `org rotate` (an admin or writer of the workgroup, person or agent) | built |
 | next:community_key_missing | `community key --wait` (the client of any online member, person or agent, hands the key over) | built |
 | next:not_own_account | the person's passkey approval of a new main orchestrator of an account with a passkey (concept idea 34): `pair --remote` | person |

@@ -1,6 +1,9 @@
 # ADR-026: Entitlement to platform devices
 
-Status: Accepted (2026-11-21)
+Status: Accepted (2026-11-21); amended by ADR-077 (2026-11-24): an organization without an `org_platform_access` of
+its own follows the root-signed switch `open_platform_access` (off until the owner decides; an explicit entry wins),
+platform invitations come from every user while `open_platform_invites` is on, and a task waiting for platform access
+asks the users with the platform role `operator`.
 
 ## Context
 KONZEPT §3: by default DFX provides the execution servers; without own credentials and hardware the system uses

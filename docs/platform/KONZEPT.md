@@ -396,8 +396,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „in so einem fall muss direkt erkannt werden dass ein GitHub Login benötigt wird und die einzige
   korrekte Antwort besteht darin das GitHub Login anzustossen“
 - **Bezug:** ergänzt [§9](#k-9) und [Idee 32](#k-idee-32); gilt als Muster für jede fehlende Voraussetzung.
-- **Umsetzung:** gebaut für GitHub – [ADR-066](adr/066-held-github-operations.md) (KOR-25); übrige Voraussetzungen
-  offen – KOR-49.
+- **Umsetzung:** gebaut – für GitHub [ADR-066](adr/066-held-github-operations.md) (KOR-25); für Modellzugang,
+  Guthaben, Gerät und Plattformzugang [ADR-077](adr/077-no-approval-as-precondition.md) (KOR-49); jede Voraussetzung
+  mit dem Schritt, den die Plattform anstößt, im Register [spec/15-prerequisites.md](spec/15-prerequisites.md).
 
 <a id="e-06"></a>
 
@@ -488,8 +489,10 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** geht [Idee 26](#k-idee-26) („eingeschränkte Rechte“), [Idee 31](#k-idee-31) („geringere Rechte“),
   [Idee 42](#k-idee-42) und [§9 Punkt 3](#k-9-b3) („freigegebene Repositories“) vor ([A1](#a-1), [A5](#a-5)).
 - **Umsetzung:** gebaut für Repositories – [ADR-054](adr/054-repository-list-optional.md) (KOR-30) – und für die
-  Arbeits-VM ohne Befehlsfilter – [ADR-059](adr/059-work-vm-on-request.md) (KOR-29); übrige Freigaben offen – KOR-49
-  (Teil D).
+  Arbeits-VM ohne Befehlsfilter – [ADR-059](adr/059-work-vm-on-request.md) (KOR-29); Inventur, Register mit Prüfung,
+  vom Root signierte Schalter und die Betreiber-Abo-Liste im Plattform-Log, keine geschützten Branches als
+  Voreinstellung – [ADR-077](adr/077-no-approval-as-precondition.md) (KOR-49); die Schalter legt der Betreiber nach
+  dem Entscheid des Auftraggebers um (Teil D).
 
 <a id="e-12"></a>
 
@@ -850,8 +853,7 @@ Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 
 | Regel / Stelle | Gebauter Stand heute | Schließt |
 |---|---|---|
-| [E-05](#e-05) übrige Voraussetzungen | Fehlende Voraussetzungen außer GitHub (Modellzugang, Guthaben, Gerät) werden nur angezeigt, nicht angestoßen | KOR-49 |
-| [E-11](#e-11) übrige Freigaben | Freigabe von Team-Organisationen für DFX-Geräte, Freigabe der Betreiber-Abos je Organization, Plattform-Einladung nur mit eigener Rolle und die festen Betreiber-Listen sind noch Voraussetzungen | KOR-49 |
+| [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber über ein Startguthaben entscheidet (die Schalter sind gebaut, [ADR-077](adr/077-no-approval-as-precondition.md)); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
@@ -862,6 +864,5 @@ Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [A12](#a-12) Support | Keine Support-Freigabe | KOR-56 |
 | [A13](#a-13) Default-Workgroup | Das Schreibrecht in der Default-Workgroup lässt sich nicht herabsetzen | KOR-55 |
 | [A15](#a-15) Gemeinsame Sessions | Die Session erfährt nicht, wer anweist; Verbrauch und Kinder hängen am Besitzer der Aufgabe (Operationen nennen den Anweisenden, GitHub-Aktionen nutzen nur seine Identitäten: gebaut mit KOR-47) | KOR-46 |
-| [A17](#a-17) Geschützte Branches | Ohne Einstellung der Workgroup gelten `main`, `master`, `develop` und `release/*` als geschützt | KOR-49 |
 | [A18](#a-18) Blockierter Versuch | Ablehnungen durch den Kernel werden nicht je Session gezählt | KOR-60 |
 | Ideen 27–47, §16 | Stand je Idee in [spec/01-requirements.md](spec/01-requirements.md) Block R-16 | dort genannt |

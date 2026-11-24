@@ -1,6 +1,10 @@
 # ADR-052: Operator subscriptions for approved organizations (runner only)
 
-Status: Accepted (2026-11-23)
+Status: Accepted (2026-11-23); amended by ADR-077 (2026-11-24): the organizations come from the root-signed
+`org_operator_subscriptions` of the verified platform log (changed by the operator CLI, effective at the runner's next
+platform-log refresh without a restart; an entry of the log wins over the environment); `OPERATOR_SUBSCRIPTION_ORGS`
+remains for the move only, and `OPERATOR_SUBSCRIPTION_DIR` alone is a valid configuration. Points 2 and 7 below read
+accordingly.
 
 ## Context
 - A session needs model access (05-runner.md §10.1). Without an own `claude_subscription` or `anthropic_api_key` of
