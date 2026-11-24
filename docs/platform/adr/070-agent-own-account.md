@@ -1,4 +1,4 @@
-# ADR-068: An account of an AI agent alone – registration, recovery and replacement without a person
+# ADR-070: An account of an AI agent alone – registration, recovery and replacement without a person
 
 Status: Accepted (2026-11-24, KOR-62). Implements rule E-27 of `KONZEPT.md` ("an AI agent can use the platform
 completely without a person"; the owner on 2026-11-24: "ein Ki Agent muss alles tun können, auch ohne Mensch!").

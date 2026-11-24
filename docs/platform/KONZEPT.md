@@ -698,7 +698,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** verschärft [E-04](#e-04); [E-12](#e-12) gilt weiter für die Registrierung eines Menschen im Browser;
   ändert [A3](#a-3) (Koppeln und Ersetzen nur mit Passkey-Geste gilt für das Konto eines Menschen) und ergänzt
   [Idee 34](#k-idee-34).
-- **Umsetzung:** gebaut – [ADR-068](adr/068-agent-own-account.md) (KOR-62).
+- **Umsetzung:** gebaut – [ADR-070](adr/070-agent-own-account.md) (KOR-62).
 
 <a id="e-28"></a>
 

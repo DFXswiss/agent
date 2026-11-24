@@ -1,4 +1,4 @@
-"""An account without a passkey is a valid state everywhere (rule E-27, KOR-62, ADR-068; rule E-19: the class, not
+"""An account without a passkey is a valid state everywhere (rule E-27, KOR-62, ADR-070; rule E-19: the class, not
 the single case).
 
 An account of an agent alone has an identity, a recovery slot, `CK_1` and an active agent, but no `hub.passkey` row

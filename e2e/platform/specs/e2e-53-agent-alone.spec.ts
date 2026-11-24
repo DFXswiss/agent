@@ -1,4 +1,4 @@
-// E2E-51 (11-agent-access.md section 5.5, ADR-068, rule E-27; KOR-62): an AI agent alone. Not a single browser step
+// E2E-53 (11-agent-access.md section 5.5, ADR-070, rule E-27; KOR-62): an AI agent alone. Not a single browser step
 // and no passkey for the agents: the operator's platform invitation goes to the agent tool on stdin; the agent creates
 // its account (`register --own-account`: its private organization, no passkey, no browser session), deposits its own
 // model access (`credentials set-api-key`, `settings set`), assigns the platform device, creates a task and reads the
@@ -25,12 +25,12 @@ import { invite, platformDevice, poolReady, uuid } from '../fixtures/platform.ts
 import type { Orchestrator } from '../fixtures/orchestrator.ts';
 
 const scenario: unknown = JSON.parse(
-  readFileSync(new URL('../scenarios/e2e-51-agent-alone.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../scenarios/e2e-53-agent-alone.json', import.meta.url), 'utf8'),
 );
 const BOT = 'Research Bot kz62-bot-r5t7y9';
 const SECOND = 'Helper Bot kz62-helper-u2i4o6';
 const TEAM = 'Robots kz62-team-a8s0d2';
-const PROMPT = 'E2E51-ALONE kz62-prompt-f3g5h7: summarise the plan';
+const PROMPT = 'E2E53-ALONE kz62-prompt-f3g5h7: summarise the plan';
 const ANSWER = 'Answer for the agent alone kz62-answer-p4l8m2.';
 const CANARIES = ['kz62-team-a8s0d2', 'kz62-prompt-f3g5h7', 'kz62-answer-p4l8m2'];
 
@@ -69,7 +69,7 @@ async function followUntil(orchestrator: Orchestrator, home: string, task: strin
   throw new Error(`task ${task}: no event with ${text} within 240 s`);
 }
 
-test('@E2E-51 @R-1.14 @needs-vm an agent alone registers, works, invites an agent and moves without any person', async ({
+test('@E2E-53 @R-1.14 @needs-vm an agent alone registers, works, invites an agent and moves without any person', async ({
   page,
   e2e,
   orchestrator,
