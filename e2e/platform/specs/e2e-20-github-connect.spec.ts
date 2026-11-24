@@ -427,6 +427,7 @@ test('@E2E-20 @R-9.1 @R-P.5 @needs-vm a task that needs GitHub waits for the con
   );
   expect(waiting).toHaveLength(1);
   expect(Object.keys(waiting[0]!).sort()).toEqual([
+    'for_user',
     'operation_id',
     'operation_type',
     'repo',

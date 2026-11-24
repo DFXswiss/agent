@@ -142,7 +142,7 @@ test('@E2E-56 @R-9.1 @R-9.4 @needs-vm the fork case with the GitHub App only is 
   await expect(step).toHaveAttribute('data-action', 'new_token');
   await expect(card.getByTestId('waiting.step.link')).toHaveAttribute(
     'href',
-    /\/settings\/tokens\/new\?scopes=repo%2Cworkflow&description=agent\.dfx\.swiss$/,
+    /\/settings\/tokens\/new\?scopes=repo%2Cworkflow&description=agent\+kz56-octo$/,
   );
   await expect(card.getByTestId('waiting.step.link')).toHaveAttribute('target', '_blank');
   expect(await hubOperations(orchestrator, task)).toEqual([]);

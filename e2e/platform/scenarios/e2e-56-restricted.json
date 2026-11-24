@@ -7,10 +7,7 @@
       "expect": {
         "user_text_contains": "E2E56-STRICT",
         "has_tool_result": false,
-        "tools_include": [
-          "mcp__platform__request_operation",
-          "mcp__platform__get_operation"
-        ]
+        "tools_include": ["mcp__platform__request_operation", "mcp__platform__get_operation"]
       },
       "reply": {
         "content": [
