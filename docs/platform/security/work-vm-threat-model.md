@@ -35,10 +35,11 @@ manipulated. The attacker fully controls the VM's kernel, network stack, Lima gu
 | Escape from the VM to the host (hypervisor bug) | Out of scope of the platform; Apple Virtualization framework; a host-agent compromise yields only that slot account (no other slot's disk, no runner secret, `_config` root-owned) | — |
 
 ## Residual risks
-- ICMP is not matched by pf's `user`: the anchor has no device-wide rules any more (decisions #22). ICMP a slot's
-  host agent sends falls through to the Cloudflare client's anchor, whose default deny blocks it except towards the
-  ranges it passes directly (private networks): a ping sweep of the site network from a VM is possible if Lima's user
-  network forwards echo requests (WVM-03 measures with `icmp-fake`); TCP and UDP to those ranges stay blocked.
+- ICMP is not matched by pf's `user`, the anchor has no device-wide rules (decisions #22), and the Cloudflare client
+  passes ICMP to the private networks. The boundary for ICMP is therefore Lima's user network: gvisor-tap-vsock does
+  not forward a VM's ICMP out of its virtual network (it may answer echo requests itself). `egress-check.sh --vm`
+  (`vm_lan_icmp`) and WVM-03 verify this on every device and Lima release; should a release forward ICMP, a ping
+  sweep of the site network would become possible (TCP and UDP stay blocked) and the device needs an ICMP rule.
 - The hook is Apple's `anchor "com.apple/*"` line in the running main ruleset. A component that replaces the main
   ruleset without it opens nothing for long: the watcher stops every slot process within one round (2 s) and the
   runner tears the VMs down; in that window a slot account's new connections fall through to the client's rules.

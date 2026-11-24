@@ -157,8 +157,10 @@ block return out quick user U
 Every rule names a slot account: the device's own traffic (runner, hub, remote access) and the client's own rules are
 never affected, and there are no device-wide rules (ICMP of the device is governed by the client's default deny).
 Because our anchor is evaluated first and decides every TCP and UDP packet of a slot account with a `quick` rule, the
-client's `pass out quick … to <private network>` never applies to them; ICMP is not matched by pf's `user` and falls
-through to the client's rules (threat model, residual risks). The anchor is named `000.agent.workvm`: pf evaluates
+client's `pass out quick … to <private network>` never applies to them. ICMP is not matched by pf's `user`, and the
+client passes ICMP to the private networks; the boundary for ICMP is that no slot process sends it: Lima's user
+network (gvisor-tap-vsock) does not forward a VM's ICMP out of its virtual network (it may fake echo replies).
+`egress-check.sh --vm` proves it per device (`vm_lan_icmp`, with a documentation address to detect faked replies). The anchor is named `000.agent.workvm`: pf evaluates
 the children of `com.apple/*` in name order, and ours must be the first (Apple ships `100.…`, `200.…`, `250.…`). The pass rules keep their states `if-bound`,
 so a flow never continues on the physical interface after a disconnect. No bandwidth shaping yet (decisions #20), no
 global rate cap shared by all VMs, no destination logging. The host's own addresses are reached over lo0 and therefore

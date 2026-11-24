@@ -219,3 +219,12 @@ MON-3. **Runner measures only from outside** (`agent_runner.metrics.workvm`): th
     E2E-23 turned around) and stays open.
 28. **Runbook** `docs/platform/runbooks/work-vms.md`: rehearsal, installation with `--plan`, operation, faults,
     removal.
+29. **ICMP and the restart check (operator addendum 2026-11-24 06:15).** The Cloudflare client passes ICMP to the
+    private networks, and pf's `user` cannot attribute ICMP. The work VMs' ICMP never reaches the host stack: Lima's
+    user network (gvisor-tap-vsock) does not forward ICMP out of its virtual network. `egress-check.sh` now checks
+    UDP to the gateway for the slot account (`lan_udp`), reports the slot account's own ICMP socket for information
+    (`lan_icmp_slot_socket`, no slot process pings), and with `--vm` checks ICMP (with a documentation address to
+    detect faked replies), TCP and UDP from inside the VM to the site network. No device-wide ICMP rule (it would
+    touch the device's own traffic). `images/workvm/after-reboot-check.sh` checks after a restart that the volume
+    is mounted again (the open assumption of a custom `addVolume` mount point), the homes, the watcher, the anchor
+    and the hook; the rehearsal runs it once as a baseline.

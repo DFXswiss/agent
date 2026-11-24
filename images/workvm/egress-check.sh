@@ -51,9 +51,9 @@ done
 id -u "$account" >/dev/null 2>&1 || { echo "egress-check: no such account" >&2; exit 2; }
 
 failed=0
-report() { # name result detail
+report() { # name result detail (`info` is shown and does not fail the run)
   echo "check=$1 result=$2 detail=$3"
-  [ "$2" = pass ] || failed=1
+  [ "$2" = pass ] || [ "$2" = info ] || failed=1
 }
 
 as_slot() { sudo -n -u "$account" "$@"; }
@@ -142,6 +142,22 @@ else
   report loopback pass "blocked"
 fi
 
+# UDP to the site network (DNS of the gateway): pf's `user` matches UDP, the slot rule refuses it at once.
+if [ -n "${lan:-}" ] && as_slot dig "@$lan" +time=2 +tries=1 +short example.com >/dev/null 2>&1; then
+  report lan_udp fail "UDP to the gateway answered"
+else
+  report lan_udp pass "blocked"
+fi
+# ICMP: pf's `user` does not match ICMP and the Cloudflare client passes the private networks, so the boundary for
+# ICMP is that no slot process sends it: Lima's user network (gvisor-tap-vsock) does not forward a VM's ICMP out of
+# its virtual network. A ping of the slot account itself goes through an unprivileged ICMP socket that pf cannot
+# attribute; it is reported for information only (no process of a slot account pings; the VM check below counts).
+if [ -n "${lan:-}" ] && as_slot ping -c 1 -t 3 "$lan" >/dev/null 2>&1; then
+  report lan_icmp_slot_socket info "a slot account's own ICMP socket reaches the gateway (not used by Lima)"
+else
+  report lan_icmp_slot_socket pass "no answer"
+fi
+
 # 5. Optionally the same from inside a running work VM.
 if [ -n "$vm" ]; then
   vm_ip=$(in_vm curl -s -m 15 "$trace" 2>/dev/null | sed -n 's/^ip=//p')
@@ -154,6 +170,25 @@ if [ -n "$vm" ]; then
   # the tunnel's MTU (1300 on the device): a large transfer must complete
   size=$(in_vm curl -s -m 120 -o /dev/null -w '%{size_download}' 'https://speed.cloudflare.com/__down?bytes=50000000' 2>/dev/null)
   if [ "${size:-0}" = 50000000 ]; then report vm_large pass "50 MB"; else report vm_large fail "got ${size:-0} bytes"; fi
+  # ICMP and UDP from inside the VM to the site network. A documentation address (never routed) that answers means
+  # the user network fakes echo replies; then a gateway answer says nothing and the check passes as `fake`.
+  if in_vm ping -c 1 -W 3 192.0.2.1 >/dev/null 2>&1; then
+    report vm_lan_icmp pass "fake: the user network answers every echo request"
+  elif [ -n "${lan:-}" ] && in_vm ping -c 1 -W 3 "$lan" >/dev/null 2>&1; then
+    report vm_lan_icmp fail "the gateway answers ICMP from the VM"
+  else
+    report vm_lan_icmp pass "no answer"
+  fi
+  if [ -n "${lan:-}" ] && in_vm sh -c "nc -z -w 3 $lan 80 || nc -z -w 3 $lan 22" >/dev/null 2>&1; then
+    report vm_lan_tcp fail "the gateway answers TCP from the VM"
+  else
+    report vm_lan_tcp pass "blocked"
+  fi
+  if [ -n "${lan:-}" ] && in_vm sh -c "dig @$lan +time=2 +tries=1 +short example.com" >/dev/null 2>&1; then
+    report vm_lan_udp fail "the gateway answers UDP from the VM"
+  else
+    report vm_lan_udp pass "blocked"
+  fi
 fi
 
 # 6. Client disconnected: the slot has no internet (fail-closed), never the site address.

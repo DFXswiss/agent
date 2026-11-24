@@ -176,6 +176,12 @@ check_all() { # phase
 }
 say "4 checks"
 check_all installed
+# the same checks the operator runs after a restart of the device (volume mount, homes, watcher, anchor, hook)
+if "$here/after-reboot-check.sh" --accounts 1 --prefix "$prefix" >"$log/after-reboot-baseline.txt" 2>&1; then
+  report reboot_check_baseline pass "$(grep -c 'result=pass' "$log/after-reboot-baseline.txt") checks"
+else
+  report reboot_check_baseline fail "see after-reboot-baseline.txt"
+fi
 
 # 5. Disconnect: the slot has no internet; reconnect: it comes back by itself.
 say "5 disconnect"

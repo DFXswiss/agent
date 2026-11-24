@@ -16,11 +16,12 @@ import pytest
 WORKVM = Path(__file__).resolve().parents[3] / "images" / "workvm"
 REHEARSAL = WORKVM / "host-rehearsal.sh"
 EGRESS = WORKVM / "egress-check.sh"
+REBOOT = WORKVM / "after-reboot-check.sh"
 FIRST_ANCHOR = "grep -n '^anchor ' | head -n 1"
 HOOK_CASE = """*:'anchor "com.apple/*"'*)"""
 
 
-@pytest.mark.parametrize("script", [REHEARSAL, EGRESS], ids=["rehearsal", "egress"])
+@pytest.mark.parametrize("script", [REHEARSAL, EGRESS, REBOOT], ids=["rehearsal", "egress", "reboot"])
 def test_parses_is_executable_and_never_touches_the_main_ruleset(script: Path) -> None:
     assert subprocess.run(["/bin/sh", "-n", str(script)], check=False).returncode == 0
     assert os.access(script, os.X_OK)
@@ -64,3 +65,25 @@ def test_rehearsal_refuses_without_arguments_and_root() -> None:
     args = ["--runner-account", "nobody", "--site-ip", "192.0.2.1"]
     done = subprocess.run(["/bin/sh", str(REHEARSAL), *args], capture_output=True, text=True, timeout=30, check=False)
     assert (done.returncode, done.stderr) == (2, "host-rehearsal: run as root\n")
+
+
+def test_egress_check_covers_tcp_udp_and_icmp_to_the_site_network() -> None:
+    text = EGRESS.read_text(encoding="utf-8")
+    for name in ("lan_udp", "lan_icmp_slot_socket", "vm_lan_icmp", "vm_lan_tcp", "vm_lan_udp"):
+        assert f"report {name} " in text
+    assert "192.0.2.1" in text  # a documentation address that answers marks faked echo replies
+
+
+def test_after_reboot_check_is_read_only_and_refuses_without_root() -> None:
+    text = REBOOT.read_text(encoding="utf-8")
+    for name in ("volume_mounted", "volume_name", "watcher_state", "anchor_first", "hook"):
+        assert f"report {name} " in text
+    assert "after-reboot-check.sh" in REHEARSAL.read_text(encoding="utf-8")
+    done = subprocess.run(["/bin/sh", str(REBOOT), "--accounts", "x"], capture_output=True, text=True, check=False)
+    assert (done.returncode, done.stderr) == (2, "after-reboot-check: --accounts needs a number\n")
+    done = subprocess.run(["/bin/sh", str(REBOOT), "--bogus"], capture_output=True, text=True, check=False)
+    assert done.returncode == 2
+    if os.geteuid() == 0:
+        pytest.fail("the hermetic suite never runs as root")
+    done = subprocess.run(["/bin/sh", str(REBOOT)], capture_output=True, text=True, check=False)
+    assert (done.returncode, done.stderr) == (2, "after-reboot-check: run as root\n")
