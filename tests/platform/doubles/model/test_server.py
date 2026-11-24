@@ -387,6 +387,32 @@ def test_delay_and_thinking(start_model: Start, make_user: User, parse_sse: Sse)
     assert double.state()["ok"]
 
 
+def test_stop_ends_a_delayed_answer_in_flight(start_model: Start, make_user: User) -> None:
+    double, client = start_model(
+        {"id": "slow", "delay_ms": 600_000, "reply": {"content": [{"type": "text", "text": "late"}]}}
+    )
+    outcome: list[object] = []
+
+    def ask() -> None:
+        try:
+            outcome.append(client.request("POST", MESSAGES, make_user("x")).status)
+        except OSError as error:
+            outcome.append(error)
+
+    asking = threading.Thread(target=ask)
+    asking.start()
+    deadline = time.monotonic() + 10
+    while double.state()["remaining"] and time.monotonic() < deadline:  # the step is chosen, its delay runs
+        time.sleep(0.01)
+    started = time.monotonic()
+    double.stop()
+    asking.join(30)
+    assert not asking.is_alive()
+    assert time.monotonic() - started < 30  # not the 600 s of the delay
+    assert len(outcome) == 1
+    assert not isinstance(outcome[0], int)  # the connection closed without an answer
+
+
 def test_tool_ids_stay_unique(start_model: Start, make_user: User) -> None:
     """A repeated step and a side step answering again issue fresh tool ids, as the real API would."""
     tool = {"content": [{"type": "tool_use", "name": "Read", "input": {}}]}

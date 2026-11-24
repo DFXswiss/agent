@@ -33,7 +33,6 @@ from __future__ import annotations
 import hmac
 import re
 import threading
-import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler
@@ -129,6 +128,8 @@ class ModelDouble:
         key_token: str | None = None,
     ) -> None:
         self._lock = threading.Lock()
+        # Set by `stop`: a step that waits out its `delay_ms` ends at once instead of answering a stopped double.
+        self.stopping = threading.Event()
         self.scenario = scenario
         self.access = access
         self.key_token = key_token
@@ -146,6 +147,7 @@ class ModelDouble:
 
     def start(self) -> Self:
         """Serve in a background thread."""
+        self.stopping.clear()
         self._server.start()
         return self
 
@@ -154,7 +156,8 @@ class ModelDouble:
         self._server.serve_forever()
 
     def stop(self) -> None:
-        """Stop serving and close the socket."""
+        """Stop serving and close the socket; a delayed answer in flight ends without being sent."""
+        self.stopping.set()
         self._server.stop()
 
     def __enter__(self) -> Self:
@@ -495,8 +498,10 @@ class _Handler(DoubleHandler):
             return
         step = choice.step
         entry.extra["step"] = step.id
-        if step.delay_ms:
-            time.sleep(step.delay_ms / 1000)
+        if step.delay_ms and self.double.stopping.wait(step.delay_ms / 1000):
+            entry.note = "double stopped during the delay"
+            self.close_connection = True
+            return
         if step.error is not None:
             self._error(step.error, choice, body, entry)
         else:

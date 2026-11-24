@@ -11,8 +11,11 @@ from pathlib import Path
 
 import pytest
 
-# A thread a test starts has ended with the test's teardown (HOT-15, E-19).
-pytest_plugins = ("tests.platform.threadcheck",)
+# A thread a test starts has ended with the test's teardown (HOT-15, E-19): the hooks of the class check.
+from tests.platform.threadcheck import pytest_fixture_setup, pytest_runtest_setup, pytest_runtest_teardown
+
+__all__ = ["pytest_fixture_setup", "pytest_runtest_setup", "pytest_runtest_teardown"]
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLATFORM_INI = Path(__file__).resolve().with_name("pytest.ini")

@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import http.server
 import json
 import subprocess
 import sys
@@ -39,7 +38,7 @@ from tests.platform.guest_linux.conftest import Guest, ldd_paths
 from tests.platform.guest_linux.test_sessions_linux import (
     REPO,
     Rig,
-    _Forward,
+    _ForwardServer,
     _release_platform_port,
     _restore_platform_listener,
     claude_binary,
@@ -367,16 +366,11 @@ def delivery_gateway(tmp_path: Path, scenario: dict[str, Any]) -> Iterator[Model
     double = ModelDouble(load_scenario(path))
     double.start()
     _release_platform_port()
-    _Forward.upstream = ("127.0.0.1", int(double.url.rsplit(":", 1)[1]))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 7700), _Forward)
-    server.daemon_threads = True
-    thread = threading.Thread(target=server.serve_forever, args=(0.1,), daemon=True)
-    thread.start()
+    server = _ForwardServer(("127.0.0.1", int(double.url.rsplit(":", 1)[1])))
     try:
         yield double
     finally:
-        server.shutdown()
-        server.server_close()
+        server.close()
         double.stop()
         _restore_platform_listener()
 

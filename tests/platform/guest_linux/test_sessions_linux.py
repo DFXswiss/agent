@@ -47,6 +47,7 @@ from agent_guest.control_routes import capture
 from agent_guest.driver import ClaudeCodeDriver
 from agent_guest.sandbox import unit
 from agent_guest.state import StateError
+from tests.platform import threadcheck
 from tests.platform.guest.conftest import ControlClient
 from tests.platform.guest.sessions.conftest import request
 from tests.platform.guest_linux.conftest import LAUNCHER, SANDBOX_DIR, TEST_ROOT, Guest, ldd_paths
@@ -569,6 +570,9 @@ class _Forward(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(length) if length else None
         connection = http.client.HTTPConnection(*self.upstream, timeout=60)
         headers = {k: v for k, v in self.headers.items() if k.lower() not in ("host", "connection")}
+        connection.connect()
+        assert isinstance(self.server, _ForwardServer)
+        self.server.track(connection.sock)
         connection.request(self.command, self.path[len("/model") :], body=body, headers=headers)
         response = connection.getresponse()
         self.send_response(response.status)
@@ -581,9 +585,53 @@ class _Forward(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
             self.wfile.flush()
         self.wfile.write(b"0\r\n\r\n")
+        self.server.untrack(connection.sock)
         connection.close()
 
     do_GET = do_POST = do_HEAD = _forward
+
+
+class _ForwardServer(http.server.ThreadingHTTPServer):
+    """The forwarder on 7700 in a thread of its own. `close` ends its open connections (to the session and to the model
+    double) and waits for its request threads, so none outlives the test (HOT-15)."""
+
+    daemon_threads = False
+    block_on_close = True
+
+    def __init__(self, upstream: tuple[str, int]) -> None:
+        _Forward.upstream = upstream
+        super().__init__(("127.0.0.1", unit.PLATFORM_PORT), _Forward)
+        self._open: set[socket.socket] = set()
+        self._open_lock = threading.Lock()
+        self._thread = threading.Thread(target=self.serve_forever, args=(0.1,), daemon=True)
+        self._thread.start()
+
+    def track(self, sock: socket.socket | None) -> None:
+        if sock is not None:
+            with self._open_lock:
+                self._open.add(sock)
+
+    def untrack(self, sock: socket.socket | None) -> None:
+        with self._open_lock:
+            self._open.discard(sock)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        self.track(request)
+        super().process_request(request, client_address)
+
+    def shutdown_request(self, request: Any) -> None:
+        self.untrack(request)
+        super().shutdown_request(request)
+
+    def close(self) -> None:
+        self.shutdown()
+        self._thread.join(5)
+        with self._open_lock:
+            still_open = list(self._open)
+        for sock in still_open:
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+        self.server_close()  # joins the request threads (block_on_close)
 
 
 def _release_platform_port() -> None:
@@ -605,16 +653,11 @@ def model_gateway() -> Iterator[ModelDouble]:
     double = ModelDouble(packaged_scenario("hello"))
     double.start()
     _release_platform_port()
-    _Forward.upstream = ("127.0.0.1", int(double.url.rsplit(":", 1)[1]))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", unit.PLATFORM_PORT), _Forward)
-    server.daemon_threads = True
-    thread = threading.Thread(target=server.serve_forever, args=(0.1,), daemon=True)
-    thread.start()
+    server = _ForwardServer(("127.0.0.1", int(double.url.rsplit(":", 1)[1])))
     try:
         yield double
     finally:
-        server.shutdown()
-        server.server_close()
+        server.close()
         double.stop()
         _restore_platform_listener()
 
@@ -634,7 +677,9 @@ def _restore_platform_listener() -> None:
                 return
             conn.close()
 
-    threading.Thread(target=serve, daemon=True).start()
+    thread = threading.Thread(target=serve, name="platform-listener", daemon=True)
+    threadcheck.share(thread)  # the listener of the session fixture `platform_listener`, not of this test
+    thread.start()
 
 
 def test_real_claude_code_answers_through_the_session(

@@ -19,8 +19,29 @@ SPEC = textwrap.dedent(
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
+    import pytest
+
+    from tests.platform import threadcheck
+
     STOP = threading.Event()
     POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shared")
+
+
+    @pytest.fixture(scope="module")
+    def module_listener():
+        thread = threading.Thread(target=STOP.wait, name="module-listener", daemon=True)
+        thread.start()
+        yield thread
+
+
+    def test_a_module_fixture_owns_its_thread(module_listener) -> None:
+        assert module_listener.is_alive()
+
+
+    def test_a_shared_thread_restarted_by_a_test(module_listener) -> None:
+        thread = threading.Thread(target=STOP.wait, name="restarted-listener", daemon=True)
+        threadcheck.share(thread)
+        thread.start()
 
 
     def test_leaves_a_thread() -> None:
@@ -56,7 +77,7 @@ def test_only_the_test_that_leaves_a_thread_running_fails(tmp_path: Path, repo_r
         cwd=repo_root, env={**env, "PYTHONPATH": str(repo_root)}, capture_output=True, text=True, timeout=120,
         check=False,
     )  # fmt: skip
-    assert "5 passed, 1 error" in result.stdout, result.stdout + result.stderr
+    assert "7 passed, 1 error" in result.stdout, result.stdout + result.stderr
     errors = [line for line in result.stdout.splitlines() if line.startswith("ERROR ")]
     assert len(errors) == 1, result.stdout
     assert "test_spec.py::test_leaves_a_thread" in errors[0]
@@ -72,6 +93,7 @@ def test_the_workers_of_module_executors_are_process_wide() -> None:
         assert worker in threadcheck.process_wide_workers([SimpleNamespace(pool=pool)])
         before = frozenset(threading.enumerate()) - {worker}
         assert threadcheck.surviving(before, grace_s=0.01) == [worker]
+        assert threadcheck.surviving(frozenset(threading.enumerate())) == []
     finally:
         pool.shutdown()
 
