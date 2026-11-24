@@ -425,8 +425,10 @@ def test_an_agent_that_exits_at_once_fails_the_start(
     create(rig, sid)
     assert rig.manager.start(sid)
     wait_for(lambda: "failed" in states(rig.context, sid), 30, lambda: str(states(rig.context, sid)))
+    # the waiting initial prompt is refused after the failure (HOT-09): read the session's failure record
     records, _ = rig.context.journal.read(after=0, limit=1000)
-    assert records[-1]["body"]["reason"] == "agent_start_failed"
+    failed = [r["body"] for r in records if r["kind"] == "session.state" and r["body"]["state"] == "failed"]
+    assert [body["reason"] for body in failed] == ["agent_start_failed"]
     wait_for(lambda: not rig.tmux.has_session(tmux.session_name(sid)), 10)
 
 
@@ -437,10 +439,12 @@ def test_a_launcher_failure_fails_the_sandbox(make_rig: Callable[[str, tuple[str
     create(rig, sid)
     assert rig.manager.start(sid)
     wait_for(lambda: "failed" in states(rig.context, sid), 30, lambda: str(states(rig.context, sid)))
-    # other records (the agent's end, terminal capture) may follow the failure: read the session's last state record
+    # other records (the agent's end, terminal capture, the refusal of the waiting initial prompt) may follow the
+    # failure: read the session's failure record
     records, _ = rig.context.journal.read(after=0, limit=1000)
-    own = [r for r in records if r["kind"] == "session.state" and r["session_id"] == sid]
-    assert own[-1]["body"] == {"state": "failed", "reason": "sandbox_failed", "at": own[-1]["body"]["at"]}
+    own = [r["body"] for r in records if r["kind"] == "session.state" and r["session_id"] == sid]
+    failed = [body for body in own if body["state"] == "failed"]
+    assert failed == [{"state": "failed", "reason": "sandbox_failed", "at": failed[0]["at"]}]
 
 
 def test_suspend_and_resume_start_the_same_session_again(
