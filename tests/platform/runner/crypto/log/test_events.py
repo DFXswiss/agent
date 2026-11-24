@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/test_events.py at 952bb156fc9c.
+"""Copied from agent-core tests/platform/hub/log/test_events.py at 3d02f01a237c.
 
 U-HUB-events (rules part): E1-E9, kind matrix, grace period, sizes (agent_hub.log.events)."""
 
