@@ -140,17 +140,26 @@ test('@E2E-20 @R-9.1 @R-9.6 @R-P.5 @needs-vm GitHub connects through the device 
     );
   await expect.poll(cached, { timeout: 30_000 }).toEqual([{ kind: 'github' }]);
 
-  // Disconnect: hard delete at the hub, purge on the device; the page links GitHub's settings.
+  // Disconnect: hard delete at the hub, purge on the device. The device-flow token was minted by the platform, so the
+  // device revokes it at GitHub (KOR-40) and the page says so - no link to GitHub's settings.
   await page.getByTestId('github.disconnect').click();
+  await expect(page.getByTestId('github.disconnect.body')).toHaveAttribute('data-revocable', 'true');
   await page.getByTestId('github.disconnect.confirm').click();
   await expect(page.getByTestId('github.disconnected')).toBeVisible();
-  await expect(page.getByTestId('github.settings-link')).toBeVisible();
+  await expect(page.getByTestId('github.disconnected-note')).toHaveAttribute('data-revoked', 'true');
+  await expect(page.getByTestId('github.settings-link')).toHaveCount(0);
   expect(await orchestrator.hubQuery(`SELECT id FROM hub.credential WHERE owner_id = '${uuid(user)}'`)).toEqual([]);
   const deleted = await orchestrator.hubQuery<{ actor_kind: string }>(
     `SELECT actor_kind FROM hub.audit WHERE action = 'credential.delete' AND detail->>'kind' = 'github' AND actor_id = '${uuid(user)}'`,
   );
   expect(deleted).toEqual([{ actor_kind: 'user' }]);
   await expect.poll(cached, { timeout: 60_000 }).toEqual([]);
+  // The revocation reached GitHub once, and the double's journal (an artefact of the run) keeps only the token's
+  // length (HOT-11).
+  const revocations = (await githubJournal(orchestrator)).filter((call) => call.route === 'POST /credentials/revoke');
+  expect(revocations.map((call) => [call.status, call.body])).toEqual([
+    [202, { credentials: [expect.stringMatching(/^<redacted \d+ chars>$/)] }],
+  ]);
   const callsBefore = (await githubRoutes(orchestrator)).length;
 
   // A later operation of a session: refused before any GitHub call.
@@ -463,7 +472,11 @@ test('@E2E-20 @R-9.1 @R-P.5 @needs-vm a session can neither put its text into th
 
   await home(page);
   const task = await sendPrompt(page, `E2E20-FLOOD kz20-prompt-flood-b1x5: file my three notes as issues in ${INTERN}`);
-  await expectAnswerInChat(page, 'Three issues wait for GitHub kz20-flood-answer-y7b4.');
+  // Each held request is answered `pending` after 20 s (ADR-066), so the answer comes after three of those waits -
+  // longer than the usual minute of `expectAnswerInChat`.
+  await expect(
+    page.getByTestId('chat.output').filter({ hasText: 'Three issues wait for GitHub kz20-flood-answer-y7b4.' }),
+  ).toBeVisible({ timeout: 180_000 });
   await expect.poll(async () => (await orchestrator.doubleState('model')).ok, { timeout: 60_000 }).toBe(true);
 
   // One card for all held operations; it grows to three as the waiting events arrive (one per minute at most).
