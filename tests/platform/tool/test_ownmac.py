@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -750,3 +750,25 @@ def test_new_error_codes_have_their_next_step() -> None:
         assert PlatformError(code, reason="x").to_json()["error"] == code
     with pytest.raises(ValueError, match="unknown error code"):
         PlatformError("mac_too_old")
+
+
+class _DescribingTree:
+    """A tree whose commands take search words and an example (as after KOR-63)."""
+
+    def command(
+        self, group: object, name: str, work: object, help_text: str, *, writes: bool = False, example: str, words: str
+    ) -> None:
+        raise AssertionError("not called")
+
+
+def test_lookup_fields_go_only_to_a_tree_that_takes_them(tool: Tool) -> None:
+    plain = ownmac.lookup(cast(Any, object.__new__(_PlainTree)), ownmac.ADD_LOOKUP)
+    described = ownmac.lookup(cast(Any, _DescribingTree()), ownmac.ADD_LOOKUP)
+    assert plain == {}
+    assert described == ownmac.ADD_LOOKUP
+    assert set(ownmac.REMOVE_LOOKUP) == {"example", "words"}
+
+
+class _PlainTree:
+    def command(self, group: object, name: str, work: object, help_text: str, *, writes: bool = False) -> None:
+        raise AssertionError("not called")

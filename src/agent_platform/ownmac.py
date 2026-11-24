@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import hashlib
+import inspect
 import json
 import os
 import shutil
@@ -268,15 +269,41 @@ def _remove(account: Account, args: argparse.Namespace, context: Context) -> dic
     return device_remove(account, machine_for(context.environ))
 
 
+ADD_LOOKUP = {
+    "example": "agent-platform device add --this-computer [--org <org_id>] [--wg <wg_id>]",
+    "words": "eigener mac rechner computer gerät anbinden installieren own mac computer device connect install",
+}
+REMOVE_LOOKUP = {
+    "example": "agent-platform device remove --this-computer",
+    "words": "eigener mac rechner gerät entfernen deinstallieren own mac device remove uninstall",
+}
+
+
+def lookup(tree: Tree, fields: dict[str, str]) -> dict[str, Any]:
+    """The search words and example of a command, for a tree that describes its commands with them (KOR-63)."""
+    known = inspect.signature(tree.command).parameters
+    return {name: value for name, value in fields.items() if name in known}
+
+
 def register(tree: Tree) -> None:
     group = tree.group("device", "execution devices")
     sub = tree.command(
-        group, "add", _add, "make this Mac an execution device of the organization (one macOS dialog)", writes=True
+        group,
+        "add",
+        _add,
+        "make this Mac an execution device of the organization (one macOS dialog)",
+        writes=True,
+        **lookup(tree, ADD_LOOKUP),
     )
     sub.add_argument("--org", help="the organization (default: the only one)")
     sub.add_argument("--wg", action="append", default=[], help="workgroup to assign, repeatable (default: default)")
     sub.add_argument("--this-computer", action="store_true", help="the computer this command runs on (the default)")
     sub = tree.command(
-        group, "remove", _remove, "unpair this Mac and remove the installation (one macOS dialog)", writes=True
+        group,
+        "remove",
+        _remove,
+        "unpair this Mac and remove the installation (one macOS dialog)",
+        writes=True,
+        **lookup(tree, REMOVE_LOOKUP),
     )
     sub.add_argument("--this-computer", action="store_true", required=True, help="the computer this command runs on")
