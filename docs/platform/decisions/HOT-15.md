@@ -104,3 +104,10 @@ after `stop` (pool closed), the repeats would have been lost, although `stop` pr
 **Decision:** flushes are serialized (`_flushing`). The final flush waits for a write that is still running and writes
 what a failed write gave back. New test `test_stop_waits_for_the_write_of_the_sweeper`: it holds the sweeper's write
 on an event and is red without the fix (`stop` returned at once).
+
+## 7. `web/e2e/devices/terminal.spec.ts` "keystrokes and paste in the terminal produce no request"
+
+Red in gate run 8: after a fixed settle of 1.5 s the test counted every request, and the start-up round of the
+community engine (`GET /v1/community/requests`) still ran under load. That engine serves keys on its own schedule:
+after the sign-in, and on frames after a random delay of up to 3 s. **Decision:** requests under `/v1/community/` are
+not counted. Every other request after the keystrokes and the paste still fails the test.

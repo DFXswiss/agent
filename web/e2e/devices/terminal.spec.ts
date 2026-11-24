@@ -86,7 +86,13 @@ test('keystrokes and paste in the terminal produce no request', async ({ page, b
   // settle: no pull or stream reconnect pending
   await page.waitForTimeout(1500);
   const requests: string[] = [];
-  page.on('request', (request) => requests.push(`${request.method()} ${request.url()}`));
+  // The community engine serves keys on its own schedule: after the sign-in, and on frames after a random delay of up
+  // to 3 s (`core/community/engine.ts`). Under load the start-up round can still run after the settle above, so those
+  // requests are not counted; every other request is (HOT-15).
+  const background = (url: string) => new URL(url).pathname.startsWith('/v1/community/');
+  page.on('request', (request) => {
+    if (!background(request.url())) requests.push(`${request.method()} ${request.url()}`);
+  });
   await page.getByTestId('terminal.viewport').locator('.xterm').first().click();
   // the keys really reach the terminal: its (input-disabled) text area has the focus
   expect(await page.evaluate(() => document.activeElement?.classList.contains('xterm-helper-textarea'))).toBe(true);
