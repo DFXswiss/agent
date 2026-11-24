@@ -2,7 +2,8 @@
 // `home` is one user's computer. `pairAgent` runs `agent-platform pair`, opens the link the tool handed to its browser
 // stand-in in the user's page and confirms with the passkey; the page then hands the secret over to the tool's
 // loopback listener (T1: browser and tool on one machine). `agentTool` runs any other command and returns the JSON
-// object it printed.
+// object it printed; `agentToolRun` returns the whole run (exit code and output) for commands that are meant to fail.
+// `copyAgentHome` copies one computer's agent state to a new computer.
 import { expect, type Page } from '@playwright/test';
 import { anonymousBudget, COST } from './identity.ts';
 import type { Orchestrator } from './orchestrator.ts';
@@ -37,6 +38,21 @@ export async function agentTool(
   return run.result ?? {};
 }
 
+/** `agent-platform <args>` on the computer `home`, whatever its exit code. */
+export async function agentToolRun(
+  orchestrator: Orchestrator,
+  home: string,
+  args: readonly string[],
+  timeout = 60_000,
+): Promise<ToolRun> {
+  return finished(orchestrator, (await start(orchestrator, home, args)).id, timeout);
+}
+
+/** The agent state of the computer `from` on a new computer `to` (a second copy of the same paired agent). */
+export async function copyAgentHome(orchestrator: Orchestrator, from: string, to: string): Promise<void> {
+  await orchestrator.call('POST', '/agent-tool/copy-home', { from, to });
+}
+
 /** Pairs the agent of `home` with the account signed in on `page` (passkey gesture on `/connect`). */
 export async function pairAgent(
   orchestrator: Orchestrator,
@@ -63,8 +79,12 @@ export async function pairAgent(
   await page.goto(link!);
   await expect(page.getByTestId('connect.request')).toBeVisible({ timeout: 30_000 });
   await page.getByTestId('connect.confirm').click();
-  await expect(page).toHaveURL(/\/settings\?agent=connected$/, { timeout: 60_000 });
   const run = await finished(orchestrator, id, 60_000);
   expect(run.rc, `agent-platform pair: ${run.stderr_tail}`).toBe(0);
+  // the tool's listener answers with `303 /settings?agent=connected`; that new document holds no session, so the
+  // page may already have moved on to the sign-in with that page as the next one
+  await expect(page).toHaveURL(/\/settings\?agent=connected$|\/login\?next=%2Fsettings%3Fagent%3Dconnected$/, {
+    timeout: 60_000,
+  });
   return run.result ?? {};
 }

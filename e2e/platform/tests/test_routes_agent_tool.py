@@ -183,6 +183,49 @@ def test_claude_login_refuses_bad_bodies(ctx: Context, body: Any, detail: str) -
     assert detail in answer["detail"]
 
 
+def test_copy_home_gives_a_new_computer_the_same_agent_state(ctx: Context, tmp_path: Path) -> None:
+    finished(ctx, start(ctx, {"args": ["pair"], "home": "ada"}))
+    root = tmp_path / "agent-tool"
+    state = root / "ada" / "state" / "agent-platform"
+    state.mkdir(mode=0o700)
+    (state / "agent.key").write_text("key")
+    (state / "agent.key").chmod(0o600)
+    login = {"home": "ada", "access_token": "a", "expires_at_ms": 1, "refresh_token": "r"}
+    assert call(ctx, "POST", "/agent-tool/claude-login", login)[0] == 200
+    assert call(ctx, "POST", "/agent-tool/copy-home", {"from": "ada", "to": "ada_copy"}) == (200, {"home": "ada_copy"})
+    copied = root / "ada_copy" / "state" / "agent-platform" / "agent.key"
+    assert copied.read_text() == "key"
+    assert copied.stat().st_mode & 0o777 == 0o600
+    assert copied.parent.stat().st_mode & 0o777 == 0o700
+    assert (root / "ada_copy" / "state").stat().st_mode & 0o777 == 0o700
+    keychain = (root / "ada" / "tools" / "keychain.json").read_text()
+    assert (root / "ada_copy" / "tools" / "keychain.json").read_text() == keychain
+    # the copy runs as its own computer; without a keychain item at the source none is copied
+    answer = finished(ctx, start(ctx, {"args": ["pair"], "home": "ada_copy"}))
+    assert answer["result"]["state"] == str(root / "ada_copy" / "state" / "agent-platform")
+    assert call(ctx, "POST", "/agent-tool/copy-home", {"from": "ada_copy", "to": "bare"})[0] == 200
+    (root / "bob" / "state").mkdir(parents=True)
+    assert call(ctx, "POST", "/agent-tool/copy-home", {"from": "bob", "to": "bob_copy"})[0] == 200
+    assert not (root / "bob_copy" / "tools" / "keychain.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "error"),
+    [
+        ([], 400, "invalid"),
+        ({"from": "ada"}, 400, "invalid"),
+        ({"from": "ada", "to": "../x"}, 400, "invalid"),
+        ({"from": 1, "to": "x"}, 400, "invalid"),
+        ({"from": "nobody", "to": "x"}, 404, "not_found"),
+        ({"from": "ada", "to": "ada"}, 409, "exists"),
+    ],
+)
+def test_copy_home_refuses_bad_bodies(ctx: Context, tmp_path: Path, body: Any, status: int, error: str) -> None:
+    (tmp_path / "agent-tool" / "ada" / "state").mkdir(parents=True)
+    answer = call(ctx, "POST", "/agent-tool/copy-home", body)
+    assert (answer[0], answer[1]["error"]) == (status, error)
+
+
 def test_an_unknown_run_is_not_found(ctx: Context) -> None:
     status, answer = call(ctx, "GET", "/agent-tool/no-such-run")
     assert (status, answer["error"]) == (404, "not_found")

@@ -12,6 +12,9 @@
 - `POST /agent-tool/claude-login` (`{"home", "access_token", "expires_at_ms", "refresh_token"}`): the local Claude Code
   login of that computer as Claude Code stores it (keychain item for macOS-like homes). The refresh token is a canary:
   specs assert it never reaches the hub, the page or any output.
+- `POST /agent-tool/copy-home` (`{"from", "to"}`): a copy of one computer's agent state (its state directory and the
+  keychain stand-in, modes kept) on a new computer `to` that must not exist yet: a second copy of a paired agent that
+  still holds the old key after the first one revoked itself (E2E-46: the hub answers `key_revoked`).
 No real keychain, profile or browser of the machine is touched.
 """
 
@@ -20,6 +23,7 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import shutil
 import subprocess
 import threading
 from dataclasses import dataclass, field
@@ -160,8 +164,29 @@ def post_claude_login(ctx: Context, _params: dict[str, str], body: Any) -> tuple
     return 200, {"home": str(root.name)}
 
 
+def post_copy_home(ctx: Context, _params: dict[str, str], body: Any) -> tuple[int, Any]:
+    if not isinstance(body, dict):
+        raise RouteError(400, "invalid", "body must be an object")
+    source, target = body.get("from"), body.get("to")
+    for name in (source, target):
+        if not isinstance(name, str) or not name.isidentifier():
+            raise RouteError(400, "invalid", "from and to must be simple names")
+    root = Path(ctx.scratch or "/tmp") / "agent-tool"
+    if not (root / str(source)).is_dir():
+        raise RouteError(404, "not_found", f"no agent-tool computer {source}")
+    if (root / str(target)).exists():
+        raise RouteError(409, "exists", f"agent-tool computer {target} exists")
+    copy = _home(ctx, target)
+    shutil.copytree(root / str(source) / "state", copy / "state", symlinks=True, dirs_exist_ok=True)
+    keychain = root / str(source) / "tools" / "keychain.json"
+    if keychain.exists():
+        shutil.copy2(keychain, copy / "tools" / "keychain.json")
+    return 200, {"home": str(target)}
+
+
 ROUTES = [
     Route("POST", "/agent-tool", post_start),
     Route("POST", "/agent-tool/claude-login", post_claude_login),
+    Route("POST", "/agent-tool/copy-home", post_copy_home),
     Route("GET", "/agent-tool/{id}", get_run),
 ]
