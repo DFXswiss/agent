@@ -305,6 +305,9 @@ describe('watchQueue', () => {
     const stop = watchQueue(context, TASK, { onError, debounceMs: 10, pollMs: 50 });
     await vi.advanceTimersByTimeAsync(0);
     expect(onError).toHaveBeenCalledWith('not_found');
+    // the poll reads nothing while no queue was ever loaded
+    await vi.advanceTimersByTimeAsync(50);
+    expect(client.of(`GET /v1/tasks/${TASK}/queue`)).toHaveLength(1);
     client.on(`GET /v1/tasks/${TASK}/queue`, () => new Promise((_, reject) => (fail = () => reject(new Error('x')))));
     putTasks(store, [task({ state: 'idle', state_at: '2026-11-24T10:01:00.000Z' })]);
     await vi.advanceTimersByTimeAsync(10);
