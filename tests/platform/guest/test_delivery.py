@@ -817,6 +817,28 @@ def test_the_default_pause_waits_on_the_close_event(context: ControlContext, tui
     assert not engine._pause(10)
 
 
+def test_close_waits_for_the_workers_and_the_control_process_closes_the_delivery(
+    context: ControlContext, tui: FakeTui
+) -> None:
+    engine = delivery.install(context, delivery.Delivery(context, tui))
+    waiting = threading.Event()
+
+    def work() -> None:
+        waiting.set()
+        while engine._pause(10):
+            pass
+
+    engine._start(lambda: None)
+    (done,) = engine._threads
+    done.join(5)
+    engine._start(work)
+    (worker,) = engine._threads  # the ended worker is no longer kept
+    assert waiting.wait(5)
+    context.close()
+    assert not worker.is_alive()
+    assert engine._threads == []
+
+
 # -------------------------------------------------------------------------------------------- queue
 
 

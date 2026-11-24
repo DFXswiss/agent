@@ -272,6 +272,7 @@ class Delivery:
     _queued: set[tuple[str, str]] = field(default_factory=set, init=False)
     _pane_locks: dict[str, threading.Lock] = field(default_factory=dict, init=False)
     _restarts: dict[str, int] = field(default_factory=dict, init=False)
+    _threads: list[threading.Thread] = field(default_factory=list, init=False)
 
     # -- plumbing -----------------------------------------------------------------------------------------------
 
@@ -287,14 +288,23 @@ class Delivery:
         if self.spawn is not None:
             self.spawn(work)
             return
-        threading.Thread(target=work, name="agent-guest-delivery", daemon=True).start()
+        thread = threading.Thread(target=work, name="agent-guest-delivery", daemon=True)
+        with self._lock:
+            self._threads = [running for running in self._threads if running.is_alive()]
+            self._threads.append(thread)
+        thread.start()
 
     def pane_lock(self, session_id: str) -> threading.Lock:
         with self._lock:
             return self._pane_locks.setdefault(session_id, threading.Lock())
 
     def close(self) -> None:
+        """End the workers (their next pause returns ``False``) and wait for them; the control process stops."""
         self._closed.set()
+        with self._lock:
+            threads, self._threads = self._threads, []
+        for thread in threads:
+            thread.join(5)
 
     def _session(self, session_id: str) -> Session | None:
         return self.context.state.session(session_id)
@@ -614,8 +624,9 @@ _delivery_lock = threading.Lock()
 
 
 def install(context: ControlContext, created: Delivery) -> Delivery:
-    """Attach ``created`` to ``context`` (tests and ``manager``)."""
+    """Attach ``created`` to ``context`` (tests and ``manager``); it closes with the control process."""
     vars(context)[_DELIVERY] = created
+    context.on_close(created.close)
     return created
 
 
