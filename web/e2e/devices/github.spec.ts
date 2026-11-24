@@ -2,7 +2,7 @@
 // private org has no device, so "Connect GitHub" first assigns the platform device; the `github.connect` request is
 // sealed to the device (the double opens it), the device code appears with its link and countdown, the device
 // stores the credential CK-encrypted and answers `done`; the browser shows the login decrypted from the record.
-// Disconnect deletes the record at the hub and links the GitHub settings page.
+// Disconnect deletes the record at the hub; the device revokes the token it minted (KOR-40, KOR-65).
 import { expect, test } from '../fixtures/test.ts';
 import { answerRequest } from '../helpers/operations.ts';
 import { freshUser } from '../helpers/tasks.ts';
@@ -61,10 +61,9 @@ test('connects GitHub through the device flow and disconnects again', async ({ p
   await expect(page.getByTestId('github.disconnect.dialog')).toBeVisible();
   await page.getByTestId('github.disconnect.confirm').click();
   await expect(page.getByTestId('github.disconnected')).toBeVisible();
-  await expect(page.getByTestId('github.settings-link')).toHaveAttribute(
-    'href',
-    'https://github.com/settings/applications',
-  );
+  // a token of the device flow (here the OAuth App's, KOR-65) is revoked at GitHub by the device: no settings link
+  await expect(page.getByTestId('github.disconnected-note')).toHaveAttribute('data-revoked', 'true');
+  await expect(page.getByTestId('github.settings-link')).toHaveCount(0);
   expect(((await api.request('GET', '/v1/me/credentials')) as { credentials: unknown[] }).credentials).toHaveLength(0);
 });
 
