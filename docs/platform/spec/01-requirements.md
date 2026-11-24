@@ -141,7 +141,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 | R-8.4 | [§8 b3](../KONZEPT.md#k-8-b3) | Workgroup: read or write; in the default workgroup all members have write by default. | Decided: the default-workgroup write right is not reducible in v1 (ADR-024 addendum). | HUB, WEB | 04 §4.7 | E2E-18, E2E-02 |
 | R-8.5 | [§8 b4](../KONZEPT.md#k-8-b4) | Access rights enforced technically in the backend. | Hub checks every request; direct API calls in tests. | HUB | 03 §3 | E2E-18, U-HUB-rights, E2E-45 |
 | R-8.6 | [§8 b4](../KONZEPT.md#k-8-b4) | … and in the user interface. | Controls hidden/disabled; readers verify author rights. | WEB | 06 | E2E-18 |
-| R-8.7 | [§8 b5](../KONZEPT.md#k-8-b5) | Sessions may read and discover via platform APIs everything they are authorised for: members, workgroups, tasks, status, whiteboards. | MCP read tools; rights of the task owner. ADR-024. | GST, RUN | 03 §8.1 | E2E-19 |
+| R-8.7 | [§8 b5](../KONZEPT.md#k-8-b5) | Sessions may read and discover via platform APIs everything they are authorised for: members, workgroups, tasks, status, whiteboards. | MCP read tools; rights of the task owner. ADR-024. | GST, RUN | 03 §8.1 | E2E-19, E2E-52 |
 | R-8.8 | [§8 b5](../KONZEPT.md#k-8-b5) | No blanket insight into foreign workgroups. | Other workgroups: names only. | GST, RUN | 03 §8.1 | E2E-19 |
 | R-8.9 | [§8 b6](../KONZEPT.md#k-8-b6) | Read accesses are logged too. | `read.<resource>` audit rows for API and session reads. | HUB, RUN | 02 §2.9 | E2E-15, E2E-19 |
 

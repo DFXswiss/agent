@@ -31,7 +31,7 @@ interface JournalEntry {
 
 test.describe.configure({ mode: 'serial' });
 
-test('@E2E-52 @R-8.7 @R-P.5 @needs-vm the first turn of a new task on a pool VM uses a platform tool at once', async ({
+test('@E2E-52 @R-8.7 @needs-vm the first turn of a new task on a pool VM uses a platform tool at once', async ({
   page,
   orchestrator,
   authenticator,
