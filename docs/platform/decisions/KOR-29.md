@@ -209,3 +209,13 @@ MON-3. **Runner measures only from outside** (`agent_runner.metrics.workvm`): th
     request drops a ready pool entry only when the RAM of all ready entries would make it fit. L11: `limactl list`
     of the monitoring round is bounded (10 s; a hanging listing leaves that slot's host values empty). Still open:
     L10 (intended), L12 (hub before runner, documented), L13 (in-place change before merge, past).
+27. **No web search tool in the session sandbox; search goes through the work VM's browser.** The package asks for
+    the session's web search "where the model access allows it". Claude Code's `WebSearch` is a provider-side tool,
+    but it is one of the tools the session sandbox denies (attack case ATK-05, requirements R-10.4/R-13.3, E2E-23);
+    the package keeps the existing sandbox cases in force, and `WebFetch` would reach the network from the sandbox
+    itself. The work VM already gives the session full internet and a browser (`workvm_browse`, a search engine page
+    included), so nothing the session needs is missing. Enabling `WebSearch` is a separate decision on the sandbox's
+    tool list (one line in `agent_guest.driver.DISALLOWED_TOOLS` and `sandbox.settings.DENIED_TOOLS`, ATK-05 and
+    E2E-23 turned around) and stays open.
+28. **Runbook** `docs/platform/runbooks/work-vms.md`: rehearsal, installation with `--plan`, operation, faults,
+    removal.
