@@ -38,10 +38,13 @@ bytes are the reproducibility check (signatures carry time stamps, so signed bui
 `--notarized` (or re-run the build with `--notarized` and staple again) so `package_sha256` matches the stapled file.
 The device screen offers the download only for a feed with `notarized: true` that has not expired.
 
-Without a Developer ID (steps 2 and 4 only, `notarized: false`) the agent way works to the end: `device add` checks
-the feed's signature, expiry, minimum macOS and the package digest, never `notarized`; it writes the package itself
-(no quarantine attribute) and the administrator step installs it with `installer -pkg`, which accepts an unsigned
-package; updates check the same and install the same way. Only the download for people stays closed.
+Without a Developer ID (sections 2 and 4 only, `notarized: false`) the agent way installs and updates: `device add`
+checks the feed's signature, expiry, minimum macOS and the package digest, never `notarized`; it writes the package
+itself (no quarantine attribute) and the administrator step installs it with `installer -pkg`, which accepts an
+unsigned package. Updates check the feed's signature and expiry and the package digest (not `notarized`) and install
+the same way. Such a build re-signs nothing: the Mach-O files keep the signatures of their pinned upstream archives,
+so `limactl` runs VMs only with the virtualization entitlement it ships with; a task on a test Mac shows it. Only the
+download for people stays closed.
 
 ## 4. Publish
 
