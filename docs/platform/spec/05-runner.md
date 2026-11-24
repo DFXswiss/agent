@@ -974,7 +974,9 @@ poisoned settings, OS probe) on a golden built with the new version, and a check
 unknown to the model double (double fails on unknown routes). Then `agent-runner image build`; running VMs move
 per §3.5.
 
-## 16. Own device: installation without a terminal (ADR-074, KOR-59)
+## 16. Own device: installation without a terminal
+
+Decision: ADR-074 (KOR-59).
 
 An own Mac becomes an org device through one signed, versioned package (`agent_runner/install/`):
 

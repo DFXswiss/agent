@@ -1,7 +1,7 @@
 # Runbook: releasing the runner package of own devices (ADR-074)
 
 Scope: the release key, building, signing, notarising and publishing `DFX-Agent-Runner-<version>.pkg`, and what an
-own device does with it ([05 §16](../spec/05-runner.md#16-own-device-installation-without-a-terminal-adr-068-kor-59)).
+own device does with it ([05 §16](../spec/05-runner.md#16-own-device-installation-without-a-terminal)).
 Done by the release operator on an administrator's Mac with the repository checked out; never on a runner device.
 
 ## 1. The release key (once)
