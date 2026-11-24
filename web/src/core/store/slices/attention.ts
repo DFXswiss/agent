@@ -126,8 +126,6 @@ export const groupKey = (org: string, category: Category): string => `${org} ${c
 export function before(category: Category, a: AttentionRow, b: AttentionRow): boolean {
   const delta = parseTime(a.since) - parseTime(b.since);
   const ascending = delta < 0 || (delta === 0 && a.task_id < b.task_id);
-  const same = delta === 0 && a.task_id === b.task_id;
-  if (same) return false;
   return category === 'needs_decision' ? ascending : !ascending;
 }
 
@@ -178,8 +176,7 @@ function place(state: AttentionState, changed: readonly AttentionRow[]): Attenti
       }
       const lastId = group.ids.at(-1);
       const reachable =
-        group.nextBefore === null ||
-        (lastId !== undefined && lastId !== row.task_id && before(group.category, row, state.rows[lastId]!));
+        group.nextBefore === null || (lastId !== undefined && before(group.category, row, state.rows[lastId]!));
       if (present || reachable) {
         const ids = sorted(group.category, state.rows, [...group.ids, row.task_id]);
         groups = { ...groups, [key]: { ...group, ids } };
@@ -189,7 +186,10 @@ function place(state: AttentionState, changed: readonly AttentionRow[]): Attenti
   return groups;
 }
 
-/** Applies records of `org` (null: each record's known org, else `fallbackOrg`); older ones are ignored. */
+/**
+ * Applies records of `org` (null for live frames: each record's known org, else `fallbackOrg`, the org of the live
+ * channel); older ones are ignored, and so are frames when no org is known.
+ */
 function applyRows(
   state: AttentionState,
   rows: readonly AttentionRow[],
@@ -210,17 +210,6 @@ function applyRows(
   if (fresh.length === 0) return state;
   const next = { ...state, rows: records, orgs };
   return { ...next, groups: place(next, fresh) };
-}
-
-/** Applies records (live frames: `org` null, each record's known org or else `fallbackOrg`). */
-export function putAttention(
-  store: Store,
-  rows: readonly AttentionRow[],
-  org: string | null,
-  fallbackOrg: string | null = null,
-): void {
-  if (rows.length === 0) return;
-  store.update('attention', (state) => applyRows(state, rows, org, fallbackOrg));
 }
 
 /** A group starts loading. */
@@ -251,27 +240,23 @@ export function groupPage(
   store.update('attention', (state) => {
     const key = groupKey(page.org, page.category);
     const own = page.rows.filter((row) => row.category === page.category);
-    const applied = applyRows({ ...state, groups: {} }, own, page.org, null);
+    // the page's records are stored and leave the other groups of the org they were in
+    const applied = applyRows(state, own, page.org, null);
     const rows = applied.rows;
     const group = state.groups[key] ?? emptyGroup(page.org, page.category);
+    // a record a newer frame moved to another category meanwhile stays out
     const ids = own.map((row) => row.task_id).filter((id) => rows[id]!.category === page.category);
     const last = own.at(-1);
     let older: string[] = [];
     if (page.refresh && page.nextBefore !== null && last !== undefined) {
-      older = group.ids.filter(
-        (id) => rows[id]?.category === page.category && before(page.category, rows[last.task_id]!, rows[id]!),
-      );
+      const bound = rows[last.task_id]!;
+      older = group.ids.filter((id) => !ids.includes(id) && before(page.category, bound, rows[id]!));
     }
     const kept = page.first ? [...ids, ...older] : [...group.ids, ...ids];
     const merged = sorted(page.category, rows, kept);
     const nextBefore = older.length > 0 ? group.nextBefore : page.nextBefore;
     const updated: AttentionGroup = { ...group, ids: merged, nextBefore, status: 'ready', code: null };
-    // the page's records also leave the other groups of the org they were in
-    const others = place(
-      { ...applied, groups: state.groups },
-      own.filter((row) => applied.rows[row.task_id] === row),
-    );
-    return { ...applied, groups: { ...others, [key]: updated } };
+    return { ...applied, groups: { ...applied.groups, [key]: updated } };
   });
 }
 

@@ -429,6 +429,8 @@ describe('subjectOf and factsOf', () => {
   it('describes the parameters of each type', () => {
     expect(subjectOf('subagent.request', { purpose: 'Review', prompt: 'p' })).toBe('Review');
     expect(subjectOf('task.set_title', { title: 'T' })).toBe('T');
+    expect(subjectOf('human.question', { question: 'Which branch?' })).toBe('Which branch?');
+    expect(subjectOf('human.approval', { question: 'Deploy?' })).toBe('Deploy?');
     expect(subjectOf('github.list_repositories', {})).toBeNull();
     expect(subjectOf('github.checkout', { repo: 'a/b' })).toBe('a/b');
     expect(subjectOf('github.create_branch', { repo: 'a/b', branch: 'x', from: 'main' })).toBe('a/b x');
