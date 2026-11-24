@@ -1054,7 +1054,8 @@ def test_restart_runs_the_agent_again_with_a_new_token_and_the_prompt_still_wait
         assert manager.start(SESSION)
         first_run = manager._running[SESSION]
         first = context.state.session(SESSION)
-        toolsready.mark(context, SESSION, 17)
+        assert first is not None
+        toolsready.mark(context, SESSION, 17, first.token_sha256)
         assert manager.restart(SESSION)
     finally:
         registry.modules = original
@@ -1069,8 +1070,9 @@ def test_restart_runs_the_agent_again_with_a_new_token_and_the_prompt_still_wait
     assert states(context) == ["sandbox_ready", "agent_starting"]  # nothing journaled for the restart
     assert first_run.stopped
     assert manager._running[SESSION] is not first_run
-    assert manager._running[SESSION].start is not None
-    assert manager._running[SESSION].start.token == ""
+    restart_start = manager._running[SESSION].start
+    assert restart_start is not None
+    assert restart_start.token == ""
     assert tmux_runner.subcommands().count("new-session") == 2
     assert "kill-session" in tmux_runner.subcommands()
     assert manager._deferred[SESSION] == (PROMPT_ID, "Summarise the repository.")
@@ -1135,7 +1137,9 @@ def test_cleanup_forgets_the_tools_mark(
 ) -> None:
     manager.create(request())
     manager.start(SESSION)
-    toolsready.mark(context, SESSION, 17)
+    started = context.state.session(SESSION)
+    assert started is not None
+    toolsready.mark(context, SESSION, 17, started.token_sha256)
     manager.stop(SESSION)
     meta_file = Path(session_paths.meta_dir, f"{SESSION}.json")
     meta_file.write_text(json.dumps({**json.loads(meta_file.read_text()), "stopped_at": 0}))

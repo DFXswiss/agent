@@ -31,7 +31,7 @@ Status: Accepted (2026-11-24)
 3. **Measured as its own step.** The first listing of a run journals `session.tools_ready {tools, at}`; the runner logs
    it as `start_step … step=tools_ready` (budget 2 s after `agent_starting`); `prompt_delivering` is then measured
    from the tools.
-4. **Tools that do not come are a visible state and a retry.** After `AGENT_GUEST_TOOLS_SECONDS` (30 s, 1-39) without a
+4. **Tools that do not come are a visible state and a retry.** After `AGENT_GUEST_TOOLS_SECONDS` (25 s, 1-30) without a
    listing the guest journals `guest.error tools_unavailable` (shown in the task as `session.error`) and starts the
    agent again (new run, new token, the prompt keeps waiting), at most twice; then the start fails
    `agent_start_failed` and the waiting prompt is refused. Three runs stay within the runner's 120 s limit for

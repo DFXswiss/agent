@@ -7,8 +7,8 @@ ADR-027 section 3 (additive).
 - `per_page` and `page` count issues: pull requests are left out and no longer leave a page short or empty while
   issues follow (description changed).
 - New optional `note` (string, at most 500 characters): present when the flood limit of the runner ended the reading
-  before the page was complete (`truncated` is then `true` and `next_page` `null`); it says how to reach the issues
-  beyond it.
+  before the page was complete (`truncated` is then `true` and `next_page` `null`; it says how to reach the issues
+  beyond it), or when the page did not fit one result and lost its last issues (ask with a smaller `per_page`).
 
 ## Guest journal (`guest/journal/INDEX.json`, `record.json`, `session.tools_ready.json`, fixtures)
 

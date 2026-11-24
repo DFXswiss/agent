@@ -485,7 +485,7 @@ Otherwise block (`03-api.md` §8.2), journal `session.state prompt_refused` and 
 | 3 | – | choose model access (§10.1), decrypt credential | 0.05 s |
 | 4 | `sandbox_ready` | `POST /v1/sessions` (user, dirs, harness file, token) + `PUT …/credential` | 0.3 s |
 | 5 | `agent_starting` | register initial prompt hash; start tmux window + unit (no prompt on the command line, §4.1) | ≤ 120 s, else `failed` `agent_start_failed` (reconcile step 56, counted from the first reconcile that saw the state; KOR-02) |
-| 6 | `prompt_delivering` | the agent listed the platform tools (`tools/list` on `/mcp`, journal `session.tools_ready`, runner start step `tools_ready` ≤ 2 s from step 5) **and** the Claude TUI is up (input box visible); then the initial prompt is typed or pasted (§6.2). Tools not listed within `AGENT_GUEST_TOOLS_SECONDS` (30 s): `guest.error tools_unavailable` and the agent is started again (new run, new token), at most twice; then `failed` `agent_start_failed` (HOT-09) | ≤ 2 s after the tools |
+| 6 | `prompt_delivering` | the agent listed the platform tools (`tools/list` on `/mcp`, journal `session.tools_ready`, runner start step `tools_ready` ≤ 2 s from step 5) **and** the Claude TUI is up (input box visible); then the initial prompt is typed or pasted (§6.2). Tools not listed within `AGENT_GUEST_TOOLS_SECONDS` (25 s): `guest.error tools_unavailable` and the agent is started again (new run, new token), at most twice; then `failed` `agent_start_failed` (HOT-09) | ≤ 2 s after the tools |
 | 7 | `working` | UserPromptSubmit accepted (`prompt_accepted`) | ≤ 0.5 s |
 
 Warm-pool path total target ≤ 3 s; clone path ≤ 8.5 s; both under the 10 s requirement (`03-api.md` §4.6.1).

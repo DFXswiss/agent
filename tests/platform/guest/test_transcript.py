@@ -429,7 +429,7 @@ def write(path: Path, *entries: dict[str, Any], partial: str = "") -> None:
         handle.write("".join(json.dumps(entry) + "\n" for entry in entries) + partial)
 
 
-def test_follower_journals_the_transcript_and_reports_the_tui_and_claude_session(
+def test_follower_journals_the_transcript_and_names_the_claude_session(
     context: ControlContext, follower: TranscriptFollower, project: Path, ticks: Ticks
 ) -> None:
     assert follower.step() == 0  # no transcript yet
@@ -437,11 +437,11 @@ def test_follower_journals_the_transcript_and_reports_the_tui_and_claude_session
     head, _, tail = lines.partition('"msg_double_0007"')
     (project / f"{CLAUDE}.jsonl").write_text(head, encoding="utf-8")
     follower.step()
-    states = journal(context, "session.state")
-    assert [(r["body"]["state"], r["body"].get("claude_session_id")) for r in states] == [("prompt_delivering", CLAUDE)]
+    # HOT-09: a starting session is only named; prompt_delivering is the delivery watcher's
+    assert journal(context, "session.state") == []
     session = context.state.session(SID)
     assert session is not None
-    assert (session.state, session.claude_session_id) == ("prompt_delivering", CLAUDE)
+    assert (session.state, session.claude_session_id) == ("agent_starting", CLAUDE)
     with (project / f"{CLAUDE}.jsonl").open("a", encoding="utf-8") as handle:
         handle.write('"msg_double_0007"' + tail)
     follower.step()

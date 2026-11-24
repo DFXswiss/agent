@@ -52,7 +52,7 @@ a second, and ends when the state changes. Then the session's initial prompt (``
 goes on the command line) is queued; the runner sends no follow-up before the first prompt is accepted. The same holds
 for every start of the agent: a new session, a resume, a restart.
 
-Tools missing: when the agent has not listed the tools ``tools_seconds`` (``AGENT_GUEST_TOOLS_SECONDS``, default 30)
+Tools missing: when the agent has not listed the tools ``tools_seconds`` (``AGENT_GUEST_TOOLS_SECONDS``, default 25)
 after the watcher began, the watcher journals ``guest.error tools_unavailable`` for the session (the runner shows it in
 the task as ``session.error``) and starts the agent again (``sessions.restart_session``: new run, new token, the
 prompt keeps waiting), at most ``TOOLS_RESTARTS`` times per session and control process; then - or when the run
@@ -99,7 +99,7 @@ WAIT_SECONDS = 120.0
 ACCEPT_SECONDS = 10.0
 READY_SECONDS = 30.0
 READY_SLOW_POLL = 1.0
-TOOLS_SECONDS = 30.0
+TOOLS_SECONDS = 25.0
 TOOLS_RESTARTS = 2
 TOOLS_UNAVAILABLE = "tools_unavailable"
 READY, ENDED, RESTARTED = "ready", "ended", "restarted"

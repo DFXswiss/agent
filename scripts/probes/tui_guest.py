@@ -4,8 +4,8 @@ Runs as root inside a probe clone of the golden image (`python3 -E -s tui_guest.
 hands it in as a one-time Lima system provisioning step, because the Lima default user of a hardened clone may not
 run anything as root). Every run creates a throw-away session of the sandbox self-test (`selftest.
 ThrowawaySessions`, own user and directories, a pre-seeded `.claude.json` like a real session), builds the
-session's command line with the real driver (`ClaudeCodeDriver.argv`, initial prompt on the command line) and starts
-it in a detached tmux pane:
+session's command line with the real driver (`ClaudeCodeDriver.argv`; the probe appends the prompt itself, which the
+platform no longer does since ADR-068, so `transcript_ms` keeps its meaning) and starts it in a detached tmux pane:
 
 * `landlock` - exactly the start of a session: `systemd-run` with every unit property around the Landlock launcher
   (`unit.build`);
@@ -74,8 +74,8 @@ def one_run(variant: str, version: str, timeout: float) -> dict[str, Any]:
             exec_paths=paths,
             kind="main",
         )
-        launch = Launch(session_id=sessions.own, harness_file=unit.harness_file(sessions.own), initial_prompt=PROMPT)
-        args = ClaudeCodeDriver(version).argv(launch)[1:]
+        launch = Launch(session_id=sessions.own, harness_file=unit.harness_file(sessions.own))
+        args = [*ClaudeCodeDriver(version).argv(launch)[1:], "--", PROMPT]
         if variant == "landlock":
             argv = unit.build(spec, args)
         else:

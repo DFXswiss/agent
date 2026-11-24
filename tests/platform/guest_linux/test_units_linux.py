@@ -153,9 +153,19 @@ def start_units(tmp_path: Path, guest: Guest) -> Iterator[StartUnits]:
         rules.write_text(RULES)
         MCP_CONFIG.parent.mkdir(mode=0o755, exist_ok=True)
         MCP_CONFIG.write_text(
-            # the image's file (images/mcp.json): the API unit answers tools/list only with the session's token, and
-            # the first prompt waits for that listing (HOT-09)
-            (REPO / "images" / "mcp.json").read_text()
+            # as images/mcp.json: the API unit answers tools/list only with the session's token, and the first
+            # prompt waits for that listing (HOT-09)
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "platform": {
+                            "type": "http",
+                            "url": "http://127.0.0.1:7700/mcp",
+                            "headers": {"Authorization": "Bearer ${PLATFORM_SESSION_TOKEN}"},
+                        }
+                    }
+                }
+            )
         )
         MCP_CONFIG.chmod(0o644)
         spec = {
@@ -310,8 +320,10 @@ def test_a_real_restart_of_the_control_unit_keeps_the_running_session(control_un
     # beyond the start window counted from the start before the restart: `agent_exited`
     time.sleep(max(0.0, sessions.START_WINDOW_SECONDS + 0.5 - (time.monotonic() - started)))
     os.kill(agent_pid, 9)
-    wait_for(lambda: control_unit.states(sid)[-1]["state"] == "failed", 30, lambda: str(control_unit.states(sid)))
-    assert control_unit.states(sid)[-1]["reason"] == "agent_exited"
+    wait_for(
+        lambda: any(b["state"] == "failed" for b in control_unit.states(sid)), 30, lambda: str(control_unit.states(sid))
+    )
+    assert [b["reason"] for b in control_unit.states(sid) if b["state"] == "failed"] == ["agent_exited"]
 
 
 # -------------------------------------------------------------------------------------------- agent-guest-api (A-04)

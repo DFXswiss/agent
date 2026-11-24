@@ -178,7 +178,9 @@ def register(context: ControlContext, text: str, prompt_id: str = PROMPT_ID) -> 
 
 def tools_listed(context: ControlContext) -> None:
     """The session's agent listed the platform tools (what ``/mcp`` reports, HOT-09)."""
-    toolsready.mark(context, SESSION_ID, 17)
+    session = context.state.session(SESSION_ID)
+    assert session is not None
+    toolsready.mark(context, SESSION_ID, 17, session.token_sha256)
 
 
 def kinds(context: ControlContext) -> list[str]:

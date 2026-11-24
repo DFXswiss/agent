@@ -64,7 +64,7 @@ describe('session.error in the chat', () => {
     ]);
     expect(rows[0]).toHaveTextContent('Session error: A model call without a confirmed prompt was refused.');
     expect(rows[1]).toHaveTextContent('Unknown error (brand_new).');
-    expect(GUEST_ERROR_CODES.size).toBe(13);
+    expect(GUEST_ERROR_CODES.size).toBe(14);
   });
 });
 

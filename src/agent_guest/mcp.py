@@ -18,9 +18,12 @@ JSON-RPC 2.0 over HTTP POST with JSON responses (no SSE, no MCP session IDs):
   the others)
 
 Tools at the agent (HOT-09): a successful ``tools/list`` is the proof that the session's agent has the platform tools
-(Claude Code connects its MCP servers in the background, ADR-068); the server reports it to the control
-process (op ``session.tools_listed {session_id, tools}``, best effort), which holds the first prompt until then
-(``delivery.py``).
+(Claude Code connects its MCP servers in the background, ADR-068); the server reports it to the control process (op
+``session.tools_listed {session_id, tools, token_sha256}``), which holds the first prompt until then
+(``delivery.py``). The report names the token of the request, so a listing of an earlier run of the agent never
+counts for a later one. Claude Code lists only once per run: a report the control process could not take
+(``unavailable``, e.g. while it restarts) is repeated in the background every ``REPORT_PAUSE`` seconds, at most
+``REPORT_ATTEMPTS`` times; any other answer ends the repetition.
 
 Tool results are ``{content:[{type:"text",text:<JSON>}], isError}``; errors carry ``{"error":<code>,"message":...}``
 with the codes of ``mcp/objects.json#/$defs/tool_error``.
@@ -83,6 +86,8 @@ READ_RATE = 2.0
 RATE_LIMITED = "rate_limited"
 MAX_BUCKETS = 1024
 TOOLS_LISTED = "session.tools_listed"
+REPORT_ATTEMPTS = 30
+REPORT_PAUSE = 1.0
 EMPTY_LISTS: dict[str, dict[str, Any]] = {
     "resources/list": {"resources": []},
     "resources/templates/list": {"resourceTemplates": []},
@@ -251,6 +256,10 @@ def _inline(schemas: SchemaSet, base: str, node: Mapping[str, Any], depth: int) 
     return out
 
 
+def _thread(work: Callable[[], None]) -> None:
+    threading.Thread(target=work, name="agent-guest-tools-report", daemon=True).start()
+
+
 def _text(value: object, *, error: bool) -> dict[str, Any]:
     text = json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     return {"content": [{"type": "text", "text": text}], "isError": error}
@@ -285,10 +294,15 @@ class McpServer:
         self.tools = dict(tools)
         self.limiter = limiter or ReadLimiter()
         self.refusals = refusals or ReadLimiter()
+        self.pause: Callable[[float], None] = time.sleep
+        self.spawn: Callable[[Callable[[], None]], None] = _thread
         self._listing: list[dict[str, Any]] | None = None
 
-    def handle(self, session_id: str, body: bytes) -> tuple[int, dict[str, Any] | None]:
-        """HTTP status and JSON-RPC response (``None``: notification, answered 202 without a body)."""
+    def handle(
+        self, session_id: str, body: bytes, token_sha256: str | None = None
+    ) -> tuple[int, dict[str, Any] | None]:
+        """HTTP status and JSON-RPC response (``None``: notification, answered 202 without a body); ``token_sha256``
+        is the hash of the request's session token (``None``: nothing is reported for ``tools/list``)."""
         try:
             message = parse_json(body)
         except ValueError:
@@ -303,7 +317,7 @@ class McpServer:
             return 202, None
         ident = message["id"]
         try:
-            result = self._dispatch(session_id, message["method"], message.get("params", {}))
+            result = self._dispatch(session_id, message["method"], message.get("params", {}), token_sha256)
         except _RpcError as error:
             self.refused(session_id, error.refusal, method=error.method)
             return 200, _error(ident, error.code, error.message)
@@ -320,13 +334,30 @@ class McpServer:
         with contextlib.suppress(ApiSockError):
             self.control.append(REFUSED, body, session_id)
 
-    def tools_listed(self, session_id: str) -> None:
-        """Tell the control process that the session's agent has the tools (best effort: without the report the
-        first prompt waits for the next listing or the control process's deadline)."""
-        with contextlib.suppress(ApiSockError):
-            self.control.call(TOOLS_LISTED, {"session_id": session_id, "tools": len(self.tools)})
+    def tools_listed(self, session_id: str, token_sha256: str) -> None:
+        """Tell the control process that the run of ``token_sha256`` has the tools; repeated in the background while
+        the control process is unavailable (module docstring)."""
+        args = {"session_id": session_id, "tools": len(self.tools), "token_sha256": token_sha256}
+        if not self._report(args):
+            self.spawn(lambda: self._report_again(args))
 
-    def _dispatch(self, session_id: str, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    def _report(self, args: dict[str, Any]) -> bool:
+        """``True`` when the report needs no repetition (taken, or refused for good)."""
+        try:
+            self.control.call(TOOLS_LISTED, args)
+        except ApiSockError as error:
+            return error.code != "unavailable"
+        return True
+
+    def _report_again(self, args: dict[str, Any]) -> None:
+        for _ in range(REPORT_ATTEMPTS):
+            self.pause(REPORT_PAUSE)
+            if self._report(args):
+                return
+
+    def _dispatch(
+        self, session_id: str, method: str, params: dict[str, Any], token_sha256: str | None
+    ) -> dict[str, Any]:
         if method == "initialize":
             self._check_params("mcp/initialize.params.json", params)
             return {
@@ -339,7 +370,8 @@ class McpServer:
         if method == "tools/list":
             self._check_params("mcp/tools-list.params.json", params)
             listing = self.listing()
-            self.tools_listed(session_id)
+            if token_sha256 is not None:
+                self.tools_listed(session_id, token_sha256)
             return {"tools": listing}
         if method in EMPTY_LISTS:
             return dict(EMPTY_LISTS[method])

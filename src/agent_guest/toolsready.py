@@ -3,8 +3,9 @@
 Claude Code connects its MCP servers in the background and starts a turn without waiting for them, so a prompt that
 arrives before the agent listed the platform tools runs a turn without them. The proof that the tools reached the
 agent is its own ``tools/list`` on ``/mcp``: the API process reports it over ``api.sock`` (op
-``session.tools_listed {session_id, tools}``, ``control_routes/tools.py``), authenticated by the token of the run
-that asked. ``mark`` stores the session's current token hash in ``guest_meta`` (key ``tools_ready:<session>``), so
+``session.tools_listed {session_id, tools, token_sha256}``, ``control_routes/tools.py``) with the hash of the token
+the listing was authenticated with. ``mark`` stores it in ``guest_meta`` (key ``tools_ready:<session>``) when it is
+the session's current token - a listing of an earlier run (a restart raced the report) marks nothing -, so
 
 * the mark belongs to one run of the agent: a restart, resume or retry gives the session a new token and the mark no
   longer matches (``ready`` is ``False`` until that run listed the tools);
@@ -15,7 +16,8 @@ that asked. ``mark`` stores the session's current token hash in ``guest_meta`` (
 The watcher of ``delivery.py`` asks ``ready`` every 50 ms: the marks are kept in memory per control process as well
 (``_marks``, loaded from the database once, written through by ``mark``), so a poll opens no journal transaction.
 
-Interface: ``mark(context, session_id, tools) -> bool`` (``True`` for the first listing of the run; ``StateError
+Interface: ``mark(context, session_id, tools, token_sha256) -> bool`` (``True`` for the first listing of the run;
+``StateError
 not_found`` for an unknown or inactive session), ``ready(context, session_id) -> bool``, ``forget(context,
 session_id)``.
 """
@@ -48,12 +50,15 @@ def _key(session_id: str) -> str:
     return f"tools_ready:{session_id}"
 
 
-def mark(context: ControlContext, session_id: str, tools: int) -> bool:
-    """Record that the current run of the session listed the tools; ``True`` when it is the run's first listing."""
+def mark(context: ControlContext, session_id: str, tools: int, token_sha256: str) -> bool:
+    """Record that the run of ``token_sha256`` listed the tools; ``True`` when it is the current run's first listing
+    (``False`` for a repeated listing and for a run that is not the current one)."""
     with context.journal.transaction() as db:
         session = context.state.session(session_id)
         if session is None or session.state in INACTIVE_STATES:
             raise StateError("not_found")
+        if token_sha256 != session.token_sha256:
+            return False
         row = db.execute("SELECT value FROM guest_meta WHERE key = ?", (_key(session_id),)).fetchone()
         if row is not None and row[0] == session.token_sha256:
             return False

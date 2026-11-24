@@ -20,10 +20,11 @@ default silently.
 | ``AGENT_GUEST_GOLDEN_INSTALL_FILE`` | ``/var/lib/agent-golden/install.json`` | absolute path (TEST_MODE marker) |
 | ``AGENT_GUEST_FAULT_HOOKS`` | empty | empty, ``500`` or ``open`` (TEST_MODE golden only, ``fault.py``) |
 | ``AGENT_GUEST_PEER_TABLE`` | empty | empty or absolute path of the TCP socket table (``peer.py``) |
-| ``AGENT_GUEST_TOOLS_SECONDS`` | ``30`` | 1-39 (``delivery.py``, HOT-09) |
+| ``AGENT_GUEST_TOOLS_SECONDS`` | ``25`` | 1-30 (``delivery.py``, HOT-09) |
 
 ``AGENT_GUEST_TOOLS_SECONDS`` is how long a starting agent may take to list the platform tools before its start is
-repeated; three runs in all must stay within the runner's limit of 120 s for ``agent_starting``, hence at most 39.
+repeated; three runs in all, each with its own start of the unit and the TUI, must stay within the runner's limit of
+120 s for ``agent_starting``, hence at most 30.
 
 ``AGENT_GUEST_PEER_TABLE`` (``/proc/net/tcp`` in ``agent-guest-api.service``) binds every session token to the UID
 of the connecting process; empty switches the binding off (tests, other operating systems).
@@ -57,14 +58,14 @@ DEFAULTS: dict[str, str] = {
     "GOLDEN_INSTALL_FILE": "/var/lib/agent-golden/install.json",
     "FAULT_HOOKS": "",
     "PEER_TABLE": "",
-    "TOOLS_SECONDS": "30",
+    "TOOLS_SECONDS": "25",
 }
 PATHS = frozenset(DEFAULTS) - {"CONTROL_GROUP", "API_GROUP", "API_PORT", "FAULT_HOOKS", "PEER_TABLE", "TOOLS_SECONDS"}
 FAULT_HOOKS_VALUES = frozenset({"", "500", "open"})
 _GROUP_RE = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
 _PORT_RE = re.compile(r"0|[1-9][0-9]{0,4}")
 _SECONDS_RE = re.compile(r"[1-9][0-9]?")
-MAX_TOOLS_SECONDS = 39
+MAX_TOOLS_SECONDS = 30
 
 
 class ConfigError(Exception):

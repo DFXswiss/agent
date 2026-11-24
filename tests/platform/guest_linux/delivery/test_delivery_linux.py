@@ -286,7 +286,9 @@ def test_interrupt_is_one_escape(dummy: DummyRig) -> None:
 
 def test_the_ready_watcher_sees_the_input_box(dummy: DummyRig) -> None:
     session_id = ready_session(dummy, "agent_starting")
-    toolsready.mark(dummy.context, session_id, 0)  # HOT-09: the agent listed the platform tools
+    session = dummy.context.state.session(session_id)
+    assert session is not None
+    toolsready.mark(dummy.context, session_id, 0, session.token_sha256)  # HOT-09: the agent listed the platform tools
     assert dummy.engine.watch_ready(session_id)
     assert states(dummy.context, session_id) == ["prompt_delivering"]
 

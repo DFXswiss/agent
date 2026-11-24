@@ -665,6 +665,7 @@ def test_listings_stay_within_the_result_budget(store_dsn: str, monkeypatch: pyt
             listed = await execute(env, "github.list_issues", {"repo": "o/r"})
             assert 0 < len(listed["issues"]) < 10
             assert listed["truncated"] is True
+            assert listed["note"] == issues.FIT_NOTE  # next_page goes on after the issues left out
             assert len(body_json(listed)) <= 4000
             pulled = await execute(env, "github.list_pull_requests", {"repo": "o/r"})
             assert 0 < len(pulled["pull_requests"]) < 10

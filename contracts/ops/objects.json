@@ -1153,7 +1153,7 @@
         "note": {
           "type": "string",
           "maxLength": 500,
-          "description": "present when the flood limit ended the reading before the page was complete: how to reach the issues beyond it"
+          "description": "present when the flood limit ended the reading before the page was complete (how to reach the issues beyond it) or when the page did not fit one result and lost its last issues (ask with a smaller per_page)"
         }
       },
       "required": [

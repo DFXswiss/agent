@@ -219,19 +219,85 @@ def test_tools_list_reports_that_the_tools_reached_the_agent(
     assert not toolsready.ready(context, SESSION_ID)
 
 
-def test_a_failed_tools_report_still_answers_the_listing(
-    schemas: SchemaSet, api_client: ApiClient, session: Session, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def unreachable(*_args: object, **_kwargs: object) -> dict[str, Any]:
-        raise ApiSockError("unavailable")
+TOKEN = "2" * 64
 
-    monkeypatch.setattr(api_client, "call", unreachable)
+
+def test_tools_list_without_a_token_reports_nothing(
+    schemas: SchemaSet, api_client: ApiClient, session: Session, context: ControlContext
+) -> None:
     status, answer = McpServer(schemas, api_client, load_tools()).handle(
         SESSION_ID, b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
     )
     assert status == 200
     assert answer is not None
     assert answer["result"]["tools"]
+    assert tools_ready_records(context) == []
+
+
+def test_a_report_the_control_process_cannot_take_is_repeated(
+    schemas: SchemaSet,
+    api_client: ApiClient,
+    session: Session,
+    context: ControlContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claude Code lists the tools once per run: a report lost while the control process restarts is repeated in the
+    background until it is taken (review finding 2)."""
+    server = McpServer(schemas, api_client, load_tools())
+    real = api_client.call
+    answers: list[str] = ["unavailable", "unavailable"]
+    pauses: list[float] = []
+    spawned: list[Callable[[], None]] = []
+
+    def flaky(op: str, args: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any]:
+        if answers:
+            raise ApiSockError(answers.pop(0))
+        return real(op, args, timeout)
+
+    monkeypatch.setattr(api_client, "call", flaky)
+    server.pause = pauses.append
+    server.spawn = spawned.append
+    status, answer = server.handle(SESSION_ID, b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}', session.token_sha256)
+    assert status == 200
+    assert answer is not None
+    assert answer["result"]["tools"]  # the answer never waits for the report
+    assert tools_ready_records(context) == []
+    (again,) = spawned
+    again()
+    assert pauses == [mcp_core.REPORT_PAUSE] * 2
+    assert toolsready.ready(context, SESSION_ID)
+
+
+def test_a_report_refused_for_good_or_never_taken_ends(
+    schemas: SchemaSet, api_client: ApiClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = McpServer(schemas, api_client, load_tools())
+    calls: list[str] = []
+
+    def refused(op: str, args: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any]:
+        calls.append(op)
+        raise ApiSockError("not_found")
+
+    monkeypatch.setattr(api_client, "call", refused)
+    server.tools_listed(SESSION_ID, TOKEN)
+    assert calls == [mcp_core.TOOLS_LISTED]  # refused for good: no repetition
+
+    def unavailable(op: str, args: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any]:
+        calls.append(op)
+        raise ApiSockError("unavailable")
+
+    monkeypatch.setattr(api_client, "call", unavailable)
+    server.pause = lambda seconds: None
+    server.spawn = lambda work: work()
+    calls.clear()
+    server.tools_listed(SESSION_ID, TOKEN)
+    assert len(calls) == 1 + mcp_core.REPORT_ATTEMPTS
+
+
+def test_the_report_thread_runs_in_the_background() -> None:
+    done = threading.Event()
+    mcp_core._thread(done.set)
+    assert done.wait(5)
 
 
 def test_registry_holds_the_tools_of_this_package() -> None:

@@ -18,8 +18,8 @@ from __future__ import annotations
 import threading
 import weakref
 
-from agent_guest.apisock import ApiClient, ApiSockError, AuthLimited
-from agent_guest.gateway import authenticate
+from agent_guest.apisock import ApiClient, ApiSockError, AuthLimited, token_sha256
+from agent_guest.gateway import authenticate, session_token
 from agent_guest.mcp import McpServer, load_tools
 from agent_guest.routing import HttpError, Request, Response, Route, json_response, rate_limited
 from agent_guest.server import ApiContext
@@ -56,7 +56,10 @@ def rpc(context: ApiContext, request: Request) -> Response:
     if request.stream.remaining > MAX_BODY:
         server.refused(session_id, "size_exceeded")
         raise HttpError("size_exceeded")
-    status, answer = server.handle(session_id, request.stream.read())
+    # the run of the agent that asks: its token (HOT-09, a listing counts only for its own run)
+    token = session_token(request.headers, api_key=False)
+    assert token is not None  # authenticated above
+    status, answer = server.handle(session_id, request.stream.read(), token_sha256(token))
     if answer is None:
         return Response(status=status)
     return json_response(answer, status)

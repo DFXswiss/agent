@@ -424,7 +424,7 @@ def test_an_agent_that_exits_at_once_fails_the_start(
     sid = new_id()
     create(rig, sid)
     assert rig.manager.start(sid)
-    wait_for(lambda: states(rig.context, sid)[-1] == "failed", 30, lambda: str(states(rig.context, sid)))
+    wait_for(lambda: "failed" in states(rig.context, sid), 30, lambda: str(states(rig.context, sid)))
     records, _ = rig.context.journal.read(after=0, limit=1000)
     assert records[-1]["body"]["reason"] == "agent_start_failed"
     wait_for(lambda: not rig.tmux.has_session(tmux.session_name(sid)), 10)
@@ -436,7 +436,7 @@ def test_a_launcher_failure_fails_the_sandbox(make_rig: Callable[[str, tuple[str
     sid = new_id()
     create(rig, sid)
     assert rig.manager.start(sid)
-    wait_for(lambda: states(rig.context, sid)[-1] == "failed", 30, lambda: str(states(rig.context, sid)))
+    wait_for(lambda: "failed" in states(rig.context, sid), 30, lambda: str(states(rig.context, sid)))
     # other records (the agent's end, terminal capture) may follow the failure: read the session's last state record
     records, _ = rig.context.journal.read(after=0, limit=1000)
     own = [r for r in records if r["kind"] == "session.state" and r["session_id"] == sid]
@@ -540,7 +540,7 @@ class _Forward(http.server.BaseHTTPRequestHandler):
                 for session in context.state.sessions():
                     if session.state == "agent_starting":
                         with contextlib.suppress(StateError):
-                            toolsready.mark(context, session.id, 0)
+                            toolsready.mark(context, session.id, 0, session.token_sha256)
         elif method == "ping":
             answer["result"] = {}
         else:
@@ -749,9 +749,13 @@ def test_a_restarted_control_process_sees_the_agent_end_and_records_its_output(
     # counts the run from its start before the restart (beyond the start window: `agent_exited`)
     time.sleep(max(0.0, sessions.START_WINDOW_SECONDS + 0.5 - (time.monotonic() - started)))
     os.kill(main_pid(sid), 9)
-    wait_for(lambda: states(rig.context, sid)[-1] == "failed", 20, lambda: str(states(rig.context, sid)))
+    wait_for(lambda: "failed" in states(rig.context, sid), 20, lambda: str(states(rig.context, sid)))
     records, _ = rig.context.journal.read(after=0, limit=10000)
-    reason = [r["body"].get("reason") for r in records if r["kind"] == "session.state" and r["session_id"] == sid][-1]
+    reason = [
+        r["body"].get("reason")
+        for r in records
+        if r["kind"] == "session.state" and r["session_id"] == sid and r["body"]["state"] == "failed"
+    ][-1]
     assert reason == "agent_exited"
     wait_for(lambda: not rig.tmux.has_session(tmux.session_name(sid)), 10)
 

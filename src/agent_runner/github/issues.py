@@ -11,7 +11,8 @@
   reads on until it sees one or the list ends; a complete page at the flood limit names the next page as well). Flood
   limit: at most `SCAN_PAGES` GitHub pages per operation; a page that needs more is answered with what was found,
   `truncated: true`, `next_page: null` and a `note` that says how to go on (filter by labels or state, or turn the
-  order around with `direction`).
+  order around with `direction`). A page that does not fit the result budget loses its last issues (`pages.fit`); it
+  gets a `note` as well (ask for a smaller `per_page`), since `next_page` goes on after them.
 - `github.get_issue`: `GET /repos/{r}/issues/{n}` and one page of `GET /repos/{r}/issues/{n}/comments` (oldest
   first; default 100 per page); `pull_request` tells that the number is a pull request, `comments_total` is GitHub's
   comment count. The result stays within 200 KiB of body JSON: the newest comments of the page, then the body, then the
@@ -51,6 +52,10 @@ SCAN_PER_PAGE = 100
 """GitHub's largest page: the executor reads the raw list in pages of this size."""
 SCAN_PAGES = 10
 """GitHub pages `github.list_issues` reads at most per operation (flood limit, HOT-09)."""
+FIT_NOTE = (
+    "The page was too large for one result and its last issues were left out; ask for this page again with a "
+    "smaller per_page to see them."
+)
 SCAN_NOTE = (
     "Only the first {rows} entries of the list (issues and pull requests together) were read. To reach issues "
     "beyond them, filter by labels or state, or turn the order around with direction."
@@ -192,7 +197,10 @@ async def list_issues(ctx: OperationContext, client: GitHubClient) -> dict[str, 
         result["note"] = SCAN_NOTE.format(rows=SCAN_PAGES * SCAN_PER_PAGE)
     elif more is not False and page < pages.MAX_PAGE:
         result["next_page"] = page + 1
+    listed = len(issues)
     pages.fit(result, "issues")
+    if len(issues) < listed:
+        result["note"] = FIT_NOTE
     return result
 
 
