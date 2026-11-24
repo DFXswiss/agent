@@ -33,5 +33,13 @@
   "unlock.other-account": "This passkey belongs to another account. Choose the passkey you just created.",
   "agent.title": "Your AI agent will be connected",
   "agent.main": "Creating your passkey also connects this agent as your main orchestrator. You do not need to do anything else.",
-  "agent.display-name": "Your display name: {name} (proposed by your agent; you can change it later in the settings)."
+  "agent.display-name": "Your display name: {name} (proposed by your agent; you can change it later in the settings).",
+  "missing.title": "The invitation link is no longer in this tab",
+  "missing.body": "This happens, for example, after the page was reloaded. You have not joined anything yet. Open the invitation link once more.",
+  "has-account.title": "You already have an account in this browser",
+  "has-account.body": "This invitation would create a second, separate account with its own passkey. You usually do not need that.",
+  "has-account.open": "Go to my account",
+  "has-account.anyway": "Create a second account anyway",
+  "intro.one-account": "Already have an account? Then you do not need this invitation.",
+  "intro.sign-in": "Sign in"
 }

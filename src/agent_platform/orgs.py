@@ -21,12 +21,12 @@ from agent_platform.errors import PlatformError
 from agent_platform.hub import anon_request, segment
 from agent_runner.crypto import identity as identity_format
 from agent_runner.crypto import invite as invite_format
-from agent_runner.crypto.encoding import b64u_decode, b64u_encode, body_json, format_time
+from agent_runner.crypto.encoding import b64u_decode, b64u_encode, body_json, format_time, parse_time
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.event import new_header, seal_event
 from agent_runner.crypto.ids import is_uuid7, uuid7
 from agent_runner.crypto.log.platform import PlatformState
-from agent_runner.crypto.log.state import ADMIN, MEMBER, ORG, READ, WG, WRITE
+from agent_runner.crypto.log.state import ADMIN, MEMBER, ORG, READ, WG, WRITE, OrgState
 from agent_runner.crypto.log.verify import VerifiedLog, verify_log
 from agent_runner.crypto.log.wraps import CRED, WrapSlot
 
@@ -164,7 +164,47 @@ def org_show(account: Account, org: str) -> dict[str, Any]:
         "members": members,
         "workgroups": workgroups,
         "open_invites": invites,
+        **({"invites": invite_states(account, org, state)} if me is not None and me.role == "admin" else {}),
     }
+
+
+def invite_states(account: Account, org: str, state: OrgState) -> list[dict[str, Any]]:
+    """The user invitations with their state for the inviter (KOR-36): `open` (not opened yet as far as the hub
+    knows), `opened` (someone looked the link up), `registered` (a new account was created with it, the join is still
+    missing) or `accepted`. Listed are only invitations the verified log knows, not revoked and not expired (accepted
+    ones until their expiry, so that "did they accept?" is answered); an open one must also be open in the hub's list,
+    which is otherwise a hint for `opened` and `registered` only (03-api.md section 4.2; `opened_at` is missing on
+    older hubs)."""
+    answer = account.call("GET", f"/v1/orgs/{segment(org)}/invites")
+    rows = {str(row.get("invite_id")): row for row in answer.get("invites", []) if isinstance(row, dict)}
+    now = datetime.now(UTC)
+    joined = {p.joined_seq: p.id for p in state.principals.values()}
+    found: list[dict[str, Any]] = []
+    for inv in sorted(state.invites.values(), key=lambda item: -item.seq):
+        if inv.kind != "user" or inv.revoked_seq is not None or parse_time(inv.expires) <= now:
+            continue
+        row = rows.get(inv.invite_id, {})
+        # an open invitation the hub does not list as open (used, revoked, unknown) is not shown (as in the web client)
+        if inv.accepted_seq is None and row.get("state") != "open":
+            continue
+        opened = row.get("opened_at")
+        if inv.accepted_seq is not None:
+            status = "accepted"
+        elif row.get("registered") is True:
+            status = "registered"
+        else:
+            status = "opened" if opened is not None else "open"
+        found.append(
+            {
+                "invite_id": inv.invite_id,
+                "role": inv.role,
+                "expires": inv.expires,
+                "status": status,
+                "opened_at": opened,
+                "accepted_by": None if inv.accepted_seq is None else joined.get(inv.accepted_seq),
+            }
+        )
+    return found
 
 
 # --- org create ---

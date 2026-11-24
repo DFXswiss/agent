@@ -40,7 +40,7 @@
   "invite.copy-code": "Code kopieren",
   "invite.copied": "Kopiert",
   "invite.done": "Fertig",
-  "invites.title": "Offene Einladungen",
+  "invites.title": "Einladungen",
   "invites.empty": "Keine offenen Einladungen.",
   "invites.expires": "Läuft ab {time}",
   "invites.revoke": "Widerrufen",
@@ -66,5 +66,10 @@
   "progress.save": "Wird gespeichert …",
   "access.inherited": "liest als Admin",
   "role.demote": "Bereits gelesene Inhalte bleiben bei der Person; neue Inhalte von Workgroups, in denen sie nicht selbst Mitglied ist, kann sie nicht mehr lesen.",
-  "ungrant.admin-body": "Die Person bleibt Admin und kann diese Workgroup weiter lesen; zum Schreiben braucht sie wieder eine Freigabe."
+  "ungrant.admin-body": "Die Person bleibt Admin und kann diese Workgroup weiter lesen; zum Schreiben braucht sie wieder eine Freigabe.",
+  "invites.status.open": "Noch nicht geöffnet",
+  "invites.status.opened": "Link geöffnet – noch nicht beigetreten",
+  "invites.status.registered": "Konto angelegt – noch nicht beigetreten",
+  "invites.status.accepted": "Angenommen – {name} ist Mitglied",
+  "invites.someone": "die eingeladene Person"
 }

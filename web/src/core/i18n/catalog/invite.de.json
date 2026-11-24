@@ -33,5 +33,13 @@
   "unlock.other-account": "Dieser Passkey gehört zu einem anderen Konto. Wählen Sie den eben erstellten Passkey.",
   "agent.title": "Ihr KI-Agent wird verbunden",
   "agent.main": "Mit dem Anlegen Ihres Passkeys wird dieser Agent auch als Ihr Hauptorchestrator verbunden. Sonst müssen Sie nichts tun.",
-  "agent.display-name": "Ihr Anzeigename: {name} (von Ihrem Agenten vorgeschlagen; Sie können ihn später in den Einstellungen ändern)."
+  "agent.display-name": "Ihr Anzeigename: {name} (von Ihrem Agenten vorgeschlagen; Sie können ihn später in den Einstellungen ändern).",
+  "missing.title": "Der Einladungslink ist in diesem Tab nicht mehr vorhanden",
+  "missing.body": "Das passiert zum Beispiel nach dem Neuladen der Seite. Sie sind noch nirgends beigetreten. Öffnen Sie den Einladungslink noch einmal.",
+  "has-account.title": "Sie haben in diesem Browser schon ein Konto",
+  "has-account.body": "Diese Einladung würde ein zweites, getrenntes Konto mit eigenem Passkey anlegen. Das brauchen Sie in der Regel nicht.",
+  "has-account.open": "Zu meinem Konto",
+  "has-account.anyway": "Trotzdem ein zweites Konto anlegen",
+  "intro.one-account": "Sie haben schon ein Konto? Dann brauchen Sie diese Einladung nicht.",
+  "intro.sign-in": "Anmelden"
 }

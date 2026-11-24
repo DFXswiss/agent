@@ -40,7 +40,7 @@
   "invite.copy-code": "Copy code",
   "invite.copied": "Copied",
   "invite.done": "Done",
-  "invites.title": "Open invitations",
+  "invites.title": "Invitations",
   "invites.empty": "No open invitations.",
   "invites.expires": "Expires {time}",
   "invites.revoke": "Revoke",
@@ -66,5 +66,10 @@
   "progress.save": "Saving …",
   "access.inherited": "reads as admin",
   "role.demote": "Content the person has already read stays with them; they can no longer read new content of workgroups they are not a member of themselves.",
-  "ungrant.admin-body": "The person stays an admin and keeps reading this workgroup; writing needs a new grant."
+  "ungrant.admin-body": "The person stays an admin and keeps reading this workgroup; writing needs a new grant.",
+  "invites.status.open": "Not opened yet",
+  "invites.status.opened": "Link opened – not joined yet",
+  "invites.status.registered": "Account created – not joined yet",
+  "invites.status.accepted": "Accepted – {name} is a member",
+  "invites.someone": "the invited person"
 }

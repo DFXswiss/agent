@@ -306,12 +306,34 @@ def test_list_shows_every_state_newest_first(world: World, browser_accept: Any) 
         "created_at": format_time(world.hub.clock() - timedelta(seconds=HOUR)),
         "expires_at": format_time(world.hub.clock() + timedelta(hours=23)),
         "registered": False,
+        "opened_at": None,
         "used_at": None,
         "used_by": None,
         "revoked_at": None,
     }
     world.hub.flush_read_log()
     assert [row[2] for row in audit(world, "read.org.invites")] == [UUID(draft.id)]
+
+
+def test_list_shows_the_first_lookup_of_each_invitation(world: World) -> None:
+    draft = world.public_org()
+    first = create_invitation(draft)
+    second = create_invitation(draft)
+    other = world.public_org()
+    foreign = create_invitation(other)
+
+    def opened() -> dict[str, Any]:
+        listed = draft.founder.browser.get(f"/v1/orgs/{draft.id}/invites").json()["invites"]
+        return {item["invite_id"]: item["opened_at"] for item in listed}
+
+    assert opened() == {first.invite_id: None, second.invite_id: None}
+    world.hub.clock.advance(60)
+    looked = format_time(world.hub.clock())
+    assert world.hub.anon.post("/v1/invites/lookup", json={"invite_id": first.invite_id}).status_code == 200
+    world.hub.clock.advance(60)
+    assert world.hub.anon.post("/v1/invites/lookup", json={"invite_id": first.invite_id}).status_code == 200
+    assert world.hub.anon.post("/v1/invites/lookup", json={"invite_id": foreign.invite_id}).status_code == 200
+    assert opened() == {first.invite_id: looked, second.invite_id: None}
 
 
 def test_list_is_for_admins_only(world: World) -> None:

@@ -358,6 +358,16 @@ def test_post_budget_restarts_the_hub(ctx: Context, node: FakeNode) -> None:
         assert call(ctx, "POST", "/hub/budget", bad)[0] == 400
 
 
+def test_post_hub_restart_stops_and_starts_the_hub(ctx: Context, node: FakeNode) -> None:
+    """KOR-36 (E2E-39): a release-like restart with the unchanged environment."""
+    assert call(ctx, "POST", "/hub/restart", {})[0] == 409
+    ctx.hub = Hub(node, "/hub/python", {"A": "1"}, "127.0.0.1", 21006, sleep=lambda _s: None)
+    assert call(ctx, "POST", "/hub/restart", {}) == (200, {"restarted": True})
+    assert node.stopped == ["hub"]
+    assert node.spawned[-1][0] == "hub"
+    assert ctx.hub.env == {"A": "1"}
+
+
 def vm_responder(environ: str, *, pid: str = "4242", host: Result | None = None, vm: Result | None = None) -> Any:
     def respond(argv: list[str]) -> Result:  # noqa: PLR0911 - one answer per scripted command
         found = token_run(argv)

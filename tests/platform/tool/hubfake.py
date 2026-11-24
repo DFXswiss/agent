@@ -485,6 +485,7 @@ class HubFake:
             ("GET", r"/v1/orgs/(?P<org>[0-9a-f-]+)/log", self.r_log),
             ("POST", r"/v1/orgs/(?P<org>[0-9a-f-]+)/log", self.r_log_append),
             ("POST", r"/v1/orgs/(?P<org>[0-9a-f-]+)/invites", self.r_invite),
+            ("GET", r"/v1/orgs/(?P<org>[0-9a-f-]+)/invites", self.r_invites),
             ("POST", r"/v1/invites/lookup", self.r_lookup),
             ("GET", r"/v1/platform/log", self.r_platform_log),
             ("GET", r"/v1/users/lookup", self.r_user_lookup),
@@ -685,8 +686,24 @@ class HubFake:
         result = check_batch(found.log, [body["entry"]], [], wrapped_by=cast(str, request.user))
         found.log = result.log
         invite_id = body["entry"]["body"]["invite_id"]
-        self.invites[invite_id] = {"org": org, "package_ct": body["package_ct"]}
+        self.invites[invite_id] = {"org": org, "package_ct": body["package_ct"], "registered": False, "opened_at": None}
         return 200, {"invite_id": invite_id, "seq": result.log.head.seq}
+
+    def r_invites(self, request: Request, body: Any, org: str) -> tuple[int, Any]:
+        """The hub's list (only the fields the tool reads besides the ID; `opened_at` from the first lookup)."""
+        if not self.orgs[org].log.state.is_admin(cast(str, request.user)):
+            return 403, {"error": "forbidden"}
+        rows = [
+            {
+                "invite_id": invite_id,
+                "state": found.get("state", "open"),
+                "registered": found["registered"],
+                "opened_at": found["opened_at"],
+            }
+            for invite_id, found in self.invites.items()
+            if found["org"] == org
+        ]
+        return 200, {"invites": rows}
 
     def r_lookup(self, request: Request, body: Json) -> tuple[int, Any]:
         found = self.invites.get(body["invite_id"])
@@ -696,6 +713,7 @@ class HubFake:
             expires = now_ms_text(timedelta(hours=1))
             return 200, {"kind": "user", "scope": "platform", "expires_at": expires, "registered": found["registered"]}
         org = self.orgs[found["org"]]
+        found["opened_at"] = found.get("opened_at") or now_ms_text()
         return 200, {
             "kind": "user",
             "scope": "org",

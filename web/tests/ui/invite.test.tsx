@@ -8,7 +8,10 @@ import { afterLookup, failedLookup } from '../../src/ui/screens/invite/machine';
 import { downloadText, FILE_NAME, RecoveryCodeStep } from '../../src/ui/screens/invite/RecoveryCodeStep';
 import { isUnsetRecoverySlot } from '../../src/core/crypto/recovery';
 import { FakeAuthenticator } from '../core/account/authenticator';
-import { HubFailure, SimHub } from '../core/account/hub';
+import { HubFailure, ORIGIN, SimHub } from '../core/account/hub';
+import { signIn } from '../../src/core/account/login';
+import { register } from '../../src/core/account/register';
+import { setPhase } from '../../src/core/store/slices/session';
 import { renderApp } from './harness';
 
 const CODE = 'ABCDE-FGHIJ-KLMNO-PQRST-UVWXYZ';
@@ -312,6 +315,55 @@ describe('InviteScreen', () => {
     window.history.replaceState({ key: 'bad' }, '', '/invite#ABCDE');
     await renderApp('/invite');
     expect(await screen.findByTestId('invite.malformed')).toHaveAttribute('data-code', 'invite_code_length');
+  });
+
+  it('says when the code is no longer in this tab (reloaded), without a lookup', async () => {
+    const hub = new SimHub();
+    window.history.replaceState({ key: 'reloaded' }, '', '/invite');
+    await renderApp('/invite', { hub });
+    expect(await screen.findByTestId('invite.missing')).toHaveTextContent('You have not joined anything yet');
+    expect(hub.log.some((entry) => entry.target === '/v1/invites/lookup')).toBe(false);
+  });
+
+  it('warns a signed-in browser that the link creates a second account (KOR-36)', async () => {
+    const hub = new SimHub();
+    const auth = new FakeAuthenticator();
+    const code = hub.addInvite();
+    window.history.replaceState({ key: 'second' }, '', `/invite#${code}`);
+    const harness = await renderApp('/invite', { hub, auth }, async (made) => {
+      await register(made.app.anon, made.auth, made.hub.addInvite());
+      const login = await signIn({ anon: made.app.anon, credentials: made.auth, origin: ORIGIN });
+      await made.app.begin(login);
+      // still restoring when the lookup answers: neither the warning nor the form yet
+      setPhase(made.app.store, 'starting');
+      setTimeout(() => setPhase(made.app.store, 'locked'), 50);
+    });
+    expect(await screen.findByTestId('invite.has-account')).toHaveTextContent('second, separate account');
+    expect(screen.queryByTestId('invite.display-name')).toBeNull();
+    fireEvent.click(screen.getByTestId('invite.new-anyway'));
+    expect(await screen.findByTestId('invite.display-name')).toBeInTheDocument();
+    expect(screen.queryByTestId('invite.has-account')).toBeNull();
+    expect(screen.getByTestId('invite.one-account')).toHaveTextContent('Already have an account?');
+    expect(harness.hub.users.size).toBe(1);
+  });
+
+  it('takes a signed-in browser to its account', async () => {
+    const hub = new SimHub();
+    const auth = new FakeAuthenticator();
+    window.history.replaceState({ key: 'mine' }, '', `/invite#${hub.addInvite()}`);
+    const harness = await renderApp('/invite', { hub, auth }, async (made) => {
+      await register(made.app.anon, made.auth, made.hub.addInvite());
+      const login = await signIn({ anon: made.app.anon, credentials: made.auth, origin: ORIGIN });
+      await made.app.begin(login);
+    });
+    fireEvent.click(await screen.findByTestId('invite.to-account'));
+    await waitFor(() => expect(harness.router.state.location.pathname).not.toBe('/invite'));
+  });
+
+  it('offers the sign-in to someone who already has an account', async () => {
+    const harness = await openInvite();
+    fireEvent.click(screen.getByTestId('invite.sign-in-instead'));
+    await waitFor(() => expect(harness.router.state.location.pathname).toBe('/login'));
   });
 
   it('ignores a lookup that finishes after the screen was left', async () => {

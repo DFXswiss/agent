@@ -8,6 +8,7 @@ import http.server
 import json
 import threading
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -278,6 +279,52 @@ def test_invite_and_join(tool: Tool, hub: HubFake, account: User, tmp_path: Path
     granted = tool.run("wg", "grant", "--wg", wg, "--user", bob.id, "--access", "write", "--history")[1]
     assert granted["access"] == "write"
     assert hub.orgs[org].log.state.wg_access(bob.id, wg) == "write"
+
+
+def test_org_show_lists_the_invitation_states(
+    tool: Tool, hub: HubFake, account: User, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KOR-36: the inviter sees per invitation whether it is open, opened, registered or accepted."""
+    org = team(tool)
+    links = [tool.run("org", "invite", "--org", org)[1] for _ in range(4)]
+    untouched, opened, registered, accepted = (str(item["invite_id"]) for item in links)
+    hub.invites[opened]["opened_at"] = "2026-11-23T20:00:00.000Z"
+    hub.invites[registered]["registered"] = True
+    other_tool = make_tool(tmp_path / "other")
+    bob = hub.add_user(display_name="Bob")
+    pair_user(other_tool, hub, bob)
+    assert other_tool.run("org", "join", stdin=links[3]["invite_link"])[1]["org_id"] == org
+    # an open invitation the hub does not list, or lists as used, is not shown (as in the web client)
+    gone = str(tool.run("org", "invite", "--org", org)[1]["invite_id"])
+    del hub.invites[gone]
+    used = str(tool.run("org", "invite", "--org", org)[1]["invite_id"])
+    hub.invites[used]["state"] = "used"
+    shown = tool.run("org", "show", "--org", org)[1]
+    states = {item["invite_id"]: item for item in shown["invites"]}
+    assert [item["invite_id"] for item in shown["invites"]] == [accepted, registered, opened, untouched]
+    assert {key: item["status"] for key, item in states.items()} == {
+        untouched: "open",
+        opened: "opened",
+        registered: "registered",
+        accepted: "accepted",
+    }
+    assert states[opened]["opened_at"] == "2026-11-23T20:00:00.000Z"
+    assert states[accepted]["accepted_by"] == bob.id
+    assert states[accepted]["opened_at"] is not None
+    assert states[untouched]["accepted_by"] is None
+    assert states[untouched]["role"] == "member"
+    # the open ones stay in `open_invites` as before
+    assert {item["invite_id"] for item in shown["open_invites"]} == {untouched, opened, registered, gone, used}
+    # a member who is not an admin gets no invitation states (the hub list is for admins)
+    assert "invites" not in other_tool.run("org", "show", "--org", org)[1]
+    # expired invitations (accepted ones too) leave the list
+    later = datetime.now(UTC) + timedelta(days=60)
+    monkeypatch.setattr(orgs, "datetime", type("Later", (), {"now": staticmethod(lambda tz: later)}))
+    assert tool.run("org", "show", "--org", org)[1]["invites"] == []
+    monkeypatch.undo()
+    # the hub list fails: the command reports it like every other call
+    hub.hooks[("GET", f"/v1/orgs/{org}/invites")] = lambda b, r: (503, {"error": "unavailable"})
+    assert tool.run("org", "show", "--org", org)[1]["hub_error"] == "unavailable"
 
 
 def test_join_errors(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:

@@ -229,6 +229,28 @@ describe('invitations', () => {
     expect(await screen.findByTestId('members.invites.empty')).toBeInTheDocument();
   });
 
+  it('shows the inviter where each invitation stands (KOR-36)', async () => {
+    const { w } = await membersWorld();
+    const { bob } = w.others;
+    // bob has a name, cy none: the accepted invitations name the member or "the invited person"
+    names(w, { [bob.id]: 'Bob' });
+    mount(w, at('/x'), `/o/${w.org}/members`);
+    const accepted = await screen.findAllByTestId('members.invites.accepted');
+    expect(accepted.map((item) => item.textContent)).toEqual([
+      'Accepted – the invited person is a member',
+      'Accepted – Bob is a member',
+    ]);
+    // only accepted ones: "no open invitations"
+    expect(screen.getByTestId('members.invites.empty')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('members.invite.open'));
+    fireEvent.click(screen.getByTestId('members.invite.submit'));
+    fireEvent.click(await screen.findByTestId('members.invite.done'));
+    const item = await screen.findByTestId('members.invites.item');
+    expect(item).toHaveAttribute('data-status', 'open');
+    expect(within(item).getByTestId('members.invites.status')).toHaveTextContent('Not opened yet');
+    expect(screen.queryByTestId('members.invites.empty')).toBeNull();
+  });
+
   it('labels expiries in hours and days', () => {
     expect(expiryLabel(6)).toEqual({ key: 'members.invite.expiry.hours', count: 6 });
     expect(expiryLabel(72)).toEqual({ key: 'members.invite.expiry.days', count: 3 });

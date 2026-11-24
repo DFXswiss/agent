@@ -369,7 +369,7 @@ def _org_commands(tree: Tree) -> None:
     sub = tree.add(group, "create", with_account(cmd_org_create), "create a team organization")
     sub.add_argument("--name", required=True)
     sub.add_argument("--display-name")
-    sub = tree.add(group, "show", with_account(cmd_org_show), "members, workgroups, open invitations")
+    sub = tree.add(group, "show", with_account(cmd_org_show), "members, workgroups, invitations and their state")
     sub.add_argument("--org", required=True)
     sub = tree.add(group, "invite", with_account(cmd_org_invite), "invite a user (prints invite_link once)")
     sub.add_argument("--org", required=True)

@@ -40,6 +40,17 @@
           "registered": {
             "type": "boolean"
           },
+          "opened_at": {
+            "description": "Time of the first answered lookup of the invitation (from the hub's audit of invite.lookup), null if it was never looked up; optional for older hubs (KOR-36).",
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "used_at": {
             "anyOf": [
               {

@@ -169,6 +169,10 @@ export interface InviteRow {
   readonly created_at: string;
   readonly expires_at: string;
   readonly created_by: string;
+  /** Whether a person registered a passkey with it (the join may still be missing). */
+  readonly registered?: boolean;
+  /** First lookup of the invitation (hubs since KOR-36; null: never opened, absent: older hub). */
+  readonly opened_at?: string | null;
 }
 
 const STATES = ['open', 'used', 'revoked', 'expired'];
@@ -207,6 +211,64 @@ export async function openInvites(
         known.acceptedSeq === null &&
         Date.parse(known.expires) > now;
       return row.state === 'open' && open ? [{ ...row, expires_at: known.expires, seq: known.seq }] : [];
+    })
+    .sort((a, b) => b.seq - a.seq);
+}
+
+/**
+ * Where an invitation stands for the inviter (KOR-36): `accepted` (the verified log has the accept), `registered` (a
+ * person created an account with it, the join is missing), `opened` (the link was opened), `open`.
+ */
+export type InviteStatus = 'open' | 'opened' | 'registered' | 'accepted';
+
+export interface InviteStatusRow {
+  readonly inviteId: string;
+  readonly status: InviteStatus;
+  readonly expires: string;
+  readonly seq: number;
+  /** The member who joined with it (from the verified log: the principal admitted by the accept), for `accepted`. */
+  readonly acceptedBy: string | undefined;
+  readonly openedAt: string | null;
+}
+
+/**
+ * The user invitations of the org with their state, newest first: open ones (not revoked, not expired) and accepted
+ * ones that have not expired yet ("did they accept?"). The verified log decides which invitations exist and whether
+ * they were accepted; the hub's list only adds what the log cannot know (opened, registered) and is a hint.
+ */
+export async function inviteStatuses(context: OrgContext, org: string): Promise<InviteStatusRow[]> {
+  const body = await context.client.request('GET', `/v1/orgs/${encodeURIComponent(org)}/invites`);
+  if (!isRecord(body) || !Array.isArray(body.invites) || !body.invites.every(isInviteRow)) {
+    throw new HubError('unavailable', 200);
+  }
+  const state = context.store.getState().orgs.byId[org]?.log?.state ?? refuse('log_empty');
+  const now = context.now();
+  const rows = new Map(body.invites.map((row) => [row.invite_id, row]));
+  const joined = new Map([...state.principals.values()].map((p) => [p.joinedSeq, p.id]));
+  return [...state.invites.values()]
+    .flatMap((known): InviteStatusRow[] => {
+      if (known.kind !== 'user' || known.revokedSeq !== null || Date.parse(known.expires) <= now) return [];
+      const row = rows.get(known.inviteId);
+      const accepted = known.acceptedSeq !== null;
+      // an open invitation the hub does not list as open (used, revoked, unknown) is not shown
+      if (!accepted && row?.state !== 'open') return [];
+      const status: InviteStatus = accepted
+        ? 'accepted'
+        : row!.registered === true
+          ? 'registered'
+          : typeof row!.opened_at === 'string'
+            ? 'opened'
+            : 'open';
+      return [
+        {
+          inviteId: known.inviteId,
+          status,
+          expires: known.expires,
+          seq: known.seq,
+          acceptedBy: accepted ? joined.get(known.acceptedSeq!) : undefined,
+          openedAt: typeof row?.opened_at === 'string' ? row.opened_at : null,
+        },
+      ];
     })
     .sort((a, b) => b.seq - a.seq);
 }

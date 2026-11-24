@@ -80,8 +80,9 @@ test('a malformed or unknown code is reported without contacting the registratio
   await page.goto('/invite#ABCDE-ABCDE');
   await expect(page.getByTestId('invite.malformed')).toHaveAttribute('data-code', 'invite_code_length');
   await expect(page.getByTestId('invite.malformed')).toContainText('Check the code');
+  // no code in the tab (e.g. reloaded): the screen says so and that nothing was joined (KOR-36)
   await page.goto('/invite');
-  await expect(page.getByTestId('invite.malformed')).toBeVisible();
+  await expect(page.getByTestId('invite.missing')).toBeVisible();
   await page.goto('/nowhere');
   await page.goto('/invite#ABCDE-ABCDE-ABCDE-ABCDE-ABCDE1');
   await expect(page.getByTestId('invite.malformed')).toHaveAttribute('data-code', 'invite_code_invalid');

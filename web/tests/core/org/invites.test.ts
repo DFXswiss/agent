@@ -13,6 +13,7 @@ import {
   HOUR_MS,
   invitable,
   type InviteInput,
+  inviteStatuses,
   openInvites,
   revokeInvite,
   USER_EXPIRY_HOURS,
@@ -196,6 +197,40 @@ describe('open invitations and revocation', () => {
     expect(await openInvites(w.context, w.org, 'user')).toEqual([]);
   });
 
+  it('gives the inviter the state of each user invitation (KOR-36)', async () => {
+    const { w, a, input } = await setup();
+    const made = [];
+    for (const fill of [3, 4, 5, 7])
+      made.push(
+        await createInvite(w.context, w.org, {
+          ...input({ kind: 'user', role: 'member', wgs: {}, hours: 72 }),
+          code: () => new Uint8Array(16).fill(fill),
+        }),
+      );
+    const [open, opened, registered, gone] = made.map((item) => item.inviteId) as [string, string, string, string];
+    await createInvite(w.context, w.org, {
+      ...input({ kind: 'device', wgs: [w.world.defaultWg], hours: 24 }),
+      code: () => new Uint8Array(16).fill(6),
+    });
+    w.hub.invites.set(opened, { ...w.hub.invites.get(opened)!, opened_at: '2026-11-23T20:00:00.000Z' });
+    w.hub.invites.set(registered, { ...w.hub.invites.get(registered)!, registered: true, opened_at: null });
+    // the hub no longer lists one as open (used elsewhere, or a lie): not shown while the log has no accept
+    w.hub.invites.set(gone, { ...w.hub.invites.get(gone)!, state: 'used' });
+    const rows = await inviteStatuses(w.context, w.org);
+    expect(rows.map((row) => [row.inviteId, row.status, row.acceptedBy, row.openedAt])).toEqual([
+      [registered, 'registered', undefined, null],
+      [opened, 'opened', undefined, '2026-11-23T20:00:00.000Z'],
+      [open, 'open', undefined, null],
+      // the admissions of the setup (bob, cy): accepted in the verified log, with the member who joined
+      [rows[3]!.inviteId, 'accepted', a.cy!.id, null],
+      [rows[4]!.inviteId, 'accepted', a.bob!.id, null],
+    ]);
+    expect(rows).toHaveLength(5);
+    // expired by the clock: nothing is listed any more
+    w.hub.now = T0 + 100 * HOUR_MS;
+    expect(await inviteStatuses(w.context, w.org)).toEqual([]);
+  });
+
   it('refuses a malformed list and an unverified org', async () => {
     const { w } = await setup();
     w.client.on(`GET /v1/orgs/${w.org}/invites`, () => ({ invites: [{ invite_id: 1 }] }));
@@ -204,6 +239,9 @@ describe('open invitations and revocation', () => {
     await expect(openInvites(w.context, w.org, 'user')).rejects.toBeInstanceOf(HubError);
     w.client.on(`GET /v1/orgs/other/invites`, () => ({ invites: [] }));
     await expect(openInvites(w.context, 'other', 'user')).rejects.toMatchObject({ code: 'log_empty' });
+    await expect(inviteStatuses(w.context, 'other')).rejects.toMatchObject({ code: 'log_empty' });
+    w.client.on(`GET /v1/orgs/${w.org}/invites`, () => null);
+    await expect(inviteStatuses(w.context, w.org)).rejects.toBeInstanceOf(HubError);
   });
 
   it('revokes once, refuses unknown invitations and checks the answer', async () => {

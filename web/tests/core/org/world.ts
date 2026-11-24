@@ -36,6 +36,8 @@ export interface StoredInvite {
   used_at: null;
   used_by: null;
   revoked_at: string | null;
+  /** First lookup (hubs since KOR-36). */
+  opened_at?: string | null;
   package_ct: string;
 }
 

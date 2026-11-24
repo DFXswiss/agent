@@ -134,13 +134,14 @@ States and steps (`04-crypto.md` §5.1–§5.3):
 | `lookup` | "Checking invitation…" (short, no countdown) | `POST /v1/invites/lookup` |
 | `invalid` | one message for unknown/used/revoked/expired (`invite_unknown`), `invite_expired` separately | – |
 | `org_verify` (org invites) | – | open package, verify the log **returned by the lookup** (the invitee is not a member yet and cannot call `GET /v1/orgs/{org}/log`); failure → blocking error (`invite_not_in_log`, `log_*`) |
-| `intro` | what the invitation grants: org name and workgroup names (from the package fields `org_name`/`wg_names`), role, expiry; buttons "Create passkey" and "I already have an account" (org invitations only); with a valid session the client goes to `existing_account` directly | – |
-| `existing_account` (org invites) | "Join <org> with your existing account" | login ceremony §3.4 if no session; then `accept` with the registered identity (`04-crypto.md` §5.2a); `invite_registered` → error state |
+| `intro` | what the invitation grants: org name and workgroup names (from the package fields `org_name`/`wg_names`), role, expiry, "You have not joined <org> yet"; org invitations: "I already have an account – sign in and join" first (the login ceremony, unlock and `accept` in one action), then "New here – create an account with a passkey" with the display name, and a sentence against a second account by mistake; platform invitations in a browser with a stored session: "This invitation would create a second, separate account" with "Go to my account" and "Create a second account anyway"; the step waits until the stored session was restored (a session still starting never lands in the new-account path); with a valid session the client goes to `existing_account` directly (KOR-36) | – |
+| `existing_account` (org invites) | "Join <org> with your existing account", "You have not joined <org> yet"; one main button: "Join <org> as <name>" when unlocked (the name of the account's own `member.profile` in its orgs), else "Join <org> with my account" (one passkey gesture signs in, unlocks and joins); the name is the account's, "Use another name in this organization" opens the field (asked for only when no org of the account has a name); side paths "Use another account", "Create a new account instead" (KOR-36) | login ceremony §3.4 if locked, in the same action; then `accept` with the registered identity (`04-crypto.md` §5.2a); `invite_registered` → error state |
 | `create_passkey` | gesture 1 explained ("Your device will ask you to create a passkey") | `POST /v1/passkeys/register/begin` (ES256 only), `navigator.credentials.create()`, `POST /v1/passkeys/register/finish` (incl. the self-wrap of the user's new `CK_1`) |
 | `unlock_passkey` | gesture 2 explained ("Confirm once more to sign in") | login ceremony §3.4; `PUT /v1/me/bundles/{slot}` with the PRF output |
 | `prf_required` | §3.3 – the new passkey gave no PRF output: the registration is withdrawn, "Try again with another passkey" returns to `intro` (KOR-22); with PRF the flow goes from `unlock_passkey` straight to `accept` | `DELETE /v1/me/registration` |
-| `accept` | progress "Joining …" | `POST /v1/orgs/{org}/log` (`accept`) or `POST /v1/orgs` (genesis for platform invites, §3.1.1) |
-| `done` | navigate to `/o/:org` with the first-task composer (§4) | – |
+| `accept` | progress "Joining …"; a failure (hub unavailable, new release) says "You have not joined yet – try again" with "Try again" in the same tab (the code stays in the screen's memory); a retry after an accept whose answer was lost finds the membership (`GET /v1/me`) and continues with `done` | `POST /v1/orgs/{org}/log` (`accept`) or `POST /v1/orgs` (genesis for platform invites, §3.1.1) |
+| `done` | navigate to `/o/:org` with the first-task composer (§4); after an org invitation the header shows "You are now a member of <org>" until closed (KOR-36) | – |
+| `missing` | no code in this tab (reloaded after the code left the address): "The invitation link is no longer in this tab … Nothing was joined. Open the invitation link once more." (KOR-36) | – |
 
 Cancel handling (`AbortError`, `NotAllowedError`): return to the previous step with "Passkey creation was
 cancelled – try again"; never create partial users twice (register/begin is repeated with a new ceremony; the hub
@@ -385,8 +386,10 @@ usage; each node links to `/o/:org/s/:session`.
 - Admin actions:
   - **Invite user:** role (member default, admin), workgroups with read/write (default workgroup always write),
     expiry (72 h default, 1 h–30 d). Result screen shows link `<origin>/invite#<code>` and the code, with copy buttons
-    and a warning to transmit confidentially; the code is not shown again. Open invitations list with revoke
-    (`03-api.md` §4.2).
+    and a warning to transmit confidentially; the code is not shown again. The invitations list shows each user
+    invitation's state – "Not opened yet", "Link opened – not joined yet", "Account created – not joined yet" (with
+    revoke), and "Accepted – <name> is a member" until it expires; acceptance comes from the verified log, opened and
+    registered from the hub's list (`03-api.md` §4.2, KOR-36).
   - **Add an existing account (ADR-060):** the account code the person sees in its settings (or one of the accounts
     registered through the admin's own platform invitations), role, workgroups, one button. The identity is checked
     against the platform log before the button is enabled (`core/org/admit.ts`); the person does nothing and finds the

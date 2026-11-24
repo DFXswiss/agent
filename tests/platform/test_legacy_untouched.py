@@ -26,6 +26,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BASE_REF = "origin/develop"
 # `develop` of the former agent-core repository when it was united with this one; it does not move any more.
 CORE_BASE = "cbe3dbd8bee1ae36be0f3301927c3c63fbacc36a"
+# `develop` of this repository when the history of agent-core was merged into it (the first parent of that merge); once
+# `origin/develop` is the united tree, the merge base with it holds the files of both origins, so the agent side of the
+# comparison is this commit (KOR-36: without it every package was refused for the unification's own changes).
+AGENT_BASE = "64f0be0a56efbdacbfa0568fe0f59b61ec9cb079"
 
 PLATFORM_PREFIXES = (
     "src/agent_hub/",
@@ -107,7 +111,12 @@ def git(*args: str, root: Path = REPO_ROOT) -> str:
 
 
 def merge_base(root: Path = REPO_ROOT) -> str:
-    return git("merge-base", BASE_REF, "HEAD", root=root).strip()
+    """The agent base: the merge base with `origin/develop`, or `AGENT_BASE` once that lies on the united history."""
+    base = git("merge-base", BASE_REF, "HEAD", root=root).strip()
+    united = subprocess.run(
+        ["git", "-C", str(root), "merge-base", "--is-ancestor", AGENT_BASE, base], capture_output=True, check=False
+    )
+    return AGENT_BASE if united.returncode == 0 else base
 
 
 def core_base(root: Path = REPO_ROOT, ref: str = CORE_BASE) -> str:

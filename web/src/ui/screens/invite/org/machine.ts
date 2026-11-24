@@ -1,10 +1,14 @@
-// States of the org path of the invitation screen (06-web.md section 3.1): `org_verify` → `intro` (new user) or
-// `existing_account` (a signed-in user directly, or "I already have an account") → … → `accept` → `done`. Pure: the
-// component runs the effects and moves between steps.
+// States of the org path of the invitation screen (06-web.md section 3.1): `org_verify` → `intro` (nobody signed in:
+// "I already have an account – sign in and join" first, "New here – create an account with a passkey" second) or
+// `existing_account` (a stored session: one button joins, with one passkey gesture when the keys are locked) → `accept`
+// → `done` (KOR-36). The step waits until the stored session was restored: a session still `starting` must not land
+// in the new-user path, which would create a second identity. Pure apart from `settledPhase`: the component runs the
+// effects and moves between steps.
 import type { OrgInvitation } from '../../../../core/account/join';
 import type { SignIn } from '../../../../core/account/login';
 import type { Registration } from '../../../../core/account/register';
 import type { SessionPhase } from '../../../../core/store/slices/session';
+import { type Store, subscribe } from '../../../../core/store/store';
 import { HubError } from '../../../../core/net/signedFetch';
 import { errorCode } from '../../../shell/errors';
 
@@ -28,18 +32,25 @@ export type OrgStep =
   | {
       readonly step: 'existing_account';
       readonly invitation: OrgInvitation;
-      /** `sign_in`: no unlocked identity yet; `recovery`: the passkey could not unlock; `ready`: unlocked. */
+      /**
+       * `sign_in`: no unlocked identity yet (the join button signs in and joins in one go); `recovery`: the passkey
+       * could not unlock (the join follows the unlock); `ready`: unlocked, the join button joins.
+       */
       readonly mode: 'sign_in' | 'recovery' | 'ready';
       readonly signIn: SignIn | null;
       readonly busy: boolean;
       readonly notice: string | null;
+      /** No display name was found in the account's orgs and none typed: the field is asked for (rare). */
+      readonly needName: boolean;
+      /** `recovery`: the sign-in was of another account than the one before (its typed or read name is not used). */
+      readonly changed: boolean;
     }
   | {
       readonly step: 'accept';
       readonly invitation: OrgInvitation;
       readonly failed: string | null;
     }
-  | { readonly step: 'done'; readonly org: string };
+  | { readonly step: 'done'; readonly org: string; readonly orgName: string };
 
 const INVALID = new Set(['invite_unknown', 'invite_expired', 'invite_registered']);
 /** Revoked and consumed invitations get the one message of unknown ones (06-web.md section 3.1 `invalid`). */
@@ -76,7 +87,35 @@ const MODES: Partial<Record<SessionPhase, 'ready' | 'sign_in'>> = { unlocked: 'r
 /** The step after the invitation verified: a signed-in user joins with the existing account directly. */
 export function afterVerify(invitation: OrgInvitation, phase: SessionPhase): OrgStep {
   const mode = MODES[phase];
-  return mode === undefined
-    ? { step: 'intro', invitation, notice: null }
-    : { step: 'existing_account', invitation, mode, signIn: null, busy: false, notice: null };
+  return mode === undefined ? { step: 'intro', invitation, notice: null } : existingStep(invitation, mode);
+}
+
+/** The `existing_account` step in `mode`, idle. */
+export function existingStep(invitation: OrgInvitation, mode: 'sign_in' | 'ready'): OrgStep {
+  return {
+    step: 'existing_account',
+    invitation,
+    mode,
+    signIn: null,
+    busy: false,
+    notice: null,
+    needName: false,
+    changed: false,
+  };
+}
+
+/** The session phase once the stored session was restored (`starting` is over). */
+export function settledPhase(store: Store): Promise<SessionPhase> {
+  const phase = store.getState().session.phase;
+  if (phase !== 'starting') return Promise.resolve(phase);
+  return new Promise((resolve) => {
+    const stop = subscribe(
+      store,
+      (state) => state.session.phase,
+      (next) => {
+        stop();
+        resolve(next);
+      },
+    );
+  });
 }

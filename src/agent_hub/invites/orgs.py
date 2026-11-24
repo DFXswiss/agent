@@ -218,14 +218,28 @@ def _time(value: datetime | None) -> str | None:
     return None if value is None else format_time(value)
 
 
+def _opened(connection: Connection, org_id: UUID, invite_ids: list[str]) -> dict[str, datetime]:
+    """The first answered lookup of each invitation (`invite.lookup` audit rows, KOR-36).
+
+    The hub answers and audits every lookup anyway, so the time reveals nothing new (the trust boundary is unchanged).
+    """
+    rows = connection.execute(
+        "SELECT target_id, min(at) FROM hub.audit WHERE org_id = %s AND action = 'invite.lookup'"
+        " AND target_kind = 'invite' AND target_id = ANY(%s) GROUP BY target_id",
+        (org_id, invite_ids),
+    ).fetchall()
+    return {str(target): cast(datetime, at) for target, at in rows}
+
+
 def listing(connection: Connection, *, org_id: UUID, user: UUID, now: datetime) -> list[dict[str, Any]]:
-    """The org's invitations, newest first (at most 1000)."""
+    """The org's invitations, newest first (at most 1000), with the time of the first lookup (`opened_at`)."""
     rights.require(connection, user, rights.ORG_ADMIN, org_id=org_id)
     rows = connection.execute(
         "SELECT id, kind, log_seq, created_by, created_at, expires_at, registered_user, used_at, used_by, revoked_at"
         " FROM hub.invite WHERE org_id = %s ORDER BY created_at DESC, id DESC LIMIT %s",
         (org_id, MAX_LISTED),
     ).fetchall()
+    opened = _opened(connection, org_id, [str(row[0]) for row in rows])
     return [
         {
             "invite_id": invite_id,
@@ -236,6 +250,7 @@ def listing(connection: Connection, *, org_id: UUID, user: UUID, now: datetime) 
             "created_at": format_time(created_at),
             "expires_at": format_time(expires_at),
             "registered": registered_user is not None,
+            "opened_at": _time(opened.get(invite_id)),
             "used_at": _time(used_at),
             "used_by": None if used_by is None else str(used_by),
             "revoked_at": _time(revoked_at),
