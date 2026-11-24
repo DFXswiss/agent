@@ -161,8 +161,9 @@ operator needs one of an organization account.)
   active org device of an organization that is not exhausted, and without a key, the issuer's device state lists
   `dfx_keys.requests: [{request_id, org_id, device_id, device_kem}]` (`device_kem` from the hub's device registry).
   Before creating, the issuer deletes a key named for the same request that a crash left behind (lookup by name). It
-  creates one key per org device (`name` = `dfx-` + the first 8 characters of the request ID, `limit` = the key's
-  headroom), seals it with HPKE to `device_kem` (info binds request, org, device, `device_kem` and key reference),
+  creates one key per org device (`name` = `dfx-` + the request ID – its first characters are the time part of a
+  UUIDv7 and would not tell requests apart –, `limit` = the request's `headroom_usd` when the hub names one, else 0
+  until the first poll sets it), seals it with HPKE to `device_kem` (info binds request, org, device, `device_kem` and key reference),
   signs the envelope with its device signing key, forgets the key and sends `dfx_key_issued {request_id, org_id,
   device_id, key_ref, envelope}`. The hub stores the envelope (ciphertext only) in `hub.dfx_key` and delivers it in the
   org device's state (`dfx_key`).

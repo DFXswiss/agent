@@ -86,6 +86,9 @@ NAMES = (
     "CONTEXT_WORKSPACE_MIB",
     "CONTEXT_TRANSCRIPT_MIB",
     "CONTEXT_WAIT_SECONDS",
+    # DFX model access on own hardware (ADR-080 section 7)
+    "OPENROUTER_MANAGEMENT_KEY_FILE",
+    "DFX_KEY_MAX_HEADROOM_USD",
 )
 # Required for the daemon (`run`, `service install`); commands that never talk to the hub load without them.
 HUB_NAMES = frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"})
@@ -136,6 +139,11 @@ _APP_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,99}$")
 _VM_PREFIX_RE = re.compile(r"^(?:[a-z][a-z0-9-]{0,31})?$")
 _LOOPBACK_NAMES = frozenset({"localhost"})
 _ED25519_PUBLIC_LENGTH = 32
+DEFAULT_DFX_KEY_MAX_HEADROOM_MICRO_USD = 5_000_000
+_MICRO = 1_000_000
+_MAX_DFX_KEY_HEADROOM_MICRO_USD = 10_000 * _MICRO
+# a USD amount with at most six decimals (micro-USD precision), e.g. `5`, `2.5`, `0.000001`
+_USD_RE = re.compile(r"^[0-9]{1,5}(?:\.[0-9]{1,6})?$")
 
 
 @dataclass(frozen=True)
@@ -197,6 +205,12 @@ class Config:
     operator_github_org: str | None = None
     """The organization that owns the operator's GitHub account (platform devices only, only together with the file;
     KOR-47, ADR-078 section 7): an admin's company `github.connect` for it answers with the operator's token."""
+    openrouter_management_key_file: Path | None = None
+    """The OpenRouter management key file of a DFX key issuer (platform devices only, 0600, never logged or sent;
+    ADR-080 section 7): it can create, read, change and delete the limited per-device keys and nothing else."""
+    dfx_key_max_headroom_micro_usd: int = DEFAULT_DFX_KEY_MAX_HEADROOM_MICRO_USD
+    """The issuer's own cap of a key's headroom above its spend (`DFX_KEY_MAX_HEADROOM_USD`, default 5 USD), so a
+    compromised hub cannot raise a limit beyond it (ADR-080 section 7)."""
 
     @property
     def pg_dir(self) -> Path:
@@ -248,8 +262,8 @@ def load_config(
     """Validate `AGENT_RUNNER_*` from `env`.
 
     `device_kind` is the kind recorded in the device identity (None before enrollment); it selects the
-    `LOGIN_AUTOMATION` default and refuses `OPENROUTER_KEY_FILE` on org devices. `require` names the variables
-    that must be set (default: the hub settings needed by the daemon).
+    `LOGIN_AUTOMATION` default and refuses `OPENROUTER_KEY_FILE` and `OPENROUTER_MANAGEMENT_KEY_FILE` on org
+    devices. `require` names the variables that must be set (default: the hub settings needed by the daemon).
     """
     check_platform(platform)
     for key in sorted(env):
@@ -267,6 +281,14 @@ def load_config(
     openrouter = _optional(raw("OPENROUTER_KEY_FILE"), "OPENROUTER_KEY_FILE", require, _key_file)
     if openrouter is not None and device_kind == "org":
         raise RunnerError("config_invalid", "OPENROUTER_KEY_FILE")
+    management = _optional(
+        raw("OPENROUTER_MANAGEMENT_KEY_FILE"),
+        "OPENROUTER_MANAGEMENT_KEY_FILE",
+        require,
+        lambda v: _key_file(v, "OPENROUTER_MANAGEMENT_KEY_FILE"),
+    )
+    if management is not None and device_kind == "org":
+        raise RunnerError("config_invalid", "OPENROUTER_MANAGEMENT_KEY_FILE")
     operator_dir, operator_orgs = _operator(raw, require, device_kind)
     github_file, github_users, github_org = _operator_github(raw, require, device_kind)
     automation_raw = raw("LOGIN_AUTOMATION") or ("on" if device_kind == "platform" else "off")
@@ -314,6 +336,8 @@ def load_config(
         operator_github_token_file=github_file,
         operator_github_users=github_users,
         operator_github_org=github_org,
+        openrouter_management_key_file=management,
+        dfx_key_max_headroom_micro_usd=_usd_micro(raw("DFX_KEY_MAX_HEADROOM_USD"), "DFX_KEY_MAX_HEADROOM_USD"),
         **_workvm(raw, require, integers, test_mode),
         context_interval_seconds=integers["CONTEXT_INTERVAL_SECONDS"],
         context_cache_mib=integers["CONTEXT_CACHE_MIB"],
@@ -382,6 +406,12 @@ def environment(config: Config) -> dict[str, str]:
         "TEXTFILE_DIR": config.textfile_dir,
         "MODEL_CATALOG": config.model_catalog,
         "OPENROUTER_KEY_FILE": config.openrouter_key_file,
+        "OPENROUTER_MANAGEMENT_KEY_FILE": config.openrouter_management_key_file,
+        "DFX_KEY_MAX_HEADROOM_USD": (
+            None
+            if config.dfx_key_max_headroom_micro_usd == DEFAULT_DFX_KEY_MAX_HEADROOM_MICRO_USD
+            else usd_text(config.dfx_key_max_headroom_micro_usd)
+        ),
         "GITHUB_CLIENT_ID": config.github_client_id,
         "GITHUB_OAUTH_CLIENT_ID": config.github_oauth_client_id,
         "GITHUB_APP_SLUG": config.github_app_slug,
@@ -514,16 +544,35 @@ def _file(value: str, name: str) -> Path:
     return path
 
 
-def _key_file(value: str) -> Path:
+def _key_file(value: str, name: str = "OPENROUTER_KEY_FILE") -> Path:
     """A regular file (not a symlink) readable only by its owner (0600 or stricter)."""
-    path = _absolute(value, "OPENROUTER_KEY_FILE")
+    path = _absolute(value, name)
     try:
         info = path.lstat()
     except OSError:
-        raise RunnerError("config_invalid", "OPENROUTER_KEY_FILE") from None
+        raise RunnerError("config_invalid", name) from None
     if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
-        raise RunnerError("config_invalid", "OPENROUTER_KEY_FILE")
+        raise RunnerError("config_invalid", name)
     return path
+
+
+def _usd_micro(value: str, name: str) -> int:
+    """A USD amount (at most six decimals, at most 10000) in micro-USD; empty is the default of 5 USD."""
+    if value == "":
+        return DEFAULT_DFX_KEY_MAX_HEADROOM_MICRO_USD
+    if not _USD_RE.fullmatch(value):
+        raise RunnerError("config_invalid", name)
+    whole, _, fraction = value.partition(".")
+    micro = int(whole) * _MICRO + int(fraction.ljust(6, "0"))
+    if micro > _MAX_DFX_KEY_HEADROOM_MICRO_USD:
+        raise RunnerError("config_invalid", name)
+    return micro
+
+
+def usd_text(micro: int) -> str:
+    """The shortest decimal text of a micro-USD amount (`5`, `2.5`, `0.000001`); the inverse of `_usd_micro`."""
+    whole, fraction = divmod(micro, _MICRO)
+    return f"{whole}.{fraction:06d}".rstrip("0").rstrip(".")
 
 
 def _operator(

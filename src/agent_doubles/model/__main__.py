@@ -5,10 +5,11 @@
 
 ``--scenario`` names a scenario file or, when no such file exists, a packaged scenario (``scenarios/<name>.json``).
 ``--access KIND --token-env NAME`` makes the double require the credential of that access kind with the token held
-in the environment variable, so the token never appears in argv. ``--var NAME=VALUE`` overrides a template
-variable of the scenario. The double binds only to ``--host`` (default ``127.0.0.1``), prints its base URL on the
-first line of standard output, serves until SIGTERM or SIGINT, then prints its state as JSON on standard error and
-exits 0 when every step was consumed without a failure, 1 otherwise, 2 for invalid arguments.
+in the environment variable, so the token never appears in argv; ``--management-token-env NAME`` switches the
+OpenRouter key management API on with the management token held in that variable. ``--var NAME=VALUE`` overrides
+a template variable of the scenario. The double binds only to ``--host`` (default ``127.0.0.1``), prints its base URL
+on the first line of standard output, serves until SIGTERM or SIGINT, then prints its state as JSON on standard error
+and exits 0 when every step was consumed without a failure, 1 otherwise, 2 for invalid arguments.
 """
 
 from __future__ import annotations
@@ -54,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--access", choices=KINDS, help="required credential kind")
     parser.add_argument("--token-env", help="environment variable holding the required token")
     parser.add_argument("--key-token-env", help="environment variable holding the platform key GET /v1/key requires")
+    parser.add_argument("--management-token-env", help="environment variable holding the management token of /v1/keys")
     parser.add_argument("--var", action="append", default=[], metavar="NAME=VALUE", help="override a template variable")
     return parser
 
@@ -73,6 +75,11 @@ def main(argv: Sequence[str] | None = None, *, wait: Callable[[Event], None] = p
             key_token = os.environ.get(args.key_token_env, "")
             if not key_token:
                 raise AccessError("--key-token-env names a variable that must not be empty")
+        management_token = None
+        if args.management_token_env is not None:
+            management_token = os.environ.get(args.management_token_env, "")
+            if not management_token:
+                raise AccessError("--management-token-env names a variable that must not be empty")
         double = ModelDouble(
             scenario,
             host=args.host,
@@ -81,6 +88,7 @@ def main(argv: Sequence[str] | None = None, *, wait: Callable[[Event], None] = p
             access=access,
             variables=variables,
             key_token=key_token,
+            management_token=management_token,
         )
     except (OSError, ValueError) as exc:
         print(f"model double: {exc}", file=sys.stderr)

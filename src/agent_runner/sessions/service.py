@@ -31,7 +31,7 @@ from typing import Any, cast
 
 from agent_runner import registry
 from agent_runner.inbox.pull import inbox_for
-from agent_runner.model import provision, selection
+from agent_runner.model import dfxkey, selection
 from agent_runner.orgs import audit
 from agent_runner.orgs.book import book_for
 from agent_runner.sessions import records
@@ -317,7 +317,7 @@ def build_env(context: Any) -> SessionEnv | None:
         catalog=selection.load_catalog(config.model_catalog),
         strategies=selection.strategies(package),
         storage_key=sync.storage_key,
-        platform_key=lambda: provision.read_platform_key(config.openrouter_key_file),
+        platform_key=lambda org_id=None: dfxkey.platform_key(context, org_id),
         upstream_openrouter=config.model_upstream_openrouter,
         context=context,
         notify=sync.pusher.notify,

@@ -13,6 +13,11 @@ call, docs/platform/spec/05-runner.md section 10.2):
   bearer token is refused (``401``, a failure), and so is any other token than the platform key when the double knows
   it (``key_token``, CLI ``--key-token-env``: the run's key file of the runners).
 
+- ``/v1/keys`` and ``/v1/keys/{hash}``: the OpenRouter key management API (`agent_doubles.model.keys`), journaled
+  but not counted; it needs the management token (``management_token``, CLI ``--management-token-env``). A key
+  created there is accepted by ``POST /v1/messages`` in place of the configured access: ``401`` while it is
+  disabled, ``402`` once its usage reached its limit, otherwise the answer's cost is added to its usage.
+
 Any other route answers ``404 not_found_error``, is journaled and recorded as a failure, so a test notices when a
 new Claude Code version starts calling something new (05 §15). Requests under ``/v1/`` must carry the credential of
 the configured access kind (`agent_doubles.model.access`), else ``401 authentication_error`` and a failure.
@@ -26,6 +31,7 @@ Control routes (not journaled, not counted):
 - ``POST /_double/scenario``: ``{"scenario": {...}}`` or ``{"packaged": "<name>"}``, optional ``"variables"`` and
   ``"access"`` (``{"kind", "token"}`` or null); switches the scenario and restarts its progress (the journal stays).
 - ``POST /_double/reset``: restarts the progress of the loaded scenario and clears the journal in memory.
+- ``GET /_double/keys``: ``{"keys": [KEY, ...]}``, the created keys without their plaintexts.
 """
 
 from __future__ import annotations
@@ -38,13 +44,14 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, ClassVar, Self
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from agent_doubles.common.journal import Entry, Journal, decode_body, redact_headers
 from agent_doubles.common.server import BodyError, DoubleHandler, DoubleServer
 from agent_doubles.common.state import state_document
 from agent_doubles.model import wire
 from agent_doubles.model.access import Access, AccessError, parse_access
+from agent_doubles.model.keys import DEFAULT_PAGE_SIZE, KEYS_PATH, KeyRequestError, KeyStore, SubKey
 from agent_doubles.model.scenario import (
     ErrorReply,
     OpenRouter,
@@ -113,7 +120,8 @@ class ModelDouble:
 
     `access`: when set, requests under ``/v1/`` must carry its credential (else 401). `key_token`: when set, the key
     document ``GET /v1/key`` answers only ``Authorization: Bearer <key_token>`` (the platform key). `variables`
-    override the scenario's default template variables.
+    override the scenario's default template variables. `management_token` switches the key management API on
+    (`keys`, ``key_page_size`` keys per listed page).
     """
 
     def __init__(
@@ -126,6 +134,8 @@ class ModelDouble:
         access: Access | None = None,
         variables: Mapping[str, str] | None = None,
         key_token: str | None = None,
+        management_token: str | None = None,
+        key_page_size: int = DEFAULT_PAGE_SIZE,
     ) -> None:
         self._lock = threading.Lock()
         # Set by `stop`: a step that waits out its `delay_ms` ends at once instead of answering a stopped double.
@@ -133,6 +143,7 @@ class ModelDouble:
         self.scenario = scenario
         self.access = access
         self.key_token = key_token
+        self.keys = KeyStore(management_token, key_page_size)
         self._overrides = dict(variables or {})
         self._progress = self._fresh()
         self.journal = Journal(DOUBLE_NAME, journal_path)
@@ -392,6 +403,12 @@ class _Handler(DoubleHandler):
             finally:
                 self.double.journal.close(entry)
             return
+        if parts.path == KEYS_PATH or parts.path.startswith(KEYS_PATH + "/"):
+            try:
+                self._manage(parts.path[len(KEYS_PATH) :], parts.query, entry, problem)
+            finally:
+                self.double.journal.close(entry)
+            return
         self.double.count_request()
         try:
             if problem is not None:
@@ -438,9 +455,14 @@ class _Handler(DoubleHandler):
             self._refuse(entry, 404, "not_found_error", f"unhandled route {self.command} {path}")
             return
         headers = self._headers()
-        reason = self.double.refusal(headers)
+        sub = None if "x-api-key" in headers else self.double.keys.by_bearer(headers.get("authorization", ""))
+        reason = self._access_refusal(headers) if sub is None else self._sub_key_refusal(sub)
         if reason is not None:
-            self._refuse(entry, 401, "authentication_error", reason)
+            status, error_type, text = reason
+            entry.note = text
+            if sub is None:
+                self.double.fail(text)
+            self._api_error(entry, status, error_type, text)
             return
         if not isinstance(entry.body, dict):
             self._refuse(entry, 400, "invalid_request_error", "body is not a JSON object")
@@ -449,7 +471,69 @@ class _Handler(DoubleHandler):
             entry.status = 200
             self.send_json(200, {"input_tokens": wire.request_tokens(entry.body)}, (("request-id", request_id(entry)),))
             return
-        self._messages(entry.body, headers, entry)
+        self._messages(entry.body, headers, entry, sub)
+
+    def _access_refusal(self, headers: Mapping[str, str]) -> tuple[int, str, str] | None:
+        reason = self.double.refusal(headers)
+        return None if reason is None else (401, "authentication_error", reason)
+
+    @staticmethod
+    def _sub_key_refusal(sub: SubKey) -> tuple[int, str, str] | None:
+        """A created key that is switched off or whose usage reached its limit (not a failure: the provider's rule)."""
+        if sub.disabled:
+            return 401, "authentication_error", "key disabled"
+        if sub.exhausted:
+            return 402, "payment_required", "key limit reached"
+        return None
+
+    def _manage(self, rest: str, query: str, entry: Entry, problem: BodyError | None) -> None:
+        """The key management API (`agent_doubles.model.keys`)."""
+        keys = self.double.keys
+        if not keys.authorized(self._headers().get("authorization", "")):
+            self._refuse(entry, 401, "authentication_error", "key management needs the management key")
+            return
+        try:
+            if problem is not None:
+                raise KeyRequestError(problem.message)
+            self._manage_route(rest, query, entry)
+        except KeyRequestError as exc:
+            self._api_error(entry, 400, "invalid_request_error", str(exc))
+
+    def _manage_route(self, rest: str, query: str, entry: Entry) -> None:
+        keys, command, body = self.double.keys, self.command, entry.body
+        if rest in ("", "/"):
+            if command == "POST":
+                created, secret = keys.create(body)
+                self._send_key(entry, 201, {"data": created.document(), "key": secret})
+            elif command == "GET":
+                offset = parse_qs(query).get("offset", ["0"])[0]
+                if not offset.isdigit():
+                    raise KeyRequestError("offset must be a non-negative integer")
+                self._send_key(entry, 200, {"data": keys.page(int(offset))})
+            else:
+                self._refuse(entry, 405, "invalid_request_error", f"unhandled route {command} {KEYS_PATH}")
+            return
+        key_hash = rest[1:]
+        if command == "GET":
+            found = keys.get(key_hash)
+        elif command == "PATCH":
+            found = keys.patch(key_hash, body)
+        elif command == "DELETE":
+            found = None
+            if keys.delete(key_hash):
+                self._send_key(entry, 200, {"deleted": True})
+                return
+        else:
+            self._refuse(entry, 405, "invalid_request_error", f"unhandled route {command} {KEYS_PATH}/{{hash}}")
+            return
+        if found is None:
+            self._api_error(entry, 404, "not_found_error", "key not found")
+            return
+        self._send_key(entry, 200, {"data": found.document()})
+
+    def _send_key(self, entry: Entry, status: int, payload: dict[str, Any]) -> None:
+        entry.status = status
+        self.send_json(status, payload, (("request-id", request_id(entry)),))
 
     def _control(self, path: str, raw: bytes, problem: BodyError | None) -> None:
         double = self.double
@@ -458,6 +542,7 @@ class _Handler(DoubleHandler):
             "/_double/journal": ("GET",),
             "/_double/scenario": ("GET", "POST"),
             "/_double/reset": ("POST",),
+            "/_double/keys": ("GET",),
         }
         if path not in routes:
             self.send_json(404, {"error": "unknown control route"})
@@ -475,6 +560,8 @@ class _Handler(DoubleHandler):
         elif path == "/_double/reset":
             double.reset()
             self.send_json(200, double.state())
+        elif path == "/_double/keys":
+            self.send_json(200, {"keys": double.keys.documents()})
         elif self.command == "GET":
             self.send_json(200, double.describe())
         else:
@@ -487,7 +574,7 @@ class _Handler(DoubleHandler):
 
     # --- the messages route -------------------------------------------------------------------
 
-    def _messages(self, body: dict[str, Any], headers: Mapping[str, str], entry: Entry) -> None:
+    def _messages(self, body: dict[str, Any], headers: Mapping[str, str], entry: Entry, sub: SubKey | None) -> None:
         choice = self.double.choose(body, headers, request_id(entry))
         if choice.step is None:
             entry.note = choice.refusal
@@ -505,7 +592,7 @@ class _Handler(DoubleHandler):
         if step.error is not None:
             self._error(step.error, choice, body, entry)
         else:
-            self._reply(step, choice, body, entry)
+            self._reply(step, choice, body, entry, sub)
 
     def _error(self, error: ErrorReply, choice: Choice, body: dict[str, Any], entry: Entry) -> None:
         payload = choice.error
@@ -528,12 +615,14 @@ class _Handler(DoubleHandler):
     def _stream_headers(self, entry: Entry, *extra: tuple[str, str]) -> tuple[tuple[str, str], ...]:
         return (("cache-control", "no-cache"), ("request-id", request_id(entry)), *extra)
 
-    def _reply(self, step: Step, choice: Choice, body: dict[str, Any], entry: Entry) -> None:
+    def _reply(self, step: Step, choice: Choice, body: dict[str, Any], entry: Entry, sub: SubKey | None) -> None:
         reply = step.reply
         assert reply is not None
         blocks = choice.blocks
         stop = wire.stop_reason(reply, blocks)
         usage = wire.usage_for(reply, body, blocks)
+        if sub is not None:
+            self.double.keys.charge(sub, wire.openrouter_usage(usage, reply.cost)["cost"])
         start_usage = usage
         model = reply.model or str(body.get("model", DEFAULT_MODEL))
         provider: str | None = None

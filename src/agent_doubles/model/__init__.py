@@ -9,6 +9,7 @@ failure, so ``GET /_double/state`` reports ``ok`` only for a run that went exact
 - `scenario`: the script format, loading (files and packaged scenarios), request matching and template variables.
 - `wire`: response bodies: messages, server-sent events, errors, usage and OpenRouter extras.
 - `access`: the credential check per access kind (API key, OpenRouter, subscription).
+- `keys`: the OpenRouter key management API (``/v1/keys``) and the limited keys it creates (ADR-080 section 7).
 - `server`: the HTTP server and the control routes under ``/_double/``.
 - `journal`: the per-route summary of what Claude Code sent (Claude Code upgrade guard).
 - ``scenarios/``: example scenarios and the adversary scenarios ``atk-01`` … ``atk-32``.
