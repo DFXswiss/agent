@@ -35,8 +35,9 @@ visible. Architecture in [ADR-083](../adr/083-who-speaks-in-a-shared-session.md)
    count-based routing (delivered = transitions into `working` plus refusals) a withdrawal decided by the hub could
    shift every later prompt. The device decides and reports through the ordered outbox; the hub decides alone only
    for a session without device. Prompts of a failed session wait for "Retry" and cannot be withdrawn.
-8. **Device offline.** A prompt for a session whose device is offline (or that has no device because none is
-   online) notifies its author once (`prompt.waiting_for_device`, `ref` = the event), also when the device goes
+8. **Device offline.** A follow-up prompt for a session whose device is offline (or that has no device because none
+   is online) notifies its author once (not the first prompt of a new task: the countdown shows the reason, and many
+   new tasks must not flood the author) (`prompt.waiting_for_device`, `ref` = the event), also when the device goes
    offline while it waits; the queue shows `waiting_for_device`, the category the situation view (KOR-39) uses.
    Moving the session to another device is KOR-58.
 9. **GitHub for the instructing person** was already built by ADR-070 (HOT-14): an operation runs only with the

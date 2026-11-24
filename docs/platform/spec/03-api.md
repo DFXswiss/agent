@@ -289,8 +289,8 @@ follow-up's, without a new prompt; after a user's "Stop" or on a closed task the
   `triggered_by`; operation and session rows show it, `GET /v1/orgs/{org}/billing` and `GET /v1/tasks/{task}/charges`
   break consumption down per person (`people`). Consumption stays booked to the organization.
 - **Queue.** `GET /v1/tasks/{task}/queue`: `waiting_for_device` when the session holding the prompt has no device
-  or its device is offline (the author gets the notification `prompt.waiting_for_device` once, also when the device
-  goes offline later); `withdrawing` while a requested withdrawal is open.
+  or its device is offline (the author of a follow-up gets the notification `prompt.waiting_for_device` once, also when
+  the device goes offline later; a new task's first prompt shows its reason in the countdown instead); `withdrawing` while a requested withdrawal is open.
 - **Withdraw.** The session holding the prompt has no device → `withdrawn` at once (a main session that never
   delivered a prompt and has nothing left is stopped); else `withdrawing`: the hub sends `reconcile` and lists the
   event in `prompt_queue.withdrawn` of the device state of the session's device; the runner withdraws a delivery that

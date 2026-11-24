@@ -9,8 +9,9 @@ decision (device and `estimate_ms` and the task `starting`, or the task stays `s
 without any active assigned device waits with `no_device` or `platform_access_required`. An optional `placement`
 (else the workgroup default) is checked and stored with the task (`agent_hub.placement.service`: `403
 placement_forbidden`, `409 placement_invalid`). The main session is triggered by the creating user (`triggered_by`,
-ADR-083 section 2); when its waiting reason is of the category `waiting_for_device` the author gets
-`prompt.waiting_for_device` (`agent_hub.notifications.rules.waiting_rule`).
+ADR-083 section 2). Creating a task notifies nobody: the creator sees the waiting reason with the task (a workgroup
+without devices may receive many tasks at once); `prompt.waiting_for_device` is only sent for follow-ups and when a
+device goes offline.
 After the commit: the event announcement, the hint `session.start`, the `task`/`session` frames and `task.state`.
 Idempotency over `task_id`: the same request again (same workgroup, owner, GitHub identity, byte-identical events and,
 when the request names one, the same stored `placement`; without one the stored workgroup default is not compared)
@@ -227,8 +228,6 @@ def create_task(
         create_main_session(
             connection, task, session_id, decision, now, actor=actor, effects=outcome.effects, triggered_by=user
         )
-        if waits_for_device(decision):
-            notify_waiting(connection, stored[1].id, now, outcome.effects)
         outcome.body = {
             "task": rows.task_json(connection, task_id),
             "session": _session_answer(connection, str(session_id)),

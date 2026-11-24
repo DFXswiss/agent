@@ -127,9 +127,10 @@ stays traceable internally), [Idee 46](../KONZEPT.md#k-idee-46) (consumption ass
   - Every request ends visibly: `GET /v1/tasks/{task}/queue` also lists the task's withdrawals with their outcome
     (`withdrawn`, `withdrawing`, `too_late` when the prompt was delivered meanwhile); the chat marks the prompt.
     `get_task_messages` leaves out prompts this device withdrew.
-- **Device offline.** A prompt routed to a session whose device is not online, or that has no device because none
-  is online, notifies its author once (`prompt.waiting_for_device`), also when the device goes offline while the
-  prompt waits; the queue shows the state.
+- **Device offline.** A follow-up prompt routed to a session whose device is not online, or that has no device
+  because none is online, notifies its author once (`prompt.waiting_for_device`), also when the device goes offline
+  while the prompt waits; the queue shows the state. The first prompt of a new task does not notify: its author sees
+  the waiting reason in the countdown, and creating many tasks must not flood anybody with notifications.
 
 ### 4. Continuing without the creator
 Nothing new: a prompt of any member with write access continues the task's conversation (ADR-072) after completion,

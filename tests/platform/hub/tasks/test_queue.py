@@ -397,7 +397,7 @@ def test_a_prompt_for_a_session_without_an_online_device_notifies_its_author(
         desk.offline(desk.scene.other_device)
     published.clear()
     task, session = desk.started()
-    first = first_prompt(desk, task)
+    assert _waiting(desk) == []  # creating a task notifies nobody: its creator sees the waiting reason
     second = follow(desk, task)
     if devices == "online":
         assert _waiting(desk) == []
@@ -405,9 +405,9 @@ def test_a_prompt_for_a_session_without_an_online_device_notifies_its_author(
         third = follow(desk, task)
         assert _waiting(desk) == [(writer.id, task, third)]
         return
-    assert _waiting(desk) == [(writer.id, task, first), (writer.id, task, second)]
+    assert _waiting(desk) == [(writer.id, task, second)]
     sent = [entry for entry in published.items() if entry.audience.kind == "user" and entry.frame == "notification"]
-    assert [(str(entry.audience.id), entry.data["ref"]) for entry in sent] == [(writer.id, first), (writer.id, second)]
+    assert [(str(entry.audience.id), entry.data["ref"]) for entry in sent] == [(writer.id, second)]
     assert sent[0].data["kind"] == "prompt.waiting_for_device"
     # a session that ended: the follow-up's new session finds no device either
     desk.execute("UPDATE hub.session SET state = 'stopped' WHERE id = %s", session)
