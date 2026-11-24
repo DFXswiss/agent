@@ -1,6 +1,6 @@
 # KOR-43 – decisions
 
-Test runs as platform operations (ADR-079, 13-work-vm.md §12). Small decisions of the package; the architecture is in
+Test runs as platform operations (ADR-080, 13-work-vm.md §12). Small decisions of the package; the architecture is in
 the ADR.
 
 1. **Command, no templates.** `test.run` takes the command the session writes (`kind` only labels it). Fixed
@@ -12,7 +12,7 @@ the ADR.
 4. **Operation failure vs. run error.** Until the command started, every failure fails the operation (nothing ran;
    the pipeline may retry). Afterwards the operation always succeeds and the run carries `error` with a reason – the
    pipeline never re-runs a started command.
-5. **Workspace mirror instead of a work VM image** (ADR-079 §2): reproducible, no stop of the session's work VM, no
+5. **Workspace mirror instead of a work VM image** (ADR-080 §2): reproducible, no stop of the session's work VM, no
    multi-GiB copy. The harness tells the session to `workvm_sync from_vm` first when it changed files in the work VM.
    No dependency cache yet ([E-25](../KONZEPT.md#e-25)); the start time is logged per run (`runner.testrun ready
    ready_ms=`).

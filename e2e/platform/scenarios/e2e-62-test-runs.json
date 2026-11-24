@@ -1,6 +1,6 @@
 {
-  "name": "e2e-61-test-runs",
-  "description": "E2E-61 (KOR-43, ADR-079): the session uses its work VM once, then runs the tests through the operation test.run (each run in a fresh VM): the first run fails with a log over 1 MiB, the session fixes the code, the second run passes and the session opens a draft pull request. Every result is checked by the next step's expectation.",
+  "name": "e2e-62-test-runs",
+  "description": "E2E-62 (KOR-43, ADR-080): the session uses its work VM once, then runs the tests through the operation test.run (each run in a fresh VM): the first run fails with a log over 1 MiB, the session fixes the code, the second run passes and the session opens a draft pull request. Every result is checked by the next step's expectation.",
   "steps": [
     {
       "id": "checkout",

@@ -1,4 +1,4 @@
-"""Test runs as platform operations (KOR-43, ADR-079; docs/platform/spec/13-work-vm.md section 12).
+"""Test runs as platform operations (KOR-43, ADR-080; docs/platform/spec/13-work-vm.md section 12).
 
 `TestRuns.execute` is the executor of `test.run`. One run:
 

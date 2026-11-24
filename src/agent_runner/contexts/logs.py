@@ -1,4 +1,4 @@
-"""Logs of test runs and work VM jobs as encrypted objects (KOR-43, ADR-079 section 3; 04-crypto.md section 4.12).
+"""Logs of test runs and work VM jobs as encrypted objects (KOR-43, ADR-080 section 3; 04-crypto.md section 4.12).
 
 `store_log(env, owner, ref=..., total=..., pieces=...)` seals the kept output of one run or job into the local cache
 of the context objects as it arrives: pieces of at most `runlog.CHUNK_BYTES` output bytes, each sealed under `k_log`

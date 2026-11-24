@@ -333,7 +333,7 @@ repository and number can compute it.
 
 ### 4.12 Log of a test run or work VM job **(new, KOR-43)**
 
-A log (ADR-079 §3) is the kept output of one `test.run` or one long work VM job: at most `LOG_MAX_MIB` (the last part
+A log (ADR-080 §3) is the kept output of one `test.run` or one long work VM job: at most `LOG_MAX_MIB` (the last part
 of a longer output), split into pieces of at most 256 KiB **uncompressed** bytes, so a reader can fetch any window:
 
 - chunk `i` = `nonce12‖AES-256-GCM(k_log, piece, AAD = P‖"run-log-chunk\0"‖canonical({"index":i,"object":object_id}))`

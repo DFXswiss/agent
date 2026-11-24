@@ -1,4 +1,4 @@
-"""Test support of the contexts suites (U-HUB-contexts): sealed checkpoints and logs (ADR-079 section 3) of a session of
+"""Test support of the contexts suites (U-HUB-contexts): sealed checkpoints and logs (ADR-080 section 3) of a session of
 the outbox scene, uploads and commits signed by the device's own key (`tests/platform/hub/outbox/support.py`)."""
 
 from __future__ import annotations

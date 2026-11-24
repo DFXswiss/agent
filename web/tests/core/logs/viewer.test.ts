@@ -1,4 +1,4 @@
-// The log viewer's state (ADR-079 section 3): loading, the first page, paging within the log, late pages dropped,
+// The log viewer's state (ADR-080 section 3): loading, the first page, paging within the log, late pages dropped,
 // failures with their code, the download, and nothing reported after closing.
 import { describe, expect, it, vi } from 'vitest';
 import { concat } from '../../../src/core/encoding/bytes';

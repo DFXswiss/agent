@@ -1,4 +1,4 @@
-"""U-RUN-workvm billing: work and run VMs in the VM runtime meter (`workvm/billing_vms.py:VMS`, KOR-43, ADR-079
+"""U-RUN-workvm billing: work and run VMs in the VM runtime meter (`workvm/billing_vms.py:VMS`, KOR-43, ADR-080
 section 4; KOR-31 meter): only running VMs, size and `vm_kind` `work`; a task VM is shared by the task's holding
 sessions or borne by its requester, a session VM and a run VM by their session."""
 

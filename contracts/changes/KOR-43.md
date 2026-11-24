@@ -1,6 +1,6 @@
 # KOR-43 – contract changes
 
-ADR-027 section 3. Additive only (ADR-079).
+ADR-027 section 3. Additive only (ADR-080).
 
 - `ops/test.run.params.json`, `ops/test.run.result.json`, `ops/INDEX.json` (`dedupe: false`): the operation `test.run`
   (`ops/objects.json` `params_test_run`, `result_test_run`, `test_run_id`, `test_run_kind`, `test_run_state`,

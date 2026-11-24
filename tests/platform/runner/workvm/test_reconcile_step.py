@@ -1,4 +1,4 @@
-"""U-RUN-workvm reconcile step `workvm` (KOR-43, ADR-079 sections 4 and 5): a closed task deletes its VMs and cancels
+"""U-RUN-workvm reconcile step `workvm` (KOR-43, ADR-080 sections 4 and 5): a closed task deletes its VMs and cancels
 its runs, an exhausted organization's running work VMs stop; malformed entries of the untrusted desired state are
 ignored."""
 

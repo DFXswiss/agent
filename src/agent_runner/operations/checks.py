@@ -247,7 +247,7 @@ TYPES: Mapping[str, TypeRules] = {
         {"size": _one_of("standard", "large", "xlarge"), "scope": _one_of("task", "session")}, ()
     ),
     "workvm.release": TypeRules({"scope": _one_of("task", "session")}, ()),
-    # docs/platform/spec/13-work-vm.md section 12 (ADR-079)
+    # docs/platform/spec/13-work-vm.md section 12 (ADR-080)
     "test.run": TypeRules(
         {
             "kind": _one_of("lint", "format", "unit", "integration", "security", "custom"),

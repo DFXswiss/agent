@@ -628,7 +628,7 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
         None,
     ),
     "workvm.release": ("scope", "released workvm_id", "", None),
-    # KOR-43 (ADR-079 section 1; 13-work-vm.md section 12)
+    # KOR-43 (ADR-080 section 1; 13-work-vm.md section 12)
     "test.run": (
         "kind command cwd timeout_seconds size",
         "run_id state exit_code duration_ms ready_ms summary log tail reason",

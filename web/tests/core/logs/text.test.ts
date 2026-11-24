@@ -1,4 +1,4 @@
-// The UTF-8 text of a log page (ADR-079 section 3): a character that straddles two chunks belongs to the page it
+// The UTF-8 text of a log page (ADR-080 section 3): a character that straddles two chunks belongs to the page it
 // starts on; invalid bytes become U+FFFD.
 import { describe, expect, it } from 'vitest';
 import { utf8 } from '../../../src/core/encoding/bytes';

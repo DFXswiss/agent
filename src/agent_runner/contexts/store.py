@@ -5,7 +5,7 @@
   (`set_restored`, `take_restore_audit`, `mark_restore_started`, `mark_restore_failed`, `restore_failed`).
 - `context_object`: the encrypted checkpoints of the local cache (`insert_object`, `get_object`, `objects_of_task`,
   `uploads`, `uploaded`, `finish_object`, `retry_upload`, `restart_upload`, `delete_object`, `cache_rows`), and the
-  logs of test runs and work VM jobs (`kind` `log`, KOR-43, ADR-079 section 3; `objects_of_task` lists only
+  logs of test runs and work VM jobs (`kind` `log`, KOR-43, ADR-080 section 3; `objects_of_task` lists only
   checkpoints).
 - `context_pr_link`: registrations of pull requests at the hub (`pr_link_work`, `pr_link_state`).
 
@@ -51,7 +51,7 @@ class StoredObject:
     attempts: int
     created_at: datetime
     kind: str = "context"
-    """`context` (a checkpoint) or `log` (ADR-079 section 3)."""
+    """`context` (a checkpoint) or `log` (ADR-080 section 3)."""
     session_created_at: datetime | None = None
     """When this device created the object's session (`objects_of_task` only; None for a session of another
     device)."""

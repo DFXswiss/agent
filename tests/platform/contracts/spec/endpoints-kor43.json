@@ -1,5 +1,5 @@
 {
-  "description": "Endpoints added by KOR-43 (ADR-079 section 3): the members read a complete log of a test run or a work VM job of a task (manifest and sealed chunks); 03-api.md section 4.6.",
+  "description": "Endpoints added by KOR-43 (ADR-080 section 3): the members read a complete log of a test run or a work VM job of a task (manifest and sealed chunks); 03-api.md section 4.6.",
   "rights": [
     "task:read"
   ],

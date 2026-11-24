@@ -1,4 +1,4 @@
-// Reading the encrypted log of a test run or a work VM job (ADR-079 section 3, 03-api.md section 4.6,
+// Reading the encrypted log of a test run or a work VM job (ADR-080 section 3, 03-api.md section 4.6,
 // 04-crypto.md section 4.12):
 //
 // - `openLog`: `GET /v1/tasks/{task}/logs/{object}` (manifest, signature). The manifest must have the exact format

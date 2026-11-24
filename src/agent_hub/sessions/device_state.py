@@ -14,7 +14,7 @@
 - per session, only when set: the chosen VM of its task (`vm_id_pref`, ADR-075 section 6, while it is a live VM of the
   workgroup on this device; a subagent has none) and `vm_new_allowed: false` while the workgroup has reached
   `AGENT_HUB_VMS_PER_WG` live VMs on all devices (the runner then takes no new VM for it; absent means true) and
-  `task_closed: true` while its task is closed (the runner deletes the task's work VMs at once, ADR-079 section 5);
+  `task_closed: true` while its task is closed (the runner deletes the task's work VMs at once, ADR-080 section 5);
 - per session, always: `github_identity` / `task_github_identity`, the GitHub identities chosen for the session and its
   task (ADR-078 section 3, null without a choice);
 - `pending_prompts` / `delivered_prompt_event_ids`: the prompt routing of `agent_hub.sessions.prompts` for the main

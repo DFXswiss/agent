@@ -1,4 +1,4 @@
-// UTF-8 text of one page of a log (ADR-079 section 3): a log is split into chunks of a fixed number of output bytes,
+// UTF-8 text of one page of a log (ADR-080 section 3): a log is split into chunks of a fixed number of output bytes,
 // so a multi-byte character can straddle two chunks. A page shows one chunk: it leaves out the continuation bytes at
 // its start (they end the character the previous page completes) and completes its last character with the first
 // bytes of the next chunk. Anything else that is not valid UTF-8 is shown as U+FFFD (the output is untrusted text).

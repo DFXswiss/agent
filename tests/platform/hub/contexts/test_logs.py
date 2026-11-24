@@ -1,5 +1,5 @@
 """U-HUB-contexts (logs): logs of test runs and work VM jobs as objects of kind `log` beside the checkpoints - upload,
-commit, the members' read routes, quotas and pruning of their own (ADR-079 section 3; 03-api.md sections 4.6, 6.1)."""
+commit, the members' read routes, quotas and pruning of their own (ADR-080 section 3; 03-api.md sections 4.6, 6.1)."""
 
 from __future__ import annotations
 

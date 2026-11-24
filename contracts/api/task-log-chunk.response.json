@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/task-log-chunk.response.json",
   "title": "GET /v1/tasks/{task}/logs/{object}/chunks/{index} response",
-  "description": "Body of a successful response to GET /v1/tasks/{task}/logs/{object}/chunks/{index} (03-api.md section 4.6, ADR-079 section 3): one sealed chunk.",
+  "description": "Body of a successful response to GET /v1/tasks/{task}/logs/{object}/chunks/{index} (03-api.md section 4.6, ADR-080 section 3): one sealed chunk.",
   "type": "object",
   "properties": {
     "ct": {

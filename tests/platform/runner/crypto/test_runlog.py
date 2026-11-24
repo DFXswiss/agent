@@ -1,7 +1,7 @@
 """Copied from tests/platform/hub/crypto/test_runlog.py.
 
 U-HUB-crypto (logs): the logs of test runs and work VM jobs of `agent_hub.crypto.runlog` (04-crypto.md section 4.12,
-ADR-079 section 3) and their vectors `contracts/vectors/runlog.json`."""
+ADR-080 section 3) and their vectors `contracts/vectors/runlog.json`."""
 
 from __future__ import annotations
 

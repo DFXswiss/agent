@@ -1,4 +1,4 @@
-# ADR-079: Test runs as platform operations – a fresh VM per run, kept logs, billed and well-ended work VMs
+# ADR-080: Test runs as platform operations – a fresh VM per run, kept logs, billed and well-ended work VMs
 
 Status: Accepted (2026-11-24)
 

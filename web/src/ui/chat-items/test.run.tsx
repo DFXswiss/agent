@@ -1,4 +1,4 @@
-// Chat item `test.run` (ADR-079, 13-work-vm.md section 12): a test run of the session in its own fresh VM – kind,
+// Chat item `test.run` (ADR-080, 13-work-vm.md section 12): a test run of the session in its own fresh VM – kind,
 // a state badge (passed, failed, error, timed out, cancelled, running), exit code, duration, the time until the VM
 // was ready, the command, the summary ("Tests: 3 failed, 12 passed"), the reason of an error or cancellation, the
 // output tail in a collapsed block and "Open log" for the complete encrypted output (`ui/logs`). The timeline keeps

@@ -14,7 +14,7 @@
 - **idle pass**: a VM without a running job and without a call for `WORKVM_IDLE_SECONDS` is deleted, a stopped VM
   (paused session) once it stood that long; a VM whose deletion failed is deleted again, and own `wvm-` instances
   without a row (left by a failed deletion) are swept.
-- **paused sessions** (KOR-43, ADR-079 section 4): `pause` stops the session's VM (no RAM, no runtime); a request or
+- **paused sessions** (KOR-43, ADR-080 section 4): `pause` stops the session's VM (no RAM, no runtime); a request or
   call of the resumed session starts it again (`_resume`), or deletes it and gets a new one when its RAM does not fit.
 - **run VMs** (scope `run`, `obtain_run_vm`): one fresh VM per `test.run` of `agent_runner.workvm.testrun`.
 - **logs**: a job whose output is longer than its event keeps (`RUN_OUTPUT_LIMIT`) is captured as an encrypted log
@@ -779,7 +779,7 @@ class WorkVms:
         return current
 
     async def pause(self, session: LocalSession, *, reason: str, when_idle: bool = False) -> list[str]:
-        """Stop the VMs a paused session works in (ADR-079 section 4): its own session VM, and the task VM when no
+        """Stop the VMs a paused session works in (ADR-080 section 4): its own session VM, and the task VM when no
         other session of the task is active - with `when_idle` only a VM in which no job runs. Their RAM and runtime
         end; they are deleted after `WORKVM_IDLE_SECONDS` stopped unless a call or request of the session starts them
         again. Returns the stopped IDs."""
@@ -862,7 +862,7 @@ class WorkVms:
         return None
 
     async def close_task(self, task_id: str) -> list[str]:
-        """Every VM of a closed task goes at once (`task_closed`, ADR-079 section 5); returns their IDs."""
+        """Every VM of a closed task goes at once (`task_closed`, ADR-080 section 5); returns their IDs."""
         removed: list[str] = []
         for vm in await records.live(self.deps.db):
             if vm.task_id == task_id and vm.state != "deleting":
@@ -1023,7 +1023,7 @@ class WorkVms:
 
     async def _implicit(self, session: LocalSession) -> WorkVm | None:
         """A standard VM for a tool call without one; the `workvm.state` `starting` event comes first, so the panel
-        shows the countdown as for `workvm.request` (ADR-079 section 5)."""
+        shows the countdown as for `workvm.request` (ADR-080 section 5)."""
         scope = "session" if session.parent_id is not None else "task"
         workvm_id = new_workvm_id()
         try:

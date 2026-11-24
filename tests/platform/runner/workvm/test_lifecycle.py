@@ -1,4 +1,4 @@
-"""Lifecycle of work VMs added by KOR-43 (ADR-079 sections 2, 4 and 5; docs/platform/spec/13-work-vm.md sections 7
+"""Lifecycle of work VMs added by KOR-43 (ADR-080 sections 2, 4 and 5; docs/platform/spec/13-work-vm.md sections 7
 and 12): paused sessions stop their VM and start it again, credit, closed tasks, run VMs, failed deletions and the
 sweep, the countdown of an implicit start and the log of a long job."""
 

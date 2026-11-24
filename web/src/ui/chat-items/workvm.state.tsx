@@ -1,4 +1,4 @@
-// Chat item `workvm.state` (13-work-vm.md sections 8 and 10, ADR-059 decision 10, ADR-079 sections 4 and 5): a work
+// Chat item `workvm.state` (13-work-vm.md sections 8 and 10, ADR-059 decision 10, ADR-080 sections 4 and 5): a work
 // VM is starting (implicit start), was created, stopped (paused session) or deleted (with the reason), its size and
 // resources and, once stopped or deleted, its runtime in h/min/s. A body that does not follow the contract is a
 // neutral row with a code, never content.

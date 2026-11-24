@@ -1,4 +1,4 @@
-// E2E-61 (KOR-43; docs/platform/spec/13-work-vm.md section 12, ADR-079): test runs as platform operations. The runner
+// E2E-62 (KOR-43; docs/platform/spec/13-work-vm.md section 12, ADR-080): test runs as platform operations. The runner
 // offers work VMs in self mode (TEST_MODE, three slots, a warm pool of two) from the run's work image cache. The
 // session checks out a repository through the platform, runs one command in its work VM (an implicit start that
 // announces itself), then runs the tests with the operation `test.run`: the first run fails and prints more than
@@ -6,7 +6,7 @@
 // Both run VMs are gone right after their runs; the complete log is kept encrypted, opens in the browser and is the
 // same bytes the run printed; closing the task deletes the work VM at once (`task_closed`, or `session_ended` when the stop of the
 // session came first). The measured start times of the
-// run VMs go to the iteration's artefacts (`e2e-61/test-runs.json`). T1 only.
+// run VMs go to the iteration's artefacts (`e2e-62/test-runs.json`). T1 only.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '../fixtures/test.ts';
@@ -24,7 +24,7 @@ import {
 } from '../fixtures/platform.ts';
 
 const scenario: unknown = JSON.parse(
-  readFileSync(new URL('../scenarios/e2e-61-test-runs.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../scenarios/e2e-62-test-runs.json', import.meta.url), 'utf8'),
 );
 const LOGIN = 'kz60-octo-d3f7g1h5';
 const REPO = 'octo-org/calc';
@@ -67,13 +67,13 @@ interface VmRow {
 
 test.describe.configure({ mode: 'serial' });
 
-test('@E2E-61 @needs-vm @needs-workvm tests run red then green in fresh VMs, the log is kept and opens, the VMs go', async ({
+test('@E2E-62 @needs-vm @needs-workvm tests run red then green in fresh VMs, the log is kept and opens, the VMs go', async ({
   page,
   orchestrator,
   authenticator,
   e2e,
 }) => {
-  test.skip(e2e.topology !== 't1', 'E2E-61 is a T1 test (work VMs in self mode on the runner device)');
+  test.skip(e2e.topology !== 't1', 'E2E-62 is a T1 test (work VMs in self mode on the runner device)');
   test.setTimeout(1_500_000);
   await orchestrator.loadScenario('model', scenario);
   await seedGitHub(
@@ -196,7 +196,7 @@ test('@E2E-61 @needs-vm @needs-workvm tests run red then green in fresh VMs, the
     )
     .toEqual([{ scope: 'task', state: 'deleted', delete_reason: 'closed' }]);
 
-  const dir = join(e2e.iterationDir, 'e2e-61');
+  const dir = join(e2e.iterationDir, 'e2e-62');
   mkdirSync(dir, { recursive: true });
   const measured = {
     run_ready_ms: results.map((result) => result.ready_ms),

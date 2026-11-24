@@ -1,4 +1,4 @@
-"""Logs of test runs and work VM jobs (04-crypto.md section 4.12, ADR-079 section 3).
+"""Logs of test runs and work VM jobs (04-crypto.md section 4.12, ADR-080 section 3).
 
 A log is the complete output of one `test.run` or one work VM job, split into pieces of at most `CHUNK_BYTES`
 **uncompressed** bytes (a reader fetches any window by `offset // CHUNK_BYTES`) and sealed under a key of the task's

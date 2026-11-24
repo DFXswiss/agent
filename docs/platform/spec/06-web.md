@@ -418,7 +418,7 @@ usage; each node links to `/o/:org/s/:session`.
 `GET /v1/tasks/{task}/operations`, newest first; detail drawer shows transitions, decrypted params and result, with
 the same readable views of issue and pull request lists and of a read issue as the chat card (§5.2).
 
-### 5.4a Test runs and logs (KOR-43, ADR-079)
+### 5.4a Test runs and logs (KOR-43, ADR-080)
 
 A `test.run` event is a chat card: kind, command, state (running, passed, failed, error, timed out, cancelled), exit
 code, duration and start time of its VM, the summary ("Tests: 3 failed, 12 passed") and the tail (collapsed); the

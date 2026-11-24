@@ -1,4 +1,4 @@
-// U-WEB-ui-testrun (ADR-079): the chat item `test.run` in every state, the log viewer behind "Open log" (pages,
+// U-WEB-ui-testrun (ADR-080): the chat item `test.run` in every state, the log viewer behind "Open log" (pages,
 // jump to end, truncated note, download, failures, close), "Open full log" of a `workvm.run` with a log, the operation
 // card of `test.run` ("Tests: 3 failed – open log") and the test runs and stopped / implicitly starting VM of the
 // session's work VM panel.

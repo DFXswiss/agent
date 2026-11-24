@@ -1,4 +1,4 @@
-"""Test runs of a session as platform operations (ADR-079, 13-work-vm.md section 12; twin of the web's test run card,
+"""Test runs of a session as platform operations (ADR-080, 13-work-vm.md section 12; twin of the web's test run card,
 the runs of the work VM panel and its log viewer).
 
 - `parse_run`: a decrypted `test.run` body checked against `contracts/events/objects.json#/$defs/body_test_run`

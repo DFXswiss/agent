@@ -1,4 +1,4 @@
--- Logs of test runs and work VM jobs as encrypted objects (KOR-43, ADR-079 section 3).
+-- Logs of test runs and work VM jobs as encrypted objects (KOR-43, ADR-080 section 3).
 --
 -- `context_object.kind` tells a context checkpoint (`context`, ADR-072) from a log (`log`): the complete output of a
 -- `test.run` operation or a long work VM job, sealed by the device exactly like a checkpoint chunk (uncompressed

@@ -246,7 +246,7 @@ machine-id at first boot (cloud-init new instance-id).
   state `lost`. The teardown is shielded from cancellation and waits (at most 300 s) for the log captures of the VM.
   When Lima fails to delete, the row stays `deleting` (its slot is not given back) and the daemon task's sweep deletes
   it again every minute; the sweep also deletes own `wvm-` instances without a live row or pool entry.
-- **Paused sessions** (KOR-43, ADR-079 §4): a session the guest reports `suspended` stops the VMs it works in
+- **Paused sessions** (KOR-43, ADR-080 §4): a session the guest reports `suspended` stops the VMs it works in
   (`limactl stop`, state `stopped`, `workvm.state` `stopped` with reason `session_paused`) – its session VM, and the
   task VM when no other session of the task is active – unless a job still runs in it. On a platform device the
   reconcile step `workvm` stops every running work VM of an organization whose credit is used up (reason
@@ -348,7 +348,7 @@ session puts there itself is its own business (addendum 1).
   fill bounded by the volume quota), request abuse (size, count, foreign task), egress address = Cloudflare, never the
   site address.
 
-## 12. Test runs (KOR-43, ADR-079)
+## 12. Test runs (KOR-43, ADR-080)
 Concept idea 27, interpretations A6, A8, A9: every test run is its own operation in its own throw-away VM; result, log
 and exit code are kept outside the VM. The work VM stays unrestricted (E-08).
 

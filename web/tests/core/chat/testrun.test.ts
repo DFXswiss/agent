@@ -1,4 +1,4 @@
-// The test runs of a session (ADR-079): the body check of `test.run` and of the `test.run` operation result against
+// The test runs of a session (ADR-080): the body check of `test.run` and of the `test.run` operation result against
 // the contracts, the red state, the summary parts and the memoized selector of the latest body per run.
 import { describe, expect, it } from 'vitest';
 import {

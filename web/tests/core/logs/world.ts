@@ -1,4 +1,4 @@
-// A sealed log in the task world (ADR-079 section 3): an org device signs the manifest, the chunks are sealed with
+// A sealed log in the task world (ADR-080 section 3): an org device signs the manifest, the chunks are sealed with
 // `k_log` of the user's workgroup key, and the client double answers the two log routes.
 import { b64uEncode } from '../../../src/core/encoding/b64u';
 import { ed25519Sign } from '../../../src/core/crypto/keys';

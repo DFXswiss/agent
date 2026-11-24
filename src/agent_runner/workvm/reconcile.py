@@ -1,5 +1,5 @@
 """Reconcile step `workvm` (order 45: before the sessions step, so a closed task's VMs go before its sessions stop;
-KOR-43, ADR-079 sections 4 and 5). The hub's stop hint may stop a session of the closed task before this step sees
+KOR-43, ADR-080 sections 4 and 5). The hub's stop hint may stop a session of the closed task before this step sees
 the closed task: its VMs then go at once with the session (`session_state.py`, reason `task_closed` when the last
 desired state already named the task closed, else `session_ended`).
 

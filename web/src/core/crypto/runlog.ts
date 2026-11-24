@@ -1,4 +1,4 @@
-// Logs of test runs and work VM jobs (04-crypto.md section 4.12, ADR-079 section 3), twin of `agent_hub.crypto.runlog`
+// Logs of test runs and work VM jobs (04-crypto.md section 4.12, ADR-080 section 3), twin of `agent_hub.crypto.runlog`
 // (vectors `contracts/vectors/runlog.json`). The browser holds the workgroup key, so it opens the chunks of a log
 // (`GET /v1/tasks/{task}/logs/{object}/chunks/{index}`) itself; the hub never sees the output:
 //

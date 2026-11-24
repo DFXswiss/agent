@@ -1,4 +1,4 @@
-// The test runs of a session (ADR-079, 13-work-vm.md section 12): the operation `test.run` runs a command in a fresh
+// The test runs of a session (ADR-080, 13-work-vm.md section 12): the operation `test.run` runs a command in a fresh
 // VM and writes the event `test.run` when the run starts (`running`) and when it ends.
 //
 // - `parseTestRun`: the decrypted body checked against `contracts/events/objects.json` (`body_test_run`: every field
