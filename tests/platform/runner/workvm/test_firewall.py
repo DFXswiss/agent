@@ -1,7 +1,8 @@
-"""U-RUN-workvm firewall: pf anchor `agent.workvm` render, watcher, check and install (13-work-vm.md 6.2, 6.3).
+"""U-RUN-workvm firewall: pf anchor `com.apple/000.agent.workvm` render, watcher, check, install and uninstall
+(13-work-vm.md 6.2, 6.3; KOR-29 operations finding 1).
 
 `pfctl`, `launchctl` and file writes are injected; the live answers imitate pfctl's canonical rule output. The
-watcher script is run for real by `/bin/sh` with stub commands in place of `warp-cli`, `route`, `pfctl` and `dnctl`.
+watcher script is run for real by `/bin/sh` with stub commands in place of `warp-cli`, `route`, `pfctl` and `pkill`.
 """
 
 from __future__ import annotations
@@ -46,31 +47,21 @@ def live_rules(uid: int, port: int, egress: str | None = EGRESS) -> list[str]:
     return [*rules, f"block return out quick all user = {uid}"]
 
 
-def live_icmp(egress: str | None = EGRESS) -> list[str]:
-    passed = (
-        [
-            f"pass out quick on {egress} inet proto icmp all icmp-type echoreq keep state (if-bound)",
-            f"pass out quick on {egress} inet6 proto ipv6-icmp all icmp6-type echoreq keep state (if-bound)",
-        ]
-        if egress
-        else []
-    )
-    return [
-        *passed,
-        "block drop out quick on ! lo0 inet proto icmp all icmp-type echoreq",
-        "block drop out quick on ! lo0 inet6 proto ipv6-icmp all icmp6-type echoreq",
-    ]
-
-
 def live_anchor(egress: str | None = EGRESS) -> str:
-    rules = [*live_rules(601, 47200, egress), *live_rules(602, 47201, egress), *live_icmp(egress)]
+    rules = [*live_rules(601, 47200, egress), *live_rules(602, 47201, egress)]
     return "\n".join(rules) + "\n"
 
 
 LIVE_ANCHOR = live_anchor()
 LIVE_ENTRIES = [*firewall.BLOCKED_V4, *firewall.BLOCKED_V6]
 LIVE_TABLE = "".join(f"   {e}\n" for e in LIVE_ENTRIES)
-LIVE_MAIN = 'scrub-anchor "com.apple/*" all fragment reassemble\nanchor "com.apple/*" all\nanchor "agent.workvm" all\n'
+LIVE_MAIN = (
+    'scrub-anchor "com.apple/*" all fragment reassemble\n'
+    'anchor "com.apple/*" all\n'
+    'anchor "com.cloudflare.warp_svc" all\n'
+)
+ANCHOR = "com.apple/000.agent.workvm"
+LIVE_CHILDREN = f"  {ANCHOR}\n  com.apple/200.AirDrop\n  com.apple/250.ApplicationFirewall\n"
 LIVE_INFO = "Status: Enabled for 0 days 01:02:03           Debug: Urgent\n"
 LIVE_IFACES = "lo0\nen0\n"
 
@@ -80,10 +71,11 @@ Answers = dict[tuple[str, ...], tuple[int, str]]
 def healthy() -> Answers:
     return {
         ("/sbin/pfctl", "-s", "info"): (0, LIVE_INFO),
-        ("/sbin/pfctl", "-a", "agent.workvm", "-sr"): (0, LIVE_ANCHOR),
+        ("/sbin/pfctl", "-a", ANCHOR, "-sr"): (0, LIVE_ANCHOR),
         ("/sbin/pfctl", "-sr"): (0, LIVE_MAIN),
         ("/sbin/pfctl", "-s", "Interfaces", "-v"): (0, LIVE_IFACES),
-        ("/sbin/pfctl", "-a", "agent.workvm", "-t", "workvm_blocked", "-T", "show"): (0, LIVE_TABLE),
+        ("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show"): (0, LIVE_TABLE),
+        ("/sbin/pfctl", "-a", "com.apple", "-sA"): (0, LIVE_CHILDREN),
     }
 
 
@@ -103,9 +95,10 @@ def test_render_follows_the_spec_rule_order_per_slot() -> None:
     text = rendered()
     assert text == rendered()
     lines = text.splitlines()
-    assert lines[2] == "table <workvm_blocked> persist { \\"
+    assert lines[0].startswith("# pf anchor com.apple/000.agent.workvm")
     assert "internet only on utun4" in lines[1]
-    assert "500 Mbit/s" in lines[1]
+    assert "500 Mbit/s (not enforced yet" in lines[2]
+    assert lines[3] == "table <workvm_blocked> persist { \\"
     slot0 = lines.index("# slot 00 agentwvm00")
     assert lines.index("# slot 01 agentwvm01") > slot0
     assert lines[slot0 + 1 : slot0 + 9] == [
@@ -119,14 +112,9 @@ def test_render_follows_the_spec_rule_order_per_slot() -> None:
         "block return out quick user 601",
         "# slot 01 agentwvm01",
     ]
-    assert text.endswith(
-        "block return out quick user 602\n"
-        "# ICMP echo of the device: only through the tunnel (pf `user` does not match ICMP)\n"
-        "pass out quick on utun4 inet proto icmp all icmp-type echoreq keep state (if-bound)\n"
-        "pass out quick on utun4 inet6 proto icmp6 all icmp6-type echoreq keep state (if-bound)\n"
-        "block drop out quick on ! lo0 inet proto icmp all icmp-type echoreq\n"
-        "block drop out quick on ! lo0 inet6 proto icmp6 all icmp6-type echoreq\n"
-    )
+    assert text.endswith("block return out quick user 602\n")
+    # every filter rule names a slot account: the rest of the device is untouched by the anchor
+    assert all(" user " in line for line in text.splitlines() if line.startswith(("pass", "block")))
 
 
 def test_render_fail_closed_has_no_internet_rule() -> None:
@@ -139,13 +127,13 @@ def test_render_fail_closed_has_no_internet_rule() -> None:
         "pass out quick on lo0 proto tcp from 127.0.0.1 to 127.0.0.1 port 47201 user 602 flags S/SA keep state",
         "pass out quick on lo0 proto tcp from 127.0.0.1 port 47201 to 127.0.0.1 user 602 no state",
     ]
-    assert text.endswith("block drop out quick on ! lo0 inet6 proto icmp6 all icmp6-type echoreq\n")
+    assert text.endswith("block return out quick user 602\n")
 
 
 def test_render_up_template_is_the_rendered_text_with_the_placeholder() -> None:
     template = firewall.render_up_template(SLOTS, 500)
     assert template.replace("@EGRESS@", EGRESS) == rendered()
-    assert template.count("@EGRESS@") == 5
+    assert template.count("@EGRESS@") == 3
 
 
 def test_resolvers_are_two_public_addresses() -> None:
@@ -217,18 +205,6 @@ def test_render_refuses_invalid_network_input(egress: str | None, mbit: int, fie
     assert (caught.value.code, caught.value.name) == ("workvm_firewall_invalid", field)
 
 
-def test_render_dummynet_two_pipes_per_slot() -> None:
-    assert firewall.render_dummynet(SLOTS, 500) == (
-        "pipe 4700 config bw 500Mbit/s\npipe 4701 config bw 500Mbit/s\n"
-        "pipe 4702 config bw 500Mbit/s\npipe 4703 config bw 500Mbit/s\n"
-    )
-    assert firewall.render_dummynet([], 500) == ""
-    with pytest.raises(RunnerError, match="bandwidth_mbit"):
-        firewall.render_dummynet(SLOTS, 0)
-    with pytest.raises(RunnerError, match="uid"):
-        firewall.render_dummynet([Slot(0, "a", 1, 47200)], 500)
-
-
 def test_egress_of_reads_the_internet_pass_rule() -> None:
     assert firewall.egress_of(LIVE_ANCHOR) == EGRESS
     assert firewall.egress_of(live_anchor(None)) is None
@@ -241,7 +217,8 @@ def test_check_passes_on_the_healthy_filter() -> None:
     status = firewall.check(run, SLOTS, 500)
     assert status == firewall.Status((), EGRESS)
     assert status.internet
-    assert [call for call, _ in run.calls] == list(firewall.READ_COMMANDS)
+    order = [0, 1, 2, 5, 3, 4]
+    assert [call for call, _ in run.calls] == [firewall.READ_COMMANDS[i] for i in order]
     assert all(timeout == firewall.PFCTL_TIMEOUT for _, timeout in run.calls)
 
 
@@ -272,15 +249,17 @@ def test_check_stops_when_pfctl_cannot_read() -> None:
 def test_check_reports_every_problem() -> None:
     answers = healthy()
     answers[("/sbin/pfctl", "-s", "info")] = (0, "Status: Disabled\n")
-    answers[("/sbin/pfctl", "-a", "agent.workvm", "-sr")] = (0, "")
-    answers[("/sbin/pfctl", "-sr")] = (0, 'pass out quick all\nanchor "agent.workvm" all\n')
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-sr")] = (0, "")
+    answers[("/sbin/pfctl", "-sr")] = (0, 'pass out quick all\nanchor "com.apple/*" all\n')
     answers[("/sbin/pfctl", "-s", "Interfaces", "-v")] = (0, "lo0 (skip)\nen0\n")
-    table = ("/sbin/pfctl", "-a", "agent.workvm", "-t", "workvm_blocked", "-T", "show")
+    table = ("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show")
     answers[table] = (0, f"   {firewall.BLOCKED_V4[1]}\n")
+    answers[("/sbin/pfctl", "-a", "com.apple", "-sA")] = (0, "  com.apple/200.AirDrop\n")
     assert firewall.check(FakeRun(answers), SLOTS, 500).problems == (
         "pf_disabled",
         "anchor_missing",
-        "not_referenced",
+        "not_hooked",
+        "not_first",
         "skip_lo0",
         "table_stale",
     )
@@ -290,7 +269,7 @@ def test_check_fails_closed_on_failing_commands() -> None:
     answers = {key: (1, out) for key, (_, out) in healthy().items()}
     answers[("/sbin/pfctl", "-s", "info")] = (0, LIVE_INFO)
     assert firewall.check(FakeRun(answers), SLOTS, 500) == firewall.Status(
-        ("anchor_missing", "not_referenced", "skip_lo0", "table_stale"), None
+        ("anchor_missing", "not_hooked", "not_first", "skip_lo0", "table_stale"), None
     )
 
 
@@ -309,42 +288,84 @@ def test_check_fails_closed_on_failing_commands() -> None:
 )
 def test_check_detects_an_anchor_mismatch(live: str) -> None:
     answers = healthy()
-    answers[("/sbin/pfctl", "-a", "agent.workvm", "-sr")] = (0, live)
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-sr")] = (0, live)
     assert firewall.check(FakeRun(answers), SLOTS, 500).problems == ("anchor_mismatch",)
 
 
 def test_check_without_slots_accepts_an_empty_anchor() -> None:
     answers = healthy()
-    answers[("/sbin/pfctl", "-a", "agent.workvm", "-sr")] = (0, "")
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-sr")] = (0, "")
     assert firewall.check(FakeRun(answers), [], 500) == firewall.Status((), None)
-    answers[("/sbin/pfctl", "-a", "agent.workvm", "-sr")] = (0, LIVE_ANCHOR)
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-sr")] = (0, LIVE_ANCHOR)
     assert firewall.check(FakeRun(answers), [], 500).problems == ("anchor_mismatch",)
 
 
 @pytest.mark.parametrize(
     "main",
-    ["", 'anchor "com.apple/*" all\n', 'pass quick on en0 all\nanchor "agent.workvm" all\n'],
+    [
+        "",
+        'scrub-anchor "com.apple/*" all\nanchor "com.cloudflare.warp_svc" all\n',
+        'anchor "com.cloudflare.warp_svc" all\nanchor "com.apple/*" all\n',
+        'pass quick on en0 all\nanchor "com.apple/*" all\n',
+        'pass in quick on en0 all\nanchor "com.apple/*" all\n',
+        'anchor "other" all\nanchor "com.apple/*" all\n',
+    ],
 )
-def test_check_requires_the_reference_before_any_pass_quick(main: str) -> None:
+def test_check_requires_the_hook_before_the_client_and_any_pass_quick(main: str) -> None:
     answers = healthy()
     answers[("/sbin/pfctl", "-sr")] = (0, main)
-    assert firewall.check(FakeRun(answers), SLOTS, 500).problems == ("not_referenced",)
+    assert firewall.check(FakeRun(answers), SLOTS, 500).problems == ("not_hooked",)
+    assert not firewall.hooked(main)
 
 
-def test_check_accepts_a_pass_quick_after_the_reference() -> None:
+@pytest.mark.parametrize(
+    "main",
+    [LIVE_MAIN + "pass out quick on en0 all\npass in all\n", 'anchor "com.apple/*" all\n'],
+)
+def test_check_accepts_a_pass_quick_after_the_hook_and_no_client(main: str) -> None:
     answers = healthy()
-    answers[("/sbin/pfctl", "-sr")] = (0, LIVE_MAIN + "pass out quick on en0 all\npass in all\n")
+    answers[("/sbin/pfctl", "-sr")] = (0, main)
     assert firewall.check(FakeRun(answers), SLOTS, 500).problems == ()
+
+
+@pytest.mark.parametrize(
+    ("listing", "first"),
+    [
+        (LIVE_CHILDREN, True),
+        (f"\n  {ANCHOR}\n", True),
+        (f"  com.apple/000.aaa\n  {ANCHOR}\n", False),
+        ("", False),
+        ("  com.apple/000.agent.workvm.x\n", False),
+    ],
+)
+def test_first_child_needs_our_anchor_first(listing: str, first: bool) -> None:
+    assert firewall.first_child(listing) is first
+
+
+def test_check_reports_another_first_child() -> None:
+    answers = healthy()
+    answers[("/sbin/pfctl", "-a", "com.apple", "-sA")] = (0, f"  com.apple/000.aaa\n  {ANCHOR}\n")
+    assert firewall.check(FakeRun(answers), SLOTS, 500).problems == ("not_first",)
+
+
+def test_preflight_needs_the_hook_and_reads_only() -> None:
+    run = FakeRun({("/sbin/pfctl", "-sr"): (0, LIVE_MAIN)})
+    assert firewall.preflight(run) == []
+    assert [call for call, _ in run.calls] == [("/sbin/pfctl", "-sr")]
+    assert firewall.preflight(FakeRun({("/sbin/pfctl", "-sr"): (0, 'anchor "com.cloudflare.warp_svc" all\n')})) == [
+        "not_hooked"
+    ]
+    assert firewall.preflight(FakeRun({("/sbin/pfctl", "-sr"): (1, "")})) == ["pfctl_failed"]
 
 
 def test_check_table_ignores_noise_and_needs_every_range() -> None:
     answers = healthy()
-    answers[("/sbin/pfctl", "-a", "agent.workvm", "-t", "workvm_blocked", "-T", "show")] = (
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show")] = (
         0,
         "No ALTQ support in kernel\n" + LIVE_TABLE + "   198.51.100.7\n",
     )
     assert firewall.check(FakeRun(answers), SLOTS, 500).problems == ()
-    answers[("/sbin/pfctl", "-a", "agent.workvm", "-t", "workvm_blocked", "-T", "show")] = (
+    answers[("/sbin/pfctl", "-a", ANCHOR, "-t", "workvm_blocked", "-T", "show")] = (
         0,
         LIVE_TABLE.replace(f"   {firewall.BLOCKED_V6[-1]}\n", ""),
     )
@@ -357,28 +378,14 @@ def test_sudo_run_prefixes_sudo_non_interactive() -> None:
     assert run.calls == [(("/usr/bin/sudo", "-n", "/sbin/pfctl", "-s", "info"), 3.0)]
 
 
-def test_patched_pf_conf_inserts_before_the_first_rule_and_is_idempotent() -> None:
-    current = 'scrub-anchor "com.apple/*"\nanchor "com.apple/*"\n\npass in all\nblock out all\n'
-    patched = firewall.patched_pf_conf(current)
-    assert patched.splitlines() == [
-        'scrub-anchor "com.apple/*"',
-        'anchor "com.apple/*"',
-        "",
-        'anchor "agent.workvm"',
-        "pass in all",
-        "block out all",
-        'load anchor "agent.workvm" from "/etc/pf.anchors/agent.workvm"',
-    ]
-    assert firewall.patched_pf_conf(patched) == patched
-
-
-def test_patched_pf_conf_appends_without_rules() -> None:
-    assert firewall.patched_pf_conf("") == (
-        'anchor "agent.workvm"\nload anchor "agent.workvm" from "/etc/pf.anchors/agent.workvm"\n'
+def test_without_legacy_lines_removes_only_the_earlier_installers_lines() -> None:
+    apple = (
+        'scrub-anchor "com.apple/*"\nanchor "com.apple/*"\nload anchor "com.apple" from "/etc/pf.anchors/com.apple"\n'
     )
-    assert firewall.patched_pf_conf('anchor "agent.workvm"') == (
-        'anchor "agent.workvm"\nload anchor "agent.workvm" from "/etc/pf.anchors/agent.workvm"\n'
-    )
+    legacy = 'anchor "agent.workvm"\n' + apple + 'load anchor "agent.workvm" from "/etc/pf.anchors/agent.workvm"\n'
+    assert firewall.without_legacy_lines(legacy) == apple
+    assert firewall.without_legacy_lines(apple) is apple
+    assert firewall.without_legacy_lines("") == ""
 
 
 def test_daemon_plist_keeps_the_watcher_alive() -> None:
@@ -391,25 +398,48 @@ def test_daemon_plist_keeps_the_watcher_alive() -> None:
     }
 
 
-def test_install_plan_checks_before_loading() -> None:
+def test_install_plan_loads_only_the_anchor_never_the_main_ruleset() -> None:
     plan = firewall.install_plan(SLOTS, 500)
-    assert plan[0] == InstallStep("write", "/etc/pf.anchors/agent.workvm", rendered(None))
-    assert plan[1].argv == ("/sbin/pfctl", "-a", "agent.workvm", "-n", "-f", "/etc/pf.anchors/agent.workvm")
-    assert plan[2] == InstallStep("write", "/etc/pf.anchors/agent.workvm.sample", firewall.render(SLOTS, "utun0", 500))
-    assert plan[3].argv == ("/sbin/pfctl", "-a", "agent.workvm", "-n", "-f", "/etc/pf.anchors/agent.workvm.sample")
-    assert plan[4] == InstallStep("write", "/etc/pf.anchors/agent.workvm.up", firewall.render_up_template(SLOTS, 500))
-    assert plan[5] == InstallStep("write", "/etc/pf.anchors/agent.workvm.dnctl", firewall.render_dummynet(SLOTS, 500))
-    assert plan[6] == InstallStep("write", "/etc/pf.anchors/agent.workvm.watch", firewall.watch_script(), mode=0o755)
-    assert plan[7].path == "/Library/LaunchDaemons/swiss.dfx.agent-runner.pf.plist"
-    assert plan[8] == InstallStep("patch", "/etc/pf.conf")
-    assert [s.argv for s in plan[9:]] == [
-        ("/sbin/pfctl", "-n", "-f", "/etc/pf.conf"),
-        ("/sbin/pfctl", "-f", "/etc/pf.conf"),
+    path = "/etc/pf.anchors/agent.workvm"
+    assert plan[0] == InstallStep("write", path, rendered(None))
+    assert plan[1].argv == ("/sbin/pfctl", "-a", ANCHOR, "-n", "-f", path)
+    assert plan[2] == InstallStep("write", f"{path}.sample", firewall.render(SLOTS, "utun0", 500))
+    assert plan[3].argv == ("/sbin/pfctl", "-a", ANCHOR, "-n", "-f", f"{path}.sample")
+    assert plan[4] == InstallStep("write", f"{path}.up", firewall.render_up_template(SLOTS, 500))
+    assert plan[5] == InstallStep("write", f"{path}.watch", firewall.watch_script(SLOTS), mode=0o755)
+    assert plan[6].path == "/Library/LaunchDaemons/swiss.dfx.agent-runner.pf.plist"
+    assert [s.argv for s in plan[7:]] == [
+        ("/sbin/pfctl", "-a", ANCHOR, "-f", path),
         ("/bin/launchctl", "bootout", "system/swiss.dfx.agent-runner.pf"),
         ("/bin/launchctl", "bootstrap", "system", "/Library/LaunchDaemons/swiss.dfx.agent-runner.pf.plist"),
     ]
-    assert [s.may_fail for s in plan] == [False] * 11 + [True, False]
-    assert "/opt/warp-cli" in firewall.install_plan(SLOTS, 500, warp_cli="/opt/warp-cli")[6].content
+    assert [s.may_fail for s in plan] == [False] * 8 + [True, False]
+    for step in plan:
+        assert "/etc/pf.conf" not in step.argv
+        assert step.path != "/etc/pf.conf"
+        if step.action == "run" and step.argv[0] == "/sbin/pfctl":
+            assert step.argv[1:3] == ("-a", ANCHOR)  # never the main ruleset
+    assert "/opt/warp-cli" in firewall.install_plan(SLOTS, 500, warp_cli="/opt/warp-cli")[5].content
+
+
+def test_uninstall_plan_stops_the_watcher_first_and_never_loads_pf_conf() -> None:
+    plan = firewall.uninstall_plan()
+    assert plan[0] == InstallStep(
+        "run", argv=("/bin/launchctl", "bootout", "system/swiss.dfx.agent-runner.pf"), may_fail=True
+    )
+    assert plan[3] == InstallStep("run", argv=("/sbin/pfctl", "-a", ANCHOR, "-F", "all"), may_fail=True)
+    removed = [step.path for step in plan if step.action == "remove"]
+    assert removed == [
+        "/Library/LaunchDaemons/swiss.dfx.agent-runner.pf.plist",
+        "/etc/pf.anchors/agent.workvm.watch",
+        "/etc/pf.anchors/agent.workvm",
+        "/etc/pf.anchors/agent.workvm.sample",
+        "/etc/pf.anchors/agent.workvm.up",
+        "/var/run/agent.workvm.state",
+        "/etc/pf.anchors/agent.workvm.dnctl",
+    ]
+    assert plan[-1] == InstallStep("unpatch", "/etc/pf.conf")
+    assert not any(step.action == "run" and "/etc/pf.conf" in step.argv for step in plan)
 
 
 # -- watcher: the real script under /bin/sh with stub commands -------------------------------------------------
@@ -422,18 +452,34 @@ def _stub(path: Path, body: str) -> str:
 
 
 def run_watcher(
-    tmp_path: Path, warp: Sequence[str], route: Sequence[str], rounds: int, *, pf_fails: int = 0, pf_on: bool = True
+    tmp_path: Path,
+    warp: Sequence[str],
+    route: Sequence[str],
+    rounds: int,
+    *,
+    pf_fails: int = 0,
+    pf_on: bool = True,
+    enable_works: bool = True,
+    mains: Sequence[str] = (),
+    anchor_empty_at: Sequence[int] = (),
+    unordered_at: Sequence[int] = (),
 ) -> str:
-    """Run the watcher for `rounds` rounds; round i answers `warp[i]` / `route[i]`. Returns the pfctl log."""
+    """Run the watcher for `rounds` rounds; round i answers `warp[i]` / `route[i]` and the main ruleset `mains[i]`
+    (default `LIVE_MAIN`); in the rounds of `anchor_empty_at` the anchor reads empty. Returns the stub log."""
     (tmp_path / "warp").write_text("".join(f"{line}\n" for line in warp))
     (tmp_path / "route").write_text("".join(f"{line}\n" for line in route))
+    for index in range(rounds):
+        main = mains[index] if index < len(mains) else LIVE_MAIN
+        (tmp_path / f"main.{index + 1}").write_text(main)
+    (tmp_path / "empty").write_text("".join(f"{n}\n" for n in anchor_empty_at))
+    (tmp_path / "unordered").write_text("".join(f"{n}\n" for n in unordered_at))
     (tmp_path / "pf_fails").write_text(str(pf_fails))
     (tmp_path / "pf_info").write_text("Status: Enabled for 1 days\n" if pf_on else "Status: Disabled\n")
     log = tmp_path / "log"
     warp_cli = _stub(
         tmp_path / "warp-cli",
-        f'''n=$(cat "{tmp_path}/n" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "{tmp_path}/n"
-if [ "$n" -gt {rounds} ]; then kill -TERM $PPID; exit 1; fi
+        f'''n=$(cat "{tmp_path}/n")
+[ "$1 $2" = "--accept-tos status" ] || exit 2
 answer=$(sed -n "${{n}}p" "{tmp_path}/warp")
 [ "$answer" = fail ] && exit 1
 echo "$answer"
@@ -446,9 +492,27 @@ n=$(cat "{tmp_path}/n"); iface=$(sed -n "${{n}}p" "{tmp_path}/route")
 printf \'   route to: x\\n  interface: %s\\n\' "$iface"
 ''',
     )
+    enable = f'echo "Status: Enabled" > "{tmp_path}/pf_info"' if enable_works else "exit 1"
     pfctl = _stub(
         tmp_path / "pfctl",
         f'''if [ "$1" = -s ]; then cat "{tmp_path}/pf_info"; exit 0; fi
+if [ "$1" = -sr ]; then
+  n=$(cat "{tmp_path}/n" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "{tmp_path}/n"
+  if [ "$n" -gt {rounds} ]; then kill -TERM "$(cat "{tmp_path}/pid")"; exit 1; fi
+  cat "{tmp_path}/main.$n"; exit 0
+fi
+if [ "$1" = -E ]; then echo "pfctl -E" >> "{log}"; {enable}; exit 0; fi
+if [ "$3" = -sA ]; then
+  n=$(cat "{tmp_path}/n")
+  grep -qx "$n" "{tmp_path}/unordered" && echo "  com.apple/000.aaa"
+  echo "  {ANCHOR}"
+  exit 0
+fi
+if [ "$3" = -sr ]; then
+  n=$(cat "{tmp_path}/n")
+  grep -qx "$n" "{tmp_path}/empty" || echo "block return out quick all user = 601"
+  exit 0
+fi
 echo "pfctl $*" >> "{log}"
 if [ "$5" = - ]; then sed \'s/^/  stdin: /\' | grep "pass out quick on utun" | head -1 >> "{log}"; fi
 fails=$(cat "{tmp_path}/pf_fails")
@@ -456,36 +520,48 @@ if [ "$1" = -q ] && [ "$fails" -gt 0 ]; then echo $((fails - 1)) > "{tmp_path}/p
 exit 0
 ''',
     )
-    dnctl = _stub(tmp_path / "dnctl", f'echo "dnctl $*" >> "{log}"\n')
+    pkill = _stub(tmp_path / "pkill", f'echo "pkill $*" >> "{log}"\n')
     (tmp_path / "down").write_text(rendered(None))
     (tmp_path / "up").write_text(firewall.render_up_template(SLOTS, 500))
     script = firewall.watch_script(
+        SLOTS,
         warp_cli,
         pfctl=pfctl,
-        dnctl=dnctl,
+        pkill=pkill,
         route=route_stub,
         anchor_path=str(tmp_path / "down"),
         anchor_up_path=str(tmp_path / "up"),
-        dummynet_path=str(tmp_path / "dn"),
+        state_path=str(tmp_path / "state"),
         seconds=0,
     )
     watcher = _stub(tmp_path / "watch", script.removeprefix("#!/bin/sh\n"))
-    result = subprocess.run(["/bin/sh", watcher], capture_output=True, text=True, timeout=60, check=False)
+    log.write_text("")
+    # the stub ends the watcher itself (its own parent may be a command substitution's subshell)
+    start = f'echo $$ > "{tmp_path}/pid"; exec /bin/sh "{watcher}"'
+    result = subprocess.run(["/bin/sh", "-c", start], capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode != 0  # ended by the stub's TERM after the last round
     return log.read_text()
 
 
 CONNECTED = "Status update: Connected"
+TCP_UDP_601 = (
+    "  stdin: pass out quick on {} proto {{ tcp udp }} from any to any user 601 keep state"
+    " (if-bound, max 4096, max-src-conn 2048, max-src-conn-rate 2000/10)"
+)
 
 
-def test_watcher_takes_the_enable_reference_and_loads_the_tunnel_interface(tmp_path: Path) -> None:
+def loads(log: str) -> list[str]:
+    return [line for line in log.splitlines() if line.startswith(("pfctl -q", "  stdin"))]
+
+
+def test_watcher_loads_the_tunnel_interface_and_writes_its_state(tmp_path: Path) -> None:
     log = run_watcher(tmp_path, [CONNECTED, CONNECTED], ["utun4", "utun4"], rounds=2).splitlines()
     probe = firewall.resolvers()[0]
-    assert log[:2] == [f"dnctl -q {tmp_path}/dn", "pfctl -E"]
-    assert log[2] == f"route -n get {probe}"
-    assert log[3] == "pfctl -q -a agent.workvm -f -"
-    assert log[4].startswith("  stdin: pass out quick on utun4 proto { tcp udp }")
-    assert log[5:] == [f"route -n get {probe}"]  # unchanged: no reload in round two
+    assert log[0] == f"route -n get {probe}"
+    assert log[1] == f"pfctl -q -a {ANCHOR} -f -"
+    assert log[2] == TCP_UDP_601.format("utun4")
+    assert log[3:] == [f"route -n get {probe}"]  # unchanged: no reload in round two
+    assert (tmp_path / "state").read_text() == "ok utun4\n"
 
 
 def test_watcher_falls_back_to_the_fail_closed_anchor(tmp_path: Path) -> None:
@@ -495,31 +571,97 @@ def test_watcher_falls_back_to_the_fail_closed_anchor(tmp_path: Path) -> None:
         ["utun4", "", "", "en0", "utun12"],
         rounds=5,
     )
-    loads = [line for line in log.splitlines() if line.startswith(("pfctl -q", "  stdin"))]
-    down = f"pfctl -q -a agent.workvm -f {tmp_path}/down"
-    assert loads == [
-        "pfctl -q -a agent.workvm -f -",
-        "  stdin: pass out quick on utun4 proto { tcp udp } from any to any user 601 keep state"
-        " (if-bound, max 4096, max-src-conn 2048, max-src-conn-rate 2000/10)",
+    down = f"pfctl -q -a {ANCHOR} -f {tmp_path}/down"
+    assert loads(log) == [
+        f"pfctl -q -a {ANCHOR} -f -",
+        TCP_UDP_601.format("utun4"),
         down,
-        "pfctl -q -a agent.workvm -f -",
-        "  stdin: pass out quick on utun12 proto { tcp udp } from any to any user 601 keep state"
-        " (if-bound, max 4096, max-src-conn 2048, max-src-conn-rate 2000/10)",
+        f"pfctl -q -a {ANCHOR} -f -",
+        TCP_UDP_601.format("utun12"),
     ]
+    assert (tmp_path / "state").read_text() == "ok utun12\n"
+
+
+def test_watcher_writes_the_fail_closed_state(tmp_path: Path) -> None:
+    log = run_watcher(tmp_path, ["Status update: Disconnected"], [""], rounds=1)
+    assert loads(log) == [f"pfctl -q -a {ANCHOR} -f {tmp_path}/down"]
+    assert (tmp_path / "state").read_text() == "ok -\n"
 
 
 def test_watcher_retries_a_failed_load_and_refreshes(tmp_path: Path) -> None:
     rounds = firewall.WATCH_REFRESH + 3
     log = run_watcher(tmp_path, [CONNECTED] * rounds, ["utun4"] * rounds, rounds=rounds, pf_fails=1)
-    loads = [line for line in log.splitlines() if line.startswith("pfctl -q")]
     # round 1 fails, round 2 loads, round 2 + WATCH_REFRESH reloads
-    assert len(loads) == 3
+    assert len([line for line in log.splitlines() if line.startswith("pfctl -q")]) == 3
+
+
+def test_watcher_reloads_an_anchor_someone_flushed(tmp_path: Path) -> None:
+    log = run_watcher(tmp_path, [CONNECTED] * 3, ["utun4"] * 3, rounds=3, anchor_empty_at=[3])
+    assert len([line for line in log.splitlines() if line.startswith("pfctl -q")]) == 2
+
+
+@pytest.mark.parametrize(
+    "main",
+    [
+        'scrub-anchor "com.apple/*" all\nanchor "com.cloudflare.warp_svc" all\n',
+        'anchor "com.cloudflare.warp_svc" all\nanchor "com.apple/*" all\n',
+        'pass out quick all\nanchor "com.apple/*" all\n',
+        'pass quick on en0 all\nanchor "com.apple/*" all\n',
+        'anchor "other" all\nanchor "com.apple/*" all\n',
+    ],
+)
+def test_watcher_stops_the_slots_without_an_effective_hook(tmp_path: Path, main: str) -> None:
+    log = run_watcher(tmp_path, [CONNECTED] * 3, ["utun4"] * 3, rounds=3, mains=[LIVE_MAIN, main, LIVE_MAIN])
+    lines = log.splitlines()
+    kills = ["pkill -KILL -u agentwvm00", "pkill -KILL -u agentwvm01"]
+    assert [line for line in lines if line.startswith("pkill")] == kills  # only in round two
+    first_kill = lines.index(kills[0])
+    # round two loads nothing; when the hook is back, round three loads the anchor again
+    assert [line for line in lines[:first_kill] if line.startswith("pfctl -q")] == [f"pfctl -q -a {ANCHOR} -f -"]
+    assert [line for line in lines[first_kill:] if line.startswith("pfctl -q")] == [f"pfctl -q -a {ANCHOR} -f -"]
+    assert (tmp_path / "state").read_text() == "ok utun4\n"
+
+
+def test_watcher_stops_the_slots_when_another_child_comes_first(tmp_path: Path) -> None:
+    log = run_watcher(tmp_path, [CONNECTED] * 2, ["utun4"] * 2, rounds=2, unordered_at=[2])
+    lines = log.splitlines()
+    assert [line for line in lines if line.startswith("pkill")] == [
+        "pkill -KILL -u agentwvm00",
+        "pkill -KILL -u agentwvm01",
+    ]
+    assert lines.index("pkill -KILL -u agentwvm00") > lines.index(f"pfctl -q -a {ANCHOR} -f -")
+    assert (tmp_path / "state").read_text() == "unordered\n"
+
+
+def test_watcher_writes_unhooked_while_the_hook_is_missing(tmp_path: Path) -> None:
+    log = run_watcher(tmp_path, [CONNECTED], ["utun4"], rounds=1, mains=[""])
+    assert loads(log) == []
+    assert (tmp_path / "state").read_text() == "unhooked\n"
+    assert "route" not in log  # the client is not even asked
+
+
+def test_watcher_enables_pf_again_when_it_was_disabled(tmp_path: Path) -> None:
+    log = run_watcher(tmp_path, [CONNECTED, CONNECTED], ["utun4", "utun4"], rounds=2, pf_on=False)
+    assert log.splitlines().count("pfctl -E") == 1
+    assert (tmp_path / "state").read_text() == "ok utun4\n"
+
+
+def test_watcher_stops_the_slots_while_pf_stays_disabled(tmp_path: Path) -> None:
+    log = run_watcher(tmp_path, [CONNECTED], ["utun4"], rounds=1, pf_on=False, enable_works=False)
+    assert log.splitlines()[:3] == ["pfctl -E", "pkill -KILL -u agentwvm00", "pkill -KILL -u agentwvm01"]
+    assert (tmp_path / "state").read_text() == "unhooked\n"
+
+
+def test_watch_script_refuses_invalid_slots() -> None:
+    with pytest.raises(RunnerError, match="uid"):
+        firewall.watch_script([Slot(0, "a", 1, 47200)])
 
 
 class Files:
     def __init__(self, pf_conf: str) -> None:
         self.content = {"/etc/pf.conf": pf_conf}
         self.writes: list[tuple[str, int]] = []
+        self.removed: list[str] = []
 
     def write(self, path: str, content: str, mode: int) -> None:
         self.content[path] = content
@@ -528,44 +670,52 @@ class Files:
     def read(self, path: str) -> str:
         return self.content[path]
 
+    def remove(self, path: str) -> None:
+        self.content.pop(path, None)
+        self.removed.append(path)
 
-def test_apply_writes_patches_and_runs() -> None:
+
+def test_apply_writes_and_runs_without_touching_pf_conf() -> None:
     files = Files("pass in all\n")
     answers: Answers = {("/bin/launchctl", "bootout", "system/swiss.dfx.agent-runner.pf"): (3, "")}
     run = FakeRun(answers)
-    firewall.apply(firewall.install_plan(SLOTS, 500), run, files.write, files.read)
+    firewall.apply(firewall.install_plan(SLOTS, 500), run, files.write, files.read, files.remove)
     assert files.writes == [
         ("/etc/pf.anchors/agent.workvm", 0o644),
         ("/etc/pf.anchors/agent.workvm.sample", 0o644),
         ("/etc/pf.anchors/agent.workvm.up", 0o644),
-        ("/etc/pf.anchors/agent.workvm.dnctl", 0o644),
         ("/etc/pf.anchors/agent.workvm.watch", 0o755),
         ("/Library/LaunchDaemons/swiss.dfx.agent-runner.pf.plist", 0o644),
-        ("/etc/pf.conf", 0o644),
     ]
-    assert files.content["/etc/pf.conf"].startswith('anchor "agent.workvm"\npass in all\n')
-    assert len(run.calls) == 6
+    assert files.content["/etc/pf.conf"] == "pass in all\n"
+    assert len(run.calls) == 5
+
+
+def test_apply_uninstall_removes_files_and_the_legacy_lines() -> None:
+    files = Files('anchor "agent.workvm"\npass in all\n')
+    files.content["/etc/pf.anchors/agent.workvm"] = "x"
+    run = FakeRun({("/sbin/pfctl", "-a", ANCHOR, "-F", "all"): (1, "")})
+    firewall.apply(firewall.uninstall_plan(), run, files.write, files.read, files.remove)
+    assert files.content == {"/etc/pf.conf": "pass in all\n"}
+    assert files.writes == [("/etc/pf.conf", 0o644)]
+    assert len(files.removed) == 7
     files.writes.clear()
-    firewall.apply([InstallStep("patch", "/etc/pf.conf")], run, files.write, files.read)
+    firewall.apply([InstallStep("unpatch", "/etc/pf.conf")], run, files.write, files.read, files.remove)
     assert files.writes == []
 
 
 def test_apply_stops_at_a_failing_check() -> None:
     files = Files("")
-    run = FakeRun({("/sbin/pfctl", "-a", "agent.workvm", "-n", "-f", "/etc/pf.anchors/agent.workvm"): (1, "")})
+    run = FakeRun({("/sbin/pfctl", "-a", ANCHOR, "-n", "-f", "/etc/pf.anchors/agent.workvm"): (1, "")})
     with pytest.raises(RunnerError) as caught:
-        firewall.apply(firewall.install_plan(SLOTS, 500), run, files.write, files.read)
+        firewall.apply(firewall.install_plan(SLOTS, 500), run, files.write, files.read, files.remove)
     assert (caught.value.code, caught.value.name) == ("workvm_firewall_install", "pfctl")
-    assert files.content["/etc/pf.conf"] == ""
-
-
-def test_watcher_enables_pf_again_when_it_was_disabled(tmp_path: Path) -> None:
-    log = run_watcher(tmp_path, [CONNECTED, CONNECTED], ["utun4", "utun4"], rounds=2, pf_on=False)
-    assert log.splitlines().count("pfctl -E") == 3  # at start and in each of the two rounds
+    assert files.writes == [("/etc/pf.anchors/agent.workvm", 0o644)]
 
 
 def test_check_matches_pfctl_protocol_names() -> None:
     assert firewall.egress_of(LIVE_ANCHOR) == EGRESS
+    live = LIVE_ANCHOR.replace("port = smtp", "port = 25")
     answers = healthy()
-    assert "ipv6-icmp" in answers[firewall.READ_COMMANDS[1]][1]
+    answers[firewall.READ_COMMANDS[1]] = (0, live)
     assert firewall.check(FakeRun(answers), SLOTS, 500).problems == ()

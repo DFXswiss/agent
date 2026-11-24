@@ -133,50 +133,75 @@ against a closed schema and treats any other answer as `unavailable`.
 - Each slot has a pinned Lima SSH port `WORKVM_SSH_PORT_BASE + slot` (default base 47200, `ssh.localPort` in the
   instance). A work VM of a slot always lives in that slot's Lima home; a slot holds at most one work VM.
 
-### 6.2 Host packet filter (pf anchor `agent.workvm`)
-`agent-runner workvm install` (root) writes the fail-closed anchor `/etc/pf.anchors/agent.workvm` (loaded at boot
-through an `anchor "agent.workvm"` and a `load anchor` line in `/etc/pf.conf`), the template
-`agent.workvm.up` with the placeholder `@EGRESS@`, the pipe file, the root-owned watcher `agent.workvm.watch` and
-the LaunchDaemon `swiss.dfx.agent-runner.pf` (`KeepAlive`) that runs it. Per slot account (UID `U`, SSH port `P`),
-with `<workvm_blocked>` the table of this-network, loopback, private, CGNAT, link-local, multicast, documentation,
-benchmark and reserved ranges (IPv4 and IPv6) and `utunN` the Cloudflare client's tunnel interface:
+### 6.2 Host packet filter (pf anchor `com.apple/000.agent.workvm`)
+The main pf ruleset is **never loaded or changed** by the platform: the device's Cloudflare client hooks its own
+anchor `com.cloudflare.warp_svc` into the running main ruleset, and loading `/etc/pf.conf` would drop it (operations
+finding 1, decisions KOR-29 #22). The work VM rules live in a child of Apple's anchor, `com.apple/000.agent.workvm`: the
+macOS main ruleset evaluates `anchor "com.apple/*"`, i.e. every child of `com.apple`, before the client's anchor, and
+a child is loaded with `pfctl -a com.apple/000.agent.workvm -f FILE` alone. `/etc/pf.conf` stays untouched.
+`agent-runner workvm install` (root) writes the fail-closed anchor `/etc/pf.anchors/agent.workvm`, the template
+`agent.workvm.up` with the placeholder `@EGRESS@`, the root-owned watcher `agent.workvm.watch` and the LaunchDaemon
+`swiss.dfx.agent-runner.pf` (`KeepAlive`) that runs it, and loads the fail-closed anchor. Per slot account (UID `U`,
+SSH port `P`), with `<workvm_blocked>` the table of this-network, loopback, private, CGNAT, link-local, multicast,
+documentation, benchmark and reserved ranges (IPv4 and IPv6) and `utunN` the Cloudflare client's tunnel interface:
 ```
 pass  out quick on lo0 proto tcp from 127.0.0.1 to 127.0.0.1 port P user U flags S/SA keep state
+pass  out quick on lo0 proto tcp from 127.0.0.1 port P to 127.0.0.1 user U no state
 block return out quick on lo0 proto { tcp udp } user U
 block return out quick proto { tcp udp } from any to <workvm_blocked> user U
 block return out quick proto tcp from any to any port 25 user U
 pass  out quick on utunN proto { tcp udp } from any to any user U keep state \
-      (max 4096, max-src-conn 2048, max-src-conn-rate 2000/10)          # only while the client is connected
+      (if-bound, max 4096, max-src-conn 2048, max-src-conn-rate 2000/10)   # only while the client is connected
 block return out quick user U
 ```
-plus a dummynet pipe per slot (500 Mbit/s each direction; configured, not yet fed by rules – decisions #20). After
-the slot rules the anchor passes ICMP echo of the device only on `utunN` and drops it on every other interface but
-lo0 (pf's `user` does not match ICMP); the pass rules keep their states `if-bound`, so a flow never continues on
-the physical interface after a disconnect. There is no global rate cap shared by all VMs and no
-destination logging. The anchor only matches the slot accounts: the device's own traffic (runner, hub, remote
-access) is never affected. The host's own addresses are reached over lo0 and therefore refused address-independently;
-private ranges leave through the physical interface (the client's split-tunnel excludes), where nothing passes.
-`agent-runner workvm firewall check` (and the runner, through `sudo -n` with exactly the read commands the sudoers
-file allows) requires pf enabled, the anchor rules equal to the rendered text for the live egress interface or for
-none, the anchor referenced from the main ruleset before any `pass quick`, no `set skip on lo0`, and the table.
+Every rule names a slot account: the device's own traffic (runner, hub, remote access) and the client's own rules are
+never affected, and there are no device-wide rules (ICMP of the device is governed by the client's default deny).
+Because our anchor is evaluated first and decides every TCP and UDP packet of a slot account with a `quick` rule, the
+client's `pass out quick … to <private network>` never applies to them; ICMP is not matched by pf's `user` and falls
+through to the client's rules (threat model, residual risks). The anchor is named `000.agent.workvm`: pf evaluates
+the children of `com.apple/*` in name order, and ours must be the first (Apple ships `100.…`, `200.…`, `250.…`). The pass rules keep their states `if-bound`,
+so a flow never continues on the physical interface after a disconnect. No bandwidth shaping yet (decisions #20), no
+global rate cap shared by all VMs, no destination logging. The host's own addresses are reached over lo0 and therefore
+refused address-independently; private ranges are in the table.
+- `agent-runner workvm install --plan` prints every step (files with mode and hash, commands) and whether the hook is
+  present, changes nothing. `install` refuses a device whose running main ruleset has no `anchor "com.apple/*"` in
+  front of the client's anchor and every `pass quick` (`workvm_firewall_unhooked`).
+- `agent-runner workvm uninstall [--keep-volume]` stops the watcher, flushes the anchor, removes every file of
+  `install` (and the lines an earlier installer put into `/etc/pf.conf`, file only), stops the slot accounts'
+  processes, deletes the accounts, the group, the wrapper, the sudoers rule and (unless kept) the volume, and then
+  checks that nothing is left (`result=ok`, exit 0).
+- `agent-runner workvm firewall check` (and the runner, through `sudo -n` with exactly the read commands the sudoers
+  file allows) requires pf enabled, the anchor rules equal to the rendered text for the live egress interface or for
+  none, the hook as the first `anchor` line with no `pass quick` before it (`not_hooked` otherwise), our anchor as
+  the first child of `com.apple` (`not_first`), no `set skip on lo0`, and the table.
 
 ### 6.3 Egress through the device's Cloudflare client (addendum 3)
 - The operator installs and enrolls the Cloudflare One client on the device (managed preferences, service token,
   `service_mode warp`, `auto_connect`); the platform never handles its credential. Device traffic and everything the
   slot accounts send leaves with Cloudflare's shared egress addresses, never the site's address. No dedicated
   address, no Mesh node, no gateway VM.
-- The watcher runs every 5 s: `warp-cli status` contains `Status update: Connected` and `route -n get <resolver>`
-  names a `utunN` → load the anchor with the pass rule on that interface; otherwise load the fail-closed anchor. It
-  loads on every change and every minute (a flushed anchor comes back); a failed load is retried in the next round.
-  When the client disconnects, the routes return to the physical interface and the pass rule stops matching at once:
-  fail-closed does not depend on the watcher's timing.
+- The watcher runs every 2 s and checks that the boundary is **effective**: pf enabled (`pfctl -E` when it is not -
+  never `-d`), the hook `anchor "com.apple/*"` as the first `anchor` line of the running main ruleset with no
+  `pass quick` before it, the anchor's rules loaded, and our anchor the first child of `com.apple` (`unordered`
+  otherwise, handled like a missing hook). Without an effective hook (a component replaced the main ruleset) it kills
+  every process of the slot accounts at once - their VMs with them - writes `unhooked` to
+  `/var/run/agent.workvm.state` and repeats that every round until the hook is back; it never loads the main ruleset
+  itself. With the hook: `/usr/local/bin/warp-cli --accept-tos status` contains `Status update: Connected` and
+  `route -n get <resolver>` names a `utunN` → load the anchor with the pass rule on that interface; otherwise load the
+  fail-closed anchor; on every change, when the anchor is empty, and every minute; state `ok <utunN or ->`. When the
+  client disconnects or updates itself, the routes return to the physical interface and the pass rule stops matching
+  at once (fail-closed does not depend on the watcher); after the reconnection the watcher opens again by itself.
+- Rehearsal: `images/workvm/host-rehearsal.sh` (root, a test device with the client) runs plan, install of one slot,
+  the checks, a disconnect/reconnect and a restart of the client's service, and the uninstall, compares the state
+  with the state before, and uninstalls by itself after a deadline when the operator's session breaks.
 - The work VMs resolve through Cloudflare's public resolvers (`.dns` of the clone), through the same tunnel; the host
   resolver is off (it would ask the site's resolver when the client is down).
 - `images/workvm/egress-check.sh --account <slot> --site-ip <site address> [--vm NAME] [--disconnect-test]` (root,
   operator) checks on the device: client connected, egress rule loaded, the slot leaves with a Cloudflare address
   (Cloudflare trace, ipify IPv4/IPv6, HTTP/3), never the site address; port 25, the LAN gateway, the host's LAN
   address and the host loopback are blocked; with `--disconnect-test` the slot has no internet while the client is
-  disconnected and gets it back after reconnecting.
+  disconnected and gets it back after reconnecting. It also checks pf enabled, the hook in front of the client's
+  anchor, the client's anchor still hooked, and from inside a VM a 50 MB transfer (the tunnel's MTU is 1300).
 
 ### 6.4 Fail-closed and test mode
 - Outside `TEST_MODE`, `workvm.request` succeeds only when `firewall check` passes; otherwise `workvm_unavailable`.

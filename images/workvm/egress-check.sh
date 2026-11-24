@@ -27,7 +27,8 @@ site_ip6=
 vm=
 disconnect=0
 wrapper=/usr/local/libexec/agent-runner-workvm-limactl
-warp=${WARP_CLI:-'/Applications/Cloudflare WARP.app/Contents/Resources/warp-cli'}
+warp=${WARP_CLI:-/usr/local/bin/warp-cli}
+anchor=com.apple/000.agent.workvm
 trace=https://cloudflare.com/cdn-cgi/trace
 
 usage() {
@@ -73,15 +74,35 @@ egress_ok() { # name ip
 }
 
 # 1. The device's own traffic goes through the client (precondition, not a work VM property).
-if "$warp" status 2>/dev/null | grep -q 'Status update: Connected'; then
+connected() { "$warp" --accept-tos status 2>/dev/null | grep -q 'Status update: Connected'; }
+if connected; then
   report client pass connected
 else
   report client fail "warp-cli status is not connected"
 fi
 egress_ok device_egress "$(trace_ip)"
 
-# 2. The watcher has loaded the internet rule on the tunnel interface.
-egress_if=$(pfctl -a agent.workvm -sr 2>/dev/null | sed -n 's/^pass out quick on \(utun[0-9]*\) .*/\1/p' | head -1)
+# 2. The anchor is effective: pf on, Apple's hook in the main ruleset before the client's anchor (our child anchor
+#    is evaluated first), the client's anchor still hooked, and the watcher has loaded the rule on the tunnel.
+if pfctl -s info 2>/dev/null | grep -q 'Status: Enabled'; then report pf pass enabled; else report pf fail disabled; fi
+main=$(pfctl -sr 2>/dev/null)
+first_anchor=$(printf '%s\n' "$main" | grep -n '^anchor ' | head -n 1)
+first_pass=$(printf '%s\n' "$main" | grep -n '^pass.* quick' | head -n 1 | cut -d: -f1)
+client=$(printf '%s\n' "$main" | grep -n '^anchor "com.cloudflare' | head -n 1 | cut -d: -f1)
+case "$first_anchor" in
+  *:'anchor "com.apple/*"'*)
+    if [ -n "$first_pass" ] && [ "$first_pass" -lt "${first_anchor%%:*}" ]; then
+      report hook fail "a pass quick rule comes before com.apple/*"
+    else
+      report hook pass "com.apple/* is the first anchor"
+    fi
+    ;;
+  *) report hook fail "com.apple/* is not the first anchor of the main ruleset" ;;
+esac
+child=$(pfctl -a com.apple -sA 2>/dev/null | sed -n '/./{s/^ *//;p;q;}')
+if [ "$child" = "$anchor" ]; then report first_child pass "$anchor"; else report first_child fail "first child is ${child:-none}"; fi
+if [ -n "$client" ]; then report client_anchor pass "line $client"; else report client_anchor fail "client anchor not hooked"; fi
+egress_if=$(pfctl -a "$anchor" -sr 2>/dev/null | sed -n 's/^pass out quick on \(utun[0-9]*\) .*/\1/p' | head -1)
 if [ -n "$egress_if" ]; then report anchor pass "egress=$egress_if"; else report anchor fail "no egress rule"; fi
 
 # 3. A slot account leaves with a Cloudflare address, IPv4, IPv6 (when offered) and HTTP/3.
@@ -130,11 +151,14 @@ if [ -n "$vm" ]; then
   else
     report vm_port25 pass "blocked"
   fi
+  # the tunnel's MTU (1300 on the device): a large transfer must complete
+  size=$(in_vm curl -s -m 120 -o /dev/null -w '%{size_download}' 'https://speed.cloudflare.com/__down?bytes=50000000' 2>/dev/null)
+  if [ "${size:-0}" = 50000000 ]; then report vm_large pass "50 MB"; else report vm_large fail "got ${size:-0} bytes"; fi
 fi
 
 # 6. Client disconnected: the slot has no internet (fail-closed), never the site address.
 if [ "$disconnect" = 1 ]; then
-  "$warp" disconnect >/dev/null 2>&1
+  "$warp" --accept-tos disconnect >/dev/null 2>&1
   sleep 10
   leaked=$(trace_ip as_slot)
   if [ -n "$leaked" ]; then
@@ -142,8 +166,10 @@ if [ "$disconnect" = 1 ]; then
   else
     report disconnected pass "no internet"
   fi
-  "$warp" connect >/dev/null 2>&1
-  sleep 10
+  "$warp" --accept-tos connect >/dev/null 2>&1
+  waited=0
+  until connected || [ "$waited" -ge 90 ]; do sleep 3; waited=$((waited + 3)); done
+  sleep 12 # the watcher loads the pass rule within two of its rounds
   egress_ok reconnected "$(trace_ip as_slot)"
 fi
 

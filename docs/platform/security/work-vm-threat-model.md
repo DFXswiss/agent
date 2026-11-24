@@ -30,13 +30,21 @@ manipulated. The attacker fully controls the VM's kernel, network stack, Lima gu
 | Request abuse: many or large VMs | Size cap, limits per task/org/owner, RAM budget, queue with time-out; organization RAM share and disk admission **not built yet** (decisions #17) | runner tests, WVM-08 |
 | Host disk exhaustion (sparse VM disks, Lima logs) | Work VM homes on an own APFS volume with a quota (built); allocated disk in admission and log truncation **not built yet** (decisions #20) | WVM-07 |
 | VM traffic reaches internal resources through the device's Cloudflare identity (private routes of the organization's tunnels, Access policies admitting enrolled devices) | Private and CGNAT ranges (incl. Cloudflare's private hostname range) are in the blocked table; Access policies must not admit the device token or "any enrolled device" (operator check) | WVM-03, report |
-| Abuse towards third parties from Cloudflare's addresses | Port 25 refused (host filter); per-slot state and connection-rate caps; ICMP echo only through the tunnel; per-slot bandwidth pipes configured but **not fed yet** (decisions #20); no content inspection, no destination logging (addendum 1) | firewall tests |
+| Abuse towards third parties from Cloudflare's addresses | Port 25 refused (host filter); per-slot state and connection-rate caps; no bandwidth shaping yet (decisions #20); no content inspection, no destination logging (addendum 1) | firewall tests |
 | Data exfiltration of what the session put into the VM | **Not preventable by design** (free internet is required); leaves through Cloudflare | documented (ADR-059) |
 | Escape from the VM to the host (hypervisor bug) | Out of scope of the platform; Apple Virtualization framework; a host-agent compromise yields only that slot account (no other slot's disk, no runner secret, `_config` root-owned) | — |
 
 ## Residual risks
-- ICMP is not matched by pf's `user`: the anchor passes ICMP echo of the whole device only through the tunnel
-  (decisions #19 H3); other ICMP types a host-agent socket could send are not filtered per account (WVM-03 measures).
+- ICMP is not matched by pf's `user`: the anchor has no device-wide rules any more (decisions #22). ICMP a slot's
+  host agent sends falls through to the Cloudflare client's anchor, whose default deny blocks it except towards the
+  ranges it passes directly (private networks): a ping sweep of the site network from a VM is possible if Lima's user
+  network forwards echo requests (WVM-03 measures with `icmp-fake`); TCP and UDP to those ranges stay blocked.
+- The hook is Apple's `anchor "com.apple/*"` line in the running main ruleset. A component that replaces the main
+  ruleset without it opens nothing for long: the watcher stops every slot process within one round (2 s) and the
+  runner tears the VMs down; in that window a slot account's new connections fall through to the client's rules.
+- When the client disables pf (disconnect, uninstall), the slot accounts are unfiltered until the watcher's next
+  round enables it again (at most 2 s); without the tunnel their traffic then goes nowhere useful, but the site
+  network is reachable in that window.
 - Data the session places into the VM may leave the VM (by design).
 - Lima's own SSH needs one loopback connection per slot (its pinned port); a bug in Lima's host-agent proxy on that
   port affects only that slot.

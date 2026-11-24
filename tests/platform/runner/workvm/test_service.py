@@ -78,10 +78,11 @@ def healthy(egress: str | None = "utun4") -> Answers:
         ("/usr/bin/id", "-u", "agentwvm00"): (0, "601\n"),
         ("/usr/bin/id", "-u", "agentwvm01"): (0, "602\n"),
         (*SUDO, "/sbin/pfctl", "-s", "info"): (0, "Status: Enabled for 0 days 01:02:03\n"),
-        (*SUDO, "/sbin/pfctl", "-a", "agent.workvm", "-sr"): (0, rendered),
-        (*SUDO, "/sbin/pfctl", "-sr"): (0, 'anchor "com.apple/*" all\nanchor "agent.workvm" all\n'),
+        (*SUDO, "/sbin/pfctl", "-a", "com.apple/000.agent.workvm", "-sr"): (0, rendered),
+        (*SUDO, "/sbin/pfctl", "-sr"): (0, 'anchor "com.apple/*" all\nanchor "com.cloudflare.warp_svc" all\n'),
         (*SUDO, "/sbin/pfctl", "-s", "Interfaces", "-v"): (0, "lo0\nen0\n"),
-        (*SUDO, "/sbin/pfctl", "-a", "agent.workvm", "-t", "workvm_blocked", "-T", "show"): (0, table),
+        (*SUDO, "/sbin/pfctl", "-a", "com.apple/000.agent.workvm", "-t", "workvm_blocked", "-T", "show"): (0, table),
+        (*SUDO, "/sbin/pfctl", "-a", "com.apple", "-sA"): (0, "  com.apple/000.agent.workvm\n"),
     }
 
 

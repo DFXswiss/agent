@@ -134,9 +134,19 @@ so the filter can never lock the production device out. Cloudflare keeps logging
 - No mounts, no port forwards, `plain`-style template (no guest agent port forwarding), no SSH agent,
   `propagateProxyEnv: false`, no host resolver.
 - Fail-closed: outside `TEST_MODE` work VMs start only when the slot accounts exist, pf is enabled with the
-  `agent.workvm` anchor exactly as rendered (with or without the egress rule), and the main ruleset does not skip
-  it; checked before every start and every minute; without the client the VMs have no internet, and running work VMs
-  are stopped if the host filter is gone.
+  `com.apple/000.agent.workvm` anchor exactly as rendered (with or without the egress rule), and the main ruleset
+  evaluates `com.apple/*` before the Cloudflare client's anchor and every `pass quick`; checked before every start and
+  every minute; without the client the VMs have no internet, and running work VMs are stopped if the host filter is
+  gone. The watcher stops every process of the slot accounts within one round (2 s) when the hook is missing or our
+  anchor is not evaluated first. It never repairs the main ruleset itself: that would need a reload of the main
+  ruleset, which the client owns. If a component replaces the main ruleset for good without Apple's lines, the work
+  VMs stay off; the operator sees it in `agent-runner workvm status` (`not_hooked`) and in the sessions' "not ready"
+  answers.
+- **The main ruleset is never loaded** (operations finding 1, decisions #22): the Cloudflare client hooks its anchor
+  into the running main ruleset, so the work VM rules live in Apple's wildcard anchor (`com.apple/000.agent.workvm`,
+  loaded alone) and `/etc/pf.conf` stays untouched. Rejected: an own `anchor` line in `/etc/pf.conf` plus
+  `pfctl -f /etc/pf.conf` (drops the client's anchor; the client may in turn drop ours, fail-open); appending our line
+  to the running main ruleset (would need a reload of the whole main ruleset, same problem).
 - The runner reads VM output only as bounded bytes; archives from the VM are re-packed by the runner before they
   reach a guest import.
 

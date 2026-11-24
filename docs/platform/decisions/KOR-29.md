@@ -154,3 +154,52 @@ MON-3. **Runner measures only from outside** (`agent_runner.metrics.workvm`): th
     `lsof` their processes, so CPU, RSS, disk blocks and network may be null there; sizes, state and the runtime since
     creation are always sent. Nothing runs inside the work VM for the monitoring (addendum 1). Open: a root-owned
     read-only probe per slot (like the limactl wrapper) for full host values; Prometheus textfile series for work VMs.
+22. **Packet filter without the main ruleset (stage b, operations finding 1, 2026-11-24).** The Cloudflare client
+    hooks its anchor `com.cloudflare.warp_svc` into the running main ruleset and keeps pf enabled; the installer of
+    stage a (an `anchor` line in `/etc/pf.conf`, then `pfctl -f /etc/pf.conf`) would have dropped the client's
+    anchor, and a client reload could drop ours (fail-open). It was never run on a device. Now:
+    - the rules live in Apple's wildcard anchor as `com.apple/000.agent.workvm` (`000.` sorts before Apple's own
+      children, which pf evaluates in name order) (loaded alone with `pfctl -a … -f`;
+      evaluated through `anchor "com.apple/*"`, which the macOS main ruleset holds before the client's line - the
+      approach INF-07 uses for the test device's network guard). `/etc/pf.conf` and the main ruleset are never
+      changed or loaded; `uninstall` only removes the lines of the old installer from the file;
+    - the watcher checks effectiveness every 2 s (pf enabled - `-E`, never `-d`; `com.apple/*` as the first `anchor`
+      line with no `pass quick` before it; our anchor loaded and the first child of `com.apple`). Without an effective hook it kills every process of the slot
+      accounts (`pkill -KILL -u`) each round and writes `unhooked`; it never repairs the main ruleset itself. The
+      runner's check reports `not_hooked` and tears the VMs down; requests answer "not ready";
+    - `install --plan` (read-only, exit 1 without hook), `install` refuses without hook, `uninstall [--keep-volume]`
+      removes everything and reports what is left (exit 1);
+    - the device-wide ICMP rules of #19 H3 are gone (the operator asked for no device-wide rules the boundary does
+      not need); residual: ICMP from a slot's host agent to the ranges the client passes directly (threat model);
+    - the dummynet pipes are gone (never fed, #20); bandwidth shaping stays open;
+    - the client is `/usr/local/bin/warp-cli --accept-tos status` (operator facts); its interface name is read from
+      the route, never fixed; a self-update or reconnect closes the tunnel route (fail-closed) and the watcher opens
+      again by itself;
+    - `images/workvm/host-rehearsal.sh` proves the assumptions on a test device with the client (root): plan, one
+      slot, checks, disconnect/reconnect, service restart, uninstall, state compared with before, a deadline timer
+      that uninstalls by itself; it refuses a device that already has an installation.
+23. **Review of attempt 4 (fresh-context subagent, 2026-11-23) – dispositions.** H1 duplicate hub migration →
+    renumbered. H2 a waiting request dropped a pool entry that was still starting → only `ready` entries are dropped,
+    removal takes the row atomically (`DELETE … RETURNING`) and only that caller deletes the VM; an entry removed
+    while it started takes its VM along. M3 the head of the queue now takes a ready pool entry. M4 one pool entry per
+    pass, an immediate next pass. M6 a work VM ID two devices drew drops only that VM's samples, not the item. M7 the
+    panel counts the VMs the session ran a job in. Open: M5 (a task VM disappears from the overview 15 min after its
+    requesting session ended while other sessions use it), M8 (a real concurrency test of two `pool_assign`), L9 (a
+    head needing more RAM than the pool frees still empties the pool), L10 (unhealthy pool entry without an event -
+    intended), L11 (the monitoring round has no time limit for `limactl list`), L12 (hub before runner only documented),
+    L13 (migration 0012 was extended in place before it was merged - now merged, so later changes need a new file).
+24. **Existing workgroup VMs keep their golden (operations finding 3).** The work VM tools reach a session only with
+    the new golden. A lighter way than ending paused sessions would be an MCP server registration the guest reads at
+    every session start from the runner (no golden change); not built here (KOR-33 changes resume).
+25. **Review of stage b (fresh-context subagent, 2026-11-24) – dispositions.** Fixed: the rehearsal's timer survives a
+    hang-up (`trap '' HUP`, `nohup`) and reconnects the client; our anchor is named `000.agent.workvm` and must be
+    the first child of `com.apple` (watcher `unordered`, check `not_first`); `uninstall` stops the slot processes
+    before and after flushing the anchor; the watcher runs every 2 s (the window after the client disables pf); one
+    hook rule everywhere (`com.apple/*` is the first `anchor` line, no `pass quick` before it - watcher, check,
+    egress check, rehearsal); the rehearsal refuses any trace of an installation (files, anchor, volume, slot
+    accounts), compares anchors and groups before/after, checks LAN and loopback while disconnected and compares a
+    leak with the site address; `uninstall` also reports the template, sample, state file and a remaining volume.
+    Documented: ICMP falls through to the client's rules; the watcher never repairs the main ruleset (ADR-059).
+    Open: `uninstall` follows the configured slot count (a lowered count leaves accounts - run it with the count of
+    the installation); a reboot of the test device is not part of the rehearsal; no tests for the shell scripts
+    beyond syntax and shellcheck.

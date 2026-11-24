@@ -1,39 +1,50 @@
-"""Host packet filter of the work VMs: pf anchor `agent.workvm` (docs/platform/spec/13-work-vm.md sections 6.2, 6.3).
+"""Host packet filter of the work VMs: pf anchor `com.apple/000.agent.workvm` (spec 13-work-vm.md 6.2, 6.3).
 
 The device's own Cloudflare client (installed and enrolled by the operator) carries the device's traffic through its
 tunnel interface `utunN` and leaves with Cloudflare's shared egress addresses. The anchor lets a slot account out
 only on that tunnel interface; everything else of a slot account is blocked (fail-closed: when the client
 disconnects, the routes move back to the physical interface and the pass rule no longer matches).
 
-`render` builds the anchor text (the persistent table `<workvm_blocked>` plus the rules of section 6.2 per slot
-account, in that order) for a given egress interface or for none (fail-closed: no pass rule to the internet).
-`render_up_template` is the same text with the placeholder `@EGRESS@`; the root-owned watcher (`watch_script`, run by
-the LaunchDaemon `swiss.dfx.agent-runner.pf`) substitutes the tunnel interface while the client is connected and
-loads the fail-closed text otherwise. `check` reads the live filter (through `sudo -n` with the exact read commands
-of `READ_COMMANDS`) and compares it with the rendered text for the interface found in the live pass rule;
-`install_plan` / `apply` install everything (run by `agent-runner workvm install` as root). Every command goes
-through an injected `run(argv, timeout) -> CompletedProcess` (legacy injection style, 07-testing.md section 1);
-nothing here touches the machine by itself.
+**The main ruleset is never loaded or changed** (KOR-29 operations finding 1): the Cloudflare client hooks its own
+anchor `com.cloudflare.warp_svc` into the running main ruleset at runtime, so `pfctl -f /etc/pf.conf` would drop it.
+Our rules live in a child of Apple's anchor: the main ruleset of macOS evaluates `anchor "com.apple/*"`, which takes
+every child of `com.apple` - loaded with `pfctl -a com.apple/000.agent.workvm -f FILE` without touching anything else -
+before the client's anchor (the client appends its line after Apple's). `/etc/pf.conf` stays untouched; the
+LaunchDaemon of the watcher loads the anchor at boot. Every rule of the anchor names a slot account (`user U`); the
+rest of the device is not filtered by it.
 
-macOS facts this module relies on (verified = read in the man pages / system files of macOS 27 on the build device;
-assumed = not run, because loading pf rules needs root and changes the machine):
-- verified (pfctl(8)): `-E` enables pf and increments the enable reference count, `-X token` releases it;
-  `-s References` lists the references; `-s Interfaces -v` lists the interfaces that have skip rules; `-s info`.
-- verified (/etc/pf.conf, com.apple.pfctl LaunchDaemon): Apple loads `/etc/pf.conf` at boot (`pfctl -f`) but does
-  not enable pf; each component enables pf with `-E`. `load anchor NAME from FILE` is how Apple loads its anchor.
-- verified (dnctl(8)): `dnctl pipe N config bw 500Mbit/s`; `dnctl [-q] PATHNAME` applies a file line by line
-  (absolute path required).
-- assumed: the enable reference of `pfctl -E` lives until `pfctl -X` or `pfctl -d` (xnu keeps the token in a kernel
-  list, not tied to the enabling process).
-- assumed: `pfctl -s info` prints `Status: Enabled ...` / `Status: Disabled ...`; `-s Interfaces -v` marks a skipped
-  interface with `(skip)` (OpenBSD format); `-sr` prints a `{ tcp udp }` list as one rule per protocol, ports as
-  `port = N` (or a service name such as `smtp`) and users as `user = UID`.
-- assumed (Cloudflare One client for macOS): `warp-cli status` prints `Status update: Connected` while the tunnel is
-  up, and the route of a public destination (the work VMs' resolver) then goes through the client's `utunN`
-  interface. Both are verified on the device by `images/workvm/egress-check.sh` before work VMs are enabled.
-- assumed, not rendered: feeding the pipes needs `dummynet out ... pipe N` rules in a `dummynet-anchor` of the main
-  ruleset; their macOS grammar (and whether `user U` is accepted there) is unverified, so this module renders and
-  installs the pipe configuration only. Until those rules exist the pipes shape nothing (open point).
+`render` builds the anchor text (the persistent table `<workvm_blocked>` plus the rules of section 6.2 per slot
+account) for a given egress interface or for none (fail-closed: no pass rule to the internet). `render_up_template`
+is the same text with the placeholder `@EGRESS@`. The root-owned watcher (`watch_script`, LaunchDaemon
+`swiss.dfx.agent-runner.pf`) checks every few seconds that the boundary is **effective**, not only loaded: pf
+enabled (enabled again when it was not), the hook `anchor "com.apple/*"` present in the main ruleset and before the
+client's anchor and before any `pass quick`, and the anchor's rules loaded. While all of that holds it loads the
+pass rule on the tunnel interface when the client is connected, the fail-closed text otherwise; when the hook is
+missing or comes too late (something replaced the main ruleset) it kills every process of the slot accounts at once
+- their VMs with them - and keeps doing so until the hook is back (it never reloads the main ruleset itself). `check`
+reads the same facts (through `sudo -n` with the exact read commands of `READ_COMMANDS`); a failed check makes the
+runner tear down every work VM and answer requests "not ready". `preflight` refuses an installation on a device whose
+main ruleset has no hook. `install_plan` / `uninstall_plan` / `apply` install and remove everything (run by
+`agent-runner workvm install|uninstall` as root). Every command goes through an injected `run(argv, timeout) ->
+CompletedProcess` (legacy injection style, 07-testing.md section 1); nothing here touches the machine by itself.
+
+macOS facts this module relies on (verified = read in the man pages / system files of macOS 27 on the build device
+or measured read-only on the execution device by the operator; assumed = not run, because loading pf rules needs
+root and changes the machine; `images/workvm/host-rehearsal.sh` checks every assumption on a test device):
+- verified (pfctl(8)): `-E` enables pf and increments the enable reference count; `-a ANCHOR -f FILE` loads only
+  that anchor; `-a ANCHOR -F all` flushes only that anchor; `-s info`, `-sr`, `-s Interfaces -v`.
+- verified (/etc/pf.conf of macOS): the main ruleset holds `scrub-anchor "com.apple/*"` and `anchor "com.apple/*"`.
+- verified on the execution device (operations report, client connected): pf is enabled by the client; the running
+  main ruleset is `scrub-anchor "com.apple/*"`, `anchor "com.apple/*"`, `anchor "com.cloudflare.warp_svc" all`; the
+  client's anchor ends with `block drop in all` / `block return out all` and passes the private networks with
+  `pass out quick`; the client binary is `/usr/local/bin/warp-cli` and `warp-cli --accept-tos status` prints
+  `Status update: Connected` while the tunnel is up.
+- assumed: a wildcard anchor evaluates every child of `com.apple` that has rules, so a child loaded at runtime is
+  evaluated (INF-07 runs the network guard of a test device the same way, `com.apple/wp-guard`).
+- assumed: when the client reconnects or updates itself it appends its anchor to the running main ruleset again
+  and keeps Apple's lines (otherwise the watcher stops the slot accounts, fail-closed).
+- assumed: `-s Interfaces -v` marks a skipped interface with `(skip)`; `-sr` prints a `{ tcp udp }` list as one rule
+  per protocol, ports as `port = N` (or a service name such as `smtp`) and users as `user = UID`.
 
 Normalisation of `check`: comment, blank and continuation lines of the rendered text are joined; every `pass` /
 `block` rule is expanded per protocol of a `proto { ... }` list and reduced to the signature (action, `return`,
@@ -59,34 +70,40 @@ Run = Callable[[Sequence[str], float], "subprocess.CompletedProcess[str]"]
 WriteFile = Callable[[str, str, int], None]
 ReadFile = Callable[[str], str]
 
-ANCHOR = "agent.workvm"
+HOOK = "com.apple/*"
+# `000.` sorts before every child Apple ships (`100.InternetSharing`, `200.AirDrop`, `250.ApplicationFirewall`):
+# pf evaluates the children of a wildcard anchor in name order, and ours must decide a slot's packets first.
+ANCHOR = "com.apple/000.agent.workvm"
+PARENT = "com.apple"
+CLIENT_ANCHOR = "com.cloudflare.warp_svc"
 TABLE = "workvm_blocked"
 ANCHOR_PATH = "/etc/pf.anchors/agent.workvm"
 ANCHOR_UP_PATH = "/etc/pf.anchors/agent.workvm.up"
 ANCHOR_SAMPLE_PATH = "/etc/pf.anchors/agent.workvm.sample"
-DUMMYNET_PATH = "/etc/pf.anchors/agent.workvm.dnctl"
 WATCH_PATH = "/etc/pf.anchors/agent.workvm.watch"
 PF_CONF = "/etc/pf.conf"
+STATE_PATH = "/var/run/agent.workvm.state"
 DAEMON_LABEL = "swiss.dfx.agent-runner.pf"
 DAEMON_PATH = f"/Library/LaunchDaemons/{DAEMON_LABEL}.plist"
 PFCTL = "/sbin/pfctl"
-DNCTL = "/usr/sbin/dnctl"
+PKILL = "/usr/bin/pkill"
 LAUNCHCTL = "/bin/launchctl"
 SUDO = "/usr/bin/sudo"
-# The client binary inside the root-owned app bundle, not a link in a directory an admin user may own: the root
-# watcher runs it every few seconds.
-WARP_CLI = "/Applications/Cloudflare WARP.app/Contents/Resources/warp-cli"
+# The client's command line tool as installed on the execution device (root-owned /usr/local/bin).
+WARP_CLI = "/usr/local/bin/warp-cli"
 ROUTE = "/sbin/route"
 WARP_CONNECTED = "Status update: Connected"
 EGRESS_TOKEN = "@EGRESS@"
 SAMPLE_INTERFACE = "utun0"
-WATCH_SECONDS = 5
+WATCH_SECONDS = 2
 WATCH_REFRESH = 12
-ANCHOR_LINE = f'anchor "{ANCHOR}"'
-LOAD_LINE = f'load anchor "{ANCHOR}" from "{ANCHOR_PATH}"'
+HOOK_LINE = f'anchor "{HOOK}"'
+CLIENT_LINE = f'anchor "{CLIENT_ANCHOR}"'
+# The lines an earlier installer (KOR-29 stage a, never run on a device) added to /etc/pf.conf; `uninstall` removes
+# them from the file (without loading it).
+LEGACY_LINES = ('anchor "agent.workvm"', 'load anchor "agent.workvm" from "/etc/pf.anchors/agent.workvm"')
+LEGACY_FILES = ("/etc/pf.anchors/agent.workvm.dnctl",)
 PFCTL_TIMEOUT = 15.0
-# Pipe numbers of slot i: PIPE_BASE + 2i (out) and PIPE_BASE + 2i + 1 (in); far from small numbers other tools use.
-PIPE_BASE = 4700
 MAX_SLOTS = 100
 # The read-only pfctl commands of `check`; the sudoers rule of `accounts.sudoers` allows exactly these to the runner.
 READ_COMMANDS: tuple[tuple[str, ...], ...] = (
@@ -95,6 +112,7 @@ READ_COMMANDS: tuple[tuple[str, ...], ...] = (
     (PFCTL, "-sr"),
     (PFCTL, "-s", "Interfaces", "-v"),
     (PFCTL, "-a", ANCHOR, "-t", TABLE, "-T", "show"),
+    (PFCTL, "-a", PARENT, "-sA"),
 )
 
 
@@ -176,9 +194,9 @@ class Slot:
 
 @dataclass(frozen=True)
 class InstallStep:
-    """One installation step: write a file, patch `/etc/pf.conf`, or run a command."""
+    """One step: write or remove a file, remove the legacy lines from `/etc/pf.conf` (file only), or run a command."""
 
-    action: Literal["write", "patch", "run"]
+    action: Literal["write", "remove", "unpatch", "run"]
     path: str = ""
     content: str = ""
     mode: int = 0o644
@@ -220,8 +238,9 @@ def _render(slots: Sequence[Slot], egress: str | None, bandwidth_mbit: int) -> s
     _bandwidth(bandwidth_mbit)
     state = f"internet only on {egress}" if egress else "fail-closed, no internet"
     lines = [
-        "# pf anchor agent.workvm, generated by agent-runner workvm install (spec 11 sections 6.2 and 6.3).",
-        f"# Egress: {state}. Bandwidth per slot and direction: {bandwidth_mbit} Mbit/s ({DUMMYNET_PATH}).",
+        f"# pf anchor {ANCHOR}, generated by agent-runner workvm install (spec 13 sections 6.2 and 6.3).",
+        f"# Egress: {state}. Every rule names a slot account; the rest of the device is not filtered here.",
+        f"# Bandwidth per slot and direction: {bandwidth_mbit} Mbit/s (not enforced yet, decisions KOR-29 #20).",
         f"table <{TABLE}> persist {{ \\",
         *(f"  {entry} \\" for entry in (*BLOCKED_V4, *BLOCKED_V6)),
         "}",
@@ -244,19 +263,6 @@ def _render(slots: Sequence[Slot], egress: str | None, bandwidth_mbit: int) -> s
                 " (if-bound, max 4096, max-src-conn 2048, max-src-conn-rate 2000/10)"
             )
         lines.append(f"block return out quick user {u}")
-    if slots:
-        # pf's `user` matches TCP and UDP only. Echo requests a VM sends through its host agent's ICMP socket are
-        # therefore passed only through the tunnel, for the whole device (its own pings to the LAN included).
-        lines.append("# ICMP echo of the device: only through the tunnel (pf `user` does not match ICMP)")
-        if egress:
-            lines += [
-                f"pass out quick on {egress} inet proto icmp all icmp-type echoreq keep state (if-bound)",
-                f"pass out quick on {egress} inet6 proto icmp6 all icmp6-type echoreq keep state (if-bound)",
-            ]
-        lines += [
-            "block drop out quick on ! lo0 inet proto icmp all icmp-type echoreq",
-            "block drop out quick on ! lo0 inet6 proto icmp6 all icmp6-type echoreq",
-        ]
     return "\n".join(lines) + "\n"
 
 
@@ -272,66 +278,86 @@ def render_up_template(slots: Sequence[Slot], bandwidth_mbit: int) -> str:
     return _render(slots, EGRESS_TOKEN, bandwidth_mbit)
 
 
-def render_dummynet(slots: Sequence[Slot], bandwidth_mbit: int) -> str:
-    """The `dnctl` file of the per-slot pipes (out `PIPE_BASE + 2i`, in `PIPE_BASE + 2i + 1`)."""
-    _validate_slots(slots)
-    _bandwidth(bandwidth_mbit)
-    lines: list[str] = []
-    for slot in sorted(slots, key=lambda s: s.index):
-        pipe = PIPE_BASE + 2 * slot.index
-        lines += [f"pipe {pipe} config bw {bandwidth_mbit}Mbit/s", f"pipe {pipe + 1} config bw {bandwidth_mbit}Mbit/s"]
-    return "".join(f"{line}\n" for line in lines)
-
-
 def watch_script(
+    slots: Sequence[Slot],
     warp_cli: str = WARP_CLI,
     *,
     pfctl: str = PFCTL,
-    dnctl: str = DNCTL,
+    pkill: str = PKILL,
     route: str = ROUTE,
     anchor_path: str = ANCHOR_PATH,
     anchor_up_path: str = ANCHOR_UP_PATH,
-    dummynet_path: str = DUMMYNET_PATH,
+    state_path: str = STATE_PATH,
     seconds: int = WATCH_SECONDS,
 ) -> str:
-    """The root-owned egress watcher (spec 11 section 6.3), run by the LaunchDaemon with `KeepAlive`.
+    """The root-owned egress watcher (spec 13 section 6.3), run by the LaunchDaemon with `KeepAlive`.
 
-    At start it applies the pipes and takes one pf enable reference. Every `WATCH_SECONDS` it asks the Cloudflare
-    client for its state and the route of the work VMs' resolver for its interface; while the client is connected
-    and that interface is a `utunN`, it loads the anchor with the pass rule on that interface, otherwise the
-    fail-closed anchor; when pf was disabled it enables it again. It loads on every change and every
-    `WATCH_REFRESH` rounds; a failed load is retried in the next round. Disconnecting does not wait for the watcher:
-    the routes leave the tunnel, the pass rule stops matching (its states are bound to the tunnel interface) and the
-    final block rule of each slot holds. The keyword arguments exist for the tests.
+    Every `WATCH_SECONDS`: enable pf when it is disabled; check that the main ruleset holds the hook `anchor
+    "com.apple/*"` as the first `anchor` line and before any `pass quick` (the module docstring). Without an
+    effective hook it kills every process of the slot accounts (their VMs) and writes `unhooked` to `STATE_PATH`; it
+    never loads the main ruleset. When our anchor is not the first child of `com.apple` (another child would be
+    evaluated before it) it does the same and writes `unordered`. With the hook it asks the Cloudflare client for
+    its state and the route of the work VMs' resolver for its interface, and loads the anchor with the pass rule on
+    that `utunN` while the client is connected, the fail-closed anchor otherwise - on every change, when the anchor
+    has no rules (flushed by someone) and every `WATCH_REFRESH` rounds - and writes `ok <egress or ->`. A failed
+    load is retried in the next round. Disconnecting does not wait for the watcher: the routes leave the tunnel, the
+    pass rule stops matching (its states are bound to the tunnel interface) and the final block rule of each slot
+    holds. The keyword arguments exist for the tests.
     """
+    _validate_slots(slots)
+    names = " ".join(slot.account for slot in sorted(slots, key=lambda s: s.index))
     probe = resolvers()[0]
     return f"""#!/bin/sh
-# agent-runner work VM egress watcher, generated by agent-runner workvm install (spec 11 section 6.3).
+# agent-runner work VM egress watcher, generated by agent-runner workvm install (spec 13 section 6.3).
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
-'{dnctl}' -q '{dummynet_path}'
-'{pfctl}' -E >/dev/null 2>&1
+accounts='{names}'
 last=-
 rounds=0
 while :; do
-  egress=
-  if '{warp_cli}' status 2>/dev/null | grep -q '{WARP_CONNECTED}'; then
-    egress=$('{route}' -n get {probe} 2>/dev/null | awk '$1 == "interface:" {{ print $2 }}')
-    case "$egress" in
-      utun[0-9] | utun[0-9][0-9] | utun[0-9][0-9][0-9]) ;;
-      *) egress= ;;
-    esac
-  fi
-  if [ "$egress" != "$last" ] || [ "$rounds" -ge {WATCH_REFRESH} ]; then
-    rounds=0
-    if [ -n "$egress" ]; then
-      sed "s/{EGRESS_TOKEN}/$egress/g" '{anchor_up_path}' | '{pfctl}' -q -a {ANCHOR} -f - && last=$egress
-    else
-      '{pfctl}' -q -a {ANCHOR} -f '{anchor_path}' && last=
-    fi
-  fi
   if ! '{pfctl}' -s info 2>/dev/null | grep -q 'Status: Enabled'; then
     '{pfctl}' -E >/dev/null 2>&1
+  fi
+  main=$('{pfctl}' -sr 2>/dev/null)
+  anchor=$(printf '%s\n' "$main" | grep -n '^anchor ' | head -n 1)
+  hook=${{anchor%%:*}}
+  first=$(printf '%s\n' "$main" | grep -n '^pass.* quick' | head -n 1 | cut -d: -f1)
+  hooked=yes
+  case "$anchor" in
+    *:'{HOOK_LINE}'*) ;;
+    *) hooked= ;;
+  esac
+  if [ -n "$hooked" ] && [ -n "$first" ] && [ "$first" -lt "$hook" ]; then hooked=; fi
+  '{pfctl}' -s info 2>/dev/null | grep -q 'Status: Enabled' || hooked=
+  if [ -z "$hooked" ]; then
+    for account in $accounts; do '{pkill}' -KILL -u "$account" >/dev/null 2>&1; done
+    echo unhooked > '{state_path}'
+    last=-
+  else
+    egress=
+    if '{warp_cli}' --accept-tos status 2>/dev/null | grep -q '{WARP_CONNECTED}'; then
+      egress=$('{route}' -n get {probe} 2>/dev/null | awk '$1 == "interface:" {{ print $2 }}')
+      case "$egress" in
+        utun[0-9] | utun[0-9][0-9] | utun[0-9][0-9][0-9]) ;;
+        *) egress= ;;
+      esac
+    fi
+    loaded=$('{pfctl}' -a {ANCHOR} -sr 2>/dev/null | grep -c .)
+    if [ "$egress" != "$last" ] || [ "$rounds" -ge {WATCH_REFRESH} ] || [ "$loaded" = 0 ]; then
+      rounds=0
+      if [ -n "$egress" ]; then
+        sed "s/{EGRESS_TOKEN}/$egress/g" '{anchor_up_path}' | '{pfctl}' -q -a {ANCHOR} -f - && last=$egress
+      else
+        '{pfctl}' -q -a {ANCHOR} -f '{anchor_path}' && last=
+      fi
+    fi
+    child=$('{pfctl}' -a {PARENT} -sA 2>/dev/null | sed -n '/./{{s/^ *//;p;q;}}')
+    if [ "$child" = '{ANCHOR}' ]; then
+      echo "ok ${{egress:--}}" > '{state_path}'
+    else
+      for account in $accounts; do '{pkill}' -KILL -u "$account" >/dev/null 2>&1; done
+      echo unordered > '{state_path}'
+    fi
   fi
   rounds=$((rounds + 1))
   sleep {seconds}
@@ -423,13 +449,21 @@ def _live_entries(output: str) -> set[ipaddress.IPv4Network | ipaddress.IPv6Netw
     return entries
 
 
-def _referenced(main_rules: str) -> bool:
+def hooked(main_rules: str) -> bool:
+    """True when `anchor "com.apple/*"` is the first `anchor` line of the main ruleset (before the client's and any
+    other anchor) and no `pass ... quick` rule comes before it."""
     lines = [line.strip() for line in main_rules.splitlines()]
-    anchor = next((i for i, line in enumerate(lines) if line.startswith(ANCHOR_LINE)), None)
-    if anchor is None:
+    first_anchor = next((i for i, line in enumerate(lines) if line.startswith("anchor ")), None)
+    if first_anchor is None or not lines[first_anchor].startswith(HOOK_LINE):
         return False
     first_pass = next((i for i, line in enumerate(lines) if line.startswith("pass") and " quick" in line), len(lines))
-    return anchor < first_pass
+    return first_anchor < first_pass
+
+
+def first_child(listing: str) -> bool:
+    """True when our anchor is the first child of `com.apple` (`pfctl -a com.apple -sA`), i.e. evaluated first."""
+    names = [line.strip() for line in listing.splitlines() if line.strip()]
+    return bool(names) and names[0] == ANCHOR
 
 
 def _skips_lo0(interfaces: str) -> bool:
@@ -475,8 +509,11 @@ def check(run: Run, slots: Sequence[Slot], bandwidth_mbit: int) -> Status:
     elif live != expected_rules:
         problems.append("anchor_mismatch")
     main = run(READ_COMMANDS[2], PFCTL_TIMEOUT)
-    if main.returncode != 0 or not _referenced(main.stdout):
-        problems.append("not_referenced")
+    if main.returncode != 0 or not hooked(main.stdout):
+        problems.append("not_hooked")
+    children = run(READ_COMMANDS[5], PFCTL_TIMEOUT)
+    if children.returncode != 0 or not first_child(children.stdout):
+        problems.append("not_first")
     interfaces = run(READ_COMMANDS[3], PFCTL_TIMEOUT)
     if interfaces.returncode != 0 or _skips_lo0(interfaces.stdout):
         problems.append("skip_lo0")
@@ -486,23 +523,20 @@ def check(run: Run, slots: Sequence[Slot], bandwidth_mbit: int) -> Status:
     return Status(tuple(problems), egress)
 
 
-def patched_pf_conf(current: str) -> str:
-    """`current` with the anchor reference and the load line of `agent.workvm` (idempotent).
-
-    The `anchor` line goes before the first filter rule (`pass`/`block`/`match`) so it is evaluated before any
-    `pass quick`; the `load anchor` line is appended. Present lines are kept where they are.
-    """
+def without_legacy_lines(current: str) -> str:
+    """`current` without the lines an earlier installer added (`LEGACY_LINES`); unchanged when there are none."""
     lines = current.splitlines()
-    stripped = [line.strip() for line in lines]
-    if ANCHOR_LINE not in stripped:
-        first_rule = next(
-            (i for i, line in enumerate(stripped) if line.split()[:1] in (["pass"], ["block"], ["match"])),
-            len(lines),
-        )
-        lines.insert(first_rule, ANCHOR_LINE)
-    if LOAD_LINE not in stripped:
-        lines.append(LOAD_LINE)
-    return "\n".join(lines) + "\n"
+    kept = [line for line in lines if line.strip() not in LEGACY_LINES]
+    return current if kept == lines else "\n".join(kept) + "\n"
+
+
+def preflight(run: Run) -> list[str]:
+    """Problems that forbid an installation (read-only): the main ruleset must already hold the hook, because the
+    installer never loads the main ruleset."""
+    main = run((PFCTL, "-sr"), PFCTL_TIMEOUT)
+    if main.returncode != 0:
+        return ["pfctl_failed"]
+    return [] if hooked(main.stdout) else ["not_hooked"]
 
 
 def daemon_plist() -> str:
@@ -512,37 +546,54 @@ def daemon_plist() -> str:
 
 
 def install_plan(slots: Sequence[Slot], bandwidth_mbit: int, warp_cli: str = WARP_CLI) -> list[InstallStep]:
-    """The installation steps; each check runs before the step that would make a broken file live.
-
-    The fail-closed anchor is what `/etc/pf.conf` loads at boot; the watcher replaces it while the client is up.
-    """
+    """The installation steps; each check runs before the step that would make a broken file live. Only the anchor
+    `com.apple/000.agent.workvm` is loaded (fail-closed first); the main ruleset and `/etc/pf.conf` are not touched."""
     return [
         InstallStep("write", ANCHOR_PATH, render(slots, None, bandwidth_mbit)),
         InstallStep("run", argv=(PFCTL, "-a", ANCHOR, "-n", "-f", ANCHOR_PATH)),
         InstallStep("write", ANCHOR_SAMPLE_PATH, render(slots, SAMPLE_INTERFACE, bandwidth_mbit)),
         InstallStep("run", argv=(PFCTL, "-a", ANCHOR, "-n", "-f", ANCHOR_SAMPLE_PATH)),
         InstallStep("write", ANCHOR_UP_PATH, render_up_template(slots, bandwidth_mbit)),
-        InstallStep("write", DUMMYNET_PATH, render_dummynet(slots, bandwidth_mbit)),
-        InstallStep("write", WATCH_PATH, watch_script(warp_cli), mode=0o755),
+        InstallStep("write", WATCH_PATH, watch_script(slots, warp_cli), mode=0o755),
         InstallStep("write", DAEMON_PATH, daemon_plist()),
-        InstallStep("patch", PF_CONF),
-        InstallStep("run", argv=(PFCTL, "-n", "-f", PF_CONF)),
-        InstallStep("run", argv=(PFCTL, "-f", PF_CONF)),
+        InstallStep("run", argv=(PFCTL, "-a", ANCHOR, "-f", ANCHOR_PATH)),
         InstallStep("run", argv=(LAUNCHCTL, "bootout", f"system/{DAEMON_LABEL}"), may_fail=True),
         InstallStep("run", argv=(LAUNCHCTL, "bootstrap", "system", DAEMON_PATH)),
     ]
 
 
-def apply(plan: Sequence[InstallStep], run: Run, write_file: WriteFile, read_file: ReadFile) -> None:
+def uninstall_plan() -> list[InstallStep]:
+    """The steps removing the filter part of an installation: the watcher first (it would load the anchor again),
+    then the anchor's rules and tables, the files, and the lines of an earlier installer in `/etc/pf.conf` (the file
+    only; the main ruleset is never loaded)."""
+    return [
+        InstallStep("run", argv=(LAUNCHCTL, "bootout", f"system/{DAEMON_LABEL}"), may_fail=True),
+        InstallStep("remove", DAEMON_PATH),
+        InstallStep("remove", WATCH_PATH),
+        InstallStep("run", argv=(PFCTL, "-a", ANCHOR, "-F", "all"), may_fail=True),
+        *(InstallStep("remove", path) for path in (ANCHOR_PATH, ANCHOR_SAMPLE_PATH, ANCHOR_UP_PATH, STATE_PATH)),
+        *(InstallStep("remove", path) for path in LEGACY_FILES),
+        InstallStep("unpatch", PF_CONF),
+    ]
+
+
+RemoveFile = Callable[[str], None]
+
+
+def apply(
+    plan: Sequence[InstallStep], run: Run, write_file: WriteFile, read_file: ReadFile, remove_file: RemoveFile
+) -> None:
     """Execute `plan` through the injected callables; a failing command raises `workvm_firewall_install`."""
     for step in plan:
         if step.action == "write":
             write_file(step.path, step.content, step.mode)
-        elif step.action == "patch":
+        elif step.action == "remove":
+            remove_file(step.path)
+        elif step.action == "unpatch":
             current = read_file(step.path)
-            patched = patched_pf_conf(current)
-            if patched != current:
-                write_file(step.path, patched, step.mode)
+            cleaned = without_legacy_lines(current)
+            if cleaned != current:
+                write_file(step.path, cleaned, step.mode)
         else:
             result = run(step.argv, PFCTL_TIMEOUT)
             if result.returncode != 0 and not step.may_fail:

@@ -1,4 +1,4 @@
-"""`agent-runner workvm install|status` and `workvm firewall render|check` through `run_cli` (spec 11 sections
+"""`agent-runner workvm install|uninstall|status` and `workvm firewall render|check` through `run_cli` (spec 13 sections
 6.1-6.4): a recording fake `Machine` answers every command and keeps every written file, the effective UID comes from
 the injected host, so nothing needs root or touches the machine."""
 
@@ -25,6 +25,7 @@ from agent_runner.workvm import cli as workvm_cli
 SUDO = (firewall.SUDO, "-n")
 DS_USERS = "/" + "Users"  # dscl record directory, joined so no home path literal appears
 CONTAINER_PLIST = plistlib.dumps({"APFSContainerReference": "disk3"}).decode()
+HOOKED_MAIN = 'scrub-anchor "com.apple/*" all\nanchor "com.apple/*" all\nanchor "com.cloudflare.warp_svc" all\n'
 
 
 @dataclass
@@ -40,6 +41,9 @@ class FakeMachine:
     calls: list[tuple[str, ...]] = field(default_factory=list)
     files: dict[str, tuple[str, int]] = field(default_factory=dict)
     pf_conf: str = 'scrub-anchor "com.apple/*"\nanchor "com.apple/*"\nload anchor "com.apple" from "x"\n'
+    main: str = HOOKED_MAIN
+    flushed: bool = False
+    removed: list[str] = field(default_factory=list)
 
     def live(self, argv: tuple[str, ...]) -> tuple[int, str]:
         slots = [
@@ -48,10 +52,11 @@ class FakeMachine:
         ]
         outputs = {
             firewall.READ_COMMANDS[0]: "Status: Enabled for 1 days\n",
-            firewall.READ_COMMANDS[1]: firewall.render(slots, self.egress, 500),
-            firewall.READ_COMMANDS[2]: f"{firewall.ANCHOR_LINE} all\npass quick on lo0 all\n",
+            firewall.READ_COMMANDS[1]: "" if self.flushed else firewall.render(slots, self.egress, 500),
+            firewall.READ_COMMANDS[2]: self.main,
             firewall.READ_COMMANDS[3]: "lo0\nen0\n",
             firewall.READ_COMMANDS[4]: "\n".join((*firewall.BLOCKED_V4, *firewall.BLOCKED_V6)) + "\n",
+            firewall.READ_COMMANDS[5]: f"  {firewall.ANCHOR}\n  com.apple/200.AirDrop\n",
         }
         return 0, outputs[argv]
 
@@ -79,7 +84,19 @@ class FakeMachine:
             code, out = 0, CONTAINER_PLIST
         else:
             code, out = 0, ""
+            self.effect(key)
         return subprocess.CompletedProcess(list(argv), code, out, "")
+
+    def effect(self, key: tuple[str, ...]) -> None:
+        """What a changing command does to the fake machine."""
+        if key[:3] == (accounts.DSCL, ".", "-delete") and key[3].startswith(DS_USERS + "/"):
+            self.uids.pop(key[3].rsplit("/", 1)[1], None)
+        elif key[:3] == (accounts.DSCL, ".", "-delete"):
+            self.gid = None
+        elif key == (firewall.PFCTL, "-a", firewall.ANCHOR, "-F", "all"):
+            self.flushed = True
+        elif key[:3] == (accounts.DISKUTIL, "apfs", "deleteVolume"):
+            self.mounted = False
 
     def run_input(self, argv: Sequence[str], text: str, timeout: float) -> subprocess.CompletedProcess[str]:
         self.calls.append((*argv, "<stdin>"))
@@ -94,6 +111,13 @@ class FakeMachine:
     def is_mount(self, path: str) -> bool:
         return self.mounted
 
+    def remove_file(self, path: str) -> None:
+        self.files.pop(path, None)
+        self.removed.append(path)
+
+    def exists(self, path: str) -> bool:
+        return path in self.files
+
     def machine(self) -> workvm_cli.Machine:
         return workvm_cli.Machine(
             run=self.run,
@@ -101,6 +125,8 @@ class FakeMachine:
             write_file=self.write_file,
             read_file=self.read_file,
             is_mount=self.is_mount,
+            remove_file=self.remove_file,
+            exists=self.exists,
         )
 
 
@@ -135,7 +161,7 @@ def test_install_creates_everything(fake: FakeMachine, cli: Callable[..., tuple[
         "runner.workvm.install step=accounts count=2 created=2",
         f"runner.workvm.install step=wrapper path={accounts.WRAPPER_PATH}",
         f"runner.workvm.install step=sudoers path={accounts.SUDOERS_PATH}",
-        "runner.workvm.install step=firewall steps=13 anchor=agent.workvm",
+        "runner.workvm.install step=firewall steps=10 anchor=com.apple/000.agent.workvm",
         "runner.workvm.install result=ok slots=2",
     ]
     quota = str(200 * 2**30)
@@ -149,7 +175,9 @@ def test_install_creates_everything(fake: FakeMachine, cli: Callable[..., tuple[
     slots = [firewall.Slot(0, "wvm00", 602, 47200), firewall.Slot(1, "wvm01", 603, 47201)]
     assert fake.files[firewall.ANCHOR_PATH] == (firewall.render(slots, None, 500), 0o644)
     assert fake.files[firewall.WATCH_PATH][1] == 0o755
-    assert firewall.LOAD_LINE in fake.files[firewall.PF_CONF][0]
+    assert firewall.PF_CONF not in fake.files  # never written
+    assert (firewall.PFCTL, "-f", firewall.PF_CONF) not in fake.calls  # the main ruleset is never loaded
+    assert (firewall.PFCTL, "-a", firewall.ANCHOR, "-f", firewall.ANCHOR_PATH) in fake.calls
     assert (firewall.LAUNCHCTL, "bootstrap", "system", firewall.DAEMON_PATH) in fake.calls
 
 
@@ -168,7 +196,7 @@ def test_install_keeps_what_exists(fake: FakeMachine, cli: Callable[..., tuple[i
     assert not any(call[:3] == (accounts.DSCL, ".", "-create") for call in fake.calls)
     assert not any(call[0] == accounts.DISKUTIL for call in fake.calls)
     slots = [firewall.Slot(0, "wvm00", 700, 47200), firewall.Slot(1, "wvm01", 701, 47201)]
-    assert fake.files[firewall.DUMMYNET_PATH][0] == firewall.render_dummynet(slots, 100)
+    assert fake.files[firewall.ANCHOR_PATH][0] == firewall.render(slots, None, 100)
 
 
 def test_install_one_account_missing(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
@@ -358,6 +386,12 @@ def test_real_machine(tmp_path: Path) -> None:
     echoed = machine.run_input([sys.executable, "-c", "import sys; print(sys.stdin.read())"], "in", 30.0)
     assert echoed.stdout == "in\n"
     assert machine.is_mount("/")
+    assert machine.exists("/")
+    gone = tmp_path / "gone"
+    gone.write_text("x")
+    machine.remove_file(str(gone))
+    machine.remove_file(str(gone))
+    assert not gone.exists()
     target = tmp_path / "new" / "file"
     write = workvm_cli.file_writer(os.getuid(), os.getgid())
     write(str(target), "text\n", 0o640)
@@ -384,6 +418,210 @@ def test_install_prepares_the_images_directory_of_the_service(
     fake.answers[("/usr/sbin/chown", "runner", images)] = (1, "")
     code, _, err = cli(*INSTALL)
     assert (code, err) == (1, "runner.error code=workvm_install_failed name=chown\n")
+
+
+# -- install --plan and the hook (KOR-29 operations finding 1) --------------------------------------------------
+
+
+def test_install_refuses_a_device_without_the_hook(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
+    fake.main = 'anchor "com.cloudflare.warp_svc" all\n'
+    code, out, err = cli(*INSTALL)
+    assert (code, out, err) == (1, "", "runner.error code=workvm_firewall_unhooked name=not_hooked\n")
+    assert fake.files == {}
+    assert not any(call[0] in (accounts.DSCL, accounts.DISKUTIL) and call[2] != "-list" for call in fake.calls)
+
+
+def test_install_plan_changes_nothing(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
+    fake.uids["wvm00"] = 700
+    code, out, err = cli(*INSTALL, "--plan")
+    assert (code, err) == (0, "")
+    lines = out.splitlines()
+    assert lines[:7] == [
+        "runner.workvm.plan step=volume action=create path=/var/agent-workvm quota_gib=200",
+        "runner.workvm.plan step=images path=/var/agent-workvm/images",
+        "runner.workvm.plan step=group action=create name=workvm",
+        "runner.workvm.plan step=accounts count=2 create=1",
+        f"runner.workvm.plan step=wrapper path={accounts.WRAPPER_PATH}",
+        f"runner.workvm.plan step=sudoers path={accounts.SUDOERS_PATH}",
+        "runner.workvm.plan.firewall action=write path=/etc/pf.anchors/agent.workvm mode=0644 sha256="
+        + lines[6].rsplit("=", 1)[1],
+    ]
+    assert (
+        "runner.workvm.plan.firewall action=run"
+        f' argv="/sbin/pfctl -a {firewall.ANCHOR} -f /etc/pf.anchors/agent.workvm" may_fail=no' in lines
+    )
+    assert (
+        "runner.workvm.plan.firewall action=run"
+        ' argv="/bin/launchctl bootout system/swiss.dfx.agent-runner.pf" may_fail=yes' in lines
+    )
+    assert lines[-1] == f"runner.workvm.plan main_ruleset=untouched pf_conf=untouched anchor={firewall.ANCHOR} hook=ok"
+    assert fake.files == {}
+    reads = (workvm_cli.ID, accounts.DSCL)
+    assert [call for call in fake.calls if call[0] not in reads] == [(firewall.PFCTL, "-sr")]
+    assert all(call[2] in ("-list", "-read") for call in fake.calls if call[0] == accounts.DSCL)
+
+
+def test_install_plan_with_present_parts_and_without_hook(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]
+) -> None:
+    fake.mounted = True
+    fake.gid = 650
+    fake.main = ""
+    code, out, _ = cli(*INSTALL, "--plan")
+    assert code == 1
+    lines = out.splitlines()
+    assert lines[0] == "runner.workvm.plan step=volume action=present path=/var/agent-workvm quota_gib=200"
+    assert lines[2] == "runner.workvm.plan step=group action=present name=workvm"
+    assert lines[-2:] == [
+        f"runner.workvm.plan main_ruleset=untouched pf_conf=untouched anchor={firewall.ANCHOR} hook=missing",
+        "runner.workvm.plan.problem code=not_hooked",
+    ]
+    assert fake.files == {}
+
+
+# -- uninstall ---------------------------------------------------------------------------------------------------
+
+
+def installed(fake: FakeMachine) -> None:
+    fake.mounted = True
+    fake.gid = 650
+    fake.uids.update({"wvm00": 700, "wvm01": 701})
+    for path in (
+        firewall.DAEMON_PATH,
+        firewall.WATCH_PATH,
+        firewall.ANCHOR_PATH,
+        accounts.WRAPPER_PATH,
+        accounts.SUDOERS_PATH,
+    ):
+        fake.files[path] = ("x", 0o644)
+
+
+def test_uninstall_removes_everything_and_checks(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
+    installed(fake)
+    fake.files[firewall.PF_CONF] = ('anchor "agent.workvm"\n' + fake.pf_conf, 0o644)
+    code, out, err = cli("uninstall")
+    assert (code, err) == (0, "")
+    assert out.splitlines() == [
+        f"runner.workvm.uninstall step=firewall steps=10 anchor={firewall.ANCHOR}",
+        "runner.workvm.uninstall step=accounts count=2 removed=2",
+        "runner.workvm.uninstall step=group action=removed name=workvm",
+        f"runner.workvm.uninstall step=files wrapper={accounts.WRAPPER_PATH} sudoers={accounts.SUDOERS_PATH}",
+        "runner.workvm.uninstall step=volume action=removed path=/var/agent-workvm",
+        "runner.workvm.uninstall result=ok",
+    ]
+    assert fake.files == {firewall.PF_CONF: (fake.pf_conf, 0o644)}
+    kills = [i for i, call in enumerate(fake.calls) if call == (firewall.PKILL, "-KILL", "-u", "wvm00")]
+    flush = fake.calls.index((firewall.PFCTL, "-a", firewall.ANCHOR, "-F", "all"))
+    bootout = fake.calls.index((firewall.LAUNCHCTL, "bootout", "system/swiss.dfx.agent-runner.pf"))
+    deletes = fake.calls.index((accounts.DSCL, ".", "-delete", f"{DS_USERS}/wvm00"))
+    # the slots stop while the filter still holds, and again after it is gone, before their accounts go
+    assert len(kills) == 2
+    assert kills[0] < bootout < flush < kills[1] < deletes
+    assert (firewall.PKILL, "-KILL", "-u", "wvm01") in fake.calls
+    assert (accounts.DISKUTIL, "apfs", "deleteVolume", accounts.HOME_ROOT) in fake.calls
+    assert (firewall.PFCTL, "-f", firewall.PF_CONF) not in fake.calls
+
+
+def test_uninstall_keeps_the_volume_and_twice_is_harmless(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]
+) -> None:
+    installed(fake)
+    assert cli("uninstall", "--keep-volume")[0] == 0
+    assert fake.mounted
+    code, out, _ = cli("uninstall")
+    assert code == 0
+    assert "runner.workvm.uninstall step=accounts count=2 removed=0" in out.splitlines()
+    assert "runner.workvm.uninstall step=group action=absent name=workvm" in out.splitlines()
+    assert "runner.workvm.uninstall step=volume action=removed path=/var/agent-workvm" in out.splitlines()
+    code, out, _ = cli("uninstall")
+    assert "runner.workvm.uninstall step=volume action=absent path=/var/agent-workvm" in out.splitlines()
+
+
+def test_uninstall_reports_what_is_left(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
+    installed(fake)
+    fake.answers[(firewall.PFCTL, "-a", firewall.ANCHOR, "-sr")] = (0, "block return out quick all user = 700\n")
+    fake.answers[(accounts.DSCL, ".", "-delete", f"{DS_USERS}/wvm01")] = (0, "")
+    real_effect = fake.effect
+
+    def stubborn(key: tuple[str, ...]) -> None:
+        if key[:3] != (accounts.DSCL, ".", "-delete"):
+            real_effect(key)
+
+    fake.effect = stubborn  # type: ignore[method-assign]
+    fake.pf_conf = 'anchor "agent.workvm"\n'
+    original_remove = fake.remove_file
+
+    kept = (accounts.SUDOERS_PATH, firewall.ANCHOR_UP_PATH, firewall.ANCHOR_SAMPLE_PATH, firewall.STATE_PATH)
+    for path in kept[1:]:
+        fake.files[path] = ("x", 0o644)
+
+    def keep_sudoers(path: str) -> None:
+        if path not in kept:
+            original_remove(path)
+
+    fake.remove_file = keep_sudoers  # type: ignore[method-assign]
+    original_write = fake.write_file
+
+    def keep_pf_conf(path: str, content: str, mode: int) -> None:
+        if path != firewall.PF_CONF:
+            original_write(path, content, mode)
+
+    fake.write_file = keep_pf_conf  # type: ignore[method-assign]
+    code, out, _ = cli("uninstall", "--keep-volume")
+    assert code == 1
+    assert [line for line in out.splitlines() if ".problem" in line] == [
+        "runner.workvm.uninstall.problem code=anchor_rules",
+        f"runner.workvm.uninstall.problem code=file:{firewall.ANCHOR_UP_PATH}",
+        f"runner.workvm.uninstall.problem code=file:{firewall.ANCHOR_SAMPLE_PATH}",
+        f"runner.workvm.uninstall.problem code=file:{firewall.STATE_PATH}",
+        f"runner.workvm.uninstall.problem code=file:{accounts.SUDOERS_PATH}",
+        "runner.workvm.uninstall.problem code=account:wvm00",
+        "runner.workvm.uninstall.problem code=account:wvm01",
+        "runner.workvm.uninstall.problem code=group:workvm",
+        "runner.workvm.uninstall.problem code=pf_conf",
+    ]
+    assert out.splitlines()[-1] == "runner.workvm.uninstall result=incomplete"
+
+
+def test_uninstall_reports_a_volume_still_mounted(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
+    installed(fake)
+    fake.answers[(accounts.DISKUTIL, "apfs", "deleteVolume", accounts.HOME_ROOT)] = (0, "")  # answers, never unmounts
+    code, out, _ = cli("uninstall")
+    assert code == 1
+    assert out.splitlines()[-2:] == [
+        "runner.workvm.uninstall.problem code=volume",
+        "runner.workvm.uninstall result=incomplete",
+    ]
+
+
+def test_plan_facts_of_every_step_kind() -> None:
+    assert workvm_cli._step_fact(firewall.InstallStep("remove", "/x")) == {"action": "remove", "path": "/x"}
+    assert workvm_cli._step_fact(firewall.InstallStep("run", argv=("/a", "b"), may_fail=True)) == {
+        "action": "run",
+        "argv": "/a b",
+        "may_fail": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("env", "euid", "error"),
+    [
+        ({}, 501, "runner.error code=workvm_root_required"),
+        ({"AGENT_RUNNER_WORKVM_SLOTS": "0"}, 0, "runner.error code=workvm_not_configured name=WORKVM_SLOTS"),
+    ],
+)
+def test_uninstall_refusals(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]], env: dict[str, str], euid: int, error: str
+) -> None:
+    assert cli("uninstall", euid=euid, **env) == (1, "", error + "\n")
+    assert fake.calls == []
+
+
+def test_uninstall_failing_delete(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
+    installed(fake)
+    fake.answers[(accounts.DSCL, ".", "-delete", f"{DS_USERS}/wvm00")] = (1, "")
+    code, _, err = cli("uninstall")
+    assert (code, err) == (1, "runner.error code=workvm_install_failed name=dscl\n")
 
 
 # -- workvm image build|list (spec 11 section 4) ---------------------------------------------------------------

@@ -161,8 +161,9 @@ def test_sudoers() -> None:
         "Defaults!/usr/local/libexec/agent-runner-workvm-limactl env_reset\n"
         "Runas_Alias AGENT_WORKVM = agent-wvm00, agent-wvm01\n"
         "agent ALL = (AGENT_WORKVM) NOPASSWD: /usr/local/libexec/agent-runner-workvm-limactl\n"
-        "agent ALL = (root) NOPASSWD: /sbin/pfctl -s info, /sbin/pfctl -a agent.workvm -sr, /sbin/pfctl -sr,"
-        " /sbin/pfctl -s Interfaces -v, /sbin/pfctl -a agent.workvm -t workvm_blocked -T show\n"
+        "agent ALL = (root) NOPASSWD: /sbin/pfctl -s info, /sbin/pfctl -a com.apple/000.agent.workvm -sr,"
+        " /sbin/pfctl -sr, /sbin/pfctl -s Interfaces -v,"
+        " /sbin/pfctl -a com.apple/000.agent.workvm -t workvm_blocked -T show, /sbin/pfctl -a com.apple -sA\n"
     )
     with pytest.raises(RunnerError, match="account"):
         accounts.sudoers("ALL", ["a"])
@@ -170,6 +171,18 @@ def test_sudoers() -> None:
         accounts.sudoers("agent", [])
     with pytest.raises(RunnerError, match="wrapper"):
         accounts.sudoers("agent", ["a"], wrapper="/usr/bin/*")
+
+
+def test_delete_commands() -> None:
+    assert accounts.delete_command("agent-wvm00") == ["/usr/bin/dscl", ".", "-delete", "/" + "Users/agent-wvm00"]
+    assert accounts.delete_group_command("agent-workvm") == ["/usr/bin/dscl", ".", "-delete", "/Groups/agent-workvm"]
+    assert accounts.delete_volume_command() == ["/usr/sbin/diskutil", "apfs", "deleteVolume", "/var/agent-workvm"]
+    with pytest.raises(RunnerError, match="account"):
+        accounts.delete_command("a;rm")
+    with pytest.raises(RunnerError, match="account"):
+        accounts.delete_group_command("ALL")
+    with pytest.raises(RunnerError, match="mountpoint"):
+        accounts.delete_volume_command("/var/../x")
 
 
 def test_sudoers_check_feeds_visudo_on_stdin() -> None:

@@ -155,6 +155,21 @@ def create_commands(account: str, uid: int, gid: int, group: str, home: str) -> 
     ]
 
 
+def delete_command(account: str) -> list[str]:
+    """The `dscl` command deleting a slot account (its home goes with the volume)."""
+    return [DSCL, ".", "-delete", f"/Users/{_account(account)}"]
+
+
+def delete_group_command(group: str) -> list[str]:
+    return [DSCL, ".", "-delete", f"/Groups/{_account(group)}"]
+
+
+def delete_volume_command(mountpoint: str = HOME_ROOT) -> list[str]:
+    """Deletes the APFS volume mounted at `mountpoint` with every slot home and work VM disk (assumed: `diskutil apfs
+    deleteVolume` takes a mount point like other diskutil verbs)."""
+    return [DISKUTIL, "apfs", "deleteVolume", _path(mountpoint, "mountpoint")]
+
+
 def wrapper_script(
     accounts: Sequence[str], home_root: str = HOME_ROOT, limactl: str = "/opt/homebrew/bin/limactl"
 ) -> str:
