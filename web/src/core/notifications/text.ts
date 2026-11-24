@@ -10,7 +10,7 @@
 // | `rotation.required` | "Access in X is being updated" (neutral; the hub no longer creates it, ADR-058) | the org's members |
 // | `org.admitted` | "Z admitted you to X" (`ref` = the admitting admin, ADR-060) | the org |
 // | `agent.account_change` | "Agent A removed a passkey" (replaced the recovery code, disconnected an agent, …;
-//   `ref` = `<action>:<acting agent id>:<target>`, no org; `agent_paired_remote` (ADR-062): a pairing from another
+//   `ref` = `<action>:<acting agent id>:<target>`, no org; `agent_paired_remote` (ADR-067): a pairing from another
 //   computer was confirmed, named by the new agent, the target) | the settings |
 //
 // The level of a whiteboard notification follows from the row: a task → task level, else a workgroup → workgroup

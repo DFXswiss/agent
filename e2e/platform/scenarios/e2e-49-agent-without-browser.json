@@ -1,6 +1,6 @@
 {
-  "name": "e2e-46-agent-without-browser",
-  "description": "E2E-46: a task the user's agent creates with the agent tool alone; the first prompt is answered at once, the further prompt only after 120 s, so the agent interrupts the session's turn while the model is still working on it (the delayed answer never reaches the chat).",
+  "name": "e2e-49-agent-without-browser",
+  "description": "E2E-49: a task the user's agent creates with the agent tool alone; the first prompt is answered at once, the further prompt only after 120 s, so the agent interrupts the session's turn while the model is still working on it (the delayed answer never reaches the chat).",
   "steps": [
     {
       "id": "first-prompt",

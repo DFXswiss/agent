@@ -190,7 +190,7 @@ export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
 };
 
 /** Operations whose name one vector file uses for its own function (`agent.json` `parse_code`: the agent and return
- * codes of ADR-062, not the invitation code); the Python generator keeps one `OPS` per area. */
+ * codes of ADR-067, not the invitation code); the Python generator keeps one `OPS` per area. */
 export const FILE_OPS: Record<string, Record<string, (a: Any) => Promise<unknown>>> = {
   agent: { parse_code: async (a) => agent.parseCode(a.text, a.length) },
 };

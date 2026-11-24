@@ -14,7 +14,7 @@
 // Without a code in this tab (reloaded after the code left the address) the screen says so and that nothing was
 // joined. A browser with a stored session is told before the intro that this link creates a second, separate
 // account; it goes to its account or, deliberately, creates the new one (KOR-36).
-// A pairing from another computer (`m=remote`, ADR-062 section 6) asks for the agent code before the passkey is
+// A pairing from another computer (`m=remote`, ADR-067 section 6) asks for the agent code before the passkey is
 // created: "Create passkey" stays disabled until it matches, so a wrong or missing code creates no account.
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';

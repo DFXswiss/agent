@@ -514,7 +514,7 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | Credential metadata (owner, kind, version) | lifecycle |
 | User settings (model access preference, model choice, locale) | session start |
 | Admission (ADR-060): `user_certify` entries, the identity proof of a platform registration, the capabilities a device announced (`device.features`), which account looked up which identity or account code (read log) | direct admission without consent steps |
-| Agents of a user (`11-agent-access.md` §2): agent ID, public keys, state, times, claim hash, the source address of an open pairing (≤ 70 min), which login confirmed which pairing, which actions were taken by an agent (`agent_id` of audit rows), whether a pairing is a remote one and its nonce; the sealed identity, the sealed label and the sealed handover of a remote pairing are ciphertexts the hub cannot open | delegated agent access (ADR-056, ADR-062) |
+| Agents of a user (`11-agent-access.md` §2): agent ID, public keys, state, times, claim hash, the source address of an open pairing (≤ 70 min), which login confirmed which pairing, which actions were taken by an agent (`agent_id` of audit rows), whether a pairing is a remote one and its nonce; the sealed identity, the sealed label and the sealed handover of a remote pairing are ciphertexts the hub cannot open | delegated agent access (ADR-056, ADR-067) |
 
 Not visible: everything listed as confidential in `00-overview.md` §3, invitation and recovery codes, PRF
 outputs, scope keys, private keys, credential values, the handover secret of an agent pairing and an agent's name.

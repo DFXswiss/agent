@@ -31,7 +31,7 @@ SPEC_ERRORS: dict[int, str] = {
     " invite_revoked author_not_writer"
     # ADR-060 (KOR-37)
     " account_code_invalid log_admit"
-    # 11-agent-access.md section 4 (KOR-42, ADR-062)
+    # 11-agent-access.md section 4 (KOR-42, ADR-067)
     " handover_required handover_unexpected",
     401: "signature_missing key_unknown key_revoked time_skew signature_invalid nonce_replayed session_expired"
     " unauthorized"

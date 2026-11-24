@@ -6,7 +6,7 @@
 // agent's action, the disconnect dialogs and the account-level notification; a forged fingerprint, an unknown
 // pairing, a malformed link and the repeated gesture after `pairing_gesture_required`; the unlock without PRF.
 //
-// Pairing an AI agent that runs on another computer (ADR-062, 11-agent-access.md section 5.4): the `m=remote` link,
+// Pairing an AI agent that runs on another computer (ADR-067, 11-agent-access.md section 5.4): the `m=remote` link,
 // the warning that names the computer, the agent code typed by the user (a wrong code keeps the passkey button
 // disabled; the page never shows the code), the confirmation with the handover sealed to the agent, the return code
 // the user hands back, the agent fetching and checking the handover before it claims; the notification

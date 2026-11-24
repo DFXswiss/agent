@@ -1,7 +1,7 @@
 """Test vectors of the delegated agent access (11-agent-access.md section 3): `contracts/vectors/agent.json`.
 
 Fingerprint, proof of possession, the handover secret with its bundle key, claim and claim hash, the identity sealed
-to the agent and the label sealed to the user, and for a pairing from another computer (ADR-062) the agent code, the
+to the agent and the label sealed to the user, and for a pairing from another computer (ADR-067) the agent code, the
 handover sealed to the agent, the return code and the typed forms of a code, all with fixed keys, nonces and HPKE
 ephemeral keys. Negative vectors
 name an operation of `OPS` (this module), its arguments and the expected error code; the generator refuses a vector
@@ -62,7 +62,7 @@ def negative(name: str, op: str, args: Json, error: str) -> Json:
 
 
 def build_remote(bot: keys.Identity, user: str, secret: bytes) -> tuple[Json, list[Json]]:
-    """The remote section (ADR-062) and its negative vectors."""
+    """The remote section (ADR-067) and its negative vectors."""
     fp = agent.fingerprint(bot.kem_public(), bot.sig_public())
     nonce = fixed("agent-remote-nonce", agent.NONCE_BYTES)
     code = agent.agent_code(AGENT_ID, fp, nonce, ORIGIN)
@@ -152,7 +152,7 @@ def build_agent() -> Json:
     opened = {"agent_kem_sk": agent_sk, "secret": secret_text, "agent_id": AGENT_ID, "user_id": user, "sealed": sealed}
     remote, remote_invalid = build_remote(bot, user, secret)
     return {
-        "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-062).",
+        "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-067).",
         "agent": {"id": AGENT_ID, "kem_sk": agent_sk, "sig_sk": b64u_encode(fixed("agent/sig")), **bot.public()},
         "user": {"id": user, "kem_sk": alice_sk, **alice.public()},
         "fingerprint": agent.fingerprint(kem_pub, sig_pub),

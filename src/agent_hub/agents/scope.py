@@ -12,7 +12,7 @@ the confirmation of a main orchestrator, whose essence is the user's passkey app
 orchestrator per user, approved with a passkey; an agent never pairs or replaces an agent); each entry of
 `EXCEPTIONS` names its reason. Where the web client needs a passkey gesture (adding a passkey), the agent
 tool opens the page in the user's browser. A `confirmed` agent (paired, not yet claimed) may only claim and fetch
-the handover of a remote pairing (`CONFIRMED_ROUTES`, ADR-062); agents
+the handover of a remote pairing (`CONFIRMED_ROUTES`, ADR-067); agents
 also have their own routes (authentication class `agent`). `tests/platform/hub/agents/test_scope.py` checks every
 registered route against this rule.
 """

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/agent-pairings-create.request.json",
   "title": "POST /v1/agent-pairings request",
-  "description": "Body of POST /v1/agent-pairings (11-agent-access.md section 4); `remote: true` creates a pairing from another computer (ADR-062, section 5.4).",
+  "description": "Body of POST /v1/agent-pairings (11-agent-access.md section 4); `remote: true` creates a pairing from another computer (ADR-067, section 5.4).",
   "type": "object",
   "properties": {
     "pairing_id": {
@@ -29,7 +29,7 @@
     },
     "remote": {
       "type": "boolean",
-      "description": "true: a pairing from another computer (ADR-062); absent or false: the loopback pairing"
+      "description": "true: a pairing from another computer (ADR-067); absent or false: the loopback pairing"
     }
   },
   "required": [

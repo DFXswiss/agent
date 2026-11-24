@@ -1,5 +1,5 @@
 {
-  "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-062).",
+  "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-067).",
   "agent": {
     "id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
     "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",

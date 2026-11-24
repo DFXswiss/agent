@@ -2,7 +2,7 @@
 // hub with its proof of possession, the `/connect` link, the claim with the handover secret of the loopback form, and
 // requests signed with `agent-request-v1` under `agent.<32 hex>` (answers are not response-checked: the test's own
 // side). The loopback listener is replaced by a route of the page (`catchHandover`). A pairing from another computer
-// (ADR-062, `pair(origin, { remote: true })`) works like the agent tool: the hub's nonce gives the agent code
+// (ADR-067, `pair(origin, { remote: true })`) works like the agent tool: the hub's nonce gives the agent code
 // (`agentCode`), the agent fetches the sealed handover (`GET /v1/agent/handover`), checks the return code the user
 // passes back and only then claims (`finishRemote`).
 import type { Page, Request } from '@playwright/test';
@@ -40,7 +40,7 @@ export class TestAgent {
     readonly nonce: string | null = null,
   ) {}
 
-  /** Fresh keys and an open pairing at the hub (`remote`: a pairing from another computer, ADR-062). */
+  /** Fresh keys and an open pairing at the hub (`remote`: a pairing from another computer, ADR-067). */
   static async pair(origin: string, options: { readonly remote?: boolean } = {}): Promise<TestAgent> {
     const keys = await Identity.generate();
     const id = uuid7();

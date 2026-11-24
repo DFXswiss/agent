@@ -3,13 +3,13 @@
 // - `loadAgents`: `GET /v1/me/agents` (newest first, as the hub sends them) into the `agents` slice; each label is
 //   opened with the user's identity key (`crypto/agent.ts`), one that does not open is an unknown agent (label null).
 //   Malformed rows are left out. `replaces` names the main orchestrator a row replaced at its confirmation (or null);
-//   `remote` marks an agent paired from another computer (ADR-062; a row without it, from a hub of before KOR-42, is
+//   `remote` marks an agent paired from another computer (ADR-067; a row without it, from a hub of before KOR-42, is
 //   not remote).
 // - `revokeAgent`: `DELETE /v1/me/agents/{id}`; `revokeAllAgents`: `DELETE /v1/me/agents` (→ the number revoked).
 //   Both take effect at once at the hub; the list is loaded again afterwards.
 // - `agentChanges`: how many notifications say that the user's agents changed elsewhere (`agent_paired_remote`, a
 //   remote pairing confirmed in another client; `agent_revoked`); a new one makes the shell load the list again, so
-//   the banner of a remote main orchestrator (ADR-062 section 4.4) appears in every open client, not only after the
+//   the banner of a remote main orchestrator (ADR-067 section 4.4) appears in every open client, not only after the
 //   next sign-in.
 import { openLabel } from '../crypto/agent';
 import { isUuid7 } from '../encoding/ids';

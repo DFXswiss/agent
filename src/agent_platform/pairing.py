@@ -30,7 +30,7 @@ redirect file (`0600`, in the state directory, removed when the wait ends) whose
 The hub address comes from the invitation link; it must be `https` (plain `http` only for a loopback hub, as in
 tests), and the result names it.
 
-`Pairing` also serves the pairing from another computer (`remote`, ADR-062; the commands are in
+`Pairing` also serves the pairing from another computer (`remote`, ADR-067; the commands are in
 `agent_platform.remote`): it registers with `remote: true`, requires the answer to echo `remote: true` and a nonce
 (else `hub_too_old`, so it never proceeds with a loopback pairing it did not ask for), builds the link without a port
 (`m=remote`) and the agent code, and completes with a handover the tool fetched from the hub (`complete`).

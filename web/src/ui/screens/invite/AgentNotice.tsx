@@ -3,7 +3,7 @@
 // Creating the passkey is the confirmation: the sign-in after it is the pairing-tagged ceremony, and `/connect`
 // finishes the pairing once the account is ready.
 //
-// For an agent on another computer (ADR-062 section 6) the notice shows the warning of section 4.2 and asks for the
+// For an agent on another computer (ADR-067 section 6) the notice shows the warning of section 4.2 and asks for the
 // agent code before the passkey is created: the screens keep their passkey buttons disabled until it matches.
 import type { PairingLink } from '../../../core/agents/link';
 import { useI18n } from '../../i18n';

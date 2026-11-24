@@ -1,13 +1,13 @@
 # KOR-42 – decisions
 
-## Remote pairing (ADR-062): design review with fresh context, before building
+## Remote pairing (ADR-067): design review with fresh context, before building
 
-The draft of ADR-062 was reviewed by a reviewer without the author's context. Findings and their handling:
+The draft of ADR-067 was reviewed by a reviewer without the author's context. Findings and their handling:
 
 1. **High – a malicious hub could forge the remote handover** (HPKE base mode: anyone who knows the agent's public key
    can seal to it; the hub could seal its own `r'` around an identity it controls). Fixed: return code
    `HKDF(r, "agent-return")` shown by the page after the confirmation; the tool checks it before it claims or stores
-   anything (ADR-062 §3). This adds one step for the user in the remote mode (passing a code back to the agent); it
+   anything (ADR-067 §3). This adds one step for the user in the remote mode (passing a code back to the agent); it
    is the price of E-04 without letting the hub impersonate the user.
 2. **High – a phished agent could mark the notification as read.** Fixed: `remote` per row in `GET /v1/me/agents`
    and a banner in the web shell while the main orchestrator is a remote one (no read state hides it) (§4.4).
@@ -75,9 +75,9 @@ The draft of ADR-062 was reviewed by a reviewer without the author's context. Fi
   fake) and were finished at the same time, stage c's tool side as well; after the unification of the repositories
   all four stages were merged in one run instead of one run per stage.
 - **Scenario numbers.** The specification named the agent scenarios E2E-40 to E2E-42, but E2E-40 is the quiet
-  checkout and E2E-41 the direct admission. The agent scenarios are E2E-46 (the agent works without a browser) and
-  E2E-47 (pairing from another computer), registered like E2E-41 and E2E-45 (07 §2.1 and `traceability.json`).
-- **Open tabs learn of a remote orchestrator.** The banner of ADR-062 §4.4 reloads the agent list when an
+  checkout and E2E-41 the direct admission. The agent scenarios are E2E-49 (the agent works without a browser) and
+  E2E-50 (pairing from another computer), registered like E2E-41 and E2E-45 (07 §2.1 and `traceability.json`).
+- **Open tabs learn of a remote orchestrator.** The banner of ADR-067 §4.4 reloads the agent list when an
   `agent_paired_remote` or `agent_revoked` notification arrives, so a tab that was open during the pairing shows it
   without a reload.
 - **Device flows take two calls** (GitHub, Claude login, credential checks): the user must see the device code or the

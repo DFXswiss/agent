@@ -36,7 +36,7 @@ CATEGORIES: dict[str, str] = {
     "ciphertext": "Encrypted content (ADR-003): sealed under scope, credential or recipient keys the hub never holds",
     "agents": "Agents of a user (11-agent-access.md section 2): agent ID, public keys, state, times, claim hash, the "
     "source address of an open pairing, which login confirmed which pairing, which actions were taken by an agent, "
-    "the mode of a pairing and its nonce (ADR-062)",
+    "the mode of a pairing and its nonce (ADR-067)",
     "internal": "Hub bookkeeping without user data (applied schema migrations)",
     "billing": "Usage charges and prepaid credit (ADR-062, AUD-04 A4): amounts, token and runtime quantities, model, "
     "access origin and VM size of each charge, balances, credit history, the price list versions, the USD/CHF rates "

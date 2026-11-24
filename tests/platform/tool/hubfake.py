@@ -377,7 +377,7 @@ class HubFake:
         row.state = "confirmed"
 
     def confirm_remote(self, pairing_id: str, user: User, secret: bytes | None = None, root: str | None = None) -> str:
-        """The browser of a remote pairing (ADR-062): confirm, seal the handover to the agent; the return code."""
+        """The browser of a remote pairing (ADR-067): confirm, seal the handover to the agent; the return code."""
         secret = secrets.token_bytes(32) if secret is None else secret
         self.confirm(pairing_id, user, secret)
         row = self.agents[pairing_id]

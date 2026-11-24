@@ -53,7 +53,7 @@ describe('loadAgents', () => {
     expect(remoteOrchestrator(entries)).toBeNull();
   });
 
-  it('marks agents paired from another computer; a row without the field is not remote (ADR-062)', async () => {
+  it('marks agents paired from another computer; a row without the field is not remote (ADR-067)', async () => {
     let agents: unknown[] = [];
     const w = await agentWorld(() => ({ agents }));
     const label = await sealLabel(w.identity.kemPublic(), AGENT, USER, { name: 'Claude Code', host: 'server' });
@@ -133,7 +133,7 @@ describe('agentChanges', () => {
     read_at: null,
   });
 
-  it('counts the notifications of a remote pairing or a revoked agent (ADR-062 section 4.4)', () => {
+  it('counts the notifications of a remote pairing or a revoked agent (ADR-067 section 4.4)', () => {
     expect(agentChanges({})).toBe(0);
     const rows = {
       a: note('a', 'agent.account_change', `agent_paired_remote::${AGENT}`),

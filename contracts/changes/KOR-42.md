@@ -1,4 +1,4 @@
-# KOR-42 – pairing an agent that runs on another computer (ADR-062, 11-agent-access.md section 5.4)
+# KOR-42 – pairing an agent that runs on another computer (ADR-067, 11-agent-access.md section 5.4)
 
 Additive contract changes; an agent, page or hub of before KOR-42 keeps working with a loopback pairing.
 

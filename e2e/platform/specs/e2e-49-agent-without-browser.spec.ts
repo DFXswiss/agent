@@ -1,4 +1,4 @@
-// E2E-46 (11-agent-access.md sections 5.3, 6 and 8.4; KOR-42 goal 4): the agent works without a browser. Ada pairs
+// E2E-49 (11-agent-access.md sections 5.3, 6 and 8.4; KOR-42 goal 4): the agent works without a browser. Ada pairs
 // her agent once (loopback `pair`, confirmed with her passkey on `/connect`); from then on only the agent tool acts:
 // it creates a team organization, invites Bob (`org invite`; Bob registers through the link in his own browser),
 // creates a workgroup and grants Bob read access, assigns the platform device, creates a task with a prompt and
@@ -28,7 +28,7 @@ import { ORG, WG } from '../../../web/src/core/log/state';
 import type { Orchestrator } from '../fixtures/orchestrator.ts';
 
 const scenario: unknown = JSON.parse(
-  readFileSync(new URL('../scenarios/e2e-46-agent-without-browser.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../scenarios/e2e-49-agent-without-browser.json', import.meta.url), 'utf8'),
 );
 const ORG_NAME = 'Agent team kz46-org-a1s3d5';
 const WG_NAME = 'Agent work kz46-wg-f7g9h1';
@@ -73,7 +73,7 @@ async function followUntil(orchestrator: Orchestrator, task: string, text: strin
 const sessionState = async (orchestrator: Orchestrator, session: string) =>
   ((await agentTool(orchestrator, HOME, ['session', 'show', '--session', session])).session as Json).state;
 
-test('@E2E-46 @needs-vm the agent sets up a team, runs a task and removes a member with the agent tool alone', async ({
+test('@E2E-49 @needs-vm the agent sets up a team, runs a task and removes a member with the agent tool alone', async ({
   page,
   browser,
   e2e,

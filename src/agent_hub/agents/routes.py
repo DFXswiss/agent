@@ -11,7 +11,7 @@
 - `POST /v1/agent/claim` (agent key, `confirmed`): the agent proves the claim from the loopback (or from the
   handover of a remote pairing) and gets its keys.
 - `GET /v1/agent/handover` (agent key, `confirmed`): the handover of a confirmed remote pairing, sealed to the agent
-  by the confirming browser (ADR-062); the confirmation of a remote pairing notifies every client of the user
+  by the confirming browser (ADR-067); the confirmation of a remote pairing notifies every client of the user
   (`agent_paired_remote`).
 - `GET /v1/agent/me` (agent key, `active`): the agent's own row with the sealed identity.
 """

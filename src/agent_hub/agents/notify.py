@@ -8,7 +8,7 @@ revoked agent, the removed passkey, the organization, the credential kind, the b
 request; empty where there is none). Nothing is written for the actions of a browser session, except
 `recovery_finished` (`recovery_notice`): an anonymous recovery that added a passkey (target), with an empty agent
 field - a stolen recovery code is as dangerous as a stolen agent key - and `agent_paired_remote` (`remote_notice`):
-the browser session confirmed a pairing from another computer (target: the new agent; ADR-062 section 4.4).
+the browser session confirmed a pairing from another computer (target: the new agent; ADR-067 section 4.4).
 
 The rows are published after the commit by `agent_hub.notifications.rules.publish_rows` as the stream frame
 `notification`; only streams opened with `account=1` receive them, and `GET /v1/notifications` lists them only with

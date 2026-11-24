@@ -13,7 +13,7 @@
     },
     "remote": {
       "const": true,
-      "description": "present (true) only for a pairing from another computer (ADR-062)"
+      "description": "present (true) only for a pairing from another computer (ADR-067)"
     },
     "nonce": {
       "$ref": "../common.json#/$defs/b64u_16",

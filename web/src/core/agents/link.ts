@@ -4,7 +4,7 @@
 // key fingerprint (16 bytes b64u), `c` a decimal port 1024–65535 without leading zeros, `a` and `h` texts of the label
 // rules (`crypto/agent.ts`). Anything else is no link (null): the page says it is not valid.
 //
-// A pairing from another computer (ADR-062, section 5.4) has `m=remote` instead of `c`: exactly `p`, `f`, `m`, `a`,
+// A pairing from another computer (ADR-067, section 5.4) has `m=remote` instead of `c`: exactly `p`, `f`, `m`, `a`,
 // `h`. The mode of the link must agree with the hub's `remote` (`pairing.ts`), so neither a changed link nor a hub
 // that flips the flag turns one mode into the other.
 import { displayName } from '../account/genesis';
@@ -18,7 +18,7 @@ export const LINK_KEYS = ['p', 'f', 'c', 'a', 'h'] as const;
 export const REMOTE_LINK_KEYS = ['p', 'f', 'm', 'a', 'h'] as const;
 export const MODE_REMOTE = 'remote';
 
-/** `loopback`: the agent listens on this computer; `remote`: it runs on another computer (ADR-062). */
+/** `loopback`: the agent listens on this computer; `remote`: it runs on another computer (ADR-067). */
 export type PairingMode = 'loopback' | 'remote';
 const FINGERPRINT_LENGTH = Math.ceil((FINGERPRINT_BYTES * 4) / 3);
 const PORT_RE = /^[1-9][0-9]{3,4}$/;

@@ -1,4 +1,4 @@
-// E2E-47 (ADR-062; 11-agent-access.md sections 5.4 and 8.4): pairing an agent that runs on another computer. The
+// E2E-50 (ADR-067; 11-agent-access.md sections 5.4 and 8.4): pairing an agent that runs on another computer. The
 // agent tool starts the pairing with `pair --remote` and hands the user only a link and a code (no loopback listener,
 // no browser stand-in opens anything). Ada's page opens the link: the warning names the other computer, a wrong code
 // keeps "Confirm with passkey" disabled, the right code (typed in lower case with a space) and the passkey confirm and
@@ -22,7 +22,7 @@ const wrong = (code: string) => (code.startsWith('0') ? `1${code.slice(1)}` : `0
 
 type Json = Record<string, unknown>;
 
-/** `pair --remote` on the computer `home`: the link and the agent code, checked against ADR-062. */
+/** `pair --remote` on the computer `home`: the link and the agent code, checked against ADR-067. */
 async function startRemote(orchestrator: Orchestrator, hub: string, home: string, host: string): Promise<Json> {
   await anonymousBudget(2 * COST.lookup);
   const started = await agentTool(orchestrator, home, [
@@ -75,7 +75,7 @@ async function confirmOnPage(page: Page, started: Json, host: string, replaces: 
   return (await returned.textContent())!.trim();
 }
 
-test('@E2E-47 an agent on another computer pairs with the codes of both sides and a wrong return code ends it', async ({
+test('@E2E-50 an agent on another computer pairs with the codes of both sides and a wrong return code ends it', async ({
   page,
   e2e,
   orchestrator,

@@ -2,7 +2,7 @@
 
 `agents.unclaimed_purge`: open and confirmed pairings that were never claimed are deleted one hour after their claim
 deadline (with the sealed identity of a confirmed one); the sealed handover of a remote pairing is cleared as soon as
-its claim deadline has passed (ADR-062 section 3).
+its claim deadline has passed (ADR-067 section 3).
 """
 
 from __future__ import annotations

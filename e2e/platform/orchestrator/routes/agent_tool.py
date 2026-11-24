@@ -14,7 +14,7 @@
   specs assert it never reaches the hub, the page or any output.
 - `POST /agent-tool/copy-home` (`{"from", "to"}`): a copy of one computer's agent state (its state directory and the
   keychain stand-in, modes kept) on a new computer `to` that must not exist yet: a second copy of a paired agent that
-  still holds the old key after the first one revoked itself (E2E-46: the hub answers `key_revoked`).
+  still holds the old key after the first one revoked itself (E2E-49: the hub answers `key_revoked`).
 No real keychain, profile or browser of the machine is touched.
 """
 

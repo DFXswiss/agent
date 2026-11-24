@@ -1,9 +1,9 @@
-"""U-HUB-agents (pairing from another computer, ADR-062, 11-agent-access.md sections 2, 4 and 5.4): a remote pairing
+"""U-HUB-agents (pairing from another computer, ADR-067, 11-agent-access.md sections 2, 4 and 5.4): a remote pairing
 has the hub's nonce and a 300 s confirmation deadline; its confirmation needs `handover_ct` (a loopback one refuses
 it), notifies the user (`agent_paired_remote`), records `remote` in the audit and gives the agent 600 s to fetch the
 handover (`GET /v1/agent/handover`, only for a confirmed remote row) and claim; the handover is cleared at the claim,
 the revocation and the claim deadline; `GET /v1/me/agents` names remote rows; loopback pairings and old clients are
-answered as before; migration 0014 applies on the schema of 0013 with data."""
+answered as before; migration 0017 applies on the schema of 0016 with data."""
 
 from __future__ import annotations
 
@@ -302,10 +302,10 @@ def test_the_remote_notice_and_the_audit_detail_rules() -> None:
     )
 
 
-def test_0014_applies_on_the_schema_of_0013_with_data(hub_db: HubDatabase, tmp_path: Path) -> None:
+def test_0017_applies_on_the_schema_of_0016_with_data(hub_db: HubDatabase, tmp_path: Path) -> None:
     previous = tmp_path / "previous"
     previous.mkdir()
-    names = sorted(path.name for path in MIGRATIONS.glob("*.sql") if path.name < "0014")
+    names = sorted(path.name for path in MIGRATIONS.glob("*.sql") if path.name < "0017")
     for name in names:
         shutil.copy(MIGRATIONS / name, previous / name)
     assert run_migrate(hub_db.migrate_env(), directory=previous) == (f"applied {len(names)}", 0)
