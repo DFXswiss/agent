@@ -380,9 +380,8 @@ def test_mig01_constraints_with_fixtures(runner_dsn: str) -> None:
         for statement in refused:
             with pytest.raises(psycopg.errors.IntegrityError):
                 conn.execute(statement.encode())
-        # One VM per workgroup and device (partial unique index): a second live VM of wg is refused.
-        with pytest.raises(psycopg.errors.UniqueViolation):
-            conn.execute(vm_sql, ("vm-00000010", "arp-00000010", wg, org, "stopped"))
+        # Several live VMs per workgroup and device (migration 0018, ADR-075 section 4); a Lima name stays unique.
+        conn.execute(vm_sql, ("vm-00000010", "arp-00000010", wg, org, "stopped"))
         with pytest.raises(psycopg.errors.UniqueViolation):
             conn.execute(vm_sql, ("vm-00000011", "arp-0000000a", None, None, "pool"))
 

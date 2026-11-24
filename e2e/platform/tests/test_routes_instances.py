@@ -89,7 +89,14 @@ def node_of(ctx: Context) -> InstanceNode:
 
 def test_spawn_copies_runner_1_with_own_home_prefix_and_capacity(ctx: Context) -> None:
     ctx.notes += ["pool size 2", "golden image cache-golden-abc"]
-    options = {"memory_reserve_mib": 0, "pool_size": 1, "session_idle_seconds": 60, "vm_idle_seconds": 90}
+    options = {
+        "memory_reserve_mib": 0,
+        "pool_size": 1,
+        "session_idle_seconds": 60,
+        "vm_idle_seconds": 90,
+        "sessions_per_vm": 1,
+        "max_vms": 2,
+    }
     status, answer = call(ctx, "POST", "/runners/runner-2/spawn", options)
     assert status == 200
     assert answer == {
@@ -102,6 +109,7 @@ def test_spawn_copies_runner_1_with_own_home_prefix_and_capacity(ctx: Context) -
     env = node.spawned["runner-2"]
     assert env["AGENT_RUNNER_HOME"] == "/scratch/runner-2"
     assert env["AGENT_RUNNER_VM_PREFIX"] == f"{PREFIX}r2-"
+    assert (env["AGENT_RUNNER_SESSIONS_PER_VM"], env["AGENT_RUNNER_MAX_VMS"]) == ("1", "2")
     assert env["AGENT_RUNNER_MEMORY_RESERVE_MIB"] == "0"
     assert env["AGENT_RUNNER_POOL_SIZE"] == "1"
     assert (env["AGENT_RUNNER_SESSION_IDLE_SECONDS"], env["AGENT_RUNNER_VM_IDLE_SECONDS"]) == ("60", "90")
@@ -141,6 +149,8 @@ def test_spawn_defaults_without_golden(ctx: Context) -> None:
         ("runner-2", {"memory_reserve_mib": True}, "memory_reserve_mib must be 0..4194304 or null"),
         ("runner-2", {"pool_size": 9}, "pool_size must be 0..8 or null"),
         ("runner-2", {"pool_size": "1"}, "pool_size must be 0..8 or null"),
+        ("runner-2", {"sessions_per_vm": 1001}, "sessions_per_vm must be 0..1000 or null"),
+        ("runner-2", {"max_vms": -1}, "max_vms must be 0..1000 or null"),
     ],
 )
 def test_spawn_refusals(ctx: Context, name: str, body: Any, detail: str) -> None:

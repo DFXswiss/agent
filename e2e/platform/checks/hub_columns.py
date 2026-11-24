@@ -135,6 +135,7 @@ operation: operations | id:uuid org_id:uuid wg_id:uuid task_id:uuid session_id:u
 operation_transition: operations | operation_id:uuid seq:number state:code error_code:code at:time by_id:uuid
 org: logs | id:uuid@ids private:flag platform_access:flag default_wg:uuid created_by:uuid created_at:time
   log_head_seq:number log_head_hash:code rotation_pending:json
+org_device: logs | org_id:uuid device_id:uuid assigned_seq:number unassigned_seq:number
 org_member: logs | org_id:uuid principal_id:uuid kind:code role:code joined_seq:number removed_seq:number
   consented:flag
 outbox_receipt: events | device_id:uuid origin_seq:number item_kind:code item_sha256:bytes status:code error:code
@@ -155,13 +156,13 @@ scope_head: events | scope_id:uuid scope:code seq:number
 session: tasks | id:uuid task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid device_id:uuid vm_id:code
   parent_session_id:uuid origin_operation_id:uuid depth:number state:code state_reason:code model_access:code
   model_id:code agent_kind:code agent_version:code estimate_ms:number created_at:time ready_at:time
-  first_working_at:time ended_at:time context_restore:code@contexts context_reason:code@contexts
+  first_working_at:time ended_at:time context_restore:code@contexts context_reason:code@contexts not_before:time
 session_ping: notifications | id:uuid session_id:uuid kind:code level:code ref:code created_at:time
   delivered_at:time
 session_transition: tasks | session_id:uuid seq:number state:code reason:code at:time received_at:time
   reported_by:uuid
 task: tasks | id:uuid org_id:uuid wg_id:uuid owner_id:uuid state:code state_reason:code created_at:time
-  state_at:time last_activity_at:time closed_at:time
+  state_at:time last_activity_at:time closed_at:time placement_device_id:uuid placement_vm_id:code
 task_transition: tasks | task_id:uuid seq:number state:code reason:code at:time by_id:uuid
 usage_counter: metrics | session_id:uuid requests:number input_tokens:number output_tokens:number
   cache_read_tokens:number cache_write_tokens:number thinking_tokens:number cost_micro_usd:number cost_basis:code
@@ -187,6 +188,7 @@ vm: tasks | id:code device_id:uuid wg_id:uuid state:code golden_version:code cpu
 wg: logs | id:uuid@ids org_id:uuid is_default:flag created_seq:number archived_seq:number
 wg_access: logs | wg_id:uuid user_id:uuid access:code granted_seq:number revoked_seq:number inherited:flag
 wg_device: logs | wg_id:uuid device_id:uuid assigned_seq:number unassigned_seq:number
+wg_placement: tasks | wg_id:uuid device_id:uuid vm_id:code set_by:uuid set_at:time
 whiteboard_entry: events | id:uuid@ids org_id:uuid level:code wg_id:uuid task_id:uuid author_id:uuid
   created_event_id:uuid latest_event_id:uuid created_at:time updated_at:time deleted:flag notify:flag@notifications
 """

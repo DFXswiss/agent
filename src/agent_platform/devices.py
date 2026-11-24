@@ -3,9 +3,12 @@
 
 - `device list`: every active device member of the verified log (newest first) with its kind, the workgroups it is
   assigned to and, for platform devices, whether the verified platform log still certifies it; labels from the newest
-  verified `device.profile` of the org scope; the hub's list (`GET /v1/orgs/{org}/devices`) only adds presence, version
-  and capacity, and a device the log does not know is not shown.
-- `device unassign`: `device_unassign` plus the rotation of R (`membership.submit`), then the credential-key check.
+  verified `device.profile` of the org scope, `organization` when the verified log assigns it to the whole
+  organization (`device_assign_org`, ADR-075 section 5); the hub's list (`GET /v1/orgs/{org}/devices`) only adds
+  presence, version, capacity (with its counters and limits) and the device's VMs with workgroup and sessions, and a
+  device the log does not know is not shown.
+- `device unassign`: `device_unassign` plus the rotation of R (`membership.submit`), then the credential-key check;
+  with `--org` instead of `--wg` the end of an assignment to the whole organization (`device_unassign_org`, ADR-075).
 - `device rename`: a new `device.profile` event (org scope, `ref` = device) sealed with the current org key.
 - `device invite`: what the device screen does to add an org device: an `invite` entry of kind `device` for the chosen
   workgroups with the sealed package (the org key and the keys of those workgroups), `POST /v1/orgs/{org}/invites`; the
@@ -19,14 +22,14 @@ import argparse
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from agent_platform import membership
+from agent_platform import credkey, membership
 from agent_platform.account import Account, unverified
 from agent_platform.batch import build_batch
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import post_event, seal
 from agent_platform.hub import segment
-from agent_platform.orgs import EXPIRY_HOURS_MAX, crypto_refusal, find_org, now_text, with_retry
+from agent_platform.orgs import EXPIRY_HOURS_MAX, crypto_refusal, device_unassign_org, find_org, now_text, with_retry
 from agent_platform.reader import VERIFIED, scope_events, settle
 from agent_runner.crypto import invite as invite_format
 from agent_runner.crypto.encoding import b64u_encode, format_time
@@ -37,7 +40,7 @@ from agent_runner.crypto.log.verify import VerifiedLog
 DEVICE_PROFILE = "device.profile"
 LABEL_MAX = 100
 DEVICE_EXPIRY_HOURS = 24
-HUB_FIELDS = ("online", "last_seen_at", "agent_version", "capacity", "capacity_low", "state")
+HUB_FIELDS = ("online", "last_seen_at", "agent_version", "capacity", "capacity_low", "state", "vms")
 
 
 def device_label(text: str) -> str:
@@ -89,6 +92,7 @@ def device_rows(account: Account, org: str) -> list[dict[str, Any]]:
             "platform_seq": p.platform_seq,
             "decertified": p.id in excluded,
             "workgroups": [wg for wg in _order(state) if state.assigned(p.id, wg)],
+            "organization": state.org_assigned(p.id),
             "hub": hub.get(p.id),
         }
         for p in devices
@@ -118,6 +122,15 @@ def device_unassign(account: Account, wg: str, device: str) -> dict[str, Any]:
     org = find_org(account, membership.require_id(wg))
     built = membership.submit(account, org, unassign_plan(membership.require_id(device), wg))
     return {**membership.changed(account, org, built, credentials=True), "wg_id": wg, "device_id": device}
+
+
+def unassign_org(account: Account, org: str, device: str) -> dict[str, Any]:
+    """`device_unassign_org` with the rotations it owes (one batch), then the follow-ups of a removal: the pending
+    rotation and the credential-key check (the device held the credential keys of the members, ADR-075 section 5)."""
+    result = device_unassign_org(account, org, device)
+    result["pending_rotation"] = membership.follow_up(lambda: membership.rotate_pending(account, org))
+    result["credentials"] = membership.follow_up(lambda: credkey.rotate_if_owed(account))
+    return result
 
 
 # --- rename ---
@@ -225,6 +238,8 @@ def _list(account: Account, args: argparse.Namespace, context: Context) -> dict[
 
 
 def _unassign(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    if args.org is not None:
+        return unassign_org(account, args.org, args.device)
     return device_unassign(account, args.wg, args.device)
 
 
@@ -252,12 +267,14 @@ def register(tree: Tree) -> None:
         group,
         "unassign",
         _unassign,
-        "take a device off a workgroup (rotates the keys)",
+        "take a device off a workgroup or the organization (rotates the keys)",
         writes=True,
         example="agent-platform device unassign --wg <wg_id> --device <device_id>",
-        words="abziehen gerät entziehen trennen arbeitsgruppe detach remove machine",
+        words="abziehen gerät entziehen trennen arbeitsgruppe organisation detach remove machine organization",
     )
-    sub.add_argument("--wg", required=True)
+    target = sub.add_mutually_exclusive_group(required=True)
+    target.add_argument("--wg", help="end the assignment to this workgroup")
+    target.add_argument("--org", help="end the assignment to the whole organization")
     sub.add_argument("--device", required=True)
     sub = tree.command(
         group,

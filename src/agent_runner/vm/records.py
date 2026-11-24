@@ -2,8 +2,10 @@
 
 `runner.vm` holds one row per VM the runner created: `id` (`vm-<8 hex>`), `lima_name` (`<prefix>arp-<8 hex>`, an
 independent random value), the golden it was cloned from, the workgroup once assigned, the state, the SHA-256 of the
-control token and the size. The partial unique index on `wg_id` (state <> `deleted`) makes "one VM per workgroup
-and device" a database rule as well (05 section 3.3).
+control token and the size. A workgroup may have several live VMs on the device (ADR-075 section 4, migration 0018);
+a VM belongs to one workgroup for its life, and the VM of a session is the `vm_id` of its `runner.session` row
+(`assign_session`, written by `VmManager.ensure_vm` under the workgroup lock; `occupancy` counts the occupying
+sessions per VM).
 
 The control token itself is kept in `$AGENT_RUNNER_HOME/vm/<vm_id>.token` (0600, directory 0700, written once and
 atomically) and in memory; `TokenStore.read` refuses a file whose hash differs from the row (`vm_token_invalid`).
@@ -91,10 +93,39 @@ async def get(db: Any, vm_id: str) -> VmRow | None:
     return VmRow(**rows[0]) if rows else None
 
 
-async def for_workgroup(db: Any, wg_id: str) -> VmRow | None:
-    """The live VM (state <> deleted) of the workgroup."""
-    rows = await _rows(db, f"SELECT {COLUMNS} FROM runner.vm WHERE wg_id = %s AND state <> 'deleted'", (wg_id,))
-    return VmRow(**rows[0]) if rows else None
+async def of_workgroup(db: Any, wg_id: str) -> list[VmRow]:
+    """The live VMs (state <> deleted) of the workgroup, smallest VM ID first."""
+    rows = await _rows(
+        db, f"SELECT {COLUMNS} FROM runner.vm WHERE wg_id = %s AND state <> 'deleted' ORDER BY id", (wg_id,)
+    )
+    return [VmRow(**row) for row in rows]
+
+
+async def occupancy(db: Any, wg_id: str) -> dict[str, int]:
+    """Occupying sessions (`ACTIVE_SESSION_STATES`) per live VM of the workgroup that has any."""
+    rows = await _rows(
+        db,
+        "SELECT v.id, COUNT(*) AS sessions FROM runner.vm v JOIN runner.session s ON s.vm_id = v.id"
+        " WHERE v.wg_id = %s AND v.state <> 'deleted' AND s.state = ANY(%s) GROUP BY v.id",
+        (wg_id, list(ACTIVE_SESSION_STATES)),
+    )
+    return {row["id"]: int(row["sessions"]) for row in rows}
+
+
+async def assign_session(db: Any, session_id: str, vm_id: str) -> None:
+    """Name the VM of a session on its local row (the booking of its place, ADR-075 section 4)."""
+    await _execute(db, "UPDATE runner.session SET vm_id = %s WHERE id = %s", (vm_id, session_id))
+
+
+async def load(db: Any) -> tuple[int, int]:
+    """`(running workgroup VMs, occupying sessions)` of the device (capacity report, ADR-075 section 2)."""
+    rows = await _rows(
+        db,
+        "SELECT (SELECT COUNT(*) FROM runner.vm WHERE state = 'running') AS vms,"
+        " (SELECT COUNT(*) FROM runner.session WHERE state = ANY(%s)) AS sessions",
+        (list(ACTIVE_SESSION_STATES),),
+    )
+    return int(rows[0]["vms"]), int(rows[0]["sessions"])
 
 
 async def live(db: Any, *states: str) -> list[VmRow]:
@@ -122,7 +153,7 @@ async def insert(
     org_id: str | None = None,
     wg_id: str | None = None,
 ) -> VmRow:
-    """Insert a row; a second live VM of the workgroup raises `vm_exists` (partial unique index)."""
+    """Insert a row; an ID or Lima name that exists already raises `vm_exists`."""
     try:
         rows = await _rows(
             db,

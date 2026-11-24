@@ -434,7 +434,7 @@ describe('assigning', () => {
     mount(w, at, `/o/${w.org}/devices`);
     fireEvent.click(screen.getByTestId('devices.assign.open'));
     await waitFor(() => expect(screen.getByTestId('devices.assign.none')).toBeVisible());
-    fireEvent.change(screen.getByTestId('devices.assign.wg'), { target: { value: one } });
+    fireEvent.change(screen.getByTestId('devices.assign.scope'), { target: { value: one } });
     expect(screen.getByTestId('devices.assign.loading')).toBeVisible();
     release();
     await waitFor(() => expect(screen.getAllByTestId('devices.assign.candidate')).toHaveLength(2));
@@ -470,7 +470,7 @@ describe('assigning', () => {
     await waitFor(() =>
       expect(screen.getByTestId('devices.assign.load-error')).toHaveAttribute('data-code', 'forbidden'),
     );
-    fireEvent.change(screen.getByTestId('devices.assign.wg'), { target: { value: one } });
+    fireEvent.change(screen.getByTestId('devices.assign.scope'), { target: { value: one } });
     fireEvent.click(await screen.findByRole('radio'));
     await waitFor(() => expect(screen.getByTestId('devices.assign.confirm')).toBeEnabled());
     fireEvent.click(screen.getByTestId('devices.assign.confirm'));
@@ -492,6 +492,135 @@ describe('assigning', () => {
     await waitFor(() => expect(screen.queryByTestId('devices.to-wg')).toBeNull());
     expect(w.world.state.assigned(dev2.id, one)).toBe(true);
     await waitFor(() => expect(within(item(dev2.id)).getByTestId('devices.item.wgs')).toHaveTextContent('One'));
+  });
+});
+
+describe('the whole organization (ADR-075)', () => {
+  it('shows the capacity details, the VMs with workgroup and sessions, and "Whole organization"', async () => {
+    const { w, one, devices } = await deviceWorld({ as: 'bob' });
+    const dev1 = w.others.dev1;
+    devices[0] = hubRow(dev1.id, {
+      capacity: {
+        ...CAPACITY,
+        cpus: 8,
+        memory_total_mib: 16384,
+        disk_free_mib: 102912,
+        vms_running: 2,
+        sessions_active: 4,
+        sessions_per_vm: 16,
+        vms_max: 0,
+      },
+      vms: [
+        { vm_id: 'vm-1a2b3c4d', wg_id: one, state: 'running', sessions: 3 },
+        { vm_id: 'vm-5e6f7a8b', wg_id: 'unknown-wg', state: 'stopped', sessions: 0 },
+      ],
+    });
+    devices[1] = hubRow(w.others.dev2.id, {
+      capacity: { ...CAPACITY, sessions_per_vm: 0, vms_max: 4 },
+      vms: [{ vm_id: 'vm-9c9c9c9c', wg_id: one, state: 'running', sessions: 5 }],
+    });
+    await w.world.batch(w.others.ada, [{ type: 'device_assign_org', device: dev1.id }]);
+    await w.sync();
+    mount(w, at, `/o/${w.org}/devices`);
+    await waitFor(() => expect(within(item(dev1.id)).getByTestId('devices.item.details')).toBeVisible());
+    const row = item(dev1.id);
+    expect(row).toHaveAttribute('data-assigned-org', 'true');
+    expect(item(w.others.dev2.id)).toHaveAttribute('data-assigned-org', 'false');
+    expect(within(row).getByTestId('devices.item.org')).toHaveTextContent('Whole organization');
+    const details = within(row).getByTestId('devices.item.details');
+    for (const text of [
+      'CPUs: 8',
+      'Memory: 16 GiB',
+      'Free disk: 100.5 GiB',
+      'Running VMs: 2',
+      'Active sessions: 4',
+      'Sessions per VM: up to 16',
+      'VMs: as many as the memory allows',
+    ]) {
+      expect(details).toHaveTextContent(text);
+    }
+    const vms = within(row).getAllByTestId('devices.vm');
+    expect(vms[0]).toHaveTextContent('vm-1a2b3c4d · One · 3 of 16 sessions');
+    expect(vms[0]).toHaveAttribute('data-wg', one);
+    expect(vms[0]).toHaveAttribute('data-sessions', '3');
+    expect(vms[1]).toHaveTextContent('vm-5e6f7a8b · Workgroup · 0 of 16 sessions');
+    const other = item(w.others.dev2.id);
+    expect(within(other).getByTestId('devices.item.details')).toHaveTextContent('Sessions per VM: no limit');
+    expect(within(other).getByTestId('devices.item.details')).toHaveTextContent('VMs: up to 4');
+    expect(within(other).getByTestId('devices.vm')).toHaveTextContent('vm-9c9c9c9c · One · 5 sessions');
+    expect(screen.queryByTestId('devices.unassign-org')).toBeNull();
+    expect(screen.queryByTestId('devices.item.assign-org')).toBeNull();
+  });
+
+  it('gives a listed device to the whole organization with the plain notice and removes it again', async () => {
+    const { w, one } = await deviceWorld();
+    const dev2 = w.others.dev2;
+    w.world.add(dev2);
+    mount(w, at, `/o/${w.org}/devices`);
+    fireEvent.click(within(item(dev2.id)).getByTestId('devices.item.assign-org'));
+    expect(screen.getByTestId('devices.assign.org-notice')).toHaveTextContent('receives the keys of every workgroup');
+    fireEvent.click(screen.getByTestId('devices.assign-org.confirm'));
+    await waitFor(() => expect(screen.queryByTestId('devices.assign-org')).toBeNull());
+    expect(w.world.state.orgAssigned(dev2.id)).toBe(true);
+    await waitFor(() => expect(item(dev2.id)).toHaveAttribute('data-assigned-org', 'true'));
+    expect(within(item(dev2.id)).queryByTestId('devices.item.to-wg')).toBeNull();
+    expect(within(item(dev2.id)).queryByTestId('devices.item.assign-org')).toBeNull();
+    fireEvent.click(within(item(dev2.id)).getByTestId('devices.unassign-org'));
+    fireEvent.click(screen.getByTestId('devices.unassign-org.confirm'));
+    await waitFor(() => expect(item(dev2.id)).toHaveAttribute('data-assigned-org', 'false'));
+    expect(w.world.state.assigned(dev2.id, w.world.defaultWg)).toBe(true);
+    expect(w.world.state.assigned(dev2.id, one)).toBe(false);
+  });
+
+  it('gives a listed platform device to the organization by its certification', async () => {
+    const { w, pdev } = await deviceWorld({ private: true });
+    w.world.add(pdev);
+    mount(w, at, `/o/${w.org}/devices`);
+    fireEvent.click(within(item(pdev.id)).getByTestId('devices.item.assign-org'));
+    fireEvent.click(screen.getByTestId('devices.assign-org.confirm'));
+    await waitFor(() => expect(screen.queryByTestId('devices.assign-org')).toBeNull());
+    expect(w.world.state.orgAssigned(pdev.id)).toBe(true);
+  });
+
+  it('offers only the whole organization to a device that has every workgroup already', async () => {
+    const { w } = await deviceWorld();
+    mount(w, at, `/o/${w.org}/devices`);
+    fireEvent.click(within(item(w.others.dev1.id)).getByTestId('devices.item.to-wg'));
+    expect(screen.getByTestId('devices.to-wg.wg')).toHaveValue('org');
+    expect(screen.getByTestId('devices.assign.org-notice')).toBeVisible();
+  });
+
+  it('gives a platform device to the organization from the candidates of the default workgroup', async () => {
+    const { w, pdev } = await deviceWorld({ private: true });
+    w.world.add(pdev);
+    const candidate = { device_id: pdev.id, platform_seq: 2, pub: pdev.identity.public(), online: true };
+    w.client.on(`GET /v1/workgroups/${w.world.defaultWg}/device-candidates`, () => ({ candidates: [candidate] }));
+    mount(w, at, `/o/${w.org}/devices`);
+    fireEvent.click(screen.getByTestId('devices.assign.open'));
+    expect(screen.queryByTestId('devices.assign.org-notice')).toBeNull();
+    fireEvent.change(screen.getByTestId('devices.assign.scope'), { target: { value: 'org' } });
+    expect(screen.getByTestId('devices.assign.org-notice')).toBeVisible();
+    fireEvent.click(await screen.findByRole('radio'));
+    fireEvent.click(screen.getByTestId('devices.assign.confirm'));
+    await waitFor(() => expect(screen.queryByTestId('devices.assign')).toBeNull());
+    expect(w.world.state.orgAssigned(pdev.id)).toBe(true);
+  });
+
+  it('offers the whole organization in the workgroup dialog of an org device and says why the runner refuses', async () => {
+    const { w } = await deviceWorld();
+    const dev2 = w.others.dev2;
+    w.client.on(`POST /v1/orgs/${w.org}/log`, () => {
+      throw new HubError('peer_outdated', 409);
+    });
+    mount(w, at, `/o/${w.org}/devices`);
+    fireEvent.click(within(item(dev2.id)).getByTestId('devices.item.to-wg'));
+    expect(screen.queryByTestId('devices.assign.org-notice')).toBeNull();
+    fireEvent.change(screen.getByTestId('devices.to-wg.wg'), { target: { value: 'org' } });
+    expect(screen.getByTestId('devices.assign.org-notice')).toBeVisible();
+    fireEvent.click(screen.getByTestId('devices.to-wg.confirm'));
+    await waitFor(() =>
+      expect(screen.getByTestId('devices.to-wg.error')).toHaveTextContent('A device needs an update'),
+    );
   });
 });
 

@@ -68,6 +68,8 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "community_not_member": (409,),
     "community_epoch_exists": (409,),
     "community_no_key": (409,),
+    "placement_invalid": (409,),
+    "placement_forbidden": (403,),
     "invite_expired": (410,),
     "quota_exceeded": (413,),
     "rate_limited": (429,),

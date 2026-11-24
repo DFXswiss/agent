@@ -61,7 +61,7 @@ def check_admits(
     if admits:
         devices = [p.id for p in state.principals.values() if p.kind == DEVICE and p.active and p.id not in excluded]
         _require_features(connection, devices)
-    assigned = [body["device"] for body in bodies if body["type"] == "device_assign"]
+    assigned = [body["device"] for body in bodies if body["type"] in ("device_assign", "device_assign_org")]
     if assigned and any(cast(Body, entry["body"])["type"] == "admit" for entry in log.entries):
         _require_features(connection, assigned)
     return admits

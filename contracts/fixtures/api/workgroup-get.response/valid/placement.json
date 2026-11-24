@@ -1,0 +1,39 @@
+{
+  "wg_id": "01930002-0000-7000-8000-000000000002",
+  "org_id": "01930001-0000-7000-8000-000000000001",
+  "is_default": true,
+  "epoch": 1,
+  "devices": [
+    {
+      "device_id": "01930014-0000-7000-8000-000000000014",
+      "kind": "platform",
+      "online": true,
+      "capacity": {
+        "vm_memory_budget_mib": 65536,
+        "vm_memory_used_mib": 8192,
+        "vm_slots_total": 8,
+        "vm_slots_free": 6,
+        "pool_ready": 2
+      },
+      "capacity_low": false,
+      "assigned_via": "org",
+      "vms": [
+        {
+          "vm_id": "vm-0a1b2c3d",
+          "state": "running",
+          "sessions": 3
+        }
+      ]
+    }
+  ],
+  "members": [
+    {
+      "user_id": "0193000a-0000-7000-8000-00000000000a",
+      "access": "write"
+    }
+  ],
+  "placement": {
+    "device_id": "0193000d-0000-7000-8000-00000000000d",
+    "vm_id": null
+  }
+}

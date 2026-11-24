@@ -202,10 +202,11 @@ class SessionTransitionBody(Strict):
     model_access: ModelAccess | None = None
     model_id: ModelId | None = None
     claude_session_id_present: bool | None = None
+    vm_id: VmId | None = None
 
     @model_validator(mode="after")
     def _optional_fields(self) -> SessionTransitionBody:
-        _absent_not_null(self, ("agent_version", "model_access", "model_id", "claude_session_id_present"))
+        _absent_not_null(self, ("agent_version", "model_access", "model_id", "claude_session_id_present", "vm_id"))
         return self
 
 

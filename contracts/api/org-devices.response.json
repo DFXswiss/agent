@@ -48,6 +48,45 @@
             },
             "minItems": 0,
             "maxItems": 10000
+          },
+          "assigned_org": {
+            "type": "boolean"
+          },
+          "vms": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "vm_id": {
+                  "$ref": "../common.json#/$defs/vm_id"
+                },
+                "wg_id": {
+                  "$ref": "../common.json#/$defs/uuid"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "pool",
+                    "assigning",
+                    "running",
+                    "stopping",
+                    "stopped"
+                  ]
+                },
+                "sessions": {
+                  "$ref": "../common.json#/$defs/count"
+                }
+              },
+              "required": [
+                "vm_id",
+                "wg_id",
+                "state",
+                "sessions"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0,
+            "maxItems": 10000
           }
         },
         "required": [

@@ -157,20 +157,22 @@ def test_two_sessions_of_one_workgroup_get_one_vm(harness: Harness) -> None:
     assert [argv[0] for argv, _ in harness.fake.calls].count("clone") == 2
 
 
-def test_unique_index_refuses_a_second_live_vm(harness: Harness) -> None:
+def test_a_workgroup_may_have_several_live_vms(harness: Harness) -> None:
+    """ADR-075 section 4 (migration 0018): no unique index on the workgroup; an ID or name twice is refused."""
+
     async def body(manager: VmManager) -> Any:
         kwargs: dict[str, Any] = {"golden_version": GOLDEN, "state": "running", "token_sha256": "x", "cpus": 1,
                                   "memory_mib": 1, "created_at": NOW, "org_id": ORG, "wg_id": WG_A}  # fmt: skip
-        await records.insert(manager.env.db, vm_id="vm-00000001", lima_name="a", **kwargs)
+        await records.insert(manager.env.db, vm_id="vm-00000002", lima_name="a", **kwargs)
+        await records.insert(manager.env.db, vm_id="vm-00000001", lima_name="b", **kwargs)
         with pytest.raises(RunnerError) as caught:
-            await records.insert(manager.env.db, vm_id="vm-00000002", lima_name="b", **kwargs)
-        await records.update(manager.env.db, "vm-00000001", state="deleted")
-        await records.insert(manager.env.db, vm_id="vm-00000003", lima_name="c", **kwargs)
+            await records.insert(manager.env.db, vm_id="vm-00000003", lima_name="b", **kwargs)
         with pytest.raises(RunnerError) as unknown:
             await records.update(manager.env.db, "vm-0000000f", state="deleted")
-        return caught.value.code, unknown.value.code
+        found = [row.id for row in await records.of_workgroup(manager.env.db, WG_A)]
+        return caught.value.code, unknown.value.code, found
 
-    assert harness.run(body, reconcile=False) == ("vm_exists", "vm_unknown")
+    assert harness.run(body, reconcile=False) == ("vm_exists", "vm_unknown", ["vm-00000001", "vm-00000002"])
 
 
 # -- restart and golden replacement -----------------------------------------------------------------------------
@@ -457,8 +459,8 @@ def test_delete_workgroup(harness: Harness) -> None:
         return deleted, none, await cursor.load_cursor(manager.env.db, row.id)
 
     deleted, none, position = harness.run(body)
-    assert deleted.state == "deleted"
-    assert none is None
+    assert [item.state for item in deleted] == ["deleted"]
+    assert none == []
     assert position == 0
     assert row.lima_name not in harness.fake.instances
     assert not harness.tokens_dir.joinpath(f"{row.id}.token").exists()

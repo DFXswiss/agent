@@ -23,5 +23,11 @@
   "send": "Send",
   "offline": "Offline",
   "send.shortcut": "Ctrl/⌘ + Enter",
-  "devices": "Open devices"
+  "device.label": "Device",
+  "device.auto": "Automatic",
+  "device.offline": "{name} (offline)",
+  "vm.label": "VM",
+  "vm.any": "Any VM",
+  "vm.sessions": "{vm} · {sessions} sessions",
+  "vm.sessions-of": "{vm} · {sessions} of {limit} sessions"
 }

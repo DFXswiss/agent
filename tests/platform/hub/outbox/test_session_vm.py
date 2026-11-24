@@ -46,3 +46,41 @@ def test_a_transition_takes_the_running_vm_of_its_workgroup(outbox: Outbox) -> N
     outbox.desk.execute("UPDATE hub.session SET vm_id = NULL WHERE id = %s", session)
     outbox.ok(outbox.transition(4, session, "working"))
     assert _vm_of(outbox, session) == vm
+
+
+def _choose_vms(outbox: Outbox) -> None:
+    """The device announced the feature `vm.choice` (several VMs per workgroup, ADR-075)."""
+    outbox.desk.execute(
+        "UPDATE hub.device SET features = '{vm.choice}' WHERE id = %s",
+        outbox.scene.device.id,
+    )
+
+
+def test_a_device_that_chooses_vms_names_the_vm_of_each_session(outbox: Outbox) -> None:
+    _choose_vms(outbox)
+    _task, session = outbox.session()
+    _task2, second = outbox.session()
+    first_vm, second_vm = new_vm(), new_vm()
+    outbox.ok(outbox.vm(1, first_vm, "running"))
+    assert (_vm_of(outbox, session), _vm_of(outbox, second)) == (None, None)  # no workgroup-wide link
+    outbox.ok(outbox.transition(2, session, "idle"))
+    assert _vm_of(outbox, session) is None
+    outbox.ok(outbox.transition(3, session, "working", vm_id=first_vm))
+    outbox.ok(outbox.vm(4, second_vm, "running"))
+    outbox.ok(outbox.transition(5, second, "idle", vm_id=second_vm))
+    assert (_vm_of(outbox, session), _vm_of(outbox, second)) == (first_vm, second_vm)
+
+
+def test_a_named_vm_of_another_device_or_workgroup_is_ignored(outbox: Outbox) -> None:
+    _choose_vms(outbox)
+    _task, session = outbox.session()
+    foreign = new_vm()
+    outbox.desk.execute(
+        "INSERT INTO hub.vm (id, device_id, wg_id, state, golden_version, cpus, memory_mib, disk_gib, created_at,"
+        " state_at) VALUES (%s, %s, %s, 'running', 'golden-1', 4, 8192, 20, now(), now())",
+        foreign,
+        outbox.scene.other_device.id,
+        outbox.desk.wg,
+    )
+    outbox.ok(outbox.transition(1, session, "idle", vm_id=foreign))
+    assert _vm_of(outbox, session) is None

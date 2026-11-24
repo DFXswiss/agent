@@ -10,7 +10,10 @@
   every member, ADR-024 addendum: not reducible, plus `read` on every other workgroup for every admin without explicit
   access, marked `inherited`, ADR-058); a new or changed access (level or `inherited`) sets `granted_seq` and clears
   `revoked_seq`, a lost access sets `revoked_seq` (ungrant, remove, demotion);
-- `wg_device`: the assignments of active devices with `assigned_seq`/`unassigned_seq`;
+- `wg_device`: the effective assignments of active devices (explicit and through the organization, ADR-075: a device
+  assigned to the organization has a row for every workgroup, also for one created later) with
+  `assigned_seq`/`unassigned_seq`;
+- `org_device`: the assignments of devices to the whole organization (`device_assign_org`, ADR-075);
 - `scope_epoch`: every new epoch of an `org`/`wg` scope with `created_seq` and the receipt time.
 
 The incremental path (`agent_hub.orgs.append`) and the rebuild (`rebuild_org`) both fold `project_entry` over the
@@ -53,10 +56,19 @@ def effective_access(state: OrgState | None) -> dict[tuple[str, str], tuple[str,
 
 
 def effective_assignments(state: OrgState | None) -> set[tuple[str, str]]:
-    """`(device, wg)` of every active device."""
+    """`(device, wg)` of every active device, explicit and through the organization."""
     if state is None:
         return set()
-    return {key for key in state.assignments if state.member(key[0]) is not None}
+    found = {key for key in state.assignments if state.member(key[0]) is not None}
+    found |= {(device, wg) for device in state.org_assignments if state.org_assigned(device) for wg in state.workgroups}
+    return found
+
+
+def org_assignments(state: OrgState | None) -> set[str]:
+    """The active devices assigned to the whole organization."""
+    if state is None:
+        return set()
+    return {device for device in state.org_assignments if state.org_assigned(device)}
 
 
 def _members(connection: Connection, org: UUID, before: OrgState | None, after: OrgState, seq: int) -> None:
@@ -125,6 +137,21 @@ def _devices(connection: Connection, before: OrgState | None, after: OrgState, s
         )
 
 
+def _org_devices(connection: Connection, org: UUID, before: OrgState | None, after: OrgState, seq: int) -> None:
+    old, new = org_assignments(before), org_assignments(after)
+    for device in sorted(new - old):
+        connection.execute(
+            "INSERT INTO hub.org_device (org_id, device_id, assigned_seq, unassigned_seq) VALUES (%s, %s, %s, NULL)"
+            " ON CONFLICT (org_id, device_id) DO UPDATE"
+            " SET assigned_seq = EXCLUDED.assigned_seq, unassigned_seq = NULL",
+            (org, device, seq),
+        )
+    for device in sorted(old - new):
+        connection.execute(
+            "UPDATE hub.org_device SET unassigned_seq = %s WHERE org_id = %s AND device_id = %s", (seq, org, device)
+        )
+
+
 def _epochs(connection: Connection, before: OrgState | None, after: OrgState, seq: int, at: datetime) -> None:
     for (scope, scope_id), epoch in sorted(after.epochs.items()):
         if before is None or before.epoch(scope, scope_id) != epoch:
@@ -143,6 +170,7 @@ def project_entry(
     _workgroups(connection, org, before, after, seq)
     _access(connection, before, after, seq)
     _devices(connection, before, after, seq)
+    _org_devices(connection, org, before, after, seq)
     _epochs(connection, before, after, seq, at)
 
 
@@ -158,7 +186,9 @@ def pending_rotation(state: OrgState, platform: PlatformState | None) -> list[Sc
     for device in sorted(excluded):
         if state.device_wgs(device):
             unassigned = replace(
-                state, assignments={key: seq for key, seq in state.assignments.items() if key[0] != device}
+                state,
+                assignments={key: seq for key, seq in state.assignments.items() if key[0] != device},
+                org_assignments={key: seq for key, seq in state.org_assignments.items() if key != device},
             )
             owed |= rotation.required_set(state, unassigned, device)
     return sorted(owed)
@@ -194,6 +224,7 @@ def clear_org(connection: Connection, org: UUID, wgs: Iterable[str] = ()) -> Non
     )
     connection.execute(f"DELETE FROM hub.wg_access WHERE wg_id IN {scoped}", (org, ids))
     connection.execute(f"DELETE FROM hub.wg_device WHERE wg_id IN {scoped}", (org, ids))
+    connection.execute("DELETE FROM hub.org_device WHERE org_id = %s", (org,))
     connection.execute("DELETE FROM hub.wg WHERE org_id = %s OR id = ANY(%s::uuid[])", (org, ids))
     connection.execute("DELETE FROM hub.org_member WHERE org_id = %s", (org,))
 

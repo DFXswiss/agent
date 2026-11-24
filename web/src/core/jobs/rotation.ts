@@ -3,7 +3,8 @@
 // hub's `rotation_pending` of an org is derived from two facts the browser verifies itself, so the job works from the
 // verified logs only (a hub cannot make a browser rotate or unassign anything the logs do not owe):
 // 1. platform devices of the org whose certification ended (verified platform log, refreshed first) but that are still
-//    assigned: an admin owes `device_unassign` for every workgroup of such a device plus R (built by `buildBatch`);
+//    assigned: an admin owes `device_unassign_org` (assigned to the organization, ADR-075) and `device_unassign` for
+//    every explicit assignment of such a device plus R (built by `buildBatch`);
 // 2. scopes a member could read before leaving by itself or an admin before demoting itself (`OrgState.pending`):
 //    one `rotate` per scope the user may rotate (org: admin; workgroup: admin or writer), with the wraps of the new
 //    epochs for every reader;
@@ -15,6 +16,7 @@
 // nothing to do. Nothing is shown (key handling stays out of sight, ADR-058 section 4).
 import type { LogFields } from '../log/entries';
 import type { PlatformState } from '../log/platform';
+import { unassignAll } from '../log/rotation';
 import { ORG, WG, WRITE } from '../log/state';
 import type { KeyRing } from '../log/catchup';
 import { keyRing, type OrgContext, type Planner, submitBatch } from '../org/batch';
@@ -31,9 +33,7 @@ export function owedPlanner(platform: PlatformState | null, held: KeyRing = () =
   return (log, me) => {
     const state = log.state;
     if (platform !== null && state.isAdmin(me)) {
-      const entries: LogFields[] = platform
-        .excluded(state)
-        .flatMap((device) => state.deviceWgs(device).map((wg): LogFields => ({ type: 'device_unassign', device, wg })));
+      const entries = platform.excluded(state).flatMap((device) => unassignAll(state, device));
       if (entries.length > 0) return { entries };
     }
     const entries = state

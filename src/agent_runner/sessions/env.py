@@ -10,7 +10,7 @@ and the clocks.
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -28,7 +28,15 @@ from agent_runner.vm.records import VmRow
 class Vms(Protocol):
     """The part of `vm.lifecycle.VmManager` the session area uses."""
 
-    async def ensure_vm(self, org_id: str, wg_id: str) -> VmRow: ...
+    async def ensure_vm(
+        self,
+        org_id: str,
+        wg_id: str,
+        *,
+        session_id: str | None = None,
+        prefer: Sequence[str] = (),
+        new_allowed: bool = True,
+    ) -> VmRow: ...
 
     async def client(self, row: VmRow) -> GuestClient: ...
 

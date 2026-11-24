@@ -3,8 +3,10 @@
 `Starter.start(desired)` runs the steps for one session the hub scheduled on this device:
 
 0. local row `requested` (a session already known locally is never started twice);
-1. `vm_assigning`: `VmManager.ensure_vm` (running VM of the workgroup -> restart of a stopped one, or its golden
-   replacement -> pool -> clone);
+1. `vm_assigning`: `VmManager.ensure_vm` in the order of ADR-075 section 4 (the hub's `vm_id_pref`, then the VM
+   of the parent session for a subagent or of the `resume_from` session, then a running VM of the workgroup with
+   room -> a stopped one with room, or its golden replacement -> pool -> clone when the hub allows a new VM
+   (`vm_new_allowed`)); the session row names its VM from then on and every later transition carries it;
 2. `vm_ready`: guest health assigned to this workgroup; the journal task starts reading the VM;
 3. model access and its credential (`model.access`: the owner's subscription or API key, or the platform key);
 4. `sandbox_ready`: `POST /v1/sessions` (harness context, model, initial prompt, limits; then changed by the request
@@ -258,19 +260,35 @@ class Starter:
             # token file or instance directory gone: the VM cannot be reached
             raise StartFailed("guest_unreachable") from None
 
+    async def _origin_vm(self, desired: Desired) -> str | None:
+        """The VM of the session this one continues: the parent of a subagent, else the `resume_from` session."""
+        origin = desired.parent_session_id or desired.resume_from
+        if origin is None:
+            return None
+        async with self.env.transaction() as conn:
+            found = await records.get(conn, origin)
+        return None if found is None else found.vm_id
+
     async def _ensure_vm(self, desired: Desired, timer: StartTimer) -> VmRow:
         env = self.env
-        before = await vm_records.for_workgroup(env.db, desired.wg_id)
+        before = {row.id: row.state for row in await vm_records.of_workgroup(env.db, desired.wg_id)}
         pool = {row.id for row in await vm_records.live(env.db, "pool")}
+        prefer = [vm for vm in (desired.vm_id_pref, await self._origin_vm(desired)) if vm is not None]
         try:
-            row = await env.vms.ensure_vm(desired.org_id, desired.wg_id)
+            row = await env.vms.ensure_vm(
+                desired.org_id,
+                desired.wg_id,
+                session_id=desired.session_id,
+                prefer=prefer,
+                new_allowed=desired.vm_new_allowed,
+            )
         except RunnerError as exc:
             raise StartFailed(exc.code if exc.code in VM_REASONS else "vm_start_failed") from None
         except Exception as exc:
             env.line(f"vm_error session_id={desired.session_id} error={type(exc).__name__}")
             raise StartFailed("vm_start_failed") from None
-        if before is not None and before.id == row.id:
-            timer.path = "running" if before.state == "running" else "restart"
+        if row.id in before:
+            timer.path = "running" if before[row.id] == "running" else "restart"
         else:
             timer.path = "pool" if row.id in pool else "clone"
         self.observe(desired.session_id, "vm")

@@ -2,11 +2,14 @@
 
 The hub is untrusted (00-overview.md section 3, B2): only the fields the session step needs are read and each is
 checked; a malformed list fails the step (`wire.ResponseInvalid`). Whether the device may act on a session is decided
-against the verified membership log by the step, never by this list.
+against the verified membership log by the step, never by this list. `resume_from`, `vm_id_pref` and `vm_new_allowed`
+(ADR-075 section 4) are optional: absent, there is no previous session, no preferred VM, and a new VM is allowed. A
+preferred VM is only a preference: the VM manager takes it only when it is a live VM of the session's workgroup.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +34,7 @@ SESSION_STATES = frozenset(
     }
 )
 PREFERENCES = frozenset({"auto", "subscription", "api_key", "platform"})
+_VM_ID_RE = re.compile(r"^vm-[0-9a-f]{8}$")
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,9 @@ class Desired:
     owner_id: str
     model_access_pref: str
     model_id_pref: str | None
+    resume_from: str | None = None
+    vm_id_pref: str | None = None
+    vm_new_allowed: bool = True
 
 
 def _text(value: object, what: str, allowed: frozenset[str] | None = None, *, maximum: int = 128) -> str:
@@ -60,6 +67,13 @@ def parse(item: object) -> Desired:
     depth = data.get("depth")
     if isinstance(depth, bool) or not isinstance(depth, int) or not 0 <= depth <= 2:
         raise wire.ResponseInvalid("sessions")
+    resume = data.get("resume_from")
+    vm = data.get("vm_id_pref")
+    if vm is not None and (not isinstance(vm, str) or not _VM_ID_RE.fullmatch(vm)):
+        raise wire.ResponseInvalid("sessions")
+    new_allowed = data.get("vm_new_allowed", True)
+    if not isinstance(new_allowed, bool):
+        raise wire.ResponseInvalid("sessions")
     return Desired(
         session_id=wire.uuid_text(data.get("session_id"), "sessions"),
         task_id=wire.uuid_text(data.get("task_id"), "sessions"),
@@ -71,6 +85,9 @@ def parse(item: object) -> Desired:
         owner_id=wire.uuid_text(data.get("owner_id"), "sessions"),
         model_access_pref=_text(data.get("model_access_pref"), "sessions", PREFERENCES),
         model_id_pref=None if model is None else _text(model, "sessions"),
+        resume_from=None if resume is None else wire.uuid_text(resume, "sessions"),
+        vm_id_pref=vm,
+        vm_new_allowed=new_allowed,
     )
 
 

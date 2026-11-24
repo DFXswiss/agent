@@ -4,7 +4,7 @@
   "current": "{step} – {seconds} s",
   "waiting": "Waiting for {seconds} s",
   "reason.device_offline": "The execution device is offline – the task starts as soon as it is back.",
-  "reason.capacity_exhausted": "All execution slots are busy – the task starts as soon as one is free.",
+  "reason.capacity_exhausted": "All execution devices are full – the task starts by itself as soon as there is room.",
   "reason.unknown": "Waiting for an execution device.",
   "ready": "Ready in {seconds} s",
   "retry": "Retry",
@@ -20,5 +20,15 @@
   "step.agent_starting": "Starting the agent",
   "step.prompt_delivering": "Delivering the prompt",
   "step.working": "Agent working",
-  "step.elapsed": "+{seconds} s"
+  "step.elapsed": "+{seconds} s",
+  "reason.wg_vm_limit": "The workgroup uses as many VMs as allowed – the task starts when one of them has room.",
+  "reason.placement_full": "The chosen device {device} is full – the task starts as soon as it has room.",
+  "reason.no_device": "No execution device is assigned to this workgroup.",
+  "reason.placement_offline": "The chosen device {device} is offline – the task starts as soon as it is back.",
+  "reason.keys_pending": "The device with room is still receiving the keys of this workgroup – the task starts as soon as they are there.",
+  "reason.platform_access_required": "This organization has no execution device yet – the operator has been notified.",
+  "chosen-device": "device",
+  "assign-device": "Assign a device",
+  "ask-admin": "An admin of the organization can assign one.",
+  "choose-automatic": "Choose automatically"
 }

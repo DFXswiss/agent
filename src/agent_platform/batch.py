@@ -12,6 +12,10 @@ checking code is the copy of the reference (`agent_runner.crypto.log`). The call
 the user still reads (`Account.learn`), so events of the same batch and later ones use the new epochs. Workgroups
 named in `by_catch_up` may lack a key the user does not hold (an `admit` of an admin that is no member there,
 ADR-060): those wraps are left to the holders' catch-up.
+
+With `held_only` the wraps for newly entitled principals cover only the current epochs the user holds (an assignment
+to the whole organization wraps `OK` and every `WK` the admin has; the remaining keys reach the device by catch-up,
+ADR-075 section 5); otherwise a missing key refuses the batch (`epoch_stale`).
 """
 
 from __future__ import annotations
@@ -116,6 +120,7 @@ def build_batch(
     invite: Ed25519PrivateKey | None = None,
     history: bool = False,
     by_catch_up: frozenset[str] = frozenset(),
+    held_only: bool = False,
 ) -> Built:
     """The batch of the module docstring; refusals are `CryptoError`s with the hub's codes."""
     founder = identity.public()["sig"]
@@ -159,6 +164,8 @@ def build_batch(
         if key is None and slot.scope == WG and slot.scope_id in by_catch_up:
             continue  # a key the user does not hold: its holders deliver it by catch-up (04-crypto.md section 5.11)
         if key is None:
+            if held_only:
+                continue
             fail("epoch_stale")
         wraps.append(make_wrap(identity, slot, _kem(state, slot.recipient), key))
     check_batch(log, entries, wraps, wrapped_by=author, founder=founder, platform=platform, excluded=skip)

@@ -236,6 +236,9 @@ with:
   (e.g. "Summarize the current state of …"), "GitHub pull request: …" (if GitHub is not connected the chip first
   offers "Connect GitHub", §8.1), "Explain this repository: …", "Write a short plan for …".
 - Free-text prompt field (multi-line; send with button; `Ctrl/⌘+Enter` on desktop).
+- **Device choice** (ADR-075 §6): a compact selector "Device: Automatic" listing the devices assigned to the chosen
+  workgroup and, per device, "Any VM" and its live VMs with their sessions ("vm-1a2b3c4d · 3 of 16 sessions");
+  preselected with the workgroup's default. The choice goes into `POST /v1/tasks` as `placement`.
 
 Every send creates a task (KONZEPT §2), even for a short knowledge question.
 
@@ -251,7 +254,7 @@ with `task.set_title` (shown as "renamed by session").
 1. Ensure device (`03-api.md` §4.6.1 step 1): if the workgroup has no assigned device, the user is admin (in a private
    org the single member always is) and the org has platform access (ADR-026), assign the first platform candidate automatically (verify platform log, build
    `device_assign` + wraps of `WK`, `OK`, own `CK` batch). Shown as the first countdown step "Assigning execution
-   device". If not allowed or no candidate: message `no_device_available` with a link to `/o/:org/devices`.
+   device". If not allowed or no candidate the task is still created and waits (step 2; §4.4 shows the follow-up).
 2. Encrypt `task.meta` and `prompt` (scope wg, `lh` = verified head), `POST /v1/tasks`.
 3. Navigate to `/o/:org/t/:task` immediately; the chat shows the prompt and the countdown panel.
 
@@ -265,9 +268,15 @@ with `task.set_title` (shown as "renamed by session").
   `hello.hub_time` is applied). The current step is highlighted.
 - Countdown reaches 0 before `working`: the digits are replaced by **"Delayed"**, the current step and a live elapsed
   counter ("Starting the agent – 12.4 s"). The panel stays until `working` or `failed`.
-- `estimate_ms` is null (`scheduling`): instead of digits the panel shows the real reason: `device_offline`
-  ("The execution device is offline – the task starts as soon as it is back"), `capacity_exhausted` ("All execution
-  slots are busy …"), with elapsed time.
+- `estimate_ms` is null (`scheduling`): instead of digits the panel shows the real reason, with elapsed time, in
+  two kinds (ADR-075 §7): **waiting for room** – `capacity_exhausted` ("All execution devices are full – the task
+  starts by itself as soon as there is room"), `wg_vm_limit` ("The workgroup uses as many VMs as allowed – the task
+  starts when one of them has room"); **waiting for a device** – `device_offline` ("The execution device is offline
+  – the task starts as soon as it is back"), `no_device` ("No execution device is assigned to this workgroup" with
+  the button "Assign a device" for admins, which assigns the first candidate as in §4.3 step 1, else "An admin of the
+  organization can assign one"), `platform_access_required` ("This organization has no execution device yet – the
+  operator has been notified"). A chosen device that is busy or offline says so with its name.
+- The task header and the sessions tab name device and VM of the running session ("on <device> · vm-…").
 - `working` reached: panel collapses into a one-line summary "Ready in 4.2 s" (kept in the chat timeline).
 - `failed`: error from the catalog (`state_reason`) and "Retry" (sends the same prompt as a follow-up, §5.2).
 
@@ -457,7 +466,9 @@ event); the note says "Every admin of the organization can read it. You can writ
 ### 7.3 Devices (`/o/:org/devices`)
 
 - List: label (decrypted `device.profile`), kind (platform/org), online state, last seen, agent version, assigned
-  workgroups, capacity bar, **capacity-low badge** when `capacity_low` (`03-api.md` §4.6.2).
+  workgroups or **"Whole organization"**, capacity bar, **capacity-low badge** when `capacity_low` (`03-api.md`
+  §4.6.2), and the details CPUs, memory, free disk, running VMs, active sessions, the limits "sessions per VM" and
+  "VMs" and, per VM, its workgroup and sessions ("vm-… · Research · 3 of 16 sessions") (ADR-075).
 - **Add org device** (admin): choose workgroups → code + instructions block:
   `agent-runner enroll --hub <origin> --code <code>` (copy button), expiry 24 h default; the device appears live when
   it accepts.
@@ -468,6 +479,13 @@ event); the note says "Every admin of the organization can read it. You can writ
   verification, batch. The batch wraps the keys the admin holds; the transition rule of ADR-058 §2 (`compatSkip`)
   withholds a workgroup key the admin reads only by inheritance and did not create, which the key holders deliver by
   catch-up.
+- **Assign to the whole organization** (admin; ADR-075 §5): one batch `device_assign_org` + wraps (`OK`, the `WK`s
+  the admin holds, own `CK`); the dialog states plainly: "The device will run tasks of every workgroup, also of
+  workgroups created later. To run them it receives the keys of every workgroup: whoever controls the device can read
+  their tasks, chats and whiteboards and the access data of their members. To keep a workgroup off the device, assign
+  it to single workgroups instead." **Remove from the organization** (`device_unassign_org` + rotation batch).
+- **Default device of a workgroup** (`PUT /v1/workgroups/{wg}/placement`, writers): "Automatic" or a device and
+  optionally a VM; shown in the workgroup list.
 - **Unassign** from a workgroup / **Unpair** (remove from org): confirmation ("the device loses access to new
   content; content it already read stays on the device") + automatic rotation batch (§7.1).
 - Rename (admin, `device.profile`).

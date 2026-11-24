@@ -232,7 +232,9 @@
         "peer_outdated",
         "account_code_invalid",
         "handover_required",
-        "handover_unexpected"
+        "handover_unexpected",
+        "placement_forbidden",
+        "placement_invalid"
       ],
       "description": "codes the hub sends (enums/error-codes.json)"
     },
@@ -520,7 +522,7 @@
     },
     "capacity": {
       "type": "object",
-      "description": "device capacity (02-data-model.md section 2.1)",
+      "description": "device capacity (02-data-model.md section 2.1); the optional counters and settings come from ADR-075 section 2",
       "properties": {
         "vm_memory_budget_mib": {
           "$ref": "#/$defs/count"
@@ -535,6 +537,30 @@
           "$ref": "#/$defs/count"
         },
         "pool_ready": {
+          "$ref": "#/$defs/count"
+        },
+        "cpus": {
+          "$ref": "#/$defs/count"
+        },
+        "memory_total_mib": {
+          "$ref": "#/$defs/count"
+        },
+        "disk_free_mib": {
+          "$ref": "#/$defs/count"
+        },
+        "vms_running": {
+          "$ref": "#/$defs/count"
+        },
+        "sessions_active": {
+          "$ref": "#/$defs/count"
+        },
+        "work_vms_running": {
+          "$ref": "#/$defs/count"
+        },
+        "sessions_per_vm": {
+          "$ref": "#/$defs/count"
+        },
+        "vms_max": {
           "$ref": "#/$defs/count"
         }
       },
@@ -2090,6 +2116,12 @@
         },
         {
           "$ref": "#/$defs/log_body_admit"
+        },
+        {
+          "$ref": "#/$defs/log_body_device_assign_org"
+        },
+        {
+          "$ref": "#/$defs/log_body_device_unassign_org"
         }
       ]
     },
@@ -3237,6 +3269,123 @@
         "size",
         "digest",
         "ts"
+      ],
+      "additionalProperties": false
+    },
+    "task_waiting_reason": {
+      "type": "string",
+      "enum": [
+        "no_device",
+        "platform_access_required",
+        "wg_vm_limit",
+        "placement_full",
+        "placement_offline",
+        "keys_pending"
+      ],
+      "description": "reasons of a waiting (scheduling) task beyond the session failure reasons (03-api.md section 4.6.2, ADR-075 section 7; enums/task-states.json)"
+    },
+    "log_body_device_assign_org": {
+      "type": "object",
+      "description": "body of a device_assign_org entry (ADR-075)",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "device_assign_org"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "device": {
+          "$ref": "#/$defs/uuid"
+        },
+        "platform_seq": {
+          "$ref": "#/$defs/seq"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "device"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_device_unassign_org": {
+      "type": "object",
+      "description": "body of a device_unassign_org entry (ADR-075)",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "device_unassign_org"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "device": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "device"
       ],
       "additionalProperties": false
     }

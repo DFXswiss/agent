@@ -12,8 +12,9 @@ through a signed HTTP fetch by the hint handlers.
   outbox push spacing) first, so a burst of VM changes (pool refill) coalesces into one frame.
 - A normal close by the hub (also when a heartbeat send meets it first) is `ws_closed`, everything else `ws_failed`.
 - The upgrade request announces the runner's capabilities in the header `Agent-Features` (`FEATURES`; ADR-060: the
-  hub admits accounts into an org only while every device of it announced `log.admit`). A header, not a query
-  parameter: an older hub refuses unknown query parameters but ignores unknown headers.
+  hub admits accounts into an org only while every device of it announced `log.admit`; ADR-075: `log.org_assign`
+  for assignments to the whole organization, `vm.choice` for the VM of each session named in its transitions). A
+  header, not a query parameter: an older hub refuses unknown query parameters but ignores unknown headers.
 - Reconnect backoff 1 s doubling to 30 s with ±20 % jitter, reset after a connection that stayed up 30 s
   (legacy `cmd_sync` rule). Redirects are never followed; no proxy is used.
 """
@@ -38,7 +39,7 @@ from agent_runner.sync.push import Pusher, SyncFatal
 
 WS_TARGET = "/v1/device/ws"
 FEATURES_HEADER = "Agent-Features"
-FEATURES = ("log.admit",)
+FEATURES = ("log.admit", "log.org_assign", "vm.choice")
 """What this runner understands: `log.admit` - membership logs with `admit` entries and platform logs with
 `user_certify`/`user_decertify` (the copied verifier of `agent_runner.crypto.log`)."""
 HEARTBEAT_S = 15.0

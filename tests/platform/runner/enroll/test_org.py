@@ -625,3 +625,17 @@ def test_a_store_with_leftovers_of_another_identity_is_refused(case: Case) -> No
     with pytest.raises(RunnerError, match="store_not_empty"):
         enroll(case.config, case.host, OrgHub(OrgWorld()))
     assert load_identity(case.config.home) is None
+
+
+@pytest.mark.parametrize(
+    ("body", "needed"),
+    [
+        ({"type": "device_assign", "platform_seq": 3}, True),
+        ({"type": "device_assign_org", "platform_seq": 3}, True),
+        ({"type": "device_assign_org"}, False),
+        ({"type": "grant", "platform_seq": 3}, False),
+    ],
+)
+def test_platform_assignments_of_both_kinds_need_the_platform_log(body: dict[str, object], needed: bool) -> None:
+    """ADR-075: an assignment to the whole organization of a platform device is verified with the platform log too."""
+    assert org._needs_platform([{"body": body}, "not an entry"]) is needed

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from agent_runner.vm import capacity
 from agent_runner.vm.capacity import Candidate, compute, lru_victim
@@ -89,3 +91,32 @@ def test_lru_victim_rules() -> None:
     # Ties are broken by the VM ID.
     tied = [candidate("vm-0000000b", "wg-x", 9), candidate("vm-0000000a", "wg-y", 9)]
     assert lru_victim(tied, exclude_wg=None, now=NOW, idle_seconds=1800) == tied[1]
+
+
+def test_max_vms_caps_the_slots_and_other_areas_hold_slots_and_memory() -> None:
+    """ADR-075 section 2: `MAX_VMS` caps `vm_slots_total`; the VMs of other areas count against the budget."""
+    host = 32768 + 10 * 8192
+    capped = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[("running", 8192)], max_vms=4)
+    assert (capped.slots_total, capped.slots_free) == (4, 3)
+    # two work VMs of 4 GiB: two slots by count, one by memory -> two slots, 8 GiB used
+    other = capacity.Usage(vms=2, memory_mib=8192)
+    shared = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[], other=other)
+    assert (shared.slots_free, shared.used_mib, shared.other_vms) == (8, 8192, 2)
+    # one large work VM of 20 GiB: three slots by memory
+    large = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[], other=capacity.Usage(1, 20480))
+    assert large.slots_free == 7
+    assert capacity.Usage(1, 2) + capacity.Usage(3, 4) == capacity.Usage(4, 6)
+    assert capacity.Usage() == capacity.NO_USAGE
+
+
+def test_own_usage_and_disk_free() -> None:
+    assert asyncio.run(capacity.USAGE(None)) == capacity.NO_USAGE
+
+    def usage(path: str) -> SimpleNamespace:
+        if path == "/missing":
+            raise FileNotFoundError(path)
+        return SimpleNamespace(free=3 * 1024 * 1024 + 5)
+
+    assert capacity.disk_free_mib("/lima", usage) == 3
+    assert capacity.disk_free_mib("/missing", usage) is None
+    assert isinstance(capacity.disk_free_mib("/"), int)

@@ -43,6 +43,8 @@ def test_real_package_registries() -> None:
     assert all(callable(register) for _area, register in registry.cli_registrars())
     assert "store" in registry.areas()
     assert "sync" in registry.areas()
+    # The VM area's own provider holds nothing (its VMs are counted from `runner.vm`).
+    assert len(registry.capacity_usages()) >= 1
 
 
 def test_tasks_sorted_by_area(area_package: Callable[[dict[str, str]], str]) -> None:
@@ -180,6 +182,16 @@ def test_cli_registrars(area_package: Callable[[dict[str, str]], str]) -> None:
     with pytest.raises(RunnerError) as caught:
         registry.cli_registrars(bad)
     assert (caught.value.code, caught.value.name) == ("registry_invalid", "doctor.cli")
+
+
+def test_capacity_usages(area_package: Callable[[dict[str, str]], str]) -> None:
+    source = "async def USAGE(context):\n    return context\n"
+    pkg = area_package({"b/capacity.py": source, "a/capacity.py": source, "c/other.py": "X = 1\n"})
+    assert len(registry.capacity_usages(pkg)) == 2
+    bad = area_package({"a/capacity.py": "USAGE = 5\n"})
+    with pytest.raises(RunnerError) as caught:
+        registry.capacity_usages(bad)
+    assert (caught.value.code, caught.value.name) == ("registry_invalid", "a.capacity")
 
 
 def test_runner_error_shape() -> None:

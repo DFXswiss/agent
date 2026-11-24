@@ -1,7 +1,8 @@
 """U-HUB-scheduler (capacity refusal, KOR-14): a device that has no free VM slot fails a session start with
 `capacity_exhausted` (05-runner.md section 3.4: "the hub then re-schedules"); the hub starts the next attempt of the
 task at once, on another device with room or waiting until a device reports capacity, delivers the first prompt
-exactly once and gives up after `MAX_REFUSALS` refusals (03-api.md section 4.6.2, ADR-049; R-3.12)."""
+exactly once and, from `AGENT_HUB_CAPACITY_REFUSALS` refusals on, holds the next attempt back instead of failing the
+task (03-api.md section 4.6.2, ADR-049 amended by ADR-075 section 7; R-3.12)."""
 
 from __future__ import annotations
 
@@ -13,10 +14,10 @@ from uuid import UUID
 import pytest
 
 from agent_hub import signals
-from agent_hub.scheduler import jobs, load
+from agent_hub.scheduler import jobs, load, settings
 from agent_hub.scheduler import signals as scheduler_signals
 from agent_hub.scheduler.core import NoPlacement, Placement
-from agent_hub.sessions import prompts, retry
+from agent_hub.sessions import prompts
 from agent_hub.stream.publish import MemoryPublisher
 from tests.platform.hub.device.support import Fleet, org_device_scene
 from tests.platform.hub.orgs.support import Actor, World
@@ -188,38 +189,43 @@ def test_the_attempt_resumes_nothing_on_the_refusing_device(world: World, fleet:
     assert "resume_from" not in listed[0]
 
 
-def test_refusals_are_limited_and_end_the_task_failed(
-    desk: Desk, published: MemoryPublisher, task_signals: list[dict[str, Any]], caplog: pytest.LogCaptureFixture
+def test_refusals_at_the_limit_hold_the_attempt_back_and_never_fail_the_task(
+    desk: Desk, published: MemoryPublisher, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """No back and forth without end: after `MAX_REFUSALS` refusals of one prompt the task fails with the reason, and
-    "Retry" (a follow-up with the prompt again) delivers only the new prompt and gets its own attempts."""
+    """No back and forth faster than the hold: from the limit on the attempt waits (`capacity_exhausted`, never
+    `failed`), is held back for `AGENT_HUB_REFUSAL_HOLD_SECONDS` and is then placed by the sweep; a follow-up starts a
+    new row."""
     device = desk.scene.device
     desk.offline(desk.scene.other_device)
     task, session = desk.started()
-    for _ in range(retry.MAX_REFUSALS - 1):
+    limit = settings.capacity_refusals()
+    for _ in range(limit - 1):
         refuse(desk, session)
         session = mains(desk, task)[-1][0]
         heartbeat(desk, device, CAPACITY)
         assert jobs.sweep(desk.hub.app.state.hub) == 1
     published.clear()
     refuse(desk, session)
-    assert len(mains(desk, task)) == retry.MAX_REFUSALS
+    held = mains(desk, task)[-1]
+    assert len(mains(desk, task)) == limit + 1
+    assert (held[1], held[2], held[3]) == ("requested", None, "capacity_exhausted")
     assert any("capacity_refusal_limit" in record.getMessage() for record in caplog.records)
     assert hints(published, kind="session.start") == []
     detail = desk.task(task)
-    assert (detail["state"], detail["state_reason"]) == ("failed", "capacity_exhausted")
-    assert task_signals[-1]["state"] == "failed"
+    assert (detail["state"], detail["state_reason"]) == ("scheduling", "capacity_exhausted")
     heartbeat(desk, device, CAPACITY)
-    assert jobs.sweep(desk.hub.app.state.hub) == 0
-    # "Retry": the same text as a new prompt; the refused prompt is not delivered again
+    assert jobs.sweep(desk.hub.app.state.hub) == 0  # held back
+    desk.hub.clock.advance(settings.refusal_hold_seconds())
+    desk.online(device, CAPACITY)
+    assert jobs.sweep(desk.hub.app.state.hub) == 1
+    assert desk.session(held[0])["device_id"] == device.id
+    # a follow-up: a new row of attempts, placed at once
     desk.hub.clock.advance(1)
     again = desk.prompt_event(desk.scene.writer, task)
-    retried = desk.prompt(desk.scene.writer, task, again).json()["session_id"]
-    assert pending(desk, task)[retried] == [again["header"]["id"]]
-    refuse(desk, retried)
+    desk.prompt(desk.scene.writer, task, again)
+    refuse(desk, held[0])
     newest = mains(desk, task)[-1]
     assert (newest[1], newest[3]) == ("requested", "capacity_exhausted")
-    assert pending(desk, task)[newest[0]] == [again["header"]["id"]]
 
 
 def test_a_refused_resume_carries_only_the_undelivered_prompts(desk: Desk) -> None:
@@ -337,7 +343,7 @@ def test_an_unassignment_before_the_refusal_places_the_attempt_elsewhere_or_wait
     refuse(desk, single, desk.scene.other_device)
     waiting = mains(desk, alone)[1]
     assert (waiting[1], waiting[2]) == ("requested", None)
-    assert (desk.task(alone)["state"], desk.task(alone)["state_reason"]) == ("scheduling", "device_offline")
+    assert (desk.task(alone)["state"], desk.task(alone)["state_reason"]) == ("scheduling", "no_device")
 
 
 def online_candidates(desk: Desk, wg: str | None = None) -> list[tuple[str, int, bool]]:
@@ -510,9 +516,10 @@ def test_stopping_the_refused_session_afterwards_leaves_the_attempt(desk: Desk) 
 def test_two_refusals_of_one_device_in_one_heartbeat_window(desk: Desk) -> None:
     """Two tasks placed on the same device in one window, both refused: both attempts go to the other device."""
     other = desk.scene.other_device
-    desk.online(other, CAPACITY)
+    desk.offline(other)
     one, first = desk.started()
     two, second = desk.started()
+    desk.online(other, CAPACITY)
     placed = desk.session(first)["device_id"]
     assert desk.session(second)["device_id"] == placed
     refuser = desk.scene.device if placed == desk.scene.device.id else other

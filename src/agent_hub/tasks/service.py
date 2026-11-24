@@ -4,9 +4,11 @@
 events must be wg-scope events of that workgroup that name the task (`400 request_invalid` with the pointer
 otherwise). One transaction (03-api.md section 4.6.1 step 3): the events through `append_events`, the task
 (`scheduling`, first `task_transition`), the main session (`requested`, depth 0, `claude-code`), the scheduler's
-decision (device and `estimate_ms` and the task `starting`, or the task stays `scheduling` with `device_offline` /
-`capacity_exhausted`), the audit row `task.create`. A workgroup without any active assigned device refuses the task
-with `409 no_device` and `detail.candidates_available` (platform devices the browser could assign), storing nothing.
+decision (device and `estimate_ms` and the task `starting`, or the task stays `scheduling` with a waiting reason of
+03-api.md section 4.6.2), the audit row `task.create`. The task is always created (ADR-075 section 7): a workgroup
+without any active assigned device waits with `no_device` or `platform_access_required`. An optional `placement`
+(else the workgroup default) is checked and stored with the task (`agent_hub.placement.service`: `403
+placement_forbidden`, `409 placement_invalid`).
 After the commit: the event announcement, the hint `session.start`, the `task`/`session` frames and `task.state`.
 Idempotency over `task_id`: the same request again (same workgroup, owner and byte-identical events) answers the
 current state of the task with `replayed: true`; anything else under a known `task_id` is `409 id_conflict`.
@@ -47,14 +49,14 @@ from agent_hub.events.store import StoredEvent, append_events, hub_error, stored
 from agent_hub.http.context import HubContext
 from agent_hub.log.events import check_replay
 from agent_hub.orgs import rights
+from agent_hub.placement import service as placement
 from agent_hub.scheduler import load
 from agent_hub.sessions import prompts, rows
 from agent_hub.sessions.derive import ENDING, FINAL, STOPPED, STOPPING
 from agent_hub.sessions.effects import Effects
-from agent_hub.sessions.lifecycle import create_main_session, no_device
+from agent_hub.sessions.lifecycle import create_main_session
 from agent_hub.sessions.taskstate import Actor, TaskRow, audit, close_task, lock_task, refresh_task
 from agent_hub.sessions.transitions import SessionRow, hub_transition, lock_session
-from agent_hub.workgroups import read as workgroups
 
 Connection = psycopg.Connection[Any]
 KINDS = ("task.meta", "prompt")
@@ -135,9 +137,15 @@ def _replayed_create(
 
 
 def create_task(
-    context: HubContext, user: UUID, task_id: UUID, wg_id: UUID, events: Sequence[dict[str, Any]]
+    context: HubContext,
+    user: UUID,
+    task_id: UUID,
+    wg_id: UUID,
+    events: Sequence[dict[str, Any]],
+    *,
+    requested: tuple[UUID, str | None] | None = None,
 ) -> Outcome:
-    """`POST /v1/tasks` (module docstring)."""
+    """`POST /v1/tasks` (module docstring); `requested` is the chosen device and VM of the request."""
     now = context.clock()
     actor = Actor("user", user)
     with context.pool.connection() as connection, connection.transaction():
@@ -147,10 +155,8 @@ def create_task(
         known = connection.execute("SELECT 1 FROM hub.task WHERE id = %s", (task_id,)).fetchone()
         if known is not None:
             return Outcome(body=_replayed_create(connection, user, task_id, wg_id, events))
-        decision = load.decide(connection, wg_id, now, context.config.device_online_seconds)
-        if decision is None:
-            available = bool(workgroups.candidates(connection, wg_id, now, context.config.device_online_seconds))
-            raise HubError("no_device", detail={"candidates_available": available})
+        pin = placement.for_new_task(connection, wg_id, requested)
+        decision = load.decide(connection, wg_id, now, context.config.device_online_seconds, pin=pin, owner=user)
         stored = append_events(connection, list(events), str(user), now=now, root_key=context.config.platform_root_key)
         if any(item.replayed for item in stored):
             if not all(item.replayed for item in stored):
@@ -169,6 +175,7 @@ def create_task(
             " VALUES (%s, 1, 'scheduling', NULL, %s, %s)",
             (task_id, now, user),
         )
+        placement.store_for_new_task(connection, task_id, pin)
         task = TaskRow(task_id, org_id, wg_id, user, "scheduling", None)
         audit(connection, actor, "task.create", task, now, detail={"origin": "browser"})
         outcome = Outcome(body={}, stored=stored)
@@ -246,7 +253,14 @@ def add_prompt(context: HubContext, user: UUID, task_id: UUID, event: dict[str, 
         outcome = Outcome(body={}, stored=stored)
         main = _main(connection, task_id)
         if main is None or main.state in ENDING or task.state == "closed":
-            decision = no_device(load.decide(connection, task.wg_id, now, context.config.device_online_seconds))
+            decision = load.decide(
+                connection,
+                task.wg_id,
+                now,
+                context.config.device_online_seconds,
+                pin=load.task_pin(connection, task.id),
+                owner=task.owner_id,
+            )
             new_id = new_session_id(now)
             create_main_session(
                 connection,

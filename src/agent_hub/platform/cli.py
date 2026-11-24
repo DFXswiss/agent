@@ -30,7 +30,10 @@ Commands (entries they append):
   its browser computes from its unlocked identity) a different code is refused (`account_code_mismatch`), so the
   certification then does not rest on the hub's word. A user that is already certified is skipped. There is no "all"
   form: the operator names every account;
-- `decertify-user --user ID`: `user_decertify`.
+- `decertify-user --user ID`: `user_decertify`;
+- `waiting`: appends nothing; lists the workgroups whose tasks wait for a device the operator must provide
+  (`GET /v1/platform/waiting`, ADR-075 section 7): organization, workgroup, reason, number of tasks, oldest, and
+  whether the organization has platform access.
 
 Output never contains the root key or a hub secret; the invitation code is printed because the operator hands it on.
 Exit codes: 0 done, 1 refused (by the hub or by a local check; the line names the code), 2 usage or key-file error.
@@ -423,6 +426,21 @@ def certify_users(operator: Operator, users: Sequence[str], codes: Sequence[str]
         print(f"certified user {body['user']} (seq {seq})", file=out)
 
 
+def show_waiting(operator: Operator, out: TextIO) -> None:
+    """Print the workgroups whose tasks wait for the operator (one line each)."""
+    data = operator.request("GET", "/v1/platform/waiting")
+    rows = list(data["waiting"])
+    if not rows:
+        print("no tasks wait for a device", file=out)
+    for row in rows:
+        access = "yes" if row["platform_access"] else "no"
+        print(
+            f"org {row['org_id']} wg {row['wg_id']} {row['reason']} tasks {row['tasks']} since {row['oldest_at']}"
+            f" platform access {access}",
+            file=out,
+        )
+
+
 def simple(operator: Operator, body: dict[str, Any], out: TextIO) -> None:
     """Append one entry and print its type and `seq`."""
     done = operator.append(lambda _log, _pending: [body])
@@ -471,6 +489,8 @@ def dispatch(args: argparse.Namespace, http: httpx.Client | None, clock: Clock, 
         certify_users(operator, args.user, args.code or [], out)
     elif command == "decertify-user":
         simple(operator, {"type": "user_decertify", "user": args.user}, out)
+    elif command == "waiting":
+        show_waiting(operator, out)
     elif command in ("grant-role", "revoke-role"):
         kind = "role_grant" if command == "grant-role" else "role_revoke"
         simple(operator, {"type": kind, "subject": args.user, "role": args.role}, out)
@@ -531,6 +551,7 @@ def register(subparsers: argparse._SubParsersAction[Any]) -> None:
         role = command(name, f"{name.split('-')[0]} a platform role")
         role.add_argument("role", choices=["inviter"])
         role.add_argument("--user", type=uuid_text, required=True)
+    command("waiting", "list workgroups whose tasks wait for a device the operator must provide")
     decertify = command("decertify", "decertify a platform device")
     decertify.add_argument("--device", type=uuid_text, required=True)
     users = command("certify-user", "certify the identity keys of existing accounts (direct admission, ADR-060)")

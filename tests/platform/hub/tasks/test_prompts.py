@@ -95,7 +95,7 @@ def test_an_ended_main_session_without_devices_waits(desk: Desk) -> None:
     body = desk.prompt(desk.scene.writer, task).json()
     assert desk.session(body["session_id"])["device_id"] is None
     detail = desk.task(task)
-    assert (detail["state"], detail["state_reason"]) == ("scheduling", "device_offline")
+    assert (detail["state"], detail["state_reason"]) == ("scheduling", "no_device")
 
 
 def test_a_prompt_reopens_a_closed_task(desk: Desk, task_signals: list[dict[str, Any]]) -> None:

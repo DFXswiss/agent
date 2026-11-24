@@ -27,7 +27,7 @@ import type { Identity } from '../crypto/keys';
 import { Secret } from '../crypto/secret';
 import { buildEntries, type Body, type Entry, type LogFields, type LogSigner } from './entries';
 import { excludedFor, type PlatformState } from './platform';
-import { epochKey, ORG, pairKey, requiredSet, type Scope, splitKey, WG, WRITE } from './state';
+import { epochKey, ORG, type OrgState, pairKey, requiredSet, type Scope, splitKey, WG, WRITE } from './state';
 import { appendEntries, type VerifiedLog } from './verify';
 import { buildWraps, compatSkip, type KeyRing } from './catchup';
 import { checkWrap, compareSlots, slotKey, type WrapRecord, type WrapSlot } from './wraps';
@@ -338,9 +338,27 @@ export function pendingRotation(
 }
 
 /**
- * The batch an admin owes after a platform device was decertified (04-crypto.md section 4.7): `device_unassign` for
- * every workgroup the decertified device is still assigned to, plus R (built by `buildBatch`). Computed from the
- * verified platform log, so it does not depend on the hub's `rotation_pending`. Null if nothing is owed.
+ * The entries that end every assignment of `device` (ADR-075 section 5): `device_unassign_org` when it is assigned to
+ * the organization, then `device_unassign` for every explicit assignment (sorted by workgroup).
+ */
+export function unassignAll(state: OrgState, device: string): LogFields[] {
+  const org: LogFields[] = state.orgAssigned(device) ? [{ type: 'device_unassign_org', device }] : [];
+  const explicit = state.member(device) === null ? [] : [...state.assignments.keys()].map(splitKey);
+  return [
+    ...org,
+    ...explicit
+      .filter(([dev]) => dev === device)
+      .map(([, wg]) => wg)
+      .sort()
+      .map((wg): LogFields => ({ type: 'device_unassign', device, wg })),
+  ];
+}
+
+/**
+ * The batch an admin owes after a platform device was decertified (04-crypto.md section 4.7): `device_unassign_org`
+ * when it is assigned to the organization and `device_unassign` for every explicit assignment of the decertified
+ * device (`unassignAll`), plus R (built by `buildBatch`). Computed from the verified platform log, so it does not
+ * depend on the hub's `rotation_pending`. Null if nothing is owed.
  */
 export function decertificationBatch(
   log: VerifiedLog,
@@ -348,9 +366,7 @@ export function decertificationBatch(
   input: Omit<BatchInput, 'log' | 'entries' | 'platform'>,
 ): Promise<BuiltBatch> | null {
   const state = log.state;
-  const entries: LogFields[] = platform
-    .excluded(state)
-    .flatMap((device) => state.deviceWgs(device).map((wg) => ({ type: 'device_unassign' as const, device, wg })));
+  const entries = platform.excluded(state).flatMap((device) => unassignAll(state, device));
   return entries.length === 0 ? null : buildBatch({ ...input, log, entries, platform });
 }
 

@@ -34,7 +34,10 @@ def test_workgroup_lists_devices_and_members(desk: Desk) -> None:
         "online": True,
         "capacity": CAPACITY,
         "capacity_low": False,
+        "assigned_via": "workgroup",
+        "vms": [],
     }
+    assert body["placement"] is None
     assert devices[desk.scene.other_device.id]["online"] is False
     assert devices[desk.scene.other_device.id]["capacity_low"] is True
     members = {item["user_id"]: item["access"] for item in body["members"]}
@@ -124,6 +127,8 @@ def test_org_devices(world: World, fleet: Fleet) -> None:
                 "capacity": capacity(0),
                 "capacity_low": True,
                 "assigned_wgs": [draft.default_wg],
+                "assigned_org": False,
+                "vms": [],
             }
         ]
     }

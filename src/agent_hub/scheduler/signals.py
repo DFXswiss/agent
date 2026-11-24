@@ -1,9 +1,10 @@
 """Re-scheduling on presence, capacity and assignment signals (03-api.md section 4.6.2, ADR-027 section 4).
 
 Subscribers of `device.presence` (`device_id`, `online`) and `device.capacity` (`device_id`) from the stream area
-(HUB-07) re-run the scheduler for the waiting sessions of the device's workgroups; `log.appended` (`org_id`, `seq`)
-from the orgs area does it for the org's workgroups (a `device_assign` makes a device a candidate), and so does
-`credit.changed` (`org_id`) from the billing area (credit used up or added, KOR-31, ADR-062). Signals carry
+(HUB-07) and of `wraps.stored` (`device_id`, a key reached a device: ADR-075 `keys_pending`) re-run the scheduler
+for the waiting sessions of the device's workgroups; `log.appended` (`org_id`, `seq`) from the orgs area does it for
+the org's workgroups (a `device_assign` makes a device a candidate), and so does `credit.changed` (`org_id`) from
+the billing area (credit used up or added, KOR-31, ADR-062). Signals carry
 identifiers only and no app context: like the reconcile hints of the device area, the subscribers read with the pool
 of a bound hub context (bound by the tasks routes and by the job `scheduler.reschedule`, `agent_hub.scheduler.jobs`)
 and send nothing before one is bound - the job's sweep places those sessions at its next run. A subscriber only queues
@@ -40,7 +41,7 @@ def run(where: str, params: tuple[Any, ...]) -> None:
         return
     try:
         with transaction(context.pool) as connection:
-            wgs = waiting_wgs(connection, where, params)
+            wgs = waiting_wgs(connection, context.clock(), where, params)
         reschedule(context, wgs)
     except Exception:
         LOG.error("waiting sessions could not be re-scheduled", exc_info=True)
@@ -71,6 +72,7 @@ def wait() -> None:
 SUBSCRIBERS: Mapping[str, Sequence[signals.Subscriber]] = {
     "device.presence": [on_device],
     "device.capacity": [on_device],
+    "wraps.stored": [on_device],
     "log.appended": [on_log],
     "credit.changed": [on_log],
 }

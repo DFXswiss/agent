@@ -39,8 +39,10 @@ TASK_COLUMNS = (
     " t.closed_at,"
     " (SELECT s.id FROM hub.session s WHERE s.task_id = t.id AND s.depth = 0 ORDER BY s.created_at DESC, s.id DESC"
     " LIMIT 1),"
-    " (SELECT e.id FROM hub.event e WHERE e.task_id = t.id AND e.kind = 'task.meta' ORDER BY e.scope_seq DESC LIMIT 1)"
+    " (SELECT e.id FROM hub.event e WHERE e.task_id = t.id AND e.kind = 'task.meta' ORDER BY e.scope_seq DESC LIMIT 1),"
+    " t.placement_device_id, t.placement_vm_id"
 )
+"""The task columns: `TASK_FIELDS`, then the chosen device and VM (ADR-075; `placement` only when one is chosen)."""
 SESSION_FIELDS = (
     "session_id",
     "task_id",
@@ -112,10 +114,18 @@ def _zip(names: tuple[str, ...], row: tuple[Any, ...]) -> dict[str, Any]:
     return {name: as_json(value) for name, value in zip(names, row, strict=True)}
 
 
+def _task(row: tuple[Any, ...]) -> dict[str, Any]:
+    found = _zip(TASK_FIELDS, row[: len(TASK_FIELDS)])
+    device, vm = row[len(TASK_FIELDS) :]
+    if device is not None:
+        found["placement"] = {"device_id": str(device), "vm_id": vm}
+    return found
+
+
 def task_json(connection: Connection, task_id: UUID | str) -> dict[str, Any] | None:
     """The task row in the API form, None for an unknown task."""
     row = connection.execute(f"SELECT {TASK_COLUMNS} FROM hub.task t WHERE t.id = %s", (task_id,)).fetchone()
-    return None if row is None else _zip(TASK_FIELDS, row)
+    return None if row is None else _task(row)
 
 
 def task_rows(connection: Connection, where: str, params: list[Any], column: str) -> list[tuple[Any, ...]]:
@@ -127,7 +137,7 @@ def task_rows(connection: Connection, where: str, params: list[Any], column: str
 
 def task_row_json(row: tuple[Any, ...]) -> dict[str, Any]:
     """A raw task row (`TASK_COLUMNS`) in the API form."""
-    return _zip(TASK_FIELDS, row)
+    return _task(row)
 
 
 def session_json(connection: Connection, session_id: UUID | str) -> dict[str, Any] | None:

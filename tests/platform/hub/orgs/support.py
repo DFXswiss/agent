@@ -82,15 +82,22 @@ def insert_identity(pool: Pool, user_id: str, identity: Identity, now: datetime)
         )
 
 
-def insert_device(pool: Pool, device_id: str, identity: Identity, now: datetime, kind: str = "org") -> None:
-    """A device principal with its own keys."""
+ORG_ASSIGN_FEATURES = ["log.org_assign"]
+"""A runner that reads assignments to the whole organization (ADR-075 section 5)."""
+
+
+def insert_device(
+    pool: Pool, device_id: str, identity: Identity, now: datetime, kind: str = "org", *, outdated: bool = False
+) -> None:
+    """A device principal with its own keys (`outdated`: its runner has not announced `log.org_assign`)."""
     with pool.connection() as connection, connection.transaction():
         connection.execute(
             "INSERT INTO hub.principal (id, kind, created_at) VALUES (%s, 'device', %s)", (device_id, now)
         )
         connection.execute(
             "INSERT INTO hub.device (id, kind, kem_pub, sig_pub, owner_org, state, enrolled_at, agent_version, os,"
-            " arch, capacity, updated_at) VALUES (%s, %s, %s, %s, %s, 'active', %s, '0.1.0', 'macos', 'arm64', %s, %s)",
+            " arch, capacity, updated_at, features)"
+            " VALUES (%s, %s, %s, %s, %s, 'active', %s, '0.1.0', 'macos', 'arm64', %s, %s, %s)",
             (
                 device_id,
                 kind,
@@ -100,6 +107,7 @@ def insert_device(pool: Pool, device_id: str, identity: Identity, now: datetime,
                 now,
                 Jsonb({}),
                 now,
+                [] if outdated else ORG_ASSIGN_FEATURES,
             ),
         )
 

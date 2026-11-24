@@ -3,8 +3,9 @@
 - `FakeGuest` answers the control calls the session area makes (health, sessions, credential, control, journal
   long poll, ack) and records them; `emit(...)` appends journal records like the guest's control process does.
   Failures are injected per operation (`fail`).
-- `FakeVms` stands in for `VmManager`: `ensure_vm` inserts or reuses a `runner.vm` row of the workgroup (golden
-  `g1`, Claude Code 2.1.330) or raises the configured `RunnerError`.
+- `FakeVms` stands in for `VmManager`: `ensure_vm` takes the first preferred live VM of the workgroup, else reuses
+  its first `runner.vm` row, else inserts one (golden `g1`, Claude Code 2.1.330), books it for the session, records
+  the call (`calls`) or raises the configured `RunnerError`.
 - `Kit` (from `kit(env)`) runs the RUN-03 reconcile steps 1-3 once against the rig's hub, so the verified logs and
   the workgroup and org keys of org `a` are in the store, and builds a `SessionEnv` with the rig's real sync runtime
   (outbox, sealer, pusher against the contract-checking fake hub).
@@ -14,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import TracebackType
@@ -74,8 +75,8 @@ def desired(n: int = 1, **overrides: Any) -> Desired:
 
 
 def wire(item: Desired) -> dict[str, Any]:
-    """The desired session as `GET /v1/device/state` lists it."""
-    return dict(item.__dict__)
+    """The desired session as `GET /v1/device/state` lists it (`resume_from` only when set)."""
+    return {key: value for key, value in item.__dict__.items() if key != "resume_from" or value is not None}
 
 
 @dataclass
@@ -165,15 +166,32 @@ class FakeVms:
     created: int = 0
     touched: list[str] = field(default_factory=list)
     on_ensure: Callable[[], None] | None = None
+    calls: list[dict[str, Any]] = field(default_factory=list)
 
-    async def ensure_vm(self, org_id: str, wg_id: str) -> VmRow:
+    async def ensure_vm(
+        self,
+        org_id: str,
+        wg_id: str,
+        *,
+        session_id: str | None = None,
+        prefer: Sequence[str] = (),
+        new_allowed: bool = True,
+    ) -> VmRow:
+        self.calls.append({"session_id": session_id, "prefer": list(prefer), "new_allowed": new_allowed})
         if self.on_ensure is not None:
             self.on_ensure()
         if self.error is not None:
             raise self.error
-        row = await vm_records.for_workgroup(self.db, wg_id)
-        if row is not None:
-            return await vm_records.update(self.db, row.id, state="running")
+        row = await self._choose(org_id, wg_id, prefer)
+        if session_id is not None:
+            await vm_records.assign_session(self.db, session_id, row.id)
+        return row
+
+    async def _choose(self, org_id: str, wg_id: str, prefer: Sequence[str]) -> VmRow:
+        rows = await vm_records.of_workgroup(self.db, wg_id)
+        preferred = [row for vm_id in prefer for row in rows if row.id == vm_id]
+        if preferred or rows:
+            return await vm_records.update(self.db, (preferred or rows)[0].id, state="running")
         self.created += 1
         vm_id = f"vm-{self.created:08x}"
         return await vm_records.insert(

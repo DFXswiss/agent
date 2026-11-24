@@ -37,10 +37,12 @@ def test_format_time_and_settings_from_config() -> None:
 
     class Config:
         vm_cpus, vm_memory_mib, vm_disk_gib, pool_size, memory_reserve_mib, vm_idle_seconds = 2, 4096, 30, 3, 1024, 60
+        sessions_per_vm, max_vms = 0, 7
 
     assert VmSettings.from_config(Config()) == VmSettings(  # type: ignore[arg-type]
-        cpus=2, memory_mib=4096, disk_gib=30, pool_size=3, memory_reserve_mib=1024, vm_idle_seconds=60
-    )
+        cpus=2, memory_mib=4096, disk_gib=30, pool_size=3, memory_reserve_mib=1024, vm_idle_seconds=60,
+        sessions_per_vm=0, max_vms=7,
+    )  # fmt: skip
 
 
 def test_selftest_provisioning_is_a_valid_yq_append() -> None:

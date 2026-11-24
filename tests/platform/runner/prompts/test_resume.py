@@ -103,6 +103,8 @@ def test_a_follow_up_prompt_resumes_a_suspended_session_with_resume(rig: Rig) ->
         assert (request["task_id"], request["parent_session_id"], request["depth"]) == (TASK, None, 0)
         assert "initial_prompt" not in request
         assert pk.guest.texts() == ["Und jetzt?"]
+        # the session's own VM is asked for first (ADR-075 section 6)
+        assert pk.kit.vms.calls[-1]["prefer"] == [(await pk.session(sid)).vm_id]
         assert ("resuming", None) in await pk.kit.transitions(sid)
         # the guest's journal: the resumed start, then the acceptance
         for state in ("sandbox_ready", "agent_starting", "prompt_delivering"):
@@ -185,6 +187,8 @@ def test_resume_failure_reasons(rig: Rig) -> None:
         assert request["harness"]["context_markdown"].endswith(RESTART_LINE.format(task_id=TASK))
         fallback = [item for item in await env.audits() if item["action"] == "session.context_fallback"]
         assert [item["detail"] for item in fallback] == [{"reason": "context_missing"}]
+        # its VM row is gone (the session names none any more): the choice of the workgroup applies (ADR-075)
+        assert pk.kit.vms.calls[-1] == {"session_id": None, "prefer": [], "new_allowed": True}
 
     async def unreachable_vm(env: Any) -> None:
         pk = await setup(env)

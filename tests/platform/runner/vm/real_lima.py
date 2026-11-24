@@ -120,7 +120,7 @@ async def lifecycle_checks(manager: VmManager, row: VmRow, golden_name: str) -> 
     emit("check", name="idle_stop", stopped=stopped, ok=stopped == [row.id])
     deleted = await manager.delete_workgroup(row.wg_id)
     gone = machine.get(row.lima_name) is None
-    emit("check", name="delete", ok=deleted is not None and deleted.state == "deleted" and gone)
+    emit("check", name="delete", ok=[item.state for item in deleted] == ["deleted"] and gone)
     stray = machine.name("arp-0000abcd")
     machine.clone(golden_name, stray)
     counts = await VmManager(env).reconcile()

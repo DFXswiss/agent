@@ -48,8 +48,8 @@ class PathVms:
         self.manager = manager
         self.fake = fake
 
-    async def ensure_vm(self, org_id: str, wg_id: str) -> VmRow:
-        return await self.manager.ensure_vm(org_id, wg_id)
+    async def ensure_vm(self, org_id: str, wg_id: str, **choice: Any) -> VmRow:
+        return await self.manager.ensure_vm(org_id, wg_id, **choice)
 
     async def client(self, row: VmRow) -> Any:
         return Composite(await self.manager.client(row), self.fake)

@@ -87,8 +87,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | workgroups-ungrant | screens/workgroups | `wg ungrant` | done |
 | workgroups-archive | screens/workgroups | `wg archive` | done |
 | wg-settings | screens/wg-settings | `repos list --wg`, `repos allow\|disallow --wg --repo`, `wg settings --wg --protected-branch --pr-draft-default` | done |
-| devices-list | screens/devices | `device list` | done |
-| devices-assign | screens/devices | `device assign` | done |
+| devices-list | screens/devices | `device list` (devices, VMs, sessions, limits) | done |
+| devices-assign | screens/devices | `device assign --wg\|--org` | done |
+| devices-unassign-org | screens/devices | `device unassign --org` (with rotation) | done |
+| wg-placement | screens/workgroups | `wg placement` | done |
 | devices-unassign | screens/devices | `device unassign` | done |
 | devices-invite | screens/devices | `device invite` | done |
 | devices-profile | screens/devices | `device rename` | done |
@@ -96,7 +98,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | devices-own-mac-remove | screens/devices (unpair; the Mac then removes its installation by itself, ADR-074) | `device remove --this-computer` | done |
 | tasks-list | screens/tasks | `task list` | done |
 | tasks-overview | screens/tasks (overview of an org) | `task overview --org --state --mine --search` | done |
-| task-create | screens/home, screens/tasks | `task create` | done |
+| task-create | screens/home, screens/tasks | `task create --device --vm` | done |
 | task-view | screens/task (chat) | `task show` | done |
 | task-prompt | screens/task (composer) | `task prompt` | done |
 | task-close | screens/task | `task close --task` | done |

@@ -14,6 +14,9 @@ runner finds it here. Areas are the sub-packages of the root package, visited in
 | `<area>/requests.py:HANDLERS` | mapping device-request kind -> handler |
 | `<area>/hints.py:HANDLERS` | mapping WebSocket hint kind -> handler |
 | `<area>/uninstall.py:CLEANERS` | sequence of `Cleaner`, called by `uninstall` before the store is deleted |
+| `<area>/capacity.py:USAGE` | `async USAGE(context) -> vm.capacity.Usage`: VMs and memory of the area (ADR-075) |
+
+`USAGE` is counted against the VM budget and reported as `work_vms_running` (KOR-41, decisions/KOR-41.md).
 
 A module without its attribute, a value of the wrong type or a name registered twice raises
 `RunnerError("registry_invalid" | "registry_duplicate", ...)`, so the daemon never starts with half a registry.
@@ -159,6 +162,16 @@ def request_handlers(package: str = ROOT_PACKAGE) -> dict[str, Callable[..., Any
 
 def hint_handlers(package: str = ROOT_PACKAGE) -> dict[str, Callable[..., Any]]:
     return _handlers("hints", "HANDLERS", package)
+
+
+def capacity_usages(package: str = ROOT_PACKAGE) -> list[Callable[[Any], Awaitable[Any]]]:
+    """The `USAGE` providers of the areas, in area order."""
+    found: list[Callable[[Any], Awaitable[Any]]] = []
+    for area, value in discover("capacity", "USAGE", package):
+        if not callable(value):
+            raise RunnerError("registry_invalid", f"{area}.capacity")
+        found.append(value)
+    return found
 
 
 def cli_registrars(package: str = ROOT_PACKAGE) -> list[tuple[str, Callable[[Any], None]]]:

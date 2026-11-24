@@ -84,9 +84,9 @@ class PKit:
         return sid
 
     async def vm(self, wg_id: str = WG) -> VmRow:
-        row = await vm_records.for_workgroup(self.env.pool, wg_id)
-        assert row is not None
-        return row
+        rows = await vm_records.of_workgroup(self.env.pool, wg_id)
+        assert rows
+        return rows[0]
 
     async def rows(self) -> list[tuple[Any, ...]]:
         return await self.env.rows(

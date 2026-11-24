@@ -1,0 +1,12 @@
+{
+  "waiting": [
+    {
+      "org_id": "0193000a-0000-7000-8000-00000000000a",
+      "wg_id": "0193000b-0000-7000-8000-00000000000b",
+      "reason": "capacity_exhausted",
+      "tasks": 2,
+      "oldest_at": "2026-11-21T12:00:00.000Z",
+      "platform_access": false
+    }
+  ]
+}

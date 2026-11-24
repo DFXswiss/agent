@@ -75,11 +75,11 @@ test('offline: the real reason instead of digits; the task starts when the devic
   await expect(page.getByTestId('countdown.summary')).toContainText('Ready in');
 });
 
-test('no free slot: "All execution slots are busy"', async ({ page, baseURL }) => {
+test('no free slot: "All execution devices are full"', async ({ page, baseURL }) => {
   await freshUser(page, baseURL!, { free: 0 });
   await sendPrompt(page, 'Write a short plan for the migration');
   await expect(page.getByTestId('countdown.reason')).toHaveAttribute('data-reason', 'capacity_exhausted');
-  await expect(page.getByTestId('countdown.reason')).toContainText('All execution slots are busy');
+  await expect(page.getByTestId('countdown.reason')).toContainText('All execution devices are full');
 });
 
 test('failed: the catalog error and "Retry" sends the prompt again as a follow-up', async ({ page, baseURL }) => {

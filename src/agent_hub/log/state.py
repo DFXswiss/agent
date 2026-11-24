@@ -10,7 +10,9 @@
   effective access (`wg_access`) is the explicit access if there is one, else `read` for an active admin; the
   credential scope uses the explicit access only (`explicit_access`, ADR-058 section 1);
 - devices read the workgroups they are assigned to (`invite.wgs` at `accept`, `device_assign`, `device_unassign`) and
-  the org scope while they have at least one assignment (ADR-007);
+  the org scope while they have at least one assignment (ADR-007); a device assigned to the organization
+  (`device_assign_org` until `device_unassign_org` or `remove`, ADR-075) is assigned to every workgroup of the org,
+  including later ones;
 - an archived workgroup stays readable but is no longer writable (decision CRY-02);
 - `admit` (ADR-060) makes a user a member like `accept` of a user invitation with its role and workgroups, but without
   the user's consent (`Principal.consented` False until it leaves and joins again by an own `accept`).
@@ -102,12 +104,14 @@ class OrgState:
     access: Mapping[tuple[str, str], str]
     """Explicit `(user, wg) -> read|write`; the default workgroup is derived and never stored here."""
     assignments: Mapping[tuple[str, str], int]
-    """`(device, wg) -> seq` of the assignment."""
+    """`(device, wg) -> seq` of the explicit assignment."""
     epochs: Mapping[Scope, int]
     epoch_authors: Mapping[tuple[str, str, int], str]
     """`(scope, scope_id, epoch) -> principal` that created the epoch (genesis, `wg_create`, `rotate`)."""
     pending: frozenset[Scope] = field(default_factory=frozenset)
     """Scopes whose rotation is still owed (a member left by itself and cannot rotate, decision CRY-02)."""
+    org_assignments: Mapping[str, int] = field(default_factory=dict)
+    """`device -> seq` of its assignment to the whole organization (ADR-075)."""
 
     # --- principals and roles ---
 
@@ -149,14 +153,22 @@ class OrgState:
         """The user reads the workgroup only because it is an admin (no explicit access)."""
         return self.explicit_access(principal, wg) is None and self.wg_access(principal, wg) is not None
 
+    def org_assigned(self, device: str) -> bool:
+        """An active device assigned to the whole organization."""
+        return self.member(device) is not None and device in self.org_assignments
+
     def assigned(self, device: str, wg: str) -> bool:
-        """An active device assigned to the workgroup."""
-        return self.member(device) is not None and (device, wg) in self.assignments
+        """An active device assigned to the workgroup, explicitly or through the organization."""
+        if self.member(device) is None:
+            return False
+        return (device, wg) in self.assignments or (device in self.org_assignments and wg in self.workgroups)
 
     def device_wgs(self, device: str) -> list[str]:
         """Workgroups an active device is assigned to, sorted."""
         if self.member(device) is None:
             return []
+        if device in self.org_assignments:
+            return sorted(self.workgroups)
         return sorted(wg for (dev, wg) in self.assignments if dev == device)
 
     def writable(self, wg: str) -> bool:
@@ -214,6 +226,7 @@ class OrgState:
                     "removed_seq": p.removed_seq,
                     "platform_seq": p.platform_seq,
                     "consented": p.consented,
+                    **({"org_assigned_seq": self.org_assignments[p.id]} if p.id in self.org_assignments else {}),
                 }
                 for p in sorted(self.principals.values(), key=lambda p: p.id)
             ],

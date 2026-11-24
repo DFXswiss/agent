@@ -12,12 +12,12 @@
    from `seq` 0 against the package's founder (L1-L8), it must contain the package head (`log_rollback`), end at the
    served head (`log_chain`), name the package's org (`log_genesis`) and hold this invitation (`invite` of kind
    `device` with the code's `pk_inv`, not revoked, not accepted: `invite_not_in_log`, `invite_revoked`,
-   `invite_consumed`). A log that assigns platform devices (`device_assign` with `platform_seq`) needs the verified
-   platform log, which only an active device can read: before the `accept` such a log is anchored without
-   signatures (gapless hash chain through the package head to the served head, genesis of the package's founder and
-   org, the `invite` entry at or before the package head; the package head pins the hash of that history), and it
-   is verified completely right after the enrollment, before anything is stored (step 8). Same rule as the web
-   client's `org_verify` (`web/src/core/account/join.ts`).
+   `invite_consumed`). A log that assigns platform devices (`device_assign`/`device_assign_org` with `platform_seq`)
+   needs the verified platform log, which only an active device can read: before the `accept` such a log is
+   anchored without signatures (gapless hash chain through the package head to the served head, genesis of the
+   package's founder and org, the `invite` entry at or before the package head; the package head pins the hash of
+   that history), and it is verified completely right after the enrollment, before anything is stored (step 8).
+   Same rule as the web client's `org_verify` (`web/src/core/account/join.ts`).
 6. Generate the identity (X25519 + Ed25519) and a UUIDv7 device ID; build `accept{invite_id, subject, kind:"device",
    pub}` at `seq` = served head + 1 with `sig` (device key) and `inv_sig` (`sk_inv`).
 7. Write `keys/device.key` (last but one), then `POST /v1/device/enroll` signed with the new key and verified with the
@@ -88,6 +88,7 @@ MAX_LOOKUP_BYTES = 64 * 1024 * 1024
 TIMEOUT_S = 30.0
 PAGE_LIMIT = 1000
 MAX_PAGES = 1000
+ASSIGN_TYPES = frozenset({"device_assign", "device_assign_org"})
 _PLATFORM_TEXT_RE = re.compile(r"[a-z0-9_]{1,32}")
 _CODE_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
@@ -192,10 +193,10 @@ def _head(value: object) -> Head:
 
 
 def _needs_platform(entries: Sequence[object]) -> bool:
-    """A `device_assign` of a platform device (verifiable only with the platform log)."""
+    """A `device_assign`/`device_assign_org` of a platform device (verifiable only with the platform log)."""
     for entry in entries:
         body = entry.get("body") if isinstance(entry, dict) else None
-        if isinstance(body, dict) and body.get("type") == "device_assign" and "platform_seq" in body:
+        if isinstance(body, dict) and body.get("type") in ASSIGN_TYPES and "platform_seq" in body:
             return True
     return False
 
@@ -327,6 +328,7 @@ def enrollment_body(
         reserve_mib=config.memory_reserve_mib,
         vm_memory_mib=config.vm_memory_mib,
         vms=[],
+        max_vms=config.max_vms,
     )
     return {
         "device_id": device_id,

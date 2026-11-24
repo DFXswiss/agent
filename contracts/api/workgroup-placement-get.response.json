@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-placement-get.response.json",
+  "title": "GET /v1/workgroups/{wg}/placement response",
+  "description": "Body of a successful response to GET /v1/workgroups/{wg}/placement (03-api.md section 4.5, ADR-075 section 6).",
+  "type": "object",
+  "properties": {
+    "placement": {
+      "anyOf": [
+        {
+          "$ref": "objects.json#/$defs/placement"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "placement"
+  ],
+  "additionalProperties": false
+}

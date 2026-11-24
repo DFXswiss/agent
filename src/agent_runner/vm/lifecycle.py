@@ -1,20 +1,28 @@
 """VM lifecycle of the runner (docs/platform/spec/05-runner.md sections 3.2-3.5 and 6.1 step 1, 03-api.md section
 4.6.2, ADR-009).
 
-`VmManager.ensure_vm(org_id, wg_id)` returns the running VM of a workgroup, in the fixed order of ADR-009:
+`VmManager.ensure_vm(org_id, wg_id, session_id=..., prefer=[...], new_allowed=...)` returns a running VM of the
+workgroup for a session, in the deterministic order of ADR-075 section 4 (05-runner.md section 3.3):
 
-1. running VM of the workgroup -> use it;
-2. stopped VM of the workgroup -> restart it (`limactl start`, health `assigned` to this workgroup), unless its golden
-   is not the newest ready one, it has no `suspended` session and no retire hook keeps it (`vm.extensions`: e.g.
-   context checkpoints still due, KOR-33): then it is deleted and the next steps apply;
-3. warm pool -> assign (`Pool.take`);
-4. clone + start on the hot path (`Provisioner.create`).
+1. the VMs of `prefer` in their order - the hub's `vm_id_pref` (a user's choice), then the VM of the parent session
+   (subagent) or of the `resume_from` session - when it is a live VM of **this** workgroup, regardless of the limit:
+   running -> use it, stopped -> restart it (no golden replacement: the choice, or the work, lives there);
+2. a running VM of the workgroup with room (`SESSIONS_PER_VM` minus its occupying sessions, unbounded with 0): most
+   room first, then the smallest VM ID;
+3. a stopped VM of the workgroup with room, smallest VM ID -> restart it (`limactl start`, health `assigned` to this
+   workgroup), unless its golden is not the newest ready one, it has no `suspended` session and no retire hook keeps
+   it (`vm.extensions`: e.g. context checkpoints still due, KOR-33): then it is deleted and replaced by a new VM (a
+   replacement, allowed even when the hub allows no new VM);
+4. a new VM when the hub allows one (`new_allowed`, the hub's `vm_new_allowed`): warm pool (`Pool.take`), else clone
+   + start on the hot path (`Provisioner.create`);
+5. else `capacity_exhausted` (the hub places the next attempt).
 
-Creation is serialised per workgroup (an asyncio lock per `wg_id` plus the partial unique index of `runner.vm`), so
-two sessions of one workgroup never get two VMs. A restart or a clone needs a free slot (section 3.4): when none is
-free, a pool VM is given up first, then the least recently used idle VM of another workgroup is stopped, else the
-request fails with `capacity_exhausted` (the hub re-schedules). Failures are `RunnerError`s with the session
-failure reasons `vm_start_failed` and `capacity_exhausted`.
+The choice runs under an
+asyncio lock per `wg_id`, and the session row names its VM (`records.assign_session`) before the lock is released, so
+two starts of one workgroup never both take the last place of a VM. A restart or a clone needs a free slot (section
+3.4): when none is free, a pool VM is given up first, then the least recently used idle VM of another workgroup is
+stopped, else the request fails with `capacity_exhausted`. Failures are `RunnerError`s with the session failure
+reasons `vm_start_failed` and `capacity_exhausted`.
 
 Further rules:
 - `health_pass()` (task `vm-idle`, every 5 s): a running VM whose guest fails the health probe 3 times in a row
@@ -24,11 +32,13 @@ Further rules:
 - `idle_pass()` (task `vm-idle`, every 60 s): a running VM without an active session whose last use is
   `VM_IDLE_SECONDS` ago is stopped. "Last use" is the newest of creation, assignment, `last_session_at` (set by
   `touch(vm_id)`, which the session start calls on every session transition) and the session timestamps.
-- `delete_workgroup(wg_id)`: the VM of an unassigned or archived workgroup (trigger: RUN-06) is deleted
+- `delete_workgroup(wg_id)`: every VM of an unassigned or archived workgroup (trigger: RUN-06) is deleted
   (`limactl delete -f`, row `deleted`, token file and journal cursor removed).
 - Before a running workgroup VM is stopped (`_stop`: idle, LRU, unhealthy) or deleted (`delete_workgroup`) the retire
   hooks of `vm.extensions` run (`Retire.flush`, bounded in time; KOR-33 takes the due context checkpoints of its
   sessions there).
+- `report()`: the heartbeat's `capacity` with the counters and settings of ADR-075 section 2 (the features go with
+  the live channel's `Agent-Features` header, `agent_runner.sync.ws`).
 - `reconcile()` (start of task `vm-pool`, before any other VM work): `limactl list --json` against `runner.vm`.
   Rows whose instance is gone become `deleted`; `assigning` rows of a crashed process and pool VMs that do not run
   are deleted; states follow the instance (`running` <-> `stopped`); unknown `<prefix>arp-<8 hex>` instances are
@@ -43,7 +53,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable
+import sys
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import timedelta
 
 from agent_runner.errors import RunnerError
@@ -58,6 +69,9 @@ from agent_runner.vm.pool import HEALTH_CALL_S, Pool, Provisioner, VmEnv, failur
 from agent_runner.vm.records import GoldenRef, VmRow
 
 UNHEALTHY_LIMIT = 3
+# Reported in every capacity report: this runner chooses VMs itself and reads `device_assign_org` (ADR-075).
+UNBOUNDED = sys.maxsize
+STOPPED_STATES = ("stopped", "stopping")
 # A session start never waits longer than this for the startup reconciliation (task `vm-pool`).
 RECONCILE_WAIT_S = 60.0
 
@@ -115,6 +129,26 @@ class VmManager:
     async def capacity(self) -> Capacity:
         return await self.env.capacity(self.pool.filling + self.reserved)
 
+    async def report(self) -> dict[str, object]:
+        """The heartbeat's `capacity`: the five base counters plus the counters and settings of ADR-075
+        section 2 (`cpus` and `disk_free_mib` only when known)."""
+        env = self.env
+        capacity = await self.capacity()
+        vms, sessions = await records.load(env.db)
+        report: dict[str, object] = {
+            **capacity.heartbeat(),
+            "memory_total_mib": env.physical_mib(),
+            "vms_running": vms,
+            "sessions_active": sessions,
+            "work_vms_running": capacity.other_vms,
+            "sessions_per_vm": env.settings.sessions_per_vm,
+            "vms_max": env.settings.max_vms,
+        }
+        for name, value in (("cpus", env.cpus()), ("disk_free_mib", env.disk_free_mib())):
+            if value is not None:
+                report[name] = value
+        return report
+
     async def touch(self, vm_id: str) -> None:
         """Record session activity on the VM (idle stop and LRU, sections 3.4 and 3.5)."""
         await records.touch(self.env.db, vm_id, self.env.now())
@@ -125,38 +159,73 @@ class VmManager:
 
     # -- ensure_vm ---------------------------------------------------------------------------------------------
 
-    async def ensure_vm(self, org_id: str, wg_id: str) -> VmRow:
-        """The running VM of the workgroup (see the module docstring for the order)."""
+    async def ensure_vm(
+        self,
+        org_id: str,
+        wg_id: str,
+        *,
+        session_id: str | None = None,
+        prefer: Sequence[str] = (),
+        new_allowed: bool = True,
+    ) -> VmRow:
+        """A running VM of the workgroup, booked for `session_id` (see the module docstring for the order)."""
         try:
             await asyncio.wait_for(self._reconciled.wait(), RECONCILE_WAIT_S)
         except TimeoutError:
             raise RunnerError("vm_start_failed", "reconcile") from None
-        env = self.env
         async with self.lock(wg_id):
-            row = await records.for_workgroup(env.db, wg_id)
-            if row is not None and row.state == "running":
-                await self.touch(row.id)
-                return row
-            golden = await records.ready_golden(env.db)
-            if row is not None:
-                if (
-                    golden is not None
-                    and row.golden_version != golden.version
-                    and not await records.has_suspended(env.db, row.id)
-                    and not await self.retire.pending(row)
-                ):
-                    env.log("vm.golden_replaced", {"vm_id": row.id, "golden_version": golden.version})
-                    self._forget(row.id)
-                    await env.delete(row)
-                else:
-                    return await self._restart(row)
-            if golden is None:
-                raise RunnerError("vm_start_failed", "golden")
-            taken = await self.pool.take(golden, org_id, wg_id)
-            if taken is not None:
-                return taken
-            self.wake_refill()
-            return await self._clone(golden, org_id, wg_id)
+            row = await self._choose(org_id, wg_id, prefer, new_allowed=new_allowed)
+            if session_id is not None:
+                await records.assign_session(self.env.db, session_id, row.id)
+            return row
+
+    async def _choose(self, org_id: str, wg_id: str, prefer: Sequence[str], *, new_allowed: bool) -> VmRow:
+        env = self.env
+        live = await records.of_workgroup(env.db, wg_id)
+        by_id = {row.id: row for row in live}
+        for vm_id in prefer:
+            found = by_id.get(vm_id)
+            if found is not None and found.state == "running":
+                await self.touch(found.id)
+                return found
+            if found is not None and found.state in STOPPED_STATES:
+                return await self._restart(found)
+            env.log("vm.preference_skipped", {"vm_id": vm_id, "wg_id": wg_id})
+        limit = env.settings.sessions_per_vm
+        occupied = await records.occupancy(env.db, wg_id)
+
+        def room(row: VmRow) -> int:
+            return UNBOUNDED if limit == 0 else limit - occupied.get(row.id, 0)
+
+        running = [row for row in live if row.state == "running" and room(row) > 0]
+        if running:
+            chosen = min(running, key=lambda row: (-room(row), row.id))
+            await self.touch(chosen.id)
+            return chosen
+        golden = await records.ready_golden(env.db)
+        stopped = [row for row in live if row.state in STOPPED_STATES and room(row) > 0]
+        if stopped:
+            row = stopped[0]
+            if (
+                golden is None
+                or row.golden_version == golden.version
+                or await records.has_suspended(env.db, row.id)
+                or await self.retire.pending(row)
+            ):
+                return await self._restart(row)
+            env.log("vm.golden_replaced", {"vm_id": row.id, "golden_version": golden.version})
+            self._forget(row.id)
+            await env.delete(row)
+        elif not new_allowed:
+            # the hub's workgroup limit (`AGENT_HUB_VMS_PER_WG`): no further VM for this session
+            raise RunnerError("capacity_exhausted", "vm_new_allowed")
+        if golden is None:
+            raise RunnerError("vm_start_failed", "golden")
+        taken = await self.pool.take(golden, org_id, wg_id)
+        if taken is not None:
+            return taken
+        self.wake_refill()
+        return await self._clone(golden, org_id, wg_id)
 
     async def _clone(self, golden: GoldenRef, org_id: str, wg_id: str) -> VmRow:
         env = self.env
@@ -336,16 +405,18 @@ class VmManager:
                 return None
             return await self._stop(current)
 
-    async def delete_workgroup(self, wg_id: str) -> VmRow | None:
-        """Delete the VM of an unassigned or archived workgroup (section 3.5); None when it has none."""
+    async def delete_workgroup(self, wg_id: str) -> list[VmRow]:
+        """Delete every VM of an unassigned or archived workgroup (section 3.5); returns the deleted rows."""
+        deleted: list[VmRow] = []
         async with self.lock(wg_id):
-            row = await records.for_workgroup(self.env.db, wg_id)
-            if row is None:
-                return None
-            if row.state == "running":
-                await self.retire.flush(row)
-            self._forget(row.id)
-            return await self.env.delete(row)
+            for row in await records.of_workgroup(self.env.db, wg_id):
+                if row.state == "running":
+                    await self.retire.flush(row)
+                self._forget(row.id)
+                gone = await self.env.delete(row)
+                assert gone is not None  # without `expect` the row is always deleted
+                deleted.append(gone)
+        return deleted
 
     def _forget(self, vm_id: str) -> None:
         self._failures.pop(vm_id, None)

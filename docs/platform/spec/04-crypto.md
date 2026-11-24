@@ -45,8 +45,8 @@ their vectors: [key model](../key-model.md)** (§11).
 | Platform root | Ed25519 | operator CLI (`agent-hub platform init`) | operator (offline file) | public key (config); log entries |
 | Hub response key | Ed25519 seed | operator | hub env `AGENT_HUB_SIGNING_KEY` | yes (it is the hub's own key) |
 | Agent key **(new, ADR-056)** | X25519 `kem` + Ed25519 `sig` | agent tool on the user's computer | `$AGENT_PLATFORM_HOME/agent.key` (0600) | public keys; the user's identity sealed to it (needs the handover secret, `11-agent-access.md` §3) |
-| Org key `OK_e` | 32 B, epoch e | admin browser (genesis/rotate) | org members (users), devices assigned to any wg of the org **(changed: devices receive OK, ADR-007)** | wraps only |
-| Workgroup key `WK_e` | 32 B, epoch e | admin/writer browser | wg members, **every org admin** (inherited read, ADR-058), devices assigned to the wg | wraps only |
+| Org key `OK_e` | 32 B, epoch e | admin browser (genesis/rotate) | org members (users), devices assigned to any wg of the org or to the org (ADR-075) **(changed: devices receive OK, ADR-007)** | wraps only |
+| Workgroup key `WK_e` | 32 B, epoch e | admin/writer browser | wg members, **every org admin** (inherited read, ADR-058), devices assigned to the wg (directly or through the org, ADR-075) | wraps only |
 | Credential key `CK_e` (per user) | 32 B, epoch e | user browser | the user, devices assigned to any wg in which the user is an explicit member (not through the inherited read of an admin, ADR-058) | wraps only |
 | Invitation code | 16 B | inviting browser / operator CLI | invitee (out of band) | only `invite_id`, `pk_inv`, sealed package; since ADR-060 also the identity proof `id_sig` of a platform registration |
 | Per-event key `k_event` | 32 B | HKDF per event | transient | never |
@@ -210,8 +210,10 @@ Entry hash = `b64u(SHA-256(canonical(entry)))` (whole entry including signatures
 | `wg_archive` | `wg` | admin; not the default workgroup |
 | `grant` | `subject` (user), `wg`, `access` read\|write | admin |
 | `ungrant` | `subject`, `wg` | admin; not for the default workgroup (leave org instead) |
-| `device_assign` | `device`, `wg`, `platform_seq` (platform devices: seq of `device_certify` in the platform log; org devices: absent) | admin; with `platform_seq` only if the org has platform access (ADR-026) |
-| `device_unassign` | `device`, `wg` | admin |
+| `device_assign` | `device`, `wg`, `platform_seq` (platform devices: seq of `device_certify` in the platform log; org devices: absent) | admin; with `platform_seq` only if the org has platform access (ADR-026); not while `device` is assigned to the organization |
+| `device_unassign` | `device`, `wg` | admin; an explicit assignment of `device` to `wg` exists |
+| `device_assign_org` **(new, ADR-075)** | `device`, `platform_seq` (as `device_assign`) | admin; `device` not yet assigned to the organization; with `platform_seq` only if the org has platform access; the hub also requires that every active device member announced `log.org_assign` |
+| `device_unassign_org` **(new, ADR-075)** | `device` | admin; `device` assigned to the organization |
 | `remove` | `subject` (user or device) | admin, or `subject == by` (leave); at least one admin must remain |
 | `rotate` | `scope` org\|wg, `scope_id`, `epoch` (= current + 1) | org: admin; wg: admin or wg writer |
 | `admit` **(new, ADR-060)** | `subject`, `pub{kem,sig}`, `platform_seq`, `id_sig` (`""` or 64-byte b64u), `by_platform_seq`, `by_id_sig` (`""` or 64-byte b64u), `role` admin\|member, `wgs{wg: read\|write}` | admin; every `wgs` workgroup writable and not the default one (`log_rights`); then (`log_admit`) `subject` not an active principal (a former **user** with the same keys may be admitted again) and two identity anchors in the platform log (§4.8): the subject's `pub` at `platform_seq` with `id_sig`, and the admitting admin's keys (state before the entry) at `by_platform_seq` with `by_id_sig`; no platform state: `log_admit`. Effect as `accept` of a user invitation with `role` and `wgs`, but the principal has **not consented** (below). At the hub additionally: `pub` is the subject's registered identity of an active user, certifications still valid (`log_admit`), the batch wraps the current org epoch and default-workgroup epoch for the subject (`log_admit`), every active device of the org announced `log.admit` (`409 peer_outdated`) |
@@ -227,7 +229,9 @@ concept idea 30, ADR-058; archived workgroups included). Explicit workgroup acce
 default wg), `invite.wgs` (applied at `accept`), `grant`/`ungrant`. The effective access of a user is the explicit
 access if there is one, else `read` for an active admin; writing a workgroup always needs explicit `write` (an admin
 grants itself `write` with a visible `grant` entry). The `cred` scope uses the explicit access only. Devices: assigned
-workgroups from `invite.wgs` (at `accept`) and `device_assign`/`device_unassign`.
+workgroups from `invite.wgs` (at `accept`) and `device_assign`/`device_unassign`; a device assigned to the
+organization (`device_assign_org` until `device_unassign_org`, `remove` or the end of its certification) is
+assigned to **every** workgroup of the org, including workgroups created later (ADR-075 §5).
 
 **Rotation obligation (new):** the required rotate set is the function
 `R(state_before, state_after, subject)` = { (`wg`, w) | subject could read workgroup w before and cannot after,
@@ -242,7 +246,8 @@ a member that leaves (`remove` with `subject == by`) or an admin that demotes it
 cannot rotate what it no longer reads; its R becomes `pending` and the remaining admins or writers rotate in the
 background (`06-web.md` §11 job 4).
 Platform decertification: the hub marks the org `rotation_pending`; the next admin browser performs the batch
-`device_unassign` for every workgroup of that device in the org + R; until then the hub refuses the decertified
+`device_unassign` for every explicit assignment of that device in the org (and `device_unassign_org` when it is
+assigned to the organization, ADR-075) + R; until then the hub refuses the decertified
 device anyway. Vectors for R (every entry type, edge cases) are part of `contracts/vectors/`.
 
 ### 4.8 Platform log **(new)**
@@ -438,6 +443,13 @@ device then stores OK/WK from the package and requests wraps for later epochs vi
    the **verified platform log** (browser verifies against the compiled root key).
    In a private organization the single member is the founder and therefore admin; elsewhere only admins assign
    devices. The assigning browser always wraps `OK` as well (ADR-007), so every assigned device reads org-level data.
+5. Assignment to the whole organization (ADR-075 §5): an admin appends `device_assign_org` (with `platform_seq` for
+   a platform device). The batch carries wraps of the current `OK`, of every `WK` the admin holds and of the admin's
+   own `CK`; the remaining workgroup keys and the other members' `CK` reach the device by catch-up (§5.11) from any
+   holder – members' clients and the devices already assigned. A `wg_create` batch wraps `WK_1` for the
+   organization's devices (they are recipients), every rotation wraps the new epoch for them. Such a device can read
+   every workgroup of the org and the credentials of its members whether or not a task runs there: the assignment
+   steers computing capacity for people, but the device itself holds the keys (stated in the assignment dialog).
 
 ### 5.10 Grant, remove, unpair, rotate
 

@@ -93,6 +93,8 @@ RULES: tuple[TableRule, ...] = (
     TableRule("wg", ORG_ROWS),
     TableRule("wg_access", WG_ROWS),
     TableRule("wg_device", WG_ROWS),
+    TableRule("org_device", ORG_ROWS),
+    TableRule("wg_placement", WG_ROWS),
     TableRule("platform_role", ALL_ROWS),
     TableRule("scope_epoch", SCOPE_ROWS),
     TableRule("key_wrap", SCOPE_ROWS),

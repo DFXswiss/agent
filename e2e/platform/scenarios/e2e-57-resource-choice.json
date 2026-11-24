@@ -1,0 +1,107 @@
+{
+  "name": "e2e-57-resource-choice",
+  "description": "E2E-57: a task waits for a device and starts after the assignment from the task view, a device for the whole organization, a second VM when the first is full, waiting for room, a chosen device.",
+  "steps": [
+    {
+      "id": "wait",
+      "expect": {
+        "user_text_contains": "E2E47-WAIT",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Assigned at last kz47-answer-a1b2c3."
+          }
+        ]
+      }
+    },
+    {
+      "id": "first",
+      "expect": {
+        "user_text_contains": "E2E47-FIRST",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "First VM kz47-answer-d4e5f6."
+          }
+        ]
+      }
+    },
+    {
+      "id": "second",
+      "expect": {
+        "user_text_contains": "E2E47-SECOND",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Second VM kz47-answer-g7h8j9."
+          }
+        ]
+      }
+    },
+    {
+      "id": "queued",
+      "expect": {
+        "user_text_contains": "E2E47-QUEUED",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Room again kz47-answer-k1l2m3."
+          }
+        ]
+      }
+    },
+    {
+      "id": "chosen",
+      "expect": {
+        "user_text_contains": "E2E47-CHOSEN",
+        "has_tools": true,
+        "has_tool_result": false,
+        "stream": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Chosen device kz47-answer-n4p5q6."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Resources"
+          }
+        ]
+      }
+    }
+  ]
+}

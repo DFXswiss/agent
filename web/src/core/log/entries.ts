@@ -122,6 +122,8 @@ const LOG_TYPE_FIELDS: Record<string, Record<string, Check>> = {
   ungrant: { subject: F.uuid, wg: F.uuid },
   device_assign: { device: F.uuid, wg: F.uuid }, // optional platform_seq, see typeFields
   device_unassign: { device: F.uuid, wg: F.uuid },
+  device_assign_org: { device: F.uuid }, // optional platform_seq, see typeFields (ADR-075)
+  device_unassign_org: { device: F.uuid },
   remove: { subject: F.uuid },
   rotate: { scope: oneOf('org', 'wg'), scope_id: F.uuid, epoch },
   admit: {
@@ -183,7 +185,8 @@ function typeFields(body: Body): Record<string, Check> {
   const type = body.type as string;
   if (type === 'invite') return body.kind === 'device' ? INVITE_DEVICE : INVITE_USER;
   const own = { ...LOG_TYPE_FIELDS[type] };
-  if (type === 'device_assign' && Object.hasOwn(body, 'platform_seq')) own.platform_seq = seq;
+  if ((type === 'device_assign' || type === 'device_assign_org') && Object.hasOwn(body, 'platform_seq'))
+    own.platform_seq = seq;
   return own;
 }
 
@@ -311,6 +314,8 @@ export type LogFields =
   | { type: 'ungrant'; subject: string; wg: string }
   | { type: 'device_assign'; device: string; wg: string; platform_seq?: number }
   | { type: 'device_unassign'; device: string; wg: string }
+  | { type: 'device_assign_org'; device: string; platform_seq?: number }
+  | { type: 'device_unassign_org'; device: string }
   | { type: 'remove'; subject: string }
   | { type: 'rotate'; scope: 'org' | 'wg'; scope_id: string; epoch: number }
   | {

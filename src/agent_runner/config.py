@@ -42,6 +42,8 @@ NAMES = (
     "VM_DISK_GIB",
     "POOL_SIZE",
     "MEMORY_RESERVE_MIB",
+    "SESSIONS_PER_VM",
+    "MAX_VMS",
     "SESSION_IDLE_SECONDS",
     "VM_IDLE_SECONDS",
     "TEXTFILE_DIR",
@@ -91,6 +93,9 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "VM_DISK_GIB": (20, 5, 65_536),
     "POOL_SIZE": (2, 0, 64),
     "MEMORY_RESERVE_MIB": (32768, 0, 4_194_304),
+    # ADR-075 section 1: occupying sessions per VM and VMs of the device that occupy a slot; 0 = no such limit
+    "SESSIONS_PER_VM": (16, 0, 1_000_000),
+    "MAX_VMS": (0, 0, 1_000_000),
     "SESSION_IDLE_SECONDS": (1800, 60, 604_800),
     "VM_IDLE_SECONDS": (1800, 60, 604_800),
     "WORKVM_SLOTS": (0, 0, 100),
@@ -174,6 +179,10 @@ class Config:
     """A transcript above this size cannot be checkpointed (audited, never silent)."""
     context_wait_seconds: int = 180
     """How long a restore waits for the final checkpoint of the session it continues and retries the hub."""
+    sessions_per_vm: int = 16
+    """Occupying sessions per VM, 0 = no limit (KOR-41, ADR-075 section 1)."""
+    max_vms: int = 0
+    """VMs of the device that occupy a slot, 0 = only the memory budget decides (KOR-41, ADR-075 section 1)."""
 
     @property
     def pg_dir(self) -> Path:
@@ -257,6 +266,8 @@ def load_config(
         vm_disk_gib=integers["VM_DISK_GIB"],
         pool_size=integers["POOL_SIZE"],
         memory_reserve_mib=integers["MEMORY_RESERVE_MIB"],
+        sessions_per_vm=integers["SESSIONS_PER_VM"],
+        max_vms=integers["MAX_VMS"],
         session_idle_seconds=integers["SESSION_IDLE_SECONDS"],
         vm_idle_seconds=integers["VM_IDLE_SECONDS"],
         textfile_dir=_optional(raw("TEXTFILE_DIR"), "TEXTFILE_DIR", require, lambda v: _absolute(v, "TEXTFILE_DIR")),

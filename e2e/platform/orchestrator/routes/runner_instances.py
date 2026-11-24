@@ -2,7 +2,7 @@
 runner instances with separate `AGENT_RUNNER_HOME`").
 
 - `POST /runners/{name}/spawn` (`{"device", "memory_reserve_mib", "pool_size", "session_idle_seconds",
-  "vm_idle_seconds"}`, each optional):
+  "vm_idle_seconds", "sessions_per_vm", "max_vms"}`, each optional):
   a further runner `runner-<n>` (n above the run's `E2E_RUNNERS`) with its own home `<runner scratch>/runner-<n>`
   and VM prefix `<run prefix>r<n>-` (the run's VM cleanup covers it), otherwise the environment of `runner-1`. It
   adopts the run's golden image when the run has one and starts waiting for enrollment (`POST
@@ -10,7 +10,9 @@ runner instances with separate `AGENT_RUNNER_HOME`").
   capacity-based scheduling); `pool_size` sets its warm pool (default: that of `runner-1`). An instance that will
   enroll as an org device (`"device": "org"`) gets no platform OpenRouter key file (the runner refuses it on org
   devices, 05-runner.md section 1.3). `session_idle_seconds` / `vm_idle_seconds` (60 s minimum) let an idle session
-  be suspended and then its VM stop quickly (E2E-38: the scheduler's stopped-VM path). Answers
+  be suspended and then its VM stop quickly (E2E-38: the scheduler's stopped-VM path). `sessions_per_vm` and
+  `max_vms` set `AGENT_RUNNER_SESSIONS_PER_VM` / `AGENT_RUNNER_MAX_VMS` (E2E-57: a full VM, a second VM, a full
+  device; ADR-075). Answers
   `{name, state, vm_prefix, home}`.
 - `POST /runners/{name}/remove`: stops a spawned runner, deletes its VMs (names with its prefix) and its home and
   forgets it, so the final checks do not expect it running (a decertified or unpaired device's runner ends itself).
@@ -42,6 +44,8 @@ IDLE_VARIABLES = {
     "vm_idle_seconds": "AGENT_RUNNER_VM_IDLE_SECONDS",
 }
 IDLE_RANGE = (60, 604_800)
+LIMIT_VARIABLES = {"sessions_per_vm": "AGENT_RUNNER_SESSIONS_PER_VM", "max_vms": "AGENT_RUNNER_MAX_VMS"}
+MAX_LIMIT = 1000
 KEY_FILE = "AGENT_RUNNER_OPENROUTER_KEY_FILE"
 _NAME_RE = re.compile(r"^runner-([1-9])$")
 
@@ -99,6 +103,10 @@ def post_spawn(ctx: Context, params: dict[str, str], body: Any) -> tuple[int, An
         seconds = _number(options, key, IDLE_RANGE[1], IDLE_RANGE[0])
         if seconds is not None:
             env[variable] = str(seconds)
+    for key, variable in LIMIT_VARIABLES.items():
+        limit = _number(options, key, MAX_LIMIT)
+        if limit is not None:
+            env[variable] = str(limit)
     runner = Runner(ctx.runner_node, name, template.python, env)
     golden = _golden(ctx)
     if golden is not None:

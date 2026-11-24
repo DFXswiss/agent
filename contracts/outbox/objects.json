@@ -67,6 +67,9 @@
             },
             "claude_session_id_present": {
               "type": "boolean"
+            },
+            "vm_id": {
+              "$ref": "../common.json#/$defs/vm_id"
             }
           },
           "required": [
@@ -104,6 +107,9 @@
             },
             "claude_session_id_present": {
               "type": "boolean"
+            },
+            "vm_id": {
+              "$ref": "../common.json#/$defs/vm_id"
             }
           },
           "required": [

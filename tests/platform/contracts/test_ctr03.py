@@ -29,8 +29,8 @@ SPEC_SSE_FRAMES = (
 )
 # 04-crypto.md section 4.7 (membership-log entry types) and section 4.8 (platform-log entry types).
 SPEC_MEMBERSHIP_TYPES = (
-    "genesis invite invite_revoke accept role wg_create wg_archive grant ungrant device_assign device_unassign remove"
-    " rotate admit"
+    "genesis invite invite_revoke accept role wg_create wg_archive grant ungrant device_assign device_unassign"
+    " device_assign_org device_unassign_org remove rotate admit"
 )
 SPEC_PLATFORM_TYPES = (
     "root device_invite device_certify device_decertify role_grant role_revoke user_invite org_platform_access"

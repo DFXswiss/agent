@@ -70,6 +70,8 @@ HUB_ERROR_CODES = frozenset(
         "pairing_unknown",
         "params_invalid",
         "peer_outdated",
+        "placement_forbidden",
+        "placement_invalid",
         "platform_access_denied",
         "platform_invite_required",
         "quota_exceeded",

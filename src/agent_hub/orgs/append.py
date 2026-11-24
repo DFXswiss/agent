@@ -5,8 +5,8 @@
 1. the org exists (`404 not_found`);
 2. every entry is authored by the appending principal (`403 forbidden`: a client never submits entries of others),
    `expected_seq` is the current head + 1 (`409 seq_conflict`, `detail.expected_seq` only for members);
-3. `device_assign` with `platform_seq` only for an org with platform access (`403 platform_access_denied`, ADR-026;
-   the hub reads the access from the verified platform log);
+3. `device_assign`/`device_assign_org` with `platform_seq` only for an org with platform access (`403
+   platform_access_denied`, ADR-026; the hub reads the access from the verified platform log);
 4. L1-L8 before every entry against the hub's own verified log, the rotation obligation (the hub computes R itself,
    `409 rotation_required`) and W3 for every wrap plus the distribution of every new epoch (`agent_hub.log.batch`),
    with `now` (invitation expiry, certification validity) and the decertified platform devices excluded;
@@ -18,6 +18,10 @@
 6. storage: the entries (`membership_entry`), the projections (`agent_hub.orgs.projection`), the wraps, the deletion
    of the wraps of removed principals in this org, the head, `platform_access` and `rotation_pending` of the org and
    one audit row `log.<type>` per entry;
+6a. a batch that assigns a device to the whole organization, or that adds a device (other than by its own `accept`)
+   to an org that has such an assignment, only when every active device of the org after the batch reports the
+   feature `log.org_assign` on its live channel (`409 peer_outdated`, ADR-075 §5: older runners cannot read the new
+   entries);
 7. the events of the batch through `agent_hub.events.store.append_events` (E1-E9 against the log after the batch,
    after its epochs are stored so that E6 sees the new rotation time).
 
@@ -42,6 +46,7 @@ from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.audit.invites import audit_invite_use
 from agent_hub.crypto.encoding import b64u_decode, canonical
 from agent_hub.crypto.errors import CryptoError
+from agent_hub.device.features import LOG_ORG_ASSIGN, outdated_devices
 from agent_hub.errors import ERROR_STATUSES, HubError
 from agent_hub.events.store import StoredEvent, append_events
 from agent_hub.log.batch import BatchResult, check_batch
@@ -51,7 +56,7 @@ from agent_hub.log.state import DEVICE, USER, WG, OrgState
 from agent_hub.log.verify import VerifiedLog
 from agent_hub.notifications.rules import Notification
 from agent_hub.orgs import logs, projection
-from agent_hub.orgs.admit import admitted_notices, check_admits
+from agent_hub.orgs.admit import MAX_DETAIL_DEVICES, admitted_notices, check_admits
 
 Connection = psycopg.Connection[Any]
 Body = dict[str, Any]
@@ -114,8 +119,8 @@ def require_authored(entries: Sequence[object], appender: Appender) -> None:
 def _target(body: Body) -> tuple[str | None, str | None, str | None, str | None]:
     """`(wg, device, target_kind, target_id)` of an entry for its audit row."""
     kind = body["type"]
-    if kind in ("device_assign", "device_unassign"):
-        return body["wg"], body["device"], "device", body["device"]
+    if kind in ("device_assign", "device_unassign", "device_assign_org", "device_unassign_org"):
+        return body.get("wg"), body["device"], "device", body["device"]
     if kind == "rotate":
         return (body["scope_id"] if body["scope"] == WG else None), None, "scope", body["scope_id"]
     if kind in ("wg_create", "wg_archive"):
@@ -222,11 +227,34 @@ def members(state: OrgState) -> tuple[frozenset[str], frozenset[str]]:
 
 
 def wants_platform_device(entries: Sequence[object]) -> bool:
-    """The batch assigns a platform device (`device_assign` with `platform_seq`)."""
+    """The batch assigns a platform device (`device_assign` or `device_assign_org` with `platform_seq`)."""
     return any(
-        (body := _body(entry)) is not None and body.get("type") == "device_assign" and "platform_seq" in body
+        (body := _body(entry)) is not None
+        and body.get("type") in ("device_assign", "device_assign_org")
+        and "platform_seq" in body
         for entry in entries
     )
+
+
+def require_org_assign_feature(
+    connection: Connection, before: OrgState, after: OrgState, bodies: Sequence[Body]
+) -> None:
+    """Step 6a of the module docstring: `409 peer_outdated` (with `detail.devices`) unless every active device has
+    announced `log.org_assign` (`agent_hub.device.features`).
+
+    Checked only when the batch adds an assignment to the organization or adds a device other than by its own
+    `accept` (an enrolling runner verifies the served log, the new entries included, before it accepts, so an older
+    one refuses to enroll by itself). Removals and owed rotations are never blocked."""
+    if not after.org_assignments:
+        return
+    accepted = {str(body["subject"]) for body in bodies if body["type"] == "accept" and body.get("kind") == DEVICE}
+    devices = members(after)[1] - accepted
+    added_org = set(after.org_assignments) - set(before.org_assignments)
+    if not added_org and devices <= members(before)[1]:
+        return
+    outdated = outdated_devices(connection, devices, LOG_ORG_ASSIGN)
+    if outdated:
+        raise HubError("peer_outdated", detail={"devices": outdated[:MAX_DETAIL_DEVICES]})
 
 
 def check(
@@ -301,6 +329,7 @@ def append_batch(
     batch = check(log, entries, wraps, appender=appender, platform=platform, now=now, access=access)
     after = batch.log
     bodies = [cast(Body, entry["body"]) for entry in after.entries[log.head.seq + 1 :]]
+    require_org_assign_feature(connection, log.state, after.state, bodies)
     _accepts(connection, org_id, bodies, appender, now)
     excluded = frozenset() if platform is None else platform.excluded(after.state)
     admits = check_admits(connection, after, bodies, excluded)

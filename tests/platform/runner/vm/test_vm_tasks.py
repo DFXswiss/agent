@@ -20,6 +20,7 @@ from agent_runner.store.pool import open_pool
 from agent_runner.sync import extensions, outbox
 from agent_runner.sync.runtime import ATTRIBUTE, SyncRuntime
 from agent_runner.vm import heartbeat, records, tasks, uninstall
+from agent_runner.vm.capacity import Usage
 from agent_runner.vm.lifecycle import VmManager
 from agent_runner.vm.lima import Lima
 from agent_runner.vm.pool import VmEnv
@@ -108,21 +109,29 @@ def test_idle_task_probes_every_5_s_and_stops_idle_vms_every_60_s(fake_clock: An
     assert set(fake_clock.sleeps) == {5.0}
 
 
-def test_manager_for_builds_one_manager(fake_clock: Any, tmp_path: Path) -> None:
+def test_manager_for_builds_one_manager(fake_clock: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = SimpleNamespace(
         vm_prefix=PREFIX, vm_cpus=4, vm_memory_mib=8192, vm_disk_gib=20, pool_size=2, memory_reserve_mib=32768,
-        vm_idle_seconds=1800, home=tmp_path / "home",
+        vm_idle_seconds=1800, home=tmp_path / "home", sessions_per_vm=8, max_vms=5,
     )  # fmt: skip
     ctx = context(fake_clock)
     ctx.config = config
     ctx.pool = object()
     ctx.identity = None
+    monkeypatch.setattr(registry, "capacity_usages", lambda: [])  # no store behind this context
     manager = tasks.manager_for(ctx)
     assert tasks.manager_for(ctx) is manager
     assert isinstance(manager, VmManager)
     assert manager.env.lima.prefix == PREFIX
     assert manager.env.tokens.directory == tmp_path / "home" / "vm"
     assert manager.env.settings.pool_size == 2
+    assert (manager.env.settings.sessions_per_vm, manager.env.settings.max_vms) == (8, 5)
+    assert manager.env.cpus() == os.cpu_count()
+
+    async def usage() -> Usage:
+        return await manager.env.other_usage()
+
+    assert asyncio.run(usage()) == Usage()
     manager.env.log("vm.test", {"a": 1})
     asyncio.run(manager.env.sink({"vm_id": "vm-00000001", "state": "pool"}))  # type: ignore[arg-type]
     manager.env.log("vm.empty", {})
@@ -256,7 +265,7 @@ def test_vm_state_goes_to_the_outbox_and_the_heartbeat(harness: Harness, fake_cl
             ctx.pool = db
             ctx.config = SimpleNamespace(
                 vm_prefix=PREFIX, vm_cpus=4, vm_memory_mib=8192, vm_disk_gib=20, pool_size=1,
-                memory_reserve_mib=32768, vm_idle_seconds=1800, home=tmp_path / "home",
+                memory_reserve_mib=32768, vm_idle_seconds=1800, home=tmp_path / "home", sessions_per_vm=16, max_vms=0,
             )  # fmt: skip
             ctx.identity = None
             manager = tasks.manager_for(ctx)
@@ -291,10 +300,27 @@ def test_vm_state_goes_to_the_outbox_and_the_heartbeat(harness: Harness, fake_cl
     assert notified == (2, 2)  # pushed and the heartbeat brought forward per state change
     assert capacity == {"vm_memory_budget_mib": capacity["vm_memory_budget_mib"], "vm_memory_used_mib": 8192,
                         "vm_slots_total": capacity["vm_slots_total"], "vm_slots_free": capacity["vm_slots_total"] - 1,
-                        "pool_ready": 0}  # fmt: skip
+                        "pool_ready": 0, "cpus": os.cpu_count(), "memory_total_mib": 32768 + 4 * 8192,
+                        "vms_running": 1, "sessions_active": 0, "work_vms_running": 0, "sessions_per_vm": 16,
+                        "vms_max": 0,
+                        **{key: capacity[key] for key in ("disk_free_mib",) if key in capacity}}  # fmt: skip
     assert vms == [{"vm_id": row.id, "state": "running"}]
     sections = extensions.heartbeat_sections()
     assert (sections["capacity"].provide, sections["vms"].provide) == (heartbeat.capacity, heartbeat.vms)
+
+
+def test_the_usage_of_other_areas_is_summed_and_checked() -> None:
+    async def work(context: Any) -> Usage:
+        return Usage(vms=1, memory_mib=context)
+
+    async def wrong(_context: Any) -> object:
+        return (1, 2)
+
+    assert asyncio.run(tasks.usage_of(4096, [work, work])()) == Usage(vms=2, memory_mib=8192)
+    assert asyncio.run(tasks.usage_of(4096, [])()) == Usage()
+    with pytest.raises(RunnerError) as caught:
+        asyncio.run(tasks.usage_of(None, [wrong])())
+    assert (caught.value.code, caught.value.name) == ("registry_invalid", "capacity")
 
 
 def test_pool_task_reconciles_only_once(fake_clock: Any) -> None:

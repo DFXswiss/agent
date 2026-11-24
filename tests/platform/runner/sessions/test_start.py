@@ -91,6 +91,9 @@ def test_start_runs_steps_one_to_five_with_transitions_and_contract_requests(rig
         ]
         bodies = await found.of_kind("session_transition")
         assert all(b["at"] == "2026-11-21T12:00:00.000Z" for b in bodies)
+        # ADR-075: the VM rides on every transition from `vm_ready` on
+        assert "vm_id" not in bodies[0]
+        assert {b["vm_id"] for b in bodies[1:]} == {"vm-00000001"}
         assert "model_access" not in bodies[1]
         assert bodies[1]["agent_version"] == CLAUDE
         assert bodies[2]["model_access"] == "platform"
@@ -137,6 +140,34 @@ def test_start_runs_steps_one_to_five_with_transitions_and_contract_requests(rig
         assert [item["item_kind"] for item in env.hub.items()].count("session_transition") == 4
 
     run(rig, body, profile_world())
+
+
+def test_the_vm_preferences_of_a_start(rig: Rig) -> None:
+    """ADR-075 section 4: the hub's `vm_id_pref` first, then the VM of the parent (subagent) or of the `resume_from`
+    session; `vm_new_allowed` is passed on; the session is booked on the chosen VM."""
+
+    async def body(env: Any) -> None:
+        found = await kit(env)
+        starter = Starter(found.session_env)
+        assert (await starter.start(desired())).started
+        first = await found.stored(session_id())
+        assert found.vms.calls[-1] == {"session_id": session_id(), "prefer": [], "new_allowed": True}
+        pinned = desired(2, vm_id_pref="vm-0000abcd", resume_from=session_id(), vm_new_allowed=False)
+        assert (await starter.start(pinned)).started
+        assert found.vms.calls[-1] == {
+            "session_id": session_id(2),
+            "prefer": ["vm-0000abcd", first.vm_id],
+            "new_allowed": False,
+        }
+        child = desired(3, depth=1, parent_session_id=session_id(2))
+        assert (await starter.start(child)).started
+        assert found.vms.calls[-1]["prefer"] == [first.vm_id]
+        unknown = desired(4, resume_from=session_id(99))
+        assert (await starter.start(unknown)).started
+        assert found.vms.calls[-1]["prefer"] == []
+        assert (await found.stored(session_id(4))).vm_id == first.vm_id
+
+    run(rig, body)
 
 
 def test_a_known_session_is_never_started_twice(rig: Rig) -> None:
@@ -560,10 +591,10 @@ def test_a_session_gone_from_the_store_ends_the_start(rig: Rig) -> None:
         found = await kit(env)
         original = found.vms.ensure_vm
 
-        async def ensure(org: str, wg: str) -> Any:
+        async def ensure(org: str, wg: str, **choice: Any) -> Any:
             async with env.pool.connection() as conn:
                 await conn.execute("DELETE FROM runner.session")
-            return await original(org, wg)
+            return await original(org, wg, **choice)
 
         found.vms.ensure_vm = ensure  # type: ignore[method-assign,assignment]
         report = await Starter(found.session_env).start(desired())

@@ -242,6 +242,10 @@ agent-platform org member-name --org <org_id> --user <user_id|account code|invit
 agent-platform org show --org <org_id>                  # members with name and name_source; writes your own name
 agent-platform wg create --org <org_id> --name "Research"
 agent-platform device assign --wg <wg_id>               # a DFX execution device for the workgroup
+agent-platform device assign --org <org_id> [--device <device_id>]   # a device for every workgroup (admins)
+agent-platform device unassign --org <org_id> --device <device_id>  # end that (rotates the keys it held)
+agent-platform device list [--org <org_id>]             # devices, their VMs, sessions, load and limits
+agent-platform wg placement --wg <wg_id> [--device <device_id> [--vm <vm_id>] | --auto]  # default for new tasks
 agent-platform github connect                           # opens GitHub for your user (see below)
 ```
 
@@ -249,6 +253,13 @@ agent-platform github connect                           # opens GitHub for your 
 provisional) until the person's own name replaces it, which happens by itself when they open the organization.
 `org show` lists `name_source` (`own`, `admin`, `invitation`, `none`) for each member; give a member with `none` a
 name with `org member-name`. An admitted account's open invitation is closed by `org admit` itself.
+
+A device given to the whole organization runs tasks of every workgroup, also of later ones, and therefore holds
+the keys of all of them: it can read their tasks, chats and whiteboards and the credentials of their members. Give a
+device to single workgroups (`--wg`) to keep the others off it. The platform picks a device and a VM by itself; to
+choose them for one task use `task create --wg <wg_id> --text <prompt> --device <device_id> [--vm <vm_id>]`
+(`device list` shows the IDs). A task is always created: when every device is full or none is assigned it waits
+(`task show` prints `waiting` with the reason, `diagnose --task` the next step) and starts by itself.
 
 **Tasks.** When your user says "put this into agent.dfx.swiss as a task":
 
@@ -260,8 +271,9 @@ agent-platform task follow --task <task_id> [--after <next_after>] [--wait 60]  
 agent-platform task list --wg <wg_id> [--state open|closed]
 ```
 
-Prompts and answers are encrypted on this computer; the hub never sees them. `task create` fails with `no_device`
-when the workgroup has no execution device: run `device assign --wg <wg_id>` first.
+Prompts and answers are encrypted on this computer; the hub never sees them. A task is created even
+when the workgroup has no execution device yet: it waits with `no_device` until one is assigned (`device assign --wg
+<wg_id>`).
 
 **Your user's own Mac as an execution device** (optional; DFX devices are the default). When your user wants this
 Mac to run their tasks, connect it – your user never needs a terminal for it (ADR-074):
@@ -473,7 +485,7 @@ agent-platform diagnose --task <task_id>
 ```
 
 `diagnose` answers "why does my task not start?" with a `reason` and a `next` step (for example: no device assigned,
-the Claude login expired, the device is offline).
+the Claude login expired, the device is offline, every device is full, the chosen device is full or offline).
 
 `agent_revoked`: your user disconnected you in the settings, or approved another agent as main orchestrator. Pair
 again only if your user asks you to.

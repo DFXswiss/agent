@@ -224,6 +224,9 @@ def test_shutdown_closes_sockets_and_refuses_new_ones(hub: HubHarness, live: Liv
 def test_heartbeat_parser_refuses_everything_else() -> None:
     good = {"type": "heartbeat", "capacity": dict(CAPACITY), "sessions": [], "vms": []}
     assert parse_heartbeat(json.dumps(good)) == CAPACITY
+    # ADR-075 section 2: optional counters and settings
+    more = {**CAPACITY, "cpus": 18, "sessions_per_vm": 16, "vms_max": 0}
+    assert parse_heartbeat(json.dumps({**good, "capacity": more})) == more
     session = {"session_id": new_id(), "state": "idle"}
     invalid: list[Any] = [
         [],
@@ -242,6 +245,10 @@ def test_heartbeat_parser_refuses_everything_else() -> None:
         {**good, "sessions": [{**session, "session_id": 7}]},
         {**good, "sessions": [{**session, "state": "gone"}]},
         {**good, "vms": [{"vm_id": "vm-xyz", "state": "running"}]},
+    ]
+    invalid += [
+        {**good, "capacity": {**CAPACITY, "features": ["vm.choice"]}},
+        {**good, "capacity": {**CAPACITY, "sessions_per_vm": -1}},
     ]
     for frame in invalid:
         with pytest.raises(FrameInvalid):

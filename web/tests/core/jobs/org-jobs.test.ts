@@ -223,6 +223,25 @@ describe('rotation job', () => {
     expect(w.world.state.pendingScopes()).toEqual([]);
   });
 
+  it('ends the organization assignment and the explicit ones of a decertified device in one batch (ADR-075)', async () => {
+    const { w, a, one } = await setup({ private: true });
+    w.hub.platformAccess = true;
+    await w.world.batch(a.ada!, [{ type: 'device_assign_org', device: a.pdev!.id, platform_seq: 2 }]);
+    await w.sync();
+    const root = await ed25519KeyPair(await seed('platform root'));
+    const last = w.platform.entries[w.platform.entries.length - 1]!;
+    const head = { seq: w.platform.entries.length - 1, hash: await entryHash(last) };
+    const decertify = [{ type: 'device_decertify', device: a.pdev!.id }];
+    w.platform.entries.push(...(await buildPlatformEntries(head, root.privateKey, decertify, formatTime(T0))));
+    w.hub.platform = await verifyPlatformLog(w.platform.entries, w.platform.root);
+    const before = w.world.log!.entries.length;
+    expect(await rotatePending(jobContext(w), run(w))).toBe(1);
+    const types = w.world.log!.entries.slice(before).map((entry) => entry.body.type);
+    expect(types.filter((type) => type !== 'rotate')).toEqual(['device_unassign_org', 'device_unassign']);
+    expect(w.world.state.orgAssigned(a.pdev!.id)).toBe(false);
+    expect(w.world.state.assigned(a.pdev!.id, one)).toBe(false);
+  });
+
   it('rebuilds after seq_conflict on the log the job re-reads', async () => {
     const { w, a } = await setup();
     await w.world.batch(a.cy!, [{ type: 'remove', subject: a.cy!.id }]);

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -111,6 +112,12 @@ def test_desired_sessions_are_parsed() -> None:
     assert desired_module.desired_sessions({"sessions": [wire(item)]}) == [item]
     child = desired(2, depth=1, parent_session_id=session_id(1))
     assert desired_module.parse(wire(child)) == child
+    # ADR-075: the previous session, the preferred VM and whether the runner may create a VM
+    placed = replace(desired(3), resume_from=session_id(1), vm_id_pref="vm-0000abcd", vm_new_allowed=False)
+    assert desired_module.parse(wire(placed)) == placed
+    older = {key: value for key, value in wire(desired(4)).items() if key not in ("vm_id_pref", "vm_new_allowed")}
+    parsed = desired_module.parse({**older, "resume_from": None})
+    assert (parsed.resume_from, parsed.vm_id_pref, parsed.vm_new_allowed) == (None, None, True)
 
 
 @pytest.mark.parametrize(
@@ -124,6 +131,10 @@ def test_desired_sessions_are_parsed() -> None:
         {"model_id_pref": 5},
         {"session_id": "not-a-uuid"},
         {"parent_session_id": "x"},
+        {"resume_from": "x"},
+        {"vm_id_pref": "vm-1"},
+        {"vm_id_pref": 5},
+        {"vm_new_allowed": "yes"},
     ],
 )
 def test_malformed_desired_sessions_are_refused(change: dict[str, Any]) -> None:

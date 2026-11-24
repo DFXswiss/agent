@@ -2,7 +2,8 @@
 // menu with "Close task" for writers, "Renamed by session" after a `task.set_title` (WEB-09), and the tab frame. Tabs are discovered at `ui/task-tabs/<area>/index.tsx`
 // (ADR-027 section 4): Chat (default) and Sessions here; Operations, Whiteboard and Audit join from their packages.
 // Below the header, how the current main session took over the context after a resume (ContextNotice, KOR-33).
-// The send sequence of the home screen navigates here at once (WEB-04); the countdown is part of the chat.
+// The send sequence of the home screen navigates here at once (WEB-04); the countdown is part of the chat. The header
+// names device and VM of the main session ("on <device> · vm-…", ADR-075 section 6).
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { closeTask, loadChat } from '../../../core/chat/actions';
@@ -23,6 +24,32 @@ import { useDirectory, useOrgView, useTitle } from '../tasks/hooks';
 import { ContextNotice } from './ContextNotice';
 import { activeTab, Tabs } from './Tabs';
 import { Unlocking } from '../../unlock/Unlocking';
+import { sessionVm } from '../../../core/tasks/placement';
+import { useDeviceNames } from '../devices/labels';
+import { placementText } from '../../task-tabs/sessions/SessionsTab';
+
+/** Where the task's main session runs (nothing before it has a device). */
+function TaskPlacement({ row }: { readonly row: TaskRow }) {
+  const { app } = useAppEnv();
+  const { t } = useI18n();
+  const name = useDeviceNames([row.org_id]);
+  const session = useStore(
+    (state) => (row.main_session_id === null ? null : (state.tasks.sessions[row.main_session_id]?.row ?? null)),
+    app.store,
+  );
+  if (session?.device_id == null) return null;
+  const vm = sessionVm(session);
+  return (
+    <span
+      className="text-sm text-gray-600"
+      data-testid="task.placement"
+      data-device={session.device_id}
+      data-vm={vm ?? ''}
+    >
+      {t('task.sessions.device', { device: placementText(name(session.device_id), vm) })}
+    </span>
+  );
+}
 
 const TABS = taskTabs();
 
@@ -124,6 +151,7 @@ function TaskView({ row }: { readonly row: TaskRow }) {
             {t(`tasks.state.${row.state}`)}
           </span>
           <TaskRuntime start={row.created_at} end={row.closed_at} />
+          <TaskPlacement row={row} />
         </div>
         {writer && <TaskMenu task={row} />}
       </header>

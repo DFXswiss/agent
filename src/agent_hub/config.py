@@ -47,6 +47,9 @@ FORWARDED_HEADER = "AGENT_HUB_FORWARDED_HEADER"
 CONTEXT_MAX_OBJECT_BYTES = "AGENT_HUB_CONTEXT_MAX_OBJECT_BYTES"
 CONTEXT_KEEP = "AGENT_HUB_CONTEXT_KEEP"
 CONTEXT_ORG_BYTES = "AGENT_HUB_CONTEXT_ORG_BYTES"
+VMS_PER_WG = "AGENT_HUB_VMS_PER_WG"
+CAPACITY_REFUSALS = "AGENT_HUB_CAPACITY_REFUSALS"
+REFUSAL_HOLD_SECONDS = "AGENT_HUB_REFUSAL_HOLD_SECONDS"
 
 TEST_PREFIX = "AGENT_HUB_TEST_"
 KNOWN_VARIABLES = frozenset(
@@ -69,12 +72,23 @@ KNOWN_VARIABLES = frozenset(
         CONTEXT_MAX_OBJECT_BYTES,
         CONTEXT_KEEP,
         CONTEXT_ORG_BYTES,
+        VMS_PER_WG,
+        CAPACITY_REFUSALS,
+        REFUSAL_HOLD_SECONDS,
     }
 )
 
 DEFAULT_PORT = 8788
 DEFAULT_DEVICE_ONLINE_SECONDS = 30
 MAX_DEVICE_ONLINE_SECONDS = 3600
+DEFAULT_VMS_PER_WG = 100
+"""Live VMs of one workgroup over all devices (ADR-075 section 1; 0 = no limit)."""
+MAX_VMS_PER_WG = 1_000_000
+DEFAULT_CAPACITY_REFUSALS = 3
+"""Refusals in a row after which the next attempt is held back (ADR-075 section 7, ADR-049)."""
+MAX_CAPACITY_REFUSALS = 1000
+DEFAULT_REFUSAL_HOLD_SECONDS = 60
+MAX_REFUSAL_HOLD_SECONDS = 86400
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_CATALOG_BYTES = 1024 * 1024
 GIB = 1024**3
@@ -179,6 +193,9 @@ class HubConfig:
     """`AGENT_HUB_CONTEXT_ORG_BYTES`: the sealed checkpoint bytes of all tasks of one organisation."""
     downloads_dir: Path | None = None
     """`AGENT_HUB_DOWNLOADS_DIR`: the download area of an own device (ADR-074 section 7); None = no downloads."""
+    vms_per_wg: int = DEFAULT_VMS_PER_WG
+    capacity_refusals: int = DEFAULT_CAPACITY_REFUSALS
+    refusal_hold_seconds: int = DEFAULT_REFUSAL_HOLD_SECONDS
 
     def signer(self) -> HubSigner:
         """The hub's response and checkpoint signer (reused `agent_core.signing.HubSigner`)."""
@@ -245,6 +262,16 @@ def _bounded_int(environ: Mapping[str, str], name: str, default: int, pattern: r
         return default
     if pattern.fullmatch(value) is None or not 1 <= int(value) <= maximum:
         raise ConfigError(f"{name} must be an integer from 1 to {maximum}")
+    return int(value)
+
+
+def _setting(environ: Mapping[str, str], name: str, default: int, maximum: int) -> int:
+    """A count setting of 0 to `maximum` (0 = no limit or no hold, ADR-075 section 1)."""
+    value = _value(environ, name)
+    if value is None:
+        return default
+    if _SECONDS_RE.fullmatch(value) is None or int(value) > maximum:
+        raise ConfigError(f"{name} must be an integer from 0 to {maximum}")
     return int(value)
 
 
@@ -477,4 +504,11 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
             environ, CONTEXT_ORG_BYTES, DEFAULT_CONTEXT_ORG_BYTES, _BYTES_RE, MAX_CONTEXT_BYTES
         ),
         downloads_dir=_downloads_dir(environ),
+        vms_per_wg=_setting(environ, VMS_PER_WG, DEFAULT_VMS_PER_WG, MAX_VMS_PER_WG),
+        capacity_refusals=_bounded_int(
+            environ, CAPACITY_REFUSALS, DEFAULT_CAPACITY_REFUSALS, _SECONDS_RE, MAX_CAPACITY_REFUSALS
+        ),
+        refusal_hold_seconds=_setting(
+            environ, REFUSAL_HOLD_SECONDS, DEFAULT_REFUSAL_HOLD_SECONDS, MAX_REFUSAL_HOLD_SECONDS
+        ),
     )

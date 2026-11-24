@@ -4,8 +4,8 @@ ADR-005, ADR-007, ADR-013).
 What ends a workgroup on this device, and what the runner does then:
 
 - verified log, `device_unassign` of the workgroup (reason `unassigned`): sessions `stopping` (`unassigned`) then
-  `stopped`, VM deleted; the workgroup key once the log shows its rotation, the org key once the device reads no
-  workgroup of the org any more and the org key was rotated;
+  `stopped`, every VM of the workgroup deleted (ADR-075); the workgroup key once the log shows its rotation, the org
+  key once the device reads no workgroup of the org any more and the org key was rotated;
 - verified log, `wg_archive` (`archived`): sessions stopped, VM deleted, keys kept (an archived workgroup stays
   readable);
 - verified log, `remove` of this device (`removed`): sessions stopped, VM deleted, keys of the org and its
@@ -167,7 +167,7 @@ async def end_workgroup(context: Any, removal: Removal) -> None:
     _line(
         context,
         f"ended org_id={removal.org} wg_id={removal.wg} reason={removal.reason} sessions={stopped}"
-        f" vm={'deleted' if deleted is not None else 'none'}",
+        f" vm={'deleted' if deleted else 'none'} vms={len(deleted)}",
     )
 
 
@@ -227,8 +227,7 @@ async def revoke(context: Any, reason: str) -> None:
     stopped = await stop_sessions(context, None)
     manager = manager_for(context)
     vms = 0
-    for row in await vm_records.live(context.pool):
-        if row.wg_id is not None and await manager.delete_workgroup(str(row.wg_id)) is not None:
-            vms += 1
+    for wg in sorted({str(row.wg_id) for row in await vm_records.live(context.pool) if row.wg_id is not None}):
+        vms += len(await manager.delete_workgroup(wg))
     keys = await delete_keys(context.pool, None)
     _line(context, f"revoked reason={reason} sessions={stopped} vms={vms} keys={keys}")

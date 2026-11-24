@@ -56,6 +56,7 @@ def test_defaults(base: dict[str, str], runner_home: Path, root_key: str) -> Non
     assert (cfg.vm_cpus, cfg.vm_memory_mib, cfg.vm_disk_gib) == (4, 8192, 20)
     assert cfg.pool_size == 2
     assert cfg.memory_reserve_mib == 32768
+    assert (cfg.sessions_per_vm, cfg.max_vms) == (16, 0)
     assert (cfg.session_idle_seconds, cfg.vm_idle_seconds) == (1800, 1800)
     assert cfg.textfile_dir is None
     assert cfg.model_catalog is None
@@ -83,7 +84,7 @@ def test_default_home_expands_user(base: dict[str, str]) -> None:
 
 
 def test_every_name_is_listed_once() -> None:
-    assert len(NAMES) == len(set(NAMES)) == 45
+    assert len(NAMES) == len(set(NAMES)) == 47
     assert "VM_PREFIX" in NAMES
     assert "TEST_MODE" in NAMES
     assert frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"}) == HUB_NAMES
@@ -218,6 +219,8 @@ INTEGER_CASES = {
     "VM_DISK_GIB": (5, 65_536),
     "POOL_SIZE": (0, 64),
     "MEMORY_RESERVE_MIB": (0, 4_194_304),
+    "SESSIONS_PER_VM": (0, 1_000_000),
+    "MAX_VMS": (0, 1_000_000),
     "SESSION_IDLE_SECONDS": (60, 604_800),
     "VM_IDLE_SECONDS": (60, 604_800),
 }
@@ -466,6 +469,8 @@ def test_environment_round_trip_everything(base: dict[str, str], tmp_path: Path,
             "AGENT_RUNNER_VM_DISK_GIB": "40",
             "AGENT_RUNNER_POOL_SIZE": "0",
             "AGENT_RUNNER_MEMORY_RESERVE_MIB": "1024",
+            "AGENT_RUNNER_SESSIONS_PER_VM": "0",
+            "AGENT_RUNNER_MAX_VMS": "3",
             "AGENT_RUNNER_SESSION_IDLE_SECONDS": "600",
             "AGENT_RUNNER_VM_IDLE_SECONDS": "900",
             "AGENT_RUNNER_TEXTFILE_DIR": str(tmp_path / "tf"),

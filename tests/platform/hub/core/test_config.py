@@ -75,6 +75,17 @@ def test_optional_values(tmp_path: Path) -> None:
     assert config.bind_host == "localhost"
 
 
+def test_scheduler_settings(tmp_path: Path) -> None:
+    """ADR-075 section 1 and 7: the limits are settings with generous defaults; 0 means no limit or no hold."""
+    config = load_config(hub_environ())
+    assert (config.vms_per_wg, config.capacity_refusals, config.refusal_hold_seconds) == (100, 3, 60)
+    config = load_config(
+        hub_environ(AGENT_HUB_VMS_PER_WG="0", AGENT_HUB_CAPACITY_REFUSALS="5", AGENT_HUB_REFUSAL_HOLD_SECONDS="0")
+    )
+    assert (config.vms_per_wg, config.capacity_refusals, config.refusal_hold_seconds) == (0, 5, 0)
+    assert tmp_path.exists()
+
+
 def test_empty_optional_values_take_the_defaults() -> None:
     config = load_config(hub_environ(AGENT_HUB_PORT="", AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY=""))
     assert config.bind_port == 8788
@@ -134,6 +145,10 @@ def test_owner_database_is_forbidden_in_the_hub_process(value: str) -> None:
         ("AGENT_HUB_CONTEXT_KEEP", "0", "from 1 to 1000"),
         ("AGENT_HUB_CONTEXT_KEEP", "1001", "from 1 to 1000"),
         ("AGENT_HUB_CONTEXT_ORG_BYTES", "8GiB", "from 1 to 9007199254740991"),
+        ("AGENT_HUB_VMS_PER_WG", "1000001", "from 0 to 1000000"),
+        ("AGENT_HUB_VMS_PER_WG", "-1", "from 0 to 1000000"),
+        ("AGENT_HUB_CAPACITY_REFUSALS", "0", "from 1 to 1000"),
+        ("AGENT_HUB_REFUSAL_HOLD_SECONDS", "86401", "from 0 to 86400"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "-1", "non-negative amount"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "1.1234567", "non-negative amount"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "01", "non-negative amount"),

@@ -4,7 +4,7 @@
   "current": "{step} – {seconds} s",
   "waiting": "Wartet seit {seconds} s",
   "reason.device_offline": "Das Ausführungsgerät ist offline – die Aufgabe startet, sobald es wieder da ist.",
-  "reason.capacity_exhausted": "Alle Ausführungsplätze sind belegt – die Aufgabe startet, sobald einer frei ist.",
+  "reason.capacity_exhausted": "Alle Ausführungsgeräte sind voll – die Aufgabe startet von selbst, sobald Platz ist.",
   "reason.unknown": "Wartet auf ein Ausführungsgerät.",
   "ready": "Bereit in {seconds} s",
   "retry": "Erneut versuchen",
@@ -20,5 +20,15 @@
   "step.agent_starting": "Agent startet",
   "step.prompt_delivering": "Prompt wird übergeben",
   "step.working": "Agent arbeitet",
-  "step.elapsed": "+{seconds} s"
+  "step.elapsed": "+{seconds} s",
+  "reason.wg_vm_limit": "Die Workgroup nutzt so viele VMs wie erlaubt – die Aufgabe startet, sobald eine davon Platz hat.",
+  "reason.placement_full": "Das gewählte Gerät {device} ist voll – die Aufgabe startet, sobald dort Platz ist.",
+  "reason.no_device": "Dieser Workgroup ist kein Ausführungsgerät zugewiesen.",
+  "reason.placement_offline": "Das gewählte Gerät {device} ist offline – die Aufgabe startet, sobald es wieder da ist.",
+  "reason.keys_pending": "Das Gerät mit freiem Platz erhält noch die Schlüssel dieser Workgroup – die Aufgabe startet, sobald sie da sind.",
+  "reason.platform_access_required": "Diese Organisation hat noch kein Ausführungsgerät – der Betreiber wurde benachrichtigt.",
+  "chosen-device": "Gerät",
+  "assign-device": "Gerät zuweisen",
+  "ask-admin": "Ein Admin der Organisation kann eines zuweisen.",
+  "choose-automatic": "Automatisch wählen"
 }

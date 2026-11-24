@@ -9,6 +9,7 @@ import { formatDuration } from '../../../core/monitoring/units';
 import { runtimeSeconds } from '../../../core/sessions/runtime';
 import { sessionMeta, type SessionNode, sessionTree } from '../../../core/sessions/tree';
 import { useNow } from '../../countdown/useNow';
+import { sessionVm } from '../../../core/tasks/placement';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useDeviceNames } from '../../screens/devices/labels';
@@ -43,7 +44,12 @@ export function SessionState({ state }: { readonly state: string }) {
 /** The states after which a session runs no more (its runtime stops at `ended_at`). */
 export const ENDED_STATES: ReadonlySet<string> = new Set(['stopped', 'failed', 'suspended']);
 
-/** The device (by name, and whether the hub reaches it), the runtime, the model and the usage counter of a session. */
+/** "<device> · vm-…" (the VM once the session has one, ADR-075 section 6). */
+export const placementText = (device: string, vm: string | null): string =>
+  vm === null ? device : `${device} · ${vm}`;
+
+/** The device (by name, and whether the hub reaches it) and VM, the runtime, the model and the usage counter of a
+ * session. */
 export function SessionFacts({ node }: { readonly node: Pick<SessionNode, 'entry'> }) {
   const { app } = useAppEnv();
   const { t, locale } = useI18n();
@@ -61,7 +67,7 @@ export function SessionFacts({ node }: { readonly node: Pick<SessionNode, 'entry
       <span data-testid="session.device">
         {row.device_id === null
           ? t('task.sessions.device.none')
-          : t('task.sessions.device', { device: name(row.device_id) })}
+          : t('task.sessions.device', { device: placementText(name(row.device_id), sessionVm(row)) })}
         {reachable !== undefined && (
           <span
             className={reachable ? 'text-green-800' : 'text-red-800'}

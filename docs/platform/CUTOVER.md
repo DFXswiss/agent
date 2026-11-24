@@ -109,7 +109,7 @@ tunnel hostname of its own and no address on the hub device's network.
 | `OPENROUTER_KEY_FILE` | 0600 file with the platform OpenRouter key, with the provider-side spend guardrail (P9) |
 | `MODEL_CATALOG` | the same catalog file as the hub (empty = the packaged catalog of the release, which the hub must then also use) |
 | `TEXTFILE_DIR` | a directory owned by the runner account; root links it into node_exporter's textfile directory (§6 S10) |
-| `VM_*`, `POOL_SIZE`, `MEMORY_RESERVE_MIB` | sized for the device ([05 §3](spec/05-runner.md#3-vm-management-adr-009)); defaults are a safe start |
+| `VM_*`, `POOL_SIZE`, `MEMORY_RESERVE_MIB`, `SESSIONS_PER_VM`, `MAX_VMS` | sized for the device ([05 §3](spec/05-runner.md#3-vm-management-adr-009)); defaults are a safe start |
 | `TEST_MODE` | `0` (doctor warns otherwise) |
 
 The runner device's role in the infrastructure repository changes from "host baseline only" to "execution device";

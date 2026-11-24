@@ -23,7 +23,8 @@ later in the same transaction, so taking the two locks in the other order here w
 
 The transition carries the device time (`at`), the reason, and - once known - `model_access`, `model_id`, the agent
 version (the Claude Code version of the VM's golden image, ADR-021: `agent_kind` is always `claude-code`, the hub's
-default) and `claude_session_id_present`.
+default), `claude_session_id_present` and `vm_id` (ADR-075: the VM the session runs on, from `vm_ready` on - the VM
+manager names it on the row when it chose the VM, so `vm_assigning` never carries one).
 """
 
 from __future__ import annotations
@@ -187,6 +188,8 @@ def transition_body(
         body["model_id"] = session.model_id
     if session.claude_session_id is not None:
         body["claude_session_id_present"] = True
+    if session.vm_id is not None:
+        body["vm_id"] = session.vm_id
     return body
 
 

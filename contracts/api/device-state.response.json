@@ -153,6 +153,19 @@
                   "size"
                 ],
                 "additionalProperties": false
+              },
+              "vm_id_pref": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/vm_id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "vm_new_allowed": {
+                "type": "boolean"
               }
             },
             "required": [

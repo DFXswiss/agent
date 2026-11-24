@@ -126,20 +126,20 @@ def test_an_unassigned_workgroup_is_ended_and_its_keys_go_after_the_rotation(rig
     async def body() -> None:
         async with case(rig, tmp_path) as c:
             await c.add_vm(DEFAULT)
+            await c.add_vm(DEFAULT, 2)  # several VMs of one workgroup (ADR-075): every one is deleted
             sid = await c.add_session(DEFAULT)
             run = await c.run()
             assert run.halted is None, c.env.log()
-            assert await c.vm_states() == [("vm-00000001", "running")]
+            assert await c.vm_states() == [("vm-00000001", "running"), ("vm-00000002", "running")]
             c.spec.log.add("device_unassign", "alice", device=pid(DEVICE), wg=DEFAULT)
             run = await c.run()
             assert run.halted is None, c.env.log()
             assert await c.kit.transitions(sid) == [("stopping", "unassigned"), ("stopped", None)]
             assert ("control", (sid, "stop")) in c.kit.guest.calls
-            assert await c.vm_states() == [("vm-00000001", "deleted")]
+            assert await c.vm_states() == [("vm-00000001", "deleted"), ("vm-00000002", "deleted")]
             assert "delete" in c.lima.ops()
-            assert f"runner.assignments ended org_id={ORG} wg_id={DEFAULT} reason=unassigned sessions=1 vm=deleted" in (
-                c.env.log()
-            )
+            ended = f"ended org_id={ORG} wg_id={DEFAULT} reason=unassigned sessions=1 vm=deleted vms=2"
+            assert f"runner.assignments {ended}" in c.env.log()
             # no rotation yet: the keys stay
             assert await c.keys() == [("org", ORG, 1), ("wg", DEFAULT, 1)]
             c.spec.log.add("rotate", "alice", scope="wg", scope_id=DEFAULT, epoch=2)
@@ -172,6 +172,32 @@ def test_an_archived_workgroup_keeps_its_keys(rig: Rig, tmp_path: Path) -> None:
             assert await c.kit.transitions(other) == []
             assert ("wg", ONE, 1) in await c.keys()
             assert "reason=archived" in c.env.log()
+
+    asyncio.run(body())
+
+
+def test_an_assignment_to_the_organization_assigns_every_workgroup(rig: Rig, tmp_path: Path) -> None:
+    """ADR-075 section 5: while the device is assigned to the organization it keeps the VMs of every workgroup; after
+    `device_unassign_org` only its explicit assignment (the default workgroup) remains."""
+
+    async def body() -> None:
+        world = standard_world("a")
+        spec = world.orgs[ORG]
+        spec.log.add("device_assign_org", "alice", device=pid(DEVICE), platform_seq=2)
+        async with case(rig, tmp_path, world) as c:
+            await c.add_vm(ONE)
+            await c.add_vm(DEFAULT, n=2)
+            sid = await c.add_session(ONE)
+            run = await c.run()
+            assert run.halted is None, c.env.log()
+            assert (ORG, ONE) in book_for(c.env.context).assignments()
+            assert await c.vm_states() == [("vm-00000001", "running"), ("vm-00000002", "running")]
+            spec.log.add("device_unassign_org", "alice", device=pid(DEVICE))
+            run = await c.run()
+            assert run.halted is None, c.env.log()
+            assert await c.vm_states() == [("vm-00000001", "deleted"), ("vm-00000002", "running")]
+            assert await c.kit.transitions(sid) == [("stopping", "unassigned"), ("stopped", None)]
+            assert f"wg_id={ONE} reason=unassigned" in c.env.log()
 
     asyncio.run(body())
 
@@ -307,6 +333,7 @@ def test_key_revoked_ends_everything_on_the_device(rig: Rig, tmp_path: Path) -> 
     async def body() -> None:
         async with case(rig, tmp_path) as c:
             await c.add_vm(DEFAULT)
+            await c.add_vm(DEFAULT, 2)
             sid = await c.add_session(DEFAULT)
             await c.run()
             refuse_everything(c, "key_revoked")
@@ -321,9 +348,9 @@ def test_key_revoked_ends_everything_on_the_device(rig: Rig, tmp_path: Path) -> 
             assert await teardown.revoked(c.env.context) == "key_revoked"
             # the gate halts every later run: nothing is rebuilt
             assert (await c.run()).halted == "revoked"
-            assert await c.vm_states() == [("vm-00000001", "deleted")]
+            assert await c.vm_states() == [("vm-00000001", "deleted"), ("vm-00000002", "deleted")]
             assert await c.kit.transitions(sid) == [("stopping", "unassigned"), ("stopped", None)]
-            assert "runner.assignments revoked reason=key_revoked sessions=1 vms=1 keys=2" in c.env.log()
+            assert "runner.assignments revoked reason=key_revoked sessions=1 vms=2 keys=2" in c.env.log()
             # a restarted daemon repeats the teardown once (nothing left to do)
             c.env.context.stopping.clear()
             await watch(c, until=lambda: asyncio.sleep(0, True))

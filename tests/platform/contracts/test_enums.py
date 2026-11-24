@@ -38,14 +38,14 @@ SPEC_ERRORS: dict[int, str] = {
     # 11-agent-access.md section 4 (KOR-24)
     " claim_invalid",
     403: "forbidden last_admin last_passkey device_not_assigned platform_invite_required platform_access_denied"
-    " pairing_gesture_required"
+    " pairing_gesture_required placement_forbidden"
     # 14-community.md section 4.1 (KOR-26)
     " community_muted",
     404: "not_found invite_unknown pairing_unknown identity_unproven",
     409: "id_conflict event_conflict seq_conflict version_conflict origin_seq_gap origin_seq_conflict no_device"
     " already_assigned rotation_required no_device_available invite_registered peer_outdated"
     # 14-community.md section 4.1 (KOR-26)
-    " community_not_member community_epoch_exists community_no_key",
+    " community_not_member community_epoch_exists community_no_key placement_invalid",
     410: "invite_expired",
     413: "quota_exceeded",  # KOR-33 (ADR-072 section 6): a context checkpoint over its quota
     429: "rate_limited",
@@ -105,7 +105,7 @@ SPEC_AUDIT_FIXED = (
 SPEC_AUDIT_PATTERNS = {
     # 04-crypto.md section 4.7
     "log": "genesis invite invite_revoke accept role wg_create wg_archive grant ungrant device_assign device_unassign"
-    " remove rotate admit",
+    " device_assign_org device_unassign_org remove rotate admit",
     # 02-data-model.md section 2.4.1
     "session": "requested vm_assigning vm_ready sandbox_ready agent_starting prompt_delivering working idle suspended"
     " resuming stopping stopped failed",
@@ -131,10 +131,14 @@ DECIDED_AUDIT = (
     " community.delete community.mute community.unmute community.moderator_grant community.moderator_revoke"
     # KOR-62: an agent becomes a main orchestrator without a pairing (an account of an agent alone, its recovery).
     " agent.register"
+    # ADR-075 section 6
+    " task.placement wg.placement"
 )
 # 12-billing.md sections 8 and 10 (contracts/changes/KOR-31.md): credit changes, USD/CHF rates and the export.
 KOR31_AUDIT = "credit.changed billing.fx_set billing.export"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
+# 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
+SPEC_WAITING_REASONS = "no_device platform_access_required wg_vm_limit placement_full placement_offline keys_pending"
 # 04-crypto.md section 4.3: (kind, scope, author kind, right).
 SPEC_EVENT_MATRIX = [
     ("org.profile", "org", "user", "org_admin"),
@@ -281,7 +285,14 @@ def test_task_states(contracts: Contracts) -> None:
     assert document["states"] == SPEC_TASK_STATES.split()
     assert common_enum(contracts, "task_state") == SPEC_TASK_STATES.split()
     assert document["terminal"] == ["closed"]
-    assert set(document["scheduling_reasons"]) <= set(SPEC_SESSION_FAILURES.split())
+    assert set(document["scheduling_reasons"]) <= set(SPEC_SESSION_FAILURES.split()) | set(SPEC_WAITING_REASONS.split())
+    assert common_enum(contracts, "task_waiting_reason") == SPEC_WAITING_REASONS.split()
+    assert set(document["scheduling_categories"]) == set(document["scheduling_reasons"])
+    assert set(document["scheduling_categories"].values()) == {
+        "waiting_for_capacity",
+        "waiting_for_device",
+        "waiting_for_credit",
+    }
 
 
 def test_operation_and_request_states(contracts: Contracts) -> None:

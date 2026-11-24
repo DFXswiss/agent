@@ -23,6 +23,8 @@ export interface TaskRow {
   readonly closed_at: string | null;
   readonly main_session_id: string | null;
   readonly title_event_id: string | null;
+  /** The chosen device and VM (ADR-075 section 6); only present when set. */
+  readonly placement?: { readonly device_id: string; readonly vm_id: string | null } | null;
 }
 
 /** The fields of `session_row` the client uses (the row is kept as received). */
@@ -32,6 +34,8 @@ export interface SessionRow {
   readonly org_id: string;
   readonly wg_id: string;
   readonly device_id: string | null;
+  /** The VM the session runs in (from `vm_ready` on, ADR-075). */
+  readonly vm_id?: string | null;
   readonly state: string;
   readonly state_reason: string | null;
   readonly estimate_ms: number | null;

@@ -20,12 +20,16 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 from typing import Any, cast
 
+from agent_runner import registry
+from agent_runner.errors import RunnerError
+from agent_runner.metrics.device import lima_home
 from agent_runner.registry import TaskSpec
 from agent_runner.sync.runtime import runtime
 from agent_runner.vm import lima
-from agent_runner.vm.capacity import physical_memory_mib
+from agent_runner.vm.capacity import NO_USAGE, Usage, disk_free_mib, physical_memory_mib
 from agent_runner.vm.extensions import Retire, retire_hooks
 from agent_runner.vm.lifecycle import VmManager
 from agent_runner.vm.pool import VmEnv, VmSettings
@@ -43,9 +47,25 @@ def _line(context: Any, name: str, fields: dict[str, str | int]) -> None:
     context.log.flush()
 
 
+def usage_of(context: Any, providers: list[Any]) -> Any:
+    """The sum of the other areas' `USAGE` (ADR-075 section 2) for this daemon context."""
+
+    async def other_usage() -> Usage:
+        total = NO_USAGE
+        for provide in providers:
+            found = await provide(context)
+            if not isinstance(found, Usage):
+                raise RunnerError("registry_invalid", "capacity")
+            total = total + found
+        return total
+
+    return other_usage
+
+
 def build_manager(context: Any) -> VmManager:
     config = context.config
     log = functools.partial(_line, context)
+    home = lima_home(context.host.env)
 
     async def sink(body: dict[str, Any]) -> None:
         sync = runtime(context)
@@ -69,6 +89,9 @@ def build_manager(context: Any) -> VmManager:
         sleep=context.host.sleep,
         clock=context.host.clock,
         stopping=context.stopping.is_set,
+        other_usage=usage_of(context, registry.capacity_usages()),
+        cpus=os.cpu_count,
+        disk_free_mib=functools.partial(disk_free_mib, home),
     )
     return VmManager(env, retire=Retire(context, retire_hooks(), log))
 

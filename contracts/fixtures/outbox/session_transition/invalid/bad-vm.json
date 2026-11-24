@@ -1,0 +1,11 @@
+{
+  "session_id": "01930028-0000-7000-8000-000000000028",
+  "state": "working",
+  "reason": null,
+  "at": "2026-11-21T12:00:00.000Z",
+  "agent_version": "2.1.0",
+  "model_access": "platform",
+  "model_id": "deepseek/deepseek-v4.1-flash-1017",
+  "claude_session_id_present": true,
+  "vm_id": "vm-1"
+}

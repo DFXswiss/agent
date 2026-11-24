@@ -4,16 +4,23 @@
 // again whenever the verified log changes (a device enrolled live, an assignment) and every `POLL_MS` for presence –
 // only while the tab is visible (a hidden tab spends no requests of the rate limit); it reads again when it is shown.
 //
+// A row shows its workgroups or "Whole organization" (ADR-075 section 5, from the verified log), the capacity details
+// the runner reports (CPUs, memory, free disk, running VMs, active sessions and the limits) and per VM its workgroup
+// and sessions.
+//
 // Admins get the controls: add an org device, assign a platform device (only with platform access, ADR-026 – else the
 // reason from the error catalog, `platform_access_denied`, instead of the button), assign an org device to a further
-// workgroup, unassign (rotation batch), unpair (rotation batch) and rename. Controls the user's verified rights do not
+// workgroup, assign a device to the whole organization and remove it from there (rotation batch), unassign (rotation
+// batch), unpair (rotation batch) and rename. Controls the user's verified rights do not
 // allow are not rendered (section 1.2).
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { formatEventTime } from '../../../core/i18n';
 import { actionErrorCode, submitBatch } from '../../../core/org/batch';
 import {
+  canAssignToOrg,
   canManageDevices,
+  capacityDetails,
   capacityUse,
   DEVICE_PROFILE,
   deviceRows,
@@ -22,9 +29,12 @@ import {
   type HubDevice,
   loadOrgDevices,
   selectDeviceLabels,
+  sessionsPerVm,
+  unassignOrgPlan,
   unassignPlan,
   unpairPlan,
 } from '../../../core/org/devices';
+import { keyRing } from '../../../core/org/batch';
 import { pullOnce } from '../../../core/tasks/pull';
 import type { Directory } from '../../../core/tasks/directory';
 import { useStore } from '../../hooks/useStore';
@@ -34,7 +44,7 @@ import { useNow } from '../../countdown/useNow';
 import { ActionDialog, BUTTON, PRIMARY } from '../members/ActionDialog';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 import { AddDevice } from './AddDevice';
-import { AssignPlatformDialog, AssignToWorkgroupDialog, RenameDialog } from './dialogs';
+import { AssignOrgDialog, AssignPlatformDialog, AssignToWorkgroupDialog, RenameDialog } from './dialogs';
 import { deviceName } from './parts';
 
 /** Presence is re-read this often (the hub's online window is 30 s). */
@@ -45,6 +55,8 @@ type Open =
   | { readonly kind: 'to-wg'; readonly row: DeviceRow }
   | { readonly kind: 'rename'; readonly row: DeviceRow }
   | { readonly kind: 'unpair'; readonly row: DeviceRow }
+  | { readonly kind: 'assign-org'; readonly row: DeviceRow }
+  | { readonly kind: 'unassign-org'; readonly row: DeviceRow }
   | { readonly kind: 'unassign'; readonly row: DeviceRow; readonly wg: string };
 
 /** The hub's device list, read again on every log change and every `POLL_MS` while visible (module comment). */
@@ -110,13 +122,63 @@ function CapacityBar({ hub }: { readonly hub: HubDevice }) {
   );
 }
 
+/** The capacity details the runner reports (ADR-075 section 2); memory and disk in GiB. */
+function CapacityDetails({ hub }: { readonly hub: HubDevice }) {
+  const { t, locale } = useI18n();
+  const gib = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
+  const details = capacityDetails(hub.capacity);
+  if (details.length === 0) return null;
+  return (
+    <ul className="flex flex-wrap gap-x-3 text-sm text-gray-700" data-testid="devices.item.details">
+      {details.map(([field, value]) => {
+        const text =
+          (field === 'sessions_per_vm' || field === 'vms_max') && value === 0
+            ? t(`devices.detail.${field}.none`)
+            : t(`devices.detail.${field}`, {
+                value: field.endsWith('_mib') ? gib.format(value / 1024) : String(value),
+              });
+        return (
+          <li key={field} data-detail={field}>
+            {text}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Per VM of the device: its workgroup and sessions ("vm-… · Research · 3 of 16 sessions"). */
+function VmList({ hub, wgName }: { readonly hub: HubDevice; readonly wgName: (wg: string) => string }) {
+  const { t } = useI18n();
+  const vms = hub.vms ?? [];
+  if (vms.length === 0) return null;
+  const limit = sessionsPerVm(hub.capacity);
+  return (
+    <ul className="flex flex-col text-sm text-gray-700" aria-label={t('devices.vms')}>
+      {vms.map((vm) => (
+        <li key={vm.vm_id} data-testid="devices.vm" data-vm={vm.vm_id} data-wg={vm.wg_id} data-sessions={vm.sessions}>
+          {[
+            vm.vm_id,
+            wgName(vm.wg_id),
+            limit === null
+              ? t('devices.vm.sessions', { sessions: vm.sessions })
+              : t('devices.vm.sessions-of', { sessions: vm.sessions, limit }),
+          ].join(' · ')}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function DeviceItem(props: {
   readonly row: DeviceRow;
   readonly admin: boolean;
+  /** The user may give devices to the whole organization (admin holding the current `OK`). */
+  readonly toOrg: boolean;
   readonly directory: Directory;
   readonly onOpen: (open: Open) => void;
 }) {
-  const { row, admin, directory, onOpen } = props;
+  const { row, admin, toOrg, directory, onOpen } = props;
   const { t, locale } = useI18n();
   const now = useNow(false);
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -124,7 +186,12 @@ function DeviceItem(props: {
   const hub = row.hub;
   const wgName = (wg: string) => directory.workgroups.get(wg) ?? t('devices.wg.unnamed');
   return (
-    <li className="flex flex-col gap-2 border-b border-gray-200 py-3" data-testid="devices.item" data-device={row.id}>
+    <li
+      className="flex flex-col gap-2 border-b border-gray-200 py-3"
+      data-testid="devices.item"
+      data-device={row.id}
+      data-assigned-org={String(row.org)}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium" data-testid="devices.item.name">
           {name}
@@ -159,9 +226,16 @@ function DeviceItem(props: {
         </div>
       )}
       {hub !== null && <CapacityBar hub={hub} />}
+      {hub !== null && <CapacityDetails hub={hub} />}
+      {hub !== null && <VmList hub={hub} wgName={wgName} />}
       <ul className="flex flex-wrap gap-2 text-sm" aria-label={t('devices.workgroups')} data-testid="devices.item.wgs">
         {row.workgroups.length === 0 && <li className="text-gray-600">{t('devices.no-workgroups')}</li>}
-        {row.workgroups.map((wg) => (
+        {row.org && (
+          <li className="rounded border border-gray-200 px-2 font-medium" data-testid="devices.item.org">
+            {t('devices.whole-org')}
+          </li>
+        )}
+        {row.explicit.map((wg) => (
           <li key={wg} className="flex items-center gap-1 rounded border border-gray-200 px-2" data-wg={wg}>
             <span>{wgName(wg)}</span>
             {admin && (
@@ -180,7 +254,7 @@ function DeviceItem(props: {
       </ul>
       {admin && (
         <div className="flex flex-wrap gap-2">
-          {row.kind === 'org' && (
+          {row.kind === 'org' && !row.org && (
             <button
               type="button"
               className={BUTTON}
@@ -188,6 +262,26 @@ function DeviceItem(props: {
               data-testid="devices.item.to-wg"
             >
               {t('devices.to-wg.open')}
+            </button>
+          )}
+          {!row.org && toOrg && !row.decertified && (
+            <button
+              type="button"
+              className={BUTTON}
+              onClick={() => onOpen({ kind: 'assign-org', row })}
+              data-testid="devices.item.assign-org"
+            >
+              {t('devices.assign-org.open')}
+            </button>
+          )}
+          {row.org && (
+            <button
+              type="button"
+              className={BUTTON}
+              onClick={() => onOpen({ kind: 'unassign-org', row })}
+              data-testid="devices.unassign-org"
+            >
+              {t('devices.unassign-org.open')}
             </button>
           )}
           <button
@@ -267,6 +361,7 @@ export function DevicesScreen() {
       </p>
     );
   const admin = canManageDevices(state, userId);
+  const toOrg = admin && canAssignToOrg(state, keyRing(app.store, org));
   const rows = deviceRows(state, verified, hub.rows, labels);
   const close = () => setOpen(null);
   return (
@@ -291,7 +386,7 @@ export function DevicesScreen() {
       )}
       <ul data-testid="devices.list">
         {rows.map((row) => (
-          <DeviceItem key={row.id} row={row} admin={admin} directory={directory} onOpen={setOpen} />
+          <DeviceItem key={row.id} row={row} admin={admin} toOrg={toOrg} directory={directory} onOpen={setOpen} />
         ))}
       </ul>
       {open?.kind === 'assign' && (
@@ -301,6 +396,20 @@ export function DevicesScreen() {
         <AssignToWorkgroupDialog org={org} row={open.row} state={state} directory={directory} onClose={close} />
       )}
       {open?.kind === 'rename' && <RenameDialog org={org} row={open.row} onClose={close} />}
+      {open?.kind === 'assign-org' && <AssignOrgDialog org={org} row={open.row} onClose={close} />}
+      {open?.kind === 'unassign-org' && (
+        <ActionDialog
+          title={t('devices.unassign-org.title', { name: deviceName(t, open.row) })}
+          testId="devices.unassign-org"
+          confirmLabel={t('devices.unassign-org.confirm')}
+          danger
+          run={(progress) => submitBatch(app.tasks, org, unassignOrgPlan(open.row.id), progress)}
+          onDone={close}
+          onClose={close}
+        >
+          <p>{t('devices.unassign-org.body')}</p>
+        </ActionDialog>
+      )}
       {open?.kind === 'unassign' && (
         <ActionDialog
           title={t('devices.unassign.title', {

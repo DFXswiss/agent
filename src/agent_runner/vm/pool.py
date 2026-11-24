@@ -37,7 +37,8 @@ while a slot is free, never on the hot path), `take(...)` (hot path: the oldest 
 /v1/assign`, row `assigning` -> `running`) and `purge(...)` (pool VMs of a retired golden are deleted).
 
 `VmEnv` bundles every collaborator (Lima, store, settings, token files, guest client factory, clocks, random
-sources, the `vm_state` sink and the log), so the unit tests inject all of them.
+sources, the `vm_state` sink, the log, the usage of other runner areas and the host facts of the capacity report), so
+the unit tests inject all of them.
 """
 
 from __future__ import annotations
@@ -62,7 +63,7 @@ from agent_runner.guestlink import cursor
 from agent_runner.guestlink.client import GuestClient, Health
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.vm import records
-from agent_runner.vm.capacity import Capacity, compute
+from agent_runner.vm.capacity import NO_USAGE, Capacity, Usage, compute
 from agent_runner.vm.lima import Instance, Lima, LimaError, memory_gib
 from agent_runner.vm.records import GoldenRef, TokenStore, VmRow
 
@@ -120,6 +121,14 @@ def _not_stopping() -> bool:
     return False
 
 
+async def _no_usage() -> Usage:
+    return NO_USAGE
+
+
+def _unknown() -> int | None:
+    return None
+
+
 def _token() -> str:
     return secrets.token_urlsafe(32)
 
@@ -137,6 +146,10 @@ class VmSettings:
     pool_size: int
     memory_reserve_mib: int
     vm_idle_seconds: int
+    sessions_per_vm: int = 16
+    """Occupying sessions per VM, 0 = no limit (ADR-075 section 1)."""
+    max_vms: int = 0
+    """Slots at most, 0 = the memory budget alone (ADR-075 section 1)."""
 
     @classmethod
     def from_config(cls, config: Config) -> VmSettings:
@@ -147,6 +160,8 @@ class VmSettings:
             pool_size=config.pool_size,
             memory_reserve_mib=config.memory_reserve_mib,
             vm_idle_seconds=config.vm_idle_seconds,
+            sessions_per_vm=config.sessions_per_vm,
+            max_vms=config.max_vms,
         )
 
 
@@ -175,6 +190,11 @@ class VmEnv:
     dirs: dict[str, str] = field(default_factory=dict)
     # Per-instance locks of the provisioning: a deletion waits until the `limactl` call in flight on it returned.
     guards: dict[str, threading.Lock] = field(default_factory=dict)
+    # VMs and memory of the other runner areas (`<area>/capacity.py:USAGE`, ADR-075 section 2).
+    other_usage: Callable[[], Awaitable[Usage]] = _no_usage
+    # Host facts of the capacity report (None: unknown, the counter is left out).
+    cpus: Callable[[], int | None] = _unknown
+    disk_free_mib: Callable[[], int | None] = _unknown
 
     # -- helpers shared by pool and lifecycle ------------------------------------------------------------------
 
@@ -271,6 +291,8 @@ class VmEnv:
             vm_memory_mib=self.settings.memory_mib,
             vms=await records.slot_rows(self.db),
             in_flight=in_flight,
+            max_vms=self.settings.max_vms,
+            other=await self.other_usage(),
         )
 
     def new_ids(self) -> tuple[str, str]:

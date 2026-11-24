@@ -386,7 +386,9 @@ def needs_platform(entries: Sequence[object]) -> bool:
         body = entry.get("body") if isinstance(entry, dict) else None
         if not isinstance(body, dict):
             continue
-        if (body.get("type") == "device_assign" and "platform_seq" in body) or body.get("type") == "admit":
+        if (body.get("type") in ("device_assign", "device_assign_org") and "platform_seq" in body) or body.get(
+            "type"
+        ) == "admit":
             return True
     return False
 

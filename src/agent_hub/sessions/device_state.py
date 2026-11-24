@@ -11,6 +11,9 @@
     created_at, size}` (`agent_hub.contexts.store.newest`), from which the runner restores the same conversation
     on whatever VM or device it starts the session (03-api.md section 4.6.3, ADR-072 sections 5 and 7). Old runners
     ignore the field; without it a new runner reports the emergency path.
+- per session, only when set: the chosen VM of its task (`vm_id_pref`, ADR-075 section 6, while it is a live VM of the
+  workgroup on this device; a subagent has none) and `vm_new_allowed: false` while the workgroup has reached
+  `AGENT_HUB_VMS_PER_WG` live VMs on all devices (the runner then takes no new VM for it; absent means true);
 - `pending_prompts` / `delivered_prompt_event_ids`: the prompt routing of `agent_hub.sessions.prompts` for the main
   sessions in `sessions` (pending only while the session is not `stopping`).
 """
@@ -22,6 +25,7 @@ from typing import Any
 
 from agent_hub.contexts import store as contexts
 from agent_hub.device.state import Section, StateRequest
+from agent_hub.scheduler import load
 from agent_hub.sessions import prompts
 from agent_hub.sessions.derive import STOPPING
 
@@ -38,16 +42,27 @@ def _resume_from(request: StateRequest, task_id: str, session_id: str) -> str | 
     return str(row[0]) if row is not None and row[1] else None
 
 
+def _new_vm_allowed(request: StateRequest, wg_id: str, known: dict[str, bool]) -> bool:
+    """`vm_new_allowed` of the workgroup (module docstring), once per workgroup."""
+    if wg_id not in known:
+        left = load.allowance(request.connection, wg_id)
+        known[wg_id] = left is None or left > 0
+    return known[wg_id]
+
+
 def provide(request: StateRequest) -> Mapping[str, Any]:
     """The three fields for the device of `request` (module docstring)."""
     rows = request.connection.execute(
         "SELECT s.id, s.task_id, s.org_id, s.wg_id, s.state, s.parent_session_id, s.depth, s.owner_id,"
-        " COALESCE(u.model_access, 'auto'), u.model_id FROM hub.session s"
+        " COALESCE(u.model_access, 'auto'), u.model_id,"
+        " (SELECT v.id FROM hub.task t JOIN hub.vm v ON v.id = t.placement_vm_id AND v.device_id = s.device_id"
+        " AND v.wg_id = s.wg_id AND v.state <> 'deleted' WHERE t.id = s.task_id AND s.depth = 0) FROM hub.session s"
         " LEFT JOIN hub.user_settings u ON u.user_id = s.owner_id"
         " WHERE s.device_id = %s AND s.state NOT IN ('stopped', 'failed') ORDER BY s.created_at, s.id",
         (request.device_id,),
     ).fetchall()
     sessions: list[dict[str, Any]] = []
+    allowed: dict[str, bool] = {}
     for row in rows:
         if not request.view.reads_wg(row[3]):
             continue
@@ -63,6 +78,10 @@ def provide(request: StateRequest) -> Mapping[str, Any]:
             "model_access_pref": row[8],
             "model_id_pref": row[9],
         }
+        if row[10] is not None:
+            item["vm_id_pref"] = row[10]
+        if not _new_vm_allowed(request, str(row[3]), allowed):
+            item["vm_new_allowed"] = False
         if row[6] == 0:
             previous = _resume_from(request, item["task_id"], item["session_id"])
             if previous is not None:

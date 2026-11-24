@@ -254,6 +254,11 @@
     "body": "Der Server kennt den Schlüssel dieser Sitzung oder dieses Geräts nicht.",
     "action": "Melde dich erneut an."
   },
+  "keys_pending": {
+    "title": "Gerät erhält Schlüssel",
+    "body": "Das Gerät mit freiem Platz erhält noch die Schlüssel dieser Workgroup – die Aufgabe startet, sobald sie da sind.",
+    "action": "Keine Aktion nötig."
+  },
   "kind_not_allowed": {
     "title": "Aktion hier nicht erlaubt",
     "body": "Diese Art von Eintrag ist für diesen Autor oder an diesem Ort nicht erlaubt.",
@@ -429,10 +434,35 @@
     "body": "Ein Gerät dieser Organisation läuft mit einer älteren Version und würde die Änderung nicht verstehen.",
     "action": "Aktualisiere das Gerät und versuche es dann erneut."
   },
+  "placement_forbidden": {
+    "title": "Gerät nicht verfügbar",
+    "body": "Dieses Gerät ist der Workgroup nicht zugewiesen, deshalb können Aufgaben der Workgroup nicht darauf laufen.",
+    "action": "Wähle ein anderes Gerät oder „Automatisch“."
+  },
+  "placement_full": {
+    "title": "Gewähltes Gerät ist voll",
+    "body": "Das gewählte Gerät ist voll – die Aufgabe startet, sobald dort Platz ist.",
+    "action": "Warte oder lass die Plattform automatisch ein Gerät wählen."
+  },
+  "placement_invalid": {
+    "title": "VM nicht verfügbar",
+    "body": "Diese VM läuft auf dem gewählten Gerät nicht mehr für die Workgroup.",
+    "action": "Wähle eine andere VM oder „Beliebige VM“."
+  },
+  "placement_offline": {
+    "title": "Gewähltes Gerät ist offline",
+    "body": "Das gewählte Gerät ist offline – die Aufgabe startet, sobald es wieder da ist.",
+    "action": "Warte oder lass die Plattform automatisch ein Gerät wählen."
+  },
   "platform_access_denied": {
     "title": "Keine Plattform-Geräte",
     "body": "Diese Organisation darf keine Ausführungsgeräte der Plattform verwenden.",
     "action": "Füge ein eigenes Gerät hinzu oder bitte den Betreiber um Plattformzugang."
+  },
+  "platform_access_required": {
+    "title": "Noch kein Ausführungsgerät",
+    "body": "Diese Organisation hat noch kein Ausführungsgerät – der Betreiber wurde benachrichtigt.",
+    "action": "Keine Aktion nötig; du kannst auch ein eigenes Gerät hinzufügen."
   },
   "platform_invite_required": {
     "title": "Einladung erforderlich",
@@ -608,6 +638,11 @@
     "title": "VM nicht gestartet",
     "body": "Die virtuelle Maschine dieser Workgroup konnte nicht gestartet werden.",
     "action": "Starte den Task noch einmal."
+  },
+  "wg_vm_limit": {
+    "title": "VM-Grenze der Workgroup erreicht",
+    "body": "Die Workgroup nutzt so viele VMs wie erlaubt – die Aufgabe startet, sobald eine davon Platz hat.",
+    "action": "Keine Aktion nötig."
   },
   "workvm_unavailable": {
     "title": "Arbeits-VM nicht verfügbar",

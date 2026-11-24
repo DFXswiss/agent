@@ -57,6 +57,8 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `VM_CPUS` / `VM_MEMORY_MIB` / `VM_DISK_GIB` | 4 / 8192 / 20 | per workgroup VM |
 | `POOL_SIZE` | 2 | 0 disables the pool (clone path only) |
 | `MEMORY_RESERVE_MIB` | 32768 | host reserve excluded from the VM budget |
+| `SESSIONS_PER_VM` | 16 | occupying sessions per VM (states `requested` … `stopping` without `suspended`); 0 = no limit; reported in every capacity report (ADR-075) |
+| `MAX_VMS` | 0 | VMs of the device that occupy a slot; 0 = only the memory budget decides; caps `vm_slots_total` (ADR-075) |
 | `SESSION_IDLE_SECONDS` / `VM_IDLE_SECONDS` | 1800 / 1800 | |
 | `TEXTFILE_DIR` | empty = textfile sink off | node_exporter textfile directory (08 §3) |
 | `MODEL_CATALOG` | packaged `model-catalog.json` | §10.5 |
@@ -251,12 +253,19 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
   second failure → the requesting session fails with reason `vm_start_failed`; metrics `agent_runner_vm_start_failures_total`.
 - Guest unhealthy (health probe fails 3 times, 5 s apart) on a running VM: sessions → `failed`
   (`guest_unreachable`), VM restarted once; repeated failure → VM `stopped` and reported.
-- One VM per (workgroup, device). Two sessions of the same workgroup never trigger two VMs: VM creation is
-  serialised per workgroup (in-process lock + `runner.vm` unique partial index on `wg_id` where state ≠ `deleted`).
+- A workgroup may have several VMs on a device (ADR-075); a VM belongs to exactly one workgroup for its life. The
+  VM of a session is chosen under the in-process lock of its workgroup, and the session row names its VM before the
+  lock is released, so two starts never both take the last place of a VM. Order (deterministic): (1) the VM the hub
+  names (`vm_id_pref`, a user's choice) when it is a live VM of the workgroup; (2) for a subagent the VM of its parent,
+  for a main session with `resume_from` the VM of that session – both regardless of the limit; (3) a running VM of
+  the workgroup with room (`SESSIONS_PER_VM` minus its occupying sessions): most room first, then the smallest VM ID;
+  (4) a stopped VM of the workgroup with room (restart; golden replacement as in §3.5), smallest VM ID; (5) a new VM
+  from the pool, else a clone, when a slot is free (§3.4); (6) else the session fails `capacity_exhausted`.
 
 ### 3.4 Capacity
 
-`budget_mib = physical RAM − MEMORY_RESERVE_MIB`; `vm_slots_total = floor(budget_mib / VM_MEMORY_MIB)`;
+`budget_mib = physical RAM − MEMORY_RESERVE_MIB`; `vm_slots_total = floor(budget_mib / VM_MEMORY_MIB)`, at most
+`MAX_VMS` when set;
 `vm_slots_free = vm_slots_total − (VMs in pool, assigning, running, stopping)`. Stopped VMs do not consume
 slots (RAM is returned on stop; Spike A high-water-mark finding). Reported in every heartbeat (`capacity`,
 `02-data-model.md` §2.1). If a session needs a VM and `vm_slots_free = 0`: stop the least recently used idle
@@ -264,11 +273,18 @@ VM of another workgroup (no running or suspended session younger than `VM_IDLE_S
 with `capacity_exhausted` (the hub then re-schedules: a new main session of the task, `03-api.md` §4.6.2, ADR-049;
 the refused session ID is never started again).
 
+The capacity report also carries (all optional for the hub, ADR-075): `cpus` and `memory_total_mib` of the host,
+`disk_free_mib` of the volume holding `$LIMA_HOME`, `vms_running`, `sessions_active` (occupying sessions),
+`work_vms_running` (VMs of other runner areas, e.g. work VMs; areas report them through
+`<area>/capacity.py:USAGE`, which returns their VM count and the memory they hold, both counted against the
+budget), and the settings `sessions_per_vm` and `vms_max`. The enrollment body keeps the five base counters. The
+live channel announces `log.org_assign` and `vm.choice` (`Agent-Features`, ADR-075).
+
 ### 3.5 Lifecycle rules
 
 - Idle stop: no session in `working|idle|prompt_delivering|…` for `VM_IDLE_SECONDS` → `limactl stop`.
-- Workgroup unassigned, workgroup archived, org removed this device, device decertified: stop sessions
-  (`stopping` reason `unassigned`), `limactl delete -f`, delete scope keys of that workgroup after rotation is
+- Workgroup unassigned (also by `device_unassign_org`), workgroup archived, org removed this device, device
+  decertified: stop sessions (`stopping` reason `unassigned`), `limactl delete -f` of every VM of the workgroup, delete scope keys of that workgroup after rotation is
   observed or immediately when removed from the org.
 - Golden upgrade: a workgroup VM keeps its golden version for its lifetime. At the next start of a stopped VM
   whose golden is not the newest ready one, which has no `suspended` session and whose sessions have no due context

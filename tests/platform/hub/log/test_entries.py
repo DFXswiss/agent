@@ -12,7 +12,14 @@ import pytest
 from agent_hub.crypto.encoding import P, b64u_encode, canonical
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.log import entries
-from agent_hub.log.vectors import ADMIT_COUNT, LogBuilder, PlatformBuilder, admit_builder, identity
+from agent_hub.log.vectors import (
+    ADMIT_COUNT,
+    LogBuilder,
+    PlatformBuilder,
+    admit_builder,
+    identity,
+    orgwide_builder,
+)
 
 Json = dict[str, Any]
 
@@ -20,8 +27,11 @@ Json = dict[str, Any]
 def test_every_entry_of_the_vector_logs_is_well_formed(main: LogBuilder, plat: PlatformBuilder) -> None:
     admitted = admit_builder().entries
     assert len(admitted) == ADMIT_COUNT
-    assert {entries.check_log_entry(e)["type"] for e in admitted} == entries.LOG_TYPES
-    assert {entries.check_log_entry(e)["type"] for e in main.entries} == entries.LOG_TYPES - {"admit"}
+    org_types = {"device_assign_org", "device_unassign_org"}
+    assert {entries.check_log_entry(e)["type"] for e in admitted} == entries.LOG_TYPES - org_types
+    assert {entries.check_log_entry(e)["type"] for e in main.entries} == entries.LOG_TYPES - {"admit", *org_types}
+    orgwide = {entries.check_log_entry(e)["type"] for e in orgwide_builder().entries}
+    assert {"device_assign_org", "device_unassign_org"} <= orgwide
     assert {entries.check_platform_entry(e)["type"] for e in plat.entries} == entries.PLATFORM_TYPES
 
 

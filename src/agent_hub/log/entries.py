@@ -151,6 +151,8 @@ _LOG_TYPES: dict[str, dict[str, Check]] = {
     "ungrant": {"subject": fields.uuid, "wg": fields.uuid},
     "device_assign": {"device": fields.uuid, "wg": fields.uuid},  # optional platform_seq, see _type_fields
     "device_unassign": {"device": fields.uuid, "wg": fields.uuid},
+    "device_assign_org": {"device": fields.uuid},  # optional platform_seq, see _type_fields (ADR-075)
+    "device_unassign_org": {"device": fields.uuid},
     "remove": {"subject": fields.uuid},
     "rotate": {"scope": _one_of("org", "wg"), "scope_id": fields.uuid, "epoch": _epoch},
     "admit": {
@@ -214,7 +216,7 @@ def _type_fields(body: dict[str, object]) -> dict[str, Check]:
     if kind == "invite":
         return _INVITE_DEVICE if body.get("kind") == "device" else _INVITE_USER
     own = dict(_LOG_TYPES[cast(str, kind)])
-    if kind == "device_assign" and "platform_seq" in body:
+    if kind in ("device_assign", "device_assign_org") and "platform_seq" in body:
         own["platform_seq"] = _seq
     return own
 

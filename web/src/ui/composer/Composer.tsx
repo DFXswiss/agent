@@ -8,12 +8,16 @@
 // offers connecting right here (device flow or an existing token, `GithubConnect`); the task is sent either way. The
 // connection state is loaded once when first needed; a typed reference shows the hint only once the state is known (a
 // connected user sees nothing flash). The offer sits below the form: its token field belongs to no form, and Enter
-// there never sends the task.
+// there never sends the task. The device choice (ADR-075 section 6) goes into the request as `placement`;
+// "Automatic" while the workgroup has a default is applied to the created task afterwards (`PUT
+// /v1/tasks/{task}/placement`, best effort), since a request without `placement` takes the default.
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { loadGithub } from '../../core/github/connection';
 import { mentionsGithub } from '../../core/github/mention';
+import { applyAutomatic, samePlacement } from '../../core/tasks/placement';
 import { type PreparedTask, prepareTask, sendable, sendErrorCode, sendTask } from '../../core/tasks/send';
+import { PlacementSelect, useDeviceChoice } from './DeviceChoice';
 import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
 import { useAppEnv } from '../shell/context';
@@ -49,6 +53,8 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const [github, setGithub] = useState(false);
   const prepared = useRef<PreparedTask | null>(null);
+  const { devices, choice, setChoice } = useDeviceChoice(wg);
+  const hasDefault = devices !== null && devices.placement !== null;
   const field = useRef<HTMLTextAreaElement>(null);
   // stays above the on-screen keyboard while typing (06-web.md section 12.1)
   const form = useRef<HTMLFormElement>(null);
@@ -73,14 +79,19 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
     try {
       const known = prepared.current;
       const task =
-        known !== null && known.org === org && known.wg === wg && known.prompt === text
+        known !== null &&
+        known.org === org &&
+        known.wg === wg &&
+        known.prompt === text &&
+        samePlacement(known.placement, choice)
           ? known
-          : await prepareTask(app.tasks, { org, wg, prompt: text });
+          : await prepareTask(app.tasks, { org, wg, prompt: text, placement: choice });
       prepared.current = task;
       const sent = await sendTask(app.tasks, task, {
         onAssigning: () => setStatus({ kind: 'sending', startedAt, assigning: true }),
       });
       prepared.current = null;
+      await applyAutomatic(app.tasks, sent.task.task_id, choice, hasDefault);
       navigate(`/o/${encodeURIComponent(org)}/t/${encodeURIComponent(sent.task.task_id)}`);
     } catch (failure) {
       const code = sendErrorCode(failure);
@@ -145,6 +156,16 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
           disabled={sending}
           data-testid="composer.prompt"
         />
+        {devices !== null && devices.devices.length > 0 && (
+          <PlacementSelect
+            org={org}
+            devices={devices}
+            value={choice}
+            onChange={setChoice}
+            testId="home"
+            disabled={sending}
+          />
+        )}
         <div className="flex items-center gap-3">
           <button
             type="submit"
@@ -165,11 +186,6 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
           >
             <p className="font-semibold">{error(status.code).title}</p>
             <p>{error(status.code).body}</p>
-            {status.code === 'no_device_available' && (
-              <Link className="underline" to={`/o/${encodeURIComponent(org)}/devices`} data-testid="composer.devices">
-                {t('home.devices')}
-              </Link>
-            )}
           </div>
         )}
         {status.kind === 'sending' && <PreparingPanel startedAt={status.startedAt} assigning={status.assigning} />}

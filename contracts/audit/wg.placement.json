@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/wg.placement.json",
+  "title": "audit detail wg.placement",
+  "description": "detail of audit rows with action wg.placement: the default device and VM of a workgroup changed (ADR-075 section 6). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "device_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "vm_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/vm_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "device_id",
+    "vm_id"
+  ],
+  "additionalProperties": false
+}

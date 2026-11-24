@@ -325,7 +325,15 @@ def cmd_wg_grant(account: Account, args: argparse.Namespace, context: Context) -
     return membership.wg_grant(account, args.wg, args.user, args.access, args.history)
 
 
+def cmd_wg_placement(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return orgs.wg_placement(account, args.wg, args.device, args.vm, args.auto)
+
+
 def cmd_device_assign(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    if args.org is not None:
+        return orgs.device_assign_org(account, args.org, args.device)
+    if args.device is not None:
+        raise PlatformError("invalid_argument")
     return orgs.device_assign(account, args.wg)
 
 
@@ -334,7 +342,7 @@ def cmd_task_list(account: Account, args: argparse.Namespace, context: Context) 
 
 
 def cmd_task_create(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return tasks.task_create(account, args.wg, text_argument(args, context))
+    return tasks.task_create(account, args.wg, text_argument(args, context), args.device, args.vm)
 
 
 def cmd_task_prompt(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -508,6 +516,8 @@ def _task_commands(tree: Tree) -> None:
     )
     sub.add_argument("--wg", required=True, help="the workgroup ID (`wg list --org <org_id>`, `status`)")
     sub.add_argument("--text", required=True, help="the prompt, or - to read it from stdin")
+    sub.add_argument("--device", help="run it on this device (a device assigned to the workgroup)")
+    sub.add_argument("--vm", help="and on this VM of the workgroup on that device (needs --device)")
     sub = tree.add(
         group,
         "prompt",
@@ -718,17 +728,40 @@ def _org_commands(tree: Tree) -> None:
     sub.add_argument("--user", required=True)
     sub.add_argument("--access", choices=["read", "write"], default="write")
     sub.add_argument("--history", action="store_true")
+    _placement_commands(tree, group)
+
+
+def _placement_commands(tree: Tree, wg_group: Any) -> None:
+    """`wg placement` and `device assign` (ADR-075 sections 5 and 6)."""
+    group = wg_group
+    sub = tree.add(
+        group,
+        "placement",
+        writing(cmd_wg_placement),
+        "the workgroup's default device and VM",
+        example="agent-platform wg placement --wg <wg_id>",
+        words="standard gerät vm vorgabe wählen automatisch default device choose pin placement",
+        then="agent-platform task create --wg <wg_id> --text -",
+    )
+    sub.add_argument("--wg", required=True)
+    choice = sub.add_mutually_exclusive_group()
+    choice.add_argument("--device", help="the default device for new tasks")
+    choice.add_argument("--auto", action="store_true", help="choose automatically (clears the default)")
+    sub.add_argument("--vm", help="the default VM on that device (needs --device)")
     group = tree.group("device", "execution devices")
     sub = tree.add(
         group,
         "assign",
         writing(cmd_device_assign),
-        "assign a platform device to a workgroup",
+        "assign a device to a workgroup or the whole organization",
         example="agent-platform device assign --wg <wg_id>",
-        words="zuweisen gerät rechner ausführung arbeitsgruppe computer execution machine attach",
+        words="zuweisen gerät rechner ausführung arbeitsgruppe organisation computer execution attach organization",
         then="agent-platform task create --wg <wg_id> --text -",
     )
-    sub.add_argument("--wg", required=True)
+    target = sub.add_mutually_exclusive_group(required=True)
+    target.add_argument("--wg", help="a platform device for this workgroup")
+    target.add_argument("--org", help="a device for every workgroup of this organization (it holds all their keys)")
+    sub.add_argument("--device", help="the device (with --org; default: the first candidate)")
 
 
 def build_parser() -> Parser:

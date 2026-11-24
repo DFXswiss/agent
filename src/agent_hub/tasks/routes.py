@@ -10,6 +10,8 @@ organization → workgroup → task.
 from __future__ import annotations
 
 import asyncio
+import functools
+import re
 from typing import Any, cast
 from uuid import UUID
 
@@ -20,12 +22,22 @@ from agent_hub.events.routes import parse_count, parse_uuid
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import HubRouter
 from agent_hub.orgs import rights
+from agent_hub.scheduler import settings as scheduler_settings
 from agent_hub.scheduler import signals as scheduler_signals
 from agent_hub.sessions.derive import TASK_STATES
 from agent_hub.tasks import read, service
 from agent_hub.workgroups.routes import path_id
 
 router = HubRouter()
+VM_ID = re.compile(r"vm-[0-9a-f]{8}")
+
+
+class Placement(BaseModel):
+    """The chosen device and optionally one of its VMs (ADR-075 section 6)."""
+
+    model_config = ConfigDict(extra="forbid")
+    device_id: str
+    vm_id: str | None = None
 
 
 class CreateTaskRequest(BaseModel):
@@ -35,6 +47,7 @@ class CreateTaskRequest(BaseModel):
     task_id: str
     wg_id: str
     events: list[dict[str, Any]] = Field(min_length=2, max_length=2)
+    placement: Placement | None = None
 
 
 class PromptRequest(BaseModel):
@@ -61,6 +74,7 @@ def body_id(text: str, pointer: str) -> UUID:
 def _run(context: HubContext, write: Any, *args: Any) -> dict[str, Any]:
     """Run a write of the service, then announce its effects (after the commit)."""
     scheduler_signals.bind(context)
+    scheduler_settings.bind(context.config)
     outcome: service.Outcome = write(context, *args)
     outcome.announce()
     return outcome.body
@@ -70,7 +84,14 @@ def _run(context: HubContext, write: Any, *args: Any) -> dict[str, Any]:
 async def create_task(context: Context, principal: CurrentPrincipal, body: CreateTaskRequest) -> dict[str, Any]:
     user = cast(UUID, principal.principal_id)
     task_id, wg_id = body_id(body.task_id, "/task_id"), body_id(body.wg_id, "/wg_id")
-    return await asyncio.to_thread(_run, context, service.create_task, user, task_id, wg_id, body.events)
+    requested = None
+    if body.placement is not None:
+        vm = body.placement.vm_id
+        if vm is not None and VM_ID.fullmatch(vm) is None:
+            raise HubError("request_invalid", detail={"pointers": ["/placement/vm_id"]})
+        requested = (body_id(body.placement.device_id, "/placement/device_id"), vm)
+    write = functools.partial(service.create_task, requested=requested)
+    return await asyncio.to_thread(_run, context, write, user, task_id, wg_id, body.events)
 
 
 def _list(context: HubContext, user: UUID, wg: UUID, **options: Any) -> dict[str, Any]:

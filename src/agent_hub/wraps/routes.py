@@ -13,6 +13,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_hub import signals
+from agent_hub.device.wraps import WRAPS_SIGNAL
 from agent_hub.errors import HubError
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import EVENT_BATCH_BYTES, HubRouter
@@ -83,6 +85,9 @@ async def post_wraps(context: Context, principal: CurrentPrincipal, body: WrapsR
     for recipient in sorted(stored.recipients):
         kind: AudienceKind = "device" if kinds.get(recipient) == "device" else "user"
         publish(Audience(kind, UUID(recipient)), "wraps", {})
+        if kind == "device":
+            # a device that got a key may now take a waiting task (`keys_pending`, ADR-075 section 3)
+            signals.emit(WRAPS_SIGNAL, device_id=UUID(recipient))
     return {"stored": stored.stored, "ignored": stored.ignored}
 
 

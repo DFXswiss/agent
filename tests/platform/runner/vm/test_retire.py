@@ -59,8 +59,8 @@ def test_stop_and_delete_run_the_hooks_while_the_vm_still_runs(harness: Harness)
     row, stopped, again, deleted = harness.run(body)
     assert stopped is not None
     assert stopped.state == "stopped"
-    assert deleted is not None
-    assert deleted.state == "deleted"
+    # every VM of the workgroup (ADR-075: there may be several) is deleted
+    assert [item.state for item in deleted] == ["deleted"]
     # each time before the VM changed: the export still reaches a running guest
     assert hooks.flushed == [(row.id, "running"), (again.id, "running")]
 
@@ -75,7 +75,7 @@ def test_deleting_a_stopped_vm_runs_no_hook(harness: Harness) -> None:
         manager.retire = hooks.retire()
         return await manager.delete_workgroup(WG_A)
 
-    assert harness.run(body).state == "deleted"
+    assert [item.state for item in harness.run(body)] == ["deleted"]
     assert hooks.flushed == []
 
 

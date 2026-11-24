@@ -760,6 +760,30 @@
     {
       "action": "agent.pairing",
       "group": "agent"
+    },
+    {
+      "action": "log.device_assign_org",
+      "group": "log"
+    },
+    {
+      "action": "log.device_unassign_org",
+      "group": "log"
+    },
+    {
+      "action": "task.placement",
+      "group": "task"
+    },
+    {
+      "action": "wg.placement",
+      "group": "task"
+    },
+    {
+      "action": "read.workgroup.placement",
+      "group": "read"
+    },
+    {
+      "action": "read.platform.waiting",
+      "group": "read"
     }
   ]
 }

@@ -1,8 +1,9 @@
 """`diagnose [--task <id>]` (11-agent-access.md section 8.4): why a task does not start.
 
 Checks organizations, model access and the credentials it needs (incl. the expiry of a login token), the devices the
-user's requests can reach and, with `--task`, the task's state and last transition. Every finding is a `reason` of
-`REASONS` with its fixed `next` step; nothing the hub sends is printed as text (unknown hub reasons become
+user's requests can reach and, with `--task`, the task's state, its waiting reason (ADR-075 section 7: a task is
+always created and waits `scheduling` with a reason of `WAITING`) and its last transition. Every finding is a `reason`
+of `REASONS` with its fixed `next` step; nothing the hub sends is printed as text (unknown hub reasons become
 `task_waiting`).
 """
 
@@ -26,15 +27,43 @@ REASONS: dict[str, str] = {
     "claude_expired": "Run `agent-platform claude sync` after using Claude Code once, or `claude setup-token`.",
     "claude_unreadable": "Store the Claude login again (`agent-platform claude connect` or `claude setup-token`).",
     "api_key_missing": "Store an API key (`agent-platform credentials set-api-key`) or change the model access.",
-    "no_device": "Assign a device to the workgroup (`agent-platform device assign --wg <wg_id>`).",
+}
+# Waiting reasons of a `scheduling` task (ADR-075 section 7, `contracts/enums/task-states.json`).
+WAITING: dict[str, str] = {
+    "no_device": (
+        "Assign a device to the workgroup (`agent-platform device assign --wg <wg_id>`) or to the whole organization"
+        " (`agent-platform device assign --org <org_id>`, admins); the task starts by itself."
+    ),
     "device_offline": "The device is offline; wait a few minutes or assign another device.",
-    "capacity_exhausted": "All devices are busy; the task starts when capacity is free.",
+    "capacity_exhausted": "All devices are busy; the task starts by itself when capacity is free.",
+    "platform_access_required": (
+        "The organization has no device of its own and no access to the operator's devices; assign an own device or"
+        " ask the operator for access. The task starts by itself then."
+    ),
+    "wg_vm_limit": (
+        "The workgroup uses as many VMs as allowed; the task starts when one of its VMs has room, or when the operator"
+        " raises the limit."
+    ),
+    "placement_full": (
+        "The chosen device or VM is full; wait, or let the platform choose (`agent-platform api PUT"
+        ' /v1/tasks/<task_id>/placement --body \'{"device_id":null,"vm_id":null}\'`).'
+    ),
+    "placement_offline": (
+        "The chosen device is offline; wait for it, or let the platform choose (`agent-platform api PUT"
+        ' /v1/tasks/<task_id>/placement --body \'{"device_id":null,"vm_id":null}\'`).'
+    ),
+    "keys_pending": (
+        "The device given to the organization still lacks this workgroup's key; it gets it as soon as a member's"
+        " client or a device that holds the key is online. The task starts by itself."
+    ),
+}
+REASONS |= WAITING
+REASONS |= {
     "task_failed": "Send the prompt again or start a new task.",
     "task_closed": "The task is closed; start a new task.",
     "task_waiting": "The task waits for the hub to schedule it; check again in a minute.",
     "task_running": "The task runs; nothing to do.",
 }
-_TASK_REASONS = {"device_offline", "capacity_exhausted", "no_device"}
 _RUNNING = {"starting", "working", "idle", "running"}
 
 
@@ -79,7 +108,9 @@ def _devices(account: Account) -> list[dict[str, str]]:
 
 def _task(account: Account, task: str) -> dict[str, str]:
     answer = account.call("GET", f"/v1/tasks/{segment(task)}")
-    state = answer.get("task", {}).get("state") if isinstance(answer.get("task"), dict) else None
+    found_row = answer.get("task")
+    row: dict[str, Any] = found_row if isinstance(found_row, dict) else {}
+    state = row.get("state")
     transitions = answer.get("transitions")
     last = transitions[-1] if isinstance(transitions, list) and transitions else {}
     reason = last.get("reason") if isinstance(last, dict) else None
@@ -89,8 +120,10 @@ def _task(account: Account, task: str) -> dict[str, str]:
         return finding("task", "task_closed")
     if state in _RUNNING:
         return finding("task", "task_running")
-    if reason in _TASK_REASONS:
-        return finding("task", str(reason))
+    waiting = row.get("state_reason") if state == "scheduling" else None
+    for found in (waiting, reason):
+        if isinstance(found, str) and found in WAITING:
+            return finding("task", found)
     return finding("task", "task_waiting")
 
 

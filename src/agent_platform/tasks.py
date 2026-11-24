@@ -14,6 +14,11 @@ of held operations into one card per reason with its state (`waiting`). `task sh
 creation to its close, or to now while it is open). After a lost answer (`hub_unreachable`) `task list` shows whether
 the task exists; the
 tool does not resend on its own.
+
+ADR-075: `task create --device [--vm]` sends the chosen device and VM (`placement`; without one the workgroup's
+default or the automatic choice applies), and the task is created even when no device has room (it waits
+`scheduling` with a reason). `task show` prints the device and VM of the main session and, while the task waits, its
+reason (`waiting`, a code of the closed list of `diagnose`).
 """
 
 from __future__ import annotations
@@ -24,10 +29,11 @@ from typing import Any, cast
 from urllib.parse import urlencode
 
 from agent_platform.account import Account, KeyRing
+from agent_platform.diagnose import WAITING
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import open_item, seal
 from agent_platform.hub import segment
-from agent_platform.orgs import find_org
+from agent_platform.orgs import VM_ID, find_org
 from agent_platform.reader import scope_events
 from agent_platform.sessions import runtime_seconds
 from agent_platform.waiting import annotate
@@ -87,16 +93,31 @@ def _seal(account: Account, place: tuple[str, str, str], kind: str, body: dict[s
     return seal(account, org, (WG, wg), kind, body, wg=wg, task=task)
 
 
-def task_create(account: Account, wg: str, text: str) -> dict[str, Any]:
-    """A new task with its first prompt in workgroup `wg`."""
+def _placement(device: str | None, vm: str | None) -> dict[str, str] | None:
+    if device is None:
+        if vm is not None:
+            raise PlatformError("invalid_argument")
+        return None
+    if not is_uuid7(device) or (vm is not None and not VM_ID.fullmatch(vm)):
+        raise PlatformError("invalid_argument")
+    return {"device_id": device} if vm is None else {"device_id": device, "vm_id": vm}
+
+
+def task_create(
+    account: Account, wg: str, text: str, device: str | None = None, vm: str | None = None
+) -> dict[str, Any]:
+    """A new task with its first prompt in workgroup `wg` (on the chosen device and VM, if any)."""
     org = find_org(account, _id(wg))
     prompt = _prompt(text)
+    placement = _placement(device, vm)
     task = uuid7()
     events = [
         _seal(account, (org, wg, task), "task.meta", {"title": derive_title(prompt)}),
         _seal(account, (org, wg, task), "prompt", {"attachments": [], "text": prompt}),
     ]
-    body = {"task_id": task, "wg_id": wg, "events": events}
+    body: dict[str, object] = {"task_id": task, "wg_id": wg, "events": events}
+    if placement is not None:
+        body["placement"] = placement
     try:
         answer = account.call("POST", "/v1/tasks", body)
     except PlatformError as error:
@@ -110,15 +131,39 @@ def task_create(account: Account, wg: str, text: str) -> dict[str, Any]:
         "task_id": task,
         "title": derive_title(prompt),
         "session_id": session.get("session_id") if isinstance(session, dict) else None,
+        "placement": placement,
     }
 
 
-def _task_row(account: Account, task: str) -> dict[str, Any]:
+def _task_answer(account: Account, task: str) -> dict[str, Any]:
     answer = account.call("GET", f"/v1/tasks/{segment(_id(task))}")
     row = answer.get("task")
     if not isinstance(row, dict) or row.get("task_id") != task or not is_uuid7(str(row.get("wg_id"))):
         raise PlatformError("hub_refused", reason="response_invalid")
-    return cast(dict[str, Any], row)
+    return answer
+
+
+def _task_row(account: Account, task: str) -> dict[str, Any]:
+    return cast(dict[str, Any], _task_answer(account, task)["task"])
+
+
+def main_session(answer: dict[str, Any]) -> dict[str, Any] | None:
+    """Device, VM and state of the task's main session (`main_session_id` among `sessions`), None without one."""
+    wanted = answer["task"].get("main_session_id")
+    sessions = answer.get("sessions")
+    for item in sessions if isinstance(sessions, list) else []:
+        session = item.get("session") if isinstance(item, dict) else None
+        if isinstance(session, dict) and wanted is not None and session.get("session_id") == wanted:
+            return {key: session.get(key) for key in ("session_id", "state", "device_id", "vm_id")}
+    return None
+
+
+def waiting_reason(row: dict[str, Any]) -> str | None:
+    """The reason a `scheduling` task waits (a code of `diagnose.WAITING`; anything else is `task_waiting`)."""
+    if row.get("state") != "scheduling":
+        return None
+    reason = row.get("state_reason")
+    return reason if isinstance(reason, str) and reason in WAITING else "task_waiting"
 
 
 def task_prompt(account: Account, task: str, text: str) -> dict[str, Any]:
@@ -141,8 +186,9 @@ def _open(account: Account, org: str, wg: str, item: object, ring: KeyRing) -> d
 
 
 def task_show(account: Account, task: str) -> dict[str, Any]:
-    """The task row and its chat: every event of the task, opened and verified."""
-    row = _task_row(account, task)
+    """The task row and its chat: every event of the task, opened and verified; where its main session runs."""
+    answer = _task_answer(account, task)
+    row = cast(dict[str, Any], answer["task"])
     wg = str(row["wg_id"])
     org = find_org(account, wg)
     events: list[dict[str, Any]] = []
@@ -161,6 +207,9 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
     return {
         "task": {key: row.get(key) for key in keys},
         "runtime_s": runtime_seconds(row.get("created_at"), row.get("closed_at"), True, time.time()),
+        "placement": row.get("placement"),
+        "main_session": main_session(answer),
+        "waiting": waiting_reason(row),
         "title": titles[-1] if titles else None,
         "events": annotate(account, (org, wg, task), chat, metas),
         "unverified": skipped,

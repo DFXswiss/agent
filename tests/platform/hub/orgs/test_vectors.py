@@ -56,7 +56,10 @@ DEVICES = ("device", "dev2", "pdev", "qdev")
 LABELS = {vectors.pid(label): label for label in (*USERS, *DEVICES)} | {vectors.uid("erin"): "erin"}
 HUB_CODES = {"L1_seq_gap": "seq_conflict", "L1_duplicate_entry": "seq_conflict"}
 NOT_AT_THE_HUB = {"log_empty", "L3_founder_not_pinned"}
-NO_PLATFORM_ACCESS = {"assign_without_platform_access": "platform_access_denied"}
+NO_PLATFORM_ACCESS = {
+    "assign_without_platform_access": "platform_access_denied",
+    "assign_org_without_platform_access": "platform_access_denied",
+}
 CASES = [case for case in VECTORS["invalid"] if case["op"] in ("verify_log", "append_log")]
 EXCLUDED = frozenset({vectors.pid("qdev")})
 VALID_BATCHES = [
@@ -95,7 +98,7 @@ def vector_hub(migrated_db: HubDatabase, hub_pool: Pool, clock: FixedClock) -> I
     for label in DEVICES:
         insert_device(hub_pool, vectors.pid(label), vectors.identity(label), clock(), "platform")
     with hub_pool.connection() as connection, connection.transaction():
-        connection.execute("UPDATE hub.device SET features = '{log.admit}'")
+        connection.execute("UPDATE hub.device SET features = '{log.admit,log.org_assign}'")
     yield from start_hub(config, hub_pool, clock)
 
 

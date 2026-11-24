@@ -10,6 +10,7 @@ again, at most `ATTEMPTS` times.
 
 from __future__ import annotations
 
+import re
 import sys
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
@@ -27,7 +28,7 @@ from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.event import new_header, seal_event
 from agent_runner.crypto.ids import is_uuid7, uuid7
 from agent_runner.crypto.log.platform import PlatformState
-from agent_runner.crypto.log.state import ADMIN, MEMBER, ORG, READ, WG, WRITE, OrgState
+from agent_runner.crypto.log.state import ADMIN, DEVICE, MEMBER, ORG, READ, WG, WRITE, OrgState
 from agent_runner.crypto.log.verify import VerifiedLog, verify_log
 from agent_runner.crypto.log.wraps import CRED, WrapSlot
 
@@ -35,6 +36,7 @@ ATTEMPTS = 3
 DISPLAY_NAME_MAX = 80
 PRIVATE_NAMES = {"en": {"org": "Private", "wg": "Default"}, "de": {"org": "Privat", "wg": "Standard"}}
 EXPIRY_HOURS_MAX = 720
+VM_ID = re.compile(r"^vm-[0-9a-f]{8}$")
 
 
 def now_text() -> str:
@@ -165,7 +167,9 @@ def org_show(account: Account, org: str) -> dict[str, Any]:
             "my_access": state.wg_access(account.user_id, wg.id),
             # read only because the user is an admin of the org (ADR-058), not by an own grant
             "my_access_inherited": state.inherited(account.user_id, wg.id),
-            "devices": sorted(device for device, assigned in state.assignments if assigned == wg.id),
+            "devices": sorted(
+                p.id for p in state.principals.values() if p.kind == DEVICE and state.assigned(p.id, wg.id)
+            ),
         }
         for wg in sorted(state.workgroups.values(), key=lambda wg: wg.created_seq)
     ]
@@ -190,6 +194,7 @@ def org_show(account: Account, org: str) -> dict[str, Any]:
         "role": None if me is None else me.role,
         "members": members,
         "workgroups": workgroups,
+        "org_devices": sorted(p.id for p in state.principals.values() if state.org_assigned(p.id)),
         "open_invites": invites,
         **({"invites": invite_states(account, org, state, names)} if me is not None and me.role == "admin" else {}),
     }
@@ -639,12 +644,16 @@ def _append(
     org: str,
     fields: list[dict[str, object]],
     events_of: Callable[[Built], list[dict[str, object]]] | None = None,
+    *,
+    held_only: bool = False,
 ) -> Built:
     def attempt() -> Built:
         log = account.org_log(org)
         if not log.state.is_admin(account.user_id):
             raise PlatformError("not_admin")
-        platform = account.platform() if any("platform_seq" in item for item in fields) else None
+        # the platform log also for a log with platform devices: decertified ones get no wraps of new epochs
+        platform_devices = any(p.platform_seq is not None for p in log.state.principals.values())
+        platform = account.platform() if platform_devices or any("platform_seq" in item for item in fields) else None
         try:
             built = build_batch(
                 log,
@@ -655,6 +664,7 @@ def _append(
                 ts=now_text(),
                 held=account.keys(org),
                 platform=platform,
+                held_only=held_only,
             )
         except CryptoError as error:
             raise crypto_refusal(error) from None
@@ -693,32 +703,47 @@ def find_org(account: Account, wg: str) -> str:
     raise PlatformError("no_org")
 
 
-# --- platform device ---
+# --- devices (ADR-075) ---
 
 
-def device_assign(account: Account, wg: str) -> dict[str, Any]:
-    org = find_org(account, wg)
-    log = account.org_log(org)
-    if not log.state.is_admin(account.user_id):
-        raise PlatformError("not_admin")
-    platform = account.platform()
-    if not platform.platform_access(org, log.state.private):
-        raise PlatformError("hub_refused", reason="platform_access_denied")
+def _certified(platform: PlatformState, item: object) -> tuple[str, int] | None:
+    """`(device, platform_seq)` of a candidate whose certification is valid in the verified platform log."""
+    if not isinstance(item, dict):
+        return None
+    device, seq = item.get("device_id"), item.get("platform_seq")
+    cert = platform.certification(seq) if isinstance(seq, int) and not isinstance(seq, bool) else None
+    if cert is None or cert.device != device or not platform.valid(cert.seq):
+        return None
+    return str(device), cert.seq
+
+
+def _candidates(account: Account, wg: str) -> list[object]:
     answer = account.call("GET", f"/v1/workgroups/{segment(wg)}/device-candidates")
     candidates = answer.get("candidates")
     if not isinstance(candidates, list):
         raise unverified("response_invalid")
+    return candidates
+
+
+def _admin_log(account: Account, org: str) -> VerifiedLog:
+    log = account.org_log(org)
+    if not log.state.is_admin(account.user_id):
+        raise PlatformError("not_admin")
+    return log
+
+
+def device_assign(account: Account, wg: str) -> dict[str, Any]:
+    org = find_org(account, wg)
+    log = _admin_log(account, org)
+    platform = account.platform()
+    if not platform.platform_access(org, log.state.private):
+        raise PlatformError("hub_refused", reason="platform_access_denied")
     chosen: tuple[str, int] | None = None
-    for item in candidates:
-        if not isinstance(item, dict):
+    for item in _candidates(account, wg):
+        found = _certified(platform, item)
+        if found is None or log.state.assigned(found[0], wg):
             continue
-        device, seq = item.get("device_id"), item.get("platform_seq")
-        cert = platform.certification(seq) if isinstance(seq, int) and not isinstance(seq, bool) else None
-        if cert is None or cert.device != device or not platform.valid(cert.seq):
-            continue
-        if (str(device), wg) in log.state.assignments:
-            continue
-        chosen = (str(device), cert.seq)
+        chosen = found
         break
     if chosen is None:
         raise PlatformError("no_device")
@@ -726,6 +751,102 @@ def device_assign(account: Account, wg: str) -> dict[str, Any]:
     built = _append(account, org, [{"type": "device_assign", "device": device, "wg": wg, "platform_seq": seq}])
     cred = _cred_wrap(account, device, built.log.state.principals[device].kem)
     return {"org_id": org, "wg_id": wg, "device_id": device, "seq": built.log.head.seq, "cred_wrap": cred}
+
+
+def _org_device(account: Account, log: VerifiedLog, device: str | None) -> dict[str, object]:
+    """The entry `device_assign_org` for `device` (an active org device of the verified log, a platform device of the
+    log or a certified platform candidate; without `device` the first candidate not yet assigned to the org)."""
+    state = log.state
+    member = None if device is None else state.member(device)
+    if member is not None and member.kind == DEVICE and member.platform_seq is None:
+        return {"type": "device_assign_org", "device": member.id}
+    platform = account.platform()
+    if not platform.platform_access(state.org, state.private):
+        raise PlatformError("hub_refused", reason="platform_access_denied")
+    if member is not None and member.kind == DEVICE and member.platform_seq is not None:
+        if not platform.valid(member.platform_seq):
+            raise PlatformError("no_device")
+        return {"type": "device_assign_org", "device": member.id, "platform_seq": member.platform_seq}
+    for item in _candidates(account, state.default_wg):
+        found = _certified(platform, item)
+        if found is None or state.org_assigned(found[0]) or device not in (None, found[0]):
+            continue
+        return {"type": "device_assign_org", "device": found[0], "platform_seq": found[1]}
+    raise PlatformError("no_device")
+
+
+def device_assign_org(account: Account, org: str, device: str | None) -> dict[str, Any]:
+    """Assign a device to the whole organization (`device_assign_org`, ADR-075 section 5): the batch wraps the current
+    `OK` and every `WK` the admin holds, then the admin's own `CK`; the other keys reach the device by catch-up. The
+    device can read every workgroup of the organization, present and future."""
+    if device is not None and not is_uuid7(device):
+        raise PlatformError("invalid_argument")
+    log = _admin_log(account, org)
+    if device is not None and log.state.org_assigned(device):
+        raise PlatformError("invalid_argument", reason="already_assigned")
+    entry = _org_device(account, log, device)
+    built = _append(account, org, [entry], held_only=True)
+    chosen = str(entry["device"])
+    state = built.log.state
+    before = built.log.states[built.expected_seq - 1]
+    wrapped = {(str(w["scope"]), str(w["scope_id"])) for w in built.wraps if w["recipient_id"] == chosen}
+    missing = [
+        {"scope": scope, "scope_id": scope_id}
+        for scope, scope_id in state.readable_scopes(chosen)
+        if not before.can_read(chosen, scope, scope_id) and (scope, scope_id) not in wrapped
+    ]
+    cred = _cred_wrap(account, chosen, state.principals[chosen].kem)
+    return {
+        "org_id": org,
+        "device_id": chosen,
+        "seq": built.log.head.seq,
+        "cred_wrap": cred,
+        "keys_pending": missing,
+    }
+
+
+def device_unassign_org(account: Account, org: str, device: str) -> dict[str, Any]:
+    """End the assignment to the whole organization (`device_unassign_org`) with the rotations it owes: every
+    workgroup the device can no longer read and the org scope when nothing is left (one atomic batch)."""
+    if not is_uuid7(device):
+        raise PlatformError("invalid_argument")
+    if not _admin_log(account, org).state.org_assigned(device):
+        raise PlatformError("invalid_argument", reason="not_assigned")
+    built = _append(account, org, [{"type": "device_unassign_org", "device": device}])
+    rotated = [
+        {"scope": body["scope"], "scope_id": body["scope_id"], "epoch": body["epoch"]}
+        for body in (cast(dict[str, object], entry["body"]) for entry in built.entries)
+        if body["type"] == "rotate"
+    ]
+    return {"org_id": org, "device_id": device, "seq": built.log.head.seq, "rotated": rotated}
+
+
+# --- placement (ADR-075 section 6) ---
+
+
+def _placement_ids(device: str | None, vm: str | None) -> None:
+    if (device is not None and not is_uuid7(device)) or (
+        vm is not None and (device is None or not VM_ID.fullmatch(vm))
+    ):
+        raise PlatformError("invalid_argument")
+
+
+def wg_placement(account: Account, wg: str, device: str | None, vm: str | None, auto: bool) -> dict[str, Any]:
+    """The workgroup's default device and VM for new tasks: shown without options, set with `--device [--vm]`,
+    cleared (automatic choice) with `--auto`."""
+    if not is_uuid7(wg) or (auto and device is not None):
+        raise PlatformError("invalid_argument")
+    _placement_ids(device, vm)
+    target = f"/v1/workgroups/{segment(wg)}/placement"
+    if device is None and not auto:
+        answer = account.call("GET", target)
+    else:
+        answer = account.call("PUT", target, {"device_id": device, "vm_id": vm})
+    placement = answer.get("placement")
+    if placement is not None and not isinstance(placement, dict):
+        raise unverified("response_invalid")
+    shown = None if placement is None else {"device_id": placement.get("device_id"), "vm_id": placement.get("vm_id")}
+    return {"wg_id": wg, "placement": shown}
 
 
 def _cred_wrap(account: Account, device: str, kem: str) -> bool:

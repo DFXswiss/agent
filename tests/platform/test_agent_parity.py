@@ -211,7 +211,8 @@ def _options(parser: argparse.ArgumentParser) -> set[str]:
 
 
 def command_exists(text: str) -> bool:
-    """The words of `text` walk down the parser tree (`a|b` alternatives each); options must exist at the end."""
+    """The words of `text` walk down the parser tree (`a|b` alternatives each); options must exist at the end (an
+    option `--a|--b` names alternatives, each must exist)."""
     node: argparse.ArgumentParser = build_parser()
     words = text.split()
     walked = 0
@@ -228,7 +229,7 @@ def command_exists(text: str) -> bool:
         walked += 1
     if walked == 0:
         return False
-    options = {word.split("=")[0] for word in words[walked:] if word.startswith("--")}
+    options = {option for word in words[walked:] if word.startswith("--") for option in word.split("=")[0].split("|")}
     return options <= _options(node)
 
 
@@ -379,6 +380,8 @@ def test_the_walker_refuses_unknown_commands() -> None:
     assert not command_exists("org frobnicate")
     assert not command_exists("org list --nosuch")
     assert command_exists("claude service install|remove")
+    assert command_exists("device assign --wg|--org")
+    assert not command_exists("device assign --wg|--nosuch")
     assert not command_exists("--hub")
     assert {"org admit", "session workvm", "quotas", "claude service install"} <= set(leaf_commands(build_parser()))
 
