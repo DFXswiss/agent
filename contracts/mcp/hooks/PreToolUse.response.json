@@ -19,7 +19,7 @@
               "const": "allow"
             },
             "additionalContext": {
-              "$ref": "../objects.json#/$defs/notice"
+              "$ref": "../objects.json#/$defs/hook_context"
             }
           },
           "required": [
@@ -52,7 +52,7 @@
               "$ref": "../objects.json#/$defs/deny_reason"
             },
             "additionalContext": {
-              "$ref": "../objects.json#/$defs/notice"
+              "$ref": "../objects.json#/$defs/hook_context"
             }
           },
           "required": [

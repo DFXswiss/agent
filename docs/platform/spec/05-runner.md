@@ -401,7 +401,13 @@ files into the sandbox - replacing those of a `suspended` session of the same ID
 everything to the session user (without following links) and starts `claude --resume <id>` (same conversation ID,
 the same file is continued). The workspace scanner starts afterwards and takes the restored tree as its baseline;
 the transcript follower skips the records of the restored transcript (`transcript-baseline.json`), so a restore
-posts neither `session.file` nor earlier turns again.
+posts neither `session.file` nor earlier turns again. Before an export reads anything, the conversation file must be
+quiet: the export waits (polling every 0.1 s, at most 20 s) until the file was not written for 1 s and - for an
+`idle` session - until its last conversation record is a final assistant answer (no `tool_use` block); `working` and
+starting sessions are exported at once. A conversation that then holds no complete turn (no `user` and no
+`assistant` record) is `409 state_conflict`: there is nothing to save yet (KOR-33 E2E: the `Stop` hook reports
+`idle` before Claude Code has written the turn; such checkpoints held only a few hundred bytes and their restore
+failed the agent's start).
 
 ### 4.5 Sandbox self-test
 
@@ -487,6 +493,11 @@ Otherwise block (`03-api.md` §8.2), journal `session.state prompt_refused` and 
   denies and layer 2 sandbox remain, so a hook failure never opens a forbidden capability (tested by ATK with
   `FAULT_HOOKS`). Hook failures are counted (`agent_runner_session_hook_errors_total`).
 - Pings: see §9; the `additionalContext` text is exactly the one of `03-api.md` §8.2.
+- Session notice (KOR-33, addon `hook_addons/notice.py`): after a resume or restore the first `PreToolUse`,
+  `PostToolUse` or accepted `UserPromptSubmit` answer (normally the resumed prompt itself) carries the pending
+  notice of §8 once as `additionalContext` (`contracts/mcp/objects.json#/$defs/session_notice`), before a ping
+  notice (joined by a blank line). Claude Code 2.1.330 sends no `SessionStart` hook (ADR-029), so the first decorated
+  answer is the earliest point.
 
 ## 6. Session lifecycle
 
@@ -581,9 +592,12 @@ Prompts for a session are delivered strictly in event order; a prompt arriving w
   assigned to the workgroup at the manifest's epoch, IDs, digest, AEAD, archive checks, `context.json`; a damaged
   cached copy is read again from the hub when it holds it; version rule: target Claude Code ≥ the highest `version`
   of the transcript lines. Then `POST /v1/contexts/{session}/stage` (the guest's heavy work happens there),
-  `restore {claude_session_id, object_id}` in `POST /v1/sessions` (longer timeout) and one harness sentence about
-  what changed (same VM / another VM / another device, checkpoint time, workspace and what was left out, stale, work
-  VM). Audit `session.context_restored {object_id, workspace, stale}` once the guest reports `agent_starting`;
+  `restore {claude_session_id, object_id, note}` in `POST /v1/sessions` (longer timeout); `note` is the one sentence
+  about what changed (same VM / another VM / another device, checkpoint time, workspace and what was left out, stale,
+  work VM), which the guest delivers with the current session facts as the session notice of §8 - not in the
+  harness file, which a resumed model never reads. An archive whose conversation holds no complete turn is refused
+  (`context_incomplete`): never sealed at the export, `context_invalid` (emergency path) at a restore. Audit
+  `session.context_restored {object_id, workspace, stale}` once the guest reports `agent_starting`;
   otherwise `RESTART_LINE` and audit `session.context_fallback {reason}` (`context_missing`, `context_invalid`,
   `context_unavailable`, `version_incompatible`, `restore_failed`). A checkpoint whose restored agent failed inside
   its start window is not used again on this device.
@@ -618,6 +632,19 @@ Prompts for a session are delivered strictly in event order; a prompt arriving w
   `harness_version` (sha256 of RULES.md) journaled in `session.state` and stored at the hub transition reason.
   Placed via `--append-system-prompt-file` (top-level system prompt; Spike C: mid-conversation system messages
   are rewritten by OpenRouter).
+- The harness file reaches the model only when a conversation starts fresh. Claude Code (2.1.330) keeps the system
+  prompt of a conversation in its transcript and reuses it on `--resume`, ignoring a new
+  `--append-system-prompt-file` (KOR-33 E2E): a resumed or restored conversation still sees the facts of its first
+  start (platform session ID, task title, ...). What changed reaches it as a **session notice** instead: control
+  keeps, in the session's root-only meta file, the fact lines the conversation knows (`harness.fact_lines`: the
+  lines of the context block and of the session block) and a pending notice. A fresh start knows the current facts.
+  A restore (or a resume into a new sandbox) knows nothing certain: its notice is the runner's `restore.note` (else a
+  fixed sentence) plus every current fact line. A resume of the sandbox's own conversation (suspend → resume on the
+  same VM) keeps what it knows; when a fact line changed, its notice is a fixed sentence plus the changed lines only,
+  otherwise there is none. The notice (`agent.dfx.swiss session notice: <sentence>` and, after a blank line,
+  `Current facts of this session (they replace the ones in your instructions):` with the lines) is handed out once
+  by the api.sock op `session.notice` (§5.5) and its facts become known; the meta file is replaced atomically, so a
+  restart of the control process neither loses nor repeats it. The conversation's history is never replaced.
 
 ## 9. Pings (ADR-020)
 

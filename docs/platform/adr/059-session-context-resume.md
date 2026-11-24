@@ -52,8 +52,12 @@ A checkpoint is a tar archive produced by the guest (`POST /v1/sessions/{id}/con
    (`"workspace":"omitted_too_large"`) and the transcript is still saved; the restored session and the user are told
    so (`context_reason` `workspace_omitted`, or `workspace_partial` when entries were left out).
 A JSONL line that is incomplete at export time (the agent was writing) is cut off at the last line feed; the export
-does not parse transcript lines otherwise (AEAD, digest and manifest secure the integrity; Claude Code tolerates its
-own damaged lines, review amendment 13).
+does not refuse transcript lines otherwise (AEAD, digest and manifest secure the integrity; Claude Code tolerates its
+own damaged lines, review amendment 13). The export first waits, bounded, until the conversation file is quiet - for
+an `idle` session until the turn's final answer is written, because the `Stop` hook reports `idle` before Claude
+Code writes the turn (KOR-33 E2E) - and a conversation without a complete turn (no `user` and `assistant` record)
+is never a checkpoint: the guest answers `state_conflict` and the runner refuses such an archive
+(`context_incomplete`; at a restore `context_invalid`, the reported emergency path).
 The archive is read on the host with the untrusted-archive rules of `agent_runner.github.tarsafe` (regular files and
 directories only, normalised relative paths, sizes and counts checked) before it is encrypted.
 
@@ -147,9 +151,16 @@ the same device uses it), uploads without a new chunk for 6 h are removed by a j
   and the old slug by the new one in the transcript and in the file names of the companion directory (without it the
   model sees the old directory and a "(was …)" note; entries are never filtered or reordered - filtering broke a
   compacted transcript in the spike), the workspace into `work/`, owned by the session user, and starts
-  `claude --resume <claude_session_id>`. Its harness context gets **one** sentence about what changed (a new VM or
-  device only when it changed, checkpoint time and whether it was the newest, workspace restored fully, partly or not,
-  a work VM - KOR-29 - must be requested again); the transcript itself is never replaced or summarised.
+  `claude --resume <claude_session_id>`. The session learns in **one** sentence what changed (a new VM or device only
+  when it changed, checkpoint time and whether it was the newest, workspace restored fully, partly or not, a work VM -
+  KOR-29 - must be requested again): the runner sends it as `restore.note` of `POST /v1/sessions`. It does not go
+  into the harness file: Claude Code keeps the system prompt of a conversation in its transcript and ignores
+  `--append-system-prompt-file` on `--resume` (KOR-33 E2E), so a resumed model still sees the facts of its first
+  start. The guest keeps the sentence, with the current session facts the conversation does not know (platform
+  session ID, task, limits, ...), as a pending notice in the session's root-only state and attaches it once to the
+  first decorated hook answer of the resumed conversation (`additionalContext` of `PreToolUse`, `PostToolUse` or an
+  accepted `UserPromptSubmit`, 05-runner.md §§5.5, 8); a suspend and resume on the same VM is told the facts that
+  changed in the same way. The transcript itself is never replaced or summarised.
 - A suspended session whose VM is gone (deleted, replaced by a new golden, another VM of the workgroup) is restored
   the same way under its own session ID instead of failing with `vm_start_failed`; its new `vm_id` is stored only
   after the create succeeded. A restore into a guest that still has a suspended session of that ID (A → B → A)

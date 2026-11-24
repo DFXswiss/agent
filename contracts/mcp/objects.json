@@ -1307,6 +1307,24 @@
       "description": "ping notice of 03-api.md section 8.2; kinds distinct, in the order whiteboard.entry, subagent.finished, operation.finished",
       "pattern": "^agent\\.dfx\\.swiss notice: [1-9][0-9]{0,5} new item\\(s\\) available \\((whiteboard\\.entry, subagent\\.finished, operation\\.finished|whiteboard\\.entry, subagent\\.finished|whiteboard\\.entry, operation\\.finished|whiteboard\\.entry|subagent\\.finished, operation\\.finished|subagent\\.finished|operation\\.finished)\\)\\. Use mcp__platform__get_notifications to see them\\.$"
     },
+    "session_notice": {
+      "type": "string",
+      "description": "platform session notice of a resumed or restored session (ADR-059 section 7, 05-runner.md section 5.5): what changed and the current session facts, attached once to the first decorated hook answer after the resume; a ping notice may follow after a blank line",
+      "minLength": 1,
+      "maxLength": 131072,
+      "pattern": "^agent\\.dfx\\.swiss session notice: "
+    },
+    "hook_context": {
+      "description": "additionalContext of a decorated hook answer: a ping notice, a session notice, or a session notice followed by a ping notice",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/notice"
+        },
+        {
+          "$ref": "#/$defs/session_notice"
+        }
+      ]
+    },
     "deny_reason": {
       "anyOf": [
         {

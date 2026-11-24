@@ -195,8 +195,10 @@ of the commit, so a late upload of an earlier session never supersedes its succe
 not `resume_from`, the final checkpoint of that session has not arrived yet; the runner waits for it a bounded time
 (same device: its local copy; another device: it reads the device state again) and otherwise restores the newest one
 and says so (`stale`). The runner restores the transcript and the workspace into the new sandbox and starts `claude
---resume` with the **same** Claude session ID; the harness adds one sentence about what changed (VM or device,
-checkpoint time, workspace restored fully, partly or not, a work VM to be requested again). It reports the outcome
+--resume` with the **same** Claude session ID; the session is told in one sentence what changed (VM or device,
+checkpoint time, workspace restored fully, partly or not, a work VM to be requested again) - as `restore.note`,
+which the guest attaches with the current session facts once to the first hook answer of the resumed conversation;
+Claude Code ignores a new harness file on `--resume` (05-runner.md §8). It reports the outcome
 as the outbox audit `session.context_restored {object_id,workspace,stale}`; the hub stores `context_restore =
 restored` on the session row, with `context_reason` `workspace_partial`/`workspace_omitted` when the workspace came
 back only partly or not at all (too large). **Only** when no checkpoint can be used does the session start a new
@@ -372,13 +374,13 @@ JSON bodies except tar streams.
 |---|---|
 | `GET /v1/health` | → `{guest_version,claude_version,state:"unassigned"|"assigned"|"broken",org_id?,wg_id?,sessions:[{session_id,state}],landlock_abi,boot_id}` |
 | `POST /v1/assign` | `{vm_id,org_id,wg_id}` → `{}`; refused if already assigned to another wg (`already_assigned`) |
-| `POST /v1/sessions` | `{session_id,task_id,parent_session_id,depth,harness:{context_markdown},model:{access,model_id,env:{…}},resume_claude_session_id?,restore?:{claude_session_id,object_id},initial_prompt?:{prompt_id,text},limits:{memory_max,cpu_quota,tasks_max,runtime_max_sec}}` → `{state:"sandbox_ready"}`; further transitions via journal. `restore` (ADR-059 §7, not with `resume_claude_session_id`) creates the sandbox from the context staged for this session ID and resumes its conversation; without a matching staging `409 state_conflict` |
+| `POST /v1/sessions` | `{session_id,task_id,parent_session_id,depth,harness:{context_markdown},model:{access,model_id,env:{…}},resume_claude_session_id?,restore?:{claude_session_id,object_id,note?},initial_prompt?:{prompt_id,text},limits:{memory_max,cpu_quota,tasks_max,runtime_max_sec}}` → `{state:"sandbox_ready"}`; further transitions via journal. `restore` (ADR-059 §7, not with `resume_claude_session_id`) creates the sandbox from the context staged for this session ID and resumes its conversation (`note`: the sentence about what changed, delivered as the session notice of 05-runner.md §8); without a matching staging `409 state_conflict` |
 | `PUT /v1/sessions/{id}/credential` | `{upstream_base_url,auth_header,auth_value,extra_headers:{…},provider_allowlist?:[…]}` → `{}`; memory only, replaced on refresh; a model request that finds no credential is held until the next provisioning (`05-runner.md` §10.2) |
 | `POST /v1/sessions/{id}/prompts` | `{prompt_id,text}` → `{state:"registered"}`; delivery result via journal (`session.state` with `prompt_accepted`/`prompt_refused`) |
 | `POST /v1/sessions/{id}/control` | `{action:"interrupt"|"stop"|"suspend"}` → `{}` |
 | `POST /v1/sessions/{id}/files/import` | `?dir=<relative dir>&replace=true|false`, body `application/x-tar` (regular files and directories only; no links, devices, absolute or `..` paths; ≤ 512 MiB) → `{files,bytes}` |
 | `POST /v1/sessions/{id}/files/export` | `{dir,paths?:[…]}` → `application/x-tar` + header `X-Manifest-Sha256`; regular files only, symlinks are reported in the manifest as skipped |
-| `POST /v1/sessions/{id}/context/export` | `{workspace_max_bytes,transcript_max_bytes}` → `application/x-tar`: context archive v1 (ADR-059 §2: `context.json`, `transcript/…`, `work/…`); any state with directories; workspace over its limit left out (`omitted_too_large`), transcript over its limit `413 size_exceeded`, no conversation `409 state_conflict` |
+| `POST /v1/sessions/{id}/context/export` | `{workspace_max_bytes,transcript_max_bytes}` → `application/x-tar`: context archive v1 (ADR-059 §2: `context.json`, `transcript/…`, `work/…`); any state with directories; workspace over its limit left out (`omitted_too_large`), transcript over its limit `413 size_exceeded`, no conversation or no complete turn yet (no `user` and `assistant` record, after a bounded wait for a quiet transcript) `409 state_conflict` |
 | `POST /v1/contexts/{id}/stage` | body `application/x-tar` (a context archive, ≤ 16 GiB; every transcript `.jsonl` line complete JSON) → `{files,bytes}`; root-only staging for the session `{id}` that `POST /v1/sessions` with `restore` creates; an existing session that is not `suspended` `409 state_conflict` |
 | `POST /v1/sessions/{id}/pings` | `{ping_id,kind:"whiteboard.entry"|"subagent.finished"|"operation.finished",level?,ref}` → `{}` |
 | `GET /v1/journal` | `?after=<seq>&limit=<n>&wait=<s ≤ 25>` → `{records:[{seq,ts,session_id,kind,body}],head}` (long poll) |
@@ -452,6 +454,9 @@ PreToolUse → `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionD
 UserPromptSubmit → `{}` (accepted) or `{"decision":"block","reason":"Prompts are accepted only from agent.dfx.swiss."}`;
 PreToolUse / PostToolUse / UserPromptSubmit with pending pings (never `Stop`) → additionally
 `{"hookSpecificOutput":{"hookEventName":<event>,"additionalContext":"agent.dfx.swiss notice: <n> new item(s) available (<kinds>). Use mcp__platform__get_notifications to see them."}}`;
+the first of these answers after a resume or restore carries the session notice once (`additionalContext` starting
+with `agent.dfx.swiss session notice: `, the sentence about what changed and the session facts the conversation does
+not know; a ping notice follows after a blank line; KOR-33, 05-runner.md §§5.5, 8);
 all others → `{}`.
 
 ### 8.3 Operation registration (runner → hub)

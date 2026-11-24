@@ -20,8 +20,33 @@ messages.
   `resume_claude_session_id` (`400 request_invalid`, a rule the schema does not state); without a matching staging
   `409 state_conflict`. No new error code.
 
+- `guest/sessions-create.request.json`: optional `restore.note` (1-4096 characters) - the runner's one sentence
+  about what changed. Claude Code keeps the system prompt of a conversation in its transcript and ignores a new
+  `--append-system-prompt-file` on `--resume`, so the harness file never reaches a resumed model; the guest keeps
+  the sentence with the current session facts as a pending notice (root-only session state) and attaches it once to
+  the first decorated hook answer of the resumed conversation (see "Hooks" below). An old guest never receives the
+  field: `restore` itself is new in this package.
+- `POST /v1/sessions/{id}/context/export` waits, bounded, until the transcript is quiet (and, for an `idle` session,
+  until its last conversation record is a final assistant answer) and answers `409 state_conflict` while the
+  transcript holds no complete turn (no `user` and `assistant` record): such a checkpoint is never produced. No new
+  error code.
+
 Fixtures: `guest/session-context-export.{request,response}/`, `guest/context-stage.{request,response}/`,
-`guest/sessions-create.request/valid/restore.json`, `.../invalid/restore-without-object.json`.
+`guest/sessions-create.request/valid/{restore,restore-note}.json`, `.../invalid/restore-without-object.json`,
+`.../invalid/restore-note-{empty,too-long}.json`.
+
+## Hooks
+
+Producer: the guest's hook endpoint (`agent_guest.hooks`, addon `hook_addons/notice.py`); consumer: Claude Code.
+
+- `mcp/objects.json`: new `$defs/session_notice` (text starting with `agent.dfx.swiss session notice: `, at most
+  131072 characters) and `$defs/hook_context` (`notice` or `session_notice`; a session notice may be followed by a
+  ping notice after a blank line). `additionalContext` of the `PreToolUse`, `PostToolUse` and `UserPromptSubmit`
+  responses refers to `hook_context` instead of `notice` - a widening; every earlier answer stays valid.
+
+Fixtures: `mcp/hooks/UserPromptSubmit.response/{valid/session-notice,invalid/session-notice-other-prefix}.json`,
+`mcp/hooks/PostToolUse.response/valid/session-notice-and-ping.json`,
+`mcp/hooks/PreToolUse.response/valid/allow-session-notice.json`.
 `tests/platform/contracts/test_ctr02.py` lists the two endpoints and the `restore` object.
 
 ## Hub API

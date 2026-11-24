@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/mcp/hooks/PostToolUse.response.json",
   "title": "hook PostToolUse response",
-  "description": "{} or, with pending pings, the notice",
+  "description": "{} or, with pending pings or a pending session notice, the context",
   "type": "object",
   "properties": {
     "hookSpecificOutput": {
@@ -13,7 +13,7 @@
           "const": "PostToolUse"
         },
         "additionalContext": {
-          "$ref": "../objects.json#/$defs/notice"
+          "$ref": "../objects.json#/$defs/hook_context"
         }
       },
       "required": [
