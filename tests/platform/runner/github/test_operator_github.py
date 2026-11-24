@@ -24,7 +24,7 @@ from agent_runner.github.op_prechecks import PRECHECKS
 from agent_runner.operations.extensions import CheckFailed, OperationFailed
 from agent_runner.requests.service import service_for
 
-from ..credentials.kit import ALICE, BOB, Env, kit_env, seal_request
+from ..credentials.kit import ALICE, BOB, Env, ck, github_body, kit_env, make_record, seal_request
 from ..settle import settle as settle_tasks
 from .conftest import REPO, GitHub, seed
 from .run10_kit import R10, refused, run10
@@ -582,3 +582,40 @@ def test_without_an_allow_list_every_repository_of_the_account_works(
         assert r.ok.hub.params_event()[1]["params"]["repo"] == "octo-org/second"
 
     run10(store_dsn, github, tmp_path, body, token=OPERATOR_TOKEN, allowed=allowed)
+
+
+def test_a_copy_of_the_operators_token_held_by_another_user_is_never_used(
+    store_dsn: str, opgh: GitHub, tmp_path: Path
+) -> None:
+    """HOT-14: alice is the operator's one user; bob still holds the copy stored while several users could be
+    approved. Bob's operations never use it (no request reaches GitHub); alice's do."""
+    token_file = tmp_path / "github.token"
+    write_token(token_file, OPERATOR_TOKEN + "\n")
+
+    async def body(env: Env) -> None:
+        env.hub.records[(ALICE, "github")] = make_record(github_body(token=OPERATOR_TOKEN))
+        env.hub.records[(BOB, "github")] = make_record(
+            github_body(token=OPERATOR_TOKEN), owner=BOB, author="bob", key=ck(BOB)
+        )
+        await env.add_ck(BOB)
+        with pytest.raises(OperationFailed) as failed:
+            await EXECUTORS["github.list_repositories"](context_for(env, {}, owner=BOB))
+        assert failed.value.code == "github_not_connected"
+        assert await refused_check(env, BOB) == "github_not_connected"
+        assert opgh.journal() == []
+        listed = await EXECUTORS["github.list_repositories"](context_for(env, {}, data={"allowed": []}))
+        assert "repositories" in listed
+        # without the operator's file there is nothing to compare with (the runbook revokes the token at GitHub)
+        assert not operator.foreign_copy(env.context, BOB, "another-token")
+        token_file.unlink()
+        assert not operator.foreign_copy(env.context, BOB, OPERATOR_TOKEN)
+        env.context.config.operator_github_token_file = None
+        assert not operator.foreign_copy(env.context, BOB, OPERATOR_TOKEN)
+
+    run(store_dsn, opgh, token_file, frozenset({ALICE}), body)
+
+
+async def refused_check(env: Env, user: str) -> str:
+    with pytest.raises(CheckFailed) as failed:
+        await PRECHECKS["github.list_repositories"](precheck_request(env, "github.list_repositories", {}, owner=user))
+    return failed.value.code

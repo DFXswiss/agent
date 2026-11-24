@@ -51,7 +51,7 @@ from typing import Any
 
 from agent_runner.credentials.cache import CredentialUnavailable, put
 from agent_runner.github import operator, ops, revoke
-from agent_runner.github.client import GitHubClient, GitHubError, GitHubResponse, settings_for
+from agent_runner.github.client import TOKEN_RE, GitHubClient, GitHubError, GitHubResponse, settings_for
 from agent_runner.requests.service import RESPOND_DELAYS, Flow
 from agent_runner.sessions.records import time_text
 from agent_runner.sync.http import HubRefusal, HubTransportError
@@ -267,7 +267,7 @@ async def _device_flow(flow: Flow) -> tuple[str, int, list[str]]:
         )
         issued = await poll(flow, web, settings.client_id, (device_code, interval, expires))
     token = issued.pop("access_token", None)
-    if not isinstance(token, str) or not ops.TOKEN_RE.fullmatch(token):
+    if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
         raise ConnectFailed("token_invalid")
     async with settings.client(token, flow.user) as api:
         try:
@@ -307,7 +307,7 @@ async def _connect(flow: Flow) -> tuple[str, int, list[str], str]:
     if "token" not in body:
         return (*await _device_flow(flow), "device_flow")
     token = body["token"]
-    if not isinstance(token, str) or not ops.TOKEN_RE.fullmatch(token):
+    if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
         raise ConnectFailed("token_invalid", "step=request kind=token")
     return (*await _token(flow, token), "token")
 

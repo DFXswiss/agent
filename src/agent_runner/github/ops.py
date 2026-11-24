@@ -24,12 +24,11 @@ from typing import Any
 
 from agent_runner.credentials import acting
 from agent_runner.credentials.cache import CredentialUnavailable
-from agent_runner.github.client import GitHubClient, GitHubError, settings_for
+from agent_runner.github.client import TOKEN_RE, GitHubClient, GitHubError, settings_for
 from agent_runner.operations.extensions import OperationContext, OperationFailed
 from agent_runner.operations.records import Operation
 from agent_runner.sync.http import HubRefusal, HubTransportError
 
-TOKEN_RE = re.compile(r"^[!-~]{1,4096}$")
 URL_RE = re.compile(r"^https://[!-~]{1,2048}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 LOGIN_RE = re.compile(r"^[A-Za-z0-9-]{1,39}(\[bot\])?$")

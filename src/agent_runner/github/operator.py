@@ -25,6 +25,7 @@ textfile metrics (`metrics.counters`).
 
 from __future__ import annotations
 
+import hmac
 import os
 import stat
 from collections.abc import Callable
@@ -32,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent_runner.github.ops import TOKEN_RE
+from agent_runner.github.client import TOKEN_RE
 
 KEY = "operator_github"
 MAX_BYTES = 4096 + 2
@@ -133,6 +134,22 @@ def read_token(path: Path, state: OperatorGitHub, line: Callable[[str], None]) -
         raise
     state.logged = None
     return token
+
+
+def foreign_copy(context: Any, user: str, token: object) -> bool:
+    """Whether `token` is the operator's token held as the `github` credential of a user who is not the operator's
+    user: a copy stored while several users could be approved (before HOT-14). Such a copy is never used
+    (`credentials.acting`); revoking the token at GitHub ends it everywhere. False without the setting or a usable
+    file (nothing to compare with)."""
+    config = context.config
+    path = getattr(config, "operator_github_token_file", None)
+    if path is None or user.lower() in getattr(config, "operator_github_users", frozenset()):
+        return False
+    try:
+        operator_token = _read(path, state_for(context).euid())
+    except Unusable:
+        return False
+    return isinstance(token, str) and hmac.compare_digest(operator_token.encode(), token.encode())
 
 
 def check(config: Any, euid: Callable[[], int] = os.geteuid) -> tuple[str, str]:

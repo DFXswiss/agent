@@ -41,6 +41,9 @@ from urllib.parse import urlsplit
 
 import httpx
 
+TOKEN_RE = re.compile(r"^[!-~]{1,4096}$")
+"""A GitHub token as stored and sent: printable ASCII without spaces, at most 4096 characters."""
+
 ACCEPT = "application/vnd.github+json"
 API_VERSION = "2022-11-28"
 USER_AGENT = "agent-runner"

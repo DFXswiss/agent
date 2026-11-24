@@ -133,7 +133,8 @@ def test_formal_check_failures_are_registered_as_rejected_with_their_code(rig: R
         # the error result as an event (03 §9 "every operation has a result"); no transition: the hub decided
         ((kind, event),) = await kit_.outbox()
         assert kind == "event"
-        assert event["body"] == {"operation_id": op.id, "status": "rejected", "error": op.answer["error"]}
+        error = op.answer["error"]
+        assert event["body"] == {"operation_id": op.id, "status": "rejected", "connection_of": OWNER, "error": error}
         assert op.result_event_id == event["header"]["id"]
         await kit_.kit.pushed_events()
 

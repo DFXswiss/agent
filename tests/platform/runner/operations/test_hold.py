@@ -143,7 +143,8 @@ def test_a_held_operation_is_rejected_at_until_with_the_original_code(rig: Rig) 
         assert (registration["local_check"], registration["error_code"]) == ("rejected", "github_not_connected")
         assert op.checked == {"error": error}
         result = [item for kind, item in await kit_.outbox() if kind == "event"][-1]
-        assert result["body"] == {"operation_id": op_id, "status": "rejected", "error": error}
+        # the acting user is named: only that person's connection could have been used (HOT-14)
+        assert result["body"] == {"operation_id": op_id, "status": "rejected", "connection_of": OWNER, "error": error}
         assert calls == []
         assert any(f"hold_timeout operation_id={op_id} reason=github_connection" in line for line in kit_.lines)
         await kit_.kit.pushed_events()

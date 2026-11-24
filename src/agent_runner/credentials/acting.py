@@ -23,7 +23,9 @@ keeps it so).
   and never changes: a held operation keeps it, whoever writes later.
 - `cached_version(conn, operation, kind)`: the version of the acting user's cached credential (None without an acting
   user or record); `opened(context, operation, kind)`: its decrypted body for one use - `CredentialUnavailable
-  ("no_actor")` without an acting user, so nothing is ever opened for an operation whose acting user is unknown.
+  ("no_actor")` without an acting user, so nothing is ever opened for an operation whose acting user is unknown, and
+  `CredentialUnavailable("shared")` for a copy of the operator's GitHub token held by anybody but the operator's user
+  (`github.operator.foreign_copy`; stored while several users could be approved).
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from typing import Any, Protocol
 from psycopg import AsyncConnection
 
 from agent_runner.credentials import cache
+from agent_runner.github import operator
 
 PERSONAL_KINDS = frozenset({"github"})
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -70,12 +73,15 @@ def needs(op_type: str) -> str | None:
 
 async def prompt_accepted(conn: AsyncConnection[Any], session_id: str, prompt_id: str) -> None:
     """A prompt of the session was accepted: its verified author acts in the turn (module docstring, "Turn"). A prompt
-    ID that names no stored prompt delivered to this session has no known author."""
+    ID that names no stored prompt being delivered to this session (its delivery row `registered` or `typed`; this
+    observer runs before the delivery's, which marks it `accepted`) has no known author - a replayed or forged
+    acceptance of an earlier prompt never brings back its author."""
     known = prompt_id if _UUID_RE.fullmatch(prompt_id) else None
     await conn.execute(
         "UPDATE runner.session s SET turn_actor = CASE WHEN s.turn_open AND s.turn_actor IS DISTINCT FROM a.author"
         " THEN NULL ELSE a.author END, turn_open = true FROM (SELECT (SELECT e.author_id FROM runner.prompt_event e"
-        " JOIN runner.prompt_delivery d ON d.event_id = e.event_id WHERE e.event_id = %s AND d.session_id = %s)"
+        " JOIN runner.prompt_delivery d ON d.event_id = e.event_id WHERE e.event_id = %s AND d.session_id = %s"
+        " AND d.state IN ('registered', 'typed'))"
         " AS author) a WHERE s.id = %s",
         (known, session_id, session_id),
     )
@@ -115,4 +121,6 @@ async def opened(context: Any, operation: Acting, kind: str) -> AsyncIterator[di
     if operation.actor_id is None:
         raise cache.CredentialUnavailable("no_actor")
     async with cache.opened(context, operation.actor_id, kind) as body:
+        if operator.foreign_copy(context, operation.actor_id, body.get("token")):
+            raise cache.CredentialUnavailable("shared")
         yield body

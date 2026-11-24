@@ -29,8 +29,10 @@ from ..sessions.kit import ORG, TASK, WG, session_id
 from .kit import REQUESTED_AT, OKit, run, setup
 
 
-def test_the_observer_is_registered() -> None:
-    assert [o.name for o in state_observers(ROOT_PACKAGE) if o.name == "credentials.acting"] == ["credentials.acting"]
+def test_the_observer_is_registered_before_the_delivery() -> None:
+    names = [observer.name for observer in state_observers(ROOT_PACKAGE)]
+    # the acting user is read while the prompt's delivery row is still open; the delivery's observer closes it
+    assert names.index("credentials.acting") < names.index("prompts.delivery")
     assert acting_state.OBSERVERS[0].handle is acting_state.observe
 
 
@@ -152,6 +154,13 @@ def test_a_prompt_without_known_author_leaves_the_turn_without_acting_user(rig: 
         assert await turns.turn() == (None, True)
         await turns.idle()
         await turns.accepted("not-a-uuid")
+        assert await turns.turn() == (None, True)
+        await turns.idle()
+        # a replayed (or forged) acceptance of a prompt that was accepted before never brings back its author
+        replayed = await turns.prompt(ALICE)
+        async with env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.prompt_delivery SET state = 'accepted' WHERE event_id = %s", (replayed,))
+        await turns.accepted(replayed)
         assert await turns.turn() == (None, True)
         assert await turns.request() is None
         # other states change nothing

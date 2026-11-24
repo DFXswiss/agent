@@ -1088,7 +1088,7 @@
             },
             "connection_of": {
               "$ref": "../common.json#/$defs/uuid",
-              "description": "the user whose own personal connection (GitHub) the operation used: the person who gave the instruction (HOT-14); absent when it used none"
+              "description": "for a type that needs a personal connection (GitHub): the person who gave the instruction, the only one whose own connection its checks and execution used or could use (HOT-14); absent otherwise and when nobody could be named"
             },
             "status": {
               "type": "string",
@@ -1113,7 +1113,7 @@
             },
             "connection_of": {
               "$ref": "../common.json#/$defs/uuid",
-              "description": "the user whose own personal connection (GitHub) the operation used: the person who gave the instruction (HOT-14); absent when it used none"
+              "description": "for a type that needs a personal connection (GitHub): the person who gave the instruction, the only one whose own connection its checks and execution used or could use (HOT-14); absent otherwise and when nobody could be named"
             },
             "status": {
               "type": "string",

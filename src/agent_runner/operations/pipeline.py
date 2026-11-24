@@ -47,11 +47,11 @@
    starts (the daemon stopped during the executor) ends `failed` `timeout`, `retryable:true`: it is never executed
    twice.
 5. **Result** (`_finish`): in **one** transaction the outbox `event` `operation.result` (encrypted `{operation_id,
-   status, connection_of?, result|error}`; `connection_of`: the acting user whose personal connection an executed
-   operation used, HOT-14), then the `operation_transition` (`succeeded`/`failed` with `result_event_id`), and the
-   answer stored with the row; then `POST /v1/pending/{id}/answer`. A result that does not fit into an event (E8)
-   ends `failed` `size_exceeded`. A result with `existing:true` (an open pull request found by the executor) is
-   answered `status:"duplicate"` without `duplicate_of`.
+   status, connection_of?, result|error}`; `connection_of`: for a type that needs a personal connection, the acting user
+   - the only person whose connection its checks and executor used or could use, HOT-14), then the
+   `operation_transition` (`succeeded`/`failed` with `result_event_id`), and the answer stored with the row; then `POST
+   /v1/pending/{id}/answer`. A result that does not fit into an event (E8) ends `failed` `size_exceeded`. A result with
+   `existing:true` (an open pull request found by the executor) is answered `status:"duplicate"` without `duplicate_of`.
 6. **Duplicates** (`_duplicate`): the original's outcome from its local row or its verified `operation.result` event
    (`results.original_outcome`, an inbox pull per poll while the original is not local), polled every second
    within the MCP wait (20 s from the request): `duplicate` with `duplicate_of` and the original's result; an original
@@ -108,6 +108,15 @@ from agent_runner.sync.http import HubClient
 from agent_runner.sync.outbox import event_draft
 from agent_runner.sync.seal import Sealer, check_draft
 from agent_runner.vm import records as vm_records
+
+
+def _connection_of(op: Operation) -> dict[str, str]:
+    """`connection_of` of the result event (HOT-14): the acting user of a type that needs a personal connection - the
+    only person whose connection its pre-checks and executor used or could use; nothing otherwise."""
+    if op.actor_id is None or acting.needs(op.type) is None:
+        return {}
+    return {"connection_of": op.actor_id}
+
 
 ATTRIBUTE = "operation_pipeline"
 MCP_WAIT_S = 20.0
@@ -585,7 +594,7 @@ class Pipeline:
 
         async def write(conn: Any) -> None:
             if event:
-                body = {"operation_id": op.id, "status": state, "error": error}
+                body = {"operation_id": op.id, "status": state, **_connection_of(op), "error": error}
                 await self.env.outbox.enqueue(conn, "event", self._result_draft(op, event_id, body, at))
                 fields["result_event_id"] = event_id
             if transition is not None:
@@ -723,9 +732,7 @@ class Pipeline:
     ) -> Operation:
         """`operation.result` event, then the transition, and the stored answer, in one transaction."""
         at, event_id = self.env.at(), uuid7()
-        # whose personal connection the executor used (HOT-14): the acting user, once the operation executed
-        used = op.actor_id if op.state == "executing" and acting.needs(op.type) is not None else None
-        connection = {} if used is None else {"connection_of": used}
+        connection = _connection_of(op)
         if failure is None:
             assert result is not None
             draft = self._result_draft(
