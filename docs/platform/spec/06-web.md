@@ -577,7 +577,10 @@ SPA routes (§2.4) and `/assets/…` statically.
 ### 10.3 Reproducible build
 
 Pinned `package-lock.json`, `npm ci`, Node version in `.nvmrc`, `SOURCE_DATE_EPOCH` = commit time, no timestamps or
-absolute paths in output. Two builds from the same commit MUST be byte-identical (CI job compares). The
+absolute paths in output. Two builds from the same commit MUST be byte-identical (CI job compares), whatever the
+operating system, the checkout directory and the time: build rules look only at paths relative to `web/`, never at
+absolute module ids (HOT-18), and `make platform-ci-linux` builds on the runner device and in the Linux VM below another
+directory and fails unless the build hashes are equal. The
 `build-manifest.json` lists `{version, commit, files:[{path, sha256, size}], root_key_fingerprint}`; its sha256 is the
 **build hash**, published with each release.
 

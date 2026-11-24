@@ -3,7 +3,11 @@
 # sections 1, 3 and 7; ADR-027 section 7). Runs on the runner device.
 #
 #   scripts/guest-ci.sh [run]   create or reuse the VM, copy the checkout in, run the tests marked `linux` as root
-#                               under coverage, copy .coverage.linux.* back into the checkout, stop the VM
+#                               under coverage, copy .coverage.linux.* back into the checkout, compare the web build
+#                               of this device with the one of the VM (web-build), stop the VM
+#   scripts/guest-ci.sh web-build   only the build comparison: build web/ here and in the VM below another directory
+#                               (one with a `src` component) with the same commit, time and version; the build hashes
+#                               must be equal (06-web.md section 10.3, decision HOT-18)
 #   scripts/guest-ci.sh stop    stop the VM (it is kept for reuse)
 #   scripts/guest-ci.sh delete  delete the VM
 #
@@ -28,12 +32,22 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 guest_repo=/var/lib/guest-ci/agent
 guest_venv=/opt/guest-ci/venv
 # Bump to re-provision existing VMs.
-provision_version=3
+provision_version=4
 # Same major versions as the platform-test extra (pytest-timeout: the hard limit per test of tests/platform/pytest.ini);
 # coverage data files are compatible across 7.x.
 pip_packages="pytest>=8.3.0 pytest-timeout>=2.4 coverage>=7.10.7"
+# Node of the work image (images/versions.json, checksum-pinned) for the web build of the VM.
+guest_node=/opt/guest-ci/node
+# The web build of the VM: below a directory named `src`, unlike the checkout on this device.
+guest_web=/var/lib/guest-ci/src/agent/web
+guest_web_out=/var/lib/guest-ci/web-out
 
 log() { printf 'guest-ci: %s\n' "$*" >&2; }
+
+# A value of images/versions.json (the pins of the work image).
+version_of() {
+  sed -n "s/^ *\"$1\": *\"\\([^\"]*\\)\".*/\\1/p" "$repo/images/versions.json"
+}
 
 command -v limactl >/dev/null || { log "limactl not found (run on the runner device)"; exit 2; }
 
@@ -54,14 +68,22 @@ create_vm() {
 }
 
 provision() {
+  local node_url node_sha
+  node_url=$(version_of node_tarball_url)
+  node_sha=$(version_of node_tarball_sha256)
   in_vm sudo env "PIP_PACKAGES=$pip_packages" "VENV=$guest_venv" "MARK=/var/lib/guest-ci/provisioned-$provision_version" \
+    "NODE_URL=$node_url" "NODE_SHA=$node_sha" "NODE_DIR=$guest_node" \
     bash -euo pipefail -c '
       [ -e "$MARK" ] && exit 0
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -qq
-      apt-get install -y -qq python3-venv git nftables acl tmux
+      apt-get install -y -qq python3-venv git nftables acl tmux curl xz-utils libatomic1
       python3 -m venv "$VENV"
       "$VENV/bin/pip" install -q $PIP_PACKAGES
+      curl -fsSL "$NODE_URL" -o /tmp/guest-ci-node.tar.xz
+      echo "$NODE_SHA  /tmp/guest-ci-node.tar.xz" | sha256sum -c --quiet
+      rm -rf "$NODE_DIR" && mkdir -p "$NODE_DIR"
+      tar -xJf /tmp/guest-ci-node.tar.xz -C "$NODE_DIR" --strip-components 1 && rm -f /tmp/guest-ci-node.tar.xz
       mkdir -p "$(dirname "$MARK")"
       touch "$MARK"'
 }
@@ -112,6 +134,39 @@ run_tests() {
   return "$rc"
 }
 
+# The commit time, commit and version both builds compile in; outside a git checkout (the gates copy the tree without
+# .git) fixed values, the same for both sides.
+build_env() {
+  local epoch commit
+  epoch=$(git -C "$repo" log -1 --format=%ct 2>/dev/null) || epoch=0
+  commit=$(git -C "$repo" rev-parse HEAD 2>/dev/null) || commit=0000000000000000000000000000000000000000
+  printf '%s\n' "SOURCE_DATE_EPOCH=$epoch" "BUILD_COMMIT=$commit" \
+    "BUILD_VERSION=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$repo/web/package.json")"
+}
+
+web_build() {
+  local scratch tarball rc=0
+  scratch=$(mktemp -d -t guest-ci-web.XXXXXX)
+  # shellcheck disable=SC2046
+  set -- $(build_env)
+  log "web build: $* (this device and the VM)"
+  tarball="$scratch/web.tgz"
+  COPYFILE_DISABLE=1 tar -C "$repo" --exclude 'web/node_modules' -czf "$tarball" web
+  limactl copy "$tarball" "$vm:/tmp/guest-ci-web.tgz"
+  in_vm sudo env "$@" "PATH=$guest_node/bin:/usr/bin:/bin" "WEB=$guest_web" "OUT=$guest_web_out" \
+    bash -euo pipefail -c 'rm -rf "$(dirname "$WEB")" "$OUT" && mkdir -p "$(dirname "$WEB")" && \
+      tar --no-same-owner -xzf /tmp/guest-ci-web.tgz -C "$(dirname "$WEB")" && rm -f /tmp/guest-ci-web.tgz && \
+      cd "$WEB" && npm ci --no-audit --no-fund --loglevel=error >/dev/null && \
+      TZ=Pacific/Kiritimati node scripts/build-compare.mjs build "$OUT" >&2 && chmod 0644 "$OUT/build-manifest.json"'
+  limactl copy "$vm:$guest_web_out/build-manifest.json" "$scratch/linux.json"
+  [ -d "$repo/web/node_modules" ] || (cd "$repo/web" && npm ci --no-audit --no-fund --loglevel=error >/dev/null)
+  (cd "$repo/web" && env "$@" node scripts/build-compare.mjs build "$scratch/out" >&2)
+  (cd "$repo/web" && node scripts/build-compare.mjs compare "$scratch/out/build-manifest.json" "$scratch/linux.json" 2>&1) \
+    | sed 's/^/guest-ci: web build (this device \/ Linux VM): /' >&2 || rc=$?
+  rm -rf "$scratch"
+  return "$rc"
+}
+
 stop_vm() {
   if [ "$(status)" = "Running" ]; then
     log "stopping $vm (kept for reuse)"
@@ -128,7 +183,17 @@ run)
   image_settings
   in_vm uname -r | sed 's/^/guest-ci: kernel /' >&2
   copy_repo
-  run_tests
+  rc=0
+  run_tests || rc=$?
+  web_build || rc=1
+  exit "$rc"
+  ;;
+web-build)
+  [ -n "$(status)" ] || create_vm
+  [ "$(status)" = "Running" ] || limactl start -y "$vm" >/dev/null
+  [ "${GUEST_CI_KEEP_RUNNING:-0}" = 1 ] || trap stop_vm EXIT
+  provision
+  web_build
   ;;
 stop)
   stop_vm
@@ -137,7 +202,7 @@ delete)
   if [ -n "$(status)" ]; then limactl delete -f "$vm"; fi
   ;;
 *)
-  log "unknown command $cmd (run|stop|delete)"
+  log "unknown command $cmd (run|web-build|stop|delete)"
   exit 2
   ;;
 esac

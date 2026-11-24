@@ -306,7 +306,7 @@ heads without `log_rollback`/`log_fork`; a follow-up prompt works; `rebuild-proj
 | Command | Where | Content |
 |---|---|---|
 | `make platform-ci` (each repo) | any work device | lint-free build, unit/integration tests, coverage gates, contract tests, migrations, web Vitest + Playwright component tests |
-| `make platform-ci-linux` (agent) | runner device | Linux-only guest tests inside the `guest-ci` VM, coverage copied back and combined |
+| `make platform-ci-linux` (agent) | runner device | Linux-only guest tests inside the `guest-ci` VM, coverage copied back and combined; the web build of the runner device (macOS) compared with the one of the VM below another directory: equal build hash or red (06-web.md §10.3, HOT-18) |
 | `e2e/platform/run.sh --topology t1` | runner device | E2E-* (T1/both), ATK-*, PERF-* |
 | `e2e/platform/run.sh --topology t2 --runner <ssh target>` | second device | E2E-* (T2/both) with the runner on the runner device |
 | `e2e/platform/run.sh --live` | runner device | LIVE-* |
