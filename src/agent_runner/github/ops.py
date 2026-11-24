@@ -6,6 +6,8 @@
   the duration of the block. No acting user, no cached or fetchable record, a record that does not open or a body
   without a usable token is `NotConnected`; a hub that cannot be asked for a missing record is
   `GitHubError("unreachable")` (retryable).
+- `executor(body)`: a `403` that refuses access (SAML single sign-on, an organisation's restriction, a right the token
+  lacks) is `repo_not_accessible` with the one next step in its message (`reach`, KOR-65); everything else is
 - `failure(error, not_found=...)`: the operation failure of a `GitHubError`: `401` -> `github_not_connected`, `404`
   -> the type's code, `410` (the repository's issues are disabled, KOR-25) -> `not_found` with `ISSUES_DISABLED`,
   retryable errors (network, `5xx`, `429`, secondary and primary rate limits) -> `upstream_error` with `retryable`
@@ -24,6 +26,7 @@ from typing import Any
 
 from agent_runner.credentials import acting
 from agent_runner.credentials.cache import CredentialUnavailable
+from agent_runner.github import reach
 from agent_runner.github.client import TOKEN_RE, GitHubClient, GitHubError, settings_for
 from agent_runner.operations.extensions import OperationContext, OperationFailed
 from agent_runner.operations.records import Operation
@@ -94,15 +97,25 @@ def executor(body: Body, *, not_found: str = "not_found") -> Callable[[Operation
     """An executor that runs `body` with the acting user's client and maps the GitHub failures."""
 
     async def run(ctx: OperationContext) -> dict[str, Any]:
+        client: GitHubClient | None = None
         try:
             async with actor_client(ctx.context, ctx.operation) as client:
                 return await body(ctx, client)
         except NotConnected:
             raise OperationFailed("github_not_connected", message=NOT_CONNECTED) from None
         except GitHubError as error:
-            raise failure(error, not_found=not_found) from None
+            raise _refused(client, ctx, error) or failure(error, not_found=not_found) from None
 
     return run
+
+
+def _refused(client: GitHubClient | None, ctx: OperationContext, error: GitHubError) -> OperationFailed | None:
+    """`repo_not_accessible` with the one next step for a `403` access refusal at execution time (`reach`, KOR-65)."""
+    repo = ctx.operation.params.get("repo")
+    if client is None or error.kind != "forbidden" or not isinstance(repo, str):
+        return None
+    step = reach.next_step(client, repo, error)
+    return None if step is None else OperationFailed("repo_not_accessible", message=reach.message(step, repo))
 
 
 def invalid() -> GitHubError:

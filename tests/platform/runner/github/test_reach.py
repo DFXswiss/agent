@@ -27,10 +27,11 @@ from agent_runner.operations.pipeline import ACCESS_RECHECK_S, HOLD_S, TIMEOUT_M
 from agent_runner.orgs.db import session
 from agent_runner.orgs.keys import store_scope_key
 
-from ..credentials.kit import ALICE, CLIENT_ID, ck, github_body, make_record
+from ..credentials.kit import ALICE, CLIENT_ID, Env, ck, github_body, make_record
 from ..operations.kit import OKit, setup
 from ..reconcile.rig import Rig, standard_world
 from .conftest import GitHub
+from .test_executors import fails, with_env
 
 APP = "ghu_double-app"  # not secrets: the double only compares them
 OAUTH = "gho_double-oauth"
@@ -467,3 +468,41 @@ def test_the_double_refuses_the_restricted_organisation_like_github(places: GitH
     answer = httpx.get(f"{places.url}/repos/{THIRD}", headers=headers)
     assert answer.status_code == 403
     assert "OAuth App access restrictions" in answer.json()["message"]
+
+
+def test_a_write_github_refuses_at_execution_names_the_step(
+    store_dsn: str, start_github: Callable[..., GitHub]
+) -> None:
+    """The pre-checks passed (the repository is readable), but GitHub refuses the write: the App's installation may
+    only read issues. Already registered, the operation is not held, but it ends with the one step."""
+    seeded = world()
+    seeded["installations"][0]["permissions"] = {"contents": "write", "issues": "read", "metadata": "read"}
+    github = start_github(world=seeded)
+
+    async def body(env: Env) -> None:
+        env.context.config.github_oauth_client_id = OAUTH_ID
+        failed = await fails(env, "github.comment", {"repo": OWN, "number": 1, "body": "Done."})
+        assert (failed.code, failed.retryable) == ("repo_not_accessible", False)
+        assert failed.message is not None
+        assert failed.message.startswith(
+            f"The GitHub connection of the person who gave this instruction does not reach {OWN}."
+        )
+        # a refusal that is no access refusal stays as before
+        github.faults({"route": "POST /repos/{owner}/{repo}/issues/{number}/comments", "kind": "error", "status": 403})
+        refused = await fails(env, "github.comment", {"repo": OWN, "number": 1, "body": "Done."})
+        assert refused.code == "upstream_error"
+
+    with_env(store_dsn, github, body, token=APP)
+
+
+def test_an_executor_without_a_repository_keeps_the_plain_failure(
+    store_dsn: str, start_github: Callable[..., GitHub]
+) -> None:
+    github = start_github(world=world())
+
+    async def body(env: Env) -> None:
+        github.faults({"route": "GET /user/installations", "kind": "error", "status": 403})
+        failed = await fails(env, "github.list_repositories", {}, data={"allowed": []})
+        assert failed.code == "upstream_error"
+
+    with_env(store_dsn, github, body, token=APP)

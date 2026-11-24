@@ -270,9 +270,11 @@ def test_a_revoked_token_is_not_connected(store_dsn: str, gh: GitHub) -> None:
 
 def test_an_organisation_that_requires_sso_is_named_without_its_url(store_dsn: str, gh: GitHub) -> None:
     async def sso(env: Env) -> None:
+        # the executor names the one step (KOR-65): authorise the token for the organisation, at GitHub's page of it
         failed = await fails(env, "github.list_issues", {"repo": REPO})
-        assert (failed.code, failed.message, failed.retryable) == ("upstream_error", ops.SSO_REQUIRED, False)
-        assert "https://" not in (failed.message or "")
+        assert (failed.code, failed.retryable) == ("repo_not_accessible", False)
+        assert failed.message is not None
+        assert "requires SAML single sign-on" in failed.message
         # the pre-check names the one next step instead (KOR-65): authorise the token for the organisation
         assert await refused(env, "github.get_issue", {"repo": REPO}) == "repo_not_accessible"
         with pytest.raises(CheckFailed) as caught:

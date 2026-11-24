@@ -14,12 +14,17 @@ depends on what refused and on the kind of token (`client.token_kind`, from GitH
   flow), else `<web>/settings/applications` (for example the GitHub CLI's token);
 - `403` naming that the organisation forbids "personal access token (classic)": `new_token` with a pre-filled
   fine-grained token for the owner (`fine_grained_url`);
+- `403` "Resource not accessible by ..." (the token lacks the right, typically at the first write): as a `404`;
 - `404` with a GitHub App token: `connect` when the OAuth App is set up (one device flow reaches every repository),
   else `install_app` (`<web>/apps/<slug>/installations/new`) when the App's URL name is set, else `new_token`
   (`classic_url`);
 - `404` with a fine-grained token: `new_token` with a pre-filled fine-grained token for the owner;
 - `404` with any other token (OAuth App, classic, unknown): `check_access` with `<web>/<owner>/<name>` - the account
   itself does not reach it (or it does not exist).
+
+An executor whose request GitHub refuses that way after the pre-checks passed (`ops.executor`, a `403` only: a `404`
+there is the missing issue or pull request of the type) ends `repo_not_accessible` with the same sentence - the
+operation is already registered, so it is not held, but the session and the person see the one step.
 
 Every URL is built from the configured web URL and values the platform checked (`ops.REPO_RE`); nothing of GitHub's
 answer is passed on except a checked SSO URL. The message is a fixed English sentence ending with the step, so a
@@ -42,6 +47,9 @@ from agent_runner.operations.extensions import CheckFailed
 
 OAUTH_RESTRICTED = "oauth app access restrictions"
 CLASSIC_FORBIDDEN = "personal access token (classic)"
+NOT_ACCESSIBLE_BY = "resource not accessible by"
+"""GitHub's `403` when the token lacks the right for the request: "... by integration" (a GitHub App without the
+installation's permission) or "... by personal access token" (a token without the scope or permission)."""
 TOKEN_NAME = "agent.dfx.swiss"
 FINE_GRAINED_PERMISSIONS = (
     ("contents", "write"),
@@ -120,7 +128,7 @@ def next_step(client: GitHubClient, repo: str, error: GitHubError) -> dict[str, 
         return {"action": "approve_app", "owner": owner, "url": _approval_url(client)}
     if error.kind == "forbidden" and CLASSIC_FORBIDDEN in message:
         return {"action": "new_token", "owner": owner, "url": fine_grained_url(web, owner)}
-    if error.kind == "not_found":
+    if error.kind == "not_found" or (error.kind == "forbidden" and NOT_ACCESSIBLE_BY in message):
         return _missing(client, repo, owner)
     return None
 
