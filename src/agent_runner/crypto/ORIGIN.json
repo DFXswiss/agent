@@ -148,7 +148,7 @@
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/events.py",
-      "sha256": "f194d1e608d5dd00fad6ea8a7ee53e0e9a739feff0b6071a2f2c9a5a10400c3b",
+      "sha256": "ea4281ebdea7a751fda4ff6385c4fa8893378db1effaae3064064f392e9f18fc",
       "source": "src/agent_hub/log/events.py"
     },
     {
@@ -177,7 +177,7 @@
         }
       ],
       "copy": "src/agent_runner/crypto/log/vectors.py",
-      "sha256": "a115ba084c4de8606c07cbd8051832411a3b8192e57ed43de1045fe3ec8d8df5",
+      "sha256": "8cf3b1da11f8e8d22c4a28c052116af3f00c59688f54de1ac7bb70cc727d8b49",
       "source": "src/agent_hub/log/vectors.py"
     },
     {
