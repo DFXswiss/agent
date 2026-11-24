@@ -1,0 +1,184 @@
+# 15 – Prerequisites: the register of everything a task can wait for or be refused for
+
+Rules [E-05](../KONZEPT.md#e-05), [E-11](../KONZEPT.md#e-11), [E-19](../KONZEPT.md#e-19); design: ADR-077. Kept
+complete by `tests/platform/test_prerequisites.py`.
+
+## 1. Purpose
+What the user or the connected account may do, the AI may do as well, without anything entered, unlocked or confirmed
+first ([E-11](../KONZEPT.md#e-11)). Every code with which a task, a session, an operation or a request can wait or be
+refused is listed here with the reason it must exist and the step the platform starts when it occurs
+([E-05](../KONZEPT.md#e-05)): a missing prerequisite is started, not explained. A code that would need an approval has
+no class here and is a defect.
+
+## 2. Sources (what the test collects)
+- the scheduling reasons of a waiting task (`contracts/enums/task-states.json`, 03-api.md §4.6.2);
+- the session failure reasons (`session-failure-reasons.json`) and the operation error codes
+  (`operation-error-codes.json`);
+- the hub's error codes (`error-codes.json`, 03-api.md §11), including the client-only verification codes;
+- the reasons a runner holds an operation for (`session.status` `waiting_for`, ADR-066);
+- every code the hub or the runner raises as `HubError`, `CheckFailed`, `StartFailed`, `NoPlacement`, `AccessRefused`,
+  `Refused` or `Rejected` (a literal or a resolvable module constant; the operator's own command lines `cli.py` and the
+  copy of the reference crypto are not scanned).
+
+The test fails for a code without a row, for a row without a source, for an unknown class, and for a row without a
+justification or a handling.
+
+## 3. Classes
+| Class | Meaning |
+|---|---|
+| `technical` | the step cannot work without it (a device, a model, a key, a free slot, a consistent log) |
+| `third_party` | it protects other people, their data, their accounts or the operator's money and devices |
+| `option` | a restriction a user, an admin or the operator chose voluntarily (a setting with a generous default, A5/A14) |
+| `rights` | the rights model of the concept ([§8](../KONZEPT.md#k-8)): reading and writing per workgroup, admin |
+| `credit` | the balance ([Idee 47](../KONZEPT.md#k-idee-47), [E-14](../KONZEPT.md#e-14)) |
+| `input` | the request itself is wrong; the agent or the client corrects it |
+
+## 4. The former approvals (inventory of KOR-49)
+| # | Former approval | Now |
+|---|---|---|
+| a | a team organization needed the operator's `org_platform_access` before it could use a platform device | root-signed switch `open_platform_access` (ADR-077 §3); off until the owner decides F1; with it off the operators are asked (`operator.request`) |
+| b | a private organization only with a platform invitation | stays: the invitation is the only way onto the platform (§1 Punkt 1, E-18), class `third_party` |
+| c | the operator's subscriptions only for organizations in a fixed list of the runner's environment, changed with a restart | root-signed `org_operator_subscriptions` in the platform log, read by the runner at its next refresh, no restart; all members of a granted organization use them; who outside the operator's organization is granted is the owner's question F2 |
+| d | the operator's GitHub account only for users of a fixed list | not here: KOR-47 makes it the organization's account |
+| e | protected branches `main`, `master`, `develop`, `release/*` even without settings | no default (A17); GitHub's own branch protection applies; the workgroup may set a list |
+| f | platform invitations only with the role `inviter` | root-signed switch `open_platform_invites`; off until F1; without the role a user lists and revokes only its own invitations |
+| g | a session without model access ended `model_access_unavailable` | the chat offers its owner the connection; the hub continues the task by itself once a model credential is stored (ADR-077 §4) |
+| h | an empty balance made the task wait without anybody being told | the operators are asked once per occasion; the person sees that credit has been requested |
+| i | workgroup rights and roles | stay: the rights model of the concept, not an approval; roles come only as a voluntary restriction (KOR-51) |
+| – | a workgroup without a device | an admin's client assigns a platform device before sending; otherwise every admin is asked (`device.needed`) |
+
+## 5. Register
+| Code | Where | Class | Why it is needed | Handling: the step the platform starts (E-05) | Started by |
+|---|---|---|---|---|---|
+| `account_code_invalid` | request | `input` | the account code is malformed | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `agent_exited` | session failure | `technical` | Claude Code ended unexpectedly | "Try again" or a follow-up prompt resumes the conversation (ADR-072) | user |
+| `agent_start_failed` | session failure | `technical` | Claude Code did not start in the guest | "Try again" starts a new session | user |
+| `already_assigned` | request | `input` | the device is assigned already | nothing to do; the client shows the assignment | client |
+| `attestation_invalid` | passkey ceremony | `third_party` | the attestation is malformed; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `authenticator_data_invalid` | passkey ceremony | `third_party` | the authenticator data is malformed; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `author_not_writer` | request, verification | `third_party` | the author may not write the scope; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `branch_exists` | operation | `input` | the branch exists already | the agent uses the existing branch or another name | agent |
+| `branch_protected` | operation | `option` | the workgroup chose to protect this branch (optional list; there is no default since ADR-077, A17) | an admin or writer changes the workgroup's protected branches; GitHub's own protection applies otherwise | user |
+| `budget_exceeded` | session failure, operation | `credit` | the organization's daily platform budget (the operator's setting, ADR-026) protects the operator's money | handled like `credit_exhausted`: the situation view shows `credit_empty`, the operator is asked and the task goes on once the budget allows it | hub (notification), operator |
+| `capacity_exhausted` | task wait, session failure | `technical` | every assigned device is full; starting more would break running sessions | the task waits and starts by itself as soon as a device reports room (ADR-075 §7); never a refusal | hub scheduler |
+| `ceremony_invalid` | passkey ceremony | `third_party` | the passkey ceremony is unknown or used; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `certificate_expiry_invalid` | passkey ceremony | `third_party` | the attestation certificate has expired; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `challenge_mismatch` | passkey ceremony | `third_party` | the challenge does not match; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `claim_invalid` | request | `input` | the claim of an agent is not valid | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `client_data_invalid` | passkey ceremony | `third_party` | the WebAuthn client data is malformed; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `community_epoch_exists` | community | `input` | the key epoch exists already | the client rebuilds on the newest epoch | client |
+| `community_muted` | community | `third_party` | a moderator muted the person to protect the other members | the mute ends at its time or a moderator lifts it | moderator |
+| `community_no_key` | community | `technical` | the person's client does not hold the community key yet | a member's client wraps the key (catch-up) | members' clients |
+| `community_not_member` | community | `rights` | only members read the community | the person joins the community | person |
+| `counter_regressed` | passkey ceremony | `third_party` | the passkey counter went back (a cloned authenticator); the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `credential_invalid` | passkey ceremony | `third_party` | the passkey credential is malformed; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `credit_exhausted` | task wait, session suspension, operation | `credit` | paid resources consume credit (Idee 47, E-14); without credit the operator would pay | every operator is asked once per occasion (`operator.request`, ADR-077 §4); the person sees that credit has been requested; the task goes on by itself once credit is set | hub (notification), operator (credit) |
+| `decrypt_failed` | request | `input` | the content does not open with the given key | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `delivery_failed` | session failure | `technical` | the prompt could not be delivered to the guest | a follow-up prompt starts a new session | user |
+| `device_not_assigned` | request | `rights` | a device acts only for the workgroups it is assigned to (§8, ADR-007) | an admin assigns the device | admin |
+| `device_offline` | task wait, session failure | `technical` | a session runs on an execution device; an offline device cannot run it | the task waits and starts by itself when an assigned device connects; the situation view names it (`device_unreachable`) and the owner is notified once per workgroup | hub scheduler |
+| `device_shutdown` | session failure | `technical` | the execution device was shut down | the task goes on with the next prompt on a device that runs | user, scheduler |
+| `epoch_stale` | request | `input` | the event was sealed for an old key epoch | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `event_conflict` | request | `input` | another event with this ID exists | the client sends its own event again or draws a new ID | client |
+| `forbidden` | request | `rights` | the rights model of the concept (§8): the caller lacks the right for this object | the answer is final for this caller; a person with the right acts, or an admin grants it | person with the right |
+| `github_connection` | held operation (session.status waiting) | `technical` | a GitHub operation needs the acting person's GitHub account | the person is asked in the chat to connect; the operation continues by itself (ADR-066) | runner, web client |
+| `github_not_connected` | operation | `technical` | a GitHub operation needs the acting person's GitHub account | the operation is held and the person is asked in the chat to connect (ADR-066); it continues by itself | runner, web client |
+| `guest_unreachable` | session failure | `technical` | the guest in the VM does not answer | "Try again" starts a new session; the runner replaces broken VMs | user, runner |
+| `handover_required` | agent account | `technical` | the account must be handed over first | the agent runs the handover | agent |
+| `handover_unexpected` | request | `input` | no handover is expected | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `header_invalid` | request | `input` | an event header does not fit the contract | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `hook_unavailable` | session failure | `third_party` | the guest's fail-closed hooks protect the workgroup's data and third parties (ADR-064); a session without them may not run | "Try again" starts a new session; the runner replaces the guest | user, runner |
+| `hpke_short` | request | `input` | the HPKE ciphertext is too short | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `hub_unreachable` | operation | `technical` | the hub is not reachable | the runner retries; the operation is idempotent | runner |
+| `id_conflict` | request | `input` | the ID is used by another object | the client draws a new ID | client |
+| `identity_unproven` | direct admission | `third_party` | an account is admitted only with keys the root or its invitation vouches for (ADR-060) | the operator certifies the account or it registers through an invitation | operator |
+| `invite_code_invalid` | request | `input` | the invitation code is malformed | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `invite_code_length` | request | `input` | the invitation code has the wrong length | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `invite_consumed` | request, verification | `third_party` | the invitation is used up; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `invite_expired` | registration, joining | `third_party` | an invitation link that never ends would be a standing door for whoever finds it (ADR-005) | the person asks the inviter for a new link | person, inviter |
+| `invite_not_in_log` | request, verification | `third_party` | the invitation is not in the log; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `invite_registered` | registration | `third_party` | the invitation registered another person already | the person asks the inviter for a new link | person, inviter |
+| `invite_revoked` | request, verification | `third_party` | the invitation was revoked; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `invite_unknown` | registration, joining | `input` | the invitation code is unknown | the person asks the inviter for a new link | person, inviter |
+| `key_revoked` | request authentication | `third_party` | the signing key was revoked or the device decertified; only the account's own keys may act for it | the client signs in again or re-signs the request; an agent uses its own key (E-27) | client |
+| `key_unknown` | request authentication | `third_party` | the signing key is unknown; only the account's own keys may act for it | the client signs in again or re-signs the request; an agent uses its own key (E-27) | client |
+| `keys_pending` | task wait | `technical` | a device assigned through the organization cannot open the workgroup before it holds its key | a key holder's client adds the wrap by catch-up (04-crypto §5.11) and the task starts by itself | members' clients |
+| `kind_not_allowed` | request | `input` | the event kind is not allowed in this scope | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `last_admin` | request | `third_party` | an organization without an admin could no longer be managed by anybody | another member is made admin first | admin |
+| `last_passkey` | request | `third_party` | removing the last passkey would lock the person out of the account | the person adds another passkey first | person |
+| `limit_exceeded` | operation | `option` | a generous limit of the platform (subagents, sizes; settings, A5/A14) | the answer names the limit; the operator raises the setting | agent, operator |
+| `log_accept` | request, verification | `third_party` | the acceptance is not valid; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `log_admit` | request, verification | `third_party` | the admission is not valid; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `log_chain` | request, verification | `third_party` | the entry does not extend the log; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `log_empty` | request, verification | `third_party` | an empty log batch; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `log_epoch` | request, verification | `third_party` | the epoch does not follow; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `log_fork` | request, verification | `third_party` | the served log forks the verified one; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `log_genesis` | request, verification | `third_party` | the genesis rules are violated; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `log_rights` | request, verification | `third_party` | the author lacks the right in the verified log; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `log_rollback` | request, verification | `third_party` | the served log is shorter than the verified one; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `log_signature` | request, verification | `third_party` | the entry is not signed by its author (for the platform log: by the root, ADR-077); the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `log_type` | request, verification | `third_party` | the entry type is unknown to this verifier; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `login_automation_failed` | subscription login on a device | `technical` | the automated subscription login could not finish | the device retries; the person can store the subscription itself | device, person |
+| `model_access_unavailable` | session failure | `technical` | a session cannot work without a model; an explicit own-access preference is the user's voluntary choice (E-11) and is never replaced by paid access | the chat shows the owner the card that connects the Claude subscription; once a model credential is stored the hub continues the task by itself (ADR-077 §4) | web client (card), hub (continuation) |
+| `model_not_allowed` | operation | `option` | the model is not allowed for the access kind in the catalog | the agent chooses an allowed model | agent |
+| `no_changes` | operation | `input` | there is nothing to commit | the agent changes files first | agent |
+| `no_device` | task wait (legacy refusal for old clients) | `technical` | a session needs an execution device of the workgroup | an admin's client (web `ensureDevice`, `agent-platform task create`) assigns a platform device before the task is sent; otherwise every admin is asked (`device.needed`) and the task starts once one is assigned | admin's client, hub (notification) |
+| `no_device_available` | device assignment | `technical` | no certified platform device is free | the task waits and starts when one is; the operators see it in the waiting list | hub, operator |
+| `non_ascii` | request | `input` | a field must be ASCII | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `non_fast_forward` | operation | `third_party` | a push that is no fast-forward would overwrite other people's commits (A2) | the agent merges the branch first (A2) | agent |
+| `nonce_replayed` | request authentication | `third_party` | the request was replayed; only the account's own keys may act for it | the client signs in again or re-signs the request; an agent uses its own key (E-27) | client |
+| `not_found` | operation, request | `input` | the object does not exist (or is not visible to the caller) | the caller uses an existing object | agent, client |
+| `oom` | session failure | `technical` | the VM ran out of memory | "Try again"; the operator sizes the VMs | user, operator |
+| `origin_mismatch` | passkey ceremony | `third_party` | the origin does not match; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `origin_seq_conflict` | device outbox | `technical` | another item has this number | the runner resends from the hub's position | runner |
+| `origin_seq_gap` | device outbox | `technical` | the device's outbox skipped a number | the runner resends from the hub's position | runner |
+| `pairing_gesture_required` | agent pairing | `third_party` | an agent enters a person's account only with that person's passkey gesture (A3, E-27) | the person confirms with the passkey in the browser the agent opened | person |
+| `pairing_mismatch` | request | `input` | the pairing confirmation does not match | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `pairing_unknown` | agent pairing | `input` | the pairing is unknown or ended | the agent starts a new pairing | agent |
+| `params_invalid` | operation, request | `input` | the parameters do not fit the contract | the agent or client corrects the request | agent, client |
+| `path_invalid` | operation | `input` | the path is not a repository-relative path | the agent corrects the path | agent |
+| `peer_outdated` | request | `technical` | an older runner or client would stop at the new entry and miss later decertifications | the operator updates the named devices; the entry can be appended afterwards | operator |
+| `placement_forbidden` | task creation | `rights` | a user can choose only devices assigned to the workgroup (§8, ADR-075 §6) | the automatic choice applies or an admin assigns the device | user, admin |
+| `placement_full` | task wait | `option` | the user chose this device or VM (ADR-075 §6) | the task waits for room; the action "Choose automatically" is offered | hub scheduler, user |
+| `placement_invalid` | request | `input` | the chosen VM is no live VM of the workgroup on that device | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `placement_offline` | task wait | `option` | the user chose this device | the task waits for the device; the action "Choose automatically" is offered | hub scheduler, user |
+| `platform_access_denied` | device assignment | `third_party` | the operator's devices serve only organizations the operator lets in (root-signed switch or grant, ADR-077) | the task waits `platform_access_required` and the operators are asked (`operator.request`); with the switch on it does not occur | hub, operator |
+| `platform_access_required` | task wait | `third_party` | the operator's devices and money may only serve organizations the operator lets in (the switch `open_platform_access` or an `org_platform_access`, both root-signed, ADR-077) | every operator is asked once per occasion (`operator.request`); with the switch on the reason does not occur; the task starts once access is granted and a device assigned | hub (notification), operator |
+| `platform_invite_required` | registration, private organization | `third_party` | concept rule §1 Punkt 1 and E-18: new people join the platform only by invitation; it keeps strangers from spending the operator's resources | an existing user invites (with `open_platform_invites` every user may, ADR-077); an existing account is admitted directly (E-18) | inviting user |
+| `platform_root_mismatch` | request, verification | `third_party` | the platform log is not rooted in the pinned key; the signed logs are what protects members and their data against a taken-over hub (ADR-003) | the client rebuilds the batch on the verified head; a forged or rolled-back log stops the verifier and is reported (no silent acceptance) | client |
+| `prf_length` | request | `input` | the passkey's PRF output has the wrong length | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `prf_missing` | passkey ceremony | `third_party` | the passkey has no PRF (E-12); the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `prompt_refused` | session failure | `technical` | the guest refused the prompt delivery | a follow-up prompt starts a new session | user |
+| `quota_exceeded` | request | `option` | a generous storage quota (a setting, A14) | the answer names the quota; the operator raises it | operator |
+| `rate_limited` | request | `third_party` | protects the platform and its other users from floods | the client waits for the given time and retries | client |
+| `recovery_code_length` | request | `input` | the recovery code has the wrong length | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `repo_not_accessible` | operation | `third_party` | the connected GitHub account has no access; the platform never reaches past the rights of the account (protects the repository's owner) | the agent uses another repository or the person gives the account access at GitHub | person at GitHub |
+| `repo_not_allowed` | operation | `option` | the workgroup chose to limit its repositories (optional list, ADR-054) | the answer names the list; an admin or writer changes the workgroup settings | user |
+| `request_invalid` | request | `input` | the request does not fit the API | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
+| `rights_denied` | operation | `rights` | the rights model of the concept (§8: reading and writing per workgroup; a subagent asks its main agent) | the agent asks a person with the right (`human.question`) | agent |
+| `rotation_required` | request | `third_party` | a key rotation is owed after a removal; writing with the old key would let the removed principal read | the admin's client runs the owed rotation silently (ADR-058) and sends again | admin's client |
+| `rp_id_mismatch` | passkey ceremony | `third_party` | the relying party does not match; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `runtime_exceeded` | session failure | `option` | the generous runtime limit of a session (a setting, A5/A14) | a follow-up prompt resumes the conversation in a new session (ADR-072) | user |
+| `sandbox_failed` | session failure | `technical` | the session's sandbox could not be set up; running without it would expose the VM | "Try again" starts a new session | user |
+| `secret_detected` | operation | `third_party` | a commit would publish a secret (a credential of the user or of third parties) | the agent removes the secret and commits again | agent |
+| `seq_conflict` | request | `technical` | another writer appended first | the client rebuilds on the new head and sends again | client |
+| `session_expired` | request authentication | `third_party` | the browser session expired; only the account's own keys may act for it | the client signs in again or re-signs the request; an agent uses its own key (E-27) | client |
+| `signature_invalid` | request authentication | `third_party` | the request signature does not verify; only the account's own keys may act for it | the client signs in again or re-signs the request; an agent uses its own key (E-27) | client |
+| `signature_missing` | request authentication | `third_party` | the request is not signed; only the account's own keys may act for it | the client signs in again or re-signs the request; an agent uses its own key (E-27) | client |
+| `size_exceeded` | operation, request | `technical` | the payload exceeds a size the system can carry | the agent or client splits the payload | agent, client |
+| `statement_invalid` | passkey ceremony | `third_party` | the attestation statement is malformed; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `time_skew` | request authentication | `third_party` | the request time is too far from the hub's time; only the account's own keys may act for it | the client signs in again or re-signs the request; an agent uses its own key (E-27) | client |
+| `timeout` | operation | `technical` | the operation took longer than its deadline | the agent retries | agent |
+| `tree_mismatch` | operation | `technical` | GitHub's tree differs from the checked snapshot; committing it would commit something unchecked | the agent commits again | agent |
+| `unassigned` | session failure | `technical` | the workgroup's device was unassigned while the session ran | the situation view leads admins to assign a computer (`device_missing`); admins are asked (`device.needed`) | admin's client, hub |
+| `unauthorized` | request authentication | `third_party` | no valid authentication; only the account's own keys may act for it | the client signs in again or re-signs the request; an agent uses its own key (E-27) | client |
+| `unavailable` | request | `technical` | the hub or a dependency is not available | the client retries | client |
+| `unknown_type` | operation | `input` | the operation type does not exist | the agent requests an existing type (the harness lists them) | agent |
+| `upstream_error` | operation | `technical` | GitHub or another upstream refused or failed | retryable failures are retried; otherwise the agent reads the upstream's answer | runner, agent |
+| `user_presence_missing` | passkey ceremony | `third_party` | the authenticator did not confirm presence; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `user_verification_missing` | passkey ceremony | `third_party` | the authenticator did not verify the user; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
+| `version_conflict` | request | `technical` | the record changed meanwhile | the client reads the newest version and writes again | client |
+| `vm_start_failed` | session failure | `technical` | the VM could not start | the hub's next attempt or "Try again"; the operator sees it in the runner's monitoring | user, runner |
+| `wg_vm_limit` | task wait | `option` | the operator's generous limit of VMs per workgroup (`AGENT_HUB_VMS_PER_WG`, A5/A14) | the task waits and starts when a VM of the workgroup has room or the operator raises the setting | hub scheduler |
+| `workvm_unavailable` | operation | `technical` | no work VM can be started now | the agent requests it again later; the operator sees the capacity | agent, operator |
+| `wrap_unauthorized` | request | `input` | the wrap names a recipient that may not hold the key | the client corrects the request (it is built by the platform's own clients; a person never sees it as a precondition) | client |
