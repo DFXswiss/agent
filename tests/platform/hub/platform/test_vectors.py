@@ -33,8 +33,8 @@ def vector_hub(
     owner: psycopg.Connection[Any],
 ) -> Iterator[HubHarness]:
     # the vector devices run a current runner: every device the log certifies has announced `log.admit`, so the user
-    # certifications of the vector log are not held back (ADR-060, `peer_outdated`)
-    owner.execute("ALTER TABLE hub.device ALTER COLUMN features SET DEFAULT '{log.admit}'")
+    # certifications of the vector log are not held back (ADR-060, `peer_outdated`), nor the switches (`log.policy`, ADR-077)
+    owner.execute("ALTER TABLE hub.device ALTER COLUMN features SET DEFAULT '{log.admit,log.policy}'")
     config = load_config(hub_environ(migrated_db, AGENT_HUB_PLATFORM_ROOT_KEY=VECTORS["root"]))
     for harness in start_hub(config, hub_pool, clock):
         org = VECTORS["valid"]["platform_access"][0]["org"]
@@ -69,6 +69,7 @@ def test_the_valid_log_is_accepted_with_the_vector_heads_and_projections(vector_
             ).fetchall()
             devices = connection.execute("SELECT id::text, state, certified_seq FROM hub.device ORDER BY 1").fetchall()
             access = connection.execute("SELECT id::text, platform_access FROM hub.org").fetchall()
+            policies = connection.execute('SELECT name, "on" FROM hub.platform_policy').fetchall()
         assert [{"user": user, "role": role} for user, role in roles] == projection["roles"]
         status = {"active": "certified", "decertified": "decertified"}
         assert [
@@ -76,6 +77,7 @@ def test_the_valid_log_is_accepted_with_the_vector_heads_and_projections(vector_
             for device, state, certified in devices
         ] == projection["devices"]
         assert {org: granted for org, granted in access if org in projection["org_access"]} == projection["org_access"]
+        assert dict(policies) == projection["policies"]
 
 
 INVALID = list(VECTORS["invalid"])

@@ -36,7 +36,7 @@ SPEC_MEMBERSHIP_TYPES = (
 )
 SPEC_PLATFORM_TYPES = (
     "root device_invite device_certify device_decertify role_grant role_revoke user_invite org_platform_access"
-    " user_certify user_decertify"
+    " user_certify user_decertify platform_policy org_operator_subscriptions"  # ADR-077
 )
 # 04-crypto.md section 4.4 and 02-data-model.md section 2.7 (device_request.kind).
 SPEC_CREDENTIAL_KINDS = "github anthropic_api_key claude_subscription mailbox"

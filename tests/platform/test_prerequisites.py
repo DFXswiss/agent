@@ -34,6 +34,7 @@ OPERATOR_CLI = "cli.py"
 RAISERS = frozenset({"HubError", "CheckFailed", "StartFailed", "NoPlacement", "AccessRefused", "Refused", "Rejected"})
 CLASSES = frozenset({"technical", "third_party", "option", "rights", "credit", "input"})
 CODE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+REGISTER_HEADING = "## 5. Register"
 ROW_RE = re.compile(r"^\| `([a-z][a-z0-9_]*)` \|(.*)\|\s*$")
 
 
@@ -141,7 +142,8 @@ def raised_codes() -> dict[str, list[str]]:
 def register_rows() -> dict[str, list[str]]:
     """`code -> cells` of the register table (Where, Class, Why, Handling, Started by)."""
     rows: dict[str, list[str]] = {}
-    for line in REGISTER.read_text(encoding="utf-8").splitlines():
+    text = REGISTER.read_text(encoding="utf-8")
+    for line in text[text.index(REGISTER_HEADING) :].splitlines():
         match = ROW_RE.match(line)
         if match is None:
             continue
@@ -168,7 +170,7 @@ def test_the_scan_finds_the_codes_of_every_raiser() -> None:
     assert "platform_access_denied" in raised  # HubError("…") in the hub
     assert "branch_protected" in raised  # CheckFailed("…") in the runner
     assert "model_access_unavailable" in raised  # AccessRefused(UNAVAILABLE), a module constant
-    assert "device_offline" in raised  # NoPlacement("…")
+    assert "platform_access_required" in raised  # NoPlacement(PLATFORM_ACCESS_REQUIRED), imported from another module
 
 
 def test_every_row_names_a_known_code() -> None:

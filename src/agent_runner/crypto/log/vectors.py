@@ -290,7 +290,7 @@ ALICE_CERT_SEQ = 12
 DAVE_CERT_SEQ = 13
 BOB_CERT_SEQ = 14
 BOB_RENEWED_SEQ = 16
-PLATFORM_COUNT = 17
+PLATFORM_COUNT = 23
 INVITED = {"erin": ("erin-platform", ERIN_INVITE_SEQ)}
 """Labels registered through a platform invitation: their ID is derived from it (`identity.invited_user_id`)."""
 

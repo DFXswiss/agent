@@ -106,6 +106,32 @@ def test_recertified_device_does_not_revive_its_old_certification(main: LogBuild
     assert fresh.state.principals[pid("pdev")].sig == sig_pk("pdev-new")
 
 
+def test_switches_and_operator_subscriptions(plat: PlatformBuilder) -> None:
+    """ADR-077: the latest entry of a switch or an organization counts; without one a switch is off and an organization
+    is not granted; an organization without an `org_platform_access` of its own follows `open_platform_access`."""
+    log = platform.verify_platform_log(plat.entries, ROOT)
+    other = pid("org/other")
+    before = log.states[16]
+    assert not before.policy("open_platform_access")
+    assert not before.platform_access(other, private=False)
+    assert not before.operator_subscribed(ORG)
+    opened = log.states[17]
+    assert opened.policy("open_platform_access")
+    assert opened.platform_access(other, private=False)
+    assert not opened.platform_access(ORG, private=False)  # its own `granted: false` wins over the switch
+    assert log.states[18].operator_subscribed(ORG)
+    assert not log.states[18].operator_subscribed(other)
+    assert log.states[19].has_role(pid("alice"), "operator")
+    state = log.state
+    assert state.policy("open_platform_invites")
+    assert not state.policy("open_platform_access")
+    assert not state.platform_access(other, private=False)
+    assert not state.operator_subscribed(ORG)
+    projected = state.projection()
+    assert projected["policies"] == {"open_platform_access": False, "open_platform_invites": True}
+    assert projected["operator_subscriptions"] == {ORG: False}
+
+
 def test_user_certifications(plat: PlatformBuilder) -> None:
     log = platform.verify_platform_log(plat.entries, ROOT)
     state = log.state
