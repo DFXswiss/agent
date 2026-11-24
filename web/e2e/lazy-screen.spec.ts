@@ -34,4 +34,10 @@ test('a screen whose chunk cannot be fetched says so inside the shell, with a re
   await expect(page.getByTestId('error.reload')).toBeVisible();
   await expect(page.getByTestId('shell.footer.security')).toBeVisible();
   await expect(page.getByTestId('error.page')).toHaveCount(0);
+  // "Reload" loads the page again; the chunk is still unreachable, so the screen says so again
+  const reloaded = page.waitForEvent('load');
+  await page.getByTestId('error.reload').click();
+  await reloaded;
+  await expect(page).toHaveURL(/\/recover$/);
+  await expect(page.getByTestId('screen.unavailable')).toBeVisible();
 });

@@ -24,13 +24,16 @@ test('follows the browser language', async ({ newContext }) => {
 
 test('serves hashed assets as immutable with integrity', async ({ page, request }) => {
   await page.goto('/');
-  const script = page.locator('script[type="module"]');
-  await expect(script).toHaveAttribute('integrity', /^sha384-/);
-  await expect(script).toHaveAttribute('crossorigin', 'anonymous');
-  const src = await script.getAttribute('src');
-  const asset = await request.get(src!);
-  expect(asset.headers()['cache-control']).toMatch(/\bimmutable\b/);
-  expect(asset.headers()['cache-control']).toMatch(/\bmax-age=31536000\b/);
-  expect(asset.headers()['content-security-policy']).toBe(CONTENT_SECURITY_POLICY);
+  // the first load is several module scripts (framework, start, runtime; 06-web.md section 12.2): each one is checked
+  const scripts = await page.locator('script[type="module"]').all();
+  expect(scripts.length).toBeGreaterThan(0);
+  for (const script of scripts) {
+    await expect(script).toHaveAttribute('integrity', /^sha384-/);
+    await expect(script).toHaveAttribute('crossorigin', 'anonymous');
+    const asset = await request.get((await script.getAttribute('src'))!);
+    expect(asset.headers()['cache-control']).toMatch(/\bimmutable\b/);
+    expect(asset.headers()['cache-control']).toMatch(/\bmax-age=31536000\b/);
+    expect(asset.headers()['content-security-policy']).toBe(CONTENT_SECURITY_POLICY);
+  }
   expect((await request.get('/assets/missing.js')).status()).toBe(404);
 });
