@@ -7,16 +7,12 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type UserConfig } from 'vite';
 import { noLibraryGlobals } from './build/globals.ts';
+import { chunkGroups } from './build/chunks.ts';
 import { buildManifest, compiledRootKey, rootKeyFingerprint } from './build/manifest.ts';
 import { lazyIntegrity, sri } from './build/sri.ts';
 
 export const WEB_DIR = fileURLToPath(new URL('.', import.meta.url));
 export const OUT_DIR = fileURLToPath(new URL('../src/agent_hub/static', import.meta.url));
-
-/** App code, and the lazily loaded parts that keep chunks of their own with their libraries (Markdown, chart, terminal). */
-const SCREEN_CODE = /[\\/]src[\\/]/;
-const LAZY_PARTS =
-  /[\\/]src[\\/]ui[\\/](?:task-tabs[\\/]chat[\\/]Markdown\.tsx$|charts[\\/]UPlotChart\.tsx$|terminal[\\/])/;
 
 /** Path of a source map entry relative to web/ (`src/main.tsx`), whatever the output directory. */
 const fromWeb = (source: string, map: string): string => relative(WEB_DIR, resolve(dirname(map), source));
@@ -54,22 +50,8 @@ export default defineConfig((): UserConfig => {
       reportCompressedSize: false,
       rolldownOptions: {
         output: {
-          // Few, larger chunks for the first load (06-web.md section 12.2; decisions WEB-13 and HOT-16): the framework
-          // and the app modules of the first load (`$initial`: imported statically from the entry) each go into one
-          // chunk, so a phone on a slow network does not wait for a cascade of small requests. Screens, terminal,
-          // charts and Markdown are lazy chunks; what only they share stays out of the first load.
-          codeSplitting: {
-            groups: [
-              {
-                name: 'framework',
-                test: /node_modules[\\/](react|react-dom|react-router|react-router-dom|@remix-run|scheduler)[\\/]/,
-                priority: 30,
-              },
-              { name: 'start', test: /[\\/]src[\\/]/, tags: ['$initial'], priority: 20 },
-              // every lazily loaded screen in one chunk (the heavy parts – Markdown, charts, terminal – stay apart)
-              { name: 'screens', test: (id: string) => SCREEN_CODE.test(id) && !LAZY_PARTS.test(id), priority: 10 },
-            ],
-          },
+          // Few, larger chunks for the first load, assigned by the path relative to web/ (build/chunks.ts).
+          codeSplitting: { groups: chunkGroups(WEB_DIR) },
           // Map sources relative to web/ (`src/main.tsx`), independent of the output location.
           sourcemapPathTransform: (source: string, map: string) => fromWeb(source, map),
           // Library sources are marked for debuggers; decided on the same location-independent path.
