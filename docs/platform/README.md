@@ -18,6 +18,7 @@ must not contradict it, and every new rule of the client is entered there first.
 | [KONZEPT.md](KONZEPT.md) | Concept and binding rules: the full concept with anchors per idea and bullet (part A), the client's rules E-01 … with date and wording (B), interpretations until the client decides (C), maintenance and open deviations (D) |
 | [PLATFORM-DESIGN.md](PLATFORM-DESIGN.md) | Design overview: principles, components, trust boundaries, data flows, the DESIGN.md sections it replaces, coexistence, known limits |
 | [spec/](spec/00-overview.md) | Implementation specification 00–10 (overview, requirements, data model, API, crypto, runner, web, testing, monitoring, milestones, work packages) |
+| [key-model.md](key-model.md) | Key model: principals, keys, scopes, who receives what when, revocation and rotation, where plaintext lies, rules with their test vectors, concordance with the concept and the gaps of the cryptography packages |
 | [spec-deviations.md](spec-deviations.md) | As-built register: where the implementation refines or deviates from the specification, with the deciding package |
 | [adr/](adr/README.md) | Architecture decision records |
 | [decisions/](decisions/README.md) | Small decisions per work package (one file per package; packages that changed both former repositories have both notes in it) |

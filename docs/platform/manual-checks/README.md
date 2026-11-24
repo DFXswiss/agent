@@ -7,3 +7,6 @@ run) and the rows that need real devices and a person (open until checked by han
 | Release | File | State |
 |---|---|---|
 | 0.1.0 (integration branch, M3) | [0.1.0.md](0.1.0.md) | automated rows passed; manual rows open |
+
+Procedure for the real-device rows, valid for every release: [prf-devices.md](prf-devices.md) (one person, one
+device, at most 10 minutes per row; KOR-54).

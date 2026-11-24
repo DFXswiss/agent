@@ -8,7 +8,10 @@ Status: binding. Implements KONZEPT §1, §5, §8, §12 and decides §14.1 (ADR-
 Three implementations: Python `agent_hub/crypto/` (reference implementation; the hub itself only verifies – it
 never holds scope keys), Python `agent_runner/crypto/` and TypeScript `web/src/core/crypto/`. All three MUST pass
 the shared vectors in `contracts/vectors/` byte for byte. The vector generator is `contracts/tools/make_vectors.py`
-in `agent-core` (uses `agent_hub.crypto`); `contracts/` is owned by `agent-core` and copied into `agent`.
+(uses `agent_hub.crypto` and `agent_hub.log`); since the repositories were unified (INF-06) there is one
+`contracts/` and the runner's crypto is a checked copy of the reference (`src/agent_runner/crypto/ORIGIN.json`).
+**Who holds which key, who receives which scope when, revocation per case, where plaintext lies, and the rules with
+their vectors: [key model](../key-model.md)** (§11).
 
 ## 1. Primitives and encodings
 
@@ -547,9 +550,20 @@ Log: `seq_conflict`, `log_empty`, `log_chain`, `log_genesis`, `log_accept`, `log
 
 ## 10. Test vectors (`contracts/vectors/`)
 
-Generated deterministically by `agent_runner.crypto.vectors` (Python) and checked by both implementations:
+Generated deterministically by `agent_hub.crypto.vectors` and the discovered sections (`agent_hub.log.vectors`,
+`contracts/vectors/README.md`) and checked by all three implementations:
 PRF salt, KEK, bundle (passkey + recovery), `recovery_id`, three HPKE wraps of one WK (two users, one device)
 with fixed ephemeral keys, one event per scope with non-ASCII body, invitation (ID, package key, `pk_inv`,
 package), log with every entry type (valid chain + one broken variant per rule L1–L8), platform log, credential
 record, device request/response, dedupe tags for every operation type, canonical-JSON edge cases. A test in each
 repo asserts the vector file is current (`test_vectors_file_is_current`).
+
+## 11. Key model
+
+The closed description over every principal – user, browser session, execution device, the user's agent, platform
+session, VMs, platform root, hub, and the planned support principal – is [`../key-model.md`](../key-model.md)
+(KOR-54): keys per principal, scopes, the entitlement per log entry and how each key arrives (package, batch,
+catch-up), revocation and rotation case by case with what a revoked principal keeps, where plaintext lies, and the
+rules `KM-NN` with the vectors of §10 that pin each of them. Its concordance maps every place of the concept to these
+rules; its gap list gives the requirements on the packages that extend this document (trust anchor of the runner,
+support release, the agent's own identity, reading across workgroups, credentials of an organization).
