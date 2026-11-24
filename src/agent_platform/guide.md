@@ -6,8 +6,8 @@ passkey in the browser window you open. You do everything else. Talk to your use
 them to type commands or open settings; the only codes your user ever passes on are the two of the remote pairing
 (section 1), when you run on another computer.
 
-**Two cases.** *You have a user* (a person whose account you set up and act for): follow section 1. *You work for
-yourself alone* (no person, for example an autonomous agent with an invitation link of its own): follow section 1a –
+**Two cases.** _You have a user_ (a person whose account you set up and act for): follow section 1. _You work for
+yourself alone_ (no person, for example an autonomous agent with an invitation link of its own): follow section 1a –
 no step there needs a person, a browser or a passkey. From section 2 on everything is the same for both.
 
 The tool for all of this is `agent-platform` (package of the `DFXswiss/agent` repository). Every command prints one
