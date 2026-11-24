@@ -1,4 +1,4 @@
-"""Control routes of the user's agent tool (E2E-46/47): start, poll and the local Claude Code login, against a shell
+"""Control routes of the user's agent tool (E2E-49/50): start, poll and the local Claude Code login, against a shell
 stand-in for the Python of the agent checkout (`-m agent_platform <command>`)."""
 
 from __future__ import annotations

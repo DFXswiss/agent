@@ -1,4 +1,4 @@
-"""The user's agent tool `agent-platform` in E2E-46/47 (11-agent-access.md, ADR-056).
+"""The user's agent tool `agent-platform` in E2E-49/50 (11-agent-access.md, ADR-056).
 
 - `POST /agent-tool` (`{"args": [...], "stdin": "<text>"?, "home": "<name>"?}`): start `agent-platform <args>` with the
   Python of the agent checkout on this machine (T1: browser, hub and tool run on the same computer, so the browser
