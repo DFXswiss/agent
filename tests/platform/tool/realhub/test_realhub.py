@@ -92,8 +92,9 @@ def test_tasks_and_credentials(real: RealHub) -> None:
     pair(real, ada)
     org = str(run_ok(ada.tool, "org", "create", "--name", "Acme", "--display-name", "Ada")["org_id"])
     wg = str(run_ok(ada.tool, "wg", "create", "--org", org, "--name", "Research")["wg_id"])
-    code, refused = ada.tool.run("task", "create", "--wg", wg, "--text", "Fix the login bug")
-    assert (code, refused["error"]) == (1, "no_device")
+    # without any device the task is created and waits (ADR-075): no own device and no platform access yet
+    early = str(run_ok(ada.tool, "task", "create", "--wg", wg, "--text", "Fix the login bug")["task_id"])
+    assert run_ok(ada.tool, "task", "show", "--task", early)["waiting"] == "platform_access_required"
     # the operator certifies a platform device and grants the org platform access; the tool assigns it
     device, _seq = real.fleet.platform_device()
     real.fleet.platform.post({"type": "org_platform_access", "org": org, "granted": True})

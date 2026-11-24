@@ -8,7 +8,8 @@
   it; on success the wraps of principals the batch removed are deleted for this org's scopes and the receipt time of
   every new epoch is kept (E6);
 - `POST /v1/orgs/{org}/invites/{id}/revoke` (`invite_revoke` with its invitation row, admin);
-- `GET /v1/orgs/{org}/devices` (`org:member`): the device members of the log with the presence of `Extra.online`;
+- `GET /v1/orgs/{org}/devices` (`org:member`): the device members of the log with the presence of `Extra.online` and
+  the VMs of `Extra.vms`;
 - `GET /v1/me` names the devices holding a wrap of the user's current `CK` (`cred_holders`).
 """
 
@@ -42,6 +43,8 @@ class Extra:
     online: dict[str, bool] = field(default_factory=dict)
     hub_devices: list[Json] = field(default_factory=list)
     """Further rows of `GET /v1/orgs/{org}/devices` (devices the log does not know)."""
+    vms: dict[str, list[Json]] = field(default_factory=dict)
+    """The VMs the hub reports per device (ADR-075)."""
     entries: dict[str, Json] = field(default_factory=dict)
     """Whiteboard entries by ID (`fakes/boards.py`)."""
 
@@ -150,6 +153,8 @@ def install(hub: HubFake) -> None:
                 "capacity": CAPACITY,
                 "capacity_low": False,
                 "assigned_wgs": org_state.device_wgs(p.id),
+                "assigned_org": org_state.org_assigned(p.id),
+                "vms": state.vms.get(p.id, []),
             }
             for p in org_state.principals.values()
             if p.kind == DEVICE and p.active

@@ -18,6 +18,7 @@ from agent_runner.crypto.log.entries import entry_hash
 from agent_runner.crypto.log.state import ORG, WG
 
 from .conftest import Tool
+from .fakes.membership import extra
 from .hubfake import HubFake, User, now_ms_text
 
 TS = "2026-01-01T00:00:00.000Z"
@@ -83,16 +84,15 @@ def test_device_list_shows_the_vms_and_the_organization(tool: Tool, hub: HubFake
     assert tool.run("device", "assign", "--org", org, "--device", device)[1]["ok"] is True
     later = tool.run("wg", "create", "--org", org, "--name", "Ops")[1]["wg_id"]
     vms = [{"vm_id": "vm-0000000a", "wg_id": default, "state": "running", "sessions": 3}]
-    capacity = {"vm_slots_free": 2, "sessions_per_vm": 16}
-    hub.org_devices[org] = [{"device_id": device, "online": True, "capacity": capacity, "vms": vms}]
+    extra(hub).vms[device] = vms
+    extra(hub).online[device] = True
     listed = tool.run("device", "list", "--org", org)[1]
     assert listed["ok"] is True, listed
     (shown,) = [item for item in listed["orgs"][0]["devices"] if item["device_id"] == device]
     # the verified log assigns it to the organization (every workgroup, also a later one); the hub adds VMs and load
     assert shown["organization"] is True
     assert set(shown["workgroups"]) == {default, later}
-    assert shown["hub"]["vms"] == vms
-    assert shown["hub"]["capacity"] == capacity
+    assert (shown["hub"]["vms"], shown["hub"]["online"]) == (vms, True)
 
 
 # --- assignment to the organization: platform devices ---
@@ -124,9 +124,8 @@ def test_platform_device_for_the_whole_organization(tool: Tool, hub: HubFake, ac
     wg2 = tool.run("wg", "create", "--org", org, "--name", "Ops")[1]["wg_id"]
     assert (WG, wg2, 1) in slots_of(hub, device)
     assert tool.run("org", "show", "--org", org)[1]["org_devices"] == [device]
-    hub.org_devices[org] = [{"device_id": device}]
-    verified = tool.run("device", "list", "--org", org)[1]["orgs"][0]["devices"][0]["verified"]
-    assert verified == {"assigned_org": True, "assigned_wgs": sorted([default, wg2])}
+    (listed,) = tool.run("device", "list", "--org", org)[1]["orgs"][0]["devices"]
+    assert (listed["organization"], set(listed["workgroups"])) == (True, {default, wg2})
     # ending it rotates every workgroup and the org scope (nothing else is left)
     ended = tool.run("device", "unassign", "--org", org, "--device", device)[1]
     assert ended["ok"] is True, ended

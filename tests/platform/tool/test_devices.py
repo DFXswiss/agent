@@ -57,6 +57,7 @@ def test_list_and_rename(tool: Tool, hub: HubFake, account: User) -> None:
         "platform_seq": seq,
         "decertified": False,
         "workgroups": [wg],
+        "organization": False,
         "hub": {
             "online": True,
             "last_seen_at": None,
@@ -64,6 +65,7 @@ def test_list_and_rename(tool: Tool, hub: HubFake, account: User) -> None:
             "capacity": row["hub"]["capacity"],
             "capacity_low": False,
             "state": "active",
+            "vms": [],
         },
     }
     assert tool.run("device", "rename", "--device", device, "--name", "Studio", "--org", org)[1]["label"] == "Studio"

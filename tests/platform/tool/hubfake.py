@@ -124,7 +124,6 @@ class HubFake:
         self.invites: dict[str, Json] = {}
         self.devices: dict[str, list[Any]] = {}
         self.candidates: dict[str, list[Any]] = {}
-        self.org_devices: dict[str, Any] = {}
         self.placements: dict[str, Any] = {}
         self.no_device: set[str] = set()
         self.tasks: dict[str, Json] = {}
@@ -521,7 +520,6 @@ class HubFake:
             ("GET", r"/v1/users/(?P<user>[0-9a-f-]+)/identity", self.r_user_identity),
             ("GET", r"/v1/scopes/(?P<scope>[0-9a-f-]+)/events", self.r_events),
             ("GET", r"/v1/workgroups/(?P<wg>[0-9a-f-]+)/device-candidates", self.r_candidates),
-            ("GET", r"/v1/orgs/(?P<org>[0-9a-f-]+)/devices", self.r_org_devices),
             ("GET", r"/v1/workgroups/(?P<wg>[0-9a-f-]+)/placement", self.r_placement_get),
             ("PUT", r"/v1/workgroups/(?P<wg>[0-9a-f-]+)/placement", self.r_placement_put),
             ("GET", r"/v1/tasks/(?P<task>[0-9a-f-]+)", self.r_task),
@@ -836,11 +834,6 @@ class HubFake:
 
     def r_candidates(self, request: Request, body: Any, wg: str) -> tuple[int, Any]:
         return 200, {"candidates": self.candidates.get(wg, [])}
-
-    def r_org_devices(self, request: Request, body: Any, org: str) -> tuple[int, Any]:
-        if self._member(request, org) is None:
-            return 404, {"error": "not_found"}
-        return 200, {"devices": self.org_devices.get(org, [])}
 
     def r_placement_get(self, request: Request, body: Any, wg: str) -> tuple[int, Any]:
         return 200, {"placement": self.placements.get(wg)}
