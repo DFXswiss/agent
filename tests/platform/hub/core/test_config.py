@@ -91,6 +91,13 @@ def test_scheduler_settings(tmp_path: Path) -> None:
     assert tmp_path.exists()
 
 
+def test_the_headroom_of_a_dfx_key() -> None:
+    """ADR-080 section 7 (KOR-50): at most 5 USD beyond a per-device key's booked spend unless configured."""
+    assert load_config(hub_environ()).dfx_key_headroom_usd == Decimal(5)
+    assert load_config(hub_environ(AGENT_HUB_DFX_KEY_HEADROOM_USD="")).dfx_key_headroom_usd == Decimal(5)
+    assert load_config(hub_environ(AGENT_HUB_DFX_KEY_HEADROOM_USD="0.5")).dfx_key_headroom_usd == Decimal("0.5")
+
+
 def test_empty_optional_values_take_the_defaults() -> None:
     config = load_config(hub_environ(AGENT_HUB_PORT="", AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY=""))
     assert config.bind_port == 8788
@@ -160,6 +167,7 @@ def test_owner_database_is_forbidden_in_the_hub_process(value: str) -> None:
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "-1", "non-negative amount"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "1.1234567", "non-negative amount"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "01", "non-negative amount"),
+        ("AGENT_HUB_DFX_KEY_HEADROOM_USD", "-5", "non-negative amount"),
         ("AGENT_HUB_STATIC_DIR", "/nonexistent/static", "is not a directory"),
         ("AGENT_HUB_MODEL_CATALOG", "/nonexistent/catalog.json", "is not a file"),
     ],

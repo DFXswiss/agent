@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-model-consent.response.json",
+  "title": "POST /v1/tasks/{task}/model-consent response",
+  "description": "Body of a successful response to POST /v1/tasks/{task}/model-consent (ADR-080 section 5, KOR-50): the task has the consent to use DFX model access while its own access is used up.",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "model_consent": {
+      "type": "boolean",
+      "const": true
+    }
+  },
+  "required": [
+    "task_id",
+    "model_consent"
+  ],
+  "additionalProperties": false
+}

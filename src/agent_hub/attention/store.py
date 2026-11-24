@@ -34,17 +34,22 @@ import psycopg
 
 from agent_hub.attention.derive import (
     BLOCKING_CODES,
+    MODEL_QUOTA,
     OCCASIONS,
     QUESTION_TYPES,
+    QUOTA_CHOICE,
+    QUOTA_WAIT,
     REFUSED_STATES,
     RUNNING_OPERATION_STATES,
     SUCCEEDED,
+    SUSPENDED,
     Attention,
     Inputs,
     Operation,
     derive,
 )
 from agent_hub.audit.chain import AUDIT_LOCK
+from agent_hub.billing import credit
 from agent_hub.sessions.effects import Effects
 from agent_hub.sessions.rows import as_json
 
@@ -62,9 +67,15 @@ ROW_FIELDS = (
     "subagents_total",
     "subagents_active",
     "updated_at",
+    "wait_until",
 )
+QUOTA_REASONS = frozenset({QUOTA_CHOICE[1], QUOTA_WAIT[1]})
+"""The reasons whose rows carry `wait_until` (ADR-080 section 5); every other row leaves the field out."""
 ROW_COLUMNS = ", ".join(f"a.{name}" for name in ROW_FIELDS)
-_STORED = "org_id, wg_id, owner_id, category, reason, ref_kind, ref_id, since, seq, subagents_total, subagents_active"
+_STORED = (
+    "org_id, wg_id, owner_id, category, reason, ref_kind, ref_id, since, seq, subagents_total, subagents_active,"
+    " wait_until"
+)
 
 
 @dataclass(frozen=True)
@@ -82,6 +93,7 @@ class Stored:
     seq: int
     subagents_total: int
     subagents_active: int
+    wait_until: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -95,7 +107,8 @@ class Read:
 
 
 _INPUTS = (
-    "SELECT t.state, t.state_reason, t.state_at, m.id, m.state, m.state_reason,"
+    "SELECT t.state, t.state_reason, t.state_at, m.id, m.state, m.state_reason, m.wait_until, m.dfx_choice,"
+    " t.model_consent, t.org_id,"
     # the end of the main session's previous turn: its newest `idle` before its newest `working` (the start of the
     # first turn when there is none); NULL while it never worked
     " CASE WHEN EXISTS (SELECT 1 FROM hub.session_transition w WHERE w.session_id = m.id AND w.state = 'working')"
@@ -115,7 +128,8 @@ _INPUTS = (
     " JOIN hub.device v ON v.id = o.device_id AND v.state = 'active'"
     " WHERE o.org_id = t.org_id AND o.unassigned_seq IS NULL))"
     " FROM hub.task t"
-    " LEFT JOIN LATERAL (SELECT id, state, state_reason FROM hub.session WHERE task_id = t.id AND depth = 0"
+    " LEFT JOIN LATERAL (SELECT id, state, state_reason, wait_until, dfx_choice FROM hub.session"
+    " WHERE task_id = t.id AND depth = 0"
     " ORDER BY created_at DESC, id DESC LIMIT 1) m ON TRUE"
     " CROSS JOIN LATERAL (SELECT COALESCE(bool_or(depth = 0 AND state = 'working'), false) AS main_working,"
     " COALESCE(bool_or(depth > 0 AND state = 'working'), false) AS subagent_working,"
@@ -140,14 +154,22 @@ _LAST_TURN = (
 _NO_PROMPT = datetime.fromisoformat("0001-01-01T00:00:00+00:00")
 
 
-def read_inputs(connection: Connection, task_id: UUID | str) -> Read:
+def _credit_exhausted(connection: Connection, inputs: tuple[Any, ...], now: datetime) -> bool:
+    """Whether the org's credit is exhausted - read only for a main session waiting for model quota."""
+    main_state, main_reason, org_id = inputs
+    if main_state != SUSPENDED or main_reason != MODEL_QUOTA:
+        return False
+    return credit.exhausted(connection, org_id, now)
+
+
+def read_inputs(connection: Connection, task_id: UUID | str, now: datetime) -> Read:
     """The inputs of the derivation of a known task."""
     row = cast(
         tuple[Any, ...],
         connection.execute(_INPUTS, {"task": task_id, "running": list(RUNNING_OPERATION_STATES)}).fetchone(),
     )
-    state, reason, state_at, main_id, main_state, main_reason, turn, prompt = row[:8]
-    main_working, subagent_working, total, active, running, device = row[8:]
+    state, reason, state_at, main_id, main_state, main_reason, wait_until, dfx_choice, consent, org_id = row[:10]
+    turn, prompt, main_working, subagent_working, total, active, running, device = row[10:]
     last_turn: tuple[Operation, ...] = ()
     if turn is not None:
         found = connection.execute(
@@ -174,6 +196,10 @@ def read_inputs(connection: Connection, task_id: UUID | str) -> Read:
         operation_running=bool(running),
         main_working=bool(main_working),
         subagent_working=bool(subagent_working),
+        main_wait_until=wait_until,
+        main_dfx_choice=bool(dfx_choice),
+        model_consent=bool(consent),
+        credit_exhausted=_credit_exhausted(connection, (main_state, main_reason, org_id), now),
     )
     return Read(inputs, int(total), int(active), state_at)
 
@@ -220,6 +246,7 @@ def _next(current: Stored, new: bool, derived: Attention, read: Read, now: datet
         seq,
         read.subagents_total,
         read.subagents_active,
+        derived.wait_until,
     )
 
 
@@ -232,8 +259,11 @@ def row_json(connection: Connection, task_id: UUID | str) -> dict[str, Any] | No
 
 
 def attention_json(row: tuple[Any, ...]) -> dict[str, Any]:
-    """A raw row in the order of `ROW_FIELDS` as the `attention_row`."""
-    return {name: as_json(value) for name, value in zip(ROW_FIELDS, row, strict=True)}
+    """A raw row in the order of `ROW_FIELDS` as the `attention_row` (`wait_until` only for a quota reason)."""
+    found = {name: as_json(value) for name, value in zip(ROW_FIELDS, row, strict=True)}
+    if found["reason"] not in QUOTA_REASONS:
+        del found["wait_until"]
+    return found
 
 
 def refresh(connection: Connection, task_id: UUID | str, now: datetime, effects: Effects) -> bool:
@@ -242,14 +272,14 @@ def refresh(connection: Connection, task_id: UUID | str, now: datetime, effects:
     if locked is None:
         return False
     current, new = locked
-    read = read_inputs(connection, task_id)  # known: the attention row was inserted from the task row
+    read = read_inputs(connection, task_id, now)  # known: the attention row was inserted from the task row
     stored = _next(current, new, derive(read.inputs), read, now)
     if stored == current and not new:
         return False
     connection.execute(
         "UPDATE hub.task_attention SET category = %s, reason = %s, ref_kind = %s, ref_id = %s, since = %s, seq = %s,"
-        " subagents_total = %s, subagents_active = %s, updated_at = GREATEST(%s, updated_at + interval '1 microsecond')"
-        " WHERE task_id = %s",
+        " subagents_total = %s, subagents_active = %s, wait_until = %s,"
+        " updated_at = GREATEST(%s, updated_at + interval '1 microsecond') WHERE task_id = %s",
         (
             stored.category,
             stored.reason,
@@ -259,6 +289,7 @@ def refresh(connection: Connection, task_id: UUID | str, now: datetime, effects:
             stored.seq,
             stored.subagents_total,
             stored.subagents_active,
+            stored.wait_until,
             now,
             task_id,
         ),

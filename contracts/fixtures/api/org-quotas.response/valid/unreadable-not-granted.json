@@ -1,0 +1,25 @@
+{
+  "own": {
+    "windows": [],
+    "unreadable": {
+      "since": "2026-11-21T12:00:00.000Z"
+    },
+    "limited": {
+      "at": "2026-11-21T12:00:00.000Z",
+      "until": null,
+      "readable": false
+    }
+  },
+  "operator": {
+    "granted": false,
+    "subscriptions": []
+  },
+  "platform": {
+    "available": false
+  },
+  "summary": {
+    "usable": 0,
+    "exhausted": 1,
+    "next_release": null
+  }
+}

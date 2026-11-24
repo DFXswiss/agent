@@ -80,17 +80,21 @@ SPEC_SESSION_FAILURES = (
     " oom unassigned"
     # KOR-40, ADR-064 section 2: the guest ended the session because a decision hook failed
     " hook_unavailable"
+    # ADR-080 section 3 (contracts/changes/KOR-50.md): no allowed model access is left for a subagent session
+    " model_quota_exhausted"
 )
 # 03-api.md section 6.1 / 02-data-model.md section 4.
 SPEC_OUTBOX_KINDS = (
     "event session_transition vm_state operation_transition usage quota metrics audit wrap"
     " runtime"  # 12-billing.md section 4 (contracts/changes/KOR-31.md)
+    " operator_quota dfx_key_state dfx_key_issued dfx_key_usage"  # ADR-080 (contracts/changes/KOR-50.md)
 )
 SPEC_OUTBOX_AUDIT = (
     "hook.denied read.session.<tool> ping.delivered session.prompt_refused model.provider_outside_allowlist"
     " runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert session.context_restored"
     " session.context_fallback"
     " runner.operator_github_users"  # ADR-078 section 7 (contracts/changes/KOR-47.md)
+    " session.model_switched"  # ADR-080 section 5 (contracts/changes/KOR-50.md)
 )
 # 03-api.md section 8.1: the session platform tools that read (request_operation writes).
 SPEC_MCP_TOOLS = (
@@ -142,17 +146,19 @@ DECIDED_AUDIT = (
 KOR31_AUDIT = "credit.changed billing.fx_set billing.export"
 # ADR-078 (contracts/changes/KOR-47.md): defaults, primary mark and the task's identity; the reads come from INDEX.json.
 KOR47_AUDIT = "github.default github.primary task.github_identity runner.operator_github_users"
+# ADR-080 section 5 (contracts/changes/KOR-50.md): a session moved to another model access, a task's consent.
+KOR50_AUDIT = "session.model_switched task.model_consent"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
 SPEC_WAITING_REASONS = "no_device platform_access_required wg_vm_limit placement_full placement_offline keys_pending"
 # ADR-076 section 1 (KOR-39): category -> (order, reasons).
 SPEC_ATTENTION = {
-    "needs_decision": ("since_asc", "question approval connection_missing credit_empty device_missing"),
+    "needs_decision": ("since_asc", "question approval connection_missing credit_empty device_missing quota_choice"),
     "blocked": (
         "since_desc",
         "session_failed guest_error device_unreachable model_access_missing no_capacity operation_refused",
     ),
-    "working": ("since_desc", "queued starting working operation subagents"),
+    "working": ("since_desc", "queued starting working operation subagents quota_wait"),  # quota_*: ADR-080
     "done": ("since_desc", "idle closed"),
 }
 # 04-crypto.md section 4.3: (kind, scope, author kind, right).
@@ -265,7 +271,7 @@ def test_audit_actions(index: dict[str, Any]) -> None:
         assert set(row) == {"action", "group"}
         assert re.fullmatch(r"[a-z_]+(\.[a-z_]+)+", row["action"]), row
     expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split()) | set(KOR31_AUDIT.split())
-    expected |= set(KOR47_AUDIT.split())
+    expected |= set(KOR47_AUDIT.split()) | set(KOR50_AUDIT.split())
     for prefix, values in SPEC_AUDIT_PATTERNS.items():
         expected |= {f"{prefix}.{value}" for value in values.split()}
     expected |= {f"read.{e['read_resource']}" for e in index["endpoints"] if e["read_resource"]}
@@ -382,7 +388,8 @@ def test_attention_categories(contracts: Contracts) -> None:
     assert [row["category"] for row in rows] == list(SPEC_ATTENTION)
     assert common_enum(contracts, "attention_category") == list(SPEC_ATTENTION)
     row_schema = contracts.schemas["api/objects.json"]["$defs"]["attention_row"]
-    assert row_schema["required"] == list(row_schema["properties"])
+    # every field is required except `wait_until` (ADR-080 section 5: only quota records carry it, KOR-50)
+    assert row_schema["required"] == [name for name in row_schema["properties"] if name != "wait_until"]
     for row in rows:
         for reason in row["reasons"]:
             assert check_reason(contracts, reason), reason

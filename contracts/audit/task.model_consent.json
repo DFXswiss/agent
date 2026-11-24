@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/task.model_consent.json",
+  "title": "audit detail task.model_consent",
+  "description": "detail of audit rows with action task.model_consent: a person allowed DFX model access for the task while its own access is used up (POST /v1/tasks/{task}/model-consent, ADR-080 section 5; target the task); `changed` is false when the task had the consent already. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "changed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "changed"
+  ],
+  "additionalProperties": false
+}

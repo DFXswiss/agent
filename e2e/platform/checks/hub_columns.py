@@ -36,7 +36,7 @@ CATEGORIES: dict[str, str] = {
     "audit": "Audit and read-log rows (actor, action, target IDs, result)",
     "credentials": "Credential metadata (owner, owner kind user/org, kind, version, epoch, times, primary mark); "
     "default GitHub identities (record ID) of organizations and workgroups",
-    "settings": "User settings (model access preference, model choice, locale)",
+    "settings": "User settings (model access preference, model choice, locale, fallback of the model access)",
     "community": "Community metadata (14-community.md section 2.3, ADR-069): message IDs, authors, sequence numbers, "
     "times, sizes, tombstones, key epochs and checks, key requests, members, read positions, mutes, moderators",
     "ciphertext": "Encrypted content (ADR-003): sealed under scope, credential or recipient keys the hub never holds",
@@ -46,7 +46,8 @@ CATEGORIES: dict[str, str] = {
     "internal": "Hub bookkeeping without user data (applied schema migrations)",
     "billing": "Usage charges and prepaid credit (ADR-062, AUD-04 A4): amounts, token and runtime quantities, model, "
     "access origin and VM size of each charge, balances, credit history, the price list versions, the USD/CHF rates "
-    "and the CHF equivalent of each booking (books)",
+    "and the CHF equivalent of each booking (books); per-device DFX keys (ADR-080): request, key reference, issuer, "
+    "booked provider spend and the cost reported per session for the next booking",
     "contexts": "Context checkpoints (ADR-072): IDs, epoch, chunk counts, sizes, digest and chunk hashes, the signed "
     "manifest, times; pull-request links: opaque tag, epoch, task and session; restore outcomes",
 }
@@ -155,6 +156,12 @@ principal: ids | id:uuid kind:code created_at:time disabled_at:time
 quota_snapshot: metrics | owner_id:uuid window:code used_percent:number resets_at:time severity:code
   fetched_at:time device_id:uuid
 quota_unreadable: metrics | owner_id:uuid since:time device_id:uuid
+quota_limit: metrics | owner_id:uuid at:time until:time readable:flag device_id:uuid fetched_at:time
+operator_quota: metrics | device_id:uuid at:time snapshot:json received_at:time
+dfx_issuer: billing | device_id:uuid announced_at:time
+dfx_key: billing | request_id:uuid org_id:uuid device_id:uuid requested_at:time issuer_device_id:uuid key_ref:code
+  envelope:code@ciphertext issued_at:time booked_micro_usd:number booked_at:time revoked_at:time closed_at:time
+dfx_key_cost: billing | device_id:uuid session_id:uuid org_id:uuid cost_micro_usd:number
 request_nonce: auth | key_id:code nonce:code seen_at:time
 schema_version: internal | version:number name:code checksum:code applied_at:time
 scope_epoch: logs | scope:code scope_id:uuid epoch:number created_at:time created_seq:number
@@ -163,16 +170,17 @@ session: tasks | id:uuid task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid devic
   parent_session_id:uuid origin_operation_id:uuid depth:number state:code state_reason:code model_access:code
   model_id:code agent_kind:code agent_version:code estimate_ms:number created_at:time ready_at:time
   first_working_at:time ended_at:time context_restore:code@contexts context_reason:code@contexts not_before:time
-  github_identity:uuid
+  github_identity:uuid wait_until:time dfx_choice:flag
 session_ping: notifications | id:uuid session_id:uuid kind:code level:code ref:code created_at:time
   delivered_at:time
 session_transition: tasks | session_id:uuid seq:number state:code reason:code at:time received_at:time
   reported_by:uuid
 task: tasks | id:uuid org_id:uuid wg_id:uuid owner_id:uuid state:code state_reason:code created_at:time
   state_at:time last_activity_at:time closed_at:time placement_device_id:uuid placement_vm_id:code
-  github_identity:uuid
+  github_identity:uuid model_consent:flag
 task_attention: attention | task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid category:code reason:code
   ref_kind:code ref_id:uuid since:time seq:number subagents_total:number subagents_active:number updated_at:time
+  wait_until:time
 task_transition: tasks | task_id:uuid seq:number state:code reason:code at:time by_id:uuid
 usage_counter: metrics | session_id:uuid requests:number input_tokens:number output_tokens:number
   cache_read_tokens:number cache_write_tokens:number thinking_tokens:number cost_micro_usd:number cost_basis:code
@@ -186,13 +194,14 @@ credit_entry: billing | org_id:uuid n:number at:time kind:code amount_micro_usd:
   chf_per_usd_e8:number amount_micro_chf:number
 charge: billing | id:uuid org_id:uuid wg_id:uuid task_id:uuid session_id:uuid device_id:uuid origin_seq:number
   kind:code at:time amount_micro_usd:number price_version:number quantity:json fx_n:number fx_day:time
-  chf_per_usd_e8:number amount_micro_chf:number
+  chf_per_usd_e8:number amount_micro_chf:number part:number
 charge_pending: billing | charge_id:uuid org_id:uuid amount_micro_usd:number
 charge_daily: billing | org_id:uuid day:time wg_id:uuid device_id:uuid kind:code amount_micro_usd:number
   quantity:number
 user_identity: auth | user_id:uuid@ids kem_pub:bytes@logs sig_pub:bytes@logs recovery_id:code created_at:time
   id_sig:bytes@logs id_invite_seq:number@logs
 user_settings: settings | user_id:uuid model_access:code model_id:code locale:code updated_at:time
+  fallback_own_to_dfx:flag fallback_operator_to_platform:flag
 vm: tasks | id:code device_id:uuid wg_id:uuid state:code golden_version:code cpus:number@metrics
   memory_mib:number@metrics disk_gib:number@metrics created_at:time state_at:time
 wg: logs | id:uuid@ids org_id:uuid is_default:flag created_seq:number archived_seq:number

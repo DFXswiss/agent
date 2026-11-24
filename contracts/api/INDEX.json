@@ -2551,6 +2551,44 @@
       "read_resource": "device.github_identities",
       "streaming": false,
       "owner": "CTR-03"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{task}/model-consent",
+      "name": "task-model-consent",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:write"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/task-model-consent.request.json",
+      "response": "api/task-model-consent.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-50"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/quotas",
+      "name": "org-quotas",
+      "section": "4.3",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/org-quotas.request.json",
+      "response": "api/org-quotas.response.json",
+      "read_resource": "org.quotas",
+      "streaming": false,
+      "owner": "KOR-50"
     }
   ]
 }

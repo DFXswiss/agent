@@ -10,6 +10,10 @@
     "metrics",
     "audit",
     "wrap",
-    "runtime"
+    "runtime",
+    "operator_quota",
+    "dfx_key_state",
+    "dfx_key_issued",
+    "dfx_key_usage"
   ]
 }

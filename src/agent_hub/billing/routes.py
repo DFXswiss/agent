@@ -1,7 +1,8 @@
 """Routes of the billing area (12-billing.md section 6, ADR-062 section 7).
 
 - `GET /v1/orgs/{org}/billing` (`org:member`): balance, exhausted, the price list in force, the credit history and the
-  consumption per day and per workgroup of the last 30 days;
+  consumption per day and per workgroup of the last 30 days (a share without workgroup - a per-device DFX key's
+  spend no session reported, ADR-080 section 7 - counts in the days, not in the workgroups);
 - `GET /v1/workgroups/{wg}/charges` (`wg:read`): charges per task of the last 30 days;
 - `GET /v1/tasks/{task}/charges` (`task:read`): charges per session of the task.
 
@@ -18,6 +19,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from agent_hub.billing import binding, credit, prices
+from agent_hub.billing.outbox import NO_WG
 from agent_hub.crypto.encoding import format_time
 from agent_hub.errors import HubError
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
@@ -75,8 +77,9 @@ def org_billing(connection: Any, org: UUID, now: datetime) -> dict[str, Any]:
         (org, first),
     ).fetchall()
     wgs = connection.execute(
-        f"SELECT wg_id, {_SUMS} FROM hub.charge_daily WHERE org_id = %s AND day >= %s GROUP BY wg_id ORDER BY wg_id",
-        (org, first),
+        f"SELECT wg_id, {_SUMS} FROM hub.charge_daily WHERE org_id = %s AND day >= %s AND wg_id <> %s GROUP BY wg_id"
+        " ORDER BY wg_id",
+        (org, first, NO_WG),
     ).fetchall()
     balance = credit.balance(connection, org)
     return {

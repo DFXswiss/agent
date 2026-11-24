@@ -70,6 +70,21 @@
             },
             "vm_id": {
               "$ref": "../common.json#/$defs/vm_id"
+            },
+            "wait_until": {
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "KOR-50, ADR-080 section 4: with reason model_quota_exhausted the time the runner resumes the session by itself (null: unknown)"
+            },
+            "dfx_choice": {
+              "type": "boolean",
+              "description": "KOR-50, ADR-080 section 3: with reason model_quota_exhausted, DFX access would be available but the owner's setting does not allow it (the task may ask for consent)"
             }
           },
           "required": [
@@ -392,7 +407,7 @@
       "additionalProperties": false
     },
     "body_quota": {
-      "description": "The windows the device fetched for the owner, or `unavailable: true` when the usage endpoint refused the owner's subscription token (401/403; 05-runner.md section 10.6): the hub then drops the owner's older windows.",
+      "description": "The windows the device fetched for the owner, or `unavailable: true` when the usage endpoint refused the owner's subscription token (401/403; 05-runner.md section 10.6): the hub then drops the owner's older windows. Optional `limited` (KOR-50, ADR-080 section 6): the latest observed limit of the owner's subscription; sent only to a hub whose device state carries model_fallback.api >= 1.",
       "anyOf": [
         {
           "type": "object",
@@ -403,52 +418,16 @@
             "windows": {
               "type": "array",
               "items": {
-                "type": "object",
-                "properties": {
-                  "window": {
-                    "type": "string",
-                    "pattern": "^(five_hour|seven_day|weekly:[A-Za-z0-9._-]{1,64})$"
-                  },
-                  "used_percent": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 1000
-                  },
-                  "resets_at": {
-                    "anyOf": [
-                      {
-                        "$ref": "../common.json#/$defs/time"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "severity": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "pattern": "^[a-z_]{1,32}$"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  }
-                },
-                "required": [
-                  "window",
-                  "used_percent",
-                  "resets_at",
-                  "severity"
-                ],
-                "additionalProperties": false
+                "$ref": "#/$defs/quota_window"
               },
               "minItems": 1,
               "maxItems": 16
             },
             "fetched_at": {
               "$ref": "../common.json#/$defs/time"
+            },
+            "limited": {
+              "$ref": "#/$defs/quota_limited"
             }
           },
           "required": [
@@ -470,6 +449,9 @@
             },
             "fetched_at": {
               "$ref": "../common.json#/$defs/time"
+            },
+            "limited": {
+              "$ref": "#/$defs/quota_limited"
             }
           },
           "required": [
@@ -2020,6 +2002,117 @@
             "detail"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "session.model_switched"
+            },
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "denied",
+                "rejected",
+                "duplicate",
+                "failed"
+              ]
+            },
+            "task_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "session_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "target_kind": {
+              "type": "string",
+              "pattern": "^[a-z_]{1,32}$"
+            },
+            "target_id": {
+              "type": "string",
+              "description": "an ID (UUID, vm-..., key or code), never content",
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+            },
+            "detail": {
+              "description": "detail of audit rows with action session.model_switched: the runner moved a session to another model access because its access was used up, could not be used or was released again (ADR-080 sections 4 and 5): the access kinds and models before and after, the cause and the release time of the used-up access (null without one). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+              "type": "object",
+              "properties": {
+                "from_access": {
+                  "type": "string",
+                  "enum": [
+                    "subscription",
+                    "api_key",
+                    "platform"
+                  ]
+                },
+                "to_access": {
+                  "type": "string",
+                  "enum": [
+                    "subscription",
+                    "api_key",
+                    "platform"
+                  ]
+                },
+                "from_model": {
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/model_id"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "to_model": {
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/model_id"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "cause": {
+                  "type": "string",
+                  "enum": [
+                    "exhausted",
+                    "unusable",
+                    "released"
+                  ]
+                },
+                "until": {
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "from_access",
+                "to_access",
+                "from_model",
+                "to_model",
+                "cause",
+                "until"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "result",
+            "target_kind",
+            "target_id",
+            "detail"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -2235,8 +2328,333 @@
             "body"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "origin_seq": {
+              "$ref": "../common.json#/$defs/positive"
+            },
+            "item_kind": {
+              "type": "string",
+              "const": "operator_quota"
+            },
+            "body": {
+              "$ref": "#/$defs/body_operator_quota"
+            }
+          },
+          "required": [
+            "origin_seq",
+            "item_kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "origin_seq": {
+              "$ref": "../common.json#/$defs/positive"
+            },
+            "item_kind": {
+              "type": "string",
+              "const": "dfx_key_state"
+            },
+            "body": {
+              "$ref": "#/$defs/body_dfx_key_state"
+            }
+          },
+          "required": [
+            "origin_seq",
+            "item_kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "origin_seq": {
+              "$ref": "../common.json#/$defs/positive"
+            },
+            "item_kind": {
+              "type": "string",
+              "const": "dfx_key_issued"
+            },
+            "body": {
+              "$ref": "#/$defs/body_dfx_key_issued"
+            }
+          },
+          "required": [
+            "origin_seq",
+            "item_kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "origin_seq": {
+              "$ref": "../common.json#/$defs/positive"
+            },
+            "item_kind": {
+              "type": "string",
+              "const": "dfx_key_usage"
+            },
+            "body": {
+              "$ref": "#/$defs/body_dfx_key_usage"
+            }
+          },
+          "required": [
+            "origin_seq",
+            "item_kind",
+            "body"
+          ],
+          "additionalProperties": false
         }
       ]
+    },
+    "quota_window": {
+      "type": "object",
+      "properties": {
+        "window": {
+          "type": "string",
+          "pattern": "^(five_hour|seven_day|weekly:[A-Za-z0-9._-]{1,64})$"
+        },
+        "used_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "resets_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z_]{1,32}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "window",
+        "used_percent",
+        "resets_at",
+        "severity"
+      ],
+      "additionalProperties": false,
+      "description": "one quota window of a subscription (05-runner.md section 10.6)"
+    },
+    "quota_limited": {
+      "type": "object",
+      "description": "the latest observed limit of the subscription (ADR-080 sections 2 and 6, runner.access_limit): when it was marked used up, its release time (null: unknown) and whether the release time is the provider's own (readable quota) or a probe time after a streak of 429 answers",
+      "properties": {
+        "at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "readable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "at",
+        "until",
+        "readable"
+      ],
+      "additionalProperties": false
+    },
+    "operator_subscription": {
+      "type": "object",
+      "description": "one operator subscription file of a platform device as its runner observes it (ADR-080 section 6): the file name chosen by the operator, never a token",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "usable",
+            "exhausted",
+            "blocked",
+            "deferred",
+            "ignored"
+          ]
+        },
+        "readable": {
+          "type": "boolean"
+        },
+        "windows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/quota_window"
+          },
+          "minItems": 0,
+          "maxItems": 16
+        },
+        "limited_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "until": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fetched_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "state",
+        "readable",
+        "windows",
+        "limited_at",
+        "until",
+        "fetched_at"
+      ],
+      "additionalProperties": false
+    },
+    "body_operator_quota": {
+      "type": "object",
+      "description": "the complete snapshot of the operator subscriptions of a platform device (ADR-080 section 6); the hub keeps the newest per device and refuses the item from an org device (403 forbidden)",
+      "properties": {
+        "at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "subscriptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/operator_subscription"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "at",
+        "subscriptions"
+      ],
+      "additionalProperties": false
+    },
+    "body_dfx_key_state": {
+      "type": "object",
+      "description": "whether this platform device can issue per-device DFX keys (it holds a management key of the model provider, ADR-080 section 7); refused from an org device (403 forbidden)",
+      "properties": {
+        "issuer": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "issuer"
+      ],
+      "additionalProperties": false
+    },
+    "body_dfx_key_issued": {
+      "type": "object",
+      "description": "the issuer created the key of a request of its device state and sealed it to the org device (ADR-080 section 7); the hub stores the envelope only",
+      "properties": {
+        "request_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "org_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "device_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "key_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,128}$"
+        },
+        "envelope": {
+          "type": "string",
+          "$ref": "../common.json#/$defs/b64u",
+          "minLength": 1,
+          "maxLength": 8192,
+          "description": "base64url of the sealed and signed key envelope (ADR-080 section 7); opaque to the hub"
+        }
+      },
+      "required": [
+        "request_id",
+        "org_id",
+        "device_id",
+        "key_ref",
+        "envelope"
+      ],
+      "additionalProperties": false
+    },
+    "body_dfx_key_usage": {
+      "type": "object",
+      "description": "the provider's cumulative spend of one per-device key (ADR-080 section 7); the hub books the difference to the highest figure it booked for the key",
+      "properties": {
+        "key_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,128}$"
+        },
+        "org_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "device_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "spent_micro_usd": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "key_ref",
+        "org_id",
+        "device_id",
+        "spent_micro_usd",
+        "at"
+      ],
+      "additionalProperties": false
     }
   }
 }

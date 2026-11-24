@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/audit/settings.put.json",
   "title": "audit detail settings.put",
-  "description": "detail of audit rows with action settings.put: the user's settings were replaced (PUT /v1/me/settings): the new values, which the hub stores in clear. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "description": "detail of audit rows with action settings.put: the user's settings were replaced (PUT /v1/me/settings): the new values, which the hub stores in clear; own_to_dfx and operator_to_platform are the fallback settings (ADR-080 section 1, KOR-50; absent in rows of an older hub). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
   "type": "object",
   "properties": {
     "model_access": {
@@ -20,6 +20,12 @@
     },
     "locale": {
       "$ref": "../common.json#/$defs/locale"
+    },
+    "own_to_dfx": {
+      "type": "boolean"
+    },
+    "operator_to_platform": {
+      "type": "boolean"
     }
   },
   "required": [

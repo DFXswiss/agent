@@ -55,6 +55,8 @@ def test_a_new_session_with_its_first_prompt(world: World, fleet: Fleet) -> None
             "model_id_pref": None,
             "github_identity": None,
             "task_github_identity": None,
+            "fallback": {"own_to_dfx": False, "operator_to_platform": True},
+            "model_consent": False,
         }
     ]
     first = prompt_ids(desk, task)
@@ -82,6 +84,15 @@ def test_delivery_follows_the_working_transitions(world: World, fleet: Fleet) ->
     answer = state(fleet, desk.scene.device)
     assert answer["sessions"][0]["model_access_pref"] == "platform"
     assert answer["sessions"][0]["model_id_pref"] == "deepseek/deepseek-v4.1-flash-1017"
+    # the owner's fallback settings and the task's consent (KOR-50, ADR-080 sections 1 and 5)
+    desk.execute(
+        "UPDATE hub.user_settings SET fallback_own_to_dfx = true, fallback_operator_to_platform = false"
+        " WHERE user_id = %s",
+        desk.scene.writer.id,
+    )
+    desk.execute("UPDATE hub.task SET model_consent = true WHERE id = %s", task)
+    found = state(fleet, desk.scene.device)["sessions"][0]
+    assert (found["fallback"], found["model_consent"]) == ({"own_to_dfx": True, "operator_to_platform": False}, True)
     assert [item["event_id"] for item in answer["pending_prompts"]] == ids[1:]
     assert answer["delivered_prompt_event_ids"] == {session: ids[:1]}
     desk.walk(session, "idle", "working")

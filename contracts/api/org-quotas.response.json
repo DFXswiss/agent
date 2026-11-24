@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-quotas.response.json",
+  "title": "GET /v1/orgs/{org}/quotas response",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/quotas (ADR-080 section 6, KOR-50): the caller's own subscription, the operator's subscriptions when the organization may use them (verified platform log, ADR-079), whether DFX access over OpenRouter is available and a summary.",
+  "type": "object",
+  "properties": {
+    "own": {
+      "type": "object",
+      "description": "the caller's own subscription (as GET /v1/me/quotas) and its latest observed limit",
+      "properties": {
+        "windows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "window": {
+                "type": "string",
+                "pattern": "^(five_hour|seven_day|weekly:[A-Za-z0-9._-]{1,64})$"
+              },
+              "used_percent": {
+                "type": "number",
+                "minimum": 0
+              },
+              "resets_at": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "severity": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z_]{1,32}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fetched_at": {
+                "$ref": "../common.json#/$defs/time"
+              },
+              "device_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              }
+            },
+            "required": [
+              "window",
+              "used_percent",
+              "resets_at",
+              "severity",
+              "fetched_at",
+              "device_id"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "unreadable": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "since": {
+                  "$ref": "../common.json#/$defs/time"
+                }
+              },
+              "required": [
+                "since"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limited": {
+          "anyOf": [
+            {
+              "type": "object",
+              "description": "the latest observed limit (ADR-080 section 6)",
+              "properties": {
+                "at": {
+                  "$ref": "../common.json#/$defs/time"
+                },
+                "until": {
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "readable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "at",
+                "until",
+                "readable"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "windows",
+        "unreadable",
+        "limited"
+      ],
+      "additionalProperties": false
+    },
+    "operator": {
+      "type": "object",
+      "description": "the operator's subscriptions of the platform devices serving the organization; empty unless granted",
+      "properties": {
+        "granted": {
+          "type": "boolean"
+        },
+        "subscriptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "usable",
+                  "exhausted",
+                  "blocked",
+                  "deferred",
+                  "ignored"
+                ]
+              },
+              "readable": {
+                "type": "boolean"
+              },
+              "used_percent": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "resets_at": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "limited_at": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "until": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fetched_at": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "label",
+              "state",
+              "readable",
+              "used_percent",
+              "resets_at",
+              "limited_at",
+              "until",
+              "fetched_at"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "granted",
+        "subscriptions"
+      ],
+      "additionalProperties": false
+    },
+    "platform": {
+      "type": "object",
+      "description": "DFX access over OpenRouter: an online platform device serving the organization or a held per-device key",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "description": "counts over the listed subscriptions (own and operator)",
+      "properties": {
+        "usable": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "exhausted": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "next_release": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "usable",
+        "exhausted",
+        "next_release"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "own",
+    "operator",
+    "platform",
+    "summary"
+  ],
+  "additionalProperties": false
+}

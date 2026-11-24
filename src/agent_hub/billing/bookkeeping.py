@@ -4,7 +4,8 @@
 (optionally of one organization), oldest first: the charges (`tokens`, `runtime`) and the credit history entries
 (`start`, `grant`, `set`, `manual`). Each row carries the time, the organization (cost bearer), the kind, the amount in
 USD, the rate, the rate's day, the CHF equivalent booked with it and the reference (charge ID with workgroup, task and
-session, or the number of the credit entry). Amounts are micro-units; the CHF column is the equivalent stored with
+session - or with the per-device DFX key for a share no session reported, ADR-080 section 7 - or the number of the
+credit entry). Amounts are micro-units; the CHF column is the equivalent stored with
 the booking (never recomputed), so the sum of the column is the CHF total of the period. No content of tasks.
 
 The operator command `agent-hub billing export` writes it as JSON lines (default) or CSV; the export is audited
@@ -44,7 +45,8 @@ def bookings(connection: Connection, first: date, last: date, org: UUID | None) 
     window = (ZONE, first, last, org, org)
     charges = connection.execute(
         "SELECT at, org_id, kind, amount_micro_usd, chf_per_usd_e8, fx_day, amount_micro_chf,"
-        " 'charge:' || id || ' wg:' || wg_id || ' task:' || task_id || ' session:' || session_id"
+        " 'charge:' || id || COALESCE(' wg:' || wg_id || ' task:' || task_id || ' session:' || session_id,"
+        " ' key:' || (quantity->>'key_ref'))"
         f" FROM hub.charge WHERE {_WINDOW}",
         window,
     ).fetchall()

@@ -7,7 +7,8 @@ of the state and the state machine (`400 request_invalid` for a refused step, wh
 A transition that names its VM (`vm_id`, ADR-075: a workgroup may have several VMs on a device) sets `session.vm_id`
 unless that VM is known as another device's or another workgroup's; otherwise, on a device without the feature
 `vm.choice` (one VM per workgroup), an open session without a VM takes the active VM of its device and workgroup
-(`handlers_vm.link_session_vm`).
+(`handlers_vm.link_session_vm`). `wait_until` and `dfx_choice` (KOR-50) are stored with a `suspended` transition of
+reason `model_quota_exhausted` only.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ def handle(item: ItemContext, body: SessionTransitionBody) -> None:
         agent_version=body.agent_version,
         model_access=body.model_access,
         model_id=body.model_id,
+        wait=(None if body.wait_until is None else moment(body.wait_until), bool(body.dfx_choice)),
     )
     if body.vm_id is not None:
         item.connection.execute(

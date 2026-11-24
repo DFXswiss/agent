@@ -14,7 +14,9 @@
   refused.
 - `POST /v1/me/recovery/begin`: the ceremony for that assertion.
 - `PUT /v1/me/settings`: `model_access`, `model_id` (null or a model of `/v1/config.models` allowed for the chosen
-  access kind; `auto` allows every listed model) and `locale` (02-data-model.md section 2.1).
+  access kind; `auto` allows every listed model) and `locale` (02-data-model.md section 2.1); optionally `fallback`
+  `{own_to_dfx, operator_to_platform}` (ADR-080 section 1, KOR-50), without it the stored fallback settings stay. The
+  settings of `GET /v1/me` and the answer of the PUT always carry `fallback` (defaults false/true).
 The read log of the GETs is written by the pipeline (`read_resource`).
 """
 
@@ -27,6 +29,7 @@ from typing import Any, Literal, cast
 
 import psycopg
 import psycopg.errors
+from pydantic import model_validator
 
 from agent_core.signing import b64url_decode, b64url_encode
 from agent_hub.agents.notify import account_change
@@ -58,10 +61,22 @@ class BundlePut(Strict):
     assertion: RecoveryAssertion | None = None
 
 
+class Fallback(Strict):
+    own_to_dfx: bool
+    operator_to_platform: bool
+
+
 class Settings(Strict):
     model_access: Literal["auto", "subscription", "api_key", "platform"]
     model_id: ModelId | None
     locale: Literal["de", "en"]
+    fallback: Fallback | None = None
+
+    @model_validator(mode="after")
+    def _fallback_not_null(self) -> Settings:
+        if "fallback" in self.model_fields_set and self.fallback is None:
+            raise ValueError("fallback is an object when given")
+        return self
 
 
 def _user(principal: Principal) -> uuid.UUID:
@@ -69,7 +84,12 @@ def _user(principal: Principal) -> uuid.UUID:
 
 
 def settings_body(row: tuple[Any, ...]) -> dict[str, Any]:
-    return {"model_access": row[0], "model_id": row[1], "locale": row[2]}
+    return {
+        "model_access": row[0],
+        "model_id": row[1],
+        "locale": row[2],
+        "fallback": {"own_to_dfx": row[3], "operator_to_platform": row[4]},
+    }
 
 
 def load_me(context: HubContext, user_id: uuid.UUID) -> dict[str, Any]:
@@ -78,7 +98,8 @@ def load_me(context: HubContext, user_id: uuid.UUID) -> dict[str, Any]:
         # one snapshot: the org list and the CK holders must agree (KOR-04)
         connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         identity = connection.execute(
-            "SELECT i.kem_pub, i.sig_pub, COALESCE(s.model_access, 'auto'), s.model_id, COALESCE(s.locale, 'en')"
+            "SELECT i.kem_pub, i.sig_pub, COALESCE(s.model_access, 'auto'), s.model_id, COALESCE(s.locale, 'en'),"
+            " COALESCE(s.fallback_own_to_dfx, false), COALESCE(s.fallback_operator_to_platform, true)"
             " FROM hub.user_identity i LEFT JOIN hub.user_settings s ON s.user_id = i.user_id WHERE i.user_id = %s",
             (user_id,),
         ).fetchone()
@@ -239,13 +260,18 @@ def check_model(config: HubConfig, settings: Settings) -> None:
 def put_settings(context: HubContext, user_id: uuid.UUID, settings: Settings) -> dict[str, Any]:
     check_model(context.config, settings)
     now = context.clock()
+    fallback = settings.fallback
+    own, operator = (None, None) if fallback is None else (fallback.own_to_dfx, fallback.operator_to_platform)
     with transaction(context.pool) as connection:
         row = connection.execute(
-            "INSERT INTO hub.user_settings (user_id, model_access, model_id, locale, updated_at)"
-            " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET model_access = EXCLUDED.model_access,"
-            " model_id = EXCLUDED.model_id, locale = EXCLUDED.locale, updated_at = EXCLUDED.updated_at"
-            " RETURNING model_access, model_id, locale",
-            (user_id, settings.model_access, settings.model_id, settings.locale, now),
+            "INSERT INTO hub.user_settings (user_id, model_access, model_id, locale, updated_at, fallback_own_to_dfx,"
+            " fallback_operator_to_platform) VALUES (%s, %s, %s, %s, %s, COALESCE(%s, false), COALESCE(%s, true))"
+            " ON CONFLICT (user_id) DO UPDATE SET model_access = EXCLUDED.model_access,"
+            " model_id = EXCLUDED.model_id, locale = EXCLUDED.locale, updated_at = EXCLUDED.updated_at,"
+            " fallback_own_to_dfx = COALESCE(%s, hub.user_settings.fallback_own_to_dfx),"
+            " fallback_operator_to_platform = COALESCE(%s, hub.user_settings.fallback_operator_to_platform)"
+            " RETURNING model_access, model_id, locale, fallback_own_to_dfx, fallback_operator_to_platform",
+            (user_id, settings.model_access, settings.model_id, settings.locale, now, own, operator, own, operator),
         ).fetchone()
         body = settings_body(cast(tuple[Any, ...], row))
         append_audit(
@@ -256,7 +282,12 @@ def put_settings(context: HubContext, user_id: uuid.UUID, settings: Settings) ->
                 actor_id=user_id,
                 action="settings.put",
                 result="ok",
-                detail={"model_access": body["model_access"], "model_id": body["model_id"], "locale": body["locale"]},
+                detail={
+                    "model_access": body["model_access"],
+                    "model_id": body["model_id"],
+                    "locale": body["locale"],
+                    **body["fallback"],
+                },
             ),
         )
     return body

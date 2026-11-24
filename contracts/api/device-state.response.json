@@ -192,6 +192,27 @@
               "task_closed": {
                 "type": "boolean",
                 "description": "the session's task is closed: its work VMs go at once (ADR-080 section 5); absent means false"
+              },
+              "fallback": {
+                "type": "object",
+                "description": "the fallback settings of the session's owner (ADR-080 section 1; KOR-50, absent from an older hub: the defaults own_to_dfx false, operator_to_platform true apply)",
+                "properties": {
+                  "own_to_dfx": {
+                    "type": "boolean"
+                  },
+                  "operator_to_platform": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "own_to_dfx",
+                  "operator_to_platform"
+                ],
+                "additionalProperties": false
+              },
+              "model_consent": {
+                "type": "boolean",
+                "description": "a person allowed DFX access for the session's task (ADR-080 section 5; KOR-50, absent: false)"
               }
             },
             "required": [
@@ -478,6 +499,135 @@
           },
           "minItems": 0,
           "maxItems": 20000
+        },
+        "model_fallback": {
+          "type": "object",
+          "description": "KOR-50, ADR-080: always sent by a hub of KOR-50 or later, optional for older hubs; api tells the runner that the hub accepts operator_quota, dfx_key_*, quota.limited, the wait fields of session_transition and the audit action session.model_switched",
+          "properties": {
+            "api": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "model fallback interface version; KOR-50 sends 1"
+            }
+          },
+          "required": [
+            "api"
+          ],
+          "additionalProperties": false
+        },
+        "dfx_keys": {
+          "type": "object",
+          "description": "only for the elected issuer (the online platform device with the smallest ID that announced dfx_key_state issuer true; ADR-080 section 7): the keys to create and the keys to watch",
+          "properties": {
+            "requests": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "request_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "org_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "device_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "device_kem": {
+                    "$ref": "../common.json#/$defs/b64u_32",
+                    "description": "the X25519 public key of the org device from the hub's device registry"
+                  }
+                },
+                "required": [
+                  "request_id",
+                  "org_id",
+                  "device_id",
+                  "device_kem"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0,
+              "maxItems": 1000
+            },
+            "keys": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{8,128}$"
+                  },
+                  "org_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "device_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "headroom_usd": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "disabled": {
+                    "type": "boolean"
+                  },
+                  "revoke": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "key_ref",
+                  "org_id",
+                  "device_id",
+                  "headroom_usd",
+                  "disabled",
+                  "revoke"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0,
+              "maxItems": 10000
+            }
+          },
+          "required": [
+            "requests",
+            "keys"
+          ],
+          "additionalProperties": false
+        },
+        "dfx_key_held": {
+          "type": "array",
+          "description": "only for an org device (ADR-080 section 7): the sealed key of each organization the device serves, at most one per organization",
+          "items": {
+            "type": "object",
+            "properties": {
+              "org_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "key_ref": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{8,128}$"
+              },
+              "envelope": {
+                "type": "string",
+                "$ref": "../common.json#/$defs/b64u",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "issuer_device_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              }
+            },
+            "required": [
+              "org_id",
+              "key_ref",
+              "envelope",
+              "issuer_device_id"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 1000
         }
       },
       "required": [

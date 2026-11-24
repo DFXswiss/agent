@@ -42,7 +42,15 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("id_sig", B),
         ("id_invite_seq", INT),
     ],
-    "user_settings": [("user_id", U), ("model_access", T), ("model_id", T), ("locale", T), ("updated_at", TS)],
+    "user_settings": [
+        ("user_id", U),
+        ("model_access", T),
+        ("model_id", T),
+        ("locale", T),
+        ("updated_at", TS),
+        ("fallback_own_to_dfx", BOOL),  # KOR-50, migration 0024 (ADR-080)
+        ("fallback_operator_to_platform", BOOL),
+    ],
     "identity_bundle": [("user_id", U), ("slot", T), ("ct", B), ("updated_at", TS)],
     "passkey": [
         ("credential_id", B),
@@ -256,6 +264,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("placement_device_id", U),  # KOR-41, migration 0020
         ("placement_vm_id", T),
         ("github_identity", U),  # KOR-47, migration 0022
+        ("model_consent", BOOL),  # KOR-50, migration 0024 (ADR-080)
     ],
     "task_transition": [("task_id", U), ("seq", INT), ("state", T), ("reason", T), ("at", TS), ("by_id", U)],
     # KOR-39, migration 0011 (ADR-076): the attention record of a task, a projection
@@ -273,6 +282,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("subagents_total", INT),
         ("subagents_active", INT),
         ("updated_at", TS),
+        ("wait_until", TS),  # KOR-50, migration 0024 (ADR-080)
     ],
     "session": [
         ("id", U),
@@ -300,6 +310,8 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("context_reason", T),
         ("not_before", TS),  # KOR-41, migration 0020
         ("github_identity", U),  # KOR-47, migration 0022
+        ("wait_until", TS),  # KOR-50, migration 0024 (ADR-080)
+        ("dfx_choice", BOOL),
     ],
     # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-072)
     "context_object": [
@@ -474,6 +486,32 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     "event_audit_cover": [("scope_id", U), ("covered_seq", BI)],
     # the subscription refuses the read of its quotas (KOR-40, migration 0016)
     "quota_unreadable": [("owner_id", U), ("since", TS), ("device_id", U)],
+    # model access with fallback (KOR-50, migration 0024, ADR-080)
+    "quota_limit": [
+        ("owner_id", U),
+        ("at", TS),
+        ("until", TS),
+        ("readable", BOOL),
+        ("device_id", U),
+        ("fetched_at", TS),
+    ],
+    "operator_quota": [("device_id", U), ("at", TS), ("snapshot", J), ("received_at", TS)],
+    "dfx_issuer": [("device_id", U), ("announced_at", TS)],
+    "dfx_key": [
+        ("request_id", U),
+        ("org_id", U),
+        ("device_id", U),
+        ("requested_at", TS),
+        ("issuer_device_id", U),
+        ("key_ref", T),
+        ("envelope", T),
+        ("issued_at", TS),
+        ("booked_micro_usd", BI),
+        ("booked_at", TS),
+        ("revoked_at", TS),
+        ("closed_at", TS),
+    ],
+    "dfx_key_cost": [("device_id", U), ("session_id", U), ("org_id", U), ("cost_micro_usd", BI)],
     "metric_rollup": [
         ("entity_kind", T),
         ("entity_id", T),
@@ -569,6 +607,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("fx_day", "date"),
         ("chf_per_usd_e8", BI),
         ("amount_micro_chf", BI),
+        ("part", INT),  # KOR-50, migration 0024: the shares of one per-device key booking
     ],
     "charge_pending": [("charge_id", U), ("org_id", U), ("amount_micro_usd", BI)],
     "charge_daily": [
@@ -689,6 +728,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "usage_daily": ("org_id", "day", "device_id"),
     "credit_entry": ("org_id", "n"),
     "charge_daily": ("org_id", "day", "wg_id", "device_id", "kind"),
+    "dfx_key_cost": ("device_id", "session_id"),
     "context_chunk": ("object_id", "chunk_index"),
     "pr_link": ("wg_id", "epoch", "tag"),
     "outbox_receipt": ("device_id", "origin_seq"),
@@ -795,6 +835,9 @@ def test_every_other_table_has_a_single_column_primary_key(owner: psycopg.Connec
         ("credential", "owner_id, kind"),
         ("audit", "hash"),
         ("invite", "registered_user"),
+        ("charge", "device_id, origin_seq, part"),
+        ("dfx_key", "key_ref"),
+        ("dfx_key", "org_id, device_id) WHERE (revoked_at IS NULL"),
     ],
 )
 def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns: str) -> None:

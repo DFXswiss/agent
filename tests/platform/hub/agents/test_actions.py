@@ -58,8 +58,9 @@ def test_the_agent_reads_and_changes_the_account_like_its_user(browser: FakeBrow
     client = agent.client(hub)
     assert client.get("/v1/me").json() == session.get("/v1/me").json()
     settings = {"model_access": "auto", "model_id": None, "locale": "de"}
-    assert client.put("/v1/me/settings", json=settings).json() == settings
-    assert session.get("/v1/me").json()["settings"] == settings
+    stored = {**settings, "fallback": {"own_to_dfx": False, "operator_to_platform": True}}
+    assert client.put("/v1/me/settings", json=settings).json() == stored
+    assert session.get("/v1/me").json()["settings"] == stored
     # settings are no account change: nothing is notified
     assert notices(hub, account.user_id) == []
 

@@ -19,7 +19,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
 from agent_hub.auth.fields import ModelId, Strict, Uuid7
-from agent_hub.crypto.encoding import MAX_SAFE_INTEGER
+from agent_hub.crypto.encoding import MAX_SAFE_INTEGER, is_b64u
 from agent_hub.errors import HubError
 
 MAX_ITEMS = 500
@@ -35,6 +35,10 @@ ITEM_KINDS = (
     "audit",
     "wrap",
     "runtime",
+    "operator_quota",
+    "dfx_key_state",
+    "dfx_key_issued",
+    "dfx_key_usage",
 )
 """A copy of `contracts/enums/outbox-item-kinds.json` (a test compares them)."""
 OUTBOX_AUDIT_ACTIONS = (
@@ -60,6 +64,7 @@ OUTBOX_AUDIT_ACTIONS = (
     "session.context_restored",
     "session.context_fallback",
     "runner.operator_github_users",
+    "session.model_switched",
 )
 """A copy of `contracts/enums/outbox-audit-actions.json` (a test compares them)."""
 OPERATION_ERROR_CODES = (
@@ -102,6 +107,10 @@ ItemKind = Literal[
     "audit",
     "wrap",
     "runtime",
+    "operator_quota",
+    "dfx_key_state",
+    "dfx_key_issued",
+    "dfx_key_usage",
 ]
 Time = Annotated[
     str,
@@ -208,10 +217,18 @@ class SessionTransitionBody(Strict):
     model_id: ModelId | None = None
     claude_session_id_present: bool | None = None
     vm_id: VmId | None = None
+    wait_until: Time | None = None
+    """KOR-50, ADR-080 section 4: when a session suspended for `model_quota_exhausted` continues by itself."""
+    dfx_choice: bool | None = None
+    """KOR-50, ADR-080 section 3: DFX access would be available but the owner's setting does not allow it."""
 
     @model_validator(mode="after")
     def _optional_fields(self) -> SessionTransitionBody:
-        _absent_not_null(self, ("agent_version", "model_access", "model_id", "claude_session_id_present", "vm_id"))
+        _absent_not_null(
+            self, ("agent_version", "model_access", "model_id", "claude_session_id_present", "vm_id", "dfx_choice")
+        )
+        if self.state == "failed" and {"wait_until", "dfx_choice"} & self.model_fields_set:
+            raise ValueError("a failed session does not wait")
         return self
 
 
@@ -306,18 +323,28 @@ class QuotaWindow(Strict):
     severity: Annotated[str, StringConstraints(pattern=r"^[a-z_]{1,32}$")] | None
 
 
+class QuotaLimited(Strict):
+    """The latest observed limit of the owner's subscription (KOR-50, ADR-080 section 6)."""
+
+    at: Time
+    until: Time | None
+    readable: bool
+
+
 class QuotaBody(Strict):
     """`quota`: the windows of one owner as fetched by the device (each window at most once), or `unavailable: true`
-    without windows when the usage endpoint refused the owner's token (KOR-05)."""
+    without windows when the usage endpoint refused the owner's token (KOR-05); either form may carry the latest
+    observed limit (`limited`, KOR-50)."""
 
     owner_id: Uuid7
     windows: list[QuotaWindow] = Field(default_factory=list, max_length=16)
     unavailable: Literal[True] | None = None
     fetched_at: Time
+    limited: QuotaLimited | None = None
 
     @model_validator(mode="after")
     def _windows_once(self) -> QuotaBody:
-        _absent_not_null(self, ("unavailable",))
+        _absent_not_null(self, ("unavailable", "limited"))
         # exactly one of the two forms of the contract: windows (at least one), or the marker without `windows`
         if ("unavailable" in self.model_fields_set) == ("windows" in self.model_fields_set) or (
             self.unavailable is None and not self.windows
@@ -327,6 +354,69 @@ class QuotaBody(Strict):
         if len(set(names)) != len(names):
             raise ValueError("a window is listed twice")
         return self
+
+
+SubscriptionName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")]
+KeyRef = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{8,128}$")]
+Envelope = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]+$", max_length=8192)]
+
+
+class OperatorSubscription(Strict):
+    """One operator subscription file of a platform device (KOR-50, ADR-080 section 6): its name, never a token."""
+
+    name: SubscriptionName
+    state: Literal["usable", "exhausted", "blocked", "deferred", "ignored"]
+    readable: bool
+    windows: list[QuotaWindow] = Field(max_length=16)
+    limited_at: Time | None
+    until: Time | None
+    fetched_at: Time | None
+
+
+class OperatorQuotaBody(Strict):
+    """`operator_quota`: the complete snapshot of a platform device's operator subscriptions (names once each)."""
+
+    at: Time
+    subscriptions: list[OperatorSubscription] = Field(max_length=64)
+
+    @model_validator(mode="after")
+    def _names_once(self) -> OperatorQuotaBody:
+        names = [entry.name for entry in self.subscriptions]
+        if len(set(names)) != len(names):
+            raise ValueError("a subscription is listed twice")
+        return self
+
+
+class DfxKeyStateBody(Strict):
+    """`dfx_key_state`: whether the platform device can issue per-device DFX keys (ADR-080 section 7)."""
+
+    issuer: bool
+
+
+class DfxKeyIssuedBody(Strict):
+    """`dfx_key_issued`: the sealed key of a request (the envelope is opaque to the hub; canonical b64u)."""
+
+    request_id: Uuid7
+    org_id: Uuid7
+    device_id: Uuid7
+    key_ref: KeyRef
+    envelope: Envelope
+
+    @model_validator(mode="after")
+    def _canonical(self) -> DfxKeyIssuedBody:
+        if not is_b64u(self.envelope):
+            raise ValueError("the envelope is no canonical b64u")
+        return self
+
+
+class DfxKeyUsageBody(Strict):
+    """`dfx_key_usage`: the provider's cumulative spend of one per-device key."""
+
+    key_ref: KeyRef
+    org_id: Uuid7
+    device_id: Uuid7
+    spent_micro_usd: Count
+    at: Time
 
 
 class MetricSample(Strict):
@@ -438,6 +528,18 @@ class OperatorGithubUsers(Strict):
     removed: Count
 
 
+ModelAccessKind = Literal["subscription", "api_key", "platform"]
+
+
+class ModelSwitched(Strict):
+    from_access: ModelAccessKind
+    to_access: ModelAccessKind
+    from_model: ModelId | None
+    to_model: ModelId | None
+    cause: Literal["exhausted", "unusable", "released"]
+    until: Time | None
+
+
 AUDIT_DETAILS: dict[str, type[Strict]] = {
     "hook.denied": HookDenied,
     **{action: ReadCount for action in OUTBOX_AUDIT_ACTIONS if action.startswith("read.session.")},
@@ -451,6 +553,7 @@ AUDIT_DETAILS: dict[str, type[Strict]] = {
     "session.context_restored": ContextRestored,
     "session.context_fallback": ContextFallback,
     "runner.operator_github_users": OperatorGithubUsers,
+    "session.model_switched": ModelSwitched,
 }
 
 
@@ -479,6 +582,7 @@ class AuditBody(Strict):
         "runner.alert",
         "session.context_restored",
         "session.context_fallback",
+        "session.model_switched",
     ]
     result: Literal["ok", "denied", "rejected", "duplicate", "failed"]
     task_id: Uuid7 | None = None
@@ -505,6 +609,10 @@ BODIES: dict[str, type[Strict]] = {
     "audit": AuditBody,
     "wrap": WrapBody,
     "runtime": RuntimeBody,
+    "operator_quota": OperatorQuotaBody,
+    "dfx_key_state": DfxKeyStateBody,
+    "dfx_key_issued": DfxKeyIssuedBody,
+    "dfx_key_usage": DfxKeyUsageBody,
 }
 
 

@@ -20,6 +20,10 @@
     },
     "locale": {
       "$ref": "../common.json#/$defs/locale"
+    },
+    "fallback": {
+      "$ref": "objects.json#/$defs/fallback_settings",
+      "description": "KOR-50: optional; without it the stored fallback settings stay"
     }
   },
   "required": [

@@ -16,7 +16,9 @@
   `AGENT_HUB_VMS_PER_WG` live VMs on all devices (the runner then takes no new VM for it; absent means true) and
   `task_closed: true` while its task is closed (the runner deletes the task's work VMs at once, ADR-080 section 5);
 - per session, always: `github_identity` / `task_github_identity`, the GitHub identities chosen for the session and its
-  task (ADR-078 section 3, null without a choice);
+  task (ADR-078 section 3, null without a choice); `fallback`, the owner's crossing rules of model access
+  (`{own_to_dfx, operator_to_platform}`, defaults false/true without settings), and `model_consent`, the task's
+  consent to DFX access (ADR-080 sections 1 and 5, KOR-50);
 - `pending_prompts` / `delivered_prompt_event_ids`: the prompt routing of `agent_hub.sessions.prompts` for the main
   sessions in `sessions` (pending only while the session is not `stopping`).
 """
@@ -60,7 +62,8 @@ def provide(request: StateRequest) -> Mapping[str, Any]:
         " COALESCE(u.model_access, 'auto'), u.model_id,"
         " (SELECT v.id FROM hub.vm v WHERE v.id = t.placement_vm_id AND v.device_id = s.device_id"
         " AND v.wg_id = s.wg_id AND v.state <> 'deleted' AND s.depth = 0), s.github_identity, t.github_identity,"
-        " t.state = 'closed'"
+        " t.state = 'closed', COALESCE(u.fallback_own_to_dfx, false), COALESCE(u.fallback_operator_to_platform, true),"
+        " t.model_consent"
         " FROM hub.session s JOIN hub.task t ON t.id = s.task_id"
         " LEFT JOIN hub.user_settings u ON u.user_id = s.owner_id"
         " WHERE s.device_id = %s AND s.state NOT IN ('stopped', 'failed') ORDER BY s.created_at, s.id",
@@ -84,6 +87,8 @@ def provide(request: StateRequest) -> Mapping[str, Any]:
             "model_id_pref": row[9],
             "github_identity": None if row[11] is None else str(row[11]),
             "task_github_identity": None if row[12] is None else str(row[12]),
+            "fallback": {"own_to_dfx": row[14], "operator_to_platform": row[15]},
+            "model_consent": row[16],
         }
         if row[10] is not None:
             item["vm_id_pref"] = row[10]

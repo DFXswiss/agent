@@ -23,6 +23,10 @@
         },
         "locale": {
           "$ref": "../common.json#/$defs/locale"
+        },
+        "fallback": {
+          "$ref": "#/$defs/fallback_settings",
+          "description": "always sent by a hub of KOR-50 or later; absent from an older hub (the defaults apply)"
         }
       },
       "required": [
@@ -223,6 +227,17 @@
         },
         "updated_at": {
           "$ref": "../common.json#/$defs/time"
+        },
+        "wait_until": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "KOR-50, ADR-080 section 5: the time a quota_wait or quota_choice record continues by itself (null: unknown); absent for every other reason and from an older hub"
         }
       },
       "required": [
@@ -1795,6 +1810,23 @@
       ],
       "additionalProperties": false,
       "description": "the default GitHub identity of an organization or workgroup (ADR-078 section 3)"
+    },
+    "fallback_settings": {
+      "type": "object",
+      "description": "the user's fallback settings (ADR-080 section 1, KOR-50): own_to_dfx - use DFX access when the own access is used up or cannot be used (default false); operator_to_platform - move from the operator's subscriptions to DFX access over OpenRouter (default true)",
+      "properties": {
+        "own_to_dfx": {
+          "type": "boolean"
+        },
+        "operator_to_platform": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "own_to_dfx",
+        "operator_to_platform"
+      ],
+      "additionalProperties": false
     }
   }
 }

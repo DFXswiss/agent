@@ -289,7 +289,8 @@
         "credit_exhausted",
         "oom",
         "unassigned",
-        "hook_unavailable"
+        "hook_unavailable",
+        "model_quota_exhausted"
       ],
       "description": "enums/session-failure-reasons.json"
     },

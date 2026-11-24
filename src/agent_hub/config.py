@@ -40,6 +40,7 @@ DOWNLOADS_DIR = "AGENT_HUB_DOWNLOADS_DIR"
 DEVICE_ONLINE_SECONDS = "AGENT_HUB_DEVICE_ONLINE_SECONDS"
 PLATFORM_BUDGET = "AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY"
 START_CREDIT = "AGENT_HUB_BILLING_START_CREDIT_USD"
+DFX_KEY_HEADROOM = "AGENT_HUB_DFX_KEY_HEADROOM_USD"
 MODEL_CATALOG = "AGENT_HUB_MODEL_CATALOG"
 TRUSTED_PROXIES = "AGENT_HUB_TRUSTED_PROXIES"
 IPV4_MAPPED = ipaddress.IPv6Network("::ffff:0:0/96")
@@ -68,6 +69,7 @@ KNOWN_VARIABLES = frozenset(
         DEVICE_ONLINE_SECONDS,
         PLATFORM_BUDGET,
         START_CREDIT,
+        DFX_KEY_HEADROOM,
         MODEL_CATALOG,
         TRUSTED_PROXIES,
         FORWARDED_HEADER,
@@ -92,6 +94,7 @@ DEFAULT_CAPACITY_REFUSALS = 3
 """Refusals in a row after which the next attempt is held back (ADR-075 section 7, ADR-049)."""
 MAX_CAPACITY_REFUSALS = 1000
 DEFAULT_REFUSAL_HOLD_SECONDS = 60
+DEFAULT_DFX_KEY_HEADROOM = Decimal(5)
 MAX_REFUSAL_HOLD_SECONDS = 86400
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_CATALOG_BYTES = 1024 * 1024
@@ -191,6 +194,9 @@ class HubConfig:
     model_catalog: ModelCatalog
     billing_start_credit_usd: Decimal = Decimal(0)
     """`AGENT_HUB_BILLING_START_CREDIT_USD`: the balance of a new credit account (KOR-31, ADR-062; default 0)."""
+    dfx_key_headroom_usd: Decimal = DEFAULT_DFX_KEY_HEADROOM
+    """`AGENT_HUB_DFX_KEY_HEADROOM_USD`: the most a per-device DFX key may spend beyond its booked spend (KOR-50,
+    ADR-080 section 7; default 5)."""
     trusted_proxies: tuple[Network, ...] = ()
     forwarded_header: str = X_FORWARDED_FOR
     context_max_object_bytes: int = DEFAULT_CONTEXT_MAX_OBJECT_BYTES
@@ -302,6 +308,15 @@ def _start_credit(environ: Mapping[str, str]) -> Decimal:
         return Decimal(0)
     if _BUDGET_RE.fullmatch(value) is None:
         raise ConfigError(f"{START_CREDIT} must be empty or a non-negative amount with at most 6 decimals")
+    return Decimal(value)
+
+
+def _dfx_key_headroom(environ: Mapping[str, str]) -> Decimal:
+    value = _value(environ, DFX_KEY_HEADROOM)
+    if value is None:
+        return DEFAULT_DFX_KEY_HEADROOM
+    if _BUDGET_RE.fullmatch(value) is None:
+        raise ConfigError(f"{DFX_KEY_HEADROOM} must be empty or a non-negative amount with at most 6 decimals")
     return Decimal(value)
 
 
@@ -506,6 +521,7 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
         platform_budget_usd_per_org_day=_budget(environ),
         model_catalog=load_model_catalog(Path(_require(environ, MODEL_CATALOG))),
         billing_start_credit_usd=_start_credit(environ),
+        dfx_key_headroom_usd=_dfx_key_headroom(environ),
         trusted_proxies=trusted,
         forwarded_header=_forwarded_header(environ, trusted),
         context_max_object_bytes=_bounded_int(

@@ -1,0 +1,28 @@
+{
+  "description": "Endpoints of model access with fallback (ADR-080, KOR-50): a task's consent to DFX model access while its own access is used up, and the quotas of an organization (own subscription, operator subscriptions, DFX access).",
+  "rights": [
+    "task:write",
+    "org:member"
+  ],
+  "auth": [
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{task}/model-consent",
+      "rights": [
+        "task:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/quotas",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.3"
+    }
+  ]
+}

@@ -1016,6 +1016,10 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "audit",
                         "wrap",
                         "runtime",
+                        "operator_quota",
+                        "dfx_key_state",
+                        "dfx_key_issued",
+                        "dfx_key_usage",
                     ],
                 }
             ],
@@ -1219,6 +1223,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.org.invites": {"properties": {}, "required": []},
     "read.org": {"properties": {}, "required": []},
     "read.org.log": {"properties": {}, "required": []},
+    "read.org.quotas": {"properties": {}, "required": []},
     "read.platform.enrollments": {"properties": {}, "required": []},
     "read.platform.invites": {"properties": {}, "required": []},
     "read.platform.log": {"properties": {}, "required": []},
@@ -1428,6 +1433,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "oom",
                         "unassigned",
                         "hook_unavailable",
+                        "model_quota_exhausted",
                     ],
                 }
             ],
@@ -1442,6 +1448,26 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "model_id": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"}, {"type": "null"}],
         },
         "required": ["reason", "model_access", "model_id"],
+    },
+    "session.model_switched": {
+        "properties": {
+            "from_access": [{"type": "string", "enum": ["subscription", "api_key", "platform"]}],
+            "to_access": [{"type": "string", "enum": ["subscription", "api_key", "platform"]}],
+            "from_model": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"}, {"type": "null"}],
+            "to_model": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"}, {"type": "null"}],
+            "cause": [{"type": "string", "enum": ["exhausted", "unusable", "released"]}],
+            "until": [
+                {
+                    "type": "string",
+                    "pattern": (
+                        "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])"
+                        "T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+                    ),
+                },
+                {"type": "null"},
+            ],
+        },
+        "required": ["from_access", "to_access", "from_model", "to_model", "cause", "until"],
     },
     "session.pr_linked": {
         "properties": {"epoch": [{"type": "integer", "minimum": 1, "maximum": 2147483647}]},
@@ -1536,6 +1562,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "model_access": [{"type": "string", "enum": ["auto", "subscription", "api_key", "platform"]}],
             "model_id": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"}, {"type": "null"}],
             "locale": [{"type": "string", "enum": ["de", "en"]}],
+            "own_to_dfx": [{"type": "boolean"}],
+            "operator_to_platform": [{"type": "boolean"}],
         },
         "required": ["model_access", "model_id", "locale"],
     },
@@ -1553,6 +1581,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["identity_id"],
     },
+    "task.model_consent": {"properties": {"changed": [{"type": "boolean"}]}, "required": ["changed"]},
     "task.placement": {
         "properties": {
             "device_id": [

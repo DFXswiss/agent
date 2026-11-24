@@ -30,11 +30,16 @@ def my_quotas_state(context: HubContext, user_id: UUID) -> tuple[list[dict[str, 
 def my_quotas(context: HubContext, user_id: UUID) -> list[dict[str, Any]]:
     """The quota windows of the user (module docstring)."""
     with context.pool.connection() as connection:
-        rows = connection.execute(
-            'SELECT "window", used_percent, resets_at, severity, fetched_at, device_id FROM hub.quota_snapshot'
-            ' WHERE owner_id = %s ORDER BY fetched_at DESC, "window"',
-            (user_id,),
-        ).fetchall()
+        return quota_rows(connection, user_id)
+
+
+def quota_rows(connection: Any, user_id: UUID) -> list[dict[str, Any]]:
+    """The quota windows of the user in the caller's connection (also `GET /v1/orgs/{org}/quotas`, KOR-50)."""
+    rows = connection.execute(
+        'SELECT "window", used_percent, resets_at, severity, fetched_at, device_id FROM hub.quota_snapshot'
+        ' WHERE owner_id = %s ORDER BY fetched_at DESC, "window"',
+        (user_id,),
+    ).fetchall()
     return [
         {
             "window": window,

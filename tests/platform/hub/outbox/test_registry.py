@@ -15,6 +15,7 @@ import pytest
 from agent_hub.billing import outbox as billing_handlers
 from agent_hub.errors import HubError
 from agent_hub.http.limits import RateLimiter
+from agent_hub.models import outbox as models_handlers
 from agent_hub.outbox import bodies, chains, jobs
 from agent_hub.outbox import outbox as base_handlers
 from agent_hub.outbox.base import ItemContext, PushContext, moment
@@ -42,7 +43,13 @@ def test_the_copies_equal_the_contract_enumerations() -> None:
     assert set(bodies.BODIES) == set(bodies.ITEM_KINDS)
 
 
-BASES = [("outbox", base_handlers.HANDLERS), ("usage", usage_handlers.HANDLERS), ("billing", billing_handlers.HANDLERS)]
+BASES = [
+    ("outbox", base_handlers.HANDLERS),
+    ("usage", usage_handlers.HANDLERS),
+    ("billing", billing_handlers.HANDLERS),
+    ("models", models_handlers.HANDLERS),
+]
+MODEL_KINDS = dict.fromkeys(models_handlers.BASE_KINDS, "models")
 
 
 def test_the_outbox_area_registers_a_base_handler_for_every_kind_but_the_delegated_ones() -> None:
@@ -50,9 +57,14 @@ def test_the_outbox_area_registers_a_base_handler_for_every_kind_but_the_delegat
     assert found["outbox"] is base_handlers.HANDLERS
     assert found["usage"] is usage_handlers.HANDLERS
     claimed = chains.claimed_bases(discover(chains.BASE_KINDS))
-    assert claimed == {"usage": "usage", "quota": "usage", "runtime": "billing"}
+    assert claimed == {"usage": "usage", "quota": "usage", "runtime": "billing", **MODEL_KINDS}
     assert set(base_handlers.HANDLERS) == set(bodies.ITEM_KINDS) - set(claimed)
-    bases = {**base_handlers.HANDLERS, **usage_handlers.HANDLERS, "runtime": billing_handlers.HANDLERS["runtime"]}
+    bases = {
+        **base_handlers.HANDLERS,
+        **usage_handlers.HANDLERS,
+        "runtime": billing_handlers.HANDLERS["runtime"],
+        **{kind: models_handlers.HANDLERS[kind] for kind in models_handlers.BASE_KINDS},
+    }
     assert {kind: chain[0] for kind, chain in chains.chains().items()} == bases
 
 
@@ -103,7 +115,7 @@ def test_broken_base_claims_stop_the_discovery(found: list[tuple[str, object]]) 
 def test_a_claim_makes_the_area_the_base_of_the_kind() -> None:
     found = [("outbox", {k: h for k, h in base_handlers.HANDLERS.items() if k != "wrap"}), ("alpha", {"wrap": _noop})]
     found.extend(BASES[1:])
-    claimed = {"wrap": "alpha", "usage": "usage", "quota": "usage", "runtime": "billing"}
+    claimed = {"wrap": "alpha", "usage": "usage", "quota": "usage", "runtime": "billing", **MODEL_KINDS}
     assert chains.collect(found, claimed)["wrap"] == (_noop,)
 
 

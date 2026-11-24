@@ -1,0 +1,8 @@
+{
+  "from_access": "platform",
+  "to_access": "subscription",
+  "from_model": null,
+  "to_model": null,
+  "cause": "released",
+  "until": null
+}

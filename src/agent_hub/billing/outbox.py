@@ -16,12 +16,14 @@
   item of an org device is acknowledged and ignored. `runtime_ms` may not exceed the interval `to - from`, and `to`
   may not lie after the receive time by more than the clock skew allowance.
 
-Each charge is one row of `hub.charge` (unique per device and `origin_seq`: an outbox replay runs no handler, and the
-key refuses a second row should one ever run twice), added to `hub.charge_daily` (org, UTC day of the measurement,
-workgroup, device, kind: amount and quantity; with its CHF equivalent at the rate of its day, `agent_hub.billing.fx`)
-and left in `hub.charge_pending` for the settle job, which takes it from
-the org's credit (`agent_hub.billing.credit`); the push never locks the org's account.
-Without a price list in force nothing is booked.
+Each charge is one row of `hub.charge` (unique per device, `origin_seq` and `part`: an outbox replay runs no handler,
+and the key refuses a second row should one ever run twice; an item that books several rows - the split of a
+per-device DFX key, `agent_hub.models.dfx` - numbers them), added to `hub.charge_daily` (org, UTC day of the
+measurement, workgroup, device, kind: amount and quantity; with its CHF equivalent at the rate of its day,
+`agent_hub.billing.fx`) and left in `hub.charge_pending` for the settle job, which takes it from the org's credit
+(`agent_hub.billing.credit`); the push never locks the org's account. A charge without a session (the share of a
+per-device key no session reported, ADR-080 section 7) has no workgroup, task or session and is summed per day under
+the nil workgroup ID `NO_WG`. Without a price list in force nothing is booked.
 """
 
 from __future__ import annotations
@@ -48,11 +50,13 @@ SKEW = timedelta(seconds=300)
 """How far a measured time may lie after the hub's receive time (device clock skew)."""
 COUNTS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
 INSERT_CHARGE = (
-    "INSERT INTO hub.charge (id, org_id, wg_id, task_id, session_id, device_id, origin_seq, kind, at,"
+    "INSERT INTO hub.charge (id, org_id, wg_id, task_id, session_id, device_id, origin_seq, part, kind, at,"
     " amount_micro_usd, price_version, quantity, fx_n, fx_day, chf_per_usd_e8, amount_micro_chf)"
-    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-    " ON CONFLICT (device_id, origin_seq) DO NOTHING RETURNING id"
+    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    " ON CONFLICT (device_id, origin_seq, part) DO NOTHING RETURNING id"
 )
+NO_WG = UUID(int=0)
+"""The workgroup of `charge_daily` rows without a workgroup (module docstring)."""
 UPSERT_DAILY = (
     "INSERT INTO hub.charge_daily (org_id, day, wg_id, device_id, kind, amount_micro_usd, quantity)"
     " VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (org_id, day, wg_id, device_id, kind) DO UPDATE"
@@ -82,7 +86,7 @@ def measured(item: ItemContext, text: str | None) -> datetime:
 
 def book(
     item: ItemContext,
-    ids: tuple[UUID, UUID, UUID, UUID],
+    ids: tuple[UUID, UUID | None, UUID | None, UUID | None],
     *,
     kind: str,
     at: datetime,
@@ -90,8 +94,11 @@ def book(
     version: int,
     quantity: Mapping[str, Any],
     count: int,
+    part: int = 0,
+    daily_device: UUID | None = None,
 ) -> None:
-    """Insert the charge, add it to the day and leave it pending for the credit (module docstring)."""
+    """Insert the charge, add it to the day and leave it pending for the credit (module docstring); `daily_device` is
+    the device of the day's row when it is not the pushing one (a per-device key's org device)."""
     org, wg, task, session = ids
     inserted = item.connection.execute(
         INSERT_CHARGE,
@@ -103,6 +110,7 @@ def book(
             session,
             item.device,
             item.origin_seq,
+            part,
             kind,
             at,
             amount,
@@ -113,7 +121,8 @@ def book(
     ).fetchone()
     if inserted is None:
         return
-    item.connection.execute(UPSERT_DAILY, (org, utc_day(at), wg, item.device, kind, amount, count))
+    day_row = (org, utc_day(at), wg or NO_WG, daily_device or item.device, kind, amount, count)
+    item.connection.execute(UPSERT_DAILY, day_row)
     credit.pend(item.connection, inserted[0], org, amount)
 
 

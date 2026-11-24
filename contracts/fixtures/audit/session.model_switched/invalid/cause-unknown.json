@@ -1,0 +1,8 @@
+{
+  "from_access": "subscription",
+  "to_access": "platform",
+  "from_model": "claude-sonnet-5-5",
+  "to_model": "deepseek/deepseek-v4.1-flash-1017",
+  "cause": "rate_limited",
+  "until": "2026-11-21T14:05:00.000Z"
+}

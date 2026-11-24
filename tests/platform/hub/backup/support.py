@@ -363,6 +363,26 @@ class Estate:
                 "INSERT INTO hub.quota_unreadable (owner_id, since, device_id) VALUES (%s, %s, %s)",
                 (writer.id, now, device.id),
             ),
+            # model access with fallback (KOR-50): a limit, a snapshot, an issuer, a key and its waiting cost
+            (
+                "INSERT INTO hub.quota_limit (owner_id, at, until, readable, device_id, fetched_at)"
+                " VALUES (%s, %s, %s, true, %s, %s)",
+                (writer.id, now, now + timedelta(hours=2), device.id, now),
+            ),
+            (
+                "INSERT INTO hub.operator_quota (device_id, at, snapshot, received_at) VALUES (%s, %s, %s, %s)",
+                (device.id, now, Jsonb([]), now),
+            ),
+            ("INSERT INTO hub.dfx_issuer (device_id, announced_at) VALUES (%s, %s)", (device.id, now)),
+            (
+                "INSERT INTO hub.dfx_key (request_id, org_id, device_id, requested_at, issuer_device_id, key_ref,"
+                " envelope, issued_at, booked_micro_usd) VALUES (%s, %s, %s, %s, %s, 'dfx-backup1', 'AAAA', %s, 10)",
+                (new_id(), org, device.id, now, device.id, now),
+            ),
+            (
+                "INSERT INTO hub.dfx_key_cost (device_id, session_id, org_id, cost_micro_usd) VALUES (%s, %s, %s, 7)",
+                (device.id, self.session, org),
+            ),
             (
                 "INSERT INTO hub.usage_daily (org_id, day, device_id, cost_micro_usd) VALUES (%s, %s, %s, 5000)",
                 (org, date(2026, 11, 21), device.id),

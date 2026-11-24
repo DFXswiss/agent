@@ -1,0 +1,16 @@
+{
+  "action": "session.model_switched",
+  "result": "ok",
+  "task_id": "0193001e-0000-7000-8000-00000000001e",
+  "session_id": "01930028-0000-7000-8000-000000000028",
+  "target_kind": "session",
+  "target_id": "01930028-0000-7000-8000-000000000028",
+  "detail": {
+    "from_access": "subscription",
+    "to_access": "platform",
+    "from_model": "claude-sonnet-5-5",
+    "to_model": "deepseek/deepseek-v4.1-flash-1017",
+    "cause": "x",
+    "until": "2026-11-21T14:05:00.000Z"
+  }
+}

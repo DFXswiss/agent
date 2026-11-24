@@ -15,7 +15,9 @@ and composes every other field from the sections other areas register as `<area>
 `delivered_prompt_event_ids` from the tasks area, `requests`/`credentials_changed` from requests and credentials,
 `pings` from notifications, `quota_poll_owners`/`platform_budget` from usage, `github_defaults` from github). A field
 may be provided by one area only. A field no area provides is sent empty: `[]`, `{}` for
-`delivered_prompt_event_ids`, `null` for `platform_budget`. Every provider reads in the same transaction as the base
+`delivered_prompt_event_ids`, `null` for `platform_budget`. The optional fields of KOR-50 (`model_fallback`,
+`dfx_keys`, `dfx_key_held`, from the models area) are left out while their value is `OMIT`: `dfx_keys` goes to the
+elected issuer only, `dfx_key_held` to org devices only. Every provider reads in the same transaction as the base
 fields.
 """
 
@@ -36,6 +38,8 @@ from agent_hub.device.access import DeviceView, device_view
 from agent_hub.registry import DEVICE_STATE_SECTIONS, RegistryError, discover
 
 Connection = psycopg.Connection[Any]
+OMIT: Any = object()
+"""The value of an optional field that is left out of the answer."""
 SECTION_FIELDS: Mapping[str, Callable[[], Any]] = {
     "sessions": list,
     "pending_prompts": list,
@@ -47,6 +51,9 @@ SECTION_FIELDS: Mapping[str, Callable[[], Any]] = {
     "platform_budget": lambda: None,
     "billing": lambda: {"api": 1, "active": False, "orgs": {}},
     "github_defaults": list,
+    "model_fallback": lambda: OMIT,
+    "dfx_keys": lambda: OMIT,
+    "dfx_key_held": lambda: OMIT,
 }
 """The fields sections provide, with the value of a field no area provides."""
 
@@ -137,4 +144,4 @@ def active_state(connection: Connection, device: UUID, config: HubConfig, now: d
             raise RegistryError("a device-state section returned other fields than it declares")
         answer.update(provided)
     answer["hub_time"] = format_time(now)
-    return answer
+    return {name: value for name, value in answer.items() if value is not OMIT}

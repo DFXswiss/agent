@@ -25,6 +25,8 @@ from tests.platform.hub.conftest import HubHarness, SignedClient, uuid7
 
 NO_CONTRACT = {"contract": False}
 
+DEFAULT_FALLBACK = {"own_to_dfx": False, "operator_to_platform": True}
+
 
 def rows(hub: HubHarness, query: str, *params: Any) -> list[tuple[Any, ...]]:
     with hub.pool.connection() as connection:
@@ -54,7 +56,7 @@ def test_me_of_a_new_user(browser: FakeBrowser, account: Account, client: Signed
             "kem_pub": b64url_encode(account.identity.kem_public()),
             "sig_pub": b64url_encode(account.identity.sig_public()),
         },
-        "settings": {"model_access": "auto", "model_id": None, "locale": "en"},
+        "settings": {"model_access": "auto", "model_id": None, "locale": "en", "fallback": DEFAULT_FALLBACK},
         "orgs": [],
         "platform_roles": [],
         "unread_notifications": 0,
@@ -332,11 +334,30 @@ def test_a_recovery_id_of_another_user_is_a_conflict(
 def test_settings_are_stored(browser: FakeBrowser, client: SignedClient, access: str, model: str | None) -> None:
     settings = {"model_access": access, "model_id": model, "locale": "de"}
     response = client.put("/v1/me/settings", json=settings)
-    assert (response.status_code, response.json()) == (200, settings)
-    assert client.get("/v1/me").json()["settings"] == settings
+    stored = {**settings, "fallback": DEFAULT_FALLBACK}
+    assert (response.status_code, response.json()) == (200, stored)
+    assert client.get("/v1/me").json()["settings"] == stored
     assert rows(browser.hub, "SELECT updated_at FROM hub.user_settings") == [(browser.hub.clock(),)]
     # the new values are audited (metadata the hub stores in clear, ADR-063 section 2)
-    assert rows(browser.hub, "SELECT detail FROM hub.audit WHERE action = 'settings.put'") == [(settings,)]
+    audited = {**settings, **DEFAULT_FALLBACK}
+    assert rows(browser.hub, "SELECT detail FROM hub.audit WHERE action = 'settings.put'") == [(audited,)]
+
+
+def test_the_fallback_settings_are_stored_and_kept(browser: FakeBrowser, client: SignedClient) -> None:
+    """KOR-50, ADR-080 section 1: `fallback` is optional; without it the stored values stay."""
+    chosen = {"own_to_dfx": True, "operator_to_platform": False}
+    settings = {"model_access": "auto", "model_id": None, "locale": "de", "fallback": chosen}
+    assert client.put("/v1/me/settings", json=settings).json() == settings
+    assert client.get("/v1/me").json()["settings"]["fallback"] == chosen
+    later = {"model_access": "subscription", "model_id": None, "locale": "en"}
+    assert client.put("/v1/me/settings", json=later).json() == {**later, "fallback": chosen}
+    details = rows(browser.hub, "SELECT detail FROM hub.audit WHERE action = 'settings.put' ORDER BY seq")
+    assert [detail[0]["own_to_dfx"] for detail in details] == [True, True]
+    back = {**later, "fallback": DEFAULT_FALLBACK}
+    assert client.put("/v1/me/settings", json=back).json() == back
+    # a new row takes the given values
+    fresh = {"model_access": "platform", "model_id": None, "locale": "en", "fallback": chosen}
+    assert browser.hub.browser().put("/v1/me/settings", json=fresh).json() == fresh
 
 
 @pytest.mark.parametrize(
@@ -359,8 +380,10 @@ def test_a_model_outside_the_catalog_is_refused(client: SignedClient, access: st
         {"model_access": "auto", "locale": "en"},
         {"model_access": "auto", "model_id": " bad", "locale": "en"},
         {"model_access": "auto", "model_id": None, "locale": "en", "theme": "dark"},
+        {"model_access": "auto", "model_id": None, "locale": "en", "fallback": {"own_to_dfx": True}},
+        {"model_access": "auto", "model_id": None, "locale": "en", "fallback": None},
     ],
-    ids=["locale", "access", "missing", "model-form", "unknown"],
+    ids=["locale", "access", "missing", "model-form", "unknown", "fallback-partial", "fallback-null"],
 )
 def test_malformed_settings_are_refused(client: SignedClient, body: dict[str, Any]) -> None:
     response = client.put("/v1/me/settings", json=body, extensions=NO_CONTRACT)
@@ -370,7 +393,10 @@ def test_malformed_settings_are_refused(client: SignedClient, body: dict[str, An
 
 def test_settings_of_a_user_without_a_settings_row_are_created(browser: FakeBrowser) -> None:
     settings = {"model_access": "platform", "model_id": None, "locale": "en"}
-    assert browser.hub.browser().put("/v1/me/settings", json=settings).json() == settings
+    assert browser.hub.browser().put("/v1/me/settings", json=settings).json() == {
+        **settings,
+        "fallback": DEFAULT_FALLBACK,
+    }
 
 
 # --- zero knowledge ---------------------------------------------------------------------------------------------------

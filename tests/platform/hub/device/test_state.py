@@ -26,6 +26,7 @@ EMPTY_SECTIONS: dict[str, Any] = {
     "platform_budget": None,
     "billing": {"api": 1, "active": False, "orgs": {}},
     "github_defaults": [],
+    "model_fallback": {"api": 1},  # KOR-50; dfx_keys only for the issuer, dfx_key_held only for org devices
 }
 
 

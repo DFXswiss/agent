@@ -1,0 +1,8 @@
+{
+  "session_id": "01930028-0000-7000-8000-000000000028",
+  "state": "suspended",
+  "reason": "model_quota_exhausted",
+  "at": "2026-11-21T12:00:00.000Z",
+  "wait_until": "2026-11-21T14:05:00.000Z",
+  "dfx_choice": true
+}

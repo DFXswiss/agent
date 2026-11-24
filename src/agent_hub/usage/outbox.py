@@ -21,6 +21,11 @@ the outbox acknowledges as `rejected` and audits as `outbox.rejected`. Each wind
 report than the stored one (a late retry, a report of the previous polling device) leaves the row unchanged. A report
 `unavailable: true` (the usage endpoint refused the owner's token) drops the owner's windows fetched at or before it,
 so `GET /v1/me/quotas` answers no rows and the web shows "not available" instead of an old snapshot (KOR-05).
+
+Either form may carry `limited` (KOR-50, ADR-080 section 6): the latest observed limit of the owner's subscription,
+kept in `hub.quota_limit` (a newer observation replaces an older one, never the reverse). A report without it that was
+fetched after the stored limit was observed releases it: its `until` becomes the fetch time unless it lies earlier,
+and the time of the limit stays visible.
 """
 
 from __future__ import annotations
@@ -74,6 +79,14 @@ MARK_UNREADABLE = (
     " ON CONFLICT (owner_id) DO NOTHING"
 )
 CLEAR_UNREADABLE = "DELETE FROM hub.quota_unreadable WHERE owner_id = %s AND since <= %s"
+UPSERT_LIMIT = (
+    "INSERT INTO hub.quota_limit (owner_id, at, until, readable, device_id, fetched_at) VALUES (%s, %s, %s, %s, %s, %s)"
+    " ON CONFLICT (owner_id) DO UPDATE SET at = EXCLUDED.at, until = EXCLUDED.until, readable = EXCLUDED.readable,"
+    " device_id = EXCLUDED.device_id, fetched_at = EXCLUDED.fetched_at WHERE hub.quota_limit.at <= EXCLUDED.at"
+)
+RELEASE_LIMIT = (
+    "UPDATE hub.quota_limit SET until = %s WHERE owner_id = %s AND at < %s AND (until IS NULL OR until > %s)"
+)
 PLATFORM = "platform"
 PROVIDER_COST = "provider"
 
@@ -111,6 +124,13 @@ def handle_quota(item: ItemContext, body: QuotaBody) -> None:
     if not polls_for(item.connection, item.device, body.owner_id, item.now, binding.online_window()):
         raise HubError("forbidden")
     fetched = moment(body.fetched_at)
+    limited = body.limited
+    if limited is None:
+        item.connection.execute(RELEASE_LIMIT, (fetched, body.owner_id, fetched, fetched))
+    else:
+        until = None if limited.until is None else moment(limited.until)
+        observed = (body.owner_id, moment(limited.at), until, limited.readable, item.device, fetched)
+        item.connection.execute(UPSERT_LIMIT, observed)
     if body.unavailable:
         item.connection.execute(DROP_QUOTA, (body.owner_id, fetched))
         # a late report after a newer successful read leaves no marker (review L5)

@@ -1,0 +1,8 @@
+{
+  "model_access": "auto",
+  "model_id": null,
+  "locale": "de",
+  "fallback": {
+    "own_to_dfx": true
+  }
+}

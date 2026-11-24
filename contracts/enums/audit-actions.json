@@ -840,6 +840,18 @@
     {
       "action": "read.device.github_identities",
       "group": "read"
+    },
+    {
+      "action": "session.model_switched",
+      "group": "session"
+    },
+    {
+      "action": "task.model_consent",
+      "group": "task"
+    },
+    {
+      "action": "read.org.quotas",
+      "group": "read"
     }
   ]
 }

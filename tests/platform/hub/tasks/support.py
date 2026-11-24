@@ -150,7 +150,7 @@ class Desk:
         *,
         device: Actor | None = None,
         at: datetime | None = None,
-        **details: str | None,
+        **details: Any,
     ) -> Applied:
         """A transition as the outbox applies it (reported by `device`, default the scene's device)."""
         reporter = device or self.scene.device

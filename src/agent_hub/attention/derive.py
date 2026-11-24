@@ -16,7 +16,11 @@
 5. task `starting` → `working/starting`; task `working` → an operation of the task `accepted` or `executing` →
    `working/operation`, no session of depth 0 `working` but a subagent `working` → `working/subagents`, else
    `working/working`;
-6. task `idle` → a main session reason of `IDLE_REASONS` → its record (ref: the session); otherwise `done/idle`.
+6. task `idle` → a main session `suspended` with `model_quota_exhausted` (ADR-080 section 5) →
+   `needs_decision/quota_choice` (ref: the session) when its transition offered the choice of DFX access
+   (`dfx_choice`), the task has no consent yet and the org's credit is not exhausted, else `working/quota_wait`; both
+   carry the session's `wait_until`. A main session reason of `IDLE_REASONS` → its record (ref: the session);
+   otherwise `done/idle`.
 
 The mappings are tables: a later package adds a reason by a row here and in `contracts/enums/attention.json` (the
 contract test compares `CATEGORIES` with the enum). Only `needs_decision` and `blocked` records carry a ref; a record
@@ -27,6 +31,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from types import MappingProxyType
 from uuid import UUID
 
@@ -36,7 +41,7 @@ CATEGORIES: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
     {
         NEEDS_DECISION: (
             ASCENDING,
-            ("question", "approval", "connection_missing", "credit_empty", "device_missing"),
+            ("question", "approval", "connection_missing", "credit_empty", "device_missing", "quota_choice"),
         ),
         BLOCKED: (
             DESCENDING,
@@ -49,7 +54,7 @@ CATEGORIES: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
                 "operation_refused",
             ),
         ),
-        WORKING: (DESCENDING, ("queued", "starting", "working", "operation", "subagents")),
+        WORKING: (DESCENDING, ("queued", "starting", "working", "operation", "subagents", "quota_wait")),
         DONE: (DESCENDING, ("idle", "closed")),
     }
 )
@@ -117,6 +122,10 @@ WG_DEVICE_REASONS = frozenset({"device_offline"})
 IDLE_REASONS: Mapping[str, Outcome] = MappingProxyType(
     {"budget_exceeded": (NEEDS_DECISION, "credit_empty"), "credit_exhausted": (NEEDS_DECISION, "credit_empty")}
 )
+MODEL_QUOTA = "model_quota_exhausted"
+SUSPENDED = "suspended"
+QUOTA_CHOICE: Outcome = (NEEDS_DECISION, "quota_choice")
+QUOTA_WAIT: Outcome = (WORKING, "quota_wait")
 RUNNING_OPERATION_STATES = ("accepted", "executing")
 WG_WIDE = frozenset({"device_missing", "device_unreachable", "no_capacity"})
 """Reasons that concern a whole workgroup (one notification per owner, workgroup and reason, ADR-076 section 5)."""
@@ -149,16 +158,25 @@ class Inputs:
     operation_running: bool = False
     main_working: bool = False
     subagent_working: bool = False
+    main_wait_until: datetime | None = None
+    """The main session's wait (ADR-080 section 4)."""
+    main_dfx_choice: bool = False
+    model_consent: bool = False
+    """The task's consent to DFX model access (ADR-080 section 5)."""
+    credit_exhausted: bool = False
+    """The org's credit is exhausted (read only for a main session waiting for model quota)."""
 
 
 @dataclass(frozen=True)
 class Attention:
-    """A derived record: category, reason and the object the next action refers to."""
+    """A derived record: category, reason, the object the next action refers to and, for a quota wait, when the
+    task continues by itself."""
 
     category: str
     reason: str
     ref_kind: str | None = None
     ref_id: UUID | None = None
+    wait_until: datetime | None = None
 
 
 def _session(outcome: Outcome, main_id: UUID | None) -> Attention:
@@ -203,7 +221,16 @@ def _scheduling(inputs: Inputs) -> Attention:
     return Attention(*(known or (WORKING, "queued")))
 
 
+def _quota(inputs: Inputs) -> Attention:
+    """Rule 6, a main session waiting for model quota (module docstring)."""
+    if inputs.main_dfx_choice and not inputs.model_consent and not inputs.credit_exhausted:
+        return Attention(*QUOTA_CHOICE, "session", inputs.main_id, inputs.main_wait_until)
+    return Attention(*QUOTA_WAIT, wait_until=inputs.main_wait_until)
+
+
 def _idle(inputs: Inputs) -> Attention:
+    if inputs.main_state == SUSPENDED and inputs.main_reason == MODEL_QUOTA:
+        return _quota(inputs)
     credit = IDLE_REASONS.get(inputs.main_reason or "")
     return Attention(DONE, "idle") if credit is None else _session(credit, inputs.main_id)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -232,3 +233,25 @@ def test_every_outcome_of_every_table_is_a_listed_reason_of_its_category() -> No
 )
 def test_derivation(inputs: Inputs, expected: Attention) -> None:
     assert derive.derive(inputs) == expected
+
+
+def test_a_main_session_waiting_for_model_quota() -> None:
+    """ADR-080 section 5 (KOR-50): the choice of DFX access needs a person unless the task has the consent or the
+    org's credit is exhausted; otherwise the task waits by itself. Both records carry the wait."""
+    until = datetime(2026, 11, 21, 14, 5, tzinfo=UTC)
+    waiting = {"main_state": "suspended", "main_reason": "model_quota_exhausted", "main_wait_until": until}
+    choice = Attention("needs_decision", "quota_choice", "session", MAIN, until)
+    wait = Attention("working", "quota_wait", wait_until=until)
+    assert derive.derive(_inputs("idle", main_dfx_choice=True, **waiting)) == choice
+    assert derive.derive(_inputs("idle", main_dfx_choice=True, model_consent=True, **waiting)) == wait
+    assert derive.derive(_inputs("idle", main_dfx_choice=True, credit_exhausted=True, **waiting)) == wait
+    assert derive.derive(_inputs("idle", **waiting)) == wait
+    # another pause of the main session is no quota wait
+    assert derive.derive(_inputs("idle", main_state="suspended", main_reason="credit_exhausted")) == Attention(
+        "needs_decision", "credit_empty", "session", MAIN
+    )
+    assert derive.derive(_inputs("idle", main_state="idle", main_reason="model_quota_exhausted")) == Attention(
+        "done", "idle"
+    )
+    for category, reason in (derive.QUOTA_CHOICE, derive.QUOTA_WAIT):
+        assert reason in derive.CATEGORIES[category][1]
