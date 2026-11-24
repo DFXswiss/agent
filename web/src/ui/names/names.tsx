@@ -1,4 +1,4 @@
-// How the interface names people and things (ADR-067, rule E-19 of the concept): a name when one is known, else a
+// How the interface names people and things (ADR-073, rule E-19 of the concept): a name when one is known, else a
 // sentence a layperson understands – never a fragment of an ID as the main line. The ID stays available (`title`,
 // `data-id`, the member list's "Show ID") to compare it, e.g. with an account code read out on the phone. A person's
 // name may be provisional (given by an admin or taken from the invitation) until the person's own name is written; it

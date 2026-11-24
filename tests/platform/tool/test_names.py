@@ -1,4 +1,4 @@
-"""Names of people (ADR-067): `org admit --name`, `org invite --name` and `org member-name` give a provisional name as a
+"""Names of people (ADR-073): `org admit --name`, `org invite --name` and `org member-name` give a provisional name as a
 `member.name` event (sealed, the hub never sees it), `org show` names every member with where the name comes from and
 writes the user's own name into an org opened without one; an invitation whose account was admitted directly is
 closed by the admission."""

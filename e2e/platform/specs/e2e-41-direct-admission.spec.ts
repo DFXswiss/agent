@@ -6,7 +6,7 @@
 // `org.admitted` notification; he reads what Ada wrote in the workgroup and his prompt runs on the platform device
 // (the runner verified a log with `admit`). A non-admin cannot admit (no button; the hub refuses a signed entry). Bob
 // leaves; Ada's browser sends the owed rotation. Ada's agent tool (`agent-platform org admit`) admits Carol by user ID.
-// Names (ADR-067, HOT-12): Ada gives Bob a name when admitting him and sees it at once (marked as provisional), Bob's
+// Names (ADR-073, HOT-12): Ada gives Bob a name when admitting him and sees it at once (marked as provisional), Bob's
 // client writes his own name when he opens the org without any action of his, and it replaces the provisional one;
 // the agent admits Carol with a name and changes it with `org member-name`; no member line shows an ID fragment and
 // the hub never sees a name. Runs on T1.
@@ -53,7 +53,7 @@ const BOB_GIVEN = 'Bob kz40-name-bob-h7j9k1';
 const CAROL_GIVEN = 'Carol kz40-name-carol-m2n4b6';
 const CAROL_CHANGED = 'Carol kz40-name-carol2-v8c0x2';
 
-/** The member list never shows an ID or a fragment of one as a name (ADR-067). */
+/** The member list never shows an ID or a fragment of one as a name (ADR-073). */
 async function namesWithoutIds(page: Page, ids: readonly string[]): Promise<void> {
   for (const text of await page.getByTestId('members.item.name').allTextContents()) {
     expect(text).not.toMatch(/…[0-9a-f]{4,}/);

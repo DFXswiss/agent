@@ -41,7 +41,7 @@
             "type": "boolean"
           },
           "registered_user": {
-            "description": "The account that registered with the invitation when it is an active member of the org now (the invitation is settled), else null; optional for older hubs (ADR-067).",
+            "description": "The account that registered with the invitation when it is an active member of the org now (the invitation is settled), else null; optional for older hubs (ADR-073).",
             "anyOf": [
               {
                 "$ref": "../common.json#/$defs/uuid"

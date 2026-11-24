@@ -81,7 +81,7 @@ export const KIND_RULES: readonly KindRule[] = [
   rule('wg.profile', 'org', [USER], ORG_ADMIN, { wg: 'target' }),
   rule('member.profile', 'org', [USER], ORG_MEMBER_SELF, { wg: 'empty', ref: 'author' }),
   rule('device.profile', 'org', [USER], ORG_ADMIN, { wg: 'empty', ref: 'device' }),
-  // an admin-given name of a member or of an invitation's person (ADR-067)
+  // an admin-given name of a member or of an invitation's person (ADR-073)
   rule('member.name', 'org', [USER], ORG_ADMIN, { wg: 'empty', ref: 'subject' }),
   ...['whiteboard.entry', 'whiteboard.edit', 'whiteboard.delete'].flatMap((kind) => [
     rule(kind, 'org', [USER], ORG_ADMIN, ORG_ENTRY, ORG_LEVEL),

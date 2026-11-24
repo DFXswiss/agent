@@ -1,7 +1,7 @@
 // "Add an existing account" (06-web.md section 7.1, ADR-060): the admin types the account code the person sees in its
 // settings, or picks one of the accounts registered through the admin's own platform invitations; chooses the role and
 // the workgroups (the default workgroup is always write), enters the person's name and admits with one button. The
-// name is the provisional name every member sees until the person's own one is written (ADR-067, `member.name`); an
+// name is the provisional name every member sees until the person's own one is written (ADR-073, `member.name`); an
 // open invitation the same account registered with is closed right after. The person does nothing; it finds the
 // organization the next time it opens the app. The identity shown before the button is the proven one (checked
 // against the platform log in `core/org/admit.ts`), never the hub's word.

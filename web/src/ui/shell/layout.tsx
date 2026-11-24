@@ -5,7 +5,7 @@
 // open; the page is then padded by the keyboard's height so a composer can stay above it), from `md` a navigation row,
 // from `lg` a left sidebar. Routes that need an unlocked identity send a locked or anonymous browser to
 // `/login?next=…`; inside `/o/:org` the org becomes the active one (its live channel runs), the user's own name is
-// written into it once its log is verified if the user has none there yet (ADR-067, `ensureOwnNameOnce`), and an org
+// written into it once its log is verified if the user has none there yet (ADR-073, `ensureOwnNameOnce`), and an org
 // in the blocking error state shows that state instead of the screen.
 import { useEffect } from 'react';
 import { matchPath, Navigate, Outlet, useLocation } from 'react-router-dom';

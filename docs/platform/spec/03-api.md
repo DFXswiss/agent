@@ -98,7 +98,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | Endpoint | Right | Request → Response |
 |---|---|---|
 | `POST /v1/orgs/{org}/invites` | org:admin | `{entry` (log `invite` entry)`,package_ct}` → `{invite_id,seq}` (atomic with the log append) |
-| `GET /v1/orgs/{org}/invites` | org:admin | → open and recent invites (state `open|used|revoked|expired`, `registered`, `opened_at`: first answered lookup from the audit or null, KOR-36; `registered_user`: the account that registered with it or null, ADR-067) |
+| `GET /v1/orgs/{org}/invites` | org:admin | → open and recent invites (state `open|used|revoked|expired`, `registered`, `opened_at`: first answered lookup from the audit or null, KOR-36; `registered_user`: the account that registered with it or null, ADR-073) |
 | `POST /v1/orgs/{org}/invites/{id}/revoke` | org:admin | `{entry` (`invite_revoke`)`}` → `{seq}` |
 | `POST /v1/platform/invites` | platform:inviter | `{invite_id,kind:"user",expires_at,pk_inv}` → `{}` (code never sent; `pk_inv` not an Ed25519 public key → `400 params_invalid`; the same ID with other values → `409 id_conflict`; ADR-043) |
 | `GET /v1/platform/invites` / `POST /v1/platform/invites/{id}/revoke` | platform:inviter | list / revoke |
@@ -577,7 +577,7 @@ operation's result (decrypted from its `operation.result` event) with `status:"d
 | `wg.profile` | `{name,description?}` |
 | `member.profile` | `{display_name}` |
 | `device.profile` | `{label}` |
-| `member.name` | `{display_name}`; header `ref` = the user or the invitation the name is for (ADR-067) |
+| `member.name` | `{display_name}`; header `ref` = the user or the invitation the name is for (ADR-073) |
 | `task.meta` | `{title,description?}`; header `session=""`, `ref=""` |
 | `prompt` | `{text,attachments:[]}` (attachments reserved, empty in v1); header `session=""`, `ref=""` (prompts address the task) |
 | `whiteboard.entry` | `{level,text}` (Markdown, ≤ 64 KiB) |

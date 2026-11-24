@@ -53,7 +53,7 @@ function CreateDialog({ org, state, userId, directory, onClose }: CreateProps) {
   const [devices, setDevices] = useState<string[]>([]);
   const others = memberRows(state, userId, directory).filter((row) => !row.isMe);
   const choices = assignableDevices(state, platform);
-  // devices by their label (`device.profile`, read with the org's profiles), else a sentence – never an ID (ADR-067)
+  // devices by their label (`device.profile`, read with the org's profiles), else a sentence – never an ID (ADR-073)
   useDeviceNames([org]); // pulls the org's device labels once
   const labels = useStore(selectDeviceLabels(org), app.store);
   const labelled = (device: string) => labels.has(device);

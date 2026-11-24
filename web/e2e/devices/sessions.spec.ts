@@ -34,7 +34,7 @@ test('shows the session tree and the detail of a subagent', async ({ page, baseU
   ]);
   const childNode = page.locator(`[data-testid="sessions.node"][data-session="${child}"]`);
   await expect(childNode.getByTestId('session.model').first()).toHaveText('Model claude-sonnet');
-  // the device has no `device.profile` label here: a sentence, never an ID (KOR-05, B-23, ADR-067)
+  // the device has no `device.profile` label here: a sentence, never an ID (KOR-05, B-23, ADR-073)
   await expect(childNode.getByTestId('session.device').first()).toHaveText('On Device without a name (reachable)');
   await expect(childNode.getByTestId('session.state').first()).toHaveAttribute('data-state', 'working');
   await childNode.getByTestId('sessions.link').first().click();

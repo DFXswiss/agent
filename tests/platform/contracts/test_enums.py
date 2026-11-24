@@ -331,7 +331,7 @@ def test_event_kind_matrix(contracts: Contracts) -> None:
     assert by_kind[("wg.profile", "org", ("user",))]["wg"] == "target"
     assert by_kind[("member.profile", "org", ("user",))]["ref"] == "author"
     assert by_kind[("device.profile", "org", ("user",))]["ref"] == "device"
-    # ADR-067: member.name names a user or a user invitation of the org at lh
+    # ADR-073: member.name names a user or a user invitation of the org at lh
     assert by_kind[("member.name", "org", ("user",))]["ref"] == "subject"
     assert by_kind[("operation.result", "wg", ("device",))]["ref"] == "operation"
     for row in rows:

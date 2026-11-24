@@ -1,4 +1,4 @@
-"""Names of people in an org for the agent (ADR-067; the web client's twin is `web/src/core/org/names.ts`).
+"""Names of people in an org for the agent (ADR-073; the web client's twin is `web/src/core/org/names.ts`).
 
 - `give_name`: an admin gives a member without an own name - or the person of an invitation - a provisional name, a
   `member.name` event in the org scope (`ref` = the user ID or the `invite_id`) sealed with the current org key: every

@@ -1,4 +1,4 @@
-// ADR-067 (core part): the names of people – the directory's name resolution (own `member.profile` first, else the
+// ADR-073 (core part): the names of people – the directory's name resolution (own `member.profile` first, else the
 // name a current admin gave the member from its current membership on, else the name of the invitation it joined
 // with), the admin's `member.name` event (`giveName`), the settled invitations (`closeSettledInvites`, the `settled`
 // status) and the own name written into an org opened without one (`ensureOwnName`, `ensureOwnNameOnce`).

@@ -2,7 +2,7 @@
 // workgroups with read or write (the default workgroup is always write; only workgroups whose key the admin holds),
 // expiry 1 h – 30 d (72 h default). The result shows the link `<origin>/invite#<code>` and the code once, with copy
 // buttons and the warning to pass them on confidentially; "Done" forgets them. The admin names the invited person; the
-// name is a `member.name` event for the invitation (ADR-067), shown in the list ("Invitation for <name>") and – once the
+// name is a `member.name` event for the invitation (ADR-073), shown in the list ("Invitation for <name>") and – once the
 // person joins with it – as the member's provisional name. Open invitations (checked against the verified log) can be
 // revoked; one whose account was meanwhile admitted directly is shown as settled with one action to close it.
 import { useEffect, useId, useState } from 'react';

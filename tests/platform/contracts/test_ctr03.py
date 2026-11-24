@@ -165,7 +165,7 @@ def test_event_kinds_table(contracts: Contracts) -> None:
         assert row["authors"] == sorted({a for m in rows for a in m["authors"]}), row
         limits = matrix["size_limits"]
         assert row["max_ct_bytes"] == limits.get(row["kind"], limits["default_ct_bytes"]), row
-        # devices pull every kind but the terminal and the admin-given names (ADR-067: the sessions name members from
+        # devices pull every kind but the terminal and the admin-given names (ADR-073: the sessions name members from
         # their own profiles)
         assert row["device_pull"] is (row["kind"] not in {"session.terminal", "member.name"}), row
         assert row["body"] == f"events/{row['kind']}.json"

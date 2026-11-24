@@ -3,7 +3,7 @@
 // landing org first), the first verified own `member.profile` wins; profiles not in the store yet are pulled once.
 // '' if no org has one (no org, nothing readable). A name an admin gave the user is never the user's own.
 //
-// `ensureOwnName` writes the own name into an org the user opens without having one there (ADR-067): no dialog, no
+// `ensureOwnName` writes the own name into an org the user opens without having one there (ADR-073): no dialog, no
 // question – a display name is no access credential. It writes only after the org's profiles were pulled completely
 // (a failed pull writes nothing), only with the current org key, and at most once per org and sign-in.
 import { memberProfile } from './join';
@@ -72,7 +72,7 @@ export function ensureOwnNameOnce(context: TasksContext, org: string, orgs: read
   const key = `${context.store.getState().me.userId} ${org}`;
   if (done.has(key)) return Promise.resolve(null);
   done.add(key);
-  // a failure is tried again at the next open (ADR-067 §3)
+  // a failure is tried again at the next open (ADR-073 §3)
   return ensureOwnName(context, org, orgs).catch(() => {
     done!.delete(key);
     return null;

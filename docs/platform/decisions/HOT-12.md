@@ -1,6 +1,6 @@
 # HOT-12 – decisions
 
-Package: every member has a name, never an ID instead of a person ([ADR-067](../adr/067-names-for-every-member.md)).
+Package: every member has a name, never an ID instead of a person ([ADR-073](../adr/073-names-for-every-member.md)).
 
 1. **Where the admin-given name lives:** an org-scope event `member.name` (sealed with the org key), not a field of
    the `admit` entry – the membership log is plaintext for the hub. One kind serves members and invitations (`ref` =
@@ -10,7 +10,7 @@ Package: every member has a name, never an ID instead of a person ([ADR-067](../
    Only the own name is the account's name.
 3. **Own name without a question** (task goal 2 against ADR-060 "consent"): consent in ADR-060 is about credential
    keys; a display name is none. Reviewed finding "the admitter learns the name on open" accepted as a deliberate
-   change of ADR-060's residual-risk sentence (recorded in ADR-067 §3), also when the person opens the org only to
+   change of ADR-060's residual-risk sentence (recorded in ADR-073 §3), also when the person opens the org only to
    leave it.
 4. **`--name` is required for `org admit`, optional for `org invite`** in the tool (an agent may create a link before
    it knows for whom; the web asks for it). The web requires it in both forms.

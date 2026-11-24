@@ -236,7 +236,7 @@ def _opened(connection: Connection, org_id: UUID, invite_ids: list[str]) -> dict
 
 def listing(connection: Connection, *, org_id: UUID, user: UUID, now: datetime) -> list[dict[str, Any]]:
     """The org's invitations, newest first (at most 1000), with the time of the first lookup (`opened_at`) and the
-    account that registered with the invitation once it is an active member of the org (`registered_user`, ADR-067:
+    account that registered with the invitation once it is an active member of the org (`registered_user`, ADR-073:
     an invitation of a person admitted directly is settled by the admitting client; no other account is named)."""
     rights.require(connection, user, rights.ORG_ADMIN, org_id=org_id)
     rows = connection.execute(

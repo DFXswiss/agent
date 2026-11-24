@@ -60,7 +60,7 @@ describe('add an existing account', () => {
     fireEvent.change(screen.getByTestId(`members.admit.wg.${one}`), { target: { value: 'write' } });
     fireEvent.change(screen.getByTestId(`members.admit.wg.${two}`), { target: { value: 'read' } });
     fireEvent.change(screen.getByTestId(`members.admit.wg.${two}`), { target: { value: '' } });
-    // the name is required (ADR-067): every member sees it at once
+    // the name is required (ADR-073): every member sees it at once
     expect(screen.getByTestId('members.admit.submit')).toBeDisabled();
     fireEvent.change(screen.getByTestId('members.admit.name'), { target: { value: '  Bob Example ' } });
     fireEvent.click(screen.getByTestId('members.admit.submit'));
@@ -116,7 +116,7 @@ describe('add an existing account', () => {
     expect(w.world.state.member(bob.id)).toMatchObject({ role: 'member', consented: false });
   });
 
-  it('admits even when the name cannot be saved and the settled invitations cannot be read (ADR-067)', async () => {
+  it('admits even when the name cannot be saved and the settled invitations cannot be read (ADR-073)', async () => {
     const { w, answer } = await world();
     const { bob } = w.others;
     w.client.on('POST /v1/events', () => {

@@ -1,6 +1,6 @@
 // Device names outside the device screen (06-web.md sections 5.3, 5.4, 8.1, 8.2): a device is named by its label from
 // the newest verified `device.profile` event of its org (`selectDeviceLabels`, pulled once per org when the org's log
-// is verified), and only while none was read by "Device without a name" – never by an ID (ADR-067).
+// is verified), and only while none was read by "Device without a name" – never by an ID (ADR-073).
 import { useEffect, useMemo, useRef } from 'react';
 import { meOrgs } from '../../../core/account/session';
 import { DEVICE_PROFILE, selectDeviceLabels } from '../../../core/org/devices';

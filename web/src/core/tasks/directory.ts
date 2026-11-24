@@ -1,7 +1,7 @@
 // Names and titles for the task screens, read from verified events only (06-web.md section 1: unverifiable items are
 // shown as such, never as content):
 // - the org scope: `org.profile` (org name), `wg.profile` (workgroup names, `header.wg`), `member.profile` (display
-//   names, `ref` = author), `member.name` (a name an admin gave, `ref` = a member or an invitation, ADR-067); the
+//   names, `ref` = author), `member.name` (a name an admin gave, `ref` = a member or an invitation, ADR-073); the
 //   verified event with the highest `scope_seq` of each wins. A member's name is its own `member.profile` first, else
 //   the admin-given name of the member, else the admin-given name of the invitation its current membership started
 //   with (the log's `accept`); an admin-given name counts only while its author is an admin in the current verified

@@ -1,4 +1,4 @@
-// Names of people (ADR-067): the name an admin gives a member or an invitation's person (`member.name`, org scope,
+// Names of people (ADR-073): the name an admin gives a member or an invitation's person (`member.name`, org scope,
 // `ref` = the member's user ID or the `invite_id`, sealed with the current org key: every member reads it, the hub
 // does not), and the settling of invitations whose person was admitted directly. A member's own name always ranks
 // first (`core/tasks/directory.ts`); an admin-given name is only shown until the member's client writes the own one.
@@ -60,7 +60,7 @@ export async function giveName(context: TasksContext, org: string, subject: stri
 /**
  * Revokes the open user invitations the hub names `subject` as the registered account of, once `subject` is a member
  * of the org (it was admitted directly, so the invitation is no longer needed); returns their IDs. The link between
- * invitation and account is the hub's word (ADR-067): a lying hub can make the admin revoke another open invitation –
+ * invitation and account is the hub's word (ADR-073): a lying hub can make the admin revoke another open invitation –
  * a denial it can cause anyway by refusing that invitation. Admins only.
  */
 export async function closeSettledInvites(context: TasksContext, org: string, subject: string): Promise<string[]> {

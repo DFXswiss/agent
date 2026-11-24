@@ -1,4 +1,4 @@
-// "Enter name" / "Change name" (ADR-067): an admin gives a member without an own name – or the person of an
+// "Enter name" / "Change name" (ADR-073): an admin gives a member without an own name – or the person of an
 // invitation – a provisional name (`member.name`, sealed with the org key). Every member sees it until the person's
 // own name is written.
 import { useId, useState } from 'react';

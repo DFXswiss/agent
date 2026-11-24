@@ -1,6 +1,6 @@
 // Members and rights (06-web.md section 7.1, route `/o/:org/members`, right org:member, edit: admin). The list comes
 // from the verified log (names: the member's own `member.profile`, else a provisional name an admin gave – marked with
-// who gave it –, else "Name not known yet" with what happens next; the ID only on request, ADR-067); admins see the
+// who gave it –, else "Name not known yet" with what happens next; the ID only on request, ADR-073); admins see the
 // controls – enter or change a provisional name, – invite, change role (hidden for
 // the last admin), grant workgroup access (optionally with history; every writable workgroup, the key holders deliver
 // the key), ungrant an explicit access, remove – each change through the confirmation dialog ("Saving …",

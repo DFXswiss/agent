@@ -1,4 +1,4 @@
-// Rule E-19 for names (ADR-067): the interface never names a person, a device, a workgroup, an organization or a
+// Rule E-19 for names (ADR-073): the interface never names a person, a device, a workgroup, an organization or a
 // task by a technical ID. Two permanent checks keep the class out: no message of the catalogs carries an ID (`{id}`)
 // or an ID fragment ("…{x}"), except the explicit "ID: …" line shown on request and the listed technical messages;
 // and no source file under `src/ui` cuts an ID for display (`<something>Id.slice(…)`), except the listed technical

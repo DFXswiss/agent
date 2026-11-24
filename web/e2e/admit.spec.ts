@@ -60,7 +60,7 @@ test('an admin adds an existing account by its account code without the person c
   await page.getByTestId('members.admit.name').fill('Bob Example');
   await page.getByTestId('members.admit.submit').click();
   await expect(page.getByTestId('members.admit.done')).toContainText(`Bob Example (account ${code}) is a member now.`);
-  // the name every member sees at once (ADR-067), marked as given by the admin
+  // the name every member sees at once (ADR-073), marked as given by the admin
   await expect(page.getByTestId('members.item.name').filter({ hasText: 'Bob Example' })).toHaveAttribute(
     'data-source',
     'admin',

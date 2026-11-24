@@ -148,7 +148,7 @@ def org_show(account: Account, org: str) -> dict[str, Any]:
             "kind": p.kind,
             "role": p.role,
             "name": names.members.get(p.id),
-            # where the name comes from (ADR-067): own, admin (given_by), invitation (given_by) or none
+            # where the name comes from (ADR-073): own, admin (given_by), invitation (given_by) or none
             "name_source": names.sources.get(p.id, {}).get("source", "none"),
             "name_given_by": names.sources.get(p.id, {}).get("by"),
         }
@@ -199,7 +199,7 @@ def invite_states(account: Account, org: str, state: OrgState, names: Names | No
     """The user invitations with their state for the inviter (KOR-36): `open` (not opened yet as far as the hub
     knows), `opened` (someone looked the link up), `registered` (a new account was created with it, the join is still
     missing), `settled` (that account is a member now, admitted directly: the invitation is no longer needed,
-    ADR-067; `registered_user` names it) or `accepted`, with the name an admin gave the invitation (`name`, null
+    ADR-073; `registered_user` names it) or `accepted`, with the name an admin gave the invitation (`name`, null
     without one). Listed are only invitations the verified log knows, not revoked and not expired (accepted ones
     until their expiry, so that "did they accept?" is answered); an open one must also be open in the hub's list,
     which is otherwise a hint for `opened`, `registered` and `settled` only (03-api.md section 4.2; `opened_at` and
@@ -224,7 +224,7 @@ def invite_states(account: Account, org: str, state: OrgState, names: Names | No
         if inv.accepted_seq is not None:
             status = "accepted"
         elif settled:
-            # the account that registered with it was admitted directly: no longer needed (ADR-067)
+            # the account that registered with it was admitted directly: no longer needed (ADR-073)
             status = "settled"
         elif row.get("registered") is True:
             status = "registered"

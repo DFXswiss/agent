@@ -1,4 +1,4 @@
-# ADR-067: Every member has a name – an admin-given name (`member.name`) and the own name set on first open
+# ADR-073: Every member has a name – an admin-given name (`member.name`) and the own name set on first open
 
 Status: Accepted (2026-11-24; draft reviewed with fresh context before it was built)
 

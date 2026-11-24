@@ -182,7 +182,7 @@ export interface InviteRow {
   readonly registered?: boolean;
   /** First lookup of the invitation (hubs since KOR-36; null: never opened, absent: older hub). */
   readonly opened_at?: string | null;
-  /** The account that registered with it (hubs since ADR-067; null: none, absent: older hub). */
+  /** The account that registered with it (hubs since ADR-073; null: none, absent: older hub). */
   readonly registered_user?: string | null;
 }
 
@@ -228,7 +228,7 @@ export async function openInvites(
 
 /**
  * Where an invitation stands for the inviter (KOR-36): `accepted` (the verified log has the accept), `settled` (the
- * account that registered with it is a member of the org now – admitted directly, ADR-067 – so it is no longer
+ * account that registered with it is a member of the org now – admitted directly, ADR-073 – so it is no longer
  * needed), `registered` (a person created an account with it, the join is missing), `opened` (the link was opened),
  * `open`.
  */

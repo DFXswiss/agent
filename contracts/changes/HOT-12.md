@@ -1,4 +1,4 @@
-# HOT-12 – names for every member (ADR-067)
+# HOT-12 – names for every member (ADR-073)
 
 Additive.
 

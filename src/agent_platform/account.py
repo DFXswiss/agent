@@ -14,7 +14,7 @@ verifies it:
 - profile events (names): the reader checks E1-E5 of every event against the verified log (`check_event`; admins only
   for org, workgroup and admin-given names, `ref == author` for own member names); events that fail are skipped. A
   member's name is its own `member.profile`, else the newest `member.name` of a current admin about it written during
-  its current membership, else the name of the invitation its membership started with (ADR-067); only the own name is
+  its current membership, else the name of the invitation its membership started with (ADR-073); only the own name is
   the account's (`display_name`).
 """
 
@@ -43,7 +43,7 @@ from agent_runner.crypto.log.wraps import CRED, WRAP_KEYS, check_wrap
 
 PAGE = 1000
 MEMBER_NAME = "member.name"
-"""The kind of a name an admin gives to a member or an invitation (ADR-067)."""
+"""The kind of a name an admin gives to a member or an invitation (ADR-073)."""
 KeyRing = dict[tuple[str, str, int], bytes]
 
 

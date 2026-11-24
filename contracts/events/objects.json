@@ -343,7 +343,7 @@
     },
     "body_member_name": {
       "type": "object",
-      "description": "A name an admin gives to a member or to the person of an invitation (header ref = user ID or invite_id); a member's own member.profile always ranks first (ADR-067).",
+      "description": "A name an admin gives to a member or to the person of an invitation (header ref = user ID or invite_id); a member's own member.profile always ranks first (ADR-073).",
       "properties": {
         "display_name": {
           "type": "string",

@@ -249,7 +249,7 @@ def cmd_org_create(account: Account, args: argparse.Namespace, context: Context)
 
 
 def cmd_org_show(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    # opening an org writes the user's own name into it if it has none there (ADR-067); the view never fails on it
+    # opening an org writes the user's own name into it if it has none there (ADR-073); the view never fails on it
     try:
         own_name = names.ensure_own_name(account, args.org)
     except PlatformError:
@@ -425,7 +425,7 @@ def _org_commands(tree: Tree) -> None:
     sub.add_argument("--wg", action="append", default=[], help="<wg_id>[:read|write], repeatable")
     sub.add_argument("--expires-hours", type=int, default=72)
     sub.add_argument("--message", help=MESSAGE_HELP)
-    sub.add_argument("--name", help="the invited person's name, shown in the invitation list (ADR-067)")
+    sub.add_argument("--name", help="the invited person's name, shown in the invitation list (ADR-073)")
     sub = tree.add(group, "admit", writing(cmd_org_admit), "admit an existing account directly (no step on its side)")
     sub.add_argument("--org", required=True)
     sub.add_argument("--user", required=True, help="user ID or account code (XXXX-XXXX-XXXX)")

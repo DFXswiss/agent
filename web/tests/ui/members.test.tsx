@@ -46,7 +46,7 @@ describe('member screen', () => {
     mount(w, at('/x'), `/o/${w.org}/members`);
     const items = await screen.findAllByTestId('members.item');
     expect(items.map((item) => item.getAttribute('data-member'))).toEqual([ada.id, cy.id, bob.id]);
-    // no name known: a sentence with what happens next, never an ID (ADR-067); the ID on request
+    // no name known: a sentence with what happens next, never an ID (ADR-073); the ID on request
     expect(within(items[1]!).getByTestId('members.item.name')).toHaveTextContent('Name not known yet');
     expect(within(items[1]!).getByTestId('members.item.name')).toHaveAttribute('data-source', 'none');
     expect(within(items[1]!).getByTestId('members.item.unnamed')).toHaveTextContent('as soon as the person opens');

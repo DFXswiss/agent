@@ -1,4 +1,4 @@
-// ADR-067 (screens): how people are named – the helpers of ui/names (own, provisional and unknown names, who gave a
+// ADR-073 (screens): how people are named – the helpers of ui/names (own, provisional and unknown names, who gave a
 // name, a thing without a name with its ID on request), the member list with "Enter name"/"Change name" and the line
 // that says who gave a provisional name, the name dialog, and the invitations with their names and the settled state
 // with "Close invitation", in jsdom against the org world of tests/core/org/world.ts.
