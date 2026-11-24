@@ -348,6 +348,10 @@ bearing on keys).
 | [E-22](KONZEPT.md#e-22) | One repository: one set of vectors for three verifiers. | carried | [§9](#9-rules-and-their-evidence) |
 | [E-23](KONZEPT.md#e-23) | Concept file. | none | – |
 | [E-24](KONZEPT.md#e-24) | No access layer in front: the platform protects itself (passkey, signed requests, keys). | carried | KM-07, KM-36 |
+| [E-25](KONZEPT.md#e-25) | No unordered protection layers. | none | – |
+| [E-26](KONZEPT.md#e-26) | Simple and efficient use by AI agents. | none | – |
+| [E-27](KONZEPT.md#e-27) | An agent account without a human: created by invitation, signed in with the agent's own key, no passkey. | carried (pending KOR-62) | [§1](#1-principals) |
+| [E-28](KONZEPT.md#e-28) | Personal message of the requester at the consent. | none | – |
 | [A1](KONZEPT.md#a-1) | Subagents have the parent's rights and no keys. | carried | [§1](#1-principals) |
 | [A2](KONZEPT.md#a-2) | Conflict fix by merge commit. | none | – |
 | [A3](KONZEPT.md#a-3) | The agent holds the user's identity; own identity with rotation later. | gap → KOR-57 | KM-28, KM-30 |

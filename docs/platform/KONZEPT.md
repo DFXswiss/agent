@@ -651,6 +651,68 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** ergänzt [§1](#k-1) und [§5](#k-5).
 - **Umsetzung:** gebaut (Betrieb).
 
+<a id="e-25"></a>
+
+### E-25 – Keine unbestellten Schutzschichten: Nutzbarkeit, Tempo und Leistung zuerst
+
+- **Datum:** 2026-11-24 09:35
+- **Regel:** Schutzschichten, Härtungen und Umbauten, die über das Bestellte hinausgehen und Entwicklungszeit oder
+  Leistung kosten, werden erst gebaut, wenn der Auftraggeber sie entschieden hat; bis dahin haben die produktive
+  Nutzbarkeit, die Fertigstellung und die Leistung der Plattform Vorrang.
+- **Wortlaut:** „das scheint mir übertrieben“ (zu einer zusätzlichen Abschottung der Arbeits-VMs) · „das scheint mir
+  auch übertrieben zu sein“ (zu einer zweiten Schutzschicht um laufende Sessions) · „ich möchte agent.dfx.swiss so
+  schnell wie möglich produktiv nutzen können, nicht schutzschichten bauen die ich nie bestellt habe“ ·
+  „Schutzschicht ist schon etwas gutes aber es kostet uns jetzt wertvolle Zeit und nachher Performance, du kannst
+  nicht einfach ohne Rückfrage mit mir solche entscheidungen treffen, ich will mehr Performance und schneller fertig
+  werden!“
+- **Bezug:** ergänzt [E-24](#e-24) und die Arbeits-VM ([E-08](#e-08)) sowie die isolierten Sessions
+  ([§3 Punkt 5](#k-3-b5)).
+- **Umsetzung:** gilt für jedes Paket. Zwei geplante zusätzliche Abschottungen (Arbeits-VMs in einer eigenen
+  Umgebung; zweite Netzgrenze im Gast der Sessions) sind zurückgestellt, bis der Auftraggeber sie bestellt.
+
+<a id="e-26"></a>
+
+### E-26 – KI-Agenten sind Nutzer wie Menschen: die Bedienung durch sie ist einfach und effizient
+
+- **Datum:** 2026-11-24 09:40
+- **Regel:** Die Plattform wird nicht nur von Menschen, sondern auch von KI-Agenten benutzt; die Bedienung durch
+  KI-Agenten ist einfach (ein Agent findet ohne Vorwissen selbst heraus, wie er etwas tut) und effizient (er liest
+  und sendet nur, was der nächste Schritt braucht).
+- **Wortlaut:** „agent.dfx.swiss soll nicht nur von Menschen benutzt werden können sondern auch von ki agents. was
+  müssen wir tun damit die bedienung durch ki agents einfach und effizient ist?“
+- **Bezug:** ergänzt [E-04](#e-04) und [Idee 34](#k-idee-34).
+- **Umsetzung:** offen – KOR-63 (kurzer Einstieg und Nachschlagen statt einer langen Anleitung; Anschluss für
+  KI-Programme ohne Befehlszeile).
+
+<a id="e-27"></a>
+
+### E-27 – Ein KI-Agent kann alles, auch ohne Mensch
+
+- **Datum:** 2026-11-24 09:49
+- **Regel:** Ein KI-Agent kann die Plattform vollständig ohne Mitwirkung eines Menschen nutzen: Er legt mit einer
+  Einladung selbst ein Konto an (ohne Passkey und ohne Browser), meldet sich mit seinem eigenen Schlüssel an und
+  kann alles, was ein Mensch in der Oberfläche kann; kein Schritt setzt eine menschliche Geste voraus. Unverändert:
+  In das bestehende Konto eines Menschen gelangt ein Agent nur mit dessen Zustimmung.
+- **Wortlaut:** „ein Ki Agent muss alles tun können, auch ihne Mensch!“ (als Antwort auf den Satz „Der Mensch
+  bestätigt nur einmal mit dem Passkey.“)
+- **Bezug:** verschärft [E-04](#e-04); [E-12](#e-12) gilt weiter für die Registrierung eines Menschen im Browser;
+  ändert [A3](#a-3) (Koppeln und Ersetzen nur mit Passkey-Geste gilt für das Konto eines Menschen) und ergänzt
+  [Idee 34](#k-idee-34).
+- **Umsetzung:** offen – KOR-62.
+
+<a id="e-28"></a>
+
+### E-28 – Persönliche Nachricht des Anfragenden, wo jemand Zugriff gibt
+
+- **Datum:** 2026-11-24 09:53
+- **Regel:** Überall, wo jemand einer Anfrage zustimmt und damit einem Agenten oder einer Person Zugriff gibt, kann
+  der Anfragende eine persönliche Nachricht mitgeben, die an der Stelle der Zustimmung angezeigt wird.
+- **Wortlaut:** „an dem ort wo man zustimmen kann einem agent oder person zugriff zu geben, könnte es sinnvoll sein
+  dass der anfrager auch noch eine persönliche nachricht anzeigen kann“
+- **Bezug:** ergänzt [Idee 34](#k-idee-34) (Freigabe des Hauptorchestrators) sowie Einladung und Aufnahme
+  ([§1 Punkt 3](#k-1-b3), [E-18](#e-18)).
+- **Umsetzung:** offen – KOR-64.
+
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und
@@ -667,7 +729,8 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
   ([Idee 41](#k-idee-41)). Rebase mit `--force-with-lease` nur nach ausdrücklichem Entscheid.
 <a id="a-3"></a>
 - **A3 – Agent des Nutzers:** genau ein Hauptorchestrator je Nutzer ([Idee 34](#k-idee-34)); Koppeln und Ersetzen nur
-  mit einer Passkey-Geste; der Agent kann alles, was der Nutzer kann ([E-04](#e-04)), und hält dazu dessen Identität.
+  mit einer Passkey-Geste, soweit es um das Konto eines Menschen geht (ein Konto ohne Mensch regelt [E-27](#e-27));
+  der Agent kann alles, was der Nutzer kann ([E-04](#e-04)), und hält dazu dessen Identität.
   Eine eigene Identität mit Rotation ist eine spätere Härtung. Die Plattform-Schnittstelle mit Audit gilt als
   „kontrollierte Operation“; das Ausführungsverbot betrifft Plattform-Sessions, nicht den Rechner des Nutzers.
 <a id="a-4"></a>
@@ -773,6 +836,9 @@ Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-11](#e-11) übrige Freigaben | Freigabe von Team-Organisationen für DFX-Geräte, Freigabe der Betreiber-Abos je Organization, Plattform-Einladung nur mit eigener Rolle und die festen Betreiber-Listen sind noch Voraussetzungen | KOR-49 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
+| [E-26](#e-26) Bedienung durch KI-Agenten | Eine lange Anleitung, kein Nachschlagen, kein Anschluss für KI-Programme ohne Befehlszeile | KOR-63 |
+| [E-27](#e-27) Agent ohne Mensch | Ein Konto entsteht nur mit dem Passkey eines Menschen | KOR-62 |
+| [E-28](#e-28) Persönliche Nachricht | Keine Nachricht des Anfragenden an der Stelle der Zustimmung | KOR-64 |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |

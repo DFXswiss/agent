@@ -301,6 +301,10 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | E-22 | [E-22](../KONZEPT.md#e-22) | One repository (`DFXswiss/agent`). | gebaut | [ADR-061](../adr/061-one-repository.md) |
 | E-23 | [E-23](../KONZEPT.md#e-23) | Concept and rules in one central file in the repository. | gebaut | [KONZEPT.md](../KONZEPT.md), `tests/platform/test_konzept.py` |
 | E-24 | [E-24](../KONZEPT.md#e-24) | No access layer in front of the platform; it protects itself. | gebaut | operation |
+| E-25 | [E-25](../KONZEPT.md#e-25) | No unordered protection layers: usability, speed and performance first. | gebaut | every package |
+| E-26 | [E-26](../KONZEPT.md#e-26) | AI agents are users like humans: operating the platform is simple and efficient for them. | offen | KOR-63 |
+| E-27 | [E-27](../KONZEPT.md#e-27) | An AI agent can do everything, also without a human (own account by invitation, own key). | offen | KOR-62 |
+| E-28 | [E-28](../KONZEPT.md#e-28) | Personal message of the requester wherever someone grants access. | offen | KOR-64 |
 
 ## R-P Assignment guardrails (`PROJECT.md`)
 
