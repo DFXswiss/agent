@@ -17,20 +17,18 @@
   request sealed with HPKE to the device, which checks it at GitHub and stores it (`done` with login, scopes and
   source, or a failure such as `token_refused`, `scope_missing`, `sso_required`). `disconnect` deletes the record; a
   revocable token is revoked at GitHub by the devices, any other stays valid there (`revoke_at` names the page).
-<<<<<<< HEAD
 - `github connect --from-gh` (KOR-65, rule E-29): the same as `--token -` with the token of this computer's GitHub CLI
   login (`gh auth token --hostname github.com`, `AGENT_PLATFORM_GH` names another `gh`); it reaches every repository
   the account can reach. No login is `github_login_missing`. `github connect --app oauth_app|github_app` asks for that
   device flow (default: the device's preferred one, the OAuth App when set up).
-=======
-  GitHub identities (ADR-078, `agent_platform.identities`): `connect --identity` reconnects into that own record,
+- GitHub identities (ADR-078, `agent_platform.identities`): `connect --identity` reconnects into that own record,
   `--signing-key` asks the device for an own signing key (`signing` in the answer), `--org` connects a company account
   of an organization the user is an admin of: the request goes to a device of that organization and names it in
   plaintext as well; the device's final answer carries the credential body, which the tool seals for the
   organization's devices and stores (`identities.store_company`; with `--identity` into that company record), then
   prints only `{status, identity_id, owner, org_id, version, login, source, signing?}`. A continued company flow
-  (`--request`) needs `--org` (and `--identity`) again; the body is never printed.
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+  (`--request`) needs `--org` (and `--identity`) again; the body is never printed. These options combine with each way
+  of connecting: `--from-gh --org` stores the GitHub CLI login as a company account like `--token - --org`.
 - `claude login`: the relay of the web (`claude.login {mode}`): the device answers the authorization link (opened in
   the user's browser), the code the user receives goes back as a follow-up request (stdin), the device stores the
   subscription record itself.
@@ -204,7 +202,6 @@ def token_input(text: str) -> str:
     return token
 
 
-<<<<<<< HEAD
 def gh_token(environ: Mapping[str, str]) -> str:
     """The token of this computer's GitHub CLI login (`gh auth token`), never printed or logged."""
     program = environ.get("AGENT_PLATFORM_GH", "") or shutil.which("gh", path=environ.get("PATH"))
@@ -225,7 +222,8 @@ def gh_token(environ: Mapping[str, str]) -> str:
     if done.returncode != 0 or not PRINTABLE_RE.fullmatch(token):
         raise PlatformError("github_login_missing", reason="gh_not_logged_in")
     return token
-=======
+
+
 def _connected(account: Account, args: Any, prepared: dict[str, Any], found: dict[str, Any]) -> dict[str, Any]:
     """The result of a step; a company account's final answer is stored (never printed), any other `body` refused."""
     result = finish(prepared, found)
@@ -240,7 +238,6 @@ def _connected(account: Account, args: Any, prepared: dict[str, Any], found: dic
     if "body" in found:
         raise PlatformError("invalid_argument", reason="org_missing", request_id=prepared["id"])
     return result
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 
 
 def github_connect(account: Account, args: Any, context: Context) -> dict[str, Any]:
@@ -250,26 +247,17 @@ def github_connect(account: Account, args: Any, context: Context) -> dict[str, A
     options = identities.connect_body(args)
     if args.request is not None:
         prepared = resume(account, args.request, ("github.connect",))
-<<<<<<< HEAD
-        return finish(prepared, wait(account, prepared, args.wait, frozenset({"done", "failed"})))
-    if args.token is not None or args.from_gh:
-        token = gh_token(context.environ) if args.from_gh else token_input(context.read_stdin())
-        prepared = submit(account, choose_device(account, args.device), "github.connect", {"token": token})
-        return finish(prepared, wait(account, prepared, args.wait, frozenset({"done", "failed"})))
-    body = {} if args.app is None else {"app": args.app}
-    prepared = submit(account, choose_device(account, args.device), "github.connect", body)
-=======
         return _connected(account, args, prepared, wait(account, prepared, args.wait, frozenset({"done", "failed"})))
     if args.org is not None:
         target = identities.org_device(account, args.org, args.device)
     else:
         target = choose_device(account, args.device)
-    if args.token is not None:
-        token = token_input(context.read_stdin())
+    if args.token is not None or args.from_gh:
+        token = gh_token(context.environ) if args.from_gh else token_input(context.read_stdin())
         prepared = submit(account, target, "github.connect", {"token": token, **options}, org=args.org)
         return _connected(account, args, prepared, wait(account, prepared, args.wait, frozenset({"done", "failed"})))
-    prepared = submit(account, target, "github.connect", options, org=args.org)
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+    body = options if args.app is None else {"app": args.app, **options}
+    prepared = submit(account, target, "github.connect", body, org=args.org)
     found = wait(account, prepared, args.wait, frozenset({"device_code", "done", "failed"}))
     if found["step"] == "device_code":
         show_in_browser(context.environ, found["verification_uri"], f"enter the code {found['user_code']} at")
@@ -413,18 +401,15 @@ def register(tree: Tree) -> None:
         then="agent-platform github connect --request <request_id> --wait 120",
     )
     sub.add_argument("--token", help="- : store an existing GitHub token read from stdin (checked by the device)")
-<<<<<<< HEAD
     sub.add_argument(
         "--from-gh", action="store_true", help="store the token of this computer's GitHub CLI login (`gh auth token`)"
     )
     sub.add_argument(
         "--app", choices=["oauth_app", "github_app"], help="the device flow to use (default: the device's preferred)"
     )
-=======
     sub.add_argument("--org", help="a company account of this organization (admins; stored for its devices only)")
     sub.add_argument("--identity", help="reconnect into this identity record (from `github accounts`)")
     sub.add_argument("--signing-key", action="store_true", help="also create and register an own SSH signing key")
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
     _flow_options(sub)
     tree.command(
         group,

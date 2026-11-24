@@ -30,6 +30,7 @@ from .fakes.sessions import add_operation, add_session
 from .fakes.sessions import state_of as sessions_of
 from .hubfake import HubFake, Json, User, now_ms_text
 from .seeding import assign_device, new_task, reader
+from .test_devicereq import fake_gh
 
 SEED = b64u_encode(b"s" * 32)
 PUBLIC = "ssh-ed25519 " + base64.b64encode(b"\0\0\0\x0bssh-ed25519\0\0\0\x20" + b"k" * 32).decode()
@@ -596,3 +597,22 @@ def test_operations_name_their_identity(tool: Tool, hub: HubFake, account: User)
     assert (
         "github_account" not in tool.run("task", "operations", "--task", task, "--operation", unnamed)[1]["operation"]
     )
+
+
+def test_company_account_from_the_github_cli_login_and_app_choice(
+    tool: Tool, hub: HubFake, account: User, tmp_path: Path
+) -> None:
+    org, _wg, device = assign_device(tool, hub, account)
+    gh = fake_gh(tmp_path, 'test "$*" = "auth token --hostname github.com" && printf "ghp_company\\n"')
+    relay(hub).script["github.connect"] = [[({"step": "done", "login": "acme-bot", "body": COMPANY}, True)]]
+    argv = ("github", "connect", "--from-gh", "--org", org, "--wait", "5")
+    code, connected = tool.run(*argv, env={"AGENT_PLATFORM_GH": gh})
+    assert (code, connected["status"], connected["owner"]) == (0, "connected", "org"), connected
+    assert opened(hub, connected["request_id"]) == {"token": "ghp_company", "org_id": org}
+    assert device_opens(hub, device, org, connected["identity_id"]) == COMPANY
+    # the device flow of a chosen app, for an own account to reconnect
+    identity = uuid7()
+    relay(hub).script["github.connect"] = [[({"step": "done", "login": "octo", "identity_id": identity}, True)]]
+    code, own = tool.run("github", "connect", "--app", "oauth_app", "--identity", identity, "--wait", "5")
+    assert code == 0, own
+    assert opened(hub, own["request_id"]) == {"app": "oauth_app", "identity_id": identity}
