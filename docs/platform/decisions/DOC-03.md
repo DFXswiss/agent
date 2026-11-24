@@ -29,3 +29,5 @@ integration branch ([`../KONZEPT.md`](../KONZEPT.md), part D rule 3).
    the fixed operator lists; R-16 rows K-30 (ADR-058), K-16 (ADR-062), K-37 (KOR-47) and K-42 (KOR-51) updated.
    Not taken over: A18 keeps "gezählt" although kernel refusals may not be observable on every guest kernel
    (ADR-063 §5) – the interpretation states the target, KOR-60 checks what can be counted.
+7. **KOR-25 merged while this package waited for the merge.** E-05 is built for GitHub (ADR-066), E-06's general
+   connection path is built (ADR-065); the part D row keeps only the other prerequisites (KOR-49).

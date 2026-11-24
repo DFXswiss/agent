@@ -256,7 +256,7 @@ row adds `R-` rows with their tests and replaces the row here.
 | K-34 | [Idee 34](../KONZEPT.md#k-idee-34) | Exactly one delegated main orchestrator per user, passkey release, own key, audit, revocation. | teils | Pairing with a passkey, own key, audit and revocation built by KOR-24 ([ADR-056](../adr/056-delegated-agent-access.md)); the orchestrator running on DFX hardware is open. | KOR-24 |
 | K-35 | [Idee 35](../KONZEPT.md#k-idee-35) | Own hardware exclusively for a workgroup or the whole organization; capacity, not data access. | teils | Org device per workgroup, separate VMs; assignment to the whole organization in one step missing. | – |
 | K-36 | [Idee 36](../KONZEPT.md#k-idee-36) | Every workgroup member with write access can continue a session; interventions attributed. | teils | Ordered queue and author per prompt built; the session does not learn who speaks ([A15](../KONZEPT.md#a-15)). | KOR-46 |
-| K-37 | [Idee 37](../KONZEPT.md#k-idee-37) | GitHub identities per PR and commit (author, committer, signature, co-authors), defaults per org/workgroup. | offen | One GitHub connection per user, operator account ([E-06](../KONZEPT.md#e-06)). | KOR-25, KOR-47 |
+| K-37 | [Idee 37](../KONZEPT.md#k-idee-37) | GitHub identities per PR and commit (author, committer, signature, co-authors), defaults per org/workgroup. | offen | One GitHub connection per user, operator account ([E-06](../KONZEPT.md#e-06)). | KOR-47 |
 | K-38 | [Idee 38](../KONZEPT.md#k-idee-38) | Automatic and manual choice of device and VM, deterministic. | teils | Deterministic scheduler; manual choice and fallback to a second VM missing. | – |
 | K-39 | [Idee 39](../KONZEPT.md#k-idee-39) | Session completion and cleanup; logs, results and context kept. | teils | Closing ends the process and frees the sandbox; context not kept resumable. | – |
 | K-40 | [Idee 40](../KONZEPT.md#k-idee-40) | Full session resume of the original Claude Code session, also on another VM. | offen | Resume only of a paused session on the same VM. | – |
@@ -281,8 +281,8 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | E-02 | [E-02](../KONZEPT.md#e-02) | "Hundreds of agents" describes use, no number target; no artificial limit, clear message at capacity. | teils | KOR-35, KOR-45 ([A14](../KONZEPT.md#a-14)) |
 | E-03 | [E-03](../KONZEPT.md#e-03) | The user only creates a passkey; their AI agent sets up everything else, incl. subscription token transfer. | gebaut | [ADR-056](../adr/056-delegated-agent-access.md) |
 | E-04 | [E-04](../KONZEPT.md#e-04) | An agent without passkey can do everything a human with passkey can. | gebaut | [ADR-056](../adr/056-delegated-agent-access.md) |
-| E-05 | [E-05](../KONZEPT.md#e-05) | A missing prerequisite is triggered, not explained. | offen | KOR-25, KOR-49 |
-| E-06 | [E-06](../KONZEPT.md#e-06) | GitHub through the operator's account for approved users. | gebaut | [ADR-053](../adr/053-operator-github-account.md), [ADR-054](../adr/054-repository-list-optional.md) |
+| E-05 | [E-05](../KONZEPT.md#e-05) | A missing prerequisite is triggered, not explained. | teils | [ADR-066](../adr/066-held-github-operations.md) (GitHub), KOR-49 |
+| E-06 | [E-06](../KONZEPT.md#e-06) | GitHub through the operator's account for approved users. | gebaut | [ADR-053](../adr/053-operator-github-account.md), [ADR-054](../adr/054-repository-list-optional.md), [ADR-065](../adr/065-github-existing-token.md) |
 | E-07 | [E-07](../KONZEPT.md#e-07) | Operator subscriptions for approved organizations. | gebaut | [ADR-052](../adr/052-operator-subscriptions.md) |
 | E-08 | [E-08](../KONZEPT.md#e-08) | Work VM on request in which everything is allowed. | gebaut | [ADR-059](../adr/059-work-vm-on-request.md) |
 | E-09 | [E-09](../KONZEPT.md#e-09) | Nothing is monitored inside the work VM. | gebaut | [ADR-059](../adr/059-work-vm-on-request.md) |

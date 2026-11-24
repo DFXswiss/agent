@@ -396,7 +396,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „in so einem fall muss direkt erkannt werden dass ein GitHub Login benötigt wird und die einzige
   korrekte Antwort besteht darin das GitHub Login anzustossen“
 - **Bezug:** ergänzt [§9](#k-9) und [Idee 32](#k-idee-32); gilt als Muster für jede fehlende Voraussetzung.
-- **Umsetzung:** offen – KOR-25 (GitHub); übrige Voraussetzungen KOR-49.
+- **Umsetzung:** gebaut für GitHub – [ADR-066](adr/066-held-github-operations.md) (KOR-25); übrige Voraussetzungen
+  offen – KOR-49.
 
 <a id="e-06"></a>
 
@@ -408,7 +409,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „ich will dass es mit meinem […] GitHub Account funktioniert“ (Kontoname gekürzt)
 - **Bezug:** ergänzt [§9 Punkt 1](#k-9-b1) und [Idee 37](#k-idee-37).
 - **Umsetzung:** gebaut – [ADR-053](adr/053-operator-github-account.md) (KOR-27),
-  [ADR-054](adr/054-repository-list-optional.md) (KOR-30); allgemeiner Verbindungsweg KOR-25 (offen).
+  [ADR-054](adr/054-repository-list-optional.md) (KOR-30); allgemeiner Verbindungsweg
+  [ADR-065](adr/065-github-existing-token.md) (KOR-25).
 
 <a id="e-07"></a>
 
@@ -767,7 +769,7 @@ Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 
 | Regel / Stelle | Gebauter Stand heute | Schließt |
 |---|---|---|
-| [E-05](#e-05), [E-06](#e-06) allgemeiner GitHub-Weg | Fehlende GitHub-Verbindung wird gemeldet, nicht angestoßen (außer bei freigegebenen Nutzern); andere fehlende Voraussetzungen (Modellzugang, Guthaben, Gerät) werden nur angezeigt | KOR-25; übrige Voraussetzungen KOR-49 |
+| [E-05](#e-05) übrige Voraussetzungen | Fehlende Voraussetzungen außer GitHub (Modellzugang, Guthaben, Gerät) werden nur angezeigt, nicht angestoßen | KOR-49 |
 | [E-11](#e-11) übrige Freigaben | Freigabe von Team-Organisationen für DFX-Geräte, Freigabe der Betreiber-Abos je Organization, Plattform-Einladung nur mit eigener Rolle und die festen Betreiber-Listen sind noch Voraussetzungen | KOR-49 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
