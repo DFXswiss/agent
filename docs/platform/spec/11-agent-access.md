@@ -13,6 +13,7 @@ up with the agent tool `agent-platform` (repository `agent`).
 | Main orchestrator | ("Hauptorchestrator" in the interface) the one `confirmed` or `active` agent of a user (concept idea 34, ADR-056 §4a); a new pairing replaces it. |
 | Pairing | The agent's request to be connected; becomes the agent row once confirmed. Pairing ID = agent ID (UUIDv7, drawn by the agent). |
 | Label | `{"name","host"}` chosen by the agent (e.g. `Claude Code`, the computer's name); only sealed at the hub. |
+| Request message | The requester's optional personal message (rule E-28, KOR-64): the agent's in a pairing link (`t`), the inviter's in an org invitation package (`04-crypto.md` §4.6). Shown where the user approves, quoted as the requester's words, as plain text only. |
 | Handover secret | `r`: 32 random bytes drawn by the confirming browser and handed to the agent **only** over the loopback – or, for a remote pairing, sealed to the agent's key and relayed by the hub (§5.4). It yields the bundle key and the claim (§3). |
 | Remote pairing | A pairing of an agent on another computer than the confirming browser (server, container, SSH; ADR-067), chosen explicitly (`--remote`, `m=remote`, `remote` at the hub). |
 | Agent code | 10 characters (`XXXXX-XXXXX`) the agent tool shows for a remote pairing and the user types on the page (§3); not a secret. |
@@ -50,6 +51,7 @@ created + 300 s); its claim deadline is the confirmation + 600 s.
 | Claim | `claim = HKDF(r, info = P‖"agent-claim\0"‖ids)`; the hub stores `claim_hash = SHA-256(P‖"agent-claim-hash\0"‖claim)` |
 | Sealed identity | `info = P‖"agent-bundle\0"‖ids`; `inner = nonce12‖AES-GCM(k, identity bundle plaintext (§4.1), AAD = info)`; `bundle_ct = b64u(HPKE_seal(agent kem_pub, info, inner))` (base mode, suite of §1). Opening needs the agent's private key **and** `r` |
 | Sealed label | `label_ct = b64u(HPKE_seal(user identity kem_pub, P‖"agent-label\0"‖ids, body JSON {"host","name"}))`; each text 1–64 characters, no leading/trailing space, none of the Unicode categories Cc, Cf (bidi, zero-width), Zl, Zp, Cs, Co, Cn |
+| Request message | 1–500 characters under the rules of the sealed label (no leading/trailing space, none of Cc, Cf, Zl, Zp, Cs, Co, Cn); `check_message` / `isMessageText`. It travels where the request's other texts travel and is never sent to the hub in clear: in the fragment of a pairing link like `a` and `h`, inside the sealed invitation package like `org_name` |
 | Agent key ID | `agent.<32 hex>` = agent ID without dashes; signatures Ed25519 with `sig` (`agent-request-v1`) |
 | Crockford base32 | `crockford32(bytes)`: the bit string big-endian, 5 bits per character of `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, the last one padded with zeros |
 | Agent code (remote) | `code = crockford32(SHA-256(P‖"agent-code\0"‖canonical({"fp","mode":"remote","nonce":b64u(nonce),"origin","pairing_id"})))[:10]`, shown `XXXXX-XXXXX`; `nonce` = the hub's 16 bytes of the pairing, `origin` = the hub's origin as in the link (`https://host[:port]`, no trailing slash) |
@@ -89,10 +91,12 @@ client-only `pairing_mismatch`.
 
 ### 5.1 Existing account
 1. Agent: generate fresh keys, `POST /v1/agent-pairings`, listen on `127.0.0.1:<random port>` (§8.2), open
-   `<origin>/connect#p=<id>&f=<fp>&c=<port>&a=<name>&h=<host>` in the user's default browser.
+   `<origin>/connect#p=<id>&f=<fp>&c=<port>&a=<name>&h=<host>[&t=<message>]` in the user's default browser (`t`: the
+   optional request message of `pair --message`, §3).
 2. Browser `/connect`: read and remove the fragment; `GET /v1/agent-pairings/{id}`; refuse unless state `open` and
    `fp` matches the returned keys (`pairing_mismatch`, "This link is not valid"). Show, as text the link supplied, the
-   agent's name and computer, the age of the request, and the warning "Only
+   agent's name and computer, the agent's request message when the link has one (a quote marked as the agent's words,
+   as stated by the link; without `t` nothing is shown), the age of the request, and the warning "Only
    confirm if you have just asked your AI agent on this computer to connect", and that the agent becomes the user's
    main orchestrator ("Hauptorchestrator") with **full access** to the account and can do everything the user can;
    when the user has one already (from `GET /v1/me/agents` once the user is signed in, name from its sealed label), "replaces
@@ -118,14 +122,14 @@ client-only `pairing_mismatch`.
 ### 5.2 New account (invitation)
 1. Agent (`register`, §8.4): reads the invitation link from stdin or `AGENT_PLATFORM_INVITE` (never the command line),
    checks it with `POST /v1/invites/lookup` (`invite_registered` → `hub_refused`), creates the pairing as in §5.1
-   step 1 and opens `<origin>/invite#<code>&p=…&f=…&c=…&a=…&h=…&u=<display name>` (the code stays the first part; the
+   step 1 and opens `<origin>/invite#<code>&p=…&f=…&c=…&a=…&h=…[&t=…]&u=<display name>` (the code stays the first part; the
    parameters follow after `&`). The link carries the invitation code and is never printed.
 2. Browser `/invite`: the parameters after the code must be exactly a pairing link (§5.1) and at most one `u` of 1–80
    characters after trimming; anything else, a fingerprint that does not match, or a pairing that is not open ends in
    the invalid state before anything is created ("This link is not valid" / "Connection request expired"). Without
    parameters the invitation is unchanged; without `u` the name field is shown as before.
 3. The registration (`04-crypto.md` §5.1, the KOR-22 screens) shows the agent block – name and computer as the link
-   states them, full access, main orchestrator, the warning of §5.1 step 2 – and uses `u` as display name (no name
+   states them, the agent's request message if the link has one, full access, main orchestrator, the warning of §5.1 step 2 – and uses `u` as display name (no name
    field; changeable later in the settings). The sign-in after the new passkey (gesture 2) is the pairing-tagged
    ceremony. An org invitation does the same, for a new user and for an existing account signing in from the page.
    If the pairing expired before the sign-in (`pairing_unknown`), the page says so and the next sign-in finishes the
@@ -151,7 +155,8 @@ never falls back from loopback to remote.
 1. Agent (`pair --remote`, `register --remote`, §8.4): fresh keys, `POST /v1/agent-pairings {…, remote: true}`; the
    answer must echo `remote: true` and a nonce, else the tool reports `hub_too_old` (an old hub refuses the field with
    `400 request_invalid`). The tool computes the agent code (§3) and returns at once
-   `<origin>/connect#p=<id>&f=<fp>&m=remote&a=<name>&h=<host>` (exactly these five parameters) and the code; the agent
+   `<origin>/connect#p=<id>&f=<fp>&m=remote&a=<name>&h=<host>` (exactly these five parameters, plus `t` with
+   `--message`) and the code; the agent
    gives both to its user in its conversation. The pending pairing stays in `pending.json` (§8.1).
 2. Browser `/connect`: as §5.1 step 2, plus: the link's mode must agree with the hub's `remote` (both ways, else
    "This link is not valid"); a remote pairing needs a nonce. The page shows the warning "This AI agent runs on
@@ -257,10 +262,10 @@ commands and options as `agent-platform <group> --help` lists them):
 
 | Command | Effect |
 |---|---|
-| `pair --hub <url> [--name] [--host] [--no-browser]` | §5.1; prints the link it opened; waits for the claim (10 min); the user's approval replaces the previous main orchestrator, also the one running this command (the tool then holds only the new state) |
-| `register --display-name <name> [--name] [--host]` (invitation link on stdin or `AGENT_PLATFORM_INVITE`) | §5.2; waits like `pair`; never prints the link |
-| `pair --hub <url> --remote [--name] [--host] [--replace-pending]` | §5.4; refuses while a pending pairing exists (`pairing_pending`) unless `--replace-pending`; returns at once `{"state":"waiting","connect_link","code","expires_at"}`; never falls back from or to loopback (`hub_too_old` when the hub does not echo `remote` and a nonce) |
-| `register --remote --display-name <name> [--name] [--host] [--replace-pending]` | §5.4 step 6 with the invitation: returns `invite_link` (`<origin>/invite#<code>&p=…&f=…&m=remote&a=…&h=…&u=…`, listed in `secret_fields`), the code and the deadline |
+| `pair --hub <url> [--name] [--host] [--no-browser] [--message <text>\|-]` | §5.1; `--message` puts the request message (§3) into the link as `t` (`-`: stdin); prints the link it opened; waits for the claim (10 min); the user's approval replaces the previous main orchestrator, also the one running this command (the tool then holds only the new state) |
+| `register --display-name <name> [--name] [--host] [--message <text>\|-]` (invitation link on stdin or `AGENT_PLATFORM_INVITE`) | §5.2; waits like `pair`; never prints the link; `--message -` reads stdin only when the link comes from `AGENT_PLATFORM_INVITE` (`invalid_argument` otherwise) |
+| `pair --hub <url> --remote [--name] [--host] [--replace-pending] [--message <text>\|-]` | §5.4; refuses while a pending pairing exists (`pairing_pending`) unless `--replace-pending`; returns at once `{"state":"waiting","connect_link","code","expires_at"}`; never falls back from or to loopback (`hub_too_old` when the hub does not echo `remote` and a nonce) |
+| `register --remote --display-name <name> [--name] [--host] [--replace-pending] [--message <text>\|-]` | §5.4 step 6 with the invitation: returns `invite_link` (`<origin>/invite#<code>&p=…&f=…&m=remote&a=…&h=…&u=…`, listed in `secret_fields`), the code and the deadline |
 | `pair --wait [--return-code <code>] [--timeout <s>]` | the pending remote pairing (`no_pending_pairing`; a second `--wait` at the same time: `pairing_busy`). Without `--return-code`: polls every 2 s for at most `--timeout` (default 120, max 600) and returns `"state":"waiting"` or `"state":"confirmed"` (next: ask the user for the code the page shows). With `--return-code`: fetches and opens the handover, checks the code, only then claims, stores the state and returns like `pair`. Expired: `pairing_timeout`; a handover that does not open or a wrong code: `pairing_failed` |
 | `status` | hub, agent, user, organizations, credentials (kind, version, expiry, origin), devices |
 | `claude connect` | read the local Claude Code login (§8.5) and store it as `login_token` |
@@ -269,7 +274,7 @@ commands and options as `agent-platform <group> --help` lists them):
 | `claude setup-token` | run `claude setup-token` locally (browser approval only), store as `setup_token` |
 | `settings set [--model-access] [--model] [--locale]` | `PUT /v1/me/settings` |
 | `api <METHOD> <path> [--body …]` | the generic signed call |
-| `org list|create|show|leave|rotate|catch-up`, `org invite --org [--role admin|member] [--wg …] [--expires-hours]`, `org invite-revoke --org --invite`, `org join`, `org admit --org --user <id|account code> [--role admin|member] [--wg …]`, `org invitees [--org]` | organizations and invitations of every role (`show` gives an admin the state of each user invitation: open, opened, registered, accepted, KOR-36), joining with an invitation (a log with an `admit` is verified with the platform log; an `accept` the hub stored although its answer got lost counts as joined once the membership and the verified log show it), admitting an existing account directly and the accounts of the user's own platform invitations (ADR-060; every identity verified against the platform log like in the web client), leaving, owed key rotations and catch-up wraps |
+| `org list|create|show|leave|rotate|catch-up`, `org invite --org [--role admin|member] [--wg …] [--expires-hours] [--message <text>|-]`, `org invite-revoke --org --invite`, `org join`, `org admit --org --user <id|account code> [--role admin|member] [--wg …]`, `org invitees [--org]` | organizations and invitations of every role (`show` gives an admin the state of each user invitation: open, opened, registered, accepted, KOR-36), joining with an invitation (the result carries the inviter's request message as `message` when the package has one; a log with an `admit` is verified with the platform log; an `accept` the hub stored although its answer got lost counts as joined once the membership and the verified log show it), admitting an existing account directly and the accounts of the user's own platform invitations (ADR-060; every identity verified against the platform log like in the web client), leaving, owed key rotations and catch-up wraps |
 | `member list|role|remove --org` | the members with their role and access (explicit, or `inherited` as an admin, ADR-058); role changes and removal with the key rotation that follows |
 | `wg list|create|rename|grant|ungrant|archive|settings`, `repos list|allow|disallow --wg` | workgroups (`my_access`, `my_access_inherited`), grants (`ungrant` acts on the explicit access only), the workgroup settings and allowed repositories |
 | `device list|assign|unassign|rename|invite` | execution devices: the platform device from the verified platform log, an own computer through a device invitation |

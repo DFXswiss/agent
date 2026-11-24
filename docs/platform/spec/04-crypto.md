@@ -181,7 +181,10 @@ follow-up only from the user of the original request and only while that request
 **(changed: `scope`, `org_name`, `wg_names`, `hub_key`, `v` added)**. The package plaintext is body JSON (§1;
 non-ASCII names allowed), not canonical JSON. For user invitations `keys` contains `OK` (current epoch) and `WK`
 of every invited workgroup plus the default workgroup; for device invitations `OK` and the `WK` of the assigned
-workgroups. Platform invitations (no org) have no package.
+workgroups. Platform invitations (no org) have no package. A user invitation may carry one optional key `message`:
+the inviter's personal message to the invitee (rule E-28, KOR-64; 1–500 characters under the label rules of
+`11-agent-access.md` §3), shown where the invitee joins; a package without it is exactly as before, and a device
+invitation never has one.
 
 ### 4.7 Membership log
 

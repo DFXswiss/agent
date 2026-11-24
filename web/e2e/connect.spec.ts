@@ -4,7 +4,8 @@
 // (r never in a URL), the agent's claim, "Connected agents" in the settings; an agent cannot pair another one; a second
 // pairing confirmed with the passkey names and replaces the first, which is revoked at once; the audit marker of an
 // agent's action, the disconnect dialogs and the account-level notification; a forged fingerprint, an unknown
-// pairing, a malformed link and the repeated gesture after `pairing_gesture_required`; the unlock without PRF.
+// pairing, a malformed link and the repeated gesture after `pairing_gesture_required`; the unlock without PRF; the
+// agent's personal message (rule E-28) quoted as plain text, and nothing of it without one.
 //
 // Pairing an AI agent that runs on another computer (ADR-067, 11-agent-access.md section 5.4): the `m=remote` link,
 // the warning that names the computer, the agent code typed by the user (a wrong code keeps the passkey button
@@ -55,6 +56,8 @@ test('connects the main orchestrator with one gesture; a second one replaces it;
   await expect(page.getByTestId('connect.warning')).toHaveText(
     'Only confirm if you have just asked your AI agent on this computer to connect.',
   );
+  // without a message nothing of it is shown (rule E-28)
+  await expect(page.getByTestId('connect.message')).toHaveCount(0);
   await page.getByTestId('connect.confirm').click();
   const sent = await handover;
   expect(sent.method).toBe('POST');
@@ -99,8 +102,13 @@ test('connects the main orchestrator with one gesture; a second one replaces it;
   const handoverSecond = catchHandover(page, origin, async (handed) => {
     claimedSecond = await second.claim(handed.fields.get('r')!, handed.fields.get('u')!);
   });
-  await page.goto(`/connect#${await second.fragment({ name: 'Helper' })}`);
+  // the agent's personal message (rule E-28): quoted where the user approves, markup and an address only as text
+  const message = 'Hi Ada, it is me: <b>Helper</b> <a href="https://evil.example">https://evil.example</a>';
+  await page.goto(`/connect#${await second.fragment({ name: 'Helper', message })}`);
   await expect(page.getByTestId('connect.name')).toHaveText('Helper');
+  await expect(page.getByTestId('connect.message')).toContainText('Personal message of the agent');
+  await expect(page.getByTestId('connect.message.text')).toHaveText(message);
+  await expect(page.getByTestId('connect.message').locator('a, b')).toHaveCount(0);
   await page.getByTestId('connect.confirm').click();
   await expect(page.getByTestId('connect.replaces')).toHaveText(
     'Replaces “Claude Code”, your current main orchestrator. “Claude Code” is disconnected at once.',

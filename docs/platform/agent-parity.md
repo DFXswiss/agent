@@ -29,6 +29,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | Action | Screen | Command | State |
 |---|---|---|---|
 | connect-agent | screens/connect | `pair` | done |
+| request-message-agent | screens/connect, screens/invite (the agent's personal message on the page of the approval, rule E-28) | `pair --message`, `register --message` (an agent never approves a pairing, 11-agent-access.md §6) | done |
 | register | screens/invite | `register` | done |
 | login-unlock | screens/login | (the agent's own key replaces the passkey sign-in and the unlock of the identity) | n/a |
 | recover | screens/recover | (passkey ceremony: a recovery registers a new passkey with the user's authenticator; a new code: `recovery new`) | n/a |
@@ -65,6 +66,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | org-join | screens/invite (existing user) | `org join` | done |
 | members-list | screens/members (explicit and inherited access, ADR-058) | `member list` | done |
 | members-invite | screens/members | `org invite --role admin\|member` | done |
+| members-invite-message | screens/members, screens/invite (the inviter's personal message, rule E-28) | `org invite --message`, `org join` (prints the message) | done |
 | members-admit | screens/members | `org admit --user <id\|account code> --role admin\|member --wg` | done |
 | members-invitees | screens/members (accounts of the admin's own platform invitations) | `org invitees --org` | done |
 | account-code | settings/passkeys | `status` (prints the account code) | done |

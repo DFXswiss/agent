@@ -2,7 +2,8 @@
 // invitations revoked), a second user joins with the code (API, the screen is WEB-08), the admin changes the role,
 // (an admin reads every workgroup as admin, ADR-058), grants workgroup access with history, removes the member while
 // the dialog shows "Saving …"; a plain member sees no admin controls, leaves, and the admin's browser rotates what the
-// member could read automatically and silently.
+// member could read automatically and silently; the inviter's personal message (rule E-28) reaches the invitee's
+// intro as plain text.
 import type { BrowserContext, Page } from '@playwright/test';
 import { ORG, WG } from '../src/core/log/state';
 import { expect, test } from './fixtures/test.ts';
@@ -41,10 +42,11 @@ async function navigateInApp(page: Page, path: string): Promise<void> {
 }
 
 /** Ada invites through the screen; returns the code shown once. */
-async function invite(page: Page, org: string, role: 'member' | 'admin' = 'member'): Promise<string> {
+async function invite(page: Page, org: string, role: 'member' | 'admin' = 'member', message?: string): Promise<string> {
   if (!page.url().endsWith(`/o/${org}/members`)) await page.getByTestId('shell.nav.members').click();
   await page.getByTestId('members.invite.open').click();
   await page.getByTestId('members.invite.role').selectOption(role);
+  if (message !== undefined) await page.getByTestId('members.invite.message').fill(message);
   await expect(page.getByTestId('members.invite.expiry')).toHaveValue('72');
   await page.getByTestId('members.invite.submit').click();
   await expect(page.getByTestId('members.invite.warning')).toBeVisible();
@@ -81,6 +83,32 @@ test('an admin creates an invitation shown once and revokes it @R-1.4 @R-1.11', 
   const log = await (await PageUser.open(page, ada.recoveryCode)).log(ada.org);
   const types = log.entries.map((entry) => entry.body.type);
   expect(types.slice(-2)).toEqual(['invite', 'invite_revoke']);
+});
+
+test("the invitee sees the inviter's personal message where it joins, as plain text (E-28)", async ({
+  page,
+  baseURL,
+  newContext,
+}) => {
+  const origin = baseURL!;
+  await addAuthenticator(page);
+  const ada = await onboard(page, { origin, name: 'Ada Admin' });
+  const message = 'Welcome Bob! <script>alert(1)</script> <a href="https://evil.example">https://evil.example</a>';
+  const code = await invite(page, ada.org, 'member', message);
+  const plain = await invite(page, ada.org);
+  const bob = await (await newContext()).newPage();
+  await addAuthenticator(bob);
+  await bob.goto(`${origin}/invite#${code}`);
+  await expect(bob.getByTestId('invite.org-intro')).toBeVisible();
+  await expect(bob.getByTestId('invite.message')).toContainText('Personal message from the person who invited you');
+  await expect(bob.getByTestId('invite.message.text')).toHaveText(message);
+  await expect(bob.getByTestId('invite.message').locator('a, script')).toHaveCount(0);
+  // without a message the invitation looks as before
+  const carol = await (await newContext()).newPage();
+  await addAuthenticator(carol);
+  await carol.goto(`${origin}/invite#${plain}`);
+  await expect(carol.getByTestId('invite.org-intro')).toBeVisible();
+  await expect(carol.getByTestId('invite.message')).toHaveCount(0);
 });
 
 test('a member joins; the admin changes the role, grants with history and removes with rotation @R-8.1 @R-8.2 @R-5.4', async ({

@@ -81,7 +81,7 @@ via selectors.
 |---|---|---|
 | `/` | redirect: unauthenticated → `/login`; else last org → `/o/:org` | – |
 | `/invite` (code in fragment `#…`) | invitation (§3.1); with agent pairing parameters after the code: new account through the user's agent (`11-agent-access.md` §5.2) | anon |
-| `/connect` (pairing in fragment `#…`) | confirm the pairing of the user's AI agent with one passkey gesture (`11-agent-access.md` §5.1) | anon → user |
+| `/connect` (pairing in fragment `#…`) | confirm the pairing of the user's AI agent with one passkey gesture (`11-agent-access.md` §5.1); shows the agent's request message (`t`) as a quote | anon → user |
 | `/login` | login and unlock (§3.4) | anon |
 | `/recover` | recovery (§3.5) | anon |
 | `/o/:org` | home: first-task composer (§4) and recent tasks of the default workgroup | org:member |
@@ -134,7 +134,7 @@ States and steps (`04-crypto.md` §5.1–§5.3):
 | `lookup` | "Checking invitation…" (short, no countdown) | `POST /v1/invites/lookup` |
 | `invalid` | one message for unknown/used/revoked/expired (`invite_unknown`), `invite_expired` separately | – |
 | `org_verify` (org invites) | – | open package, verify the log **returned by the lookup** (the invitee is not a member yet and cannot call `GET /v1/orgs/{org}/log`); failure → blocking error (`invite_not_in_log`, `log_*`) |
-| `intro` | what the invitation grants: org name and workgroup names (from the package fields `org_name`/`wg_names`), role, expiry, "You have not joined <org> yet"; org invitations: "I already have an account – sign in and join" first (the login ceremony, unlock and `accept` in one action), then "New here – create an account with a passkey" with the display name, and a sentence against a second account by mistake; platform invitations in a browser with a stored session: "This invitation would create a second, separate account" with "Go to my account" and "Create a second account anyway"; the step waits until the stored session was restored (a session still starting never lands in the new-account path); with a valid session the client goes to `existing_account` directly (KOR-36) | – |
+| `intro` | what the invitation grants: org name and workgroup names (from the package fields `org_name`/`wg_names`), the inviter's personal message when the package has one (`message`, rule E-28: a quote marked as the inviter's words, plain text; also on `existing_account`), role, expiry, "You have not joined <org> yet"; org invitations: "I already have an account – sign in and join" first (the login ceremony, unlock and `accept` in one action), then "New here – create an account with a passkey" with the display name, and a sentence against a second account by mistake; platform invitations in a browser with a stored session: "This invitation would create a second, separate account" with "Go to my account" and "Create a second account anyway"; the step waits until the stored session was restored (a session still starting never lands in the new-account path); with a valid session the client goes to `existing_account` directly (KOR-36) | – |
 | `existing_account` (org invites) | "Join <org> with your existing account", "You have not joined <org> yet"; one main button: "Join <org> as <name>" when unlocked (the name of the account's own `member.profile` in its orgs), else "Join <org> with my account" (one passkey gesture signs in, unlocks and joins); the name is the account's, "Use another name in this organization" opens the field (asked for only when no org of the account has a name); side paths "Use another account", "Create a new account instead" (KOR-36) | login ceremony §3.4 if locked, in the same action; then `accept` with the registered identity (`04-crypto.md` §5.2a); `invite_registered` → error state |
 | `create_passkey` | gesture 1 explained ("Your device will ask you to create a passkey") | `POST /v1/passkeys/register/begin` (ES256 only), `navigator.credentials.create()`, `POST /v1/passkeys/register/finish` (incl. the self-wrap of the user's new `CK_1`) |
 | `unlock_passkey` | gesture 2 explained ("Confirm once more to sign in") | login ceremony §3.4; `PUT /v1/me/bundles/{slot}` with the PRF output |
@@ -396,7 +396,8 @@ the same readable views of issue and pull request lists and of a read issue as t
   member has only because it is an admin (ADR-058) is shown as "reads as admin" and has no ungrant control.
 - Admin actions:
   - **Invite user:** role (member default, admin), workgroups with read/write (default workgroup always write),
-    expiry (72 h default, 1 h–30 d). Result screen shows link `<origin>/invite#<code>` and the code, with copy buttons
+    expiry (72 h default, 1 h–30 d), an optional personal message for the invitee (one line, up to 500 characters,
+    sealed in the package, rule E-28). Result screen shows link `<origin>/invite#<code>` and the code, with copy buttons
     and a warning to transmit confidentially; the code is not shown again. The invitations list shows each user
     invitation's state – "Not opened yet", "Link opened – not joined yet", "Account created – not joined yet" (with
     revoke), and "Accepted – <name> is a member" until it expires; acceptance comes from the verified log, opened and

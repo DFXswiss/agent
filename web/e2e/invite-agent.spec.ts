@@ -2,7 +2,8 @@
 // authenticator: the agent's link carries the invitation code, its pairing and the display name; the new user creates
 // the passkey and confirms the sign-in – nothing else (no name field, no further button) – and the same tab hands
 // over to the agent's loopback listener. The agent claims and is the user's main orchestrator; the hub holds the
-// proposed name only encrypted. A pairing that does not match the link refuses the invitation before anything exists.
+// proposed name only encrypted, and the agent's personal message (rule E-28) not at all. A pairing that does not match
+// the link refuses the invitation before anything exists.
 import { expect, test } from './fixtures/test.ts';
 import { catchHandover, TestAgent } from './helpers/agent.ts';
 import { addAuthenticator } from './helpers/authenticator.ts';
@@ -23,8 +24,12 @@ test('a new user only creates the passkey: account, private org and the agent co
     claimed = await agent.claim(handed.fields.get('r')!, handed.fields.get('u')!);
   });
 
-  await page.goto(`/invite#${invite.code}&${await agent.fragment({ host: 'Büro-Mac' })}&u=Ada+Lovelace`);
+  const message = 'Please confirm <b>me</b>: https://example.com/agent';
+  await page.goto(`/invite#${invite.code}&${await agent.fragment({ host: 'Büro-Mac', message })}&u=Ada+Lovelace`);
   await expect(page.getByTestId('invite.agent.name')).toHaveText('Claude Code');
+  // the agent's personal message (rule E-28) in the agent block, as plain text
+  await expect(page.getByTestId('invite.agent.message.text')).toHaveText(message);
+  await expect(page.getByTestId('invite.agent.message').locator('b, a')).toHaveCount(0);
   await expect(page.getByTestId('invite.agent.host')).toHaveText('Büro-Mac');
   await expect(page.getByTestId('invite.agent.warning')).toBeVisible();
   await expect(page.getByTestId('invite.proposed-name')).toContainText('Ada Lovelace');
@@ -45,7 +50,7 @@ test('a new user only creates the passkey: account, private org and the agent co
   expect((me.body as { orgs: unknown[] }).orgs).toHaveLength(1);
   // neither the invitation code nor the display name went to the hub in clear text
   const traffic = sent.filter((line) => !line.startsWith('http://127.0.0.1')).join('\n');
-  for (const secret of [invite.code, invite.code.replace(/-/g, ''), 'Ada Lovelace']) {
+  for (const secret of [invite.code, invite.code.replace(/-/g, ''), 'Ada Lovelace', 'example.com/agent']) {
     expect(traffic).not.toContain(secret);
   }
 

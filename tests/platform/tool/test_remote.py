@@ -501,7 +501,8 @@ def test_register_remote_refusals(tool: Tool, hub: HubFake) -> None:
     )
     assert dict(parse_qsl(document["invite_link"].split("#")[1].split("&", 1)[1]))["t"] == "Hallo"
     hub.hooks[("POST", "/v1/invites/lookup")] = lambda body, request: (200, {"registered": False, "scope": 5})
-    assert tool.run("register", "--remote", "--display-name", "Ada", stdin=link)[1]["scope"] is None
+    replaced = tool.run("register", "--remote", "--display-name", "Ada", "--replace-pending", stdin=link)
+    assert replaced[1]["scope"] is None
 
 
 @pytest.mark.parametrize(

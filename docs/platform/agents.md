@@ -68,6 +68,16 @@ exists and you are connected as its main orchestrator. It works for an invitatio
 organization) and for an invitation to an organization. If your user already has an account, use `pair` and then
 `org join` (invitation link on stdin) instead.
 
+**A personal message:** `pair`, `pair --remote`, `register` and `org invite` take `--message "<text>"` (or
+`--message -` to read it from stdin; with `register` only when the invitation link comes from
+`AGENT_PLATFORM_INVITE`). The page shows it as your words where your user (or the person invited) approves, as plain
+text: one line, up to 500 characters. Without it everything is as before. `org join` returns the inviter's message as
+`message` when there is one.
+
+```sh
+agent-platform pair --hub https://agent.dfx.swiss --name "Claude Code" --message "Hi, it's your agent from the terminal"
+```
+
 If `pair` fails with `pairing_timeout`: either your user did not confirm in time (run it again), or you do not
 run on your user's computer – then use the remote mode below.
 

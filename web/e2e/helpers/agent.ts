@@ -83,7 +83,14 @@ export class TestAgent {
   }
 
   /** The fragment of the `/connect` link (a wrong fingerprint on request). */
-  async fragment(options: { readonly name?: string; readonly host?: string; readonly forged?: boolean } = {}) {
+  async fragment(
+    options: {
+      readonly name?: string;
+      readonly host?: string;
+      readonly forged?: boolean;
+      readonly message?: string;
+    } = {},
+  ) {
     const fp = options.forged
       ? b64uEncode(random(16))
       : await fingerprint(this.keys.kemPublic(), this.keys.sigPublic());
@@ -94,6 +101,7 @@ export class TestAgent {
       a: options.name ?? 'Claude Code',
       h: options.host ?? 'Test-Mac',
     });
+    if (options.message !== undefined) params.set('t', options.message);
     return params.toString();
   }
 
