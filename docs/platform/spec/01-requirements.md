@@ -245,59 +245,60 @@ row adds `R-` rows with their tests and replaces the row here.
 | ID | Ref | Requirement | Status | As built today | Package |
 |---|---|---|---|---|---|
 | K-3.5 | [§3 b5](../KONZEPT.md#k-3-b5) | Under high load several VMs per workgroup may run on several devices. | teils | Separate VM per workgroup and device; the scheduler stays on the device with the running workgroup VM even when it is full. | – |
-| K-10.3 | [§10 b3](../KONZEPT.md#k-10-b3) | Subagents, tests and browsers are requested only as controlled platform operations. | teils | Subagents only by operation (R-13); tests and browsers not yet; the work VM is free ([E-08](../KONZEPT.md#e-08)). | KOR-29 |
-| K-27 | [Idee 27](../KONZEPT.md#k-idee-27) | Temporary test VMs: every test run gets an isolated temporary Lima VM; results, logs and exit codes stored; VM removed even on failure. | offen | Ban part built (no shell in the session); test run as operation missing ([A6](../KONZEPT.md#a-6)). | KOR-29 |
-| K-28 | [Idee 28](../KONZEPT.md#k-idee-28) | Temporary browser VMs: isolated Ubuntu VM with a browser controlled through controlled interfaces, traceable and live, removed after use. | offen | – | KOR-29 |
-| K-29 | [Idee 29](../KONZEPT.md#k-idee-29) | Explicit DFX support release of a workgroup (read or write), revocable, audited. | offen | Building blocks only (workgroup grant with rotation). | – |
+| K-10.3 | [§10 b3](../KONZEPT.md#k-10-b3) | Subagents, tests and browsers are requested only as controlled platform operations. | teils | Subagents only by operation (R-13); tests and browsers not yet; the work VM is free ([E-08](../KONZEPT.md#e-08)). | KOR-43, KOR-44 |
+| K-27 | [Idee 27](../KONZEPT.md#k-idee-27) | Temporary test VMs: every test run gets an isolated temporary Lima VM; results, logs and exit codes stored; VM removed even on failure. | offen | Ban part built (no shell in the session); free work VM built ([ADR-059](../adr/059-work-vm-on-request.md)); test run as its own operation in a fresh VM missing ([A6](../KONZEPT.md#a-6), [A8](../KONZEPT.md#a-8), [A9](../KONZEPT.md#a-9)). | KOR-43 |
+| K-28 | [Idee 28](../KONZEPT.md#k-idee-28) | Temporary browser VMs: isolated Ubuntu VM with a browser controlled through controlled interfaces, traceable and live, removed after use. | offen | Free browser in the work VM ([ADR-059](../adr/059-work-vm-on-request.md)), not live; browser tools with a live picture missing ([A6](../KONZEPT.md#a-6)). | KOR-44 |
+| K-29 | [Idee 29](../KONZEPT.md#k-idee-29) | Explicit DFX support release of a workgroup (read or write), revocable, audited. | offen | Building blocks only (workgroup grant with rotation); support is its own principal ([A12](../KONZEPT.md#a-12)). | KOR-56 |
 | K-30 | [Idee 30](../KONZEPT.md#k-idee-30) | Encryption by default without UX disadvantages; passkey the only visible release; org admins read all workgroups. | teils | Client-side encryption, no recovery-code step ([E-13](../KONZEPT.md#e-13)); admin read right on all workgroups missing. | – |
 | K-31 | [Idee 31](../KONZEPT.md#k-idee-31) | Scale and identity hierarchy: humans, main agents and subagents distinguishable; names and GitHub usernames for main agents. | teils | Main/subagent by depth and parent; agent names and per-agent GitHub mapping missing ([E-02](../KONZEPT.md#e-02)). | KOR-26, KOR-27 |
 | K-32 | [Idee 32](../KONZEPT.md#k-idee-32) | Autonomous-first: dashboard prioritises agent status, progress, blockers and required decisions. | teils | Task per request, no questions, task overview ([E-21](../KONZEPT.md#e-21)); status-first dashboard missing. | KOR-32 |
 | K-33 | [Idee 33](../KONZEPT.md#k-idee-33) | "Optimise processes" button starts an analysis session over authorised logs and metrics, no automatic changes. | offen | Raw data exist. | – |
 | K-34 | [Idee 34](../KONZEPT.md#k-idee-34) | Exactly one delegated main orchestrator per user, passkey release, own key, audit, revocation. | teils | Pairing with a passkey, own key, audit and revocation built by KOR-24 ([ADR-056](../adr/056-delegated-agent-access.md)); the orchestrator running on DFX hardware is open. | KOR-24 |
 | K-35 | [Idee 35](../KONZEPT.md#k-idee-35) | Own hardware exclusively for a workgroup or the whole organization; capacity, not data access. | teils | Org device per workgroup, separate VMs; assignment to the whole organization in one step missing. | – |
-| K-36 | [Idee 36](../KONZEPT.md#k-idee-36) | Every workgroup member with write access can continue a session; interventions attributed. | teils | Ordered queue and author per prompt built; the session does not learn who speaks. | – |
+| K-36 | [Idee 36](../KONZEPT.md#k-idee-36) | Every workgroup member with write access can continue a session; interventions attributed. | teils | Ordered queue and author per prompt built; the session does not learn who speaks ([A15](../KONZEPT.md#a-15)). | KOR-46 |
 | K-37 | [Idee 37](../KONZEPT.md#k-idee-37) | GitHub identities per PR and commit (author, committer, signature, co-authors), defaults per org/workgroup. | offen | One GitHub connection per user, operator account ([E-06](../KONZEPT.md#e-06)). | KOR-25 |
 | K-38 | [Idee 38](../KONZEPT.md#k-idee-38) | Automatic and manual choice of device and VM, deterministic. | teils | Deterministic scheduler; manual choice and fallback to a second VM missing. | – |
 | K-39 | [Idee 39](../KONZEPT.md#k-idee-39) | Session completion and cleanup; logs, results and context kept. | teils | Closing ends the process and frees the sandbox; context not kept resumable. | – |
 | K-40 | [Idee 40](../KONZEPT.md#k-idee-40) | Full session resume of the original Claude Code session, also on another VM. | offen | Resume only of a paused session on the same VM. | – |
 | K-41 | [Idee 41](../KONZEPT.md#k-idee-41) | PR conflict auto-fix button; updates the PR branch, no automatic merge. | offen | No automatic merge (met); the rest missing ([A2](../KONZEPT.md#a-2)). | – |
 | K-42 | [Idee 42](../KONZEPT.md#k-idee-42) | Specialised agent roles with configurable API rights. | offen | Only member/admin/read/write ([A1](../KONZEPT.md#a-1)). | – |
-| K-43 | [Idee 43](../KONZEPT.md#k-idee-43) | One main agent per task with fresh context; continuing a task uses its original session. | teils | Own Linux user and `.claude` per task; reading limited to the own workgroup and continuation after completion (K-40) missing. | – |
+| K-43 | [Idee 43](../KONZEPT.md#k-idee-43) | One main agent per task with fresh context; continuing a task uses its original session. | teils | Own Linux user and `.claude` per task; reading beyond the own workgroup ([A11](../KONZEPT.md#a-11)) and continuation after completion (K-40) missing. | KOR-45 |
 | K-44 | [Idee 44](../KONZEPT.md#k-idee-44) | Cloud sessions resume on another device after a device failure; temporary VMs are restarted. | offen | – | – |
-| K-45 | [Idee 45](../KONZEPT.md#k-idee-45) | No DFX fee with own hardware and own AI access. | teils | Own access is budget-free; holds today only because nothing is charged. | KOR-31 |
-| K-46 | [Idee 46](../KONZEPT.md#k-idee-46) | Usage-based billing: tokens and VM seconds, attributable to task, session, workgroup and org, visible. | teils | Tokens measured and attributed; VM time, prices and bookings missing ([E-15](../KONZEPT.md#e-15)–[E-17](../KONZEPT.md#e-17)). | KOR-31 |
-| K-47 | [Idee 47](../KONZEPT.md#k-idee-47) | Prepaid balance; without balance no paid resources; controlled stop, resumable. | offen | Daily budget per org with refusal; balance missing ([E-14](../KONZEPT.md#e-14)). | KOR-31 |
+| K-45 | [Idee 45](../KONZEPT.md#k-idee-45) | No DFX fee with own hardware and own AI access. | gebaut | Own resources are never charged ([ADR-062](../adr/062-prepaid-credit-and-usage-billing.md)). | KOR-31 |
+| K-46 | [Idee 46](../KONZEPT.md#k-idee-46) | Usage-based billing: tokens and VM seconds, attributable to task, session, workgroup and org, visible. | teils | Tokens and session VM runtime charged by a price list ([ADR-062](../adr/062-prepaid-credit-and-usage-billing.md), [E-15](../KONZEPT.md#e-15)–[E-17](../KONZEPT.md#e-17)); runtime of work, test and browser VMs not yet charged. | KOR-31, KOR-43, KOR-44 |
+| K-47 | [Idee 47](../KONZEPT.md#k-idee-47) | Prepaid balance; without balance no paid resources; controlled stop, resumable. | gebaut | Prepaid credit per org, controlled stop and continuation after a credit ([ADR-062](../adr/062-prepaid-credit-and-usage-billing.md), [E-14](../KONZEPT.md#e-14)). | KOR-31 |
 | K-16 | [§16](../KONZEPT.md#k-16) | Final concept decisions and technical checks. | teils | No project level, fresh context, bans, idempotency built; resume across devices, runtime metering and balance stop missing. | see above |
 
 ## R-E Rules of the client (`KONZEPT.md` part B)
 
 Younger than the concept; where they contradict it, the rule holds. Wording, date and reference in
-[`KONZEPT.md`](../KONZEPT.md#teil-b--regeln-und-entscheide-des-auftraggebers); a new rule is entered there first.
+[`KONZEPT.md`](../KONZEPT.md#teil-b--regeln-und-entscheide-des-auftraggebers); a new rule is entered there first. The
+interpretations A1–A18 (part C) have no rows of their own; the rows above and below cite them where they apply.
 
 | ID | Ref | Rule (short) | Status | Where |
 |---|---|---|---|---|
 | E-01 | [E-01](../KONZEPT.md#e-01) | Full concept version (47 ideas) is binding. | gebaut | this document, R-16 |
-| E-02 | [E-02](../KONZEPT.md#e-02) | "Hundreds of agents" describes use, no number target; no artificial limit, clear message at capacity. | teils | KOR-35 |
+| E-02 | [E-02](../KONZEPT.md#e-02) | "Hundreds of agents" describes use, no number target; no artificial limit, clear message at capacity. | teils | KOR-35, KOR-45 ([A14](../KONZEPT.md#a-14)) |
 | E-03 | [E-03](../KONZEPT.md#e-03) | The user only creates a passkey; their AI agent sets up everything else, incl. subscription token transfer. | gebaut | [ADR-056](../adr/056-delegated-agent-access.md) |
 | E-04 | [E-04](../KONZEPT.md#e-04) | An agent without passkey can do everything a human with passkey can. | gebaut | [ADR-056](../adr/056-delegated-agent-access.md) |
-| E-05 | [E-05](../KONZEPT.md#e-05) | A missing prerequisite is triggered, not explained. | offen | KOR-25 |
+| E-05 | [E-05](../KONZEPT.md#e-05) | A missing prerequisite is triggered, not explained. | offen | KOR-25, KOR-49 |
 | E-06 | [E-06](../KONZEPT.md#e-06) | GitHub through the operator's account for approved users. | gebaut | [ADR-053](../adr/053-operator-github-account.md), [ADR-054](../adr/054-repository-list-optional.md) |
 | E-07 | [E-07](../KONZEPT.md#e-07) | Operator subscriptions for approved organizations. | gebaut | [ADR-052](../adr/052-operator-subscriptions.md) |
-| E-08 | [E-08](../KONZEPT.md#e-08) | Work VM on request in which everything is allowed. | offen | KOR-29 |
-| E-09 | [E-09](../KONZEPT.md#e-09) | Nothing is monitored inside the work VM. | offen | KOR-29 |
-| E-10 | [E-10](../KONZEPT.md#e-10) | Work VM egress never via the site address, fail-closed. | offen | KOR-29 |
-| E-11 | [E-11](../KONZEPT.md#e-11) | No unnecessary restrictions; nothing must be released one by one. | teils | [ADR-054](../adr/054-repository-list-optional.md), KOR-29 |
+| E-08 | [E-08](../KONZEPT.md#e-08) | Work VM on request in which everything is allowed. | gebaut | [ADR-059](../adr/059-work-vm-on-request.md) |
+| E-09 | [E-09](../KONZEPT.md#e-09) | Nothing is monitored inside the work VM. | gebaut | [ADR-059](../adr/059-work-vm-on-request.md) |
+| E-10 | [E-10](../KONZEPT.md#e-10) | Work VM egress never via the site address, fail-closed. | gebaut | [ADR-059](../adr/059-work-vm-on-request.md) |
+| E-11 | [E-11](../KONZEPT.md#e-11) | No unnecessary restrictions; nothing must be released one by one. | teils | [ADR-054](../adr/054-repository-list-optional.md), [ADR-059](../adr/059-work-vm-on-request.md), KOR-49 |
 | E-12 | [E-12](../KONZEPT.md#e-12) | Registration only with a PRF-capable passkey. | gebaut | [ADR-055](../adr/055-registration-without-recovery-code-step.md) |
 | E-13 | [E-13](../KONZEPT.md#e-13) | No mandatory recovery-code step at registration. | gebaut | [ADR-055](../adr/055-registration-without-recovery-code-step.md) |
-| E-14 | [E-14](../KONZEPT.md#e-14) | Billing only from a balance the operator sets; no payment path. | offen | KOR-31 |
-| E-15 | [E-15](../KONZEPT.md#e-15) | Prices as a fair market average, in configuration. | offen | KOR-31 |
-| E-16 | [E-16](../KONZEPT.md#e-16) | Everything priced in USD. | offen | KOR-31 |
-| E-17 | [E-17](../KONZEPT.md#e-17) | Every booking also stores its CHF equivalent from one central daily USD/CHF rate. | offen | KOR-31 |
-| E-18 | [E-18](../KONZEPT.md#e-18) | Existing accounts are admitted to an organization directly. | offen | KOR-37 |
+| E-14 | [E-14](../KONZEPT.md#e-14) | Billing only from a balance the operator sets; no payment path. | gebaut | [ADR-062](../adr/062-prepaid-credit-and-usage-billing.md) |
+| E-15 | [E-15](../KONZEPT.md#e-15) | Prices as a fair market average, in configuration. | gebaut | [ADR-062](../adr/062-prepaid-credit-and-usage-billing.md) |
+| E-16 | [E-16](../KONZEPT.md#e-16) | Everything priced in USD. | gebaut | [ADR-062](../adr/062-prepaid-credit-and-usage-billing.md) |
+| E-17 | [E-17](../KONZEPT.md#e-17) | Every booking also stores its CHF equivalent from one central daily USD/CHF rate. | gebaut | [ADR-062](../adr/062-prepaid-credit-and-usage-billing.md) |
+| E-18 | [E-18](../KONZEPT.md#e-18) | Existing accounts are admitted to an organization directly. | gebaut | [ADR-060](../adr/060-direct-admission-of-existing-accounts.md) |
 | E-19 | [E-19](../KONZEPT.md#e-19) | No single-case fixes: exclude the class of fault. | teils | KOR-35 (first case) |
 | E-20 | [E-20](../KONZEPT.md#e-20) | Community area with a group chat of all users. | offen | KOR-26 |
 | E-21 | [E-21](../KONZEPT.md#e-21) | Task overview as a menu entry. | gebaut | KOR-32 |
-| E-22 | [E-22](../KONZEPT.md#e-22) | One repository (`DFXswiss/agent`). | offen | INF-06 |
+| E-22 | [E-22](../KONZEPT.md#e-22) | One repository (`DFXswiss/agent`). | gebaut | [ADR-061](../adr/061-one-repository.md) |
 | E-23 | [E-23](../KONZEPT.md#e-23) | Concept and rules in one central file in the repository. | gebaut | [KONZEPT.md](../KONZEPT.md), `tests/platform/test_konzept.py` |
 | E-24 | [E-24](../KONZEPT.md#e-24) | No access layer in front of the platform; it protects itself. | gebaut | operation |
 

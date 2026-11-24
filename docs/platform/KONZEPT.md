@@ -20,7 +20,7 @@ Punkt), `#e-01` (Regel E-01), `#a-1` (Auslegung A1). Anker werden nie umbenannt 
 |---|---|
 | [A – Das Konzept](#teil-a--das-konzept) | Vollständige Konzeptfassung mit 47 Ideen, im Wortlaut |
 | [B – Regeln und Entscheide](#teil-b--regeln-und-entscheide-des-auftraggebers) | Regeln E-01 … mit Datum, Wortlaut, Bezug und Umsetzung |
-| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A7 |
+| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A18 |
 | [D – Pflege](#teil-d--pflege) | Wie eine neue Vorgabe eingetragen wird; offene Abweichungen |
 
 ## Teil A – Das Konzept
@@ -354,7 +354,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „keine technische anforderung sondern eine aussage die erklärt wie ich es nutzen will, es können auch
   10 sein, oder 1000“
 - **Bezug:** präzisiert [Idee 31](#k-idee-31) und [§16 Punkt 1](#k-16-b1).
-- **Umsetzung:** Grenzen als Einstellungen ([A5](#a-5)); Volumenfestigkeit KOR-35 (offen).
+- **Umsetzung:** Grenzen als Einstellungen ([A5](#a-5), [A14](#a-14); offen – KOR-45); Volumenfestigkeit KOR-35
+  (offen).
 
 <a id="e-03"></a>
 
@@ -395,7 +396,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „in so einem fall muss direkt erkannt werden dass ein GitHub Login benötigt wird und die einzige
   korrekte Antwort besteht darin das GitHub Login anzustossen“
 - **Bezug:** ergänzt [§9](#k-9) und [Idee 32](#k-idee-32); gilt als Muster für jede fehlende Voraussetzung.
-- **Umsetzung:** offen – KOR-25 (GitHub); weitere Fälle in den jeweiligen Paketen.
+- **Umsetzung:** offen – KOR-25 (GitHub); übrige Voraussetzungen KOR-49.
 
 <a id="e-06"></a>
 
@@ -418,8 +419,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   etwas zu verbinden.
 - **Wortlaut:** „auch die abos verbinden ich will nicht selber machen, du hast doch alle abos, warum hast du sie
   nicht hinzugefügt?“
-- **Bezug:** ergänzt [§4 Punkt 2](#k-4-b2) und [§4 Punkt 4](#k-4-b4); zur Abrechnung siehe [Teil D](#d-offen).
-- **Umsetzung:** gebaut – [ADR-052](adr/052-operator-subscriptions.md) (KOR-23).
+- **Bezug:** ergänzt [§4 Punkt 2](#k-4-b2) und [§4 Punkt 4](#k-4-b4); zur Abrechnung [Idee 46](#k-idee-46).
+- **Umsetzung:** gebaut – [ADR-052](adr/052-operator-subscriptions.md) (KOR-23); ihr Verbrauch wird berechnet –
+  [ADR-062](adr/062-prepaid-credit-and-usage-billing.md) (KOR-31).
 
 <a id="e-08"></a>
 
@@ -438,7 +440,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** ersetzt für die Arbeits-VM das Ausführungsverbot aus [§10 Punkt 3](#k-10-b3), [§10 Punkt 6](#k-10-b6)
   und [§16 Punkt 4](#k-16-b4) (in der Session selbst wird weiterhin nichts ausgeführt); ergänzt
   [Idee 27](#k-idee-27) und [Idee 28](#k-idee-28) ([A6](#a-6)).
-- **Umsetzung:** offen – KOR-29.
+- **Umsetzung:** gebaut – [ADR-059](adr/059-work-vm-on-request.md) (KOR-29).
 
 <a id="e-09"></a>
 
@@ -453,7 +455,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   überwachen, […]“ (Fortsetzung zum Ausgang siehe E-10)
 - **Bezug:** wie E-08; gegenüber [§6 Punkt 4](#k-6-b4) und [§10 Punkt 8](#k-10-b8) gilt: protokolliert werden die
   Plattform-Operationen (Anfordern, Abbau, Ergebnisse), nicht die Vorgänge in der VM.
-- **Umsetzung:** offen – KOR-29.
+- **Umsetzung:** gebaut – [ADR-059](adr/059-work-vm-on-request.md) (KOR-29).
 
 <a id="e-10"></a>
 
@@ -467,7 +469,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   dort verlangte eigene statische Adresse hat er um 20:40 zurückgenommen:) „wir brauchen keine fixe ip für ubuntu vm,
   es geht nur darum dass sie nicht die normale ip von […] standort nimmt“ (Standortname gekürzt)
 - **Bezug:** ergänzt E-08 und [§3](#k-3).
-- **Umsetzung:** offen – KOR-29.
+- **Umsetzung:** gebaut – [ADR-059](adr/059-work-vm-on-request.md) (KOR-29).
 
 <a id="e-11"></a>
 
@@ -482,8 +484,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   unnötige einschränkung soll nicht existieren“
 - **Bezug:** geht [Idee 26](#k-idee-26) („eingeschränkte Rechte“), [Idee 31](#k-idee-31) („geringere Rechte“),
   [Idee 42](#k-idee-42) und [§9 Punkt 3](#k-9-b3) („freigegebene Repositories“) vor ([A1](#a-1), [A5](#a-5)).
-- **Umsetzung:** gebaut für Repositories – [ADR-054](adr/054-repository-list-optional.md) (KOR-30); Arbeits-VM ohne
-  Befehlsfilter KOR-29 (offen); Inventur der übrigen Freigaben offen (Teil D).
+- **Umsetzung:** gebaut für Repositories – [ADR-054](adr/054-repository-list-optional.md) (KOR-30) – und für die
+  Arbeits-VM ohne Befehlsfilter – [ADR-059](adr/059-work-vm-on-request.md) (KOR-29); übrige Freigaben offen – KOR-49
+  (Teil D).
 
 <a id="e-12"></a>
 
@@ -521,7 +524,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   (interner Zugangsweg gekürzt)
 - **Bezug:** präzisiert [Idee 47](#k-idee-47) („nach Aufladung“ = nach einer Gutschrift des Betreibers) und
   [Idee 46](#k-idee-46).
-- **Umsetzung:** offen – KOR-31.
+- **Umsetzung:** gebaut – [ADR-062](adr/062-prepaid-credit-and-usage-billing.md) (KOR-31).
 
 <a id="e-15"></a>
 
@@ -533,7 +536,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „preise kannst du selber entscheiden, ermittle den marktpreis und orientiere dich an anderen
   anbietern. nimm einen fairen durchschnittspreis.“
 - **Bezug:** ergänzt [Idee 46](#k-idee-46).
-- **Umsetzung:** offen – KOR-31.
+- **Umsetzung:** gebaut – [ADR-062](adr/062-prepaid-credit-and-usage-billing.md) (KOR-31).
 
 <a id="e-16"></a>
 
@@ -546,7 +549,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „es kann sein dass es im konzept anderst definiert ist, ich habe mich aber jetzt dazu entschieden
   alles in agent immer in usd zu bepreisen“
 - **Bezug:** geht jeder abweichenden Angabe in [Idee 45](#k-idee-45)–[47](#k-idee-47) und in älteren Texten vor.
-- **Umsetzung:** offen – KOR-31 (Beträge als Mikro-USD).
+- **Umsetzung:** gebaut – [ADR-062](adr/062-prepaid-credit-and-usage-billing.md) (KOR-31; Beträge als Mikro-USD).
 
 <a id="e-17"></a>
 
@@ -561,7 +564,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   dafür reicht es aber einen USD / CHF Tageskurs einmal zentral zu definieren, bzw in einer db abzulegen der dann
   immer benutzt wird“
 - **Bezug:** ergänzt E-16 und [Idee 46](#k-idee-46).
-- **Umsetzung:** offen – KOR-31.
+- **Umsetzung:** gebaut – [ADR-062](adr/062-prepaid-credit-and-usage-billing.md) (KOR-31).
 
 <a id="e-18"></a>
 
@@ -574,7 +577,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   das muss reichen!“ – früher: „alles muss von dir gemacht werden können, zwingend!“
 - **Bezug:** ergänzt [§1 Punkt 1](#k-1-b1) und [§8 Punkt 1](#k-8-b1): Die Einladung bleibt der einzige Weg auf die
   Plattform, aber nicht der einzige Weg in eine weitere Organization.
-- **Umsetzung:** offen – KOR-37 (direkte Aufnahme); Einladung mit einem Klick KOR-36.
+- **Umsetzung:** gebaut – [ADR-060](adr/060-direct-admission-of-existing-accounts.md) (KOR-37, direkte Aufnahme);
+  Einladung mit einem Klick KOR-36.
 
 <a id="e-19"></a>
 
@@ -619,7 +623,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „repos zusammenlegen, nur noch /agent“
 - **Bezug:** ersetzt [§14](#k-14) für die Zeit nach der Zusammenlegung (`DFXswiss/agent-core` wird archiviert; der
   Name `agent-core` bleibt für den Hub als Komponente, [Grundprinzip](#k-gp)).
-- **Umsetzung:** offen – INF-06.
+- **Umsetzung:** gebaut – [ADR-061](adr/061-one-repository.md) (INF-06).
 
 <a id="e-23"></a>
 
@@ -647,9 +651,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
-**Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln,
-die der Abgleich der vollständigen Fassung am 2026-11-23 gefunden hat, und wurden dem Auftraggeber am selben Abend
-mitgeteilt. Sie gelten für alle Arbeiten, bis er anders entscheidet; dahinter steht die Rangfolge (die jüngere
+**Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln
+und offene Fragen nach dem Wortlaut des Konzepts: A1–A7 aus dem Abgleich der vollständigen Fassung vom 2026-11-23
+(dem Auftraggeber am selben Abend mitgeteilt), A8–A18 aus dem Restplan vom 2026-11-24. Sie gelten für alle Arbeiten, bis er anders entscheidet; dahinter steht die Rangfolge (die jüngere
 ausdrückliche Aussage gilt, [E-01](#e-01)).
 
 <a id="a-1"></a>
@@ -679,6 +683,47 @@ ausdrückliche Aussage gilt, [E-01](#e-01)).
 - **A7 – Hinweis, kein Entscheid:** Läuft eine Aufgabe auf einem DFX-Gerät, liegt ihr Inhalt dort im Klartext
   (technisch zwingend, [§5 Punkt 4](#k-5-b4)). Die Support-Freigabe ([Idee 29](#k-idee-29)) ist etwas anderes und
   kommt als eigenes Paket.
+<a id="a-8"></a>
+- **A8 – Datensatz je Ausführung:** Befehle in der Arbeits-VM sind keine protokollierten Operationen im Sinne von
+  [§11 Punkt 1](#k-11-b1) ([E-09](#e-09)). Ein Testlauf ist eine eigene Operation mit Datensatz, Ergebnis, Exit-Code
+  und verschlüsseltem Log ([Idee 27](#k-idee-27), [A6](#a-6)).
+<a id="a-9"></a>
+- **A9 – Testläufe:** Jeder Testlauf bekommt eine eigene Wegwerf-VM, auch wenn das langsamer ist
+  ([Idee 27](#k-idee-27)); die Startzeit wird gemessen und berichtet.
+<a id="a-10"></a>
+- **A10 – Subagenten laufen weiter:** Ein Subagent bekommt Folge-Anweisungen seines Hauptagenten und läuft weiter,
+  statt nach einem Turn zu enden ([Idee 26](#k-idee-26) „vollwertige Claude-Code-Session“, [E-11](#e-11),
+  [A1](#a-1)).
+<a id="a-11"></a>
+- **A11 – Lesen über Workgroups:** Eine Session liest so weit, wie **sowohl** der Besitzer der Aufgabe **als auch**
+  der Mensch lesen darf, dessen Anweisung sie gerade bearbeitet ([§8 Punkt 5](#k-8-b5), [Idee 43](#k-idee-43)).
+  Fremde Workgroups ohne Recht bleiben unsichtbar („Keine pauschale Einsicht in fremde Workgroups“).
+<a id="a-12"></a>
+- **A12 – Support:** „DFX-Support“ ([Idee 29](#k-idee-29)) sind Menschen mit einer Plattformrolle – ein eigener
+  Prinzipal, der eine Workgroup nur nach deren Freigabe liest oder schreibt. Das Ausführungsgerät ist Technik, kein
+  Support (ergänzt [A7](#a-7), [§5 Punkt 4](#k-5-b4)).
+<a id="a-13"></a>
+- **A13 – Default-Workgroup:** Schreiben ist dort Voreinstellung ([§8 Punkt 3](#k-8-b3) „standardmässig“), keine
+  Unveränderlichkeit: Admins können einzelne Mitglieder auf Lesen setzen; neue Mitglieder bekommen weiter Schreiben
+  ([E-11](#e-11)).
+<a id="a-14"></a>
+- **A14 – Keine festen Grenzen:** Alle verbleibenden festen Werte werden Einstellungen; Meldegrenzen dürfen die
+  Überwachung nie blind machen (ergänzt [A5](#a-5), [E-02](#e-02)).
+<a id="a-15"></a>
+- **A15 – Gemeinsame Sessions:** Jede Anweisung trägt den verifizierten Menschen, der sie gegeben hat; die Folgen
+  gehören dem Anweisenden ([Idee 36](#k-idee-36), [Idee 37](#k-idee-37)). GitHub-Aktionen laufen nur mit
+  Identitäten, die der Anweisende nutzen darf ([§9 Punkt 3](#k-9-b3)).
+<a id="a-16"></a>
+- **A16 – Mittelbare Ausführung:** Workflow-Dateien im Ziel-Repository werden nicht gesperrt; ein Workflow läuft mit
+  den Rechten, die der verbundene GitHub-Account dort hat ([E-08](#e-08), [E-11](#e-11), [§9 Punkt 5](#k-9-b5)).
+<a id="a-17"></a>
+- **A17 – Geschützte Branches:** Die Plattform setzt keine Voreinstellung; maßgeblich ist der Branch-Schutz des
+  Repositories, und eine Workgroup kann freiwillig eine eigene Liste setzen ([E-11](#e-11),
+  [Idee 42](#k-idee-42)). Überschrieben wird weiterhin nichts ([A2](#a-2) bleibt).
+<a id="a-18"></a>
+- **A18 – Blockierter Versuch:** Jede abgelehnte Aktion, die eine Session beantragt oder ein Hook abfängt, wird
+  protokolliert ([§10 Punkt 8](#k-10-b8)). Ablehnungen einzelner Systemaufrufe durch den Kernel sind die zweite
+  Schutzschicht ([§10 Punkt 5](#k-10-b5)) und werden gezählt, nicht einzeln protokolliert.
 
 ## Teil D – Pflege
 
@@ -717,19 +762,22 @@ ausdrückliche Aussage gilt, [E-01](#e-01)).
 
 ### Offene Abweichungen
 
-Stand 2026-11-23. Was hier steht, widerspricht dem gebauten Stand noch und wird vom genannten Paket geschlossen.
+Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird vom genannten Paket geschlossen.
 
 | Regel / Stelle | Gebauter Stand heute | Schließt |
 |---|---|---|
-| [E-08](#e-08), [E-09](#e-09), [E-10](#e-10) Arbeits-VM | Sessions haben keine Arbeits-VM; das Ausführungsverbot aus §10 gilt ohne Ausnahme | KOR-29 |
-| [E-14](#e-14)–[E-17](#e-17) Guthaben, Preise, USD, CHF-Gegenwert | Tagesbudget je Organization statt Saldo; keine Buchungen, keine Preise, kein Tageskurs | KOR-31 |
-| [E-07](#e-07) mit [Idee 46](#k-idee-46) | Betreiber-Abos gelten im Code als eigener Zugang, ihr Verbrauch würde nicht berechnet | KOR-31 |
-| [E-05](#e-05), [E-06](#e-06) allgemeiner GitHub-Weg | Fehlende GitHub-Verbindung wird gemeldet, nicht angestoßen (außer bei freigegebenen Nutzern) | KOR-25 |
-| [E-11](#e-11) übrige Freigaben | Freigabe von Team-Organisationen für DFX-Geräte, Freigabe der Betreiber-Abos je Organization, Workgroup-Rechte und Rollen sind noch Voraussetzungen | Inventur, noch kein Paket |
-| [E-18](#e-18) direkte Aufnahme | Bestehende Konten brauchen eine Einladung, die sie selbst annehmen | KOR-37 |
+| [E-05](#e-05), [E-06](#e-06) allgemeiner GitHub-Weg | Fehlende GitHub-Verbindung wird gemeldet, nicht angestoßen (außer bei freigegebenen Nutzern); andere fehlende Voraussetzungen (Modellzugang, Guthaben, Gerät) werden nur angezeigt | KOR-25; übrige Voraussetzungen KOR-49 |
+| [E-11](#e-11) übrige Freigaben | Freigabe von Team-Organisationen für DFX-Geräte, Freigabe der Betreiber-Abos je Organization, Plattform-Einladung nur mit eigener Rolle und Workgroup-Rechte sind noch Voraussetzungen | KOR-49 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
-| [E-22](#e-22) ein Repository | Hub und Web liegen noch in `DFXswiss/agent-core` | INF-06 |
-| [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | noch kein Paket |
-| [A5](#a-5) Grenzen | Subagenten je Task, Tiefe und Sessions je VM sind feste Werte | KOR-29, KOR-31 |
+| [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
+| [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
+| [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
+| [A10](#a-10) Subagenten | Ein Subagent endet nach einem Turn und bekommt keine Folge-Anweisung | KOR-45 |
+| [A11](#a-11) Lesen über Workgroups | Eine Session liest nur in ihrer eigenen Workgroup, andere sieht sie nur namentlich | KOR-45 |
+| [A12](#a-12) Support | Keine Support-Freigabe | KOR-56 |
+| [A13](#a-13) Default-Workgroup | Das Schreibrecht in der Default-Workgroup lässt sich nicht herabsetzen | KOR-55 |
+| [A15](#a-15) Gemeinsame Sessions | Die Session erfährt nicht, wer anweist; Folgen und GitHub-Aktionen hängen am Besitzer der Aufgabe | KOR-46, KOR-47 |
+| [A17](#a-17) Geschützte Branches | Ohne Einstellung der Workgroup gelten `main`, `master`, `develop` und `release/*` als geschützt | KOR-49 |
+| [A18](#a-18) Blockierter Versuch | Ablehnungen durch den Kernel werden nicht je Session gezählt | KOR-60 |
 | Ideen 27–47, §16 | Stand je Idee in [spec/01-requirements.md](spec/01-requirements.md) Block R-16 | dort genannt |

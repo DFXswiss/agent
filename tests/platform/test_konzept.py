@@ -2,11 +2,12 @@
 
 `docs/platform/KONZEPT.md` is the first source for everyone working on agent.dfx.swiss: the concept with 47 ideas
 (part A), the client's rules E-NN (part B), the interpretations (C) and its maintenance (D). This test checks that
-(a) every rule ID is unique, numbered without gaps, anchored and dated; (b) every link from `spec/01-requirements.md`
-and from the ADRs into the file names an existing anchor, every requirement row cites the file, the bare section
-numbers of the ADRs 001-056 (short concept version) resolve through the numbering map of part A, and newer ADRs cite
-the concept by link only; (c) part A carries every section and idea. Internal names are kept out by the repository
-scan of `test_hygiene.py`, which covers `docs/platform/`.
+(a) every rule ID is unique, numbered without gaps, anchored and dated, and every interpretation AN of part C is
+numbered without gaps, carries its anchor `a-N` and is counted in the table of contents; (b) every link from
+`spec/01-requirements.md` and from the ADRs into the file names an existing anchor, every requirement row cites the
+file, the bare section numbers of the ADRs 001-056 (short concept version) resolve through the numbering map of
+part A, and newer ADRs cite the concept by link only; (c) part A carries every section and idea. Internal names are
+kept out by the repository scan of `test_hygiene.py`, which covers `docs/platform/`.
 """
 
 from __future__ import annotations
@@ -54,6 +55,8 @@ SHORT_REF_RE = re.compile(r"KONZEPT (Grundprinzip|§\d+(?:\.\d+)?(?:, §\d+(?:\.
 BARE_KONZEPT_RE = re.compile(r"\bKONZEPT\b(?!\.md)")
 ANCHOR_SPAN_RE = re.compile(r'<a\s+(?:name|id)="[^"]+"></a>')
 ADR_NUMBER_RE = re.compile(r"^(\d{3})-")
+INTERPRETATION_RE = re.compile(r'^<a id="a-(\d+)"></a>\n- \*\*A(\d+) ' + DASH + r" \S", re.MULTILINE)
+CONTENTS_C_RE = re.compile(r"^\| \[C " + DASH + r" Auslegungen\]\([^)]*\) \| A1" + DASH + r"A(\d+) \|$", re.MULTILINE)
 
 
 def rules(text: str) -> list[tuple[str, str]]:
@@ -87,6 +90,25 @@ def rule_problems(text: str) -> list[str]:
             datetime.date.fromisoformat(dates[0])
         except ValueError:
             problems.append(f"{rule_id}: invalid date {dates[0]}")
+    return problems
+
+
+def interpretation_problems(text: str) -> list[str]:
+    """Part C: interpretations A1, A2, ... gapless, each right under its anchor `a-N`, all counted in the contents."""
+    part_c = text.split("\n## Teil C", 1)[-1].split("\n## Teil D", 1)[0] if "\n## Teil C" in text else ""
+    found = INTERPRETATION_RE.findall(part_c)
+    problems = [f"A{number}: anchor a-{anchor} does not match" for anchor, number in found if anchor != number]
+    numbers = [int(number) for _, number in found]
+    if not numbers:
+        return [*problems, "part C has no interpretation"]
+    if numbers != list(range(1, len(numbers) + 1)):
+        problems.append(f"interpretations {numbers} are not gapless from A1")
+    entries = len(re.findall(r"^- \*\*A\d+ ", part_c, re.MULTILINE))
+    if entries != len(numbers):
+        problems.append(f"{entries - len(numbers)} interpretation(s) without anchor line")
+    contents = CONTENTS_C_RE.findall(text)
+    if contents != [str(max(numbers))]:
+        problems.append(f"table of contents does not name A1{DASH}A{max(numbers)} for part C")
     return problems
 
 
@@ -186,6 +208,10 @@ def test_rules_are_unique_anchored_and_dated() -> None:
     assert duplicate_anchors(text) == []
 
 
+def test_interpretations_are_gapless_and_anchored() -> None:
+    assert interpretation_problems(konzept_text()) == []
+
+
 def test_part_a_has_every_section_and_idea() -> None:
     assert part_a_problems(DOCS_RULES.anchors(konzept_text())) == []
 
@@ -227,6 +253,30 @@ def test_rule_problems_name_every_kind() -> None:
     assert rule_problems(undated) == ["E-01: needs exactly one date line, found 0"]
     bad_date = RULE.format(n="01", date="2026-13-40")
     assert rule_problems(bad_date) == ["E-01: invalid date 2026-13-40"]
+
+
+def _part_c(*entries: str, contents: int) -> str:
+    head = f"| [C {DASH} Auslegungen](#c) | A1{DASH}A{contents} |\n\n## Teil C\n\n"
+    return head + "".join(entries) + "\n## Teil D\n"
+
+
+def _entry(anchor: int, number: int) -> str:
+    return f'<a id="a-{anchor}"></a>\n- **A{number} {DASH} Name:** x\n'
+
+
+def test_interpretation_problems_name_every_kind() -> None:
+    assert interpretation_problems(_part_c(_entry(1, 1), _entry(2, 2), contents=2)) == []
+    assert interpretation_problems(_part_c(_entry(1, 1), _entry(2, 2), contents=1)) == [
+        f"table of contents does not name A1{DASH}A2 for part C",
+    ]
+    assert interpretation_problems(_part_c(_entry(1, 1), _entry(3, 3), contents=3)) == [
+        "interpretations [1, 3] are not gapless from A1",
+    ]
+    assert interpretation_problems(_part_c(_entry(1, 1), _entry(1, 2), contents=2)) == ["A2: anchor a-1 does not match"]
+    unanchored = _part_c(_entry(1, 1), f"- **A2 {DASH} Name:** x\n", contents=1)
+    assert interpretation_problems(unanchored) == ["1 interpretation(s) without anchor line"]
+    assert interpretation_problems(_part_c(contents=1)) == ["part C has no interpretation"]
+    assert interpretation_problems("no part C") == ["part C has no interpretation"]
 
 
 def test_link_problems_check_only_konzept_fragments(tmp_path: Path) -> None:
