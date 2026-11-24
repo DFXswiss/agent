@@ -1,6 +1,6 @@
 {
   "name": "e2e-20-github-connect",
-  "description": "E2E-20: after GitHub was connected and disconnected again, the session asks for its repositories; the operation is refused with github_not_connected (no GitHub call).",
+  "description": "E2E-20: after GitHub was connected and disconnected again, the session asks for its repositories; the runner holds the operation for a new connection (ADR-066, no GitHub call) and answers it pending.",
   "steps": [
     {
       "id": "list-repositories",
@@ -26,9 +26,9 @@
       }
     },
     {
-      "id": "not-connected",
+      "id": "held",
       "expect": {
-        "tool_result_contains": "\"github_not_connected\""
+        "tool_result_contains": "\"status\":\"pending\""
       },
       "reply": {
         "content": [

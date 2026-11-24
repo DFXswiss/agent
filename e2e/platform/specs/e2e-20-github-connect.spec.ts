@@ -2,9 +2,10 @@
 // and disconnect. The user connects in the settings: the `github.connect` device request reaches the platform device,
 // which runs the device flow at the GitHub double; the page shows the user code with the link and the countdown; once
 // the code is authorized the device stores the credential under the user's CK (the hub holds only ciphertext, the
-// device a verified cache) and the page shows the login it decrypted. Disconnecting hard-deletes the record at the hub
-// and the device purges its cache; a later operation of a session ends `github_not_connected` without a call to
-// GitHub.
+// device a verified cache) and the page shows the login it decrypted. Disconnecting hard-deletes the record at the hub,
+// the device revokes the token it minted (KOR-40) and purges its cache; a later operation of a session is held for a
+// new connection (ADR-066: the waiting card, no call to GitHub, unknown to the hub; it ends `github_not_connected`
+// after the hold).
 //
 // KOR-25 (ADR-065, ADR-066): the second way and the connection a task asks for.
 // - An existing token (GitHub CLI login or personal access token) stored in the settings: the device checks it at
@@ -95,7 +96,7 @@ async function inboundRejections(orchestrator: Orchestrator, device: string, sin
 
 test.describe.configure({ mode: 'serial' });
 
-test('@E2E-20 @R-9.1 @R-9.6 @R-P.5 @needs-vm GitHub connects through the device flow, disconnects everywhere and operations then end github_not_connected', async ({
+test('@E2E-20 @R-9.1 @R-9.6 @R-P.5 @needs-vm GitHub connects through the device flow, disconnects everywhere and operations then wait for a new connection', async ({
   page,
   orchestrator,
   authenticator,
@@ -162,23 +163,19 @@ test('@E2E-20 @R-9.1 @R-9.6 @R-P.5 @needs-vm GitHub connects through the device 
   ]);
   const callsBefore = (await githubRoutes(orchestrator)).length;
 
-  // A later operation of a session: refused before any GitHub call.
+  // A later operation of a session: held for a new connection before any GitHub call (ADR-066); the session got
+  // `pending`, the chat shows the waiting card, the hub knows nothing of the operation while it is held.
   await home(page);
   const task = await sendPrompt(page, PROMPT);
   await expectAnswerInChat(page, 'GitHub is not connected kz20-answer-r4c8w1n6.');
   await expect.poll(async () => (await orchestrator.doubleState('model')).ok, { timeout: 60_000 }).toBe(true);
-  const [session] = await mainSessions(orchestrator, task);
-  const operations = await hubOperations(orchestrator, task);
-  expect(operations.map((op) => [op.session_id, op.type, op.state, op.error_code])).toEqual([
-    [session!.id, 'github.list_repositories', 'rejected', 'github_not_connected'],
-  ]);
-  expect(await operationAudit(orchestrator, operations[0]!.id)).toContain('operation.rejected');
-  expect((await auditRows(orchestrator, task, 'operation.rejected')).map((row) => row.detail.error_code)).toEqual([
-    'github_not_connected',
-  ]);
-  await expect(page.getByTestId('operation.error')).toHaveAttribute('data-code', 'github_not_connected', {
-    timeout: 30_000,
-  });
+  const card = page.getByTestId('waiting.card');
+  await expect(card).toHaveAttribute('data-status', 'open', { timeout: 60_000 });
+  await expect(card).toHaveAttribute('data-reason', 'github_connection');
+  await expect(card.getByTestId('waiting.operation')).toHaveAttribute('data-type', 'github.list_repositories');
+  expect(await mainSessions(orchestrator, task)).toHaveLength(1);
+  expect(await hubOperations(orchestrator, task)).toEqual([]);
+  expect(await auditRows(orchestrator, task, 'operation.rejected')).toEqual([]);
   expect(await githubRoutes(orchestrator, callsBefore)).toEqual([]);
 
   // No inbound refusal of the device during the scenario (KOR-17).
