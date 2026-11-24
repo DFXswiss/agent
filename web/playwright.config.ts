@@ -26,6 +26,7 @@ const MOBILE_DEVICE_SPECS = [
   '**/devices/responsive.spec.ts',
   '**/devices/task-overview.spec.ts',
   '**/devices/waiting.spec.ts',
+  '**/devices/attention.spec.ts',
 ];
 
 export default defineConfig({

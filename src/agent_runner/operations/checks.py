@@ -6,10 +6,10 @@ booleans; the guest's `local_check:"passed"` is only a hint) and adds the rules 
 
 1. type known (`unknown_type`), parameters (`params_invalid` with every JSON pointer, at most 32): required and
    unknown keys, types, lengths in code points, `repo`, branch rules (`refs/heads/` removed first), `ref` (branch or
-   tag name or 7-40 hex SHA), full SHAs, PR numbers, single-line title, model ID syntax, label names, pages;
-   `github.update_issue` names at least one of `state`, `title`, `body`, `labels`, and `state_reason` only together
-   with a fitting `state` (`reopened` with `open`, `completed`/`not_planned` with `closed`; `params_invalid`; the
-   contract leaves this to the runner, KOR-25);
+   tag name or 7-40 hex SHA), full SHAs, PR numbers, single-line title, model ID syntax, label names, pages, the
+   question of `human.question` / `human.approval` (1-4000 characters); `github.update_issue` names at least one of
+   `state`, `title`, `body`, `labels`, and `state_reason` only together with a fitting `state` (`reopened` with
+   `open`, `completed`/`not_planned` with `closed`; `params_invalid`; the contract leaves this to the runner, KOR-25);
 2. commit paths (`path_invalid`, with pointers): relative, no empty, `.`, `..` or `.git` segment;
 3. repository allow-list of the workgroup settings when it is set (`repo_not_allowed`; every type with `repo`, so
    not `github.list_repositories` and `github.request_connection`; without a list every repository passes, KOR-30);
@@ -92,6 +92,7 @@ BRANCH: Rule = rules.branch_valid
 REF: Rule = rules.ref_valid
 SHA: Rule = lambda value: isinstance(value, str) and rules.FULL_SHA_RE.fullmatch(value) is not None  # noqa: E731
 BOOL: Rule = lambda value: isinstance(value, bool)  # noqa: E731
+QUESTION: Rule = _text(1, rules.QUESTION_LIMITS["question_max_length"])
 MODEL: Rule = lambda value: isinstance(value, str) and _MODEL_ID_RE.fullmatch(value) is not None  # noqa: E731
 DIRECTION: Rule = _one_of("desc", "asc")
 
@@ -201,6 +202,8 @@ TYPES: Mapping[str, TypeRules] = {
         {"size": _one_of("standard", "large", "xlarge"), "scope": _one_of("task", "session")}, ()
     ),
     "workvm.release": TypeRules({"scope": _one_of("task", "session")}, ()),
+    "human.question": TypeRules({"question": QUESTION}, ("question",)),
+    "human.approval": TypeRules({"question": QUESTION}, ("question",)),
 }
 """Parameter rules per type (`contracts/ops/<type>.params.json`; a test compares the key sets with the contracts)."""
 

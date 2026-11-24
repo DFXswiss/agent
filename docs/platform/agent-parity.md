@@ -65,6 +65,18 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | agents-activity | settings/agents | `audit` | done |
 | org-list | shell (org switcher) | `org list` | done |
 | org-create | screens/home | `org create` | done |
+| attention-view | screens/home | `status --attention --org` | done |
+| attention-list | screens/home | `task list --org --state --mine --limit` | done |
+| attention-answer | screens/home | `task prompt --task --text` | done |
+| attention-approve | screens/home | `task prompt --task --approve --text` | done |
+| attention-decline | screens/home | `task prompt --task --decline --text` | done |
+| attention-retry | screens/home | `task prompt --task --text` (a follow-up prompt starts a new main session) | done |
+| attention-continue | screens/home | `task prompt --task --text` (once the operator set the balance) | done |
+| attention-tree | screens/home | `task show --task` (the task with its session tree) | done |
+| attention-connect-github | screens/home | `github connect --token --device --wait` (an existing token; the device flow needs the user, see the row github-connect) | done |
+| attention-assign-device | screens/home | `device assign` | done |
+| attention-model-settings | screens/home | `settings set --model-access --model` | done |
+| attention-open-task | screens/home | `task show --task` | done |
 | org-join | screens/invite (existing user) | `org join` | done |
 | members-list | screens/members (explicit and inherited access, ADR-058) | `member list` | done |
 | members-invite | screens/members | `org invite --role admin\|member --name` | done |
@@ -182,6 +194,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/notifications/read` | notifications-read |
 | `GET /v1/operations/{operation}` | operations |
 | `POST /v1/orgs` | org-create |
+| `GET /v1/orgs/{org}/attention` | attention-view, attention-list |
+| `GET /v1/orgs/{org}/attention/summary` | attention-view |
 | `GET /v1/orgs/{org}/audit` | audit |
 | `GET /v1/orgs/{org}/audit/verify` | audit |
 | `GET /v1/orgs/{org}/billing` | settings-billing, credit-balance |

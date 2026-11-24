@@ -24,7 +24,7 @@ export function Nav({ entries = navEntries() }: { readonly entries?: readonly Na
   const { visible, badges } = useNavState(entries, app.store);
   const links = visible.flatMap((entry) => {
     const to = navTarget(entry, org);
-    return to === null ? [] : [{ id: entry.id, to, label: t(entry.labelKey) }];
+    return to === null ? [] : [{ id: entry.id, to, label: t(entry.labelKey), Badge: entry.Badge }];
   });
   if (links.length === 0) return null;
   return (
@@ -44,6 +44,7 @@ export function Nav({ entries = navEntries() }: { readonly entries?: readonly Na
             >
               {link.label}
               <NavBadge count={badges.get(link.id)!} testId={`shell.nav.${link.id}.badge`} />
+              {link.Badge !== undefined && org !== null && <link.Badge org={org} />}
             </NavLink>
           </li>
         ))}

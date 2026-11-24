@@ -89,7 +89,7 @@ def request_operation(call: ToolCall) -> Any:
 TOOL = Tool(
     name="request_operation",
     description="Request a platform operation (for example github.checkout, github.commit, github.create_pull_request, "
-    "subagent.request) with its parameters; returns the result, or status pending after 20 s (then use "
-    "get_operation).",
+    "subagent.request, human.question) with its parameters; returns the result, or status pending after 20 s (then "
+    "use get_operation).",
     handler=request_operation,
 )

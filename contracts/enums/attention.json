@@ -1,0 +1,47 @@
+{
+  "description": "Attention categories of a task and their reason codes (ADR-076, 03-api.md section 4.6.0; KOR-39). Every task has one attention record (category, reason). order: since_asc = longest waiting first (since ASC, task_id ASC), since_desc = newest first (since DESC, task_id DESC). The list of reasons is closed per release; a later package may add reasons (additive, ADR-027 section 3), and a client shows an unknown reason with the generic text of its category. Derivation: ADR-076 section 2 (normative).",
+  "categories": [
+    {
+      "category": "needs_decision",
+      "order": "since_asc",
+      "reasons": [
+        "question",
+        "approval",
+        "connection_missing",
+        "credit_empty",
+        "device_missing"
+      ]
+    },
+    {
+      "category": "blocked",
+      "order": "since_desc",
+      "reasons": [
+        "session_failed",
+        "guest_error",
+        "device_unreachable",
+        "model_access_missing",
+        "no_capacity",
+        "operation_refused"
+      ]
+    },
+    {
+      "category": "working",
+      "order": "since_desc",
+      "reasons": [
+        "queued",
+        "starting",
+        "working",
+        "operation",
+        "subagents"
+      ]
+    },
+    {
+      "category": "done",
+      "order": "since_desc",
+      "reasons": [
+        "idle",
+        "closed"
+      ]
+    }
+  ]
+}

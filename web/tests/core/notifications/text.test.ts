@@ -9,6 +9,7 @@ import { setAgents } from '../../../src/core/store/slices/agents';
 import {
   agentChange,
   AGENT_ACTIONS,
+  attentionOf,
   type Names,
   notificationMessage,
   notificationNames,
@@ -76,6 +77,36 @@ describe('notificationMessage', () => {
     });
     expect(notificationTarget(row)).toBe(`/o/${ORG}`);
   });
+
+  it('names the category and the reason of a task that needs attention (KOR-39)', () => {
+    const message = (ref: string | null) =>
+      notificationMessage(
+        notification('n1', { kind: 'task.attention', task_id: TASK, wg_id: WG, ref }),
+        NAMES,
+        FALLBACK,
+      );
+    expect(message('needs_decision:question:3')).toEqual({
+      key: 'notifications.text.task.attention.needs_decision',
+      params: { task: 'Fix the build', org: 'Acme' },
+      reason: 'attention.reason.question',
+    });
+    expect(message('blocked:device_unreachable:wg')).toEqual({
+      key: 'notifications.text.task.attention.blocked',
+      params: { task: 'Fix the build', org: 'Acme' },
+      reason: 'attention.reason.device_unreachable',
+    });
+    expect(message('blocked:later_reason:4').reason).toBe('attention.generic.blocked');
+    for (const ref of [null, 'working:working:1', 'needs_decision::1', '']) {
+      expect(message(ref)).toEqual({
+        key: 'notifications.text.task.attention',
+        params: { task: 'Fix the build', org: 'Acme' },
+      });
+    }
+    expect(attentionOf({ ref: 'needs_decision:approval:2' })).toEqual({
+      category: 'needs_decision',
+      reason: 'approval',
+    });
+  });
 });
 
 describe('notificationTarget', () => {
@@ -94,6 +125,10 @@ describe('notificationTarget', () => {
       `/o/${ORG}/members`,
     );
     expect(notificationTarget(notification('n1', { org_id: ORG, kind: 'later.kind' }))).toBe(`/o/${ORG}`);
+    // the situation view (the org's home) holds the entry of a task that needs attention
+    expect(notificationTarget(notification('n1', { org_id: ORG, kind: 'task.attention', task_id: TASK }))).toBe(
+      `/o/${ORG}`,
+    );
   });
 });
 

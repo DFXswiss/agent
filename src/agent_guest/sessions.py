@@ -1040,6 +1040,12 @@ class SessionManager:
     def _meta_file(self, session_id: str) -> str:
         return f"{self.paths.meta_dir}/{session_id}.json"
 
+    def depth(self, session_id: str) -> int | None:
+        """The depth of the session's stored identity (0: the main session of its task), None when unknown."""
+        identity = self._meta(session_id).get("identity")
+        depth = identity.get("depth") if isinstance(identity, dict) else None
+        return depth if type(depth) is int else None
+
     def _meta(self, session_id: str) -> dict[str, Any]:
         try:
             value = json.loads(Path(self._meta_file(session_id)).read_text(encoding="utf-8"))

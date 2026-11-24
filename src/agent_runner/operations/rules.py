@@ -14,6 +14,7 @@ Pure functions on plaintext, deterministic, no network and no `git`:
   characters except `/`, everything else literally);
 - `title_valid`: the single-line title of `task.set_title` (1-120 characters, no C0 or C1 control character - NEL
   is a line break -, no line or paragraph separator);
+- `QUESTION_LIMITS`: the question of `human.question` / `human.approval` (1-4000 characters, KOR-39);
 - `find_secret`: the first deterministic secret pattern found in a text (`secret_detected` of `github.commit`; the
   scan itself runs on the snapshot of RUN-10).
 
@@ -54,6 +55,7 @@ SUBAGENT_LIMITS = {
     "max_total_per_task": 10,
 }
 TITLE_LIMITS = {"max_length": 120, "single_line": True}
+QUESTION_LIMITS = {"question_max_length": 4000}
 SECRET_PATTERNS = (
     ("pem_private_key", "-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"),
     ("github_token", "gh[pou]_[A-Za-z0-9]{16,}"),

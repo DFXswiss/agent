@@ -23,6 +23,8 @@
   "type.task.set_title": "Task umbenennen",
   "type.workvm.request": "Arbeits-VM anfordern",
   "type.workvm.release": "Arbeits-VM zurückgeben",
+  "type.human.question": "Person fragen",
+  "type.human.approval": "Um Freigabe bitten",
   "type.unknown": "Operation",
   "state.received": "Empfangen",
   "state.accepted": "Angenommen",

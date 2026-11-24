@@ -38,6 +38,8 @@ SPEC_OPERATIONS: dict[str, tuple[set[str], set[str]]] = {
     "task.set_title": ({"title"}, set()),
     "workvm.request": (set(), {"size", "scope"}),
     "workvm.release": (set(), {"scope"}),
+    "human.question": ({"question"}, set()),
+    "human.approval": ({"question"}, set()),
 }
 MANDATORY = [
     "agent.dfx.swiss",
@@ -86,6 +88,11 @@ MANDATORY = [
     "only through the GitHub operations",
     "The work VM holds no platform credentials. Credentials you choose to use there are your own responsibility.",
     "type `workvm.release`",
+    # KOR-39 (05-runner.md section 8, ADR-076 sections 3 and 8): ask a person only through an operation, then end
+    "ask with `mcp__platform__request_operation` of type `human.question` or `human.approval` and then end your turn",
+    "do not use the tool `AskUserQuestion`",
+    "starts with `Approved.` or `Declined.`",
+    "report what needs a decision to your main agent",
 ]
 FORBIDDEN = ["say so in your answer", "Request it once", "deleted with the task anyway"]
 

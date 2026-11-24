@@ -2,6 +2,12 @@
   "description": "Fixed English deny sentences of the PreToolUse policy (05-runner.md section 5.3; rule = step number there) and the UserPromptSubmit block reason (03-api.md section 8.2). The guest uses exactly these texts; tool_forbidden inserts the tool name when it matches name_pattern, else tool_forbidden_unnamed is used.",
   "pre_tool_use": [
     {
+      "id": "question_passed",
+      "rule": 1,
+      "text": "Your question was passed to the person through agent.dfx.swiss. End your turn now; the answer arrives as your next prompt.",
+      "when": "rule 1a: AskUserQuestion of a main session; the guest requested the operation human.question for the session (KOR-39, ADR-076 section 3)"
+    },
+    {
       "id": "tool_forbidden",
       "rule": 2,
       "template": "Tool {name} is forbidden in agent.dfx.swiss sessions. Request actions through the platform tools (mcp__platform__request_operation).",

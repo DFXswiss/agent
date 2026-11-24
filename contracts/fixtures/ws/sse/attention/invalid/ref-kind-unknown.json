@@ -1,0 +1,12 @@
+{
+  "task_id": "01930003-0000-7000-8000-000000000003",
+  "category": "needs_decision",
+  "reason": "question",
+  "ref_kind": "device",
+  "ref_id": "01930060-0000-7000-8000-000000000060",
+  "since": "2026-11-21T12:00:00.000Z",
+  "seq": 7,
+  "subagents_total": 0,
+  "subagents_active": 0,
+  "updated_at": "2026-11-21T12:00:00.000Z"
+}

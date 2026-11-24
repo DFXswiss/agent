@@ -23,6 +23,8 @@
   "type.task.set_title": "Rename task",
   "type.workvm.request": "Request work VM",
   "type.workvm.release": "Release work VM",
+  "type.human.question": "Ask a person",
+  "type.human.approval": "Ask for approval",
   "type.unknown": "Operation",
   "state.received": "Received",
   "state.accepted": "Accepted",

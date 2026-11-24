@@ -28,5 +28,6 @@ export function NotificationText({ row }: { readonly row: NotificationRow }) {
     agent: t('notifications.unnamed.agent'),
   };
   const message = notificationMessage(row, names, fallback);
-  return <span data-testid="notifications.text">{t(message.key, message.params)}</span>;
+  const params = message.reason === undefined ? message.params : { ...message.params, reason: t(message.reason) };
+  return <span data-testid="notifications.text">{t(message.key, params)}</span>;
 }

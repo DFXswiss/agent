@@ -61,6 +61,8 @@ VALID: dict[str, dict[str, Any]] = {
     "github.request_connection": {},
     "subagent.request": {"purpose": "Review", "prompt": "Review PR 7.", "model_id": "deepseek/deepseek-v4-pro"},
     "task.set_title": {"title": "Fix the login"},
+    "human.question": {"question": "Which database should the service use?\n- PostgreSQL\n- SQLite"},
+    "human.approval": {"question": "May I delete the old branch?"},
 }
 
 
@@ -147,6 +149,12 @@ def test_unknown_types_are_refused() -> None:
         ("task.set_title", {"title": "t" * 121}, ["/params/title"]),
         ("task.set_title", {"title": "two\nlines"}, ["/params/title"]),
         ("task.set_title", {"title": "Fix", "description": "x"}, ["/params/description"]),
+        ("human.question", {"question": ""}, ["/params/question"]),
+        ("human.question", {"question": "q" * 4001}, ["/params/question"]),
+        ("human.question", {"question": 7}, ["/params/question"]),
+        ("human.question", {}, ["/params/question"]),
+        ("human.approval", {"question": "May I?", "options": []}, ["/params/options"]),
+        ("human.approval", {"question": ""}, ["/params/question"]),
         ("github.comment", {"repo": 1, "number": 7, "body": "x", "a/b": 1}, ["/params/a~1b", "/params/repo"]),
         # KOR-25: the issue, pull-request-list and connection types (attack forms of the params)
         ("github.list_issues", {}, ["/params/repo"]),
@@ -203,6 +211,8 @@ def test_lengths_are_counted_in_code_points() -> None:
     checks.check(request("task.set_title", {"title": "ü" * 120}))
     checks.check(request("github.comment", with_("github.comment", body="€" * 65536)))
     assert refused("task.set_title", {"title": "ü" * 121}).code == "params_invalid"
+    checks.check(request("human.question", {"question": "ü" * 4000}))
+    assert refused("human.approval", {"question": "ü" * 4001}).code == "params_invalid"
 
 
 @pytest.mark.parametrize("path", ["../x", "a/../b", ".git/config", "sub/.GIT/x", "/etc/passwd", "a//b", "a\\b", "./a"])
@@ -264,7 +274,7 @@ def test_github_types_need_the_owners_connection(op_type: str) -> None:
     assert refused(op_type, VALID[op_type], connected=False).code == "github_not_connected"
 
 
-@pytest.mark.parametrize("op_type", ["subagent.request", "task.set_title"])
+@pytest.mark.parametrize("op_type", ["subagent.request", "task.set_title", "human.question", "human.approval"])
 def test_other_types_need_no_github_connection(op_type: str) -> None:
     checks.check(request(op_type, VALID[op_type], connected=False))
 

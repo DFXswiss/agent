@@ -11,7 +11,8 @@ outbox.
 Effects: the operation row (`state`, `error_code`, `retryable`, `result_event_id`; `started_at` = receive time of
 `executing`, `finished_at` = receive time of a final state), an `operation_transition` row (`at` = device clock,
 `by_id` = device), the release of the operation's dedupe slot on `failed` and `expired` (02-data-model.md section 2.5),
-the audit row `operation.<state>` and the `operation` frame for the org's browsers after the commit. Pings to the
+the audit row `operation.<state>`, the refresh of the task's attention record (`agent_hub.attention.store`, ADR-076)
+and the `operation` frame for the org's browsers after the commit. Pings to the
 requesting session and other reactions are added by later areas as handlers of the same kind (ADR-030).
 """
 
@@ -21,6 +22,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
+from agent_hub.attention import store as attention
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.crypto.encoding import format_time
 from agent_hub.errors import HubError
@@ -154,3 +156,4 @@ def handle(item: ItemContext, body: OperationTransitionBody) -> None:
         ),
     )
     item.effects.org_frame(org, "operation", operation_row(connection, operation))
+    attention.refresh(connection, task, item.now, item.effects)

@@ -1,0 +1,27 @@
+{
+  "description": "Endpoints of the situation view (03-api.md section 4.6, KOR-39, ADR-076): the tasks of one attention category and the counters of the readable workgroups of an organization.",
+  "rights": [
+    "org:member"
+  ],
+  "auth": [
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/attention",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/attention/summary",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.6"
+    }
+  ]
+}

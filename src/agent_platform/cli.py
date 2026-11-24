@@ -20,6 +20,7 @@ from typing import Any, TextIO
 from agent_platform import (
     __version__,
     alone,
+    attention,
     claude,
     diagnose,
     lookup,
@@ -171,6 +172,10 @@ def cmd_pair(args: argparse.Namespace, context: Context) -> dict[str, Any]:
 
 
 def cmd_status(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    if args.attention:
+        return attention.status(account, args.org)
+    if args.org is not None:
+        raise PlatformError("invalid_argument")
     me = account.me()
     credentials = []
     for item in account.call("GET", "/v1/me/credentials").get("credentials", []):
@@ -338,6 +343,13 @@ def cmd_device_assign(account: Account, args: argparse.Namespace, context: Conte
 
 
 def cmd_task_list(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    if args.org is not None:
+        if args.state is None:
+            raise PlatformError("invalid_argument")
+        limit = attention.LIST_DEFAULT if args.limit is None else args.limit
+        return attention.task_list(account, args.org, args.state, mine=args.mine, limit=limit)
+    if args.state not in (None, *tasks.STATES) or args.mine:
+        raise PlatformError("invalid_argument")
     return tasks.task_list(account, args.wg, args.state)
 
 
@@ -346,7 +358,9 @@ def cmd_task_create(account: Account, args: argparse.Namespace, context: Context
 
 
 def cmd_task_prompt(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return tasks.task_prompt(account, args.task, text_argument(args, context))
+    decision = "approve" if args.approve else "decline" if args.decline else None
+    text = None if args.text is None else text_argument(args, context)
+    return tasks.task_prompt(account, args.task, tasks.answer_text(decision, text))
 
 
 def cmd_task_show(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -418,15 +432,17 @@ def _account_commands(tree: Tree) -> None:
     sub.add_argument("--message", help=MESSAGE_HELP)
     sub.add_argument("--own-account", action="store_true", help="an account of this agent alone: no user, no passkey")
     sub.add_argument("--platform-root-key", help="with --own-account: platform root key (b64u) instead of the hub's")
-    tree.add(
+    sub = tree.add(
         tree.commands,
         "status",
         writing(cmd_status),
         "the account as the agent sees it",
         example="agent-platform status",
-        words="zustand konto überblick account overview whoami state",
+        words="zustand konto überblick lage entscheidung account overview whoami state situation attention decision",
         then="agent-platform org list",
     )
+    sub.add_argument("--attention", action="store_true", help="the situation: counters, decisions and stuck tasks")
+    sub.add_argument("--org", help="with --attention: only this organization")
     sub = tree.add(
         tree.commands,
         "api",
@@ -497,14 +513,17 @@ def _task_commands(tree: Tree) -> None:
         group,
         "list",
         with_account(cmd_task_list),
-        "tasks of a workgroup with their titles",
+        "tasks of a workgroup, or of an org by attention",
         example="agent-platform task list --wg <wg_id> [--state open|closed]",
-        words="aufgabenliste aufgaben liste arbeitsgruppe titel tasks all",
+        words="aufgabenliste aufgaben liste arbeitsgruppe titel hängt läuft tasks all stuck running needs-decision",
         then="agent-platform task show --task <task_id>",
         trim="first",
     )
-    sub.add_argument("--wg", required=True)
-    sub.add_argument("--state", choices=list(tasks.STATES))
+    where = sub.add_mutually_exclusive_group(required=True)
+    where.add_argument("--wg", help="the tasks of a workgroup (--state open|closed)")
+    where.add_argument("--org", help="one category of the org's situation view (--state needs-decision|...)")
+    sub.add_argument("--state", choices=[*tasks.STATES, *attention.CATEGORIES])
+    sub.add_argument("--mine", action="store_true", help="with --org: only tasks the user owns")
     sub = tree.add(
         group,
         "create",
@@ -522,13 +541,17 @@ def _task_commands(tree: Tree) -> None:
         group,
         "prompt",
         writing(cmd_task_prompt),
-        "a further prompt to a task",
+        "a further prompt, an answer or an approval",
         example='agent-platform task prompt --task <task_id> --text "…"',
-        words="nachfragen anweisung nachricht antworten schreiben message reply send follow-up",
+        words="nachfragen anweisung nachricht antworten freigeben ablehnen schreiben message reply send follow-up"
+        " approve decline",
         then="agent-platform task follow --task <task_id>",
     )
     sub.add_argument("--task", required=True)
-    sub.add_argument("--text", required=True, help="the prompt, or - to read it from stdin")
+    sub.add_argument("--text", help="the prompt (with --approve/--decline the comment), or - to read it from stdin")
+    decision = sub.add_mutually_exclusive_group()
+    decision.add_argument("--approve", action="store_true", help="answer an approval: Approved.")
+    decision.add_argument("--decline", action="store_true", help="answer an approval: Declined.")
     sub = tree.add(
         group,
         "show",

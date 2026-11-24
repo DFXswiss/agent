@@ -14,6 +14,7 @@ export const NOTIFICATION_KINDS = [
   'whiteboard.entry',
   'task.idle',
   'task.failed',
+  'task.attention',
   'invite.accepted',
   'rotation.required',
   'agent.account_change',

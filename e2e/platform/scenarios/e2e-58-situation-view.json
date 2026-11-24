@@ -1,0 +1,175 @@
+{
+  "name": "e2e-58-situation-view",
+  "description": "E2E-58 (KOR-39, ADR-064): the agent asks a person with human.question and ends its turn, the answer from the situation view continues the same session; the agent asks for an approval with human.approval and continues after \"Approved.\"; a main agent hands work to a subagent that keeps working after the main agent ended its turn. Canary texts for the plaintext scan.",
+  "steps": [
+    {
+      "id": "ask",
+      "expect": {
+        "user_text_contains": "E2E58-ASK",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Only a person can decide this."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "human.question",
+              "params": {
+                "question": "Which colour shall the logo have? kz58-question-r3t8w1"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "asked",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "I asked the person and wait for the answer."
+          }
+        ]
+      }
+    },
+    {
+      "id": "answered",
+      "expect": {
+        "user_text_contains": "kz58-answer-b5n2m7"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Thanks, the logo will be kz58-done-p6q3z9."
+          }
+        ]
+      }
+    },
+    {
+      "id": "approve",
+      "expect": {
+        "user_text_contains": "E2E58-APPROVE",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "human.approval",
+              "params": {
+                "question": "May I publish the report? kz58-approval-t2k8"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "approval-asked",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "I wait for the approval."
+          }
+        ]
+      }
+    },
+    {
+      "id": "approved",
+      "expect": {
+        "user_text_contains": "Approved."
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Published kz58-published-w9."
+          }
+        ]
+      }
+    },
+    {
+      "id": "sub",
+      "expect": {
+        "user_text_contains": "E2E58-SUB",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Long review kz58-purpose-h4",
+                "prompt": "E2E58-CHILD review slowly"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "sub-handed",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "A helper reviews it; I am done for now."
+          }
+        ]
+      }
+    },
+    {
+      "id": "child",
+      "expect": {
+        "user_text_contains": "E2E58-CHILD"
+      },
+      "delay_ms": 45000,
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Review finished."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Task"
+          }
+        ]
+      }
+    }
+  ]
+}

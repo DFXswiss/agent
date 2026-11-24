@@ -181,6 +181,12 @@ class Estate:
                 (self.task, now, writer.id),
             ),
             (
+                "INSERT INTO hub.task_attention (task_id, org_id, wg_id, owner_id, category, reason, since, seq,"
+                " subagents_total, subagents_active, updated_at)"
+                " VALUES (%s, %s, %s, %s, 'working', 'working', %s, 1, 0, 0, %s)",
+                (self.task, org, wg, writer.id, now, now),
+            ),
+            (
                 "INSERT INTO hub.session_transition (session_id, seq, state, at, received_at, reported_by)"
                 " VALUES (%s, 1, 'working', %s, %s, %s)",
                 (self.session, now, now, device.id),

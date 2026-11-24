@@ -2285,6 +2285,44 @@
       "read_resource": "platform.waiting",
       "streaming": false,
       "owner": "KOR-41"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/attention",
+      "name": "orgs-attention",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/orgs-attention.request.json",
+      "response": "api/orgs-attention.response.json",
+      "read_resource": "org.attention",
+      "streaming": false,
+      "owner": "KOR-39"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/attention/summary",
+      "name": "orgs-attention-summary",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/orgs-attention-summary.request.json",
+      "response": "api/orgs-attention-summary.response.json",
+      "read_resource": "org.attention.summary",
+      "streaming": false,
+      "owner": "KOR-39"
     }
   ]
 }

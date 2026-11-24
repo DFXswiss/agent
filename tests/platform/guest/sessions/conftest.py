@@ -18,6 +18,7 @@ import pytest
 
 from agent_guest import sessions, tmux
 from agent_guest.control import ControlContext
+from agent_guest.control_routes import capture as capture_routes
 from agent_guest.driver import ClaudeCodeDriver
 
 SESSION = "01a1ee56-5e00-7003-8f1b-340691d99f03"
@@ -160,3 +161,13 @@ def manager(
         yield created
     finally:
         created.close()
+        stop_captures(context)
+
+
+def stop_captures(context: ControlContext) -> None:
+    """End every capture the test left running (follower, recorder, scanner threads), so that no thread of this test
+    reads its closed journal later and writes to the stderr of another test."""
+    found = vars(context).get("_capture")
+    if isinstance(found, capture_routes.Capture):
+        for session_id in list(found.sessions):
+            found.agent_ended(session_id)

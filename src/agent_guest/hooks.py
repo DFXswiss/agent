@@ -14,7 +14,9 @@ Every request:
    UserPromptSubmit ``block``, every other event ``{}``; it never answers with an error.
 4. The decision (03-api.md section 8.2):
 
-   - ``PreToolUse``: ``hook.pre_tool_use`` (policy as root, journal) -> allow / deny with the fixed reason
+   - ``PreToolUse``: ``hook.pre_tool_use`` (policy as root, journal) -> allow / deny with the fixed reason; for
+     ``AskUserQuestion`` the op also carries the ``question`` built from the tool input (rule 1a: the control process
+     requests ``human.question`` for a main session)
    - ``UserPromptSubmit``: ``prompt.check`` (registry, journal, ``prompt_accepted`` / ``prompt_refused``) -> ``{}`` or
      the block
    - every other event: journal ``session.hook {event, tool?, decision: "none"}`` and answer ``{}``;
@@ -60,7 +62,16 @@ from agent_guest import peer, registry
 from agent_guest.apisock import ApiClient, ApiSockError, AuthLimited
 from agent_guest.config import GuestConfig
 from agent_guest.fault import fault_mode, guard_suppressed
-from agent_guest.policy import BLOCK_REASON, PATH_KEYS, PATTERN_KEYS, TOOL_NAME_RE, WRITE_TOOLS, deny_reason
+from agent_guest.policy import (
+    ASK_TOOL,
+    BLOCK_REASON,
+    PATH_KEYS,
+    PATTERN_KEYS,
+    TOOL_NAME_RE,
+    WRITE_TOOLS,
+    deny_reason,
+    question_text,
+)
 from agent_guest.routing import (
     CHUNK,
     BodyReader,
@@ -250,9 +261,11 @@ def _pre_tool_use(context: ApiContext, session_id: str, body: dict[str, Any] | N
         context.control.append("session.hook", record, session_id)
         decision = {"decision": "deny", "reason": record["reason"]}
     else:
-        decision = context.control.call(
-            "hook.pre_tool_use", {"session_id": session_id, "tool_name": body["tool_name"], "tool_input": reduced}
-        )
+        args: dict[str, Any] = {"session_id": session_id, "tool_name": body["tool_name"], "tool_input": reduced}
+        question = question_text(body["tool_input"]) if body["tool_name"] == ASK_TOOL else ""
+        if question:
+            args["question"] = question
+        decision = context.control.call("hook.pre_tool_use", args)
     output: dict[str, Any] = {"hookEventName": "PreToolUse", "permissionDecision": decision["decision"]}
     if decision["decision"] == "deny":
         STATS.count("denies")

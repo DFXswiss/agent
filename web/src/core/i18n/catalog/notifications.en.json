@@ -32,5 +32,8 @@
   "text.agent.device_request": "Agent “{agent}” sent a request to an execution device",
   "text.agent.agent_paired_remote": "An AI agent on another computer (“{agent}”) became your main orchestrator",
   "text.agent.unknown": "Agent “{agent}” changed your account",
-  "unnamed.agent": "unknown"
+  "unnamed.agent": "unknown",
+  "text.task.attention": "Task “{task}” needs your attention",
+  "text.task.attention.needs_decision": "Task “{task}” needs your decision: {reason}",
+  "text.task.attention.blocked": "Task “{task}” is stuck: {reason}"
 }

@@ -161,6 +161,90 @@
       ],
       "additionalProperties": false
     },
+    "attention_row": {
+      "type": "object",
+      "description": "attention record of a task (03-api.md section 4.6.0, ADR-076; KOR-39): category and reason code, the operation or session it refers to, when it entered its category, a counter that grows with every change, the subagent counters",
+      "properties": {
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "category": {
+          "$ref": "../common.json#/$defs/attention_category"
+        },
+        "reason": {
+          "$ref": "../common.json#/$defs/attention_reason"
+        },
+        "ref_kind": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "operation",
+                "session"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ref_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "since": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "seq": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "subagents_total": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "subagents_active": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "updated_at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "task_id",
+        "category",
+        "reason",
+        "ref_kind",
+        "ref_id",
+        "since",
+        "seq",
+        "subagents_total",
+        "subagents_active",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+    "attention_item": {
+      "type": "object",
+      "description": "one entry of the situation view: the task and its attention record (KOR-39)",
+      "properties": {
+        "task": {
+          "$ref": "#/$defs/task_row"
+        },
+        "attention": {
+          "$ref": "#/$defs/attention_row"
+        }
+      },
+      "required": [
+        "task",
+        "attention"
+      ],
+      "additionalProperties": false
+    },
     "session_row": {
       "type": "object",
       "description": "session metadata (02-data-model.md section 2.4)",
@@ -725,6 +809,7 @@
             "whiteboard.entry",
             "task.idle",
             "task.failed",
+            "task.attention",
             "invite.accepted",
             "rotation.required",
             "agent.account_change",
@@ -772,6 +857,11 @@
               "pattern": "^[a-z_]{1,32}:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?:[A-Za-z0-9_:-]{0,128}$",
               "maxLength": 200,
               "description": "agent.account_change: <action>:<acting agent ID or empty>:<target> (11-agent-access.md section 8)"
+            },
+            {
+              "type": "string",
+              "pattern": "^(needs_decision|blocked):[a-z][a-z0-9_]{0,63}:([1-9][0-9]{0,15}|wg)$",
+              "description": "task.attention (KOR-39): <category>:<reason>:<seq of the attention record>, or <category>:<reason>:wg for a workgroup-wide cause (03-api.md section 4.9)"
             },
             {
               "type": "null"

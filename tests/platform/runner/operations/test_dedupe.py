@@ -100,7 +100,10 @@ def test_the_windows_equal_the_contract() -> None:
     assert dict(WINDOWS) == {name: entry["window_seconds"] for name, entry in dedupe["types"].items()}
 
 
-@pytest.mark.parametrize("op_type", ["github.list_repositories", "github.get_pull_request", "task.set_title"])
+@pytest.mark.parametrize(
+    "op_type",
+    ["github.list_repositories", "github.get_pull_request", "task.set_title", "human.question", "human.approval"],
+)
 def test_types_without_dedupe_fields_have_no_slot(op_type: str) -> None:
     common: dict[str, Any] = {"session_id": "s", "task_id": TASK, "idempotency_key": None, "extra": {}}
     assert fields_for(op_type, {"title": "x"}, **common) is None

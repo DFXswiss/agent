@@ -151,6 +151,9 @@ describe('pulls', () => {
     expect(pullTarget('s 1', { kinds: ['a', 'b'], task: 't' }, 7)).toBe(
       '/v1/scopes/s%201/events?after=7&limit=1000&kinds=a%2Cb&task=t',
     );
+    expect(pullTarget('s', { kinds: ['operation.params'], task: 't', ref: 'op' }, null)).toBe(
+      '/v1/scopes/s/events?limit=1000&kinds=operation.params&task=t&ref=op',
+    );
     t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) =>
       target.includes('after=')
         ? { events: [{ scope_seq: 2, received_at: 'x', event: {} }], next_after: null, head: 2 }

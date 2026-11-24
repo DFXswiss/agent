@@ -1,5 +1,7 @@
 """Tasks of the agent tool (stage c, 11-agent-access.md section 8.4; twin of `web/src/core/tasks/`): `task list`,
-`task create`, `task prompt`, `task show` and `task follow`.
+`task create`, `task prompt`, `task show` and `task follow`. An answer to an approval (KOR-39, ADR-076 section 8)
+is a prompt whose first line is exactly `Approved.` or `Declined.`, followed by a blank line and the comment when one
+is given (`answer_text`, the same text the web client sends).
 
 The tool seals what the web client seals: a new task is `POST /v1/tasks` with the events `task.meta` (`{"title"}`,
 derived from the prompt as `web/src/core/tasks/title.ts`, vectors `contracts/tasks/title.json`) and `prompt`
@@ -46,6 +48,7 @@ TITLE_MAX = 80
 FOLLOW_POLL_S = 2.0
 FOLLOW_WAIT_MAX_S = 600
 STATES = ("open", "closed")
+DECISIONS = {"approve": "Approved.", "decline": "Declined."}
 CHAT_KINDS = (
     "prompt",
     "session.output",
@@ -79,6 +82,16 @@ def _prompt(text: str) -> str:
     if not 1 <= len(text) <= PROMPT_MAX or not text.strip():
         raise PlatformError("invalid_argument")
     return text
+
+
+def answer_text(decision: str | None, text: str | None) -> str:
+    """The prompt text: the text itself, or for `decision` (`approve`/`decline`) its first line plus the comment."""
+    if decision is None:
+        if text is None:
+            raise PlatformError("invalid_argument")
+        return text
+    first = DECISIONS[decision]
+    return first if text is None or not text.strip() else f"{first}\n\n{text}"
 
 
 def _id(value: str) -> str:
@@ -185,6 +198,11 @@ def _open(account: Account, org: str, wg: str, item: object, ring: KeyRing) -> d
     return {**found, "locked": True} if opened.get("locked") else {**found, "body": opened["body"]}
 
 
+def open_verified(account: Account, org: str, wg: str, item: object) -> dict[str, Any] | None:
+    """`_open` with the user's key ring of the org (the situation view of `agent_platform.attention`)."""
+    return _open(account, org, wg, item, account.keys(org))
+
+
 def task_show(account: Account, task: str) -> dict[str, Any]:
     """The task row and its chat: every event of the task, opened and verified; where its main session runs."""
     answer = _task_answer(account, task)
@@ -216,6 +234,17 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
     }
 
 
+def titles(account: Account, org: str, wg: str) -> dict[str, str]:
+    """The verified titles of the workgroup's tasks (the newest `task.meta` of each task wins)."""
+    found: dict[str, str] = {}
+    ring = account.keys(org)
+    for item in scope_events(account, wg, {"kinds": "task.meta"}):
+        opened = _open(account, org, wg, item, ring)
+        if opened is not None and isinstance(opened.get("body"), dict):
+            found[str(opened["task"])] = str(opened["body"].get("title", ""))
+    return found
+
+
 def task_list(account: Account, wg: str, state: str | None) -> dict[str, Any]:
     """The tasks of a workgroup with their verified titles."""
     if state is not None and state not in STATES:
@@ -226,17 +255,12 @@ def task_list(account: Account, wg: str, state: str | None) -> dict[str, Any]:
     rows = answer.get("tasks")
     if not isinstance(rows, list):
         raise PlatformError("hub_refused", reason="response_invalid")
-    titles: dict[str, str] = {}
-    ring = account.keys(org)
-    for item in scope_events(account, wg, {"kinds": "task.meta"}):
-        opened = _open(account, org, wg, item, ring)
-        if opened is not None and isinstance(opened.get("body"), dict):
-            titles[str(opened["task"])] = str(opened["body"].get("title", ""))
+    found = titles(account, org, wg)
     tasks = [
         {
             "task_id": row.get("task_id"),
             "state": row.get("state"),
-            "title": titles.get(str(row.get("task_id"))),
+            "title": found.get(str(row.get("task_id"))),
             "created_at": row.get("created_at"),
             "last_activity_at": row.get("last_activity_at"),
         }

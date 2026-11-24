@@ -9,6 +9,8 @@ back to the derivation (a follow-up prompt after closing).
 Lock order of the tasks area (every writer keeps it, so no two writers deadlock): a follow-up prompt first takes the
 per-task prompt lock (`agent_hub.tasks.service.add_prompt`, an advisory lock no other writer takes), then events
 (`append_events`: org rows, scope heads), then the task row (`lock_task`), then its session rows, then audit rows.
+Both `refresh_task` and `close_task` end with the refresh of the task's attention record (`agent_hub.attention.store`,
+ADR-076), which takes the audit lock before the attention row.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.attention import store as attention
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.sessions import rows
 from agent_hub.sessions.derive import CLOSED, SCHEDULING, WORKING, MainSession, task_state
@@ -147,6 +150,7 @@ def refresh_task(
     stays `scheduling` keeps its reason. A closed task is left alone unless `reopen` (a follow-up prompt).
     """
     if task.state == CLOSED and not reopen:
+        attention.refresh(connection, task.id, now, effects)
         return task
     working = connection.execute(
         "SELECT EXISTS (SELECT 1 FROM hub.session WHERE task_id = %s AND state = %s)", (task.id, WORKING)
@@ -166,6 +170,7 @@ def refresh_task(
         "UPDATE hub.task SET last_activity_at = GREATEST(last_activity_at, %s) WHERE id = %s", (now, task.id)
     )
     effects.org_frame(task.org_id, "task", rows.task_json(connection, task.id) or {})
+    attention.refresh(connection, task.id, now, effects)
     return task
 
 
@@ -173,4 +178,5 @@ def close_task(connection: Connection, task: TaskRow, now: datetime, actor: Acto
     """Close the task (user action; the caller stops its sessions)."""
     closed = _write_state(connection, task, CLOSED, None, now, actor=actor, effects=effects)
     connection.execute("UPDATE hub.task SET last_activity_at = %s WHERE id = %s", (now, task.id))
+    attention.refresh(connection, task.id, now, effects)
     return closed

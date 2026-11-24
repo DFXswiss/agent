@@ -225,10 +225,42 @@ uses the platform's hybrid/QR UI of `create()`; a passkey without PRF output is 
 
 ## 4. First task and countdown
 
+### 4.0 Situation view (home of an organization, `/o/:org`, KOR-39, ADR-076)
+
+The home of an organization shows where people are needed, across all workgroups the user reads:
+
+- **Counters** at the top: "Waiting for me" (`needs_decision` tasks the user owns), "Stuck", "Running", "Finished
+  today" (`GET /v1/orgs/{org}/attention/summary`, `since` = local midnight). The navigation entry Home (sidebar,
+  navigation row, phone bottom bar) carries the "waiting for me" count as a badge.
+- **Groups** in this order: "Needs your decision" (`needs_decision`, longest waiting first), "Stuck" (`blocked`),
+  "Running" (`working`), "Recently finished" (`done`, last 7 days, with the link to the default workgroup's task
+  list); the last three newest first. Each group is a windowed list paged by the hub (50 per page; at most 50 entries
+  in the DOM, moved by 25, the window of the chat bundling, §5.2); an empty group shows one short line.
+- **Entry** (the row building block `TaskItem` of the task lists, §5.1/§5.1a, extended by an attention line):
+  title (opened in the browser), workgroup, responsible person (the signed owner), main agent with its state, the
+  reason in plain words (ADR-076 §1 table), last activity and running time; "Running" also shows the phase and the
+  number of active subagents. Expanding an entry loads its session tree (`GET /v1/tasks/{task}`): main agent,
+  subagents indented below the agent they report to, each with its state (at most 100 shown, the rest counted).
+- **Act without opening the task** (the next step, never only an explanation, E-05): `question` shows the agent's
+  question (the sealed `operation.params` opened in the browser) with an answer field (sends a follow-up prompt);
+  `approval` shows the question with "Approve" / "Decline" and an optional comment (a prompt starting with
+  `Approved.` / `Declined.`, ADR-076 §8); `connection_missing` starts the GitHub connection (§8.1);
+  `device_missing` leads admins to assigning a computer (§7.3), others see who can do it; `model_access_missing`
+  opens the model settings (§8.2); `credit_empty` says that the operator sets the balance and offers "Continue";
+  `session_failed`, `guest_error`, `device_unreachable`, `no_capacity` offer "Try again" (a follow-up prompt starts a
+  new main session); every entry offers "Open task". Users without write access see the entry without controls.
+- **New task**: the composer of §4.1 stays at the top in a compact form (context line with the workgroup selector and
+  the prompt field), so a new task is always one step away; its suggestion chips are shown while the organization has
+  no task yet, otherwise behind "Suggestions". Users without write access see a short note instead.
+- Live: stream frames `attention` update the entry and the counters (batched, counters refetched at most once per
+  second); works fully on a phone (single column, controls
+  ≥ 44 px).
+
 ### 4.1 Entry
 
 Right after the first login (and on `/o/:org` whenever the user has no task yet) the home screen shows the composer
-with:
+with its suggestions open (at the top of the situation view, §4.0; with tasks the suggestions are behind
+"Suggestions") with:
 
 - **Context line:** organization (the invitation's org, else the private org) and workgroup selector preselected to
   the default workgroup; changing the workgroup lists only workgroups with `wg:write`.
@@ -410,7 +442,8 @@ the same readable views of issue and pull request lists and of a read issue as t
 - Center (`/notifications`): newest first, content-free texts built client-side from kind + decrypted target names
   ("New whiteboard entry in workgroup X", "Task Y is waiting for you", "Task Y failed", "Z accepted the invitation",
   and, for rows of the retired kind `rotation.required` that the hub no longer creates (ADR-058 §3), the neutral
-  "Access in X is being updated"); click marks read and navigates; "Mark all read".
+  "Access in X is being updated"; `task.attention`: "Task Y needs your decision" / "Task Y is stuck" with the reason
+  from `ref`, KOR-39); click marks read and navigates (`task.attention`: to the situation view entry); "Mark all read".
 - Toasts for live notifications (auto-dismiss 6 s, accessible live region).
 
 ## 7. Organization management

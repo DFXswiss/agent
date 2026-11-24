@@ -1,8 +1,8 @@
 // The building blocks of every task list (06-web.md section 5.1; KOR-32): the rows of one or more workgroups merged
 // newest activity first (`core/tasks/overview.ts`; one workgroup is the merge of one list), endless scrolling (the
 // next page loads when the end of the list becomes visible, with a "Load more" button as fallback), the error with a
-// retry, the empty state given by the screen, and the state filter. Used by the task list of a workgroup, the home
-// screen's recent tasks and the task overview of the organization.
+// retry, the empty state given by the screen, and the state filter. Used by the task list of a workgroup and the task
+// overview of the organization (the situation view shares the row, `TaskItem`, KOR-39).
 import { type ReactNode, useEffect, useId, useMemo, useRef } from 'react';
 import { TASK_STATES } from '../../../core/tasks/countdown';
 import { PAGE_SIZE } from '../../../core/tasks/list';
@@ -27,13 +27,11 @@ export interface TaskTableProps {
   readonly search?: string;
   /** Show the workgroup of each row (lists of several workgroups). */
   readonly showWorkgroup?: boolean;
-  /** Show at most this many rows and no paging (the home screen's recent tasks). */
-  readonly limit?: number;
   /** What an empty list says. */
   readonly empty: ReactNode;
 }
 
-export function TaskTable({ org, wgs, state, mine = null, search = '', showWorkgroup, limit, empty }: TaskTableProps) {
+export function TaskTable({ org, wgs, state, mine = null, search = '', showWorkgroup, empty }: TaskTableProps) {
   const { app } = useAppEnv();
   const { t, error } = useI18n();
   const { state: orgState } = useOrgView(org);
@@ -44,16 +42,16 @@ export function TaskTable({ org, wgs, state, mine = null, search = '', showWorkg
   const query = useMemo(() => ({ org, wgs: lists, state, mine, search }), [org, lists, state, mine, search]);
   const select = useMemo(() => selectOverview(query), [query]);
   const view = useStore(select, app.store);
-  const rows = limit === undefined ? view.rows : view.rows.slice(0, limit);
+  const rows = view.rows;
   const now = useNow(true, 30_000);
   const end = useRef<HTMLLIElement>(null);
   // the search and "only mine" need the titles and owners of every merged row, not only of the shown ones
-  useTitles(limit === undefined ? view.merged : rows);
+  useTitles(view.merged);
   useEffect(() => {
     void loadOverview(app.tasks, lists, state);
   }, [app, lists, state]);
   useLiveReload(app.store, () => void loadOverview(app.tasks, query.wgs, query.state, true));
-  const paging = limit === undefined && view.binding !== null;
+  const paging = view.binding !== null;
   useEffect(() => {
     const target = end.current;
     if (!paging || target === null || typeof IntersectionObserver === 'undefined') return;

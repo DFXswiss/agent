@@ -24,16 +24,20 @@ LOG = logging.getLogger("agent_hub.sessions")
 class Effects:
     """Frames, hints and signals to send after the commit, in the order they were recorded."""
 
-    frames: list[tuple[Audience, str, dict[str, Any]]] = field(default_factory=list)
+    frames: list[tuple[Audience, str, dict[str, Any], UUID | None]] = field(default_factory=list)
     signals: list[tuple[str, dict[str, UUID | int | str]]] = field(default_factory=list)
 
-    def org_frame(self, org_id: UUID | str, frame: str, data: Mapping[str, Any]) -> None:
-        """A frame for the browsers of the org (`task`, `session`)."""
-        self.frames.append((Audience("org", UUID(str(org_id))), frame, dict(data)))
+    def org_frame(
+        self, org_id: UUID | str, frame: str, data: Mapping[str, Any], *, wg_id: UUID | str | None = None
+    ) -> None:
+        """A frame for the browsers of the org (`task`, `session`); `wg_id` restricts it to the workgroup's readers
+        (`attention`, whose row names no workgroup)."""
+        wg = None if wg_id is None else UUID(str(wg_id))
+        self.frames.append((Audience("org", UUID(str(org_id))), frame, dict(data), wg))
 
     def hint(self, device_id: UUID | str, hint: str, data: Mapping[str, Any]) -> None:
         """A content-free hint for one device (`session.start`, `session.control`, `prompt`)."""
-        self.frames.append((Audience("device", UUID(str(device_id))), hint, dict(data)))
+        self.frames.append((Audience("device", UUID(str(device_id))), hint, dict(data), None))
 
     def signal(self, name: str, **ids: UUID | int | str) -> None:
         """An internal signal (`task.state`)."""
@@ -48,9 +52,9 @@ class Effects:
         """Send everything (after the commit) and forget it."""
         frames, self.frames = self.frames, []
         pending, self.signals = self.signals, []
-        for audience, frame, data in frames:
+        for audience, frame, data, wg_id in frames:
             try:
-                publish(audience, frame, data)
+                publish(audience, frame, data, wg_id=wg_id)
             except Exception:
                 LOG.error("a %s frame could not be published", frame, exc_info=True)
         for name, ids in pending:

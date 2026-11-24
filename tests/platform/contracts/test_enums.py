@@ -139,6 +139,16 @@ KOR31_AUDIT = "credit.changed billing.fx_set billing.export"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
 SPEC_WAITING_REASONS = "no_device platform_access_required wg_vm_limit placement_full placement_offline keys_pending"
+# ADR-076 section 1 (KOR-39): category -> (order, reasons).
+SPEC_ATTENTION = {
+    "needs_decision": ("since_asc", "question approval connection_missing credit_empty device_missing"),
+    "blocked": (
+        "since_desc",
+        "session_failed guest_error device_unreachable model_access_missing no_capacity operation_refused",
+    ),
+    "working": ("since_desc", "queued starting working operation subagents"),
+    "done": ("since_desc", "idle closed"),
+}
 # 04-crypto.md section 4.3: (kind, scope, author kind, right).
 SPEC_EVENT_MATRIX = [
     ("org.profile", "org", "user", "org_admin"),
@@ -350,9 +360,33 @@ def test_event_kind_matrix(contracts: Contracts) -> None:
             assert row["header"]["wg"] == "empty", row
 
 
+def test_attention_categories(contracts: Contracts) -> None:
+    document = enum_file("attention.json")
+    assert set(document) == {"description", "categories"}
+    rows = document["categories"]
+    for row in rows:
+        assert set(row) == {"category", "order", "reasons"}, row
+    assert {row["category"]: (row["order"], row["reasons"]) for row in rows} == {
+        category: (order, reasons.split()) for category, (order, reasons) in SPEC_ATTENTION.items()
+    }
+    assert [row["category"] for row in rows] == list(SPEC_ATTENTION)
+    assert common_enum(contracts, "attention_category") == list(SPEC_ATTENTION)
+    row_schema = contracts.schemas["api/objects.json"]["$defs"]["attention_row"]
+    assert row_schema["required"] == list(row_schema["properties"])
+    for row in rows:
+        for reason in row["reasons"]:
+            assert check_reason(contracts, reason), reason
+
+
+def check_reason(contracts: Contracts, reason: str) -> bool:
+    pattern: str = contracts.schemas["common.json"]["$defs"]["attention_reason"]["pattern"]
+    return re.fullmatch(pattern.removeprefix("^").removesuffix("$"), reason) is not None
+
+
 def test_enum_files_are_described() -> None:
     names = sorted(path.name for path in ENUMS.glob("*.json"))
     assert names == [
+        "attention.json",
         "audit-actions.json",
         "error-codes.json",
         "event-kinds.json",

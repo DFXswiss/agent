@@ -1,7 +1,8 @@
 // Navigation entries discovered at `src/ui/screens/<area>/nav.ts` (each exports `nav: NavEntry[]`, ADR-027
 // section 4), sorted by `order`, then `id`. An entry may hide itself and carry a badge count from the store
-// (14-community.md section 6: the community's unread messages); `useNavState` reads both for the shell.
-import { useMemo } from 'react';
+// (14-community.md section 6: the community's unread messages); `useNavState` reads both for the shell. An entry
+// may also bring its own badge component (Home: the decisions waiting for the user, KOR-39).
+import { type ComponentType, useMemo } from 'react';
 import { collect, hasShape, ordered, type ModuleMap, type Ordered } from '../core/registry';
 import type { Store, StoreState } from '../core/store';
 import { useStore } from './hooks/useStore';
@@ -15,13 +16,19 @@ export interface NavEntry extends Ordered {
   readonly hidden?: (state: StoreState) => boolean;
   /** A count shown as a badge ("99+" above 99); none at 0. */
   readonly badge?: (state: StoreState) => number;
+  /** A badge next to the label (shown with an active org), e.g. Home's count of decisions (KOR-39). */
+  readonly Badge?: ComponentType<{ readonly org: string }>;
 }
 
 const navModules: ModuleMap = import.meta.glob('./screens/*/nav.ts', { eager: true });
 
 const isNavList = (value: unknown): value is NavEntry[] =>
   Array.isArray(value) &&
-  value.every((entry) => hasShape(entry, { id: 'string', order: 'number', to: 'string', labelKey: 'string' }));
+  value.every(
+    (entry) =>
+      hasShape(entry, { id: 'string', order: 'number', to: 'string', labelKey: 'string' }) &&
+      (entry.Badge === undefined || hasShape(entry, { Badge: 'component' })),
+  );
 
 export function navEntries(modules: ModuleMap = navModules): NavEntry[] {
   return ordered(collect(modules, 'nav', isNavList).flatMap((entry) => entry.value));

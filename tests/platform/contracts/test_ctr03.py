@@ -23,9 +23,11 @@ SPEC_HINTS = (
     "hello reconcile session.start session.control prompt events log wraps credentials request ping decertified"
 )
 # 03-api.md section 5 (frames of GET /v1/stream).
-# 03-api.md section 5 plus `community` of 14-community.md section 5 (KOR-26).
+# 03-api.md section 5 plus `community` of 14-community.md section 5 (KOR-26) and `attention` of section 4.6.0
+# (KOR-39).
 SPEC_SSE_FRAMES = (
     "hello event terminal task session operation log wraps notification device_response metrics community resync"
+    " attention"
 )
 # 04-crypto.md section 4.7 (membership-log entry types) and section 4.8 (platform-log entry types).
 SPEC_MEMBERSHIP_TYPES = (

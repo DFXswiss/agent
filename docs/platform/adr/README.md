@@ -79,5 +79,6 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [073](073-names-for-every-member.md) | Every member has a name: an admin-given provisional name (`member.name`) for members and invitations, the own name written on first open, never an ID as the main line | §5, E-18, E-19 | no |
 | [074](074-own-device-without-terminal.md) | An own Mac becomes an execution device without a terminal: one signed, versioned runner package, one system dialog for the agent way and for a download, removal and updates with a way back without a terminal | §1, §3, idea 35 | no |
 | [075](075-resource-choice.md) | Resource choice: several VMs and devices per workgroup (sessions per VM as a setting), a device for the whole organization (`device_assign_org`, what it receives and when), choosing device and VM, "full" and "no device" are waiting states with a category, never refusals | §3, §5, §8 | no |
+| [076](076-situation-view-and-attention-categories.md) | The situation view: every task has one attention record (needs decision, stuck, running, finished) that the hub derives from metadata it already holds; agents ask with `human.question` / `human.approval`; one notification per occasion | §6, §12, Ideen 31, 32 | no |
 
 New decisions get the next free number; a superseded ADR keeps its file and is marked `Superseded by ADR-NNN`.

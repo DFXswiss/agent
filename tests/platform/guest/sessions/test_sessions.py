@@ -20,6 +20,7 @@ import pytest
 from agent_guest import harness, registry, sessions, tmux, toolsready
 from agent_guest.apisock import token_sha256
 from agent_guest.control import ControlContext
+from agent_guest.control_routes import hooks as control_hooks
 from agent_guest.driver import ClaudeCodeDriver
 from agent_guest.prompts import prompt_sha256
 from agent_guest.sandbox import unit
@@ -1148,3 +1149,15 @@ def test_cleanup_forgets_the_tools_mark(
     assert manager.cleanup() == [SESSION]
     with context.journal.transaction() as db:
         assert db.execute("SELECT 1 FROM guest_meta WHERE key LIKE 'tools_ready:%'").fetchone() is None
+
+
+def test_the_depth_comes_from_the_stored_identity(manager: sessions.SessionManager, context: ControlContext) -> None:
+    assert manager.depth(SESSION) is None
+    manager._write_meta(SESSION, {"identity": {"depth": 0}})
+    assert control_hooks.session_depth(context, SESSION) == 0
+    manager._write_meta(SESSION, {"identity": {"depth": 2}})
+    assert manager.depth(SESSION) == 2
+    broken: dict[str, Any]
+    for broken in ({"identity": []}, {"identity": {"depth": "0"}}, {"identity": {"depth": True}}):
+        manager._write_meta(SESSION, broken)
+        assert manager.depth(SESSION) is None

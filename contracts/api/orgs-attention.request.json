@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/orgs-attention.request.json",
+  "title": "GET /v1/orgs/{org}/attention request",
+  "description": "query parameters (03-api.md section 4.6, KOR-39)",
+  "type": "object",
+  "properties": {
+    "category": {
+      "$ref": "../common.json#/$defs/attention_category",
+      "description": "required; needs_decision is ordered since ASC, task_id ASC, the other categories since DESC, task_id DESC"
+    },
+    "mine": {
+      "type": "string",
+      "enum": [
+        "0",
+        "1"
+      ],
+      "description": "1: only tasks the caller owns"
+    },
+    "since": {
+      "$ref": "../common.json#/$defs/time",
+      "description": "only records that entered their category at or after this time"
+    },
+    "before": {
+      "$ref": "../common.json#/$defs/q_before"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_attention",
+      "description": "default 50, max 100"
+    }
+  },
+  "required": [
+    "category"
+  ],
+  "additionalProperties": false
+}

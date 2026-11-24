@@ -533,12 +533,12 @@ def test_notice_text(contracts: Contracts, n: int, kinds: list[str], ok: bool) -
 
 def test_deny_reason_file_matches_the_schema(deny: dict[str, Any], contracts: Contracts) -> None:
     reasons = deny["pre_tool_use"]
-    assert {row["rule"] for row in reasons} == {2, 3, 4, 5, 6}
+    assert {row["rule"] for row in reasons} == {1, 2, 3, 4, 5, 6}  # rule 1: question_passed (KOR-39)
     assert "input_invalid" in {row["id"] for row in reasons}
     assert len({row["id"] for row in reasons}) == len(reasons)
     fixed = [row["text"] for row in reasons if "text" in row]
     schema = contracts.schemas["mcp/objects.json"]["$defs"]["deny_reason"]
-    assert schema["anyOf"][0]["enum"] == fixed
+    assert sorted(schema["anyOf"][0]["enum"]) == sorted(fixed)  # same sentences; the file lists rule 1 first
     template = next(row for row in reasons if "template" in row)
     assert template["template"] == SPEC_TOOL_FORBIDDEN.replace("<name>", "{name}")
     rel = "mcp/hooks/PreToolUse.response.json"
@@ -628,6 +628,9 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
         None,
     ),
     "workvm.release": ("scope", "released workvm_id", "", None),
+    # KOR-39 (ADR-076 section 3)
+    "human.question": ("question", "", "", None),
+    "human.approval": ("question", "", "", None),
 }
 SPEC_REPO = "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
 # 03-api.md section 9: (type, field, longest valid value length).
@@ -639,6 +642,8 @@ SPEC_TEXT_LIMITS = [
     ("subagent.request", "purpose", 200),
     ("subagent.request", "prompt", 32768),
     ("task.set_title", "title", 120),
+    ("human.question", "question", 4000),
+    ("human.approval", "question", 4000),
 ]
 SPEC_PROTECTED_DEFAULT = ["main", "master", "develop", "release/*"]
 

@@ -6,6 +6,8 @@
 // | `whiteboard.entry` | "New whiteboard entry in organization X" / "… in workgroup X" / "… in task Y" | the board |
 // | `task.idle` | "Task Y is waiting for you" | the task |
 // | `task.failed` | "Task Y failed" | the task |
+// | `task.attention` | "Task Y needs your decision: <reason>" / "Task Y is stuck: <reason>" (`ref` =
+//   `<category>:<reason>:<seq>` or `<category>:<reason>:wg`, KOR-39) | the situation view (the org's home) |
 // | `invite.accepted` | "Z accepted the invitation to X" | the org's members |
 // | `rotation.required` | "Access in X is being updated" (neutral; the hub no longer creates it, ADR-058) | the org's members |
 // | `org.admitted` | "Z admitted you to X" (`ref` = the admitting admin, ADR-060) | the org |
@@ -19,6 +21,7 @@
 // (`core/tasks/directory.ts`): `org.profile`, `wg.profile`, `member.profile`, `device.profile` and the task's `task.meta`;
 // an agent's name from the user's own sealed agent labels (`core/agents/list.ts`).
 import { isRecord } from '../registry';
+import { reasonKey } from '../attention/view';
 import { selectDirectory, selectTitle } from '../tasks/directory';
 import { agentName } from '../store/slices/agents';
 import { ACCOUNT_KIND, type NotificationRow } from '../store/slices/notifications';
@@ -60,6 +63,17 @@ export interface Message {
   /** Message key of the `notifications` catalog. */
   readonly key: string;
   readonly params: Readonly<Record<string, string>>;
+  /** Message key of a further text the UI translates into the parameter `reason` (`task.attention`). */
+  readonly reason?: string;
+}
+
+/** Category and reason of a `task.attention` row (`ref` = `<category>:<reason>:<seq|wg>`); null when malformed. */
+export function attentionOf(
+  row: Pick<NotificationRow, 'ref'>,
+): { category: 'needs_decision' | 'blocked'; reason: string } | null {
+  const [category, reason] = (row.ref ?? '').split(':');
+  if ((category !== 'needs_decision' && category !== 'blocked') || !reason) return null;
+  return { category, reason };
 }
 
 /** The sentence of a notification: message key and parameters, missing names replaced by `fallback`. */
@@ -83,6 +97,15 @@ export function notificationMessage(row: NotificationRow, names: Names, fallback
       return { key: 'notifications.text.task.idle', params: { task, org } };
     case 'task.failed':
       return { key: 'notifications.text.task.failed', params: { task, org } };
+    case 'task.attention': {
+      const attention = attentionOf(row);
+      if (attention === null) return { key: 'notifications.text.task.attention', params: { task, org } };
+      return {
+        key: `notifications.text.task.attention.${attention.category}`,
+        params: { task, org },
+        reason: reasonKey(attention.category, attention.reason),
+      };
+    }
     case 'invite.accepted':
       return { key: 'notifications.text.invite.accepted', params: { subject, org } };
     case 'rotation.required':

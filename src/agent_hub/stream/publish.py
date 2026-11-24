@@ -42,6 +42,7 @@ BROWSER_FRAMES = frozenset(
         "device_response",
         "metrics",
         "community",
+        "attention",
         "resync",
     }
 )

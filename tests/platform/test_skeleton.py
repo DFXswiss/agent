@@ -24,6 +24,7 @@ from agent_runner.__main__ import main as runner_main
 AREAS: dict[ModuleType, list[str]] = {
     agent_hub: [
         "agents",
+        "attention",
         "audit",
         "auth",
         "backup",

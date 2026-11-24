@@ -127,6 +127,8 @@ class HubFake:
         self.placements: dict[str, Any] = {}
         self.no_device: set[str] = set()
         self.tasks: dict[str, Json] = {}
+        self.attention: dict[str, Json] = {}
+        """Attention records by task (KOR-39): the hub derives them; tests set them."""
         self.hooks: dict[tuple[str, str], Hook] = {}
         self.requests: list[Request] = []
         self.bodies: list[bytes] = []
@@ -526,6 +528,8 @@ class HubFake:
             ("POST", r"/v1/tasks", self.r_task_create),
             ("POST", r"/v1/tasks/(?P<task>[0-9a-f-]+)/prompts", self.r_task_prompt),
             ("GET", r"/v1/workgroups/(?P<wg>[0-9a-f-]+)/tasks", self.r_wg_tasks),
+            ("GET", r"/v1/orgs/(?P<org>[0-9a-f-]+)/attention", self.r_attention),
+            ("GET", r"/v1/orgs/(?P<org>[0-9a-f-]+)/attention/summary", self.r_attention_summary),
             *self.routes,
         ]
         for route_method, pattern, handler in table:
@@ -822,13 +826,14 @@ class HubFake:
             return 404, {"error": "not_found"}
         kinds = set(request.query.get("kinds", "").split(","))
         after = int(request.query.get("after", "0"))
-        task = request.query.get("task")
+        task, ref = request.query.get("task"), request.query.get("ref")
         found = [
             item
             for item in self.events.get(scope, [])
             if item["scope_seq"] > after
             and item["event"]["header"]["kind"] in kinds
             and (task is None or item["event"]["header"]["task"] == task)
+            and (ref is None or item["event"]["header"]["ref"] == ref)
         ]
         return 200, {"events": found, "next_after": None, "head": len(self.events.get(scope, []))}
 
@@ -894,6 +899,56 @@ class HubFake:
         state = request.query.get("state")
         rows = [t["task"] for t in self.tasks.values() if t["task"]["wg_id"] == wg]
         return 200, {"tasks": [r for r in rows if state is None or r["state"] == state], "next_before": None}
+
+    # --- the situation view (the shapes of 03-api.md section 4.6 and agent_hub's attention endpoints) ---
+
+    def _attention_rows(self, request: Request, org: str) -> list[tuple[Json, Json]]:
+        rows = [(self.tasks[task]["task"], row) for task, row in self.attention.items() if task in self.tasks]
+        return [(task, row) for task, row in rows if task["org_id"] == org]
+
+    def r_attention(self, request: Request, body: Any, org: str) -> tuple[int, Any]:
+        if self._member(request, org) is None:
+            return 404, {"error": "not_found"}
+        category = request.query.get("category")
+        if category not in ("needs_decision", "blocked", "working", "done"):
+            return 400, {"error": "invalid"}
+        rows = [(t, a) for t, a in self._attention_rows(request, org) if a["category"] == category]
+        if request.query.get("mine") == "1":
+            rows = [(t, a) for t, a in rows if t["owner_id"] == request.user]
+        ascending = category == "needs_decision"
+        rows.sort(key=lambda pair: (pair[1]["since"], pair[1]["task_id"]), reverse=not ascending)
+        before = request.query.get("before")
+        if before is not None:
+            since, _, task = before.partition("|")
+            rows = [
+                (t, a)
+                for t, a in rows
+                if (
+                    (a["since"], a["task_id"]) > (since, task)
+                    if ascending
+                    else (a["since"], a["task_id"]) < (since, task)
+                )
+            ]
+        limit = min(int(request.query.get("limit", "50")), 100)
+        page = rows[:limit]
+        following = f"{page[-1][1]['since']}|{page[-1][1]['task_id']}" if len(rows) > limit else None
+        return 200, {"items": [{"task": t, "attention": a} for t, a in page], "next_before": following}
+
+    def r_attention_summary(self, request: Request, body: Any, org: str) -> tuple[int, Any]:
+        if self._member(request, org) is None:
+            return 404, {"error": "not_found"}
+        rows = self._attention_rows(request, org)
+
+        def count(category: str, mine: bool = False) -> int:
+            return sum(1 for t, a in rows if a["category"] == category and (not mine or t["owner_id"] == request.user))
+
+        return 200, {
+            "needs_decision": count("needs_decision"),
+            "needs_decision_mine": count("needs_decision", mine=True),
+            "blocked": count("blocked"),
+            "working": count("working"),
+            "done_since": count("done"),
+        }
 
 
 def head_of(log: VerifiedLog) -> Head:

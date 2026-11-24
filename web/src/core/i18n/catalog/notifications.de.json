@@ -32,5 +32,8 @@
   "text.agent.device_request": "Agent „{agent}“ hat eine Anfrage an ein Ausführungsgerät gesendet",
   "text.agent.agent_paired_remote": "Ein KI-Agent auf einem anderen Computer („{agent}“) wurde dein Hauptorchestrator",
   "text.agent.unknown": "Agent „{agent}“ hat dein Konto geändert",
-  "unnamed.agent": "unbekannt"
+  "unnamed.agent": "unbekannt",
+  "text.task.attention": "Task „{task}“ braucht deine Aufmerksamkeit",
+  "text.task.attention.needs_decision": "Task „{task}“ braucht deine Entscheidung: {reason}",
+  "text.task.attention.blocked": "Task „{task}“ steckt fest: {reason}"
 }

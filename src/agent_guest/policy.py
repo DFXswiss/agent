@@ -4,6 +4,10 @@ Rules in this order; the first match decides (rule numbers as in 05 section 5.3,
 ``contracts/mcp/hook-deny-reasons.json``):
 
 1. ``mcp__platform__<tool>`` with ``<tool>`` in the tool list of 03-api.md section 8.1 -> allow
+1a. ``AskUserQuestion`` of a main session whose question could be built (``ask``) -> deny ``question_passed``
+   (journaled as rule 1); the caller requests the operation ``human.question`` with ``question_text(tool_input)``
+   before it answers (KOR-39, ADR-076 section 3). A subagent's call, or one without any question text, falls
+   through to rule 2
 2. a tool other than ``Read``, ``Glob``, ``Grep``, ``Edit``, ``Write`` -> deny ``tool_forbidden``
 3. ``Glob.pattern`` / ``Grep.glob`` that starts with ``/`` or ``~``, has a ``..`` segment or a NUL -> deny
    ``pattern_outside_workspace``; brace alternatives (``{/etc,x}``, ``{..,x}``) and backslash escapes (``\\.\\.``)
@@ -68,6 +72,8 @@ PLATFORM_TOOLS = frozenset(
 )
 FILE_TOOLS = frozenset({"Read", "Glob", "Grep", "Edit", "Write"})
 WRITE_TOOLS = frozenset({"Edit", "Write"})
+ASK_TOOL = "AskUserQuestion"
+QUESTION_MAX = 4000
 PATH_KEYS = ("file_path", "path")
 PATTERN_KEYS = {"Glob": "pattern", "Grep": "glob"}
 MAX_SYMLINKS = 40
@@ -90,6 +96,10 @@ TOOL_FORBIDDEN = (
     "(mcp__platform__request_operation)."
 )
 REASONS: dict[str, str] = {
+    "question_passed": (
+        "Your question was passed to the person through agent.dfx.swiss. End your turn now; the answer arrives as "
+        "your next prompt."
+    ),
     "tool_forbidden_unnamed": (
         "This tool is forbidden in agent.dfx.swiss sessions. Request actions through the platform tools "
         "(mcp__platform__request_operation)."
@@ -114,6 +124,38 @@ def deny_reason(reason_id: str, tool_name: str = "") -> str:
             return TOOL_FORBIDDEN.format(name=tool_name)
         return REASONS["tool_forbidden_unnamed"]
     return REASONS[reason_id]
+
+
+def _option(option: object) -> str | None:
+    if isinstance(option, str):
+        return option if option.strip() else None
+    if not isinstance(option, Mapping):
+        return None
+    label, description = option.get("label"), option.get("description")
+    label = label if isinstance(label, str) and label.strip() else None
+    description = description if isinstance(description, str) and description.strip() else None
+    if label is None:
+        return description
+    return label if description is None else f"{label}: {description}"
+
+
+def question_text(tool_input: Mapping[str, object]) -> str:
+    """The ``question`` of the ``human.question`` operation for an ``AskUserQuestion`` call (05 section 5.3 rule 1a):
+    every question text followed by its options as a list (``- label: description``), questions separated by a blank
+    line, NUL characters removed, cut to ``QUESTION_MAX`` characters; empty when the input holds no question text.
+    Deterministic and formal: the input is only arranged, never interpreted."""
+    blocks: list[str] = []
+    questions = tool_input.get("questions")
+    for item in questions if isinstance(questions, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        question = item.get("question")
+        if not isinstance(question, str) or not question.strip():
+            continue
+        options = item.get("options")
+        found = [_option(option) for option in (options if isinstance(options, list) else [])]
+        blocks.append("\n".join([question, *(f"- {option}" for option in found if option is not None)]))
+    return "\n\n".join(blocks).replace("\x00", "")[:QUESTION_MAX]
 
 
 @dataclass(frozen=True)
@@ -245,9 +287,12 @@ class Policy:
     def _resolve(self, path: str) -> str:
         return resolve(path, self._lstat, self._readlink)
 
-    def evaluate(self, tool_name: str, tool_input: Mapping[str, object]) -> Decision:
+    def evaluate(self, tool_name: str, tool_input: Mapping[str, object], *, ask: bool = False) -> Decision:
+        """The decision for one call; ``ask``: the call is ``AskUserQuestion`` of a main session with a question."""
         if tool_name.startswith(PLATFORM_PREFIX) and tool_name[len(PLATFORM_PREFIX) :] in PLATFORM_TOOLS:
             return Decision("allow", 1)
+        if ask and tool_name == ASK_TOOL:
+            return Decision("deny", 1, deny_reason("question_passed"))
         if tool_name not in FILE_TOOLS:
             return Decision("deny", 2, deny_reason("tool_forbidden", tool_name))
         key = PATTERN_KEYS.get(tool_name)

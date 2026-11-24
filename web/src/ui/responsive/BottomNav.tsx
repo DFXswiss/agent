@@ -68,8 +68,10 @@ export function BottomNav({ entries = navEntries() }: { readonly entries?: reado
   if (org === null) return null;
   const dot = visible.some((entry) => !BAR_IDS.includes(entry.id) && badges.get(entry.id)! > 0);
   const base = `/o/${encodeURIComponent(org)}`;
+  // the badge of a bar entry comes from its discovered entry (Home's count of decisions, KOR-39)
+  const badge = (id: string) => entries.find((entry) => entry.id === id)?.Badge;
   const items = [
-    { id: 'home', to: base, label: t('home.nav'), end: true },
+    { id: 'home', to: base, label: t('home.nav'), end: true, Badge: badge('home') },
     { id: 'tasks', to: `${base}/tasks`, label: t('shell.tasks'), end: true },
     { id: 'notifications', to: '/notifications', label: t('shell.notifications'), end: true },
     { id: 'monitoring', to: `${base}/monitoring`, label: t('monitoring.nav'), end: true },
@@ -84,7 +86,10 @@ export function BottomNav({ entries = navEntries() }: { readonly entries?: reado
         {items.map((item) => (
           <li key={item.id} className="flex-1">
             <NavLink className={ITEM} to={item.to} end={item.end} data-testid={`shell.bottom.${item.id}`}>
-              {item.label}
+              <span className="flex items-center">
+                {item.label}
+                {item.Badge !== undefined && <item.Badge org={org} />}
+              </span>
             </NavLink>
           </li>
         ))}

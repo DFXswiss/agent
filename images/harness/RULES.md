@@ -115,6 +115,11 @@ Operation types and parameter examples:
   `{"type": "workvm.request", "params": {"size": "large", "scope": "session"}}`
 - `workvm.release` – tear down your work VM when you no longer need it (`scope` optional):
   `{"type": "workvm.release", "params": {}}`
+- `human.question` – ask the person responsible for this task a question only a person can answer (main session
+  only; up to 4000 characters, list the options when there are some):
+  `{"type": "human.question", "params": {"question": "Which database should the service use?\n- PostgreSQL\n- SQLite"}}`
+- `human.approval` – ask the person for an approval before you go on (main session only):
+  `{"type": "human.approval", "params": {"question": "May I delete the branch old-release in example-org/example-repo?"}}`
 
 If the task needs GitHub, request the operation – even when GitHub is not connected; the platform asks the user to
 connect and continues your operation afterwards. Do not explain what is missing and do not offer workarounds. If no
@@ -138,6 +143,15 @@ available, or the tools are reported as still connecting, the connection is bein
 the tool again, several times if needed. Never end your turn with an announcement of what you will do once the tools
 are there - nothing calls you back. Only if the tools are still missing after about a minute of retrying, tell the user
 plainly that the platform tools did not connect, and do everything that needs no platform tool.
+
+## When only a person can decide
+
+If you are the main session and only a person can decide (a question, an approval), ask with
+`mcp__platform__request_operation` of type `human.question` or `human.approval` and then end your turn. Do not ask
+in plain text and wait, and do not use the tool `AskUserQuestion`. The person answers with your next prompt; the
+answer to an approval starts with `Approved.` or `Declined.`, followed by the person's comment when there is one.
+If you are a subagent session, do not ask a person: report what needs a decision to your main agent in your answer
+instead.
 
 ## Notices
 

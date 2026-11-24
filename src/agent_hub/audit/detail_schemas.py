@@ -1084,6 +1084,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.monitoring.series": {"properties": {}, "required": []},
     "read.notifications": {"properties": {}, "required": []},
     "read.operation": {"properties": {}, "required": []},
+    "read.org.attention": {"properties": {}, "required": []},
+    "read.org.attention.summary": {"properties": {}, "required": []},
     "read.org.audit": {"properties": {}, "required": []},
     "read.org.audit.verify": {"properties": {}, "required": []},
     "read.org.billing": {"properties": {}, "required": []},

@@ -33,9 +33,13 @@ OPERATION_TYPES = frozenset(
         "github.update_issue",
         "github.list_pull_requests",
         "github.request_connection",
+        "human.question",
+        "human.approval",
     }
 )
 SUBAGENT_REQUEST = "subagent.request"
+HUMAN_TYPES = frozenset({"human.question", "human.approval"})
+"""Operations that ask a person (KOR-39): only a main session may request them (check H4)."""
 WINDOWS: Mapping[str, int] = MappingProxyType(
     {
         "github.checkout": 600,

@@ -158,11 +158,25 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `POST /v1/sessions/{session}/control` | task:write | `{action:"interrupt"|"stop"}` → `{}` |
 | `GET /v1/sessions/{session}` | task:read | → session incl. transitions, usage, device, vm, parent, children |
 | `GET /v1/tasks/{task}/contexts` | task:read | → `{contexts:[{object_id,session_id,author_id,epoch,chunks,size,digest,created_at,completed_at}]}`: the complete context checkpoints of the task (metadata only, newest first as in §4.6.3, at most 1000); uploads in progress are never listed (ADR-072 §5) |
+| `GET /v1/orgs/{org}/attention` | org:member (rows of readable workgroups only) | `?category=needs_decision\|blocked\|working\|done&mine=1&since=&before=&limit=` (KOR-39, ADR-076) → `{items:[{task:task_row,attention:attention_row}],next_before}`; `category` required; order `since ASC, task_id ASC` for `needs_decision` (longest waiting first), else `since DESC, task_id DESC`; `limit` default 50, max 100; `mine=1`: tasks the caller owns; `since` (RFC 3339): only records that entered their category at or after it |
+| `GET /v1/orgs/{org}/attention/summary` | org:member | `?since=` → `{needs_decision,needs_decision_mine,blocked,working,done_since}` (counts over the readable workgroups; `done_since` counts `done` records with `since` ≥ the parameter, default the last 24 h) |
 
 Session rows (`GET /v1/tasks/{task}`, `GET /v1/sessions/{session}`, the `session` frame) carry `context_restore`
 (`restored`, `fallback` or null) and `context_reason` (closed list `common.json#/$defs/context_reason`): what the
 runner reported for a main session that continued an earlier one (§4.6.3). The user's agent reads all of this through
 the same endpoints (`11-agent-access.md`, KOR-24 parity); continuing is `POST /v1/tasks/{task}/prompts`.
+
+#### 4.6.0 Attention record (KOR-39, ADR-076)
+
+Every task has one attention record (`hub.task_attention`, 02-data-model.md §2.4), derived by the hub from metadata
+it already holds and refreshed at the end of every transaction that changes an input (task and session transitions,
+prompts, operation states). `attention_row` = `{task_id,category,reason,ref_kind,ref_id,since,seq,subagents_total,
+subagents_active,updated_at}`; categories and reasons: `contracts/enums/attention.json`; derivation: ADR-076 §2
+(normative). Every change is sent to the org's browsers as the stream frame `attention` (the `attention_row`) for
+users who read the task's workgroup; a refresh that changes nothing sends nothing. Only `needs_decision` and `blocked`
+records carry a ref (`operation` or `session`). A task without a record (older than the migration) gets one from the
+job `attention.backfill` within a minute (a backfilled record sends no frame and no notification); until then it
+appears in no group. Query values outside their form are `400 request_invalid` with the parameter's pointer.
 
 #### 4.6.1 First-task flow (normative sequence)
 
@@ -284,7 +298,7 @@ level (org level: org members; wg/task level: wg readers) except the author; eac
 an SSE frame. Active sessions in scope (org level: all non-stopped sessions of the org; wg level: of the wg;
 task level: of the task) get a content-free ping through their device (`ping` hint, §6.2).
 
-Other notification rules: `task.idle` to the task owner when the main session goes `working → idle` after at least 10 s of `working`; `task.failed` to the owner when the task becomes `failed`; `invite.accepted` to the inviting admin. `rotation.required` is no longer created (KOR-34, ADR-058: owed rotations run silently in the admins' browsers); existing rows stay valid and render neutrally.
+Other notification rules: `task.idle` to the task owner when the main session goes `working → idle` after at least 10 s of `working`, unless the task's attention record is `needs_decision` or `blocked`; `task.failed` to the owner when the task becomes `failed`, unless its attention record is `needs_decision` (then `task.attention` says more); `task.attention` (KOR-39) to the task owner when the task's attention record enters `needs_decision` or `blocked` (not for a `blocked` record of a failed task, which `task.failed` covers), once per occasion and, for a further occasion of the same task, only once the previous `task.attention` of that task was read (`ref` = `<category>:<reason>:<seq>`; workgroup-wide causes `device_missing`, `device_unreachable`, `no_capacity` once per owner, workgroup and reason while the previous one is unread, `ref` = `<category>:<reason>:wg`), while the owner reads the workgroup; `invite.accepted` to the inviting admin. `rotation.required` is no longer created (KOR-34, ADR-058: owed rotations run silently in the admins' browsers); existing rows stay valid and render neutrally.
 
 ### 4.10 Device requests
 
@@ -335,6 +349,7 @@ active org), optional `terminal=<session_id>` (repeatable, max 3), `cursors=<sco
 | `notification` | notification row |
 | `device_response` | `{request_id,seq}` |
 | `metrics` | latest samples of visible entities (every 15 s, only while `monitoring=1` query flag is set) |
+| `attention` | `attention_row` after a change (KOR-39, §4.6.0), only to readers of the task's workgroup |
 | `resync` | `{reason}` – client MUST re-pull with its cursors (sent after a buffer overflow or hub restart) |
 
 Delivery: at-least-once; the client de-duplicates by `(scope_id, scope_seq)`. On connect the hub replays events
@@ -570,6 +585,8 @@ original released its slot (`failed`, `expired`), or with other content (e.g. an
 | `github.request_connection` | `{}` | none; the acting user's GitHub connection is the subject (held while missing, below) | – | – | `{login}` of the connected account |
 | `subagent.request` | `{purpose,prompt,model_id?}` | purpose 1–200, prompt 1–32768 chars; `model_id` from the allowed list of the parent session's access kind (checked by the runner against the model catalog ⇒ `model_not_allowed`) | parent session, sha256(purpose‖prompt) | 10 min | `{session_id}` (hub creates the child session, H4 limits: depth ≤ 2, ≤ 3 running children per task, ≤ 10 children per task) |
 | `task.set_title` | `{title}` | 1–120 chars, single line | – | – | `{}` (runner writes a device-authored `task.meta` event) |
+| `human.question` | `{question}` | 1–4000 chars; main sessions only (a subagent ⇒ `denied`, `rights_denied`) (KOR-39, ADR-076 §3) | – | – | `{}` – succeeds at once; the task waits for a person (`needs_decision/question`) until the next prompt answers it |
+| `human.approval` | `{question}` | as `human.question` | – | – | `{}` – as `human.question`, the view offers approve / decline (`needs_decision/approval`); the answer prompt starts with `Approved.` or `Declined.` |
 
 GitHub answers of the issue and list types (KOR-25): `401` → `github_not_connected`; `404` → `not_found`; `410`
 (issues are disabled in the repository) → `not_found` with the message "Issues are disabled in this repository.";

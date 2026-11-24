@@ -57,6 +57,10 @@
         {
           "type": "resync",
           "data": "ws/sse/resync.json"
+        },
+        {
+          "type": "attention",
+          "data": "ws/sse/attention.json"
         }
       ],
       "from_client": []
