@@ -34,6 +34,7 @@ def test_org_billing_without_prices(bill: Bill) -> None:
         "credits": [],
         "days": [],
         "workgroups": [],
+        "people": [],
     }
 
 
@@ -53,6 +54,7 @@ def test_org_billing_with_charges_and_credits(bill: Bill) -> None:
     totals = {"tokens_micro_usd": 445_200, "runtime_micro_usd": 3000, "tokens": 1_100_010, "runtime_ms": 30_000}
     assert body["days"] == [{"day": "2026-11-21", **totals}]
     assert body["workgroups"] == [{"wg_id": bill.meter.desk.wg, **totals}]
+    assert body["people"] == [{"user_id": None, **totals}]
 
 
 def test_charges_of_a_workgroup_and_a_task(bill: Bill) -> None:
@@ -84,8 +86,58 @@ def test_charges_of_a_workgroup_and_a_task(bill: Bill) -> None:
             }
         ],
         "total_micro_usd": 448_200,
+        "people": [
+            {
+                "user_id": None,
+                "tokens_micro_usd": 445_200,
+                "runtime_micro_usd": 3000,
+                "tokens": 1_100_010,
+                "runtime_ms": 30_000,
+            }
+        ],
     }
-    assert bill.scene.reader.browser.get(f"/v1/tasks/{other}/charges").json() == {"sessions": [], "total_micro_usd": 0}
+    assert bill.scene.reader.browser.get(f"/v1/tasks/{other}/charges").json() == {
+        "sessions": [],
+        "total_micro_usd": 0,
+        "people": [],
+    }
+
+
+def test_consumption_per_person(bill: Bill) -> None:
+    """KOR-46 (ADR-083 section 2): the consumption items name the person; billing adds a breakdown per person, largest
+    amount first, unattributed consumption as `user_id` null; the org is charged as before."""
+    bill.platform()
+    bill.add_prices()
+    task, session = bill.meter.session("platform")
+    writer, reader = bill.scene.writer.id, bill.scene.reader.id
+    assert bill.usage(session, model=FLASH, access_origin="platform", tokens=TOKENS, triggered_by=writer) == (
+        "ok",
+        None,
+    )
+    assert bill.runtime(session, 30_000, triggered_by=reader) == ("ok", None)
+    assert bill.runtime(session, 30_000, triggered_by=None) == ("ok", None)
+    assert bill.runtime(session, 10_000) == ("ok", None)
+    charged = bill.rows("SELECT kind, triggered_by::text FROM hub.charge ORDER BY at, origin_seq")
+    assert charged == [("tokens", writer), ("runtime", reader), ("runtime", None), ("runtime", None)]
+    assert sorted(
+        bill.rows("SELECT user_id::text, kind, amount_micro_usd, quantity FROM hub.charge_person_daily")
+    ) == sorted(
+        [
+            ("00000000-0000-0000-0000-000000000000", "runtime", 4000, 40_000),
+            (reader, "runtime", 3000, 30_000),
+            (writer, "tokens", 445_200, 1_100_010),
+        ]
+    )
+    tokens = {"tokens_micro_usd": 445_200, "runtime_micro_usd": 0, "tokens": 1_100_010, "runtime_ms": 0}
+    expected = [
+        {"user_id": writer, **tokens},
+        {"user_id": None, "tokens_micro_usd": 0, "runtime_micro_usd": 4000, "tokens": 0, "runtime_ms": 40_000},
+        {"user_id": reader, "tokens_micro_usd": 0, "runtime_micro_usd": 3000, "tokens": 0, "runtime_ms": 30_000},
+    ]
+    assert bill.scene.admin.browser.get(f"/v1/orgs/{bill.org}/billing").json()["people"] == expected
+    assert bill.scene.reader.browser.get(f"/v1/tasks/{task}/charges").json()["people"] == expected
+    billed = bill.scene.admin.browser.get(f"/v1/orgs/{bill.org}/billing").json()
+    assert billed["workgroups"][0]["runtime_micro_usd"] == 7000
 
 
 def test_foreign_and_unknown_ids_are_not_found(bill: Bill) -> None:

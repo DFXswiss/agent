@@ -21,6 +21,10 @@ announced it (`agent_hub.github.identities.require_feature`, `409 peer_outdated`
 `log.policy` (ADR-079): the runner verifies the platform-log entries `platform_policy` and `org_operator_subscriptions`
 and the platform role `operator` (the hub refuses to append them while an active platform device has not announced it,
 `agent_hub.platform.log`).
+
+`prompt.withdraw` (KOR-46, ADR-083 section 3): the runner withdraws a pending prompt listed in `prompt_queue.withdrawn`
+of `GET /v1/device/state` and reports `session.prompt_withdrawn`. The hub refuses to request a withdrawal from a device
+that has not announced it (`409 peer_outdated`).
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ LOG_POLICY = "log.policy"
 VM_CHOICE = "vm.choice"
 """The runner chooses the VM of each session and names it in `session_transition` (ADR-075 section 4)."""
 GITHUB_IDENTITIES = "github.identities"
+PROMPT_WITHDRAW = "prompt.withdraw"
 MAX_FEATURES = 16
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,31}")
 

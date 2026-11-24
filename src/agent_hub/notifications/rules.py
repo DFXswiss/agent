@@ -38,6 +38,11 @@ A `notification` row is content-free: recipient, kind, org, workgroup, task, a r
 - `model.switched` (`switch_rule`, KOR-50, ADR-081 section 5): to the task owner (while the owner reads the task's
   workgroup) when the hub stores a runner's audit row `session.model_switched`, `ref` =
   `<from_access>:<to_access>:<until or empty>`; `created_at` = the receive time.
+- `prompt.waiting_for_device` (`waiting_rule`, KOR-46, ADR-083 section 3): to the author of a prompt that waits for a
+  device - routed to a main session without a device (none was online) or whose device is offline
+  (`agent_hub.tasks.service`), or pending on a device that went offline (`device.presence`, the subscriber of
+  `agent_hub.notifications.signals`); `ref` = the prompt event. Once per prompt and author (a later wait of the same
+  prompt notifies nobody again), and only while the author still reads the task's workgroup.
 - `rotation.required` is no longer created (KOR-34, ADR-058 section 3: owed rotations run silently in the admins'
   browsers, 06-web.md section 11 job 4); the kind stays valid so that existing rows still list and render.
 
@@ -73,6 +78,7 @@ WHITEBOARD, TASK_IDLE, TASK_FAILED = "whiteboard.entry", "task.idle", "task.fail
 TASK_ATTENTION = "task.attention"
 INVITE_ACCEPTED, ROTATION_REQUIRED = "invite.accepted", "rotation.required"
 MODEL_SWITCHED = "model.switched"
+WAITING_FOR_DEVICE = "prompt.waiting_for_device"
 IDLE_AFTER = timedelta(seconds=10)
 COLUMNS = "id, recipient_id, kind, org_id, wg_id, task_id, ref, created_at, read_at"
 
@@ -391,6 +397,23 @@ def switch_rule(connection: Connection, task_id: UUID, detail: dict[str, Any], n
         return []
     ref = f"{detail['from_access']}:{detail['to_access']}:{detail['until'] or ''}"
     return _write(connection, task[2], MODEL_SWITCHED, now, org_id=task[0], wg_id=task[1], task_id=task_id, ref=ref)
+
+
+def waiting_rule(connection: Connection, event_ids: Iterable[str], now: datetime) -> list[Notification]:
+    """`prompt.waiting_for_device` to the author of each prompt of `event_ids` (module docstring)."""
+    found = connection.execute(
+        "SELECT e.id, e.author_id, t.org_id, t.wg_id, t.id FROM hub.event e JOIN hub.task t ON t.id = e.task_id"
+        " WHERE e.id = ANY(%s::uuid[]) AND e.kind = 'prompt' AND NOT EXISTS (SELECT 1 FROM hub.notification n"
+        " WHERE n.kind = %s AND n.ref = e.id::text AND n.recipient_id = e.author_id) ORDER BY e.scope_seq, e.id",
+        (sorted(set(event_ids)), WAITING_FOR_DEVICE),
+    ).fetchall()
+    written: list[Notification] = []
+    for event, author, org, wg, task in found:
+        if _wg_reader(connection, wg, author):
+            written += _write(
+                connection, author, WAITING_FOR_DEVICE, now, org_id=org, wg_id=wg, task_id=task, ref=str(event)
+            )
+    return written
 
 
 def publish_rows(rows: Iterable[Notification]) -> None:

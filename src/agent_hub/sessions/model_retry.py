@@ -65,9 +65,10 @@ def _credential_after(connection: Connection, owner: UUID, after: datetime) -> b
     return found is not None
 
 
-def planned(connection: Connection, task: TaskRow, session_id: UUID, now: datetime) -> datetime | None:
-    """The creation time of the attempt after `session_id` of the locked task failed for want of model access, None
-    when no model credential arrived after the session was created or the capacity rules give none."""
+def planned(connection: Connection, task: TaskRow, session_id: UUID, now: datetime) -> retry.Attempt | None:
+    """The attempt (its creation time and the author of the first prompt it takes over) after `session_id` of the
+    locked task failed for want of model access, None when no model credential arrived after the session was created
+    or the capacity rules give none."""
     created = cast(
         tuple[datetime],
         connection.execute("SELECT created_at FROM hub.session WHERE id = %s", (session_id,)).fetchone(),

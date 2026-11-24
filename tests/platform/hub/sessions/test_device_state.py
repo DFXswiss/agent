@@ -190,7 +190,12 @@ def test_children_and_unassigned_workgroups(world: World, fleet: Fleet) -> None:
             now=desk.hub.clock(),
             config=desk.hub.config,
         )
-        assert provide(request) == {"sessions": [], "pending_prompts": [], "delivered_prompt_event_ids": {}}
+        assert provide(request) == {
+            "sessions": [],
+            "pending_prompts": [],
+            "delivered_prompt_event_ids": {},
+            "prompt_queue": {"via_agent": [], "withdrawn": []},
+        }
 
 
 def test_only_the_last_hundred_delivered_prompts(world: World, fleet: Fleet) -> None:

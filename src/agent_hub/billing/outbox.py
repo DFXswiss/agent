@@ -20,10 +20,13 @@ Each charge is one row of `hub.charge` (unique per device, `origin_seq` and `par
 and the key refuses a second row should one ever run twice; an item that books several rows - the split of a
 per-device DFX key, `agent_hub.models.dfx` - numbers them), added to `hub.charge_daily` (org, UTC day of the
 measurement, workgroup, device, kind: amount and quantity; with its CHF equivalent at the rate of its day,
-`agent_hub.billing.fx`) and left in `hub.charge_pending` for the settle job, which takes it from the org's credit
-(`agent_hub.billing.credit`); the push never locks the org's account. A charge without a session (the share of a
-per-device key no session reported, ADR-081 section 7) has no workgroup, task or session and is summed per day under
-the nil workgroup ID `NO_WG`. Without a price list in force nothing is booked.
+`agent_hub.billing.fx`) and to `hub.charge_person_daily` (org, UTC day, the person the item names as `triggered_by` -
+the nil UUID `UNATTRIBUTED` for none -, kind; KOR-46, ADR-083 section 2: a breakdown only, the charge stays the org's;
+the bookings of a per-device DFX key name nobody and count as unattributed), and left in `hub.charge_pending` for the
+settle job, which takes it from the org's credit (`agent_hub.billing.credit`); the push never locks the org's account.
+A charge without a session (the share of a per-device key no session reported, ADR-081 section 7) has no workgroup,
+task or session and is summed per day under the nil workgroup ID `NO_WG`. Without a price list in force nothing is
+booked.
 """
 
 from __future__ import annotations
@@ -51,8 +54,8 @@ SKEW = timedelta(seconds=300)
 COUNTS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
 INSERT_CHARGE = (
     "INSERT INTO hub.charge (id, org_id, wg_id, task_id, session_id, device_id, origin_seq, part, kind, at,"
-    " amount_micro_usd, price_version, quantity, fx_n, fx_day, chf_per_usd_e8, amount_micro_chf)"
-    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    " amount_micro_usd, price_version, quantity, fx_n, fx_day, chf_per_usd_e8, amount_micro_chf, triggered_by)"
+    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
     " ON CONFLICT (device_id, origin_seq, part) DO NOTHING RETURNING id"
 )
 NO_WG = UUID(int=0)
@@ -63,6 +66,14 @@ UPSERT_DAILY = (
     " SET amount_micro_usd = hub.charge_daily.amount_micro_usd + EXCLUDED.amount_micro_usd,"
     " quantity = hub.charge_daily.quantity + EXCLUDED.quantity"
 )
+UPSERT_PERSON = (
+    "INSERT INTO hub.charge_person_daily (org_id, day, user_id, kind, amount_micro_usd, quantity)"
+    " VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (org_id, day, user_id, kind) DO UPDATE"
+    " SET amount_micro_usd = hub.charge_person_daily.amount_micro_usd + EXCLUDED.amount_micro_usd,"
+    " quantity = hub.charge_person_daily.quantity + EXCLUDED.quantity"
+)
+UNATTRIBUTED = UUID(int=0)
+"""The `user_id` of unattributed consumption in `hub.charge_person_daily` (a primary key holds no NULL)."""
 
 
 def served_session(item: ItemContext, session_id: str) -> tuple[UUID, UUID, UUID, UUID]:
@@ -96,6 +107,7 @@ def book(
     count: int,
     part: int = 0,
     daily_device: UUID | None = None,
+    triggered_by: str | None = None,
 ) -> None:
     """Insert the charge, add it to the day and leave it pending for the credit (module docstring); `daily_device` is
     the device of the day's row when it is not the pushing one (a per-device key's org device)."""
@@ -117,12 +129,15 @@ def book(
             version,
             Jsonb(dict(quantity)),
             *fx.equivalent(item.connection, at, amount),
+            triggered_by,
         ),
     ).fetchone()
     if inserted is None:
         return
     day_row = (org, utc_day(at), wg or NO_WG, daily_device or item.device, kind, amount, count)
     item.connection.execute(UPSERT_DAILY, day_row)
+    person = UNATTRIBUTED if triggered_by is None else UUID(triggered_by)
+    item.connection.execute(UPSERT_PERSON, (org, utc_day(at), person, kind, amount, count))
     credit.pend(item.connection, inserted[0], org, amount)
 
 
@@ -164,6 +179,7 @@ def book_tokens(item: ItemContext, body: UsageBody) -> None:
         version=version.version,
         quantity=quantity,
         count=sum(counts.values()),
+        triggered_by=body.triggered_by,
     )
 
 
@@ -192,6 +208,7 @@ def book_runtime(item: ItemContext, body: RuntimeBody) -> None:
         version=version.version,
         quantity=quantity,
         count=body.runtime_ms,
+        triggered_by=body.triggered_by,
     )
 
 

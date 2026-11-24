@@ -423,6 +423,17 @@ class Estate:
                 " VALUES (%s, %s, %s, %s, 'runtime', 3000, 30000)",
                 (org, date(2026, 11, 21), wg, device.id),
             ),
+            # the consumption per person and a withdrawn prompt (KOR-46)
+            (
+                "INSERT INTO hub.charge_person_daily (org_id, day, user_id, kind, amount_micro_usd, quantity)"
+                " VALUES (%s, %s, %s, 'runtime', 3000, 30000)",
+                (org, date(2026, 11, 21), writer.id),
+            ),
+            (
+                "INSERT INTO hub.prompt_withdrawal (event_id, task_id, requested_by, requested_at, withdrawn_at)"
+                " VALUES (%s, %s, %s, %s, %s)",
+                (new_id(), self.task, writer.id, now, now),
+            ),
             (
                 "INSERT INTO hub.outbox_receipt (device_id, origin_seq, item_kind, item_sha256, status, received_at)"
                 " VALUES (%s, 1, 'event', %s, 'ok', %s)",

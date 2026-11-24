@@ -37,7 +37,8 @@ registration runs in one transaction:
 5. The decision is written: the operation row (`state`, `error_code`, `duplicate_of`, `decided_at`), transition 2
    (`at` = hub time, `by_id` NULL = the hub) and the audit row `operation.<state>` (actor: the device; detail with
    the local check, `github_identity` and `triggered_by`). An accepted `subagent.request` creates the child session
-   (`agent_hub.operations.children`; its `github_identity` is the registration's, else the parent session's) and
+   (`agent_hub.operations.children`; its `github_identity` is the registration's, else the parent session's, its
+   `triggered_by` the registration's, ADR-083 section 2) and
    answers its ID. A `subagent.request` naming a `github_identity` passes the feature gate of the org first (`409
    peer_outdated`, nothing stored).
 
@@ -427,7 +428,14 @@ def register(
     child = None
     if state == "accepted" and request.type == SUBAGENT_REQUEST:
         child = children.create_child(
-            connection, task, parent, operation, now, effects=outcome.effects, github_identity=request.github_identity
+            connection,
+            task,
+            parent,
+            operation,
+            now,
+            effects=outcome.effects,
+            github_identity=request.github_identity,
+            triggered_by=None if request.triggered_by is None else UUID(request.triggered_by),
         )
     outcome.body = _answer(connection, state, error_code, duplicate_of, child)
     outcome.effects.org_frame(task.org_id, "operation", operation_row(connection, operation))

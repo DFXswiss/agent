@@ -1,10 +1,15 @@
 """Routes of the billing area (12-billing.md section 6, ADR-062 section 7).
 
 - `GET /v1/orgs/{org}/billing` (`org:member`): balance, exhausted, the price list in force, the credit history and the
-  consumption per day and per workgroup of the last 30 days (a share without workgroup - a per-device DFX key's
-  spend no session reported, ADR-081 section 7 - counts in the days, not in the workgroups);
+  consumption per day, per workgroup and per person (`people`, `hub.charge_person_daily`) of the last 30 days (a share
+  without workgroup - a per-device DFX key's spend no session reported, ADR-081 section 7 - counts in the days and as
+  unattributed consumption, not in the workgroups);
 - `GET /v1/workgroups/{wg}/charges` (`wg:read`): charges per task of the last 30 days;
-- `GET /v1/tasks/{task}/charges` (`task:read`): charges per session of the task.
+- `GET /v1/tasks/{task}/charges` (`task:read`): charges per session and per person (`people`) of the task.
+
+`people` (KOR-46, ADR-083 section 2) is the consumption per person whose instruction caused it (the consumption item's
+`triggered_by`), largest amount first; unattributed consumption is one entry with `user_id` null. Charges stay booked to
+the organization: the breakdown changes neither the balance nor a booking.
 
 Amounts are micro-USD. Unknown, malformed and foreign IDs answer `404 not_found` alike; the reads are read-logged by
 the pipeline (`read.org.billing`, `read.workgroup.charges`, `read.task.charges`). Nothing here changes credit: there
@@ -19,7 +24,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from agent_hub.billing import binding, credit, prices
-from agent_hub.billing.outbox import NO_WG
+from agent_hub.billing.outbox import NO_WG, UNATTRIBUTED
 from agent_hub.crypto.encoding import format_time
 from agent_hub.errors import HubError
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
@@ -58,6 +63,19 @@ def sums(row: tuple[Any, ...]) -> dict[str, int]:
     }
 
 
+def person(user: UUID | None) -> str | None:
+    """The `user_id` of a `charge_person` entry: null for unattributed consumption (`UNATTRIBUTED` or NULL)."""
+    return None if user is None or user == UNATTRIBUTED else str(user)
+
+
+def people(rows: list[tuple[Any, ...]]) -> list[dict[str, Any]]:
+    """`charge_person` entries of `(user, *sums)` rows, largest amount first (then by user)."""
+    found = [{"user_id": person(row[0]), **sums(row[1:])} for row in rows]
+    return sorted(
+        found, key=lambda item: (-(item["tokens_micro_usd"] + item["runtime_micro_usd"]), item["user_id"] or "")
+    )
+
+
 def since(now: datetime) -> datetime:
     """The first moment of the window of the last `DAYS` UTC days (today included)."""
     return datetime.combine(utc_day(now) - timedelta(days=DAYS - 1), datetime.min.time(), now.tzinfo)
@@ -80,6 +98,10 @@ def org_billing(connection: Any, org: UUID, now: datetime) -> dict[str, Any]:
         f"SELECT wg_id, {_SUMS} FROM hub.charge_daily WHERE org_id = %s AND day >= %s AND wg_id <> %s GROUP BY wg_id"
         " ORDER BY wg_id",
         (org, first, NO_WG),
+    ).fetchall()
+    persons = connection.execute(
+        f"SELECT user_id, {_SUMS} FROM hub.charge_person_daily WHERE org_id = %s AND day >= %s GROUP BY user_id",
+        (org, first),
     ).fetchall()
     balance = credit.balance(connection, org)
     return {
@@ -107,6 +129,7 @@ def org_billing(connection: Any, org: UUID, now: datetime) -> dict[str, Any]:
         ],
         "days": [{"day": day.isoformat(), **sums(row)} for day, *row in days],
         "workgroups": [{"wg_id": str(wg), **sums(row)} for wg, *row in wgs],
+        "people": people(persons),
     }
 
 
@@ -137,7 +160,10 @@ def task_charges(connection: Any, task: UUID) -> dict[str, Any]:
     totals = [(str(session), sums(row)) for session, *row in rows]
     sessions = [{"session_id": session, **found} for session, found in totals]
     total = sum(found["tokens_micro_usd"] + found["runtime_micro_usd"] for _session, found in totals)
-    return {"sessions": sessions, "total_micro_usd": total}
+    persons = connection.execute(
+        f"SELECT triggered_by, {_CHARGE_SUMS} FROM hub.charge WHERE task_id = %s GROUP BY triggered_by", (task,)
+    ).fetchall()
+    return {"sessions": sessions, "total_micro_usd": total, "people": people(persons)}
 
 
 def _org(context: HubContext, user: UUID, org: UUID) -> dict[str, Any]:

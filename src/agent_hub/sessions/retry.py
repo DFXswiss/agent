@@ -28,12 +28,14 @@ end, the task fails with the reason and shows "Retry"):
   by `agent_hub.scheduler.reschedule`); the task never fails for want of capacity. Reaching the limit is logged
   (`agent_hub.sessions.retry`, `capacity_refusal_limit`).
 
-The attempt is created after every pending prompt and after the refused session (`created_at` order of the routing).
+The attempt is created after every pending prompt and after the refused session (`created_at` order of the routing);
+it is triggered by the author of the first prompt it takes over (`triggered_by`, ADR-083 section 2).
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
@@ -67,6 +69,14 @@ def refusals(newest: list[tuple[Any, ...]]) -> int:
     return count
 
 
+@dataclass(frozen=True)
+class Attempt:
+    """The next attempt: its creation time and the author of the first prompt it takes over."""
+
+    created: datetime
+    triggered_by: UUID
+
+
 def _newest(connection: Connection, task_id: UUID, limit: int) -> list[tuple[Any, ...]]:
     return connection.execute(
         "SELECT s.id, s.created_at, (SELECT t.reason FROM hub.session_transition t WHERE t.session_id = s.id"
@@ -77,9 +87,9 @@ def _newest(connection: Connection, task_id: UUID, limit: int) -> list[tuple[Any
     ).fetchall()
 
 
-def planned(connection: Connection, task: TaskRow, session_id: UUID, now: datetime) -> datetime | None:
-    """The creation time of the next attempt after the device refused `session_id` of the locked task, None when the
-    refusal ends it (module docstring). Runs before the refusal is stored."""
+def planned(connection: Connection, task: TaskRow, session_id: UUID, now: datetime) -> Attempt | None:
+    """The next attempt after the device refused `session_id` of the locked task, None when the refusal ends it
+    (module docstring). Runs before the refusal is stored."""
     if task.state == "closed":
         return None
     newest = _newest(connection, task.id, settings.capacity_refusals())
@@ -99,14 +109,17 @@ def planned(connection: Connection, task: TaskRow, session_id: UUID, now: dateti
     if not refused.pending:
         return None
     created: datetime = newest[0][1]
-    return max(now, refused.pending[-1].received_at + prompts.TICK, created + prompts.TICK)
+    at = max(now, refused.pending[-1].received_at + prompts.TICK, created + prompts.TICK)
+    return Attempt(created=at, triggered_by=prompts.first_author(refused.pending))
 
 
-def start(connection: Connection, task: TaskRow, created: datetime, effects: Effects, reason: str = REASON) -> TaskRow:
+def start(connection: Connection, task: TaskRow, attempt: Attempt, effects: Effects, reason: str = REASON) -> TaskRow:
     """Create and place the next attempt (after the refusal is stored, so the scheduler sees it); the derived task.
     At the refusal limit the attempt waits and is held back (module docstring). `reason` is the reason of the
     attempt's first transition: `capacity_exhausted`, or `model_access_unavailable` for the attempt after the owner
-    connected model access (`agent_hub.sessions.model_retry`, ADR-079), which is never held back."""
+    connected model access (`agent_hub.sessions.model_retry`, ADR-079), which is never held back. The attempt is
+    triggered by the author of the first prompt it takes over (`triggered_by`, ADR-083 section 2)."""
+    created = attempt.created
     limit = settings.capacity_refusals()
     # the attempt counts as the next one in the row: the refusals before it are the row of the refused session
     held = reason == REASON and refusals(_newest(connection, task.id, limit)) >= limit
@@ -124,7 +137,15 @@ def start(connection: Connection, task: TaskRow, created: datetime, effects: Eff
             owner=task.owner_id,
         )
     found = create_main_session(
-        connection, task, session_id, decision, created, actor=HUB, effects=effects, reason=reason
+        connection,
+        task,
+        session_id,
+        decision,
+        created,
+        actor=HUB,
+        effects=effects,
+        reason=reason,
+        triggered_by=attempt.triggered_by,
     )
     if held:
         connection.execute(

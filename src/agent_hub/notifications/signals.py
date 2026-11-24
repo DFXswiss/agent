@@ -5,7 +5,9 @@
 - `task.state` (sessions): `task.idle` / `task.failed` to the owner;
 - `task.attention` (attention, KOR-39): `task.attention` to the owner; `operator.request` to the operators and
   `device.needed` to the admins (ADR-079);
-- `invite.accepted` (invites): `invite.accepted` to the inviting admin.
+- `invite.accepted` (invites): `invite.accepted` to the inviting admin;
+- `device.presence` (stream) with `online` 0: `prompt.waiting_for_device` to the authors of the prompts still pending
+  at that device (`agent_hub.sessions.prompts.device_pending`), unless it is online again by the time the work runs.
 
 Owed rotations (`log.appended`, `device.decertified`) no longer notify anybody: the admins' browsers run them silently
 (KOR-34, ADR-058 section 3).
@@ -28,6 +30,8 @@ from uuid import UUID
 from agent_hub import signals
 from agent_hub.db.pool import transaction
 from agent_hub.notifications import pings, rules
+from agent_hub.sessions import prompts
+from agent_hub.stream import presence
 from agent_hub.stream.publish import hint
 
 LOG = logging.getLogger("agent_hub.notifications")
@@ -122,9 +126,28 @@ def on_invite_accepted(_name: str, ids: Mapping[str, Any]) -> None:
     _queue(_rows(lambda connection, now: rules.invite_rule(connection, org, invite, subject, now)))
 
 
+def _offline(device: UUID) -> Work:
+    def work(context: Any) -> None:
+        rows: list[rules.Notification] = []
+        with transaction(context.pool) as connection:
+            now = context.clock()
+            if not presence.is_online(connection, device, now, context.config.device_online_seconds):
+                rows = rules.waiting_rule(connection, prompts.device_pending(connection, device), now)
+        rules.publish_rows(rows)
+
+    return work
+
+
+def on_presence(_name: str, ids: Mapping[str, Any]) -> None:
+    """`device.presence` (`device_id`, `online`): the prompts waiting at a device that went offline."""
+    if ids["online"] == 0:
+        _queue(_offline(ids["device_id"]))
+
+
 SUBSCRIBERS: Mapping[str, Sequence[signals.Subscriber]] = {
     "event.appended": [on_event],
     "task.state": [on_task_state],
     "task.attention": [on_task_attention],
     "invite.accepted": [on_invite_accepted],
+    "device.presence": [on_presence],
 }

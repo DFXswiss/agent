@@ -1,4 +1,4 @@
-"""The sections `sessions`, `pending_prompts` and `delivered_prompt_event_ids` of `GET /v1/device/state`
+"""The sections `sessions`, `pending_prompts`, `delivered_prompt_event_ids` and `prompt_queue` of `GET /v1/device/state`
 (03-api.md section 6.1, ADR-027 section 4: `<area>/device_state.py:SECTION`).
 
 - `sessions`: every session placed on the device that has not ended (`stopped`/`failed` are left out: the runner
@@ -21,6 +21,11 @@
   consent to DFX access (ADR-081 sections 1 and 5, KOR-50);
 - `pending_prompts` / `delivered_prompt_event_ids`: the prompt routing of `agent_hub.sessions.prompts` for the main
   sessions in `sessions` (pending only while the session is not `stopping`).
+- `prompt_queue` (KOR-46, ADR-083 sections 1 and 3), always sent: among `pending_prompts`, `via_agent` the prompts the
+  hub received from their author's agent (the runner's sender line names it) and `withdrawn` those whose author asked
+  to withdraw them and whose withdrawal the device has not confirmed yet (the runner withdraws a prompt that has not
+  reached the guest and reports `session.prompt_withdrawn`). Its presence tells a runner that this hub takes
+  `triggered_by` and `session.prompt_withdrawn`.
 """
 
 from __future__ import annotations
@@ -56,7 +61,7 @@ def _new_vm_allowed(request: StateRequest, wg_id: str, known: dict[str, bool]) -
 
 
 def provide(request: StateRequest) -> Mapping[str, Any]:
-    """The three fields for the device of `request` (module docstring)."""
+    """The four fields for the device of `request` (module docstring)."""
     rows = request.connection.execute(
         "SELECT s.id, s.task_id, s.org_id, s.wg_id, s.state, s.parent_session_id, s.depth, s.owner_id,"
         " COALESCE(u.model_access, 'auto'), u.model_id,"
@@ -123,7 +128,17 @@ def provide(request: StateRequest) -> Mapping[str, Any]:
             }
             for p in found.pending
         )
-    return {"sessions": sessions, "pending_prompts": pending, "delivered_prompt_event_ids": delivered}
+    ids = [item["event_id"] for item in pending]
+    agent, withdrawn = prompts.via_agent(request.connection, ids), prompts.withdrawing(request.connection, ids)
+    return {
+        "sessions": sessions,
+        "pending_prompts": pending,
+        "delivered_prompt_event_ids": delivered,
+        "prompt_queue": {
+            "via_agent": [event for event in ids if event in agent],
+            "withdrawn": [event for event in ids if event in withdrawn],
+        },
+    }
 
 
-SECTION = Section(fields=("sessions", "pending_prompts", "delivered_prompt_event_ids"), provide=provide)
+SECTION = Section(fields=("sessions", "pending_prompts", "delivered_prompt_event_ids", "prompt_queue"), provide=provide)

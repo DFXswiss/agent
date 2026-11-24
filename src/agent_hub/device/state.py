@@ -12,13 +12,13 @@ full form. This module writes the base fields
 
 and composes every other field from the sections other areas register as `<area>/device_state.py:SECTION`, a
 `Section(fields, provide)`: `provide(request)` returns exactly its `fields` (`sessions`, `pending_prompts`,
-`delivered_prompt_event_ids` from the tasks area, `requests`/`credentials_changed` from requests and credentials,
-`pings` from notifications, `quota_poll_owners`/`platform_budget` from usage, `github_defaults` from github). A field
-may be provided by one area only. A field no area provides is sent empty: `[]`, `{}` for
-`delivered_prompt_event_ids`, `null` for `platform_budget`. The optional fields of KOR-50 (`model_fallback`,
-`dfx_keys`, `dfx_key_held`, from the models area) are left out while their value is `OMIT`: `dfx_keys` goes to the
-elected issuer only, `dfx_key_held` to org devices only. Every provider reads in the same transaction as the base
-fields.
+`delivered_prompt_event_ids`, `prompt_queue` from the sessions area, `requests`/`credentials_changed` from requests and
+credentials, `pings` from notifications, `quota_poll_owners`/`platform_budget` from usage, `github_defaults` from
+github). A field may be provided by one area only. A field no area provides is sent empty: `[]`, `{}` for
+`delivered_prompt_event_ids`, `null` for `platform_budget`, empty lists in `prompt_queue`. The optional fields of KOR-50
+(`model_fallback`, `dfx_keys`, `dfx_key_held`, from the models area) are left out while their value is `OMIT`:
+`dfx_keys` goes to the elected issuer only, `dfx_key_held` to org devices only. Every provider reads in the same
+transaction as the base fields.
 """
 
 from __future__ import annotations
@@ -54,6 +54,7 @@ SECTION_FIELDS: Mapping[str, Callable[[], Any]] = {
     "model_fallback": lambda: OMIT,
     "dfx_keys": lambda: OMIT,
     "dfx_key_held": lambda: OMIT,
+    "prompt_queue": lambda: {"via_agent": [], "withdrawn": []},
 }
 """The fields sections provide, with the value of a field no area provides."""
 

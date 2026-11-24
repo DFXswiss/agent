@@ -7,7 +7,9 @@ and output in events. In a task row `main_session_id` is the **current** main se
 newest `task.meta` event of the task. A session row also names how a new main session continued the conversation
 (`context_restore`: `restored` from the task's checkpoint, `fallback` with `context_reason` when it had to start a new
 conversation, null while nothing was reported; ADR-072 section 7). `github_identity` is the GitHub identity chosen
-for the session (ADR-078 section 3, null without a choice).
+for the session (ADR-078 section 3, null without a choice); `triggered_by` who triggered it (the author of the prompt
+a main session was created for, the triggering person of a child session's `subagent.request`, null when unknown;
+ADR-083 section 2).
 """
 
 from __future__ import annotations
@@ -70,11 +72,12 @@ SESSION_FIELDS = (
     "context_restore",
     "context_reason",
     "github_identity",
+    "triggered_by",
 )
 SESSION_COLUMNS = (
     "id, task_id, org_id, wg_id, owner_id, device_id, vm_id, parent_session_id, origin_operation_id, depth, state,"
     " state_reason, model_access, model_id, agent_kind, agent_version, estimate_ms, created_at, ready_at,"
-    " first_working_at, ended_at, context_restore, context_reason, github_identity"
+    " first_working_at, ended_at, context_restore, context_reason, github_identity, triggered_by"
 )
 USAGE_FIELDS = (
     "requests",

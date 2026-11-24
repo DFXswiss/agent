@@ -24,6 +24,12 @@ The hub keeps no prompt table: everything is derived from rows it already has.
   prompt the guest refused (outbox audit item `session.prompt_refused`, 05-runner.md section 6.2 step 3) is consumed as
   well (it must never be delivered again, and the next one must not be taken for it). The first n prompts of a session
   are therefore done when it has n transitions into `working` plus refusals.
+- **Withdrawal (KOR-46, ADR-083 section 3).** A prompt whose withdrawal is confirmed (`hub.prompt_withdrawal`
+  `withdrawn_at`: at once for a session without a device, else when the device reported `session.prompt_withdrawn`)
+  leaves the routing by its event ID: it never counts as delivered and the rest keep their order. The device reports
+  a withdrawal through the same ordered outbox as the transitions, so the hub learns of it before the acceptance of a
+  later prompt. A prompt that is pending in several sessions (the ended session and the one it was carried to) is
+  **held** by the last of them (`holders`).
 
 `pending_prompts` lists the undelivered prompts of live, not stopping sessions; `delivered_prompt_event_ids` the last
 100 delivered prompt IDs of every listed session (a runner after a store wipe never delivers them again).
@@ -31,7 +37,7 @@ The hub keeps no prompt table: everything is derived from rows it already has.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, cast
@@ -67,6 +73,8 @@ class Prompt:
     scope_id: str
     scope_seq: int
     received_at: datetime
+    author_id: str | None = None
+    """The verified author of the prompt event (ADR-083 section 2: the person a new main session is created for)."""
 
 
 @dataclass(frozen=True)
@@ -80,14 +88,15 @@ class Routed:
 
 
 def task_prompts(connection: Connection, task_ids: Sequence[UUID | str]) -> dict[str, list[Prompt]]:
-    """The prompt events of the tasks in event order."""
+    """The prompt events of the tasks in event order, without the withdrawn ones (module docstring)."""
     found: dict[str, list[Prompt]] = {str(task): [] for task in task_ids}
     for row in connection.execute(
-        "SELECT task_id, id, scope_id, scope_seq, received_at FROM hub.event WHERE task_id = ANY(%s)"
-        " AND kind = 'prompt' ORDER BY task_id, scope_seq",
+        "SELECT e.task_id, e.id, e.scope_id, e.scope_seq, e.received_at, e.author_id FROM hub.event e"
+        " WHERE e.task_id = ANY(%s) AND e.kind = 'prompt' AND NOT EXISTS (SELECT 1 FROM hub.prompt_withdrawal w"
+        " WHERE w.event_id = e.id AND w.withdrawn_at IS NOT NULL) ORDER BY e.task_id, e.scope_seq",
         ([UUID(str(task)) for task in task_ids],),
     ):
-        found[str(row[0])].append(Prompt(str(row[1]), str(row[2]), int(row[3]), row[4]))
+        found[str(row[0])].append(Prompt(str(row[1]), str(row[2]), int(row[3]), row[4], str(row[5])))
     return found
 
 
@@ -146,6 +155,54 @@ def routing(connection: Connection, task_ids: Sequence[UUID | str]) -> dict[str,
     return found
 
 
+def holders(found: Mapping[str, Routed]) -> dict[str, tuple[Prompt, Routed]]:
+    """Each pending prompt of `found` (a `routing` result) with the main session that holds it, by event ID: the last
+    one in route order that lists it as pending (module docstring, "Withdrawal")."""
+    held: dict[str, tuple[Prompt, Routed]] = {}
+    for item in found.values():
+        for prompt in item.pending:
+            held[prompt.event_id] = (prompt, item)
+    return held
+
+
+def via_agent(connection: Connection, event_ids: Sequence[str]) -> set[str]:
+    """The prompts among `event_ids` the hub received from their author's agent: the audit row `event.append` of the
+    event names the agent (`agent_id`, ADR-056; ADR-083 section 1)."""
+    found = connection.execute(
+        "SELECT DISTINCT event_id FROM hub.audit WHERE event_id = ANY(%s::uuid[]) AND action = 'event.append'"
+        " AND agent_id IS NOT NULL",
+        (list(event_ids),),
+    ).fetchall()
+    return {str(row[0]) for row in found}
+
+
+def withdrawing(connection: Connection, event_ids: Sequence[str]) -> set[str]:
+    """The prompts among `event_ids` whose withdrawal is requested and not yet confirmed (`hub.prompt_withdrawal`)."""
+    found = connection.execute(
+        "SELECT event_id FROM hub.prompt_withdrawal WHERE event_id = ANY(%s::uuid[]) AND withdrawn_at IS NULL",
+        (list(event_ids),),
+    ).fetchall()
+    return {str(row[0]) for row in found}
+
+
+def first_author(pending: Sequence[Prompt]) -> UUID:
+    """The author of the first of the routed prompts (`task_prompts`) a new main session takes over: its
+    `triggered_by` (ADR-083 section 2)."""
+    return UUID(str(pending[0].author_id))
+
+
+def device_pending(connection: Connection, device_id: UUID | str) -> list[str]:
+    """The event IDs of the prompts pending at a device: those of its main sessions that are neither `stopping` nor
+    ended, in session and event order (as `pending_prompts` of `GET /v1/device/state` lists them)."""
+    sessions = connection.execute(
+        "SELECT id, task_id FROM hub.session WHERE device_id = %s AND depth = 0"
+        " AND state NOT IN ('stopping', 'stopped', 'failed') ORDER BY created_at, id",
+        (device_id,),
+    ).fetchall()
+    found = routing(connection, sorted({str(row[1]) for row in sessions}))
+    return [prompt.event_id for row in sessions for prompt in found[str(row[0])].pending]
+
+
 def session_of(connection: Connection, task_id: UUID | str, received_at: datetime) -> str | None:
     """The main session a prompt received at `received_at` belongs to."""
     row = connection.execute(
@@ -195,4 +252,13 @@ def carry_over(connection: Connection, task: TaskRow, session_id: UUID | str, no
         owner=task.owner_id,
     )
     new_id = UUID(uuid7(int(created.timestamp() * 1000)))
-    create_main_session(connection, task, new_id, decision, created, actor=HUB, effects=effects)
+    create_main_session(
+        connection,
+        task,
+        new_id,
+        decision,
+        created,
+        actor=HUB,
+        effects=effects,
+        triggered_by=first_author(ended.pending),
+    )

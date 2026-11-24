@@ -35,8 +35,12 @@ class Effects:
         wg = None if wg_id is None else UUID(str(wg_id))
         self.frames.append((Audience("org", UUID(str(org_id))), frame, dict(data), wg))
 
+    def user_frame(self, user_id: UUID | str, frame: str, data: Mapping[str, Any]) -> None:
+        """A frame for the browsers of one user (`notification`)."""
+        self.frames.append((Audience("user", UUID(str(user_id))), frame, dict(data), None))
+
     def hint(self, device_id: UUID | str, hint: str, data: Mapping[str, Any]) -> None:
-        """A content-free hint for one device (`session.start`, `session.control`, `prompt`)."""
+        """A content-free hint for one device (`session.start`, `session.control`, `prompt`, `reconcile`)."""
         self.frames.append((Audience("device", UUID(str(device_id))), hint, dict(data), None))
 
     def signal(self, name: str, **ids: UUID | int | str) -> None:

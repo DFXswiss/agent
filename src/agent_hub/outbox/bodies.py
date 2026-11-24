@@ -57,6 +57,7 @@ OUTBOX_AUDIT_ACTIONS = (
     "read.session.get_subagent_result",
     "ping.delivered",
     "session.prompt_refused",
+    "session.prompt_withdrawn",
     "model.provider_outside_allowlist",
     "runner.inbound_rejected",
     "runner.log_rollback",
@@ -302,6 +303,9 @@ class UsageBody(Strict):
     key), `operator` (an operator subscription, ADR-052) or `platform` (the platform key); an older runner omits it."""
     at: Time | None = None
     """When the request was made (selects the price list version; an older runner omits it)."""
+    triggered_by: Uuid7 | None = None
+    """The person whose turn made the request (ADR-083 section 2); null for several authors or none, absent from an
+    older runner."""
 
 
 class RuntimeBody(Strict):
@@ -314,6 +318,9 @@ class RuntimeBody(Strict):
     from_: Time = Field(alias="from")
     to: Time
     runtime_ms: Annotated[int, Field(ge=1, le=3_600_000)]
+    triggered_by: Uuid7 | None = None
+    """The person whose turn requested the VM (a work VM) or who acted while it was metered (a session VM; ADR-083
+    section 2); null for several authors or none, absent from an older runner."""
 
 
 class QuotaWindow(Strict):
@@ -527,6 +534,10 @@ class ContextRestored(Strict):
     stale: bool
 
 
+class NoDetail(Strict):
+    """An empty detail (`contracts/common.json#/$defs/empty`)."""
+
+
 class ContextFallback(Strict):
     reason: Literal[
         "context_missing", "context_invalid", "context_unavailable", "version_incompatible", "restore_failed"
@@ -565,6 +576,7 @@ AUDIT_DETAILS: dict[str, type[Strict]] = {
     "session.context_fallback": ContextFallback,
     "runner.operator_github_users": OperatorGithubUsers,
     "session.model_switched": ModelSwitched,
+    "session.prompt_withdrawn": NoDetail,
 }
 
 
@@ -586,6 +598,7 @@ class AuditBody(Strict):
         "read.session.get_subagent_result",
         "ping.delivered",
         "session.prompt_refused",
+        "session.prompt_withdrawn",
         "model.provider_outside_allowlist",
         "runner.inbound_rejected",
         "runner.log_rollback",

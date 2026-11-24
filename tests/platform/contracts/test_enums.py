@@ -95,8 +95,8 @@ SPEC_OUTBOX_KINDS = (
 )
 SPEC_OUTBOX_AUDIT = (
     "hook.denied read.session.<tool> ping.delivered session.prompt_refused session.prompt_withdrawn"
-    " model.provider_outside_allowlist runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert session.context_restored"
-    " session.context_fallback"
+    " model.provider_outside_allowlist runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert"
+    " session.context_restored session.context_fallback"
     " runner.operator_github_users"  # ADR-078 section 7 (contracts/changes/KOR-47.md)
     " session.model_switched"  # ADR-081 section 5 (contracts/changes/KOR-50.md)
 )

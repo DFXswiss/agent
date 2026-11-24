@@ -8,7 +8,9 @@ decision (device and `estimate_ms` and the task `starting`, or the task stays `s
 03-api.md section 4.6.2), the audit row `task.create`. The task is always created (ADR-075 section 7): a workgroup
 without any active assigned device waits with `no_device` or `platform_access_required`. An optional `placement`
 (else the workgroup default) is checked and stored with the task (`agent_hub.placement.service`: `403
-placement_forbidden`, `409 placement_invalid`).
+placement_forbidden`, `409 placement_invalid`). The main session is triggered by the creating user (`triggered_by`,
+ADR-083 section 2); when its waiting reason is of the category `waiting_for_device` the author gets
+`prompt.waiting_for_device` (`agent_hub.notifications.rules.waiting_rule`).
 After the commit: the event announcement, the hint `session.start`, the `task`/`session` frames and `task.state`.
 Idempotency over `task_id`: the same request again (same workgroup, owner, GitHub identity, byte-identical events and,
 when the request names one, the same stored `placement`; without one the stored workgroup default is not compared)
@@ -17,17 +19,19 @@ answers the current state of the task with `replayed: true`; anything else under
 identity_forbidden`, `agent_hub.github.identities`) and passes the feature gate of the org (`409 peer_outdated`); it
 is stored as `task.github_identity`.
 
-**`add_prompt`** (`POST /v1/tasks/{task}/prompts`, `task:write`): the `prompt` event (of the task, in its workgroup)
-is stored, then the task is locked. Follow-ups of one task are serialised before anything else (a per-task advisory
-lock, then the hub time, always later than the newest main session), so of two concurrent follow-ups on an ended
-session both reach the new main session (A-09). The prompt goes to the main session: a live session gets the hint
-`prompt {session_id, scope_id, scope_seq}` from its device (idle: delivered; suspended: resumed first; still starting or
+**`add_prompt`** (`POST /v1/tasks/{task}/prompts`, `task:write`): the `prompt` event (of the task, in its workgroup) is
+stored, then the task is locked. Follow-ups of one task are serialised before anything else (a per-task advisory lock,
+then the hub time, always later than the newest main session), so of two concurrent follow-ups on an ended session both
+reach the new main session (A-09). The prompt goes to the main session: a live session gets the hint `prompt
+{session_id, scope_id, scope_seq}` from its device (idle: delivered; suspended: resumed first; still starting or
 working: queued by the runner); after `stopping`/`stopped`/`failed` (or on a closed task, which is reopened) the hub
-creates a new main session placed by the scheduler on any suitable device. That session continues the **same
-conversation**: the device state names the previous main session (`resume_from`) and the task's newest context
-checkpoint (`context`), which the runner restores before it resumes the agent (03-api.md section 4.6.3, ADR-072);
-only when no checkpoint can be used does the session start a new conversation, and the runner reports that.
-Replays answer the original `scope_seq` and session.
+creates a new main session placed by the scheduler on any suitable device (triggered by the prompt's author). The hint
+carries `via_agent: true` when the user's agent sent the prompt (ADR-083 section 1). A prompt that waits for a device
+(the main session has none and waits with a reason of the category `waiting_for_device`, or its device is offline)
+notifies its author once (`prompt.waiting_for_device`). That session continues the **same conversation**: the device
+state names the previous main session (`resume_from`) and the task's newest context checkpoint (`context`), which the
+runner restores before it resumes the agent (03-api.md section 4.6.3, ADR-072); only when no checkpoint can be used does
+the session start a new conversation, and the runner reports that. Replays answer the original `scope_seq` and session.
 
 **`close_task`** (`POST /v1/tasks/{task}/close`, `task:write`): the task becomes `closed` (audit `task.close`), every
 live session `stopping` (the device gets `session.control {action:"stop"}`), a session that never got a device
@@ -44,6 +48,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.audit.chain import ACTING_AGENT
 from agent_hub.audit.recorder import unchanged
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.crypto.ids import uuid7
@@ -53,15 +58,18 @@ from agent_hub.events.store import StoredEvent, append_events, hub_error, stored
 from agent_hub.github import identities
 from agent_hub.http.context import HubContext
 from agent_hub.log.events import check_replay
+from agent_hub.notifications import rules
 from agent_hub.orgs import rights
 from agent_hub.placement import service as placement
 from agent_hub.scheduler import load
+from agent_hub.scheduler.core import CATEGORIES, WAITING_FOR_DEVICE, Decision, NoPlacement
 from agent_hub.sessions import prompts, rows
 from agent_hub.sessions.derive import ENDING, FINAL, STOPPED, STOPPING
 from agent_hub.sessions.effects import Effects
 from agent_hub.sessions.lifecycle import create_main_session
 from agent_hub.sessions.taskstate import Actor, TaskRow, audit, close_task, lock_task, refresh_task
 from agent_hub.sessions.transitions import SessionRow, hub_transition, lock_session
+from agent_hub.stream import presence
 
 Connection = psycopg.Connection[Any]
 KINDS = ("task.meta", "prompt")
@@ -216,13 +224,30 @@ def create_task(
         audit(connection, actor, "task.create", task, now, detail={"origin": "browser"})
         outcome = Outcome(body={}, stored=stored)
         session_id = new_session_id(now)
-        create_main_session(connection, task, session_id, decision, now, actor=actor, effects=outcome.effects)
+        create_main_session(
+            connection, task, session_id, decision, now, actor=actor, effects=outcome.effects, triggered_by=user
+        )
+        if waits_for_device(decision):
+            notify_waiting(connection, stored[1].id, now, outcome.effects)
         outcome.body = {
             "task": rows.task_json(connection, task_id),
             "session": _session_answer(connection, str(session_id)),
             "events": [item.result() for item in stored],
         }
     return outcome
+
+
+def waits_for_device(decision: Decision) -> bool:
+    """The new main session waits for a device: no placement, with a reason of the category `waiting_for_device`
+    (`agent_hub.scheduler.core.CATEGORIES`, the situation view of KOR-39)."""
+    return isinstance(decision, NoPlacement) and CATEGORIES.get(decision.reason) == WAITING_FOR_DEVICE
+
+
+def notify_waiting(connection: Connection, event_id: str, now: datetime, effects: Effects) -> None:
+    """`prompt.waiting_for_device` for a prompt routed to a session without an online device; the `notification`
+    frame after the commit."""
+    for notification in rules.waiting_rule(connection, [event_id], now):
+        effects.user_frame(notification.recipient_id, "notification", notification.to_json())
 
 
 def _main(connection: Connection, task_id: UUID) -> SessionRow | None:
@@ -292,12 +317,13 @@ def add_prompt(
         task = cast(TaskRow, lock_task(connection, task_id))
         outcome = Outcome(body={}, stored=stored)
         main = _main(connection, task_id)
+        window = context.config.device_online_seconds
         if main is None or main.state in ENDING or task.state == "closed":
             decision = load.decide(
                 connection,
                 task.wg_id,
                 now,
-                context.config.device_online_seconds,
+                window,
                 pin=load.task_pin(connection, task.id),
                 owner=task.owner_id,
             )
@@ -311,17 +337,28 @@ def add_prompt(
                 actor=actor,
                 effects=outcome.effects,
                 reopen=task.state == "closed",
+                triggered_by=user,
             )
             session_id = str(new_id)
+            waiting = waits_for_device(decision)
         else:
             session_id = str(main.id)
+            if main.device_id is None:  # it waits with the task's scheduling reason
+                waiting = CATEGORIES.get(task.state_reason or "") == WAITING_FOR_DEVICE
+            else:
+                waiting = not presence.is_online(connection, main.device_id, now, window)
             if main.device_id is not None:
-                outcome.effects.hint(
-                    main.device_id,
-                    PROMPT_HINT,
-                    {"session_id": session_id, "scope_id": item.scope_id, "scope_seq": item.scope_seq},
-                )
+                hint: dict[str, Any] = {
+                    "session_id": session_id,
+                    "scope_id": item.scope_id,
+                    "scope_seq": item.scope_seq,
+                }
+                if ACTING_AGENT.get() is not None:
+                    hint["via_agent"] = True
+                outcome.effects.hint(main.device_id, PROMPT_HINT, hint)
             refresh_task(connection, task, now, actor, outcome.effects)
+        if waiting:
+            notify_waiting(connection, item.id, now, outcome.effects)
         outcome.body = {"scope_seq": item.scope_seq, "session_id": session_id}
     return outcome
 

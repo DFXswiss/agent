@@ -1,11 +1,13 @@
 """Routes of the tasks area (03-api.md section 4.6): `POST /v1/tasks`, `GET /v1/workgroups/{wg}/tasks`,
-`GET /v1/tasks/{task}`, `POST /v1/tasks/{task}/prompts` and `POST /v1/tasks/{task}/close`.
+`GET /v1/tasks/{task}`, `POST /v1/tasks/{task}/prompts`, `POST /v1/tasks/{task}/close`, and the queue of a task's
+prompts `GET /v1/tasks/{task}/queue` with `POST /v1/tasks/{task}/prompts/{event}/withdraw` (KOR-46).
 
-The writes live in `agent_hub.tasks.service` (one transaction each, effects sent after the commit), the reads in
-`agent_hub.tasks.read`. Reads answer `404 not_found` for unknown, malformed and forbidden IDs alike; writes `403
-forbidden` on a known task without `task:write` (03-api.md section 1). There is no project level anywhere (R-2.10):
-organization → workgroup → task. The task's GitHub identity (`github_identity` of `POST /v1/tasks`, ADR-078) is
-checked by the service; `PUT /v1/tasks/{task}/github-identity` lives in `agent_hub.github.routes`.
+The writes live in `agent_hub.tasks.service` and `agent_hub.tasks.queue` (one transaction each, effects sent after the
+commit), the reads in `agent_hub.tasks.read` and `agent_hub.tasks.queue`. Reads answer `404 not_found` for unknown,
+malformed and forbidden IDs alike; writes `403 forbidden` on a known task without `task:write` (03-api.md section 1).
+There is no project level anywhere (R-2.10): organization → workgroup → task. The task's GitHub identity
+(`github_identity` of `POST /v1/tasks`, ADR-078) is checked by the service; `PUT /v1/tasks/{task}/github-identity`
+lives in `agent_hub.github.routes`.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from agent_hub.orgs import rights
 from agent_hub.scheduler import settings as scheduler_settings
 from agent_hub.scheduler import signals as scheduler_signals
 from agent_hub.sessions.derive import TASK_STATES
-from agent_hub.tasks import read, service
+from agent_hub.tasks import queue, read, service
 from agent_hub.workgroups.routes import path_id
 
 router = HubRouter()
@@ -62,6 +64,12 @@ class PromptRequest(BaseModel):
 
 class CloseRequest(BaseModel):
     """Body of `POST /v1/tasks/{task}/close` (empty)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class WithdrawRequest(BaseModel):
+    """Body of `POST /v1/tasks/{task}/prompts/{event}/withdraw` (empty)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -153,3 +161,17 @@ async def post_prompt(context: Context, principal: CurrentPrincipal, task: str, 
 async def close_task(context: Context, principal: CurrentPrincipal, task: str, body: CloseRequest) -> dict[str, Any]:
     user = cast(UUID, principal.principal_id)
     return await asyncio.to_thread(_run, context, service.close, user, path_id(task))
+
+
+@router.get("/v1/tasks/{task}/queue", auth="browser", right="task:read", read_resource="task.queue")
+async def get_queue(context: Context, principal: CurrentPrincipal, task: str) -> dict[str, Any]:
+    user = cast(UUID, principal.principal_id)
+    return await asyncio.to_thread(queue.read_queue, context, user, path_id(task))
+
+
+@router.post("/v1/tasks/{task}/prompts/{event}/withdraw", auth="browser", right="task:write")
+async def withdraw_prompt(
+    context: Context, principal: CurrentPrincipal, task: str, event: str, body: WithdrawRequest
+) -> dict[str, Any]:
+    user = cast(UUID, principal.principal_id)
+    return await asyncio.to_thread(_run, context, queue.withdraw, user, path_id(task), path_id(event))

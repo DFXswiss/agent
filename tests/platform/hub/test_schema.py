@@ -320,6 +320,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("wait_until", TS),  # KOR-50, migration 0025 (ADR-081)
         ("dfx_choice", BOOL),
         ("wait_at", TS),
+        ("triggered_by", U),  # KOR-46
     ],
     # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-072)
     "context_object": [
@@ -616,6 +617,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("chf_per_usd_e8", BI),
         ("amount_micro_chf", BI),
         ("part", INT),  # KOR-50, migration 0025: the shares of one per-device key booking
+        ("triggered_by", U),
     ],
     "charge_pending": [("charge_id", U), ("org_id", U), ("amount_micro_usd", BI)],
     "charge_daily": [
@@ -626,6 +628,22 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("kind", T),
         ("amount_micro_usd", BI),
         ("quantity", BI),
+    ],
+    # consumption per person and withdrawn prompts (KOR-46, ADR-083 sections 2 and 3)
+    "charge_person_daily": [
+        ("org_id", U),
+        ("day", "date"),
+        ("user_id", U),
+        ("kind", T),
+        ("amount_micro_usd", BI),
+        ("quantity", BI),
+    ],
+    "prompt_withdrawal": [
+        ("event_id", U),
+        ("task_id", U),
+        ("requested_by", U),
+        ("requested_at", TS),
+        ("withdrawn_at", TS),
     ],
     # 2.9
     "audit": [
@@ -737,6 +755,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "credit_entry": ("org_id", "n"),
     "charge_daily": ("org_id", "day", "wg_id", "device_id", "kind"),
     "dfx_key_cost": ("device_id", "session_id"),
+    "charge_person_daily": ("org_id", "day", "user_id", "kind"),
     "context_chunk": ("object_id", "chunk_index"),
     "pr_link": ("wg_id", "epoch", "tag"),
     "outbox_receipt": ("device_id", "origin_seq"),
@@ -949,6 +968,7 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
                 "operator.request",
                 "device.needed",
                 "model.switched",
+                "prompt.waiting_for_device",
             ],
         ),
         ("device_request", "kind", ["github.connect", "claude.login", "credential.check", "mailbox.check"]),

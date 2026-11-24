@@ -148,6 +148,8 @@ RULES: tuple[TableRule, ...] = (
     TableRule("charge", ORG_ROWS, append_only=True),
     TableRule("charge_pending", ORG_ROWS),
     TableRule("charge_daily", ORG_ROWS),
+    # the consumption per person (KOR-46; the nil UUID is the unattributed consumption)
+    TableRule("charge_person_daily", ORG_ROWS),
     # The community is hub-wide (ADR-069): every export carries it completely; its user columns have no foreign key.
     TableRule("community_epoch", ALL_ROWS),
     TableRule("community_wrap", ALL_ROWS),
@@ -160,6 +162,8 @@ RULES: tuple[TableRule, ...] = (
     TableRule("context_object", ORG_ROWS),
     TableRule("context_chunk", "object_id IN (SELECT id FROM hub.context_object WHERE org_id = %(org)s)"),
     TableRule("pr_link", WG_ROWS),
+    # withdrawals of waiting prompts reference their task (KOR-46, ADR-083 section 3)
+    TableRule("prompt_withdrawal", "task_id = ANY(%(tasks)s)"),
     TableRule("audit", ALL_ROWS, append_only=True),
     TableRule("audit_checkpoint", ALL_ROWS, append_only=True),
 )

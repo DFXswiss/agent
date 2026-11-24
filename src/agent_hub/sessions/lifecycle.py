@@ -1,7 +1,8 @@
 """Creating main sessions and placing them on a device (03-api.md sections 4.6.1-4.6.3, ADR-002, ADR-021).
 
 `create_main_session` inserts a session of depth 0 in state `requested` (agent `claude-code`, the only agent software
-of v1) with its first transition and the audit row `session.requested`, then `place` applies the scheduler's
+of v1, `triggered_by` = the author of the prompt it is created for, ADR-083 section 2) with its first transition and
+the audit row `session.requested`, then `place` applies the scheduler's
 decision: with a device it sets `device_id` and `estimate_ms` and records the hint `session.start {session_id}` for
 that device; without one the session waits (`device_id` NULL) and the task stays `scheduling` with the scheduler's
 reason. Both end with the `session` frame and the task derivation. Callers hold the task row (`lock_task`) or have
@@ -63,13 +64,15 @@ def create_main_session(
     effects: Effects,
     reopen: bool = False,
     reason: str | None = None,
+    triggered_by: UUID | None = None,
 ) -> TaskRow:
     """A new main session of the task, placed by `decision` (module docstring); `reason` is the reason of its first
-    transition (`capacity_exhausted` for the hub's attempt after a refusal, `agent_hub.sessions.retry`)."""
+    transition (`capacity_exhausted` for the hub's attempt after a refusal, `agent_hub.sessions.retry`),
+    `triggered_by` the author of the first prompt it is created for."""
     connection.execute(
-        "INSERT INTO hub.session (id, task_id, org_id, wg_id, owner_id, depth, state, agent_kind, created_at)"
-        " VALUES (%s, %s, %s, %s, %s, 0, 'requested', %s, %s)",
-        (session_id, task.id, task.org_id, task.wg_id, task.owner_id, AGENT_KIND, now),
+        "INSERT INTO hub.session (id, task_id, org_id, wg_id, owner_id, depth, state, agent_kind, created_at,"
+        " triggered_by) VALUES (%s, %s, %s, %s, %s, 0, 'requested', %s, %s, %s)",
+        (session_id, task.id, task.org_id, task.wg_id, task.owner_id, AGENT_KIND, now, triggered_by),
     )
     connection.execute(
         "INSERT INTO hub.session_transition (session_id, seq, state, reason, at, received_at, reported_by)"
