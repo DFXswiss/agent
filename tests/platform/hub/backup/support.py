@@ -94,7 +94,10 @@ class Estate:
         platform = Platform(hub)
         platform.append("role_grant", subject=scene.writer.id, role="inviter")
         platform.append("org_platform_access", org=scene.org, granted=True)
-        platform.append("platform_policy", name="open_platform_invites", on=True)  # ADR-077
+        # ADR-077: the scene's devices run this release (they announced `log.policy`), so the switch is appended
+        with hub.pool.connection() as connection, connection.transaction():
+            connection.execute("UPDATE hub.device SET features = array_append(features, 'log.policy')")
+        platform.append("platform_policy", name="open_platform_invites", on=True)
         platform.invite_user()
         enrolled = platform.enroll()
         platform.certify(enrolled)

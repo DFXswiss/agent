@@ -317,3 +317,36 @@ def call_sql(ctx: Context, node: PsqlNode, body: Any) -> str:
 )
 def test_forge_event_refusals(ctx: Context, body: Any, detail: str) -> None:
     assert call(ctx, "POST", "/hub-db/forge-event", body) == (400, {"error": "invalid", "detail": detail})
+
+
+def test_spawn_with_the_operators_subscription_pool(ctx: Context) -> None:
+    """KOR-49 (E2E-59): a platform runner with an operator-subscription directory (one token file, 0700/0600); the
+    directory is removed with the runner; organization devices and non-boolean options are refused."""
+    node = node_of(ctx)
+    assert call(ctx, "POST", "/runners/runner-2/spawn", {"operator_subscriptions": False})[0] == 200
+    assert "AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR" not in node.spawned["runner-2"]
+    assert call(ctx, "POST", "/runners/runner-3/spawn", {"operator_subscriptions": True})[0] == 200
+    directory = node.spawned["runner-3"]["AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"]
+    assert directory == "/scratch/runner-3-operator-subscriptions"
+    written = next(argv for argv, _env in node.runs if argv[:2] == ["/bin/sh", "-c"])
+    assert written[-1] == directory
+    assert call(ctx, "POST", "/runners/runner-3/remove")[0] == 200
+    assert node.runs[-1][0] == ["rm", "-rf", directory]
+    refused = call(ctx, "POST", "/runners/runner-4/spawn", {"operator_subscriptions": 1})
+    assert refused == (400, {"error": "invalid", "detail": "operator_subscriptions must be a boolean"})
+    org = call(ctx, "POST", "/runners/runner-4/spawn", {"operator_subscriptions": True, "device": "org"})
+    assert org == (400, {"error": "invalid", "detail": "operator subscriptions are for platform devices only"})
+
+
+def test_a_failing_operator_pool_is_reported(ctx: Context) -> None:
+    node = node_of(ctx)
+    original = node.call
+
+    def failing(op: str, /, **args: Any) -> Any:
+        if op == "run" and args["argv"][:2] == ["/bin/sh", "-c"]:
+            return {"rc": 1, "stdout": "", "stderr": "mkdir: denied\n"}
+        return original(op, **args)
+
+    node.call = failing  # type: ignore[method-assign]
+    status, answer = call(ctx, "POST", "/runners/runner-2/spawn", {"operator_subscriptions": True})
+    assert (status, answer["detail"]) == (500, "operator subscriptions not written: mkdir: denied")

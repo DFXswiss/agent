@@ -17,6 +17,7 @@ import json
 import re
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -52,18 +53,18 @@ REGISTER_HEADING = "## 5. Register"
 ROW_RE = re.compile(r"^\| `([a-z][a-z0-9_]*)` \|(.*)\|\s*$")
 
 
-def _json(name: str) -> dict[str, object]:
-    data: dict[str, object] = json.loads((ENUMS / name).read_text(encoding="utf-8"))
+def _json(name: str) -> dict[str, Any]:
+    data: dict[str, Any] = json.loads((ENUMS / name).read_text(encoding="utf-8"))
     return data
 
 
 def contract_codes() -> set[str]:
     """Every code of the closed contract lists and every held reason."""
     tasks = _json("task-states.json")
-    codes = {str(code) for code in tasks["scheduling_reasons"]}  # type: ignore[union-attr]
-    codes |= {str(code) for code in _json("session-failure-reasons.json")["reasons"]}  # type: ignore[union-attr]
-    codes |= {str(code) for code in _json("operation-error-codes.json")["codes"]}  # type: ignore[union-attr]
-    codes |= {str(item["code"]) for item in _json("error-codes.json")["codes"]}  # type: ignore[index,union-attr]
+    codes = {str(code) for code in tasks["scheduling_reasons"]}
+    codes |= {str(code) for code in _json("session-failure-reasons.json")["reasons"]}
+    codes |= {str(code) for code in _json("operation-error-codes.json")["codes"]}
+    codes |= {str(item["code"]) for item in _json("error-codes.json")["codes"]}
     codes |= set(HOLD_CODES.values())
     return codes
 

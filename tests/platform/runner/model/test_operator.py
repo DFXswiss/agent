@@ -10,7 +10,7 @@ import os
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -381,7 +381,7 @@ def test_the_verified_platform_log_decides_before_the_environment(tmp_path: Path
     assert pool.allows(listed)  # no verified log yet: the environment list
     state = SimpleNamespace(operator_subscriptions={granted: True, revoked: False, listed: False})
     state.operator_subscribed = lambda org: state.operator_subscriptions.get(org, False)
-    pool.platform = lambda: state  # type: ignore[assignment]
+    pool.platform = lambda: cast(Any, state)
     assert pool.allows(granted)
     assert not pool.allows(revoked)
     assert not pool.allows(listed)  # the log's revocation wins over the environment
@@ -392,9 +392,9 @@ def test_the_verified_platform_log_decides_before_the_environment(tmp_path: Path
 
 def test_the_platform_state_comes_from_the_daemons_book(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert operator.platform_of(SimpleNamespace())() is None
-    found = SimpleNamespace(platform_state="verified")
-    monkeypatch.setattr(operator, "book_for", lambda context: found)
-    assert operator.platform_of(SimpleNamespace(identity=object()))() == "verified"
+    state = cast(Any, object())
+    monkeypatch.setattr(operator, "book_for", lambda context: SimpleNamespace(platform_state=state))
+    assert operator.platform_of(SimpleNamespace(identity=object()))() is state
 
 
 def test_no_representation_shows_a_token(tmp_path: Path) -> None:
