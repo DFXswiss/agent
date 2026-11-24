@@ -77,7 +77,9 @@ their vectors: [key model](../key-model.md)** (§11).
 Signature/AAD labels (all prefixed with `P`): `invite-register\0` (registration proof, ADR-043), `bundle\0`, `wrap\0`, `event-sig\0`, `log\0`, `platform-log\0`
 **(new)**, `invite-package\0`, `credential-sig\0` **(new)**, `request-wrap\0` **(new)**, `request-sig\0`
 **(new)**, `dedupe\0` **(new)**, `recovery-proof\0` **(new)**, `enroll\0` **(new)**, `invite-identity\0`, `account-code\0` and
-`user-id\0` **(new, ADR-060)**.
+`user-id\0` **(new, ADR-060)**; the agent labels of `11-agent-access.md` §3, among them `agent-account\0` and
+`agent-recover\0` **(new, ADR-068)**: the account of an agent alone proves possession with Ed25519 signatures instead
+of WebAuthn and needs no PRF-derived key (the agent holds the identity, as after a pairing).
 
 Enrollment text **(new)**: `P‖"enroll\0"‖canonical(enrollment body without enroll_sig and inv_sig)` (body of
 `POST /v1/device/enroll`). `enroll_sig` = Ed25519 of the device identity, `inv_sig` = Ed25519 of `sk_inv`, both over

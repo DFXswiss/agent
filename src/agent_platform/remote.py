@@ -57,11 +57,13 @@ WAIT_MAX_S = 600
 POLL_S = 2.0
 NEXT_WAITING = (
     "Give your user the link and the code; the user opens the link, types the code and confirms with the passkey. "
-    "Then run `agent-platform pair --wait`."
+    "Then run `agent-platform pair --wait`. An account of an agent alone: its current agent confirms with "
+    "`agent-platform agents confirm --link <link> --code <code>` and gives you the return code."
 )
 NEXT_CONFIRMED = (
     "The user confirmed. Ask your user for the code the page shows, then run "
-    "`agent-platform pair --wait --return-code <code>`."
+    "`agent-platform pair --wait --return-code <code>`. An account of an agent alone: the agent that confirmed "
+    "gives you the return code."
 )
 
 

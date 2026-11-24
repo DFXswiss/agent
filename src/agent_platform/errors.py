@@ -8,10 +8,15 @@ code of `agent_runner.sync.codes`, a crypto code of `agent_runner.crypto.errors`
 from __future__ import annotations
 
 NEXT: dict[str, str] = {
-    "not_paired": "Run `agent-platform pair --hub <url>` on the computer where the user's browser runs.",
+    "not_paired": (
+        "Run `agent-platform pair --hub <url>` on the computer where the user's browser runs. Without a user: "
+        "`agent-platform register --own-account` with an invitation, or `agent-platform recover --hub <url>` with "
+        "the recovery code of an account of your own."
+    ),
     "agent_revoked": (
         "The user disconnected this agent or approved another agent as main orchestrator. Pair again only if the "
-        "user asks for it."
+        "user asks for it. An account of your own (no passkey): take it back with `agent-platform recover --hub "
+        "<url>` and its recovery code."
     ),
     "hub_unreachable": "Check the network connection and the hub address, then run the command again.",
     "hub_refused": "The hub refused the request or sent an answer that does not verify; see `hub_error`/`reason`.",
@@ -28,14 +33,19 @@ NEXT: dict[str, str] = {
     "pairing_busy": "Another `agent-platform pair --wait` is running for this pairing; wait for it to finish.",
     "pairing_failed": (
         "Pair again; the confirmation did not match this agent (or the code from the page was wrong). Ask the user "
-        "for a new connection."
+        "for a new connection; on an account of an agent alone its agent confirms again with "
+        "`agent-platform agents confirm`."
     ),
     "claude_login_missing": "Claude Code is not logged in on this computer; run `agent-platform claude setup-token`.",
     "claude_login_expired": (
         "Use Claude Code once, then run `agent-platform claude sync`, or run `agent-platform claude setup-token`."
     ),
     "claude_cli_missing": "Install Claude Code (the `claude` program) or set AGENT_PLATFORM_CLAUDE.",
-    "setup_token_failed": "Run `agent-platform claude setup-token` again and ask the user to authorize in the browser.",
+    "setup_token_failed": (
+        "Run `agent-platform claude setup-token` again and ask the user to authorize in the browser. Without a person: "
+        "`agent-platform claude connect` takes this computer's Claude Code login, or store an API key "
+        "(`agent-platform credentials set-api-key`)."
+    ),
     "no_org": "Create an organization (`agent-platform org create`) or name an existing one.",
     "no_device": "No execution device is available for this workgroup; try again later.",
     "not_admin": "Only an admin of the organization can do this; ask an admin.",

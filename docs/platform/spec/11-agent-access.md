@@ -1,6 +1,7 @@
 # 11 Delegated agent access (KOR-24)
 
-Status: binding. Decided in ADR-056; the pairing from another computer (§5.4) in ADR-067 (KOR-42). Extends
+Status: binding. Decided in ADR-056; the pairing from another computer (§5.4) in ADR-067 (KOR-42); the account of an
+agent alone (§5.5, rule E-27) in ADR-068 (KOR-62). Extends
 `02-data-model.md` (§2), `03-api.md` (§3, §4, §11), `04-crypto.md` (§3, §7, §9) and `06-web.md` (settings,
 invitation). The user's own AI agent pairs with the account through one passkey gesture and then sets the account
 up with the agent tool `agent-platform` (repository `agent`).
@@ -18,6 +19,8 @@ up with the agent tool `agent-platform` (repository `agent`).
 | Remote pairing | A pairing of an agent on another computer than the confirming browser (server, container, SSH; ADR-067), chosen explicitly (`--remote`, `m=remote`, `remote` at the hub). |
 | Agent code | 10 characters (`XXXXX-XXXXX`) the agent tool shows for a remote pairing and the user types on the page (§3); not a secret. |
 | Return code | 8 characters (`XXXX-XXXX`) the page shows after confirming a remote pairing and the user gives to the agent; derived from `r`, checked by the tool before it claims (§3). |
+| Account of an agent alone | (rule E-27, ADR-068) an account that an agent created through an invitation without a person (§5.5): no passkey, the agent holds the identity like after a pairing. "Account without a passkey" is the state the hub checks (no active `hub.passkey` row); an account of a person that lost all its passkeys is in the same state. |
+| Proof method | the named way an agent proves possession of its keys at a registration or recovery without WebAuthn (`method`, today only `agent-signature-v1`: Ed25519 signatures over the texts of §3) |
 
 ## 2. Data (hub schema, migrations `0010_agent_access.sql`, `0017_agent_remote_pairing.sql`)
 
@@ -58,6 +61,9 @@ created + 300 s); its claim deadline is the confirmation + 600 s.
 | Handover (remote) | `handover_ct = b64u(HPKE_seal(agent kem_pub, P‖"agent-handover\0"‖ids, canonical({"k":<platform root key of the build, b64u>,"r":b64u(r)})))` (base mode); the plaintext must be exactly canonical |
 | Return code (remote) | `back = crockford32(HKDF(r, info = P‖"agent-return\0"‖ids))[:8]`, shown `XXXX-XXXX` |
 | Typed code | input of either code: upper-cased, spaces and dashes removed, `I`/`L` read as `1`, `O` as `0`; then exactly 10 (8) characters of the alphabet, else refused |
+| Account text (alone) | `P‖"agent-account\0"‖canonical({"agent":agent_id,"agent_pub":{kem,sig},"invite_id","method","pub":{kem,sig},"user":user_id})`; signed by `sk_inv` of the invitation (`inv_sig`), by the new identity (`id_sig`) and by the new agent key (`agent_sig`), §5.5 |
+| Recover text (alone) | `P‖"agent-recover\0"‖canonical({"agent","agent_pub":{kem,sig},"challenge":b64u(32 B of recovery/begin),"method","user"})`; signed by the identity opened with the recovery code (the `proof` of `recovery/finish`) and by the new agent key (`agent_sig`), §5.5 |
+| Own handover (alone) | the agent draws `r` itself and seals the identity to itself (`bundle_ct`), the label (`label_ct`) and `claim_hash` exactly as above; nothing is claimed, the hub stores the row `active` |
 
 Why `r` is inside the bundle encryption: the hub never sees `r`, so neither a hub that swapped the agent key nor a hub
 that put its own key into a phishing link can open `bundle_ct`, and a hub cannot hand the agent an identity of its own
@@ -71,13 +77,15 @@ implementations check them.
 | `POST /v1/agent-pairings` | anon | `{pairing_id,pub:{kem,sig},pop,remote?}` → `{pairing_id,expires_at}`, for `remote: true` plus `remote: true, nonce` (b64u 16 B, drawn by the hub; deadline 300 s); without `remote` (or `false`) the answer is exactly as before; same ID with the same keys and mode → the stored answer, other keys, another mode or keys of another pairing → `409 id_conflict`; bad proof → `401 signature_invalid`; limits of §2 → `429 rate_limited` |
 | `GET /v1/agent-pairings/{id}` | anon | → `{pairing_id,pub:{kem,sig},state:"open"|"confirmed",expires_at}` (a remote pairing adds `remote: true, nonce`) while open or confirmed and before the deadline; otherwise (unknown, claimed, revoked, expired) `404 pairing_unknown` |
 | `POST /v1/passkeys/login/begin` | anon | `{pairing_id?}`: optional; a pairing that is not open before its deadline → `404 pairing_unknown`. The ceremony and the session it creates carry the pairing ID |
-| `POST /v1/me/agents` | browser session only (an agent gets `403 forbidden`, §6) | `{pairing_id,bundle_ct,label_ct,claim_hash,handover_ct?}` → `{agent_id}`; `handover_ct` (§3) is required for a remote pairing (`400 handover_required`) and refused for a loopback pairing (`400 handover_unexpected`); a remote confirmation sets the claim deadline to confirmation + 600 s and notifies the user (`agent_paired_remote`, §8.4); the session must have been created by a ceremony tagged with this pairing at most 300 s ago (`403 pairing_gesture_required`); the pairing must be `open` before its deadline (`404 pairing_unknown`). In the same transaction the user's previous main orchestrator (`confirmed` or `active`) is revoked and recorded in `replaces` of the new row; its open live streams are closed. A repeat with identical values (including `handover_ct`) → the same answer (nothing replaced again, nobody notified again), other values → `409 id_conflict` |
+| `POST /v1/me/agents` | browser session; the active agent of an account without a passkey (KOR-62; an agent of an account with a passkey gets `403 forbidden`, §6) | `{pairing_id,bundle_ct,label_ct,claim_hash,handover_ct?}` → `{agent_id}`; `handover_ct` (§3) is required for a remote pairing (`400 handover_required`) and refused for a loopback pairing (`400 handover_unexpected`); a remote confirmation sets the claim deadline to confirmation + 600 s and notifies the user (`agent_paired_remote`, §8.4); the session must have been created by a ceremony tagged with this pairing at most 300 s ago (`403 pairing_gesture_required`); the pairing must be `open` before its deadline (`404 pairing_unknown`). In the same transaction the user's previous main orchestrator (`confirmed` or `active`) is revoked and recorded in `replaces` of the new row; its open live streams are closed. A repeat with identical values (including `handover_ct`) → the same answer (nothing replaced again, nobody notified again), other values → `409 id_conflict` |
 | `GET /v1/me/agents` | user | → `{agents:[{agent_id,state:"confirmed"|"expired"|"active"|"revoked",label_ct,created_at,confirmed_at,claimed_at,last_used_at,revoked_at,replaces:<agent id>|null,remote}]}` of the user, newest first (`expired` = confirmed, never claimed, past the deadline; `replaces` = the main orchestrator this one replaced at its confirmation); at most one row is `confirmed` or `active` |
 | `DELETE /v1/me/agents` | user | → `{revoked}`: every confirmed or active agent of the user revoked at once |
 | `DELETE /v1/me/agents/{id}` | user | → `{}`; state `revoked`, sealed identity deleted; unknown or foreign → `404 not_found`; already revoked → `{}` |
 | `POST /v1/agent/claim` | agent key, state `confirmed` (`agent:confirmed`) | `{claim}` (b64u 32 B, §3) → `{agent_id,user_id,bundle_ct,label_ct,created_at,claimed_at}`; wrong claim → `401 claim_invalid` (counted; the fifth wrong claim deletes the pairing); past the deadline → `404 pairing_unknown`; repeat when `active` with the right claim → the same answer |
 | `GET /v1/agent/me` | agent key, state `active` (`agent`) | → `{agent_id,user_id,bundle_ct,label_ct,created_at,claimed_at}` |
 | `GET /v1/agent/handover` | agent key, state `confirmed` (`agent:confirmed`) | → `{agent_id,user_id,handover_ct}` of a confirmed remote pairing before its claim deadline; a loopback row, a claimed, revoked or expired one → `404 pairing_unknown`; read resource `agent.handover` |
+| `POST /v1/agent-accounts` | anon (KOR-62) | `{invite_id,user_id,identity:{kem_pub,sig_pub},recovery:{recovery_id,bundle_ct},cred_wrap:{epoch:1,wrap,sig},agent:{agent_id,pub:{kem,sig},bundle_ct,label_ct,claim_hash},proof:{method,inv_sig,id_sig,agent_sig}}` → `{user_id,agent_id}`; the invitation as for `register/begin` (open user invitation with a known `pk_inv`, else `404 invite_unknown`); `identity`, `recovery`, `cred_wrap` as for the first passkey of `register/finish` (`params_invalid`, `wrap_unauthorized`); a wrong signature `401 signature_invalid`; a taken user, recovery or agent ID or agent key `409 id_conflict`; sealed values under 48 bytes `400 request_invalid`; an identical repeat → the same answer, nothing changed. Stores the account without a passkey and the agent `active` (§5.5) |
+| `POST /v1/recovery/finish` with `agent` | anon (KOR-62) | `{user_id,challenge,proof,agent:{agent_id,pub,bundle_ct,label_ct,claim_hash,method,agent_sig}}` → `{user_id,agent_id}`; `proof` over the recover text (§3); only for an account without a passkey (else `403 forbidden`, nothing consumed); a wrong signature `401 signature_invalid` (the challenge is used up as for a person) |
 | `GET /agents.md` | anon (not under `/v1/`) | the guide for AI agents of the web build (`docs/platform/agents.md`), `text/markdown` |
 
 Key resolver `agent.`: unknown, `open`, or `confirmed` past its deadline → `key_unknown`; `revoked` or user disabled
@@ -140,6 +148,43 @@ client-only `pairing_mismatch`.
    `pairing_gesture_required`) and hands over (§5.1 step 4). The user creates the passkey and does nothing else.
 5. Agent: §5.1 step 5; `register` returns like `pair`, plus the invitation's `scope` and the display name.
 
+### 5.5 Account of an agent alone (rule E-27, ADR-068)
+No person, no passkey, no browser in any step. The invitation and the limits of a registration apply as for a person.
+
+1. Agent (`register --own-account`, §8.4): reads the invitation link from stdin or `AGENT_PLATFORM_INVITE`, checks it
+   with `POST /v1/invites/lookup`, reads `/v1/config` (hub key to pin; the platform root key unless
+   `--platform-root-key` names it). It draws the user ID (UUIDv7), the identity, a recovery code with its recovery
+   slot (`04-crypto.md` §4.1; a real code, not the unset slot: without a passkey the code is the account's only way to
+   another computer), `CK_1` with its self-wrap signed by the identity, its own agent key pair and agent ID, and its own
+   `r` (§3 "own handover"), and signs the account text three times.
+2. Hub (`POST /v1/agent-accounts`): checks the invitation, the identity key, the self-wrap and the three signatures and
+   stores in one transaction what a passkey registration stores without the passkey (principal, identity, settings,
+   recovery slot, `cred` epoch 1 and the wrap, the invitation bound to the user) and the agent row `active`
+   (`confirmed_at` = `claimed_at` = now, `replaces` null). Audit `agent.register` (`agent`, `invite_id`, `method`) and
+   `invite.register`. The orphan job releases the account like any registration whose invitation stays unused.
+3. Agent: stores its state exactly as after a pairing (§8.1) and does what the web client does after a registration:
+   a platform invitation founds the private organization (`genesis{private:true}` with `platform_invite_id`, the
+   profiles with its display name), an organization invitation is accepted (`org join`). The result carries
+   `agent_id`, `user_id`, `display_name`, `scope`, the organization and the recovery code (`secret_fields`).
+4. Move to another computer (`recover --hub`, the recovery code on stdin): `POST /v1/recovery/begin`, the recovery slot
+   opened with `KEK_rec`, fresh agent keys and own `r`, `POST /v1/recovery/finish` with `agent` and the recover text
+   signed by the identity and the new agent key. The hub refuses an account with a passkey (`403 forbidden`, before the
+   challenge is used), else makes the new agent the active main orchestrator in one transaction (the previous one
+   revoked, `replaces` set, its streams closed), marks the proof ceremony used, audits `auth.recovery {step: finish}`
+   and `agent.register {agent, method}` and notifies the user (`recovery_finished`, target the new agent). The tool
+   stores the state and replaces the recovery code at once (`PUT /v1/me/bundles/recovery`, `recovery new`).
+5. Replacing the main orchestrator without the code: the new agent starts a remote pairing (`pair --remote`, §5.4);
+   the current agent runs `agents confirm --link --code`, which does what the page does (link and hub agree, the typed
+   agent code matches, identity, label and handover sealed with a fresh `r`) and `POST /v1/me/agents` signed with its
+   agent key – admitted without a gesture because the account has no passkey; then it gives the new agent the return
+   code and deletes its own state (it was replaced). For an account with a passkey the hub answers `403 forbidden`:
+   the person's approval stays (concept idea 34).
+
+An account of an agent alone is a valid state everywhere: lists, members, settings, recovery, audit, usage and
+billing, leaving and removal work on users without regard to passkeys; the web client shows it as a member with its
+display name. It never signs in to the web client (it has no passkey); a passkey added later through the recovery
+of the web client makes it an account of a person (then §6's exception and idea 34 apply).
+
 ### 5.3 Revocation
 Settings "Connected agents" shows the main orchestrator ("Hauptorchestrator") and the history of earlier ones (each
 with the one it replaced). "Disconnect" (the dialog says that the agent loses all access at once and that what it
@@ -195,9 +240,11 @@ query. Equality is the default for routes added later. Exceptions (one list, eac
 the user's authenticator): `POST /v1/passkeys/register/begin`, `POST /v1/passkeys/register/finish` (creating a
 passkey is a WebAuthn `create()` ceremony; the agent tool opens the settings page in the user's browser instead),
 `POST /v1/me/recovery/begin` (starts a WebAuthn assertion; an agent replaces the recovery code with
-`PUT /v1/me/bundles/recovery` and its signed request as the proof), `POST /v1/me/agents` (confirms and so replaces
-the user's main orchestrator: the concept requires the user's passkey approval, idea 34 and ADR-056 §4a; the agent
-tool's `pair` opens the pairing page in the user's browser). A `confirmed` agent may only claim. Included,
+`PUT /v1/me/bundles/recovery` and its signed request as the proof). `POST /v1/me/agents` is admitted and decided by
+its handler (KOR-62): an agent of an account with a passkey gets `403 forbidden` (the concept requires the person's
+passkey approval to replace the main orchestrator, idea 34 and ADR-056 §4a; the agent tool's `pair` opens the pairing
+page in the user's browser), the agent of an account without a passkey confirms its successor itself (§5.5 step 5) –
+the only step that still needs a person concerns accounts of persons only. A `confirmed` agent may only claim. Included,
 among everything else: tasks and prompts, closing tasks, session control, the live stream, whiteboards and
 notifications, every membership-log entry type (also `role`, `remove`, `rotate`, admin invitations), `CK` rotation,
 credentials of every kind, every device request, platform invitations (for inviters), monitoring, audit, usage,
@@ -265,6 +312,8 @@ commands and options as `agent-platform <group> --help` lists them):
 | `pair --hub <url> [--name] [--host] [--no-browser] [--message <text>\|-]` | §5.1; `--message` puts the request message (§3) into the link as `t` (`-`: stdin); prints the link it opened; waits for the claim (10 min); the user's approval replaces the previous main orchestrator, also the one running this command (the tool then holds only the new state) |
 | `register --display-name <name> [--name] [--host] [--message <text>\|-]` (invitation link on stdin or `AGENT_PLATFORM_INVITE`) | §5.2; waits like `pair`; never prints the link; `--message -` reads stdin only when the link comes from `AGENT_PLATFORM_INVITE` (`invalid_argument` otherwise) |
 | `pair --hub <url> --remote [--name] [--host] [--replace-pending] [--message <text>\|-]` | §5.4; refuses while a pending pairing exists (`pairing_pending`) unless `--replace-pending`; returns at once `{"state":"waiting","connect_link","code","expires_at"}`; never falls back from or to loopback (`hub_too_old` when the hub does not echo `remote` and a nonce) |
+| `register --own-account --display-name <name> [--name] [--host] [--platform-root-key]` (invitation link on stdin or `AGENT_PLATFORM_INVITE`) | §5.5: an account of this agent alone, no person, no browser; returns at once like `register` plus the organization and `recovery_code` (`secret_fields`) |
+| `recover --hub <url> [--name] [--host] [--platform-root-key]` (recovery code on stdin or `AGENT_PLATFORM_RECOVERY_CODE`) | §5.5 step 4: this computer's agent becomes the main orchestrator of an account without a passkey (the previous one is revoked); prints the new recovery code once (`secret_fields`); unknown code: `invalid_argument` with `reason: recovery_code_unknown`; an account with a passkey: `not_own_account` |
 | `register --remote --display-name <name> [--name] [--host] [--replace-pending] [--message <text>\|-]` | §5.4 step 6 with the invitation: returns `invite_link` (`<origin>/invite#<code>&p=…&f=…&m=remote&a=…&h=…[&t=…]&u=…`, listed in `secret_fields`), the code and the deadline |
 | `pair --wait [--return-code <code>] [--timeout <s>]` | the pending remote pairing (`no_pending_pairing`; a second `--wait` at the same time: `pairing_busy`). Without `--return-code`: polls every 2 s for at most `--timeout` (default 120, max 600) and returns `"state":"waiting"` or `"state":"confirmed"` (next: ask the user for the code the page shows). With `--return-code`: fetches and opens the handover, checks the code, only then claims, stores the state and returns like `pair`. Expired: `pairing_timeout`; a handover that does not open or a wrong code: `pairing_failed` |
 | `status` | hub, agent, user, organizations, credentials (kind, version, expiry, origin), devices |
@@ -286,6 +335,7 @@ commands and options as `agent-platform <group> --help` lists them):
 | `billing --org` | the organization's credit (KOR-31, ADR-062, `GET /v1/orgs/{org}/billing`): balance, `exhausted`, `billing_active`, the customer prices of the price list in force, the credit history and the consumption per day and per workgroup; read only, there is no top-up |
 | `community status|key|serve|messages|post|delete|mutes|mute|unmute` | the Community (KOR-26, `14-community.md`, ADR-069): join and state; the key flow of `14-community.md` §4.2 on this computer (create epoch 1, open the self-wrap, or a key request whose one-off X25519 key stays in `state.json` until a holder's wrap is opened, checked and replaced by the self-wrap; a wrong wrap is rejected; `key --wait`); serving open requests of others; messages verified under the authors' pinned identity keys and opened with the key (what fails a check carries no content), the read position; posting (name and text cleaned and checked like the web client; a post refused with `429` names `retry_after` and is sent byte for byte again); deleting own messages; muting as a moderator |
 | `notifications list|read`, `quotas`, `monitoring`, `audit` | the user's notifications, subscription quotas (with `unreadable_since` when the subscription refuses the read), monitoring of devices, VMs, sessions and work VMs, account and org audit (with the chain check) |
+| `agents confirm --link <connect link> --code <agent code>` | §5.5 step 5: the main orchestrator of an account without a passkey confirms a remote pairing; returns `agent_id`, `replaced` (itself) and `return_code` for the new agent, then deletes its own state; `pairing_failed` (`pairing_mismatch`, `agent_code_mismatch`), `not_own_account` |
 | `passkey list|remove|add`, `recovery new`, `agents list|revoke`, `platform invite|list|revoke`, `security` | the account's security: passkeys (`add` opens the settings page), a new recovery code, the agents, platform invitations (inviters), the web build check |
 | `guide` | prints the guide for AI agents shipped with the tool |
 
@@ -313,7 +363,8 @@ Codes (closed list in `agent_platform/errors.py`): `not_paired`, `agent_revoked`
 `pairing_timeout`, `pairing_failed`, `claude_login_missing`, `claude_login_expired`, `claude_cli_missing`,
 `setup_token_failed`, `no_org`, `no_device`, `not_admin`, `invalid_argument`, `state_damaged`, `internal`, `no_write_access`, `not_inviter`,
 `device_request_failed`, `hub_too_old`, `pairing_pending`, `no_pending_pairing`, `pairing_busy`, `last_admin`, `not_found`, `credentials_blocked`,
-`rotation_pending`, `community_key_missing`.
+`rotation_pending`, `community_key_missing`, `not_own_account` (KOR-62). Every fixed text that names a step with a person has a row in the table
+"Without a person" of `docs/platform/agent-parity.md` with the way without one (`tests/platform/test_without_person.py`).
 
 ### 8.5 Reading the local Claude Code login
 Read-only, never a login, logout or refresh, never a write to the profile or the keychain. macOS: the generic password
@@ -347,6 +398,11 @@ token as the lasting way.
 | Attacker grinds a pairing with the same agent code | the hub's nonce in the code input: one hub registration per attempt, rate-limited (§2) | – |
 | Someone reads the link, the agent code or `handover_ct` | none is a secret; `handover_ct` sealed to the agent's key, single use, cleared at claim, revocation and deadline | – |
 | Someone reads the return code | useful only to the holder of the agent's private key, within the claim deadline | – |
+| Someone registers an account of an agent alone (KOR-62, ADR-068) | only with an invitation: `inv_sig` of `sk_inv` over the account text; the invitation is bound once; the limits of a registration apply | the holder of an invitation code gets an account – exactly as with a passkey registration (the code is the authorisation, rule E-27) |
+| Hub or database writer swaps keys of an agent account | the hub never sees the identity's private key; `id_sig` and `agent_sig` bind identity, agent and invitation, and the tool keeps its own state (§8.3) | as for every account: malicious hub withholding data; a hub can register an account of its own choosing only with an invitation code it never sees |
+| Stolen recovery code of an account without a passkey | `recovery/begin` limits (5 per hour per source, 20 per day per code); the move revokes the current agent (its next request: `key_revoked`), the user is notified (`recovery_finished`), audit `agent.register` | full takeover of that account, as a stolen recovery code of a person (§9 row "stolen agent key"); keep the code like a private key |
+| Stolen agent key of an account without a passkey | revocation by a recovery with the code (the stolen key is revoked); `agents list`, audit | the thief can replace the main orchestrator itself (`agents confirm`) and the recovery code (`recovery new`); the holder of the code can take it back only until the thief replaced the code. Same class as the row "stolen agent key" for persons, without a person to notice |
+| Agent of a person's account tries the passkey-free paths | `POST /v1/me/agents` by an agent and `recovery/finish` with `agent` are refused for an account with a passkey (`403 forbidden`) | an agent that removed every passkey of its person (allowed under equal rights) turns the account into one without a passkey; the person is notified of each removal (`passkey_removed`) and keeps the recovery code |
 
 ## 10. Tests
 The end-to-end scenarios of the agent access are E2E-49 and E2E-50 (`07-testing.md` §2.1; E2E-40 and E2E-41 there
@@ -382,6 +438,15 @@ wrong code keeps the button disabled), return code, waiting state, banner, invit
 passkey; tool: `pair --remote`, every outcome of `--wait`, `hub_too_old`, pending state removed in every terminal
 case, `register --remote`, secret canaries, an end-to-end run against the hub fake whose "browser" seals the
 handover; E2E-50 against the real hub and web client.
+
+Account of an agent alone (KOR-62, ADR-068): vectors of §3 (account and recover texts, their signatures, unknown
+methods) in all three implementations; hub: `POST /v1/agent-accounts` with a platform and an org invitation, every
+refusal, the identical repeat, the orphan job, `recovery/finish` with `agent` (replacement, passkey account refused
+with the ceremony kept, wrong signatures, rollback on a taken key), `POST /v1/me/agents` by the agent of an account
+without and with a passkey; tool: `register --own-account`, `recover`, `agents confirm` against the real hub (the whole
+journey: register, private org, team org, a second agent through an org invitation, a person joining, the move, the
+hand-over) and their refusals; the table "Without a person" (`test_without_person.py`); E2E-51 ("agent alone": no
+browser step, no passkey, plus the person's web view of the agent's membership and vice versa).
 
 ## 11. Orchestrator on platform hardware (design; not built in this package, follow-up package)
 
@@ -443,6 +508,14 @@ existing row satisfies). Before rolling the hub back behind it, revoke the uncla
 SET state = 'revoked', bundle_ct = NULL, handover_ct = NULL, revoked_at = now() WHERE remote AND state =
 'confirmed'`; open remote pairings expire in 5 minutes); the old hub ignores the columns, and an old page refuses a
 remote link (it has no `c`).
+
+`POST /v1/agent-accounts`, the `agent` form of `recovery/finish` and the agent's `POST /v1/me/agents` (KOR-62) need no
+migration: the existing columns hold an agent row that is `active` from its creation. An older hub answers
+`POST /v1/agent-accounts` `404` and refuses the unknown field `agent` of `recovery/finish` (`400 request_invalid`): the
+tool reports `hub_refused` and nothing is created. Rolling back behind KOR-62 keeps the accounts; their agents keep
+working (the rows are ordinary active agents), only the move and the self-replacement wait for the new hub. The old
+hub verifies the audit chain with rows of the new action `agent.register` unchanged (verification recomputes hashes and
+checks no action list); only its audit filter does not offer the action.
 
 The web client is delivered by the hub itself (`agent_hub/static_routes.py`, `06-web.md` §10.1: the build is part of
 the hub release; `index.html` is revalidated on every load, assets are content-hashed and integrity-checked), so a new

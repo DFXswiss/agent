@@ -24,7 +24,7 @@ REASONS: dict[str, str] = {
     "no_org": "Create an organization or join one (`agent-platform org create` / `org join`).",
     "claude_missing": "Run `agent-platform claude connect` or `agent-platform claude setup-token`.",
     "claude_expired": "Run `agent-platform claude sync` after using Claude Code once, or `claude setup-token`.",
-    "claude_unreadable": "Store the Claude login again (`agent-platform claude setup-token`).",
+    "claude_unreadable": "Store the Claude login again (`agent-platform claude connect` or `claude setup-token`).",
     "api_key_missing": "Store an API key (`agent-platform credentials set-api-key`) or change the model access.",
     "no_device": "Assign a device to the workgroup (`agent-platform device assign --wg <wg_id>`).",
     "device_offline": "The device is offline; wait a few minutes or assign another device.",

@@ -16,8 +16,12 @@ export interface ToolRun {
   readonly opened: string[];
 }
 
-const start = (orchestrator: Orchestrator, home: string, args: readonly string[]) =>
-  orchestrator.call<{ id: string }>('POST', '/agent-tool', { args, home });
+const start = (orchestrator: Orchestrator, home: string, args: readonly string[], stdin?: string) =>
+  orchestrator.call<{ id: string }>(
+    'POST',
+    '/agent-tool',
+    stdin === undefined ? { args, home } : { args, home, stdin },
+  );
 
 const poll = (orchestrator: Orchestrator, id: string) => orchestrator.call<ToolRun>('GET', `/agent-tool/${id}`);
 
@@ -26,14 +30,15 @@ async function finished(orchestrator: Orchestrator, id: string, timeout: number)
   return poll(orchestrator, id);
 }
 
-/** `agent-platform <args>` on the computer `home`; must exit 0. Returns the printed JSON object. */
+/** `agent-platform <args>` on the computer `home` (`stdin`: the secret input); must exit 0. Returns the JSON object. */
 export async function agentTool(
   orchestrator: Orchestrator,
   home: string,
   args: readonly string[],
   timeout = 60_000,
+  stdin?: string,
 ): Promise<Record<string, unknown>> {
-  const run = await finished(orchestrator, (await start(orchestrator, home, args)).id, timeout);
+  const run = await finished(orchestrator, (await start(orchestrator, home, args, stdin)).id, timeout);
   expect(run.rc, `agent-platform ${args.join(' ')}: ${run.stderr_tail}`).toBe(0);
   return run.result ?? {};
 }
@@ -44,8 +49,9 @@ export async function agentToolRun(
   home: string,
   args: readonly string[],
   timeout = 60_000,
+  stdin?: string,
 ): Promise<ToolRun> {
-  return finished(orchestrator, (await start(orchestrator, home, args)).id, timeout);
+  return finished(orchestrator, (await start(orchestrator, home, args, stdin)).id, timeout);
 }
 
 /** The agent state of the computer `from` on a new computer `to` (a second copy of the same paired agent). */

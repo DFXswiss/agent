@@ -1,0 +1,23 @@
+{
+  "name": "e2e-51-agent-alone",
+  "description": "E2E-51: an agent alone (no person, no passkey) creates a task with its own Anthropic API key; the double accepts only that key as x-api-key and answers the prompt.",
+  "steps": [
+    {
+      "id": "agent-alone-prompt",
+      "expect": {
+        "user_text_contains": "E2E51-ALONE",
+        "has_tools": true,
+        "has_tool_result": false,
+        "model": "claude-sonnet-5-5"
+      },
+      "reply": { "content": [{ "type": "text", "text": "Answer for the agent alone kz62-answer-p4l8m2." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Agent alone" }] }
+    }
+  ]
+}

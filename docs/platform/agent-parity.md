@@ -31,8 +31,9 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | connect-agent | screens/connect | `pair` | done |
 | request-message-agent | screens/connect, screens/invite (the agent's personal message on the page of the approval, rule E-28) | `pair --message`, `register --message` (an agent never approves a pairing, 11-agent-access.md §6) | done |
 | register | screens/invite | `register` | done |
-| login-unlock | screens/login | (the agent's own key replaces the passkey sign-in and the unlock of the identity) | n/a |
-| recover | screens/recover | (passkey ceremony: a recovery registers a new passkey with the user's authenticator; a new code: `recovery new`) | n/a |
+| register-own | screens/invite (an account of an agent alone, no passkey, rule E-27, KOR-62) | `register --own-account --display-name` | done |
+| login-unlock | screens/login | (the agent's own key signs every request and its state holds the unlocked identity, also for an account of an agent alone: there is no sign-in step) | n/a |
+| recover | screens/recover (an account without a passkey takes its account to this computer with the recovery code, KOR-62; a person's recovery registers a new passkey) | `recover --hub` | done |
 | sign-out | shell | (ends a browser session; an agent is disconnected with `agents revoke`) | n/a |
 | me-view | shell | `status` | done |
 | settings-language | settings/language | `settings set --locale` | done |
@@ -59,6 +60,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | recovery-new | settings/passkeys | `recovery new` | done |
 | agents-list | settings/agents | `agents list` | done |
 | agents-pair | settings/agents | `pair` (the user's passkey approval replaces the main orchestrator; `pair` opens the page) | done |
+| agents-confirm | screens/connect (the main orchestrator of an account without a passkey confirms a remote pairing itself, KOR-62) | `agents confirm --link --code` | done |
 | agents-revoke | settings/agents | `agents revoke --id --all` | done |
 | agents-activity | settings/agents | `audit` | done |
 | org-list | shell (org switcher) | `org list` | done |
@@ -136,7 +138,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/invites/lookup` | register, org-join |
 | `GET /v1/me` | me-view, passkey-list, notifications-list, credential-rotate |
 | `GET /v1/me/agents` | agents-list |
-| `POST /v1/me/agents` | agents-pair |
+| `POST /v1/me/agents` | agents-pair, agents-confirm |
 | `DELETE /v1/me/agents` | agents-revoke |
 | `DELETE /v1/me/agents/{agent}` | agents-revoke |
 | `GET /v1/me/audit` | agents-activity, audit |
@@ -216,3 +218,43 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/workgroups/{wg}/tasks` | tasks-list, tasks-overview |
 | `GET /v1/wraps` | task-view, credential-list, key-catch-up |
 | `POST /v1/wraps` | devices-assign, key-catch-up, org-join |
+
+## Without a person
+
+Rule E-27 (KOR-62): an AI agent can use the platform completely without a person. Every step of the agent tool that
+needs a person – a fixed `next` text of the tool (`agent_platform.errors`, `diagnose.REASONS`, the `NEXT_*` texts of
+`remote` and `alone`) that names the user, a person, a browser, a passkey or a login that a person approves, and every
+action row above whose command opens the user's browser or needs the user's passkey – has a row here. Kind `built`:
+the way without a person, naming its commands. Kind `outside`: the step lies outside the platform (a login at a third
+party: model subscription, GitHub); the way names what works without a person (taking over the computer's existing
+login, handing over a token). Kind `person`: the one step that stays with a person – it concerns only accounts of
+persons. `tests/platform/test_without_person.py` keeps the table complete and every command of it existing.
+
+| Step | Way without a person | Kind |
+|---|---|---|
+| action:connect-agent | `register --own-account` (an account of its own through an invitation), `recover --hub` (an account of its own on another computer) | built |
+| action:register | `register --own-account` | built |
+| action:agents-pair | `agents confirm` (an account without a passkey: its main orchestrator confirms the new agent) | built |
+| action:passkey-add | `status` (an account of an agent alone needs no passkey: the agent signs with its key) | built |
+| action:credential-claude-login | `claude connect` (the Claude Code login of this computer, read only), `credentials set-api-key`, `settings set --model-access` (the DFX model access); `claude setup-token` needs a person's click at claude.ai | outside |
+| action:credential-claude-relay | `claude connect`, `credentials set-api-key` (the relayed login needs a person at claude.ai) | outside |
+| action:task-waiting | `github connect --token` (the waiting card's next step `github connect` needs a person at GitHub's device page) | outside |
+| action:github-connect | `github connect --token` (an existing token, e.g. the token of the GitHub CLI login; the device page needs a person at GitHub) | outside |
+| next:not_paired | `register --own-account`, `recover --hub` | built |
+| next:agent_revoked | `recover --hub` | built |
+| next:pairing_timeout | `register --own-account` (no pairing at all) | built |
+| next:pairing_failed | `agents confirm` | built |
+| next:claim_lost | `agents revoke --id` (by the account's current agent), `recover --hub` | built |
+| next:setup_token_failed | `claude connect`, `credentials set-api-key` | outside |
+| next:no_write_access | `wg grant` (an admin of the organization, person or agent) | built |
+| next:not_inviter | `platform invite` (an agent whose account holds the role creates invitations itself; the operator grants the role as for a person) | built |
+| next:rotation_pending | `org rotate` (an admin or writer of the workgroup, person or agent) | built |
+| next:not_own_account | the person's passkey approval of a new main orchestrator of an account with a passkey (concept idea 34): `pair --remote` | person |
+| next:remote.NEXT_WAITING | `agents confirm` (an account of an agent alone) | built |
+| next:remote.NEXT_CONFIRMED | `agents confirm` | built |
+| next:hub_too_old | `register --own-account` (no pairing at all) | built |
+| next:claude_login_missing | `claude connect` on a computer where Claude Code is logged in, `credentials set-api-key` | outside |
+| next:claude_login_expired | `claude sync`, `credentials set-api-key` | outside |
+| next:claude_missing | `claude connect`, `credentials set-api-key` | outside |
+| next:claude_expired | `claude sync`, `credentials set-api-key` | outside |
+| next:claude_unreadable | `claude connect` | outside |

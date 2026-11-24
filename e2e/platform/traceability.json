@@ -20,6 +20,7 @@
   "R-1.11": {"milestone": 2, "tests": ["E2E-03"]},
   "R-1.12": {"milestone": 2, "tests": ["E2E-03", "E2E-04", "E2E-05"]},
   "R-1.13": {"milestone": 2, "tests": ["E2E-39", "E2E-41"]},
+  "R-1.14": {"milestone": 3, "tests": ["E2E-51"]},
   "R-2.1": {"milestone": 1, "tests": ["E2E-01", "E2E-06"]},
   "R-2.2": {"milestone": 2, "tests": ["E2E-02"]},
   "R-2.3": {"milestone": 1, "tests": ["E2E-01"]},

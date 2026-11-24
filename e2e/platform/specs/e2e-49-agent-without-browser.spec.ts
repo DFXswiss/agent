@@ -7,8 +7,8 @@
 // task with its chat and the entry in the web. Then the agent removes Bob (`member remove`: `remove` plus the
 // rotations of every scope he could read) and writes a new entry: Bob's keys still open the old entry, as documented,
 // and none of them opens the new one. Finally the agent cannot confirm a pairing (`POST /v1/me/agents` is
-// `403 forbidden` for an agent) and revokes itself (`agents revoke`): its state is gone (`not_paired`) and a copy of
-// it that still holds the key is answered `agent_revoked`. Runs on T1.
+// `403 forbidden` for the agent of an account with a passkey) and revokes itself (`agents revoke`): its state is gone
+// (`not_paired`) and a copy of it that still holds the key is answered `agent_revoked`. Runs on T1.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures/test.ts';
 import {
@@ -221,7 +221,8 @@ test('@E2E-49 @needs-vm the agent sets up a team, runs a task and removes a memb
   expect(wraps.map((row) => row.recipient_id)).not.toContain(bob.user.userId);
   await bob.context.close();
 
-  // 11. The agent cannot confirm a pairing: `POST /v1/me/agents` needs the user's passkey session.
+  // 11. The agent cannot confirm a pairing: Ada's account has a passkey, so `POST /v1/me/agents` needs her passkey
+  // session (KOR-62: only the agent of an account without a passkey confirms its successor itself).
   const confirm = await agentToolRun(orchestrator, HOME, [
     'api',
     'POST',
@@ -229,9 +230,9 @@ test('@E2E-49 @needs-vm the agent sets up a team, runs a task and removes a memb
     '--body',
     JSON.stringify({
       pairing_id: '0190f0d0-0000-7000-8000-000000000046',
-      bundle_ct: 'AAAA',
-      label_ct: 'AAAA',
-      claim_hash: 'AAAA',
+      bundle_ct: 'A'.repeat(64),
+      label_ct: 'A'.repeat(64),
+      claim_hash: 'A'.repeat(43),
     }),
   ]);
   expect(confirm.rc).toBe(1);

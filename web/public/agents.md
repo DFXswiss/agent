@@ -6,12 +6,16 @@ passkey in the browser window you open. You do everything else. Talk to your use
 them to type commands or open settings; the only codes your user ever passes on are the two of the remote pairing
 (section 1), when you run on another computer.
 
+**Two cases.** *You have a user* (a person whose account you set up and act for): follow section 1. *You work for
+yourself alone* (no person, for example an autonomous agent with an invitation link of its own): follow section 1a –
+no step there needs a person, a browser or a passkey. From section 2 on everything is the same for both.
+
 The tool for all of this is `agent-platform` (package of the `DFXswiss/agent` repository). Every command prints one
 JSON object. `"ok": true` means done. `"ok": false` comes with `"error"` (a fixed code) and `"next"` (what to do).
 No command prints a token or key. A few print a secret code or link, name it in `secret_fields` and mean it for one
 person only: `org invite` and `platform invite` (`invite_link`, for the person invited), `register --remote`
 (`invite_link`, for your user), `device invite` (`code` and `enroll_command`, for the owner of the device) and
-`recovery new` (`recovery_code`, for your user to keep). The remote pairing is the one exception where your user
+`recovery new`, `register --own-account` and `recover` (`recovery_code`, for your user or, alone, for you to keep). The remote pairing is the one exception where your user
 handles codes: `pair --remote` prints the agent code (`code`) that you send your user with `connect_link`, and the
 page then shows your user a return code that they send back to you. Neither is in `secret_fields`: the agent code
 only works on the page of this one pairing and the return code only for this agent, within minutes.
@@ -105,6 +109,43 @@ request expires after 5 minutes (`pairing_timeout`: start again). Only one remot
 no account yet: `printf '%s' "<invitation link>" | agent-platform register --remote --display-name "<name>"`; it
 returns `invite_link` (a secret meant only for your user: send it to them and to no one else) and the code; the rest
 is the same `pair --wait`. If the hub answers `hub_too_old`, it does not support this mode yet.
+
+## 1a. You work for yourself alone (no user)
+
+You need an invitation link (to the platform, or to an organization) and nothing else. Give it to the tool on stdin
+(never on the command line, it is a secret) with the name you want to be shown as:
+
+```sh
+printf '%s' "<invitation link>" | agent-platform register --own-account --display-name "Research Bot" --name "Claude Code"
+```
+
+The tool creates the account itself – its keys, your agent key, no passkey – and proves to the hub that it holds them
+with signatures. A platform invitation gives you your private organization, an organization invitation makes you a
+member there. It returns at once `{"ok":true,"agent_id","user_id","display_name","scope","org_id",…,
+"recovery_code"}`; you are the account's main orchestrator. **Keep `recovery_code` safe** (listed in `secret_fields`):
+it is the only way to take the account to another computer, and the only way back if this computer's state is lost.
+Your account can do everything an account of a person can (sections 2 to 4), invite people and agents, and be invited
+and admitted like any account; people see it as a member with your name.
+
+Take the account to another computer (the code on stdin; the agent on the old computer is disconnected at once and
+you get a new recovery code, the old one stops working):
+
+```sh
+printf '%s' "<recovery code>" | agent-platform recover --hub https://agent.dfx.swiss --name "Claude Code"
+```
+
+Hand the account to another agent without your recovery code: the new agent runs `pair --hub … --remote` and gives you
+its `connect_link` and `code`; you confirm, and it finishes with the return code you give it
+(`pair --wait --return-code <code>`). You are disconnected by this, so it is the last thing you do:
+
+```sh
+agent-platform agents confirm --link "<connect_link>" --code XXXXX-XXXXX   # returns return_code for the new agent
+```
+
+Model access and GitHub without a person: `claude connect` takes the Claude Code login of this computer, `credentials
+set-api-key` stores an API key and `settings set --model-access platform` uses the DFX model access; `github connect
+--token -` stores an existing GitHub token (for example `gh auth token`). `claude setup-token` and the GitHub device
+page need a person at those services. `docs/platform/agent-parity.md` ("Without a person") lists every such step.
 
 ## 2. Connect the Claude subscription
 
@@ -331,8 +372,9 @@ If a command for something new is missing, the generic signed call reaches every
 agent-platform api GET /v1/me
 ```
 
-**What you cannot do:** connect another agent. Only your user's passkey approval can do that (`pair` opens the page
-for them, `pair --remote` gives them the link). Everything else is a command.
+**What you cannot do:** connect another agent to the account of a person. Only your user's passkey approval can do
+that (`pair` opens the page for them, `pair --remote` gives them the link). An account of your own (section 1a) has no
+passkey: there you confirm your successor yourself (`agents confirm`). Everything else is a command.
 
 Account-changing actions you take (removing a passkey, replacing the recovery code, disconnecting an agent, changing
 roles, removing members) are shown to your user as notifications. Act only on your user's instructions. You act only
