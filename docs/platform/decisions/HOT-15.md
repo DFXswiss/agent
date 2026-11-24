@@ -111,3 +111,11 @@ Red in gate run 8: after a fixed settle of 1.5 s the test counted every request,
 community engine (`GET /v1/community/requests`) still ran under load. That engine serves keys on its own schedule:
 after the sign-in, and on frames after a random delay of up to 3 s. **Decision:** requests under `/v1/community/` are
 not counted. Every other request after the keystrokes and the paste still fails the test.
+
+## 8. Merged web coverage depended on the timing of an E2E run
+
+Gate run 9: every test green, but the merged coverage of `web/src` was 99.99 %. The gap was
+`ui/shell/header/joined.tsx:22`, the fallback "an organization" for a join confirmation without an org name. No test
+covered it on purpose; an E2E run reached it only when the name was not yet known at that moment. **Decision:** the
+UI test of KOR-36 (`tests/ui/invite-org.test.tsx`) also checks the confirmation without a name, so the branch no longer
+depends on timing.

@@ -20,6 +20,7 @@ import { queuedSelfWraps } from '../../src/core/jobs/self-wraps';
 import type { Entry } from '../../src/core/log/entries';
 import { HubError } from '../../src/core/net/signedFetch';
 import { createInvite } from '../../src/core/org/invites';
+import { noteJoined } from '../../src/core/store/slices/joined';
 import { orgEntry } from '../../src/core/store/slices/orgs';
 import { forgetFragment } from '../../src/ui/screens/invite/fragment';
 import { afterVerify, blocking, failedStep, settledPhase, verifyFailed } from '../../src/ui/screens/invite/org/machine';
@@ -420,6 +421,9 @@ describe('OrgInvite: existing account', () => {
     fireEvent.click(screen.getByTestId('shell.joined.close'));
     expect(screen.queryByTestId('shell.joined')).toBeNull();
     expect(harness.hub.users.size).toBe(1);
+    // an org whose name is not known (yet) is named generically (covered here, not by the timing of an E2E run)
+    act(() => noteJoined(harness.app.store, { org: harness.setup.w.org, orgName: '' }));
+    expect(await screen.findByTestId('shell.joined')).toHaveTextContent('You are now a member of an organization.');
   });
 
   it("quotes the inviter's personal message where the invitee joins, as plain text (E-28)", async () => {
