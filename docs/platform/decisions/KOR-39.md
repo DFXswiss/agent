@@ -68,3 +68,45 @@ Architecture: [ADR-064](../adr/064-situation-view-and-attention-categories.md). 
   projection rebuilder for it (`rebuild --check` would always differ on `since`), the backfill derives lost rows.
 - **Stream filter**: the `attention` frame is published with `wg_id=`; without it the stream drops it (it is listed
   with the row frames, whose rows name their workgroup), so a frame never reaches a non-reader.
+
+## Web
+
+- **Composer stays on top** (coordinator change for the existing full-chain specs): `/o/:org` keeps the compact
+  composer (`home.context`, `home.org`, `home.wg`, `composer.*`) above the counters and groups instead of a "New task"
+  toggle; the chips are open while every group answered empty (the organization shows no task), otherwise behind
+  "Suggestions" (`home.suggestions`). `home.all-tasks` moved into the header of "Recently finished"; `home.recent`
+  and `attention.new-task` do not exist.
+- **Store**: one slice `attention` (records by task, groups per org and category, counters per org). A changed record
+  leaves every group of another category and enters its own loaded group only when it sorts before that group's last
+  loaded record (or the group is complete), so paging never shows an entry twice. Older records (by `updated_at`,
+  then `seq`) are ignored. A frame's org is the org a page brought the task in, else the active org of the channel.
+- **Batching**: `attention` frames are buffered per store and written once per 16 ms; each batch bumps `changes`,
+  which the counters follow through `refreshSummary` (at most one request per second per org, a burst ends with one
+  more request). Frames buffered before a sign-out are dropped.
+- **Window**: 50 entries per group in the DOM, moved by 25 ("Show later entries" / the end of the list coming into view,
+  which loads the hub's next page when fewer than 25 loaded entries are left; "Show earlier entries"). Entries are
+  memoized; the window keeps its place when its first entry leaves the group. No virtualizer (HOT-05 reasons).
+- **Entry** = `TaskItem` with `children`: the row is then not one link; the attention line (reason, main agent state
+  once its session is in the store, time in the group, helpers for "Running") follows, then the actions, "Open task"
+  and the tree toggle. The task state badge stays the row's state; the main agent's own state is shown when known
+  (from the tree or the task page), because the attention row carries no session state.
+- **Unknown task rows** (a frame of a task created elsewhere) are loaded once with `GET /v1/tasks/{task}`; an entry
+  whose workgroup the verified log does not let the user read is not rendered (second check after the hub).
+- **Question**: read from the verified `operation.params` of `ref_id` (operation row and event pulled with
+  `ref=`); shown only when the event's type is the record's asking type and the hub row (when loaded) names the same
+  type; otherwise "cannot be verified (code)".
+- **Actions**: answers, approvals and "Continue" go through the chat's `sendPrompt` (the sealed prompt is kept for a
+  retry); "Continue" sends `Continue.`; "Try again" is the task page's `retryPrompt` (the newest prompt again).
+  "Connect GitHub" and "Open model settings" lead to `/settings` (the sections live there); "Assign a computer" leads
+  admins, and every writer of a private organization, to `/o/:org/devices`, others see who can do it. Read-only users
+  see the entry with "Open task" and the tree toggle only (navigation, not controls).
+- **Badge**: `NavEntry` got an optional `Badge` component (Home registers it in its own `nav.ts`); the sidebar/row and
+  the bottom bar render it, so no central list changed. The badge shows `needs_decision_mine` (hidden at 0, `99+`).
+- **Notifications**: `task.attention` texts are built from `ref` (`<category>:<reason>:…`) with the reason's plain
+  words (generic text for an unknown reason, a neutral text for a malformed ref); a click leads to `/o/:org`.
+- **Operation card**: `human.question` / `human.approval` are known types in the chat ("Ask a person", "Ask for
+  approval") with the question as subject.
+- **E2E**: `e2e/devices/attention.spec.ts` runs in `devices` and both phone projects (added to `MOBILE_DEVICE_SPECS`
+  like KOR-32); `e2e/devices/attention-volume.spec.ts` (1 500 tasks waiting for an offline computer, created through
+  the API paced below the session rate limit) runs on desktop and, inside the file, with the Pixel 7 profile.
+

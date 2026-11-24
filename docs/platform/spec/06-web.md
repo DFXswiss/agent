@@ -231,8 +231,9 @@ The home of an organization shows where people are needed, across all workgroups
   today" (`GET /v1/orgs/{org}/attention/summary`, `since` = local midnight). The navigation entry Home (sidebar,
   navigation row, phone bottom bar) carries the "waiting for me" count as a badge.
 - **Groups** in this order: "Needs your decision" (`needs_decision`, longest waiting first), "Stuck" (`blocked`),
-  "Running" (`working`), "Recently finished" (`done`, last 7 days); the last three newest first. Each group is a
-  windowed list paged by the hub (§12.4, the window of the chat bundling); an empty group shows one short line.
+  "Running" (`working`), "Recently finished" (`done`, last 7 days, with the link to the default workgroup's task
+  list); the last three newest first. Each group is a windowed list paged by the hub (50 per page; at most 50 entries
+  in the DOM, moved by 25, the window of the chat bundling, §5.2); an empty group shows one short line.
 - **Entry** (the row building block `TaskItem` of the task lists, §5.1/§5.1a, extended by an attention line):
   title (opened in the browser), workgroup, responsible person (the signed owner), main agent with its state, the
   reason in plain words (ADR-064 §1 table), last activity and running time; "Running" also shows the phase and the
@@ -246,8 +247,9 @@ The home of an organization shows where people are needed, across all workgroups
   opens the model settings (§8.2); `credit_empty` says that the operator sets the balance and offers "Continue";
   `session_failed`, `guest_error`, `device_unreachable`, `no_capacity` offer "Try again" (a follow-up prompt starts a
   new main session); every entry offers "Open task". Users without write access see the entry without controls.
-- **New task**: a button at the top opens the composer of §4.1 in place (with the workgroup selector and
-  suggestions); with no task yet in the organization the composer is open from the start.
+- **New task**: the composer of §4.1 stays at the top in a compact form (context line with the workgroup selector and
+  the prompt field), so a new task is always one step away; its suggestion chips are shown while the organization has
+  no task yet, otherwise behind "Suggestions". Users without write access see a short note instead.
 - Live: stream frames `attention` update the entry and the counters (batched, counters refetched at most once per
   second); works fully on a phone (single column, controls
   ≥ 44 px).
@@ -255,7 +257,8 @@ The home of an organization shows where people are needed, across all workgroups
 ### 4.1 Entry
 
 Right after the first login (and on `/o/:org` whenever the user has no task yet) the home screen shows the composer
-open (otherwise behind "New task", §4.0) with:
+with its suggestions open (at the top of the situation view, §4.0; with tasks the suggestions are behind
+"Suggestions") with:
 
 - **Context line:** organization (the invitation's org, else the private org) and workgroup selector preselected to
   the default workgroup; changing the workgroup lists only workgroups with `wg:write`.
