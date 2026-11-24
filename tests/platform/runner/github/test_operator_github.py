@@ -18,7 +18,7 @@ import pytest
 
 from agent_guest.schema import SchemaSet
 from agent_runner.credentials import cache
-from agent_runner.github import access, operator
+from agent_runner.github import operator, precheck
 from agent_runner.github.executors import EXECUTORS
 from agent_runner.github.op_prechecks import PRECHECKS
 from agent_runner.operations.extensions import CheckFailed, OperationFailed
@@ -576,7 +576,7 @@ def test_without_an_allow_list_every_repository_of_the_account_works(
         outside = await r.run(sid, "github.checkout", {"repo": "octo-org/second"})
         assert refused(outside) == "repo_not_accessible"
         assert outside.answer is not None
-        assert outside.answer["error"]["message"] == access.NOT_ACCESSIBLE
+        assert outside.answer["error"]["message"] == precheck.NOT_ACCESSIBLE
         rejected = r.ok.hub.requests[-1]
         assert (len(r.ok.hub.requests), rejected["type"], rejected["local_check"]) == (7, "github.checkout", "rejected")
         assert r.ok.hub.params_event()[1]["params"]["repo"] == "octo-org/second"
