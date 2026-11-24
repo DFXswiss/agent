@@ -264,6 +264,7 @@ def test_invite_and_join(tool: Tool, hub: HubFake, account: User, tmp_path: Path
     pair_user(other_tool, hub, bob)
     joined = other_tool.run("org", "join", stdin=invited["invite_link"] + "&p=x&f=y\n")[1]
     assert (joined["org_id"], joined["role"], joined["org_name"]) == (org, "admin", "Acme")
+    assert "message" not in joined
     state = hub.orgs[org].log.state
     assert state.is_admin(bob.id)
     assert state.wg_access(bob.id, wg) == "read"
@@ -280,6 +281,19 @@ def test_invite_and_join(tool: Tool, hub: HubFake, account: User, tmp_path: Path
     granted = tool.run("wg", "grant", "--wg", wg, "--user", bob.id, "--access", "write", "--history")[1]
     assert granted["access"] == "write"
     assert hub.orgs[org].log.state.wg_access(bob.id, wg) == "write"
+
+
+def test_an_invitation_carries_the_inviters_message(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
+    """Rule E-28: the inviter's personal message is sealed in the package and printed where the invitee joins."""
+    org = team(tool)
+    text = "Willkommen, <b>Bob</b>: https://example.com"
+    assert tool.run("org", "invite", "--org", org, "--message", "a\nb")[1]["error"] == "invalid_argument"
+    invited = tool.run("org", "invite", "--org", org, "--message", "-", stdin=f"{text}\n")[1]
+    assert all(b"Willkommen" not in body for body in hub.bodies)
+    other_tool = make_tool(tmp_path / "other")
+    pair_user(other_tool, hub, hub.add_user(display_name="Bob"))
+    joined = other_tool.run("org", "join", stdin=invited["invite_link"])[1]
+    assert joined["message"] == text
 
 
 def test_org_show_lists_the_invitation_states(

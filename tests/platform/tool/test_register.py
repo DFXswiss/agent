@@ -86,6 +86,40 @@ def test_register_opens_the_invitation_with_the_pairing_and_name(tool: Tool, hub
     assert text.replace("-", "") not in json.dumps(result)
 
 
+def test_register_puts_the_message_from_stdin_into_the_link(tool: Tool, hub: HubFake) -> None:
+    link, _ = platform_invite(hub)
+    result: dict[str, Any] = {}
+
+    def target() -> None:
+        code, document = tool.run(
+            "register",
+            "--display-name",
+            "Ada",
+            "--message",
+            "-",
+            stdin="Bitte <i>bestätigen</i>\n",
+            env={"AGENT_PLATFORM_INVITE": link},
+        )
+        result.update(document, rc=code)
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    _redirect, url = opened_redirect(tool)
+    params = {key: values[0] for key, values in parse_qs(urlsplit(url).fragment.split("&", 1)[1]).items()}
+    assert params["t"] == "Bitte <i>bestätigen</i>"
+    user = hub.add_user(display_name="Ada")
+    assert post_form(int(params["c"]), browser_confirms(hub, user, params))[0] == 303
+    thread.join(20)
+    assert result["ok"] is True, result
+
+
+def test_register_reads_the_message_from_stdin_only_when_the_link_is_not_there(tool: Tool, hub: HubFake) -> None:
+    link, _ = platform_invite(hub)
+    code, document = tool.run("register", "--display-name", "Ada", "--message", "-", stdin=link)
+    assert (code, document["error"]) == (1, "invalid_argument")
+    assert hub.agents == {}
+
+
 def test_register_reads_the_link_from_the_environment(tool: Tool, hub: HubFake) -> None:
     link, _ = platform_invite(hub, registered=True)
     code, document = tool.run("register", "--display-name", "Ada", env={"AGENT_PLATFORM_INVITE": link})

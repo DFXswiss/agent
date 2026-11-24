@@ -93,6 +93,13 @@ def test_pair_remote_returns_link_and_code_at_once(tool: Tool, hub: HubFake) -> 
     no_secrets(result, private_keys(tool, values["p"]))
 
 
+def test_pair_remote_adds_the_message_to_the_link(tool: Tool, hub: HubFake) -> None:
+    result = start(tool, hub, "--message", "Ich bin's, <b>dein</b> Agent")
+    params = parse_qsl(result["connect_link"].split("#")[1])
+    assert [key for key, _ in params] == ["p", "f", "m", "a", "h", "t"]
+    assert dict(params)["t"] == "Ich bin's, <b>dein</b> Agent"
+
+
 def test_a_second_pending_pairing_is_refused_unless_replaced(tool: Tool, hub: HubFake) -> None:
     first = pending(tool) if start(tool, hub) else {}
     code, document = tool.run("pair", "--hub", hub.origin, "--remote")
@@ -489,6 +496,10 @@ def test_register_remote_refusals(tool: Tool, hub: HubFake) -> None:
     assert (
         tool.run("register", "--replace-pending", "--display-name", "A", stdin=link)[1]["error"] == "invalid_argument"
     )
+    _code, document = tool.run(
+        "register", "--remote", "--display-name", "Ada", "--message", "Hallo", "--replace-pending", stdin=link
+    )
+    assert dict(parse_qsl(document["invite_link"].split("#")[1].split("&", 1)[1]))["t"] == "Hallo"
     hub.hooks[("POST", "/v1/invites/lookup")] = lambda body, request: (200, {"registered": False, "scope": 5})
     assert tool.run("register", "--remote", "--display-name", "Ada", stdin=link)[1]["scope"] is None
 
@@ -499,6 +510,7 @@ def test_register_remote_refusals(tool: Tool, hub: HubFake) -> None:
         ["pair", "--wait", "--hub", "http://127.0.0.1:1"],
         ["pair", "--wait", "--remote"],
         ["pair", "--wait", "--replace-pending"],
+        ["pair", "--wait", "--message", "Hallo"],
         ["pair", "--wait", "--timeout", "601"],
         ["pair", "--wait", "--timeout", "-1"],
         ["pair"],

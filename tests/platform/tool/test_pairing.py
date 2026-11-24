@@ -87,6 +87,19 @@ def test_no_browser_prints_the_link(tool: Tool, hub: HubFake, capsys: pytest.Cap
     assert user.id not in json.dumps(document)
 
 
+def test_pair_puts_the_message_into_the_link(tool: Tool, hub: HubFake) -> None:
+    user = hub.add_user()
+    text = "Hallo <b>Ada</b> \u2013 siehe https://example.com"
+    run, link = start_pair(tool, hub, "--message", f" {text} ")
+    assert link["t"] == text
+    assert post_form(int(link["c"]), browser_confirms(hub, user, link))[0] == 303
+    result = run.join()
+    assert result["ok"] is True, result
+    assert "&t=" in result["link"]
+    # the message travels in the fragment only, never to the hub
+    assert all(b"siehe" not in body for body in hub.bodies)
+
+
 @pytest.mark.parametrize(
     "variant",
     ["get", "host", "foreign", "short_r", "type", "path", "dup", "empty", "bad_k", "bad_u", "extra", "binary"],
@@ -255,6 +268,9 @@ def test_timeout(tool: Tool, hub: HubFake, monkeypatch: pytest.MonkeyPatch) -> N
     [
         (["--hub", "ftp://x"], "invalid_argument"),
         (["--hub", "http://127.0.0.1:1", "--name", " padded"], "invalid_argument"),
+        (["--hub", "http://127.0.0.1:1", "--message", "a\u202eb"], "invalid_argument"),
+        (["--hub", "http://127.0.0.1:1", "--message", "x" * 501], "invalid_argument"),
+        (["--hub", "http://127.0.0.1:1", "--message", "  "], "invalid_argument"),
         (["--hub", "http://127.0.0.1:1"], "hub_unreachable"),
     ],
 )
