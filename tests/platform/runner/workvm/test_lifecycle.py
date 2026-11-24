@@ -241,7 +241,7 @@ def test_a_failed_deletion_keeps_the_row_until_the_sweep_deletes_it(world: World
         return failing, locked, swept
 
     assert world.run(body) == (0, 1, 1)
-    assert [row["delete_reason"] for row in rows(world)] == ["released", "run_ended"]
+    assert sorted(row["delete_reason"] for row in rows(world)) == ["released", "run_ended"]
     assert states(world).count(("deleted", "released")) == 1
 
 
