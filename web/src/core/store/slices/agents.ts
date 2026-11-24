@@ -24,6 +24,15 @@ export interface AgentEntry {
   readonly replaces: string | null;
   /** Paired from another computer (ADR-067); false when the hub does not say. */
   readonly remote: boolean;
+  /** Signs with its own key as a sub-principal of the user (ADR-082); false when the hub does not say. */
+  readonly ownIdentity: boolean;
+  /** Held a copy of the user's identity at some time (paired before ADR-082): the copy keeps opening what is
+   *  encrypted for the user; false when the hub does not say. */
+  readonly heldIdentity: boolean;
+  /** The certificate generation of an own-identity agent, else null. */
+  readonly gen: number | null;
+  /** Why a revoked agent was revoked (`revoked`, `replaced`, `unclaimed`, `session_ended`), else null. */
+  readonly revokedReason: string | null;
 }
 
 export interface AgentsState {

@@ -19,6 +19,7 @@ from agent_runner.crypto.log.vectors import (
     LogBuilder,
     PlatformBuilder,
     admit_builder,
+    agents_builder,
     identity,
     orgwide_builder,
 )
@@ -29,9 +30,10 @@ Json = dict[str, Any]
 def test_every_entry_of_the_vector_logs_is_well_formed(main: LogBuilder, plat: PlatformBuilder) -> None:
     admitted = admit_builder().entries
     assert len(admitted) == ADMIT_COUNT
-    org_types = {"device_assign_org", "device_unassign_org"}
+    org_types = {"device_assign_org", "device_unassign_org", "agent_add"}
     assert {entries.check_log_entry(e)["type"] for e in admitted} == entries.LOG_TYPES - org_types
     assert {entries.check_log_entry(e)["type"] for e in main.entries} == entries.LOG_TYPES - {"admit", *org_types}
+    assert "agent_add" in {entries.check_log_entry(e)["type"] for e in agents_builder().entries}
     orgwide = {entries.check_log_entry(e)["type"] for e in orgwide_builder().entries}
     assert {"device_assign_org", "device_unassign_org"} <= orgwide
     assert {entries.check_platform_entry(e)["type"] for e in plat.entries} == entries.PLATFORM_TYPES

@@ -1,0 +1,35 @@
+{
+  "gen": 1,
+  "cert": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "user_ct": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "batches": [
+    {
+      "org": "0190f0f0-0000-7000-8000-000000000003",
+      "expected_seq": 1,
+      "entries": [
+        {
+          "body": {
+            "org": "01930001-0000-7000-8000-000000000001",
+            "seq": 8,
+            "prev": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU",
+            "type": "accept",
+            "by": "0193000b-0000-7000-8000-00000000000b",
+            "ts": "2026-11-21T12:00:00.000Z",
+            "v": 1,
+            "invite_id": "BgYGBgYGBgYGBgYGBgYGBg",
+            "subject": "0193000b-0000-7000-8000-00000000000b",
+            "kind": "user",
+            "pub": {
+              "kem": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ",
+              "sig": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU"
+            }
+          },
+          "sig": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg",
+          "inv_sig": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw"
+        }
+      ],
+      "wraps": []
+    }
+  ],
+  "cred_wraps": []
+}

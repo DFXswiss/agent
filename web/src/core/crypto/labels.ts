@@ -60,3 +60,6 @@ export const LABEL_AGENT_RETURN = 'agent-return\0';
 // An account of an agent alone (rule E-27, KOR-62, 11-agent-access.md section 3), without the prefix P.
 export const LABEL_AGENT_ACCOUNT = 'agent-account\0';
 export const LABEL_AGENT_RECOVER = 'agent-recover\0';
+// The agent's own identity (ADR-082): the delegation certificate and the user anchor sealed to the agent.
+export const LABEL_AGENT_CERT = 'agent-cert\0';
+export const LABEL_AGENT_USER = 'agent-user\0';

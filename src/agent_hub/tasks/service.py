@@ -169,8 +169,10 @@ def create_task(
     *,
     requested: tuple[UUID, str | None] | None = None,
     github_identity: UUID | None = None,
+    author: str | None = None,
 ) -> Outcome:
-    """`POST /v1/tasks` (module docstring); `requested` is the chosen device and VM of the request."""
+    """`POST /v1/tasks` (module docstring); `requested` is the chosen device and VM of the request, `author` the
+    author of the events (the user's own-identity agent, ADR-082; default the user)."""
     now = context.clock()
     given = Given(github_identity=github_identity, requested=requested)
     actor = Actor("user", user)
@@ -188,7 +190,9 @@ def create_task(
             )
         pin = placement.for_new_task(connection, wg_id, requested)
         decision = load.decide(connection, wg_id, now, context.config.device_online_seconds, pin=pin, owner=user)
-        stored = append_events(connection, list(events), str(user), now=now, root_key=context.config.platform_root_key)
+        stored = append_events(
+            connection, list(events), author or str(user), now=now, root_key=context.config.platform_root_key
+        )
         if any(item.replayed for item in stored):
             if not all(item.replayed for item in stored):
                 raise HubError("id_conflict")
@@ -261,8 +265,10 @@ def _prompt_time(connection: Connection, context: HubContext, task_id: UUID) -> 
     return max(context.clock(), newest + TICK)
 
 
-def add_prompt(context: HubContext, user: UUID, task_id: UUID, event: dict[str, Any]) -> Outcome:
-    """`POST /v1/tasks/{task}/prompts` (module docstring)."""
+def add_prompt(
+    context: HubContext, user: UUID, task_id: UUID, event: dict[str, Any], *, author: str | None = None
+) -> Outcome:
+    """`POST /v1/tasks/{task}/prompts` (module docstring; `author` as for `create_task`)."""
     actor = Actor("user", user)
     with context.pool.connection() as connection, connection.transaction():
         found = connection.execute("SELECT wg_id FROM hub.task WHERE id = %s", (task_id,)).fetchone()
@@ -271,7 +277,9 @@ def add_prompt(context: HubContext, user: UUID, task_id: UUID, event: dict[str, 
         rights.require(connection, user, rights.TASK_WRITE, wg_id=found[0], write=True)
         check_event(event, "/event", "prompt", task_id, found[0])
         now = _prompt_time(connection, context, task_id)
-        stored = append_events(connection, [event], str(user), now=now, root_key=context.config.platform_root_key)
+        stored = append_events(
+            connection, [event], author or str(user), now=now, root_key=context.config.platform_root_key
+        )
         item = stored[0]
         received = cast(
             tuple[datetime],

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/agent-identity.response.json",
+  "title": "POST /v1/agent/identity response",
+  "description": "Body of a successful response to POST /v1/agent/identity.",
+  "type": "object",
+  "properties": {
+    "agent_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "gen": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    }
+  },
+  "required": [
+    "agent_id",
+    "gen"
+  ],
+  "additionalProperties": false
+}

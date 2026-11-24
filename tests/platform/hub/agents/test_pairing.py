@@ -26,6 +26,7 @@ from tests.platform.hub.agents.support import (
     new_agent,
     rows,
     stored_agent,
+    user_with_identity,
 )
 from tests.platform.hub.auth.authenticator import FakeBrowser, Session, seed_invite
 from tests.platform.hub.conftest import HubHarness, uuid7
@@ -38,18 +39,6 @@ def paired(hub: HubHarness) -> TestAgent:
     response = hub.anon.post("/v1/agent-pairings", json=agent.pairing_body())
     assert response.status_code == 200, response.text
     return agent
-
-
-def user_with_identity(hub: HubHarness) -> tuple[uuid.UUID, Identity]:
-    user, identity = uuid7(hub.clock()), Identity.generate()
-    hub.keys.session(user)
-    with hub.pool.connection() as connection:
-        connection.execute(
-            "INSERT INTO hub.user_identity (user_id, kem_pub, sig_pub, recovery_id, created_at)"
-            " VALUES (%s, %s, %s, %s, %s)",
-            (user, identity.kem_public(), identity.sig_public(), b64u_encode(uuid.uuid4().bytes), hub.clock()),
-        )
-    return user, identity
 
 
 # --- POST /v1/agent-pairings ------------------------------------------------------------------------------------------
@@ -270,6 +259,9 @@ def test_the_gesture_session_confirms_within_300_seconds(hub: HubHarness, publis
     row = agent_row(hub, agent.agent_id)
     assert row is not None
     assert (row["state"], row["user_id"], row["source"], row["replaces"]) == ("confirmed", user, None, None)
+    assert (row["own_identity"], row["held_identity"], row["gen"], row["bundle_ct"]) == (True, False, 1, None)
+    assert b64u_encode(bytes(row["cert"])) == confirm.body["cert"]
+    assert b64u_encode(bytes(row["user_ct"])) == confirm.body["user_ct"]
     assert row["confirmed_at"] == hub.clock()
     assert bytes(row["claim_hash"]) == agent_format.claim_hash(confirm.claim)
     assert rows(hub, "SELECT action, actor_id, target_kind, target_id, agent_id FROM hub.audit ORDER BY seq") == [
@@ -315,13 +307,13 @@ def test_too_short_sealed_values_are_request_invalid(hub: HubHarness) -> None:
     agent = paired(hub)
     body = handover(agent, user, identity).body
     session = gesture_client(hub, user, agent.agent_id)
-    for field in ("bundle_ct", "label_ct"):
+    for field in ("user_ct", "label_ct"):
         response = session.post("/v1/me/agents", json={**body, field: b64u_encode(bytes(47))})
         assert (response.status_code, response.json()) == (
             400,
             {"error": "request_invalid", "detail": {"pointers": [f"/{field}"]}},
         )
-    assert session.post("/v1/me/agents", json={**body, "bundle_ct": b64u_encode(bytes(48))}).status_code == 200
+    assert session.post("/v1/me/agents", json={**body, "user_ct": b64u_encode(bytes(48))}).status_code == 200
 
 
 def test_a_new_confirmation_replaces_the_main_orchestrator(hub: HubHarness, published: MemoryPublisher) -> None:
@@ -338,6 +330,7 @@ def test_a_new_confirmation_replaces_the_main_orchestrator(hub: HubHarness, publ
     assert old is not None
     assert new is not None
     assert (old["state"], old["bundle_ct"], old["revoked_at"]) == ("revoked", None, hub.clock())
+    assert old["revoked_reason"] == "replaced"
     assert (new["state"], new["replaces"]) == ("confirmed", first.agent_id)
     assert first.client(hub).get("/v1/agent/me").json() == {"error": "key_revoked"}
     assert rows(hub, "SELECT action, target_id, agent_id FROM hub.audit WHERE action LIKE 'agent.%%' ORDER BY seq") == [
@@ -355,7 +348,7 @@ def test_a_new_confirmation_replaces_the_main_orchestrator(hub: HubHarness, publ
     assert session.post("/v1/me/agents", json=confirm.body).status_code == 200
     third = paired(hub)
     later = gesture_client(hub, user, third.agent_id)
-    assert later.post("/v1/me/agents", json=handover(third, user, identity).body).status_code == 200
+    assert later.post("/v1/me/agents", json=handover(third, user, identity, gen=2).body).status_code == 200
     states = rows(hub, "SELECT id, state, replaces FROM hub.agent WHERE user_id = %s ORDER BY created_at", user)
     assert sorted(states, key=lambda row: str(row[0])) == sorted(
         [
@@ -394,23 +387,23 @@ def test_concurrent_confirmations_of_one_user_leave_exactly_one_main_orchestrato
     user, identity = user_with_identity(hub)
     first, second = paired(hub), paired(hub)
 
-    def body(agent: Any) -> store.Confirmation:
-        sent = handover(agent, user, identity).body
+    def body(agent: Any, gen: int) -> store.Confirmation:
+        sent = handover(agent, user, identity, gen=gen).body
         return store.Confirmation(
             pairing_id=agent.agent_id,
-            bundle_ct=b64u_decode(sent["bundle_ct"]),
             label_ct=b64u_decode(sent["label_ct"]),
             claim_hash=b64u_decode(sent["claim_hash"]),
+            own=store.OwnIdentity(gen, b64u_decode(sent["cert"]), b64u_decode(sent["user_ct"])),
         )
 
     holding, results = threading.Event(), []
     with hub.pool.connection() as one:
-        results.append(store.confirm(one, user, "session.x", body(first), hub.clock()))
+        results.append(store.confirm(one, user, "session.x", body(first, 1), hub.clock()))
 
         def other() -> None:
             with hub.pool.connection() as two:
                 holding.set()
-                results.append(store.confirm(two, user, "session.y", body(second), hub.clock()))
+                results.append(store.confirm(two, user, "session.y", body(second, 2), hub.clock()))
 
         waiting = threading.Thread(target=other)
         waiting.start()
@@ -419,7 +412,7 @@ def test_concurrent_confirmations_of_one_user_leave_exactly_one_main_orchestrato
         assert waiting.is_alive()  # blocked on the user's lock until the first transaction commits
     waiting.join(10)
     assert not waiting.is_alive()
-    assert results == [store.Confirmed(changed=True), store.Confirmed(changed=True, replaced=(first.agent_id,))]
+    assert [(result.changed, result.replaced) for result in results] == [(True, ()), (True, (first.agent_id,))]
     states = rows(hub, "SELECT id, state, replaces FROM hub.agent WHERE user_id = %s", user)
     assert sorted(states, key=lambda row: str(row[0])) == sorted(
         [(first.agent_id, "revoked", None), (second.agent_id, "confirmed", first.agent_id)],
@@ -439,7 +432,7 @@ def confirmed_agent(hub: HubHarness) -> tuple[TestAgent, Any, uuid.UUID, Identit
     return agent, confirm, user, identity
 
 
-def test_the_claim_activates_the_agent_which_opens_the_identity(hub: HubHarness) -> None:
+def test_the_claim_activates_the_agent_which_opens_its_users_anchor(hub: HubHarness) -> None:
     agent, confirm, user, identity = confirmed_agent(hub)
     client = agent.client(hub)
     # a confirmed agent may only claim
@@ -451,15 +444,17 @@ def test_the_claim_activates_the_agent_which_opens_the_identity(hub: HubHarness)
     assert body == {
         "agent_id": str(agent.agent_id),
         "user_id": str(user),
-        "bundle_ct": confirm.body["bundle_ct"],
+        "user_ct": confirm.body["user_ct"],
+        "identity": "own",
+        "gen": 1,
+        "migrate": False,
         "label_ct": confirm.body["label_ct"],
         "created_at": format_time(hub.clock() - timedelta(seconds=30)),
         "claimed_at": format_time(hub.clock()),
     }
-    opened = agent_format.open_identity(
-        agent.identity.kem, confirm.secret, str(agent.agent_id), str(user), body["bundle_ct"]
-    )
-    assert opened.public() == identity.public()
+    # the agent receives its user's public keys and certificate, never the identity (ADR-082 section 2)
+    opened = agent_format.open_user(agent.identity.kem, confirm.secret, str(agent.agent_id), str(user), body["user_ct"])
+    assert opened == {"cert": confirm.body["cert"], **identity.public()}
     assert agent_format.open_label(identity.kem, str(agent.agent_id), str(user), body["label_ct"]) == {
         "host": "Büro-Mac",
         "name": "Claude Code",
@@ -491,9 +486,18 @@ def test_wrong_claims_are_counted_and_the_fifth_deletes_the_pairing(hub: HubHarn
         assert row is not None
         assert row["claim_misses"] == misses
     assert client.post("/v1/agent/claim", json=wrong).json() == {"error": "claim_invalid"}
-    assert agent_row(hub, agent.agent_id) is None
+    # an own-identity agent is in its user's logs: revoked instead of deleted, its generation stays counted
+    row = agent_row(hub, agent.agent_id)
+    assert row is not None
+    assert (row["state"], row["revoked_reason"], row["gen"]) == ("revoked", "unclaimed", 1)
     response = client.post("/v1/agent/claim", json=confirm.claim_body)
-    assert (response.status_code, response.json()) == (401, {"error": "key_unknown"})
+    assert (response.status_code, response.json()) == (401, {"error": "key_revoked"})
+    # a pairing in the old form (an account of an agent alone) is deleted at the fifth wrong claim
+    old = stored_agent(hub, state="confirmed")
+    with hub.pool.connection() as connection:
+        connection.execute("UPDATE hub.agent SET claim_misses = 4 WHERE id = %s", (old.agent_id,))
+        assert store.claim(connection, old.agent_id, bytes(32), hub.clock()) is None
+    assert agent_row(hub, old.agent_id) is None
 
 
 def test_wrong_claims_of_an_active_agent_never_delete_it(hub: HubHarness) -> None:

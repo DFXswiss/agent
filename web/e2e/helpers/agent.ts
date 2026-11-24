@@ -22,9 +22,13 @@ import { ed25519Sign, Identity } from '../../src/core/crypto/keys';
 import { random } from '../../src/core/crypto/subtle';
 import { b64uDecode, b64uEncode } from '../../src/core/encoding/b64u';
 import { utf8 } from '../../src/core/encoding/bytes';
-import { canonical } from '../../src/core/encoding/json';
+import { bodyJson, canonical } from '../../src/core/encoding/json';
 import { uuid7 } from '../../src/core/encoding/ids';
-import { formatSeconds } from '../../src/core/encoding/time';
+import { formatSeconds, formatTime } from '../../src/core/encoding/time';
+import { newHeader, sealEvent } from '../../src/core/crypto/event';
+import { unwrapKey } from '../../src/core/crypto/wrap';
+import { ORG, WG } from '../../src/core/log/state';
+import type { VerifiedLog } from '../../src/core/log/verify';
 import { concat } from '../../src/core/encoding/bytes';
 import { label, LABEL_AGENT_PAIR } from '../../src/core/crypto/labels';
 import { requestText, sha256Hex } from '../../src/core/net/responseCheck';
@@ -140,6 +144,43 @@ export class TestAgent {
       claim_hash: b64uEncode(await claimHash(await claim(r, other.id, userId))),
     };
     return this.request('POST', '/v1/me/agents', body);
+  }
+
+  /**
+   * A whiteboard entry this agent writes with its own key (ADR-076: an author of its own, shown as "Agent of <user>")
+   * on the org board (`wg` null) or a workgroup board of `log`'s org (a log its user's page verified); the scope key is
+   * the one wrapped to the agent. Returns the hub's status.
+   */
+  async writeBoard(log: VerifiedLog, wg: string | null, text: string): Promise<number> {
+    const org = log.state.org;
+    const scope = wg === null ? ORG : WG;
+    const scopeId = wg ?? org;
+    const epoch = log.state.epoch(scope, scopeId);
+    const wraps = (await this.request('GET', '/v1/wraps')).body as {
+      wraps: { scope: string; scope_id: string; epoch: number; recipient_id: string; wrap: string }[];
+    };
+    const found = wraps.wraps.find(
+      (w) => w.scope === scope && w.scope_id === scopeId && w.epoch === epoch && w.recipient_id === this.id,
+    )!;
+    const slot = { scope, scope_id: scopeId, epoch, recipient: this.id };
+    const key = await unwrapKey(this.keys.kem, slot, found.wrap);
+    const header = newHeader({
+      id: uuid7(),
+      org,
+      scope,
+      scope_id: scopeId,
+      epoch,
+      author: this.id,
+      kind: 'whiteboard.entry',
+      ts: formatTime(Date.now()),
+      lh: log.head.seq,
+      wg: wg ?? '',
+      task: '',
+      ref: uuid7(),
+    });
+    const body = bodyJson({ level: wg === null ? 'org' : 'wg', text });
+    const event = await sealEvent(key, header, body, this.keys.sig.privateKey);
+    return (await this.request('POST', '/v1/events', { events: [{ event }] })).status;
   }
 
   /** `POST /v1/agent/claim` with the claim of the handover secret `r` (b64u) for `userId`. */

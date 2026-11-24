@@ -9,14 +9,16 @@ import {
   isLastAdmin,
   leavePlan,
   memberRows,
+  removeAgentPlan,
   removePlan,
   rolePlan,
   selectOwnName,
   ungrantPlan,
   workgroupOrder,
 } from '../../../src/core/org/members';
+import { signCert } from '../../../src/core/crypto/agent';
 import type { Actor } from '../log/world';
-import { idOf } from '../log/world';
+import { actor, idOf } from '../log/world';
 import { orgWorld } from './world';
 
 const names = (members: Record<string, string>, workgroups: Record<string, string> = {}): Directory => ({
@@ -186,5 +188,25 @@ describe('planners', () => {
     expect(leavePlan()(log, a.bob!.id)).toEqual({ entries: [{ type: 'remove', subject: a.bob!.id }] });
     expect(leavePlan()(log, a.pdev!.id)).toBeNull();
     expect(() => leavePlan()(log, a.ada!.id)).toThrow(expect.objectContaining({ code: 'last_admin' }));
+  });
+
+  it('removal of an agent: by its user or an admin, never by another member (ADR-082 section 4)', async () => {
+    const { w, a } = await setup();
+    const bot = await actor('bob bot');
+    const pub = bot.identity.public();
+    const cert = await signCert(a.bob!.identity.sig.privateKey, { agent: bot.id, pub, user: a.bob!.id, gen: 1 });
+    w.world.add(bot);
+    await w.world.batch(bot, [{ type: 'agent_add', subject: bot.id, user: a.bob!.id, pub, gen: 1, cert }], {
+      keys: w.world.ring(a.ada!.id),
+    });
+    const log = w.world.log!;
+    const removal = { entries: [{ type: 'remove', subject: bot.id }] };
+    expect(removeAgentPlan(bot.id)(log, a.bob!.id)).toEqual(removal);
+    expect(removeAgentPlan(bot.id)(log, bot.id)).toEqual(removal);
+    expect(removeAgentPlan(bot.id)(log, a.ada!.id)).toEqual(removal);
+    expect(removePlan(bot.id)(log, a.bob!.id)).toEqual(removal);
+    expect(() => removeAgentPlan(bot.id)(log, a.cy!.id)).toThrow(expect.objectContaining({ code: 'forbidden' }));
+    expect(() => removeAgentPlan(a.cy!.id)(log, a.ada!.id)).toThrow(expect.objectContaining({ code: 'not_found' }));
+    expect(removeAgentPlan(await idOf('gone bot'))(log, a.bob!.id)).toBeNull();
   });
 });

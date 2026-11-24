@@ -98,13 +98,13 @@ def profile_event(
         scope=ORG,
         scope_id=org,
         epoch=epoch,
-        author=account.user_id,
+        author=account.actor,
         kind=kind,
         ts=now_text(),
         lh=lh,
         **extra,
     )
-    return seal_event(key, header, body_json(dict(body)), account.identity.sig)
+    return seal_event(key, header, body_json(dict(body)), account.signer.sig)
 
 
 def own_display_name(account: Account, given: str | None) -> str:
@@ -262,15 +262,16 @@ def genesis(account: Account, org_name: str, member_name: str, platform_invite: 
     registration through that platform invitation (04-crypto.md section 5.3)."""
     names = PRIVATE_NAMES[locale(account)]
     org, wg = uuid7(), uuid7()
-    first = {"type": "genesis", "subject": account.user_id, "pub": account.identity.public(), "default_wg": wg}
+    first = {"type": "genesis", "subject": account.user_id, "pub": account.user_pub, "default_wg": wg}
     built = build_batch(
         None,
         org=org,
         author=account.user_id,
-        identity=account.identity,
-        fields=[{**first, "private": platform_invite is not None}],
+        identity=account.signer,
+        fields=[{**first, "private": platform_invite is not None, **account.agent_member()}],
         ts=now_text(),
         held={},
+        wrapper=account.actor,
     )
     key = built.new_keys[(ORG, org, 1)]
     events = [
@@ -346,7 +347,7 @@ def org_invite(
                 raise PlatformError("hub_refused", reason="epoch_stale")
             keys.append({"scope": scope, "scope_id": scope_id, "epoch": epoch, "key": b64u_encode(key)})
         built = build_batch(
-            log, org=org, author=account.user_id, identity=account.identity, fields=[fields], ts=now_text(), held={}
+            log, org=org, author=account.actor, identity=account.signer, fields=[fields], ts=now_text(), held={}
         )
         names = account.names(org)
         package = {
@@ -416,18 +417,20 @@ def org_join(account: Account, link: str, given_display_name: str | None) -> dic
                 "invite_id": secrets.invite_id,
                 "subject": account.user_id,
                 "kind": "user",
-                "pub": account.identity.public(),
+                "pub": account.user_pub,
+                **account.agent_member(),
             }
             built = build_batch(
                 log,
                 org=org,
                 author=account.user_id,
-                identity=account.identity,
+                identity=account.signer,
                 fields=[accept],
                 ts=now_text(),
                 held=ring,
                 platform=platform,
                 invite=secrets.signing,
+                wrapper=account.actor,
             )
         except CryptoError as error:
             raise crypto_refusal(error) from None
@@ -542,7 +545,7 @@ def org_admit(account: Account, org: str, who: str, role: str, wgs: dict[str, st
     own = _proven(
         platform, account.call("GET", f"/v1/users/{segment(account.user_id)}/identity"), account.user_id, None
     )
-    if own["pub"] != account.identity.public():
+    if own["pub"] != account.user_pub:
         raise unverified("identity_mismatch")
 
     def attempt() -> Built:
@@ -570,8 +573,8 @@ def org_admit(account: Account, org: str, who: str, role: str, wgs: dict[str, st
             built = build_batch(
                 log,
                 org=org,
-                author=account.user_id,
-                identity=account.identity,
+                author=account.actor,
+                identity=account.signer,
                 fields=[fields],
                 ts=now_text(),
                 held=account.keys(org),
@@ -658,8 +661,8 @@ def _append(
             built = build_batch(
                 log,
                 org=org,
-                author=account.user_id,
-                identity=account.identity,
+                author=account.actor,
+                identity=account.signer,
                 fields=fields,
                 ts=now_text(),
                 held=account.keys(org),
@@ -856,6 +859,6 @@ def _cred_wrap(account: Account, device: str, kem: str) -> bool:
     except PlatformError:
         print("agent-platform: no verified credential key to share with the device", file=sys.stderr)
         return False
-    record = make_wrap(account.identity, WrapSlot(CRED, account.user_id, epoch, device), b64u_decode(kem, 32), key)
+    record = make_wrap(account.signer, WrapSlot(CRED, account.user_id, epoch, device), b64u_decode(kem, 32), key)
     account.call("POST", "/v1/wraps", {"wraps": [record]})
     return True

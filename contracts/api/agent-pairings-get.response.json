@@ -43,6 +43,12 @@
     "nonce": {
       "$ref": "../common.json#/$defs/b64u_16",
       "description": "the hub's nonce of a remote pairing, input of the agent code (11-agent-access.md section 3); present exactly with remote"
+    },
+    "gen": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "description": "present when the request is signed by a user (browser session or agent): the generation the user's certificate of this pairing must name (ADR-082 section 9.1)"
     }
   },
   "required": [

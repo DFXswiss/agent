@@ -28,6 +28,15 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["agent"],
     },
+    "agent.identity": {
+        "properties": {
+            "agent": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ],
+            "gen": [{"type": "integer", "minimum": 1, "maximum": 2147483647}],
+        },
+        "required": ["agent", "gen"],
+    },
     "agent.pairing": {"properties": {}, "required": []},
     "agent.register": {
         "properties": {
@@ -148,6 +157,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "log_genesis",
                         "log_accept",
                         "log_admit",
+                        "log_agent",
                         "log_signature",
                         "log_rights",
                         "log_epoch",
@@ -164,6 +174,9 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "account_code_invalid",
                         "handover_required",
                         "handover_unexpected",
+                        "client_outdated",
+                        "agent_batches_incomplete",
+                        "agent_gen_mismatch",
                         "placement_forbidden",
                         "placement_invalid",
                         "identity_forbidden",
@@ -458,6 +471,10 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["seq"],
     },
     "log.admit": {
+        "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "required": ["seq"],
+    },
+    "log.agent_add": {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
     },
@@ -1095,6 +1112,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "log_genesis",
                         "log_accept",
                         "log_admit",
+                        "log_agent",
                         "log_signature",
                         "log_rights",
                         "log_epoch",
@@ -1111,6 +1129,9 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "account_code_invalid",
                         "handover_required",
                         "handover_unexpected",
+                        "client_outdated",
+                        "agent_batches_incomplete",
+                        "agent_gen_mismatch",
                         "placement_forbidden",
                         "placement_invalid",
                         "identity_forbidden",

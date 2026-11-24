@@ -109,7 +109,10 @@ def test_an_agent_alone_registers_works_moves_and_hands_over(real: RealHub, monk
     connected = run_ok(third, "pair", "--wait", "--timeout", "5", "--return-code", confirmed["return_code"])
     assert (connected["state"], connected["user_id"]) == ("connected", made["user_id"])
     assert moved_tool.run("status")[1]["error"] == "not_paired"
-    assert run_ok(third, "status")["user_id"] == made["user_id"]
+    status = run_ok(third, "status")
+    # the successor holds the account's identity again (ADR-082 section 7) and works without a person
+    assert (status["user_id"], status["identity"]) == (made["user_id"], "user")
+    assert run_ok(third, "recovery", "new")["secret_fields"] == ["recovery_code"]
 
 
 def test_an_account_with_a_passkey_keeps_the_persons_approval(real: RealHub) -> None:

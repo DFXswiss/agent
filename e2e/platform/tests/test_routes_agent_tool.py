@@ -108,11 +108,13 @@ def test_a_run_gets_its_own_computer_and_answers_the_last_json_line(ctx: Context
     assert answer["stderr_tail"] == ""
     assert answer["opened"] == ["http://127.0.0.1:9/pair#one", "http://127.0.0.1:9/pair#two"]
     assert (root / "state").stat().st_mode & 0o777 == 0o700
-    # A second run on the same computer keeps its stand-ins (and what they recorded); without stdin it reads nothing.
+    # A second run on the same computer keeps its stand-ins; it answers only the URLs it opened itself (the earlier
+    # run's links stay recorded but never show up as this run's); without stdin it reads nothing.
     (root / "tools" / "browser").write_text('#!/bin/sh\necho "kept:$1" >> "$(dirname "$0")/opened.txt"\n')
     again = finished(ctx, start(ctx, {"args": ["pair"], "home": "default"}))
     assert again["result"]["stdin"] == ""
-    assert again["opened"][2:] == ["kept:http://127.0.0.1:9/pair#one", "kept:http://127.0.0.1:9/pair#two"]
+    assert again["opened"] == ["kept:http://127.0.0.1:9/pair#one", "kept:http://127.0.0.1:9/pair#two"]
+    assert len((root / "tools" / "opened.txt").read_text().split()) == 4
 
 
 def test_a_running_tool_is_not_done_and_an_empty_output_has_no_result(ctx: Context, tmp_path: Path) -> None:
@@ -251,3 +253,29 @@ def test_an_own_device_file_gives_the_computer_the_device_seam(ctx: Context, tmp
 def test_an_unknown_run_is_not_found(ctx: Context) -> None:
     status, answer = call(ctx, "GET", "/agent-tool/no-such-run")
     assert (status, answer["error"]) == (404, "not_found")
+
+
+def test_state_answers_the_stored_state_and_the_private_keys(ctx: Context, tmp_path: Path) -> None:
+    state = tmp_path / "agent-tool" / "ada" / "state" / "agent-platform"
+    state.mkdir(parents=True)
+    (state / "state.json").write_text(json.dumps({"agent_id": "a", "v": 1}))
+    assert call(ctx, "POST", "/agent-tool/state", {"home": "ada"}) == (
+        200,
+        {"state": {"agent_id": "a", "v": 1}, "key": None},
+    )
+    (state / "agent.key").write_text("private-keys\n")
+    assert call(ctx, "POST", "/agent-tool/state", {"home": "ada"})[1]["key"] == "private-keys"
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "error"),
+    [
+        ([], 400, "invalid"),
+        ({}, 400, "invalid"),
+        ({"home": "../x"}, 400, "invalid"),
+        ({"home": "nobody"}, 404, "not_found"),
+    ],
+)
+def test_state_refuses_bad_bodies_and_unknown_computers(ctx: Context, body: Any, status: int, error: str) -> None:
+    answer = call(ctx, "POST", "/agent-tool/state", body)
+    assert (answer[0], answer[1]["error"]) == (status, error)

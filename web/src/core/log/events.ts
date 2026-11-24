@@ -12,6 +12,8 @@
 // 7. hub only: E5 again at receipt, E6 epoch (`epoch_stale`), E7 the session runs on the author device. Readers
 //    accept any epoch they hold a key for. E9 (`event_conflict`) is `checkReplay`.
 // Every function takes the clock as a parameter (`now`, `rotatedAt`, unix ms).
+// An agent author (ADR-082) is a user for E3 and has its user's rights for E5 (`OrgState.acting`); its
+// `member.profile` is its user's (`ref` = the acting user).
 import { canonical } from '../encoding/json';
 import { equalBytes } from '../encoding/bytes';
 import { isUuid7 } from '../encoding/ids';
@@ -20,7 +22,7 @@ import { fail } from '../crypto/errors';
 import * as eventFormat from '../crypto/event';
 import * as F from '../crypto/fields';
 import type { Secret } from '../crypto/secret';
-import { DEVICE, type OrgState, type Principal, USER } from './state';
+import { AGENT, DEVICE, type OrgState, type Principal, USER } from './state';
 import type { VerifiedLog } from './verify';
 
 /** E6: the previous epoch is accepted this long (ms) after the rotation (not for removed authors). */
@@ -140,7 +142,7 @@ function fieldValid(check: string, value: unknown, header: F.Fields, state: OrgS
     case 'target':
       return state.workgroups.has(value as string);
     case 'author':
-      return value === header.author;
+      return value === state.acting(header.author as string);
     case 'read_target':
       return value !== '';
     case 'subject':
@@ -165,7 +167,7 @@ export function hasRight(kind: KindRule, state: OrgState, header: F.Fields): boo
     case ORG_ADMIN:
       return state.isAdmin(author);
     case ORG_MEMBER_SELF:
-      return state.member(author) !== null && header.ref === author;
+      return state.member(author) !== null && header.ref === state.acting(author);
     case WG_WRITE:
       return state.canWriteWg(author, scopeId);
     default: // device_assigned_wg, device_assigned_wg_session
@@ -200,7 +202,7 @@ export async function checkEvent(event: unknown, log: VerifiedLog, options: Read
   if (header.org !== log.state.org) fail('header_invalid');
   const state = log.stateAt(header.lh as number);
   const author = eventAuthor(state, header, skip);
-  const found = kindRule(header.kind as string, header.scope as string, author.kind);
+  const found = kindRule(header.kind as string, header.scope as string, author.kind === AGENT ? USER : author.kind);
   checkHeaderRules(found, header, state);
   await eventFormat.verifyEvent(event, b64uDecode(author.sig));
   if (!hasRight(found, state, header)) fail('author_not_writer');

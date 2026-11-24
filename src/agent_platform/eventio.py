@@ -107,13 +107,13 @@ def seal(
         scope=scope[0],
         scope_id=scope[1],
         epoch=epoch,
-        author=account.user_id,
+        author=account.actor,
         kind=kind,
         ts=now_text(),
         lh=log.head.seq,
         **extra,
     )
-    return seal_event(key, header, body_json(body), account.identity.sig)
+    return seal_event(key, header, body_json(body), account.signer.sig)
 
 
 def post_event(account: Account, event: Mapping[str, Any], notify: bool = False) -> int:

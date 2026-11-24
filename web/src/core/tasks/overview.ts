@@ -10,11 +10,12 @@
 //   shows a row in the wrong place and never skips one.
 // - "Load more" loads the next page of the list that holds the cut-off (the binding list) until at least one page more
 //   of merged rows is shown or no list has a further page.
-// - "Only mine" (the signed owner, never the hub's `owner_id`) and the title search run in the browser over the merged
-//   rows, because titles are encrypted.
+// - "Only mine" (the signed owner or an agent of the user, never the hub's `owner_id`) and the title search run in
+//   the browser over the merged rows, because titles are encrypted.
 import { parseTime } from '../encoding/time';
 import { type OrgState, WG } from '../log/state';
 import { workgroupOrder } from '../org/members';
+import { orgEntry } from '../store/slices/orgs';
 import { type TaskList, taskList, type TaskRow, type TasksState } from '../store/slices/tasks';
 import type { StoreState } from '../store/store';
 import { selectOwner, selectTitle } from './directory';
@@ -60,6 +61,12 @@ const after = (a: TaskRow, b: TaskRow): boolean => {
   return delta < 0 || (delta === 0 && a.task_id < b.task_id);
 };
 
+/** The user a task belongs to: its owner, or the user of an owner that is an agent (null while unknown). */
+function mineOf(state: StoreState, org: string, row: TaskRow): string | null {
+  const owner = selectOwner(org, row.wg_id, row.task_id)(state);
+  return owner === null ? null : orgEntry(state.orgs, org).log!.state.acting(owner);
+}
+
 /** A list that has not answered its first page yet. */
 const pending = (list: TaskList): boolean =>
   list.status === 'idle' || (list.status === 'loading' && list.ids.length === 0 && list.nextBefore === null);
@@ -91,7 +98,7 @@ export function overview(state: StoreState, query: OverviewQuery): Overview {
   const merged = binding === null ? sorted : cut === null ? [] : sorted.filter((row) => !after(row, cut));
   const needle = searchText(query.search);
   const rows = merged.filter((row) => {
-    if (query.mine !== null && selectOwner(query.org, row.wg_id, row.task_id)(state) !== query.mine) return false;
+    if (query.mine !== null && mineOf(state, query.org, row) !== query.mine) return false;
     if (needle === '') return true;
     const title = selectTitle(row.wg_id, row.task_id, row.title_event_id)(state);
     return title.status === 'verified' && searchText(title.text).includes(needle);

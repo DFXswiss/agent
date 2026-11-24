@@ -10,6 +10,7 @@
 //   or another epoch, and recipients the verified logs do not entitle (`mayWrapCred` over every verified org of the
 //   user), are dropped.
 // Nothing is sent when nothing is left; a run that started before a sign-out sends nothing.
+import { fail } from '../crypto/errors';
 import type { Identity } from '../crypto/keys';
 import type { Secret } from '../crypto/secret';
 import { unwrapKey, verifyWrap } from '../crypto/wrap';
@@ -18,6 +19,7 @@ import { excludedFor } from '../log/platform';
 import { compareSlots, CRED, mayWrapCred, slotKey, type WrapRecord, type WrapSlot } from '../log/wraps';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
+import { selfWrapperKey } from '../github/connection';
 import { keyRing, verifiedPlatform } from '../org/batch';
 import { orgEntry } from '../store/slices/orgs';
 import { current, type JobContext, type JobRegistration, type JobRun } from './index';
@@ -46,7 +48,7 @@ export async function fetchMissing(context: JobContext, org: string): Promise<Wr
   }));
 }
 
-/** The user's `CK` of the newest epoch the user wrapped for itself and that opens, or null. */
+/** The user's `CK` of the newest epoch the user (or its active agent) wrapped for the user and that opens, or null. */
 export async function ownCredentialKey(
   context: JobContext,
   userId: string,
@@ -55,13 +57,14 @@ export async function ownCredentialKey(
   const body = await context.client.request('GET', `/v1/wraps?scope=cred&scope_id=${encodeURIComponent(userId)}`);
   const wraps = isRecord(body) && Array.isArray(body.wraps) ? body.wraps.filter(isRecord) : [];
   const own = wraps
-    .filter((w) => w.scope === CRED && w.scope_id === userId && w.recipient_id === userId && w.wrapped_by === userId)
+    .filter((w) => w.scope === CRED && w.scope_id === userId && w.recipient_id === userId)
     .filter((w) => Number.isSafeInteger(w.epoch) && typeof w.wrap === 'string')
     .sort((a, b) => (b.epoch as number) - (a.epoch as number));
   for (const found of own) {
     const slot = { scope: CRED, scope_id: userId, epoch: found.epoch as number, recipient: userId };
     try {
-      await verifyWrap(identity.sigPublic(), slot, found.wrap as string, found.sig);
+      const wrapper = selfWrapperKey(context.store, userId, identity, found.wrapped_by) ?? fail('author_not_writer');
+      await verifyWrap(wrapper, slot, found.wrap as string, found.sig);
       return { epoch: slot.epoch, key: await unwrapKey(identity.kem, slot, found.wrap as string) };
     } catch {
       // a wrap that does not verify or open is skipped (an older one may)

@@ -18,6 +18,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from agent_hub.agents.identity import actor
 from agent_hub.errors import HubError
 from agent_hub.events import notify, read
 from agent_hub.events.store import StoredEvent, append_events
@@ -49,13 +50,13 @@ class EventsRequest(BaseModel):
     events: list[EventItem] = Field(min_length=1, max_length=MAX_EVENTS)
 
 
-def _append(context: HubContext, author: UUID, body: EventsRequest) -> list[StoredEvent]:
+def _append(context: HubContext, author: str, body: EventsRequest) -> list[StoredEvent]:
     """Store in one transaction, then announce after the commit (in the worker thread: subscribers may do I/O)."""
     with context.pool.connection() as connection, connection.transaction():
         stored = append_events(
             connection,
             [item.event for item in body.events],
-            str(author),
+            author,
             now=context.clock(),
             root_key=context.config.platform_root_key,
             notify=[item.notify for item in body.events],
@@ -66,7 +67,8 @@ def _append(context: HubContext, author: UUID, body: EventsRequest) -> list[Stor
 
 @router.post("/v1/events", auth="browser", right="per_event_kind", max_body=EVENT_BATCH_BYTES)
 async def post_events(context: Context, principal: CurrentPrincipal, body: EventsRequest) -> dict[str, Any]:
-    stored = await asyncio.to_thread(_append, context, cast(UUID, principal.principal_id), body)
+    # the author is the cryptographic actor: the user, or the user's own-identity agent (ADR-082)
+    stored = await asyncio.to_thread(_append, context, actor(principal).id, body)
     return {"results": [item.result() for item in stored]}
 
 

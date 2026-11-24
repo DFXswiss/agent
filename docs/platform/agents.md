@@ -115,6 +115,12 @@ connected already, the page says "replaces <name>", and your user's confirmation
 your user this before they confirm. Pairing again from an agent that is already connected also replaces it (the tool
 keeps only the new connection).
 
+You get **your own key**, never your user's: your user's confirmation certifies your key as your user's agent, and
+you act with your user's rights in every organization of your user, under your own ID ("Agent of <name>"). `status`
+shows `identity: "own"`. An agent connected before this existed still holds a copy of its user's key (`identity:
+"user"`): the tool changes it to its own key by itself, before the next command, once the hub asks for it; nothing is
+needed from you or your user.
+
 **Your user has an invitation link but no account yet:** give the link to the tool on stdin (never on the command
 line, it is a secret) together with the name your user wants to be shown as:
 
@@ -494,6 +500,14 @@ agent-platform platform revoke --id <invite_id>
 agent-platform security                                          # checks the web build against its manifest
 ```
 
+`recovery new` needs your user's own key: with your own key (`identity: "own"`) it opens the settings page in your
+user's browser instead (`opened`), as `passkey add` does; tell your user to choose "New recovery code" there. For the
+same reason `agents list` shows no names of agents then (`label: null`), and `passkey list` says `recovery_code: null`
+when it cannot tell. `agents revoke` disconnects an agent for real: the hub refuses its key at once, it is removed from
+every organization of your user, the keys it could read change and your user's credentials are encrypted again
+(`removed`, `credentials`); revoking yourself first takes you out of every organization (`left`). What an agent read
+before stays readable for it.
+
 Amounts of `billing` and `task charges` are micro-USD. Credit is added by the operator; there is no payment and no
 top-up. With `exhausted: true` the organization's credit is used up: paid resources (DFX devices and DFX model access)
 are paused until credit is added, then paused tasks continue; own devices with own model access keep working.
@@ -509,7 +523,8 @@ cannot be read, the last time a limit was observed (`limited_at`). Change `--fal
 does the same around its commands, so you never need to ask for it:
 
 - before every command that writes (tasks, prompts, whiteboard entries, settings, membership changes, devices,
-  credentials) it makes the key changes your user owes: when a member left an organization by itself, the keys that
+  credentials) it makes the key changes your user owes: a disconnected agent of your user that is still in an
+  organization is removed there (`removed_agents`); when a member left an organization by itself, the keys that
   member could read change (an admin changes the organization's, an admin or writer a workgroup's); a DFX device
   whose certification ended is taken off its workgroups (admins); when a device lost access to your user's
   credentials, the credential key changes and the credentials are encrypted again;
@@ -567,8 +582,10 @@ again only if your user asks you to.
 ## 6. What your user sees
 
 Settings → "Connected agents" shows you as the main orchestrator with your name and computer, when you were
-connected and last active, from which computer, and which agent you replaced. You have full access to the account. Every action you take is in the audit log marked "by agent". Your
-user can disconnect you (or all agents) at any time; it takes effect at once.
+connected and last active, from which computer, and which agent you replaced. You have full access to the account.
+Every action you take is in the audit log marked "by agent", and what you write in an organization shows "Agent of
+<name>". Your user can disconnect you (or all agents) at any time; it takes effect at once, you are removed from every
+organization and nothing new is encrypted for you.
 
 ## 7. Chat programs without a command line
 

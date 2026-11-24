@@ -44,4 +44,30 @@ describe('community preferences', () => {
     expect(prefs.communityKeys('u2')).toEqual({ a: 'k' });
     expect(new Prefs(null).communityKeys('u1')).toEqual({});
   });
+
+  it('remembers the agents whose pairing this browser confirmed, per user (ADR-082)', () => {
+    const storage = new MemoryStorage();
+    const prefs = new Prefs(storage);
+    expect(prefs.confirmedAgents('u1')).toEqual({});
+    prefs.addConfirmedAgent('u1', 'a1', 'c1');
+    prefs.addConfirmedAgent('u1', 'a2', 'c2');
+    expect(prefs.confirmedAgents('u1')).toEqual({ a1: 'c1', a2: 'c2' });
+    expect(prefs.confirmedAgents('u2')).toEqual({});
+    storage.items.set('agent-platform.confirmed-agents.u2', 'not json');
+    expect(prefs.confirmedAgents('u2')).toEqual({});
+  });
+
+  it('remembers the handled credential-key losses per user and reads malformed data as none', () => {
+    const storage = new MemoryStorage();
+    const prefs = new Prefs(storage);
+    expect(prefs.handledLosses('u1')).toEqual([]);
+    prefs.setHandledLosses('u1', ['d1 5']);
+    expect(prefs.handledLosses('u1')).toEqual(['d1 5']);
+    for (const raw of ['not json', '{}', 'null']) {
+      storage.items.set('agent-platform.handled-losses.u2', raw);
+      expect(prefs.handledLosses('u2')).toEqual([]);
+    }
+    storage.items.set('agent-platform.handled-losses.u2', '["a",1]');
+    expect(prefs.handledLosses('u2')).toEqual(['a']);
+  });
 });

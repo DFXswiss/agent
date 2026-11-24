@@ -28,9 +28,9 @@ A request is announced by the hint `request {request_id}` or listed in `requests
    `registry.request_handlers`) in its own asyncio task (`Flow`). At most one flow per user and kind is active: a
    newer root (header time, then ID) replaces the running flow (the hub has already failed the older chain), an
    older one is answered `{step:"failed", code:"busy"}`. A kind without handler is answered `failed`
-   `upstream_error`. A follow-up request (`follows` = root ID) goes to the running flow of its root when user and kind
-   match (`Flow.follow_ups`, `Flow.wait_follow_up`), else it is refused like a forged request (`forbidden`);
-4. **answers** with encrypted, signed responses (`Flow.respond`): HPKE to the user's X25519 identity key, signed by
+   `upstream_error`. A follow-up request (`follows` = root ID) goes to the running flow of its root when owner and
+   kind match (`Flow.follow_ups`, `Flow.wait_follow_up`), else it is refused like a forged request (`forbidden`);
+4. **answers** with encrypted, signed responses (`Flow.respond`): HPKE to the requester's X25519 key, signed by
    the device, `seq` 1..n per request without a gap, `final:true` on the last. The next `seq` is stored before the
    response is sent and the same envelope is resent on transport errors (the hub accepts an identical retry); a number
    used up without reaching the hub (cancellation, crash) is healed from the hub's `seq_conflict` `expected_seq`;
@@ -39,6 +39,13 @@ A request is announced by the hint `request {request_id}` or listed in `requests
    the root in two consecutive desired states (answered, expired or replaced: the flow is abandoned without answer);
    shutdown (`device_shutdown`, best effort; the row stays `active` until that answer arrived). A request that was
    active when the daemon stopped is answered `device_shutdown` when it is seen again.
+
+Agents (ADR-082 sections 1 and 9.12): `header.user` may be the active agent of a user. The requester's key is then
+the agent's own key from the verified log, the response is sealed to the agent's X25519 key, and the **owner** - whose
+`CK` and connections a handler uses (`Flow.user`) - is the agent's user (`OrgState.acting`). An agent that is no agent
+of its user any more (`revoked_agents`: superseded or removed in any verified log) is refused like an unknown user
+(`key_unknown`). "At most one flow per user and kind" and the follow-up match compare owners, so a user and the user's
+agent continue each other's flows.
 
 Local states (`runner.device_request.state`): `active`, `answered` (final response sent), `failed` (closed by the
 hub or unanswerable), `abandoned` (no longer listed, replaced or cancelled), `rejected` (failed verification).
@@ -61,8 +68,8 @@ from agent_runner.crypto import request as request_format
 from agent_runner.crypto.encoding import b64u_decode, body_json, parse_json
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import uuid7
-from agent_runner.crypto.log.state import Principal
-from agent_runner.crypto.log.wraps import cred_readers
+from agent_runner.crypto.log.state import AGENT, USER, Principal
+from agent_runner.crypto.log.wraps import cred_readers, revoked_agents
 from agent_runner.orgs import audit
 from agent_runner.orgs.book import OrgBook, book_for
 from agent_runner.orgs.db import session
@@ -132,11 +139,15 @@ class Incoming:
 
     id: str
     user: str
+    """The requester (`header.user`): a user or the user's agent."""
     kind: str
     follows: str
     ts: float
     body: dict[str, Any]
     user_kem: bytes
+    """The requester's X25519 key (the responses are sealed to it)."""
+    owner: str
+    """The user the request acts for (`acting(user)`): whose `CK` and connections a handler uses."""
 
 
 @dataclass
@@ -171,6 +182,12 @@ class Flow:
 
     @property
     def user(self) -> str:
+        """The owner: the user the request acts for (also for a request of the user's agent)."""
+        return self.request.owner
+
+    @property
+    def requester(self) -> str:
+        """The principal that signed the request (the user or the user's agent)."""
         return self.request.user
 
     @property
@@ -430,19 +447,22 @@ class RequestService:
 
     # --- verification ------------------------------------------------------------------------------------------
 
-    def user_principal(self, book: OrgBook, user: str) -> Principal:
-        """The user as an active user of an acting org that makes this device eligible for the user's `CK`."""
+    def user_principal(self, book: OrgBook, user: str) -> tuple[Principal, str]:
+        """The requester - an active user, or the active agent of one that is not revoked - of an acting org that
+        makes this device eligible for the owner's `CK`, and the owner (the user, or the agent's user)."""
         orgs = book.acting_orgs()
         states = [log.state for org in orgs if (log := book.log(org)) is not None]
         excluded = {device for org in orgs for device in book.excluded(org)}
         principal = next(
-            (found for state in states if (found := state.member(user)) is not None and found.kind == "user"), None
+            (found for state in states if (found := state.member(user)) is not None and found.kind in (USER, AGENT)),
+            None,
         )
-        if principal is None:
+        if principal is None or principal.id in revoked_agents(states):
             raise Refused("key_unknown", log_dependent=True)
-        if self.device_id not in cred_readers(states, user, excluded):
+        owner = principal.parent or principal.id
+        if self.device_id not in cred_readers(states, owner, excluded):
             raise Refused("device_not_assigned", log_dependent=True)
-        return principal
+        return principal, owner
 
     async def verify(self, request_id: str, envelope: object) -> Incoming:
         try:
@@ -457,7 +477,7 @@ class RequestService:
         book = book_for(self.context)
         async with session(self.context.pool) as conn:
             await book.ensure_loaded(conn)
-        principal = self.user_principal(book, str(header["user"]))
+        principal, owner = self.user_principal(book, str(header["user"]))
         try:
             plaintext = request_format.open_request(
                 self.context.identity.keys.kem_key(), envelope, b64u_decode(principal.sig)
@@ -484,6 +504,7 @@ class RequestService:
             ts=ts,
             body=cast(dict[str, Any], body),
             user_kem=b64u_decode(principal.kem),
+            owner=owner,
         )
 
     # --- dispatch ----------------------------------------------------------------------------------------------
@@ -498,7 +519,7 @@ class RequestService:
             closed = found is not None and found[0] in CLOSED
             await self.reject(request.id, header, Refused("forbidden", transient=not closed))
             return
-        if root.finished or (root.user, root.request.kind) != (request.user, request.kind):
+        if root.finished or (root.user, root.request.kind) != (request.owner, request.kind):
             await self.reject(request.id, header, Refused("forbidden"))
             return
         await self.mark(request, ACTIVE)
@@ -511,7 +532,7 @@ class RequestService:
             (
                 f
                 for f in self.flows.values()
-                if not f.finished and (f.user, f.request.kind) == (request.user, request.kind)
+                if not f.finished and (f.user, f.request.kind) == (request.owner, request.kind)
             ),
             None,
         )

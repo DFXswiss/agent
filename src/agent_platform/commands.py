@@ -1,5 +1,7 @@
 """The building blocks of the command line (11-agent-access.md section 8.4): the parser whose errors and help are
-exceptions, the context of a command, the wrapper that opens the paired account, and the tree that adds commands.
+exceptions, the context of a command, the wrapper that opens the paired account (an agent that still holds its
+user's identity converts itself first when the hub asks for it, `convert.ensure`, ADR-082 section 5), and the tree
+that adds commands.
 
 A command that writes into an org or stores a credential is registered with `writes=True`: it runs inside
 `upkeep.around` (the owed rotations and the credential-key check before it, catch-up wrapping after it), which
@@ -96,7 +98,9 @@ class Context:
                 b64u_decode(root, 32)
             except CryptoError:
                 raise PlatformError("invalid_argument") from None
-        return Account.open(self.home, root)
+        from agent_platform import convert  # noqa: PLC0415 - the conversion builds on the command modules
+
+        return convert.ensure(Account.open(self.home, root))
 
 
 def with_account(work: Work, around: Around | None = None) -> Handler:

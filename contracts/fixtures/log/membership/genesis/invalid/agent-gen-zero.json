@@ -1,0 +1,28 @@
+{
+  "body": {
+    "org": "0193000c-0000-7000-8000-00000000000c",
+    "seq": 3,
+    "prev": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY",
+    "type": "genesis",
+    "by": "0193000c-0000-7000-8000-00000000000c",
+    "ts": "2026-11-21T12:00:00.000Z",
+    "v": 1,
+    "subject": "0193000c-0000-7000-8000-00000000000c",
+    "pub": {
+      "kem": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg",
+      "sig": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk"
+    },
+    "default_wg": "0193000c-0000-7000-8000-00000000000c",
+    "private": false,
+    "agent": {
+      "id": "0193000c-0000-7000-8000-00000000000c",
+      "pub": {
+        "kem": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+        "sig": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM"
+      },
+      "gen": 0,
+      "cert": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+    }
+  },
+  "sig": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+}

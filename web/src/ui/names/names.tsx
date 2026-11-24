@@ -8,16 +8,33 @@ import type { Directory } from '../../core/tasks/directory';
 
 type T = (key: string, params?: Record<string, string>) => string;
 
-/** A person's name as text: own name, "<name> (provisional)", or "Name not known yet". */
+/**
+ * A person's name as text: own name, "<name> (provisional)", or "Name not known yet"; an agent of the verified log is
+ * "Agent of <its user's name>" (ADR-082 section 1).
+ */
 export function personName(t: T, directory: Directory, id: string): string {
+  const user = directory.agents.get(id);
+  if (user !== undefined) return agentName(t, directory, user);
   const name = directory.members.get(id);
   if (name === undefined) return t('names.person.unknown');
   return directory.sources.get(id)?.source === 'own' ? name : t('names.person.provisional', { name });
 }
 
-/** `personName` of a person with a known name, undefined without one (the caller has its own word for "someone"). */
+/** "Agent of <its user's name>", or of a member whose name is not known yet. */
+function agentName(t: T, directory: Directory, user: string): string {
+  return directory.members.has(user)
+    ? t('names.agent.of', { name: personName(t, directory, user) })
+    : t('names.agent.unknown');
+}
+
+/**
+ * `personName` of a person with a known name or of an agent, undefined otherwise (the caller has its own word for
+ * "someone").
+ */
 export function knownPersonName(t: T, directory: Directory, id: string | null): string | undefined {
-  return id !== null && directory.members.has(id) ? personName(t, directory, id) : undefined;
+  return id !== null && (directory.members.has(id) || directory.agents.has(id))
+    ? personName(t, directory, id)
+    : undefined;
 }
 
 /** Who gave a provisional name (their shown name), or "an admin". */

@@ -6,7 +6,8 @@
   not inherit, ADR-058 section 1) and the devices assigned to it (`access` write: they author the session events of
   the workgroup).
 
-Platform devices whose certification has ended are left out (no readers, no authors). Names come from the verified
+Platform devices whose certification has ended are left out (no readers, no authors), and so are agents (ADR-082: an
+agent acts as its user and is no member of its own). Names come from the verified
 `member.profile` (users) and `device.profile` (devices) events; sorted by kind (users first), then name, and cut
 to the members that fit into one answer (`projection.BUDGET`; the tool has no paging).
 """
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_runner.crypto.log.state import USER
+from agent_runner.crypto.log.state import AGENT, USER
 from agent_runner.queries import common, projection
 from agent_runner.queries.rights import read_scope
 from agent_runner.sessions import profiles
@@ -49,7 +50,7 @@ async def list_members(call: QueryCall) -> QueryOutcome:
         members: list[dict[str, Any]] = []
         async with common.store(call.context) as (conn, key):
             for principal in state.principals.values():
-                if not principal.active or principal.id in scope.excluded:
+                if not principal.active or principal.kind == AGENT or principal.id in scope.excluded:
                     continue
                 user = principal.kind == USER
                 if level == "org":

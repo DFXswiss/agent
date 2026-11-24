@@ -261,7 +261,7 @@ export class SimHub {
       });
     }
     const orgLog = /^\/v1\/orgs\/([^/]+)\/log$/.exec(path);
-    if (method === 'GET' && orgLog) return () => this.#orgLog(orgLog[1]!);
+    if (method === 'GET' && orgLog) return (_b, _u, target) => this.#orgLog(orgLog[1]!, target);
     throw new HubFailure(404, 'not_found');
   }
 
@@ -506,12 +506,14 @@ export class SimHub {
     return { org_id: id, default_wg: org.defaultWg };
   }
 
-  async #orgLog(id: string): Promise<unknown> {
+  /** The org's log after `?after=` (all of it without). */
+  async #orgLog(id: string, target: string): Promise<unknown> {
     const org = this.orgs.get(id);
     if (org === undefined) throw new HubFailure(404, 'not_found');
     const last = org.entries.length - 1;
+    const after = Number(new URL(target, 'https://hub.example').searchParams.get('after') ?? -1);
     return {
-      entries: org.entries.map((entry, seq) => ({ seq, entry })),
+      entries: org.entries.map((entry, seq) => ({ seq, entry })).filter((item) => item.seq > after),
       head: { seq: last, hash: await entryHash(org.entries[last]) },
       next_after: null,
     };

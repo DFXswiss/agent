@@ -163,21 +163,38 @@ def test_storing_a_new_agent_replaces_the_previous_state(home: Home) -> None:
 
 @dataclass
 class FakeAccount:
-    """The paired account `confirm` works on."""
+    """The paired account `confirm` works on (an account of an agent alone without organizations): the signed
+    `GET /v1/agent-pairings/{id}` answers `found()`, `POST /v1/me/agents` `answer(body)`."""
 
     home: Home
     platform_root: str | None = ROOT
     posted: list[dict[str, Any]] = field(default_factory=list)
     answer: Callable[[dict[str, Any]], dict[str, Any]] = lambda body: {"agent_id": body["pairing_id"]}
+    found: Callable[[], dict[str, Any]] = dict
+    looked: list[str] = field(default_factory=list)
+    passkeys: list[dict[str, Any]] = field(default_factory=list)
     origin: str = ORIGIN
     user_id: str = field(default_factory=uuid7)
     agent_id: str = field(default_factory=uuid7)
     identity: Any = field(default_factory=alone.new_identity)
     state: dict[str, Any] = field(default_factory=dict)
 
-    def call(self, method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    def call(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method == "GET":
+            self.looked.append(path)
+            return self.found()
+        assert body is not None
         self.posted.append(body)
         return self.answer(body)
+
+    def user_kem_public(self) -> bytes:
+        return bytes(self.identity.kem_public())
+
+    def me(self) -> dict[str, Any]:
+        return {"orgs": [], "passkeys": self.passkeys}
+
+    def cred_keys(self) -> dict[int, bytes]:
+        return {}
 
 
 @dataclass
@@ -206,6 +223,7 @@ class Remote:
             "state": "open",
             "remote": True,
             "nonce": b64u_encode(self.nonce),
+            "gen": 1,
         }
         return {**found, **changes}
 
@@ -218,8 +236,7 @@ def test_confirm_refuses_links_that_are_no_remote_pairing_of_this_hub(
     home: Home, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pairing = Remote()
-    calls = script(monkeypatch, lambda method, path, body: pairing.lookup())
-    account = FakeAccount(home)
+    account = FakeAccount(home, found=pairing.lookup)
     for link in (
         pairing.link() + "&p=" + pairing.pairing_id,
         pairing.link(m="loopback"),
@@ -233,20 +250,24 @@ def test_confirm_refuses_links_that_are_no_remote_pairing_of_this_hub(
             confirm(account, link, pairing.code())
         assert refused.value.code == "invalid_argument"
     assert refusal(lambda: confirm(account, pairing.link(), "short")).code == "invalid_argument"
-    assert calls == []
+    assert account.looked == []
 
 
 def test_confirm_needs_the_open_remote_pairing_of_the_link(home: Home, monkeypatch: pytest.MonkeyPatch) -> None:
     pairing = Remote()
     account = FakeAccount(home)
-    changed: list[dict[str, object]] = [{"state": "confirmed"}, {"remote": None}, {"pub": None}, {"nonce": "x"}]
+    changed: list[dict[str, object]] = [
+        {"state": "confirmed"},
+        {"remote": None},
+        {"pub": None},
+        {"nonce": "x"},
+        {"gen": None},
+        {"gen": True},
+        {"gen": 0},
+    ]
     for changes in changed:
         found = pairing.lookup(**changes)
-
-        def answer(method: str, path: str, body: Any, found: dict[str, Any] = found) -> dict[str, Any]:
-            return found
-
-        script(monkeypatch, answer)
+        account.found = lambda found=found: found  # type: ignore[misc]
         with pytest.raises(PlatformError) as refused:
             confirm(account, pairing.link(), pairing.code())
         assert refused.value.fields["reason"] == "pairing_mismatch"
@@ -255,16 +276,30 @@ def test_confirm_needs_the_open_remote_pairing_of_the_link(home: Home, monkeypat
 
 def test_confirm_needs_the_root_key_and_checks_the_hubs_answer(home: Home, monkeypatch: pytest.MonkeyPatch) -> None:
     pairing = Remote()
-    script(monkeypatch, lambda method, path, body: pairing.lookup())
-    assert refusal(lambda: confirm(FakeAccount(home, None), pairing.link(), pairing.code())).code == "state_damaged"
+    no_root = FakeAccount(home, None, found=pairing.lookup)
+    assert refusal(lambda: confirm(no_root, pairing.link(), pairing.code())).code == "state_damaged"
 
     def refused(body: dict[str, Any]) -> dict[str, Any]:
         raise PlatformError("hub_refused", hub_error="pairing_unknown", status=404)
 
-    passed_on = refusal(lambda: confirm(FakeAccount(home, answer=refused), pairing.link(), pairing.code()))
+    passed_on = refusal(
+        lambda: confirm(FakeAccount(home, answer=refused, found=pairing.lookup), pairing.link(), pairing.code())
+    )
     assert passed_on.fields["hub_error"] == "pairing_unknown"
-    other = FakeAccount(home, answer=lambda body: {"agent_id": uuid7()})
+
+    def forbidden(body: dict[str, Any]) -> dict[str, Any]:
+        raise PlatformError("hub_refused", hub_error="forbidden", status=403)
+
+    # an account that has a passkey by now: the new form, which the hub refuses from an agent
+    with_passkey = FakeAccount(home, answer=forbidden, found=pairing.lookup, passkeys=[{"credential_id": "x"}])
+    assert refusal(lambda: confirm(with_passkey, pairing.link(), pairing.code())).code == "not_own_account"
+    assert {"cert", "user_ct", "batches"} <= set(with_passkey.posted[0])
+    assert "bundle_ct" not in with_passkey.posted[0]
+    other = FakeAccount(home, answer=lambda body: {"agent_id": uuid7()}, found=pairing.lookup)
     assert refusal(lambda: confirm(other, pairing.link(), pairing.code())).fields["reason"] == "response_invalid"
+    # an account of an agent alone hands its identity to the successor (ADR-082 section 7)
+    assert "bundle_ct" in other.posted[0]
+    assert "cert" not in other.posted[0]
 
 
 # --- a lost answer and a failed organization step ---

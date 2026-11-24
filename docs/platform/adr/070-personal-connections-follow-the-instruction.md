@@ -29,7 +29,7 @@ attributed to each person) and [E-19](../KONZEPT.md#e-19) (exclude the class, no
   of a main session sets the turn's acting user when no turn is open; another or an unknown author in the same open
   turn (queued prompts of several people) leaves the turn **without** acting user until the next turn; `idle` closes
   the turn. A child session (`subagent.request`) takes the acting user of the request that started it. A user's own
-  agent signs as that user and so counts as that user.
+  agent counts as that user (since ADR-082 it signs with its own key as a sub-principal of the user).
 - **Stamp at receipt.** `operation.request` is stamped with the acting user in the journal transaction
   (`operation.actor_id`); the stamp never changes, so a held operation runs, if at all, with the connection of the
   person who asked for it, whoever writes later.

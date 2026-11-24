@@ -1,10 +1,12 @@
 """Routes of the community area (14-community.md section 4, ADR-069).
 
 Every route of a user is a signed browser request (`auth="browser"`; KOR-24 agents use the same routes with the
-user's rights); the moderator list is root-signed (operator CLI). Request bodies are closed (`extra="forbid"`, strict
-types). Database work runs in a worker thread inside one transaction; live frames are published after the commit:
-`community {change, seq}` to every browser (`all`) for new and deleted messages and for a new key request, to the one
-user for a new wrap (`key`) and a changed mute (`mute`).
+user's rights); the moderator list is root-signed (operator CLI). An own-identity agent (ADR-082) is a community
+principal of its own: it joins, asks for the community key with its own key, wraps and posts under its agent ID
+(`community_id`, accepted only while it is its user's active agent); moderation stays its user's right (`_user`).
+Request bodies are closed (`extra="forbid"`, strict types). Database work runs in a worker thread inside one
+transaction; live frames are published after the commit: `community {change, seq}` to every browser (`all`) for new
+and deleted messages and for a new key request, to the one user for a new wrap (`key`) and a changed mute (`mute`).
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ from uuid import UUID
 from fastapi import Query, Request
 from pydantic import Field, StrictBool, StrictInt
 
+from agent_hub.agents.identity import actor
+from agent_hub.agents.store import acting_user
 from agent_hub.audit.recorder import unchanged
 from agent_hub.auth.fields import B64u32, B64u64, Empty, Strict, Uuid7, b64u_text
 from agent_hub.auth.keys import Principal
@@ -89,6 +93,11 @@ def _user(principal: Principal) -> UUID:
     return cast(UUID, principal.principal_id)
 
 
+def community_id(principal: Principal) -> UUID:
+    """The community principal of a request: the user, or the user's own-identity agent (module docstring)."""
+    return UUID(actor(principal).id)
+
+
 async def in_transaction[T](context: HubContext, work: Callable[[Any], T]) -> T:
     """Run `work(connection)` in a worker thread inside one transaction."""
 
@@ -141,7 +150,7 @@ def request_frame(request: Request, context: HubContext, seq: int) -> None:
 
 @router.get("/v1/community", auth="browser", right="user", read_resource="community")
 async def get_community(request: Request, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
-    user, now = _user(principal), context.clock()
+    user, now = community_id(principal), context.clock()
 
     def work(connection: Any) -> tuple[dict[str, Any], bool]:
         return distribution.state(connection, user), distribution.waiting_unserved(connection, user, now)
@@ -156,14 +165,14 @@ async def get_community(request: Request, context: Context, principal: CurrentPr
 
 @router.post("/v1/community/join", auth="browser", right="user")
 async def join(body: Empty, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
-    user, now = _user(principal), context.clock()
+    user, now = community_id(principal), context.clock()
     await in_transaction(context, lambda c: store.join(c, user, now))
     return {"joined": True}
 
 
 @router.post("/v1/community/epochs", auth="browser", right="user")
 async def create_epoch(body: EpochCreate, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
-    user, now = _user(principal), context.clock()
+    user, now = community_id(principal), context.clock()
     epoch = await in_transaction(
         context,
         lambda c: distribution.create_epoch(
@@ -177,7 +186,7 @@ async def create_epoch(body: EpochCreate, context: Context, principal: CurrentPr
 async def put_request(
     body: RequestPut, request: Request, context: Context, principal: CurrentPrincipal
 ) -> dict[str, Any]:
-    user, now = _user(principal), context.clock()
+    user, now = community_id(principal), context.clock()
     limiter = request_limiter_of(request, context)
 
     def work(connection: Any) -> tuple[bool, int]:
@@ -202,21 +211,22 @@ async def put_request(
 async def get_requests(
     context: Context, principal: CurrentPrincipal, limit: Annotated[str | None, Query()] = None
 ) -> dict[str, Any]:
-    user, now = _user(principal), context.clock()
+    user, now = community_id(principal), context.clock()
     count = parse_count(limit, DEFAULT_REQUESTS, 1, MAX_PAGE)
     return {"requests": await in_transaction(context, lambda c: distribution.open_requests(c, user, count, now))}
 
 
 @router.post("/v1/community/requests/wraps", auth="browser", right="user")
 async def post_request_wraps(body: RequestWrapsPost, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
-    user, now = _user(principal), context.clock()
+    user, now = community_id(principal), context.clock()
     items = [item.model_dump() for item in body.wraps]
 
     def work(connection: Any) -> tuple[list[UUID], int]:
         served = distribution.wrap_requests(connection, user, items, now)
         if not served:  # every entry skipped: nothing changed (ADR-063 section 1)
             unchanged()
-        return served, store.head_seq(connection)
+        # an agent requester receives on its user's channel (ADR-082)
+        return [acting_user(connection, item) for item in served], store.head_seq(connection)
 
     served, seq = await in_transaction(context, work)
     for requester in served:
@@ -228,7 +238,7 @@ async def post_request_wraps(body: RequestWrapsPost, context: Context, principal
 async def reject_request(
     body: Empty, request: Request, context: Context, principal: CurrentPrincipal
 ) -> dict[str, Any]:
-    user, now = _user(principal), context.clock()
+    user, now = community_id(principal), context.clock()
 
     def work(connection: Any) -> int:
         distribution.reject(connection, user, now)
@@ -241,7 +251,7 @@ async def reject_request(
 
 @router.post("/v1/community/wraps", auth="browser", right="user")
 async def post_self_wrap(body: SelfWrap, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
-    user, now = _user(principal), context.clock()
+    user, now = community_id(principal), context.clock()
     epoch = await in_transaction(
         context,
         lambda c: distribution.store_self_wrap(
@@ -270,7 +280,7 @@ async def get_messages(
 async def post_message(
     body: MessagePost, request: Request, context: Context, principal: CurrentPrincipal
 ) -> dict[str, Any]:
-    user, now = _user(principal), context.clock()
+    user, now = community_id(principal), context.clock()
     limiter = limiter_of(request, context)
 
     def work(connection: Any) -> store.Posted:
@@ -305,15 +315,16 @@ async def post_message(
 
 @router.delete("/v1/community/messages/{id}", auth="browser", right=("owner", "community:moderator"))
 async def delete_message(id: str, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
-    user, now, message_id = _user(principal), context.clock(), path_id(id)
-    role, seq = await in_transaction(context, lambda c: store.delete(c, user, message_id, now))
+    user, now, message_id = community_id(principal), context.clock(), path_id(id)
+    moderator = _user(principal)  # moderation stays the user's right
+    role, seq = await in_transaction(context, lambda c: store.delete(c, user, message_id, now, moderator=moderator))
     announce(everyone(), "delete", seq)
     return {"deleted": role}
 
 
 @router.put("/v1/community/read", auth="browser", right="user")
 async def put_read(body: ReadPut, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
-    user = _user(principal)
+    user = community_id(principal)
     return {"last_read_seq": await in_transaction(context, lambda c: store.mark_read(c, user, body.seq))}
 
 

@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from agent_hub.agents import vectors as agent_vectors
-from agent_hub.crypto import agent, hpke, keys, vectors
+from agent_hub.crypto import aead, agent, hpke, keys, vectors
 from agent_hub.crypto.bundle import bundle_plaintext
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode
 from agent_hub.crypto.errors import CryptoError
@@ -321,3 +321,75 @@ def test_a_proof_method_outside_the_list_and_short_keys_are_refused() -> None:
             user_id="u",
         )
     assert short.value.code == "header_invalid"
+
+
+def test_the_delegation_certificate_is_reproduced_with_independent_code() -> None:
+    """ADR-082 sections 1 and 9.1: the user signs the agent's ID, keys, generation and version."""
+    bot, user, case = DATA["agent"], DATA["user"], DATA["own_identity"]["cert"]
+    pub = {"kem": bot["kem"], "sig": bot["sig"]}
+    certified = {"agent": bot["id"], "gen": 1, "pub": pub, "user": user["id"], "v": 1}
+    text = PREFIX + b"agent-cert\x00" + json.dumps(certified, sort_keys=True, separators=(",", ":")).encode()
+    assert b(case["text"]) == text
+    assert case["gen"] == 1
+    assert agent.cert_text(bot["id"], case["pub"], user["id"], 1) == text
+    Ed25519PublicKey.from_public_bytes(b(user["sig"])).verify(b(case["cert"]), text)
+    alice = Ed25519PrivateKey.from_private_bytes(vectors.fixed("alice/sig"))
+    assert agent.sign_cert(alice, bot["id"], case["pub"], user["id"], 1) == case["cert"]
+    agent.verify_cert(b(user["sig"]), case["cert"], agent_id=bot["id"], pub=case["pub"], user_id=user["id"], gen=1)
+    for gen in (0, True, "1", 2**31):
+        with pytest.raises(CryptoError) as refused:
+            agent.cert_text(bot["id"], case["pub"], user["id"], gen)
+        assert refused.value.code == "header_invalid"
+    bad: list[tuple[object, str]] = [({"kem": bot["kem"]}, bot["id"]), (case["pub"], "agent"), ([1, 2], bot["id"])]
+    for wrong, agent_id in bad:
+        with pytest.raises(CryptoError):
+            agent.cert_text(agent_id, wrong, user["id"], 1)
+
+
+def test_the_user_anchor_opens_with_independent_code_and_is_reproduced() -> None:
+    """ADR-082 section 2: the user's public keys and the certificate, bound to `r` and sealed to the agent."""
+    bot, user, case = DATA["agent"], DATA["user"], DATA["own_identity"]["user_anchor"]
+    info = PREFIX + b"agent-user\x00" + ids(bot["id"], user["id"])
+    assert b(case["info"]) == info
+    inner = SUITE.decrypt(b(case["sealed"]), X25519PrivateKey.from_private_bytes(b(bot["kem_sk"])), info=info)
+    nonce = inner[:12]
+    assert nonce == b(case["nonce"])
+    plaintext = AESGCM(b(DATA["secret"]["bundle_key"])).decrypt(nonce, inner[12:], info)
+    assert plaintext.decode() == case["plaintext"]
+    cert = DATA["own_identity"]["cert"]["cert"]
+    expected = {"cert": cert, "kem": user["kem"], "sig": user["sig"]}
+    assert plaintext == json.dumps(expected, sort_keys=True, separators=(",", ":")).encode()
+    bot_kem, secret = keys.x25519_private(b(bot["kem_sk"])), b(DATA["secret"]["secret"])
+    assert agent.open_user(bot_kem, secret, bot["id"], user["id"], case["sealed"]) == expected
+    resealed = agent.seal_user(
+        b(bot["kem"]),
+        secret,
+        bot["id"],
+        user["id"],
+        user_pub={"kem": user["kem"], "sig": user["sig"]},
+        cert=cert,
+        nonce=nonce,
+        ephemeral=keys.x25519_private(b(case["ephemeral_sk"])),
+    )
+    assert resealed == case["sealed"]
+    user_pub = {"kem": user["kem"], "sig": user["sig"]}
+    fresh = agent.seal_user(b(bot["kem"]), secret, bot["id"], user["id"], user_pub=user_pub, cert=cert)
+    assert fresh != case["sealed"]
+
+
+def test_a_user_anchor_must_hold_keys_and_a_signature() -> None:
+    first = agent.new_agent()
+    user = keys.Identity.generate()
+    secret = bytes(range(32))
+    cert = b64u_encode(bytes(64))
+    sealed = agent.seal_user(first.kem_public(), secret, "a", "u", user_pub=user.public(), cert=cert)
+    assert agent.open_user(first.kem, secret, "a", "u", sealed) == {"cert": cert, **user.public()}
+    for user_pub, signature in ((user.public(), b64u_encode(bytes(63))), ({"kem": "x", "sig": "y"}, cert)):
+        with pytest.raises(CryptoError) as refused:
+            agent.seal_user(first.kem_public(), secret, "a", "u", user_pub=user_pub, cert=signature)
+        assert refused.value.code == "header_invalid"
+    info = agent.user_info("a", "u")
+    inner = aead.seal_blob(agent.bundle_key(secret, "a", "u"), b"[]", info)
+    with pytest.raises(CryptoError) as refused:
+        agent.open_user(first.kem, secret, "a", "u", b64u_encode(hpke.seal(first.kem_public(), info, inner)))
+    assert refused.value.code == "header_invalid"

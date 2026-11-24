@@ -113,7 +113,12 @@ def test_append_runs_the_extra_step_in_the_same_transaction(world: World) -> Non
         )
     assert seen[0].head.seq == 1
     assert world.rows("SELECT log_head_seq FROM hub.org") == [(0,)]
+    # the rolled-back batch left no cached log (E-19): only a committed append is cached, after its commit
+    rolled_back = seen[0].head
+    assert logs.ORG_LOGS.get((uuid.UUID(draft.id), rolled_back.seq, rolled_back.hash)) is None
     assert draft.post(admin, draft.wraps(admin, "wg", wg, 1, [admin])).status_code == 200
+    head = world.rows("SELECT log_head_seq, log_head_hash FROM hub.org")[0]
+    assert logs.ORG_LOGS.get((uuid.UUID(draft.id), head[0], head[1])) is not None
 
 
 def test_malformed_entries_reach_the_format_check(world: World) -> None:

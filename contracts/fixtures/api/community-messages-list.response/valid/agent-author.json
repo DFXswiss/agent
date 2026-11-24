@@ -1,0 +1,26 @@
+{
+  "messages": [
+    {
+      "seq": 2,
+      "id": "0193a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a2b",
+      "author": "0193a1b2-c3d4-7e5f-9a6b-7c8d9e0f1a2c",
+      "created_at": "2026-11-23T12:00:00.000Z",
+      "deleted": "moderator",
+      "message": null
+    }
+  ],
+  "authors": {
+    "0190f0f0-0000-7000-8000-0000000000aa": {
+      "sig_pub": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "moderator": false,
+      "agent": {
+        "user": "0190f0f0-0000-7000-8000-000000000002",
+        "user_sig_pub": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "kem_pub": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "gen": 1,
+        "cert": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    }
+  },
+  "next_before": null
+}

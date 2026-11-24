@@ -14,6 +14,7 @@ import { isRecord } from '../registry';
 export const AUDIT_ACTIONS: readonly string[] = [
   'agent.claim',
   'agent.confirm',
+  'agent.identity',
   'agent.pairing',
   'agent.register',
   'agent.revoke',
@@ -65,6 +66,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'invite.use',
   'log.accept',
   'log.admit',
+  'log.agent_add',
   'log.device_assign',
   'log.device_assign_org',
   'log.device_unassign',

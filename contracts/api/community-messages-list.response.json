@@ -14,7 +14,7 @@
     },
     "authors": {
       "type": "object",
-      "description": "identity signing keys and moderator flag of the authors on the page, by user ID",
+      "description": "identity signing keys and moderator flag of the authors on the page, by user ID (an own-identity agent by agent ID, with agent)",
       "additionalProperties": {
         "type": "object",
         "properties": {
@@ -23,6 +23,37 @@
           },
           "moderator": {
             "type": "boolean"
+          },
+          "agent": {
+            "type": "object",
+            "description": "an own-identity agent (ADR-082): its user with the user's signing key, its encryption key, generation and certificate (readers check the certificate and show \"Agent of <user>\")",
+            "properties": {
+              "user": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "user_sig_pub": {
+                "$ref": "../common.json#/$defs/b64u_32"
+              },
+              "kem_pub": {
+                "$ref": "../common.json#/$defs/b64u_32"
+              },
+              "gen": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "cert": {
+                "$ref": "../common.json#/$defs/b64u_64"
+              }
+            },
+            "required": [
+              "user",
+              "user_sig_pub",
+              "kem_pub",
+              "gen",
+              "cert"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

@@ -46,6 +46,10 @@
       "group": "agent"
     },
     {
+      "action": "agent.identity",
+      "group": "agent"
+    },
+    {
       "action": "notification.read",
       "group": "notification"
     },
@@ -123,6 +127,10 @@
     },
     {
       "action": "log.remove",
+      "group": "log"
+    },
+    {
+      "action": "log.agent_add",
       "group": "log"
     },
     {

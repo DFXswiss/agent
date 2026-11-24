@@ -202,6 +202,7 @@ describe('community messages', () => {
         message(5, { status: 'unverifiable', name: null, text: null }),
         message(6, { status: 'pending', name: null, text: null, at: 0 }),
         message(7, { author: ME, name: 'Me' }),
+        message(8, { name: 'Ada', agent: true }),
       ],
     });
     mount(w);
@@ -225,7 +226,10 @@ describe('community messages', () => {
       'unverifiable',
       'pending',
       'verified',
+      'verified',
     ]);
+    // a message of an own-identity agent (ADR-082)
+    expect(within(items[7]!).getByTestId('community.message.name')).toHaveTextContent('Agent of Ada');
     const mia = items[1]!;
     expect(within(mia).getByTestId('community.message.name')).toHaveTextContent('Mia');
     expect(within(mia).getByTestId('community.message.moderator')).toHaveTextContent('Moderator');

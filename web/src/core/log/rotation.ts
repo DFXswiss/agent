@@ -4,8 +4,10 @@
 //
 // `checkBatch` runs, in this order:
 // 1. L1-L8 for every entry (`appendEntries`; a wrong first `seq` is `seq_conflict`);
-// 2. the rotation obligation: R = the union of `R(before, after, subject)` over the entries, except a member that
-//    leaves by itself or an admin that demotes itself (it cannot rotate what it no longer reads; its R becomes
+// 2. the rotation obligation: R = the union of `R(before, after, p)` over the entries and every principal `p` the
+//    entry takes access from (`losingSubjects`: its subject and every principal it removes, e.g. the agent of a
+//    removed user or the agent an `agent_add` replaces), except a member that leaves by itself (also a user through
+//    its agent) or an admin that demotes itself (it cannot rotate what it no longer reads; its R becomes
 //    `OrgState.pending`, ADR-058 section 3). If R is not empty the batch MUST contain exactly one
 //    `rotate` per element of R and no other `rotate`, each after the last entry contributing to R
 //    (`rotation_required`);
@@ -18,7 +20,9 @@
 // `buildBatch` produces exactly such a batch from the verified log: the requested entries, one `rotate` per element
 // of R with a fresh key, wraps of every new epoch for all remaining recipients and wraps of the current epochs for
 // every principal the batch newly entitles (grant, device assignment, accept; every held epoch of a workgroup for a
-// grant with history and for a principal that reads it by inheritance, ADR-058 section 2), then runs `checkBatch` on
+// grant with history and for a principal that reads it by inheritance, ADR-058 section 2; an agent the epochs its user
+// gets, and every held epoch of every scope in the batch of its user or itself that installs it, ADR-082 sections 2
+// and 9.4), then runs `checkBatch` on
 // its own result. Wraps of epochs the batch does not create follow the transition rule `compatSkip`. It is a pure
 // function of the log: after `seq_conflict` the caller re-reads the log and builds again.
 import { formatTime } from '../encoding/time';
@@ -27,26 +31,31 @@ import type { Identity } from '../crypto/keys';
 import { Secret } from '../crypto/secret';
 import { buildEntries, type Body, type Entry, type LogFields, type LogSigner } from './entries';
 import { excludedFor, type PlatformState } from './platform';
-import { epochKey, ORG, type OrgState, pairKey, requiredSet, type Scope, splitKey, WG, WRITE } from './state';
+import {
+  entrySubject,
+  epochKey,
+  losers,
+  lost,
+  ORG,
+  type OrgState,
+  pairKey,
+  requiredSet,
+  type Scope,
+  SELF_OWED,
+  selfOwed,
+  splitKey,
+  WG,
+  WRITE,
+} from './state';
 import { appendEntries, type VerifiedLog } from './verify';
 import { buildWraps, compatSkip, type KeyRing } from './catchup';
 import { checkWrap, compareSlots, slotKey, type WrapRecord, type WrapSlot } from './wraps';
 
-export { requiredSet };
+export { entrySubject, losers, lost, requiredSet, SELF_OWED, selfOwed };
 
-/** Entry types whose R is owed by the others (`OrgState.pending`) when the subject is the author itself. */
-export const SELF_OWED: ReadonlySet<string> = new Set(['remove', 'role']);
-
-/** The entry owes no rotation in its own batch: genesis, or a self-`remove`/self-`role` (`SELF_OWED`). */
-const owesNothing = (seq: number, body: Body): boolean =>
-  seq === 0 || (SELF_OWED.has(body.type as string) && entrySubject(body) === body.by);
-
-/** The principal an entry is about: `subject`, else `device`, else its author `by`. */
-export function entrySubject(body: Body): string {
-  if (Object.hasOwn(body, 'subject')) return String(body.subject);
-  if (Object.hasOwn(body, 'device')) return String(body.device);
-  return String(body.by);
-}
+/** The entry owes no rotation in its own batch: genesis, or a self-`remove`/self-`role` (`selfOwed`). */
+const owesNothing = (before: OrgState | undefined, body: Body): boolean =>
+  before === undefined || selfOwed(before, body);
 
 /** R in the vector/API form `[{scope, scope_id}]`, sorted. */
 export function asJson(scopes: Iterable<string>): { scope: string; scope_id: string }[] {
@@ -113,10 +122,11 @@ export async function checkBatch(
   for (const [index, body] of bodies.entries()) {
     const seq = first + index;
     if (body.type === 'rotate') rotates.push([index, pairKey(body.scope as string, body.scope_id as string)]);
-    if (owesNothing(seq, body)) continue;
-    const lost = requiredSet(after.states[seq - 1]!, after.states[seq]!, entrySubject(body));
-    if (lost.size > 0) {
-      for (const scope of lost) required.add(scope);
+    const before = after.states[seq - 1];
+    if (owesNothing(before, body)) continue;
+    const taken = lost(before!, after.states[seq]!, body);
+    if (taken.size > 0) {
+      for (const scope of taken) required.add(scope);
       lastTrigger = index;
     }
   }
@@ -241,9 +251,9 @@ export async function buildBatch(input: BatchInput): Promise<BuiltBatch> {
   for (const [index, entry] of requested.entries()) {
     const seq = first + index;
     const body = entry.body;
-    if (owesNothing(seq, body)) continue;
-    for (const scope of requiredSet(trial.states[seq - 1]!, trial.states[seq]!, entrySubject(body)))
-      required.add(scope);
+    const before = trial.states[seq - 1];
+    if (owesNothing(before, body)) continue;
+    for (const scope of lost(before!, trial.states[seq]!, body)) required.add(scope);
   }
   // 2. one rotate per element of R, after the requested entries
   const rotations: LogFields[] = [...required].sort().map((key) => {
@@ -287,7 +297,14 @@ export async function buildBatch(input: BatchInput): Promise<BuiltBatch> {
     const current = state.epoch(scope, scopeId);
     for (const recipient of state.readers(scope, scopeId, skip)) {
       if (before!.canRead(recipient, scope, scopeId)) continue;
-      const older = scope === WG && (history.has(pairKey(recipient, scopeId)) || state.inherited(recipient, scopeId));
+      // an agent gets the epochs its user gets; the batch of its user (or itself) that installs it, every held epoch
+      const parent = state.member(recipient)!.parent;
+      const installs =
+        parent !== null && before!.member(recipient) === null && state.acting(input.author.id) === parent;
+      const older =
+        installs ||
+        (scope === WG &&
+          (history.has(pairKey(state.acting(recipient), scopeId)) || state.inherited(recipient, scopeId)));
       for (let epoch = older ? 1 : current; epoch <= current; epoch += 1) {
         const slot = { scope, scope_id: scopeId, epoch, recipient };
         if (!compatSkip(state, input.author.id, slot)) slots.push(slot);
@@ -322,11 +339,12 @@ export function pendingRotation(
 ): Promise<BuiltBatch> | null {
   const state = log.state;
   const me = input.author.id;
-  const allowed = [...pending].filter(([scope, scopeId]) =>
-    scope === ORG
-      ? scopeId === state.org && state.isAdmin(me)
-      : state.workgroups.has(scopeId) && (state.isAdmin(me) || state.wgAccess(me, scopeId) === WRITE),
-  );
+  const allowed = [...pending].filter(([scope, scopeId]) => {
+    const owed = state.agentOwed.get(pairKey(scope, scopeId)) === state.acting(me);
+    return scope === ORG
+      ? scopeId === state.org && (state.isAdmin(me) || owed)
+      : state.workgroups.has(scopeId) && (state.isAdmin(me) || owed || state.wgAccess(me, scopeId) === WRITE);
+  });
   if (allowed.length === 0) return null;
   const entries: LogFields[] = allowed.map(([scope, scopeId]) => ({
     type: 'rotate',

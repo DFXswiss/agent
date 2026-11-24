@@ -3,13 +3,17 @@
 Any key holder computes from the verified log the recipients that are entitled to the **current** epoch of a scope
 but have no wrap yet, restricted to the wraps it may create (W1/W2). Older epochs are wrapped only on request
 (section 5.10), with one exception: an admin that reads a workgroup by inheritance gets **every** epoch of it
-(`catch_up_epochs`, ADR-058 section 2: an admin reads the whole workgroup, its history included). The hub answers the
-endpoint with the same function for the calling principal.
+(`catch_up_epochs`, ADR-058 section 2: an admin reads the whole workgroup, its history included). The active agent of a
+user (ADR-082 section 9.4) gets what its user gets, and in addition every slot its user has since its current
+membership (`agent_slots`: also older epochs delivered on request or after a promotion, but none current before the
+user's last `accept`/`admit`). The hub answers the endpoint with the same function
+for the calling principal.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from itertools import chain
 
 from agent_hub.log.state import WG, OrgState
 from agent_hub.log.verify import VerifiedLog
@@ -28,7 +32,20 @@ def missing_wraps(
         for recipient in state.readers(scope, scope_id, skip)
         for epoch in catch_up_epochs(state, scope, scope_id, recipient)
     )
-    return sorted(slot for slot in slots if slot not in have and may_wrap(log, slot, wrapper, skip))
+    candidates = set(chain(slots, agent_slots(log, have)))
+    return sorted(slot for slot in candidates if slot not in have and may_wrap(log, slot, wrapper, skip))
+
+
+def agent_slots(log: VerifiedLog, existing: Iterable[WrapSlot]) -> set[WrapSlot]:
+    """Every slot of a user implies the same slot for the user's active agent (ADR-082 section 9.4), for the epochs
+    since the user's current membership: an epoch at least the one current when the user (re)joined."""
+    state = log.state
+    return {
+        WrapSlot(slot.scope, slot.scope_id, slot.epoch, agent.id)
+        for slot in existing
+        if (agent := state.agent_of(slot.recipient)) is not None
+        and slot.epoch >= log.states[state.principals[slot.recipient].joined_seq].epoch(slot.scope, slot.scope_id)
+    }
 
 
 def catch_up_epochs(state: OrgState, scope: str, scope_id: str, recipient: str) -> range:
@@ -47,10 +64,19 @@ def missing_cred_wraps(
     existing: Iterable[WrapSlot],
     excluded: Iterable[str] = (),
 ) -> list[WrapSlot]:
-    """Sorted `cred` slots of the owner's current CK epoch without a wrap that `wrapper` may create."""
+    """Sorted `cred` slots of the owner's current CK epoch without a wrap that `wrapper` may create, and for the
+    owner's agents every CK epoch the owner has a wrap of (ADR-082 section 9.4)."""
     have, skip = set(existing), frozenset(excluded)
     states = [log.state for log in logs]
-    slots = (WrapSlot(CRED, owner, current_epoch, recipient) for recipient in cred_readers(states, owner, skip))
+    readers = cred_readers(states, owner, skip)
+    agents = readers & {agent.id for state in states if (agent := state.agent_of(owner)) is not None}
+    older = (
+        WrapSlot(CRED, owner, slot.epoch, agent)
+        for slot in have
+        if (slot.scope, slot.scope_id, slot.recipient) == (CRED, owner, owner)
+        for agent in agents
+    )
+    slots = set(chain((WrapSlot(CRED, owner, current_epoch, recipient) for recipient in readers), older))
     return sorted(
         slot for slot in slots if slot not in have and may_wrap_cred(states, slot, wrapper, current_epoch, skip)
     )

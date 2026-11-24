@@ -17,6 +17,7 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
+from agent_hub.agents.store import acting_user, agent_authors, agent_keys
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.audit.recorder import unchanged
 from agent_hub.community import crypto as community_format
@@ -62,7 +63,7 @@ def audit(
         AuditRow(
             at=now,
             actor_kind=actor_kind,
-            actor_id=actor,
+            actor_id=None if actor is None else acting_user(connection, actor),  # an agent: its user (ADR-082)
             action=action,
             result="ok",
             target_kind=target_kind,
@@ -83,9 +84,10 @@ def current_epoch(connection: Connection) -> int | None:
 
 
 def identity(connection: Connection, user: UUID) -> tuple[bytes, bytes] | None:
-    """`(kem_pub, sig_pub)` of a registered user."""
+    """`(kem_pub, sig_pub)` of a registered user, or of an own-identity agent while it is its user's active agent (a
+    community author of its own, ADR-082 sections 1 and 9.12)."""
     row = connection.execute("SELECT kem_pub, sig_pub FROM hub.user_identity WHERE user_id = %s", (user,)).fetchone()
-    return None if row is None else (bytes(row[0]), bytes(row[1]))
+    return agent_keys(connection, user) if row is None else (bytes(row[0]), bytes(row[1]))
 
 
 def _member(connection: Connection, user: UUID, *, lock: bool = False) -> tuple[int, datetime | None] | None:
@@ -181,6 +183,8 @@ def messages(connection: Connection, *, before: int | None, after: int | None, l
         if authors
         else []
     )
+    found = {str(row[0]) for row in keys}
+    agents = agent_authors(connection, [author for author in authors if str(author) not in found])
     return {
         "messages": [
             {
@@ -194,8 +198,11 @@ def messages(connection: Connection, *, before: int | None, after: int | None, l
             for seq, message_id, author, created_at, deleted_as, header, ct, sig in rows
         ],
         "authors": {
-            str(user_id): {"sig_pub": b64u_encode(bytes(sig_pub)), "moderator": bool(moderator)}
-            for user_id, sig_pub, moderator in keys
+            **{
+                str(user_id): {"sig_pub": b64u_encode(bytes(sig_pub)), "moderator": bool(moderator)}
+                for user_id, sig_pub, moderator in keys
+            },
+            **agents,
         },
         "next_before": next_before,
     }
@@ -290,8 +297,11 @@ def post(connection: Connection, user: UUID, message: Mapping[str, Any], now: da
     return Posted(seq=seq, replayed=False)
 
 
-def delete(connection: Connection, user: UUID, message_id: UUID, now: datetime) -> tuple[str, int]:
-    """Delete a message as its author or as a moderator; returns `(deleted_as, seq)` (idempotent)."""
+def delete(
+    connection: Connection, user: UUID, message_id: UUID, now: datetime, *, moderator: UUID | None = None
+) -> tuple[str, int]:
+    """Delete a message as its author `user` or as a moderator (`moderator`, default `user`: the user of an agent
+    author); returns `(deleted_as, seq)` (idempotent)."""
     row = connection.execute(
         "SELECT seq, author_id, deleted_as FROM hub.community_message WHERE id = %s FOR UPDATE", (message_id,)
     ).fetchone()
@@ -303,7 +313,7 @@ def delete(connection: Connection, user: UUID, message_id: UUID, now: datetime) 
         return str(deleted_as), seq
     if author == user:
         role = "author"
-    elif is_moderator(connection, user):
+    elif is_moderator(connection, moderator or user):
         role = "moderator"
     else:
         raise HubError("forbidden")

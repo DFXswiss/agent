@@ -111,10 +111,10 @@ def test_tasks_and_credentials(real: RealHub) -> None:
     assert (credit["org_id"], credit["billing_active"], credit["exhausted"]) == (org, False, False)
     assert (credit["price_list_version"], credit["token_prices"], credit["days"]) == (None, [], [])
     assert run_ok(ada.tool, "task", "charges", "--task", task)["total_micro_usd"] == 0
-    # a credential stored as the user, then the credential key rotated for the user and the device
+    # a credential stored by the agent, then the credential key rotated for the user, its agent and the device
     assert run_ok(ada.tool, "credentials", "set-api-key", stdin="sk-test-" + "k" * 20)["stored"] is True
     rotated = run_ok(ada.tool, "credentials", "rotate", "--force")
-    assert (rotated["status"], rotated["epoch"], rotated["records"], rotated["recipients"]) == ("rotated", 2, 1, 2)
+    assert (rotated["status"], rotated["epoch"], rotated["records"], rotated["recipients"]) == ("rotated", 2, 1, 3)
     listed = run_ok(ada.tool, "credentials", "list")["credentials"]
     assert [(item["kind"], item["status"], item["epoch"]) for item in listed] == [("anthropic_api_key", "verified", 2)]
     assert "k" * 20 not in str(listed)

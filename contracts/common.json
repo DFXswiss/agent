@@ -217,6 +217,7 @@
         "log_genesis",
         "log_accept",
         "log_admit",
+        "log_agent",
         "log_signature",
         "log_rights",
         "log_epoch",
@@ -233,6 +234,9 @@
         "account_code_invalid",
         "handover_required",
         "handover_unexpected",
+        "client_outdated",
+        "agent_batches_incomplete",
+        "agent_gen_mismatch",
         "placement_forbidden",
         "placement_invalid",
         "identity_forbidden"
@@ -629,6 +633,15 @@
             },
             "candidates_available": {
               "type": "boolean"
+            },
+            "orgs": {
+              "type": "array",
+              "description": "agent_batches_incomplete: the organizations whose batch is missing, not expected or does not add the agent (ADR-082 section 2)",
+              "items": {
+                "$ref": "#/$defs/uuid"
+              },
+              "minItems": 1,
+              "maxItems": 64
             },
             "devices": {
               "type": "array",
@@ -1216,6 +1229,9 @@
         },
         "private": {
           "type": "boolean"
+        },
+        "agent": {
+          "$ref": "#/$defs/log_agent_member"
         }
       },
       "required": [
@@ -1479,6 +1495,9 @@
         },
         "pub": {
           "$ref": "#/$defs/pub_keys"
+        },
+        "agent": {
+          "$ref": "#/$defs/log_agent_member"
         }
       },
       "required": [
@@ -2144,6 +2163,9 @@
         },
         {
           "$ref": "#/$defs/log_body_device_unassign_org"
+        },
+        {
+          "$ref": "#/$defs/log_body_agent_add"
         }
       ]
     },
@@ -3624,6 +3646,104 @@
         "org",
         "wg"
       ]
+    },
+    "agent_gen": {
+      "type": "integer",
+      "description": "generation of an agent's delegation certificate (ADR-082 section 9.1)",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "log_agent_member": {
+      "type": "object",
+      "description": "optional agent member of genesis and accept (ADR-082): the entry also adds the user's agent and is signed by the agent's key; cert is the user's signature over P||'agent-cert\\0'||canonical({agent, gen, pub, user, v: 1})",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "pub": {
+          "$ref": "#/$defs/pub_keys"
+        },
+        "gen": {
+          "$ref": "#/$defs/agent_gen"
+        },
+        "cert": {
+          "$ref": "#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "id",
+        "pub",
+        "gen",
+        "cert"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_agent_add": {
+      "type": "object",
+      "description": "body of a agent_add entry (ADR-082): by is the user or the agent itself (subject); cert as in log_agent_member",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "agent_add"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        },
+        "user": {
+          "$ref": "#/$defs/uuid"
+        },
+        "pub": {
+          "$ref": "#/$defs/pub_keys"
+        },
+        "gen": {
+          "$ref": "#/$defs/agent_gen"
+        },
+        "cert": {
+          "$ref": "#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "subject",
+        "user",
+        "pub",
+        "gen",
+        "cert"
+      ],
+      "additionalProperties": false
     }
   }
 }

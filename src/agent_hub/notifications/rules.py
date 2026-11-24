@@ -58,6 +58,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.agents.store import acting_user
 from agent_hub.attention.derive import BLOCKED, NEEDS_DECISION, OCCASIONS, WG_WIDE
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.crypto.encoding import format_time
@@ -156,19 +157,20 @@ def _wg_reader(connection: Connection, wg_id: UUID, user_id: UUID) -> bool:
 
 
 def whiteboard_recipients(connection: Connection, event: BoardEvent) -> list[UUID]:
-    """The users who read the level of the entry, without its author, sorted."""
+    """The users who read the level of the entry, without its author (the user of an agent author), sorted."""
+    author = acting_user(connection, event.author_id)
     if event.level == ORG:
         rows = connection.execute(
             "SELECT principal_id FROM hub.org_member WHERE org_id = %s AND kind = 'user' AND removed_seq IS NULL"
             " AND principal_id <> %s ORDER BY principal_id",
-            (event.org_id, event.author_id),
+            (event.org_id, author),
         ).fetchall()
     else:
         rows = connection.execute(
             "SELECT a.user_id FROM hub.wg_access a JOIN hub.wg w ON w.id = a.wg_id"
             " JOIN hub.org_member m ON m.org_id = w.org_id AND m.principal_id = a.user_id AND m.removed_seq IS NULL"
             " WHERE a.wg_id = %s AND a.revoked_seq IS NULL AND a.user_id <> %s ORDER BY a.user_id",
-            (event.wg_id, event.author_id),
+            (event.wg_id, author),
         ).fetchall()
     return [found[0] for found in rows]
 
@@ -194,7 +196,7 @@ def notify_whiteboard(connection: Connection, event: BoardEvent) -> int:
         AuditRow(
             at=event.received_at,
             actor_kind="user",
-            actor_id=event.author_id,
+            actor_id=acting_user(connection, event.author_id),
             action=NOTIFY_ACTION,
             result="ok",
             org_id=event.org_id,

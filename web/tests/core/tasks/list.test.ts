@@ -9,6 +9,7 @@ import { listLoading, taskList, type TaskRow } from '../../../src/core/store/sli
 import { EMPTY_DIRECTORY, selectDirectory, selectOwner, selectTitle } from '../../../src/core/tasks/directory';
 import { listTarget, loadTasks, PAGE_SIZE, selectListRows, titles } from '../../../src/core/tasks/list';
 import { pullEvents, pullOnce, pullTarget } from '../../../src/core/tasks/pull';
+import { signCert } from '../../../src/core/crypto/agent';
 import { actor } from '../log/world';
 import { taskRow, taskWorld, type TaskWorld } from './world';
 
@@ -274,6 +275,20 @@ describe('directory and titles', () => {
     expect(owner('t6')).toBe(t.me.id);
     expect(owner('t7')).toBeNull();
     expect(selectOwner('unknown-org', t.wg, 't1')(t.store.getState())).toBeNull();
+  });
+
+  it('names an agent of the verified log through its user and lets it own a task (ADR-082)', async () => {
+    const t = await taskWorld();
+    const bot = await actor('list bot');
+    const pub = bot.identity.public();
+    const cert = await signCert(t.me.identity.sig.privateKey, { agent: bot.id, pub, user: t.me.id, gen: 1 });
+    t.world.add(bot);
+    await t.world.batch(t.me, [{ type: 'agent_add', subject: bot.id, user: t.me.id, pub, gen: 1, cert }]);
+    setLog(t.store, t.org, t.world.log!);
+    putEvents(t.store, t.wg, [entry(t.wg, 1, { kind: 'task.meta', task: 't1', author: bot.id }, { title: 'x' })]);
+    expect(selectOwner(t.org, t.wg, 't1')(t.store.getState())).toBe(bot.id);
+    putEvents(t.store, t.org, [entry(t.org, 1, { kind: 'org.profile' }, { name: 'Acme' })]);
+    expect([...selectDirectory(t.org)(t.store.getState()).agents]).toEqual([[bot.id, t.me.id]]);
   });
 
   it('pulls the titles of the workgroup once, then those of single tasks still without one', async () => {

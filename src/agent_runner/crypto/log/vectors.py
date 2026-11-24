@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
+from agent_runner.crypto import agent as agent_format
 from agent_runner.crypto import enroll, event, invite, keys, signed, wrap
 from agent_runner.crypto import identity as identity_proof
 from agent_runner.crypto.encoding import b64u_decode, b64u_encode, body_json, format_time, parse_time
@@ -23,6 +24,7 @@ from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.log import catchup, events, platform, rotation, verify, wraps
 from agent_runner.crypto.log.batch import check_batch
 from agent_runner.crypto.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry
+from agent_runner.crypto.log.state import OrgState
 from agent_runner.crypto.vectors import Section, fixed, fixed_id
 
 Json = dict[str, Any]
@@ -36,6 +38,8 @@ CAPACITY = {
     "pool_ready": 2,
 }
 NAMES = ("alice", "bob", "carol", "dave", "erin", "device", "dev2", "pdev", "pdev-new", "qdev", "hub")
+AGENTS = ("bot", "bot2", "bot3", "bot4", "bot5", "bot6", "bot7")
+"""Labels of agents (ADR-082); their identities are listed with the actors."""
 
 
 def identity(label: str) -> keys.Identity:
@@ -110,10 +114,44 @@ class LogBuilder:
         self.entries.append(entry)
         return entry
 
-    def genesis(self, founder: str = "alice", default_wg: str = W0, private: bool = False) -> Json:
-        """`genesis` by the founder."""
+    def genesis(
+        self, founder: str = "alice", default_wg: str = W0, private: bool = False, agent: str | None = None
+    ) -> Json:
+        """`genesis` by the founder; with `agent` (generation 1) the entry adds the founder's agent and is signed by
+        the agent's key (ADR-082)."""
+        extra = {} if agent is None else {"agent": agent_member(agent, founder, 1)}
         return self.add(
-            "genesis", founder, subject=pid(founder), pub=pub(founder), default_wg=default_wg, private=private
+            "genesis",
+            founder,
+            signer=agent,
+            subject=pid(founder),
+            pub=pub(founder),
+            default_wg=default_wg,
+            private=private,
+            **extra,
+        )
+
+    def agent_add(
+        self,
+        by: str,
+        agent: str,
+        user: str,
+        gen: int,
+        *,
+        signer: str | None = None,
+        cert: Json | None = None,
+    ) -> Json:
+        """`agent_add` of `agent` for `user` by `by` (the user or the agent itself); `cert` changes the arguments of
+        the certificate (`signer`, `agent`, `pub`, `user`, `gen` as labels or values)."""
+        return self.add(
+            "agent_add",
+            by,
+            signer=signer,
+            subject=pid(agent),
+            user=uid(user),
+            pub=pub(agent),
+            gen=gen,
+            cert=certificate(agent, user, gen, **(cert or {})),
         )
 
     def invite_user(self, by: str, label: str, role: str = "member", wgs: Mapping[str, str] | None = None) -> Json:
@@ -144,14 +182,23 @@ class LogBuilder:
         )
 
     def accept(
-        self, label: str, kind: str = "user", code_label: str | None = None, key_label: str | None = None
+        self,
+        label: str,
+        kind: str = "user",
+        code_label: str | None = None,
+        key_label: str | None = None,
+        agent: Json | None = None,
     ) -> Json:
         """`accept` by `label` with its own code (or `code_label`'s) and its own keys (or `key_label`'s), signed by
-        the subject key and by `sk_inv`."""
+        the subject key and by `sk_inv`; with an `agent` member (`agent_member`) signed by the agent's key."""
         found = secrets(code_label or label)
         keys_of = key_label or label
-        body = self.body("accept", label, invite_id=found.invite_id, subject=pid(label), kind=kind, pub=pub(keys_of))
-        entry = sign_log_entry(body, identity(keys_of).sig, found.signing)
+        extra = {} if agent is None else {"agent": agent}
+        body = self.body(
+            "accept", label, invite_id=found.invite_id, subject=pid(label), kind=kind, pub=pub(keys_of), **extra
+        )
+        signer = identity(keys_of) if agent is None else identity(agent_label(agent["id"]))
+        entry = sign_log_entry(body, signer.sig, found.signing)
         self.entries.append(entry)
         return entry
 
@@ -196,6 +243,37 @@ class LogBuilder:
     def copy(self) -> LogBuilder:
         """An independent builder with the same entries."""
         return LogBuilder(self.org, self.entries)
+
+
+def certificate(
+    agent: str,
+    user: str,
+    gen: int,
+    *,
+    signer: str | None = None,
+    pub_of: str | None = None,
+    user_of: str | None = None,
+    gen_of: int | None = None,
+) -> str:
+    """The delegation certificate of `agent` for `user` (ADR-082), signed by `signer` (default: the user); `pub_of`,
+    `user_of` and `gen_of` certify other keys, another user or another generation."""
+    return agent_format.sign_cert(
+        identity(signer or user).sig,
+        pid(agent),
+        pub(pub_of or agent),
+        uid(user_of or user),
+        gen if gen_of is None else gen_of,
+    )
+
+
+def agent_member(agent: str, user: str, gen: int, **cert: Any) -> Json:
+    """The `agent` member of `genesis`/`accept`: `{id, pub, gen, cert}`."""
+    return {"id": pid(agent), "pub": pub(agent), "gen": gen, "cert": certificate(agent, user, gen, **cert)}
+
+
+def agent_label(agent_id: str) -> str:
+    """The label of an agent ID of `AGENTS`."""
+    return next(label for label in AGENTS if pid(label) == agent_id)
 
 
 class PlatformBuilder:
@@ -387,6 +465,48 @@ def orgwide_builder() -> LogBuilder:
 ORGWIDE_COUNT = 15
 
 
+def agents_builder() -> LogBuilder:
+    """A log with agents (ADR-082): alice creates the org through her agent `bot`, which then works with her admin
+    rights; bob accepts through his agent `bot2`; carol adds `bot3` herself, removes it, and `bot4` adds itself with
+    the next generation; bob's `bot5` replaces `bot2`; bob is removed (with `bot5`) and rejoins through `bot5`; `bot4`
+    leaves and the pending rotations are done."""
+    log = LogBuilder()
+    log.genesis(agent="bot")  # 0 (signed by bot, adds bot gen 1)
+    log.add("wg_create", "bot", wg=W1, epoch=1)  # 1 (alice gets write on W1)
+    log.invite_user("bot", "bob", wgs={W1: "read"})  # 2
+    log.accept("bob", agent=agent_member("bot2", "bob", 1))  # 3
+    log.invite_user("alice", "carol")  # 4
+    log.accept("carol")  # 5
+    log.agent_add("carol", "bot3", "carol", 1)  # 6 (by the user)
+    log.add("grant", "bot", subject=pid("bob"), wg=W1, access="write")  # 7
+    log.add("rotate", "bot", scope="wg", scope_id=W1, epoch=2)  # 8
+    log.invite_device("alice", "device", [W1])  # 9
+    log.accept("device", "device")  # 10
+    log.add("remove", "carol", subject=pid("bot3"))  # 11 (the user removes its agent)
+    log.agent_add("bot4", "bot4", "carol", 2)  # 12 (the agent adds itself)
+    log.agent_add("bob", "bot5", "bob", 2)  # 13 (replaces bot2)
+    log.add("remove", "alice", subject=pid("bob"))  # 14 (bot5 is removed with bob)
+    log.invite_user("alice", "bob-again")  # 15
+    log.accept("bob", code_label="bob-again", agent=agent_member("bot5", "bob", 2))  # 16 (bot5 comes back)
+    log.add("remove", "bot4", subject=pid("bot4"))  # 17 (the agent leaves: rotation pending)
+    log.add("rotate", "alice", scope="org", scope_id=ORG, epoch=2)  # 18
+    log.add("rotate", "alice", scope="wg", scope_id=W0, epoch=2)  # 19
+    return log
+
+
+AGENTS_COUNT = 20
+ORG_B = pid("org/b")
+WB = pid("wg/b")
+
+
+def other_org_builder() -> LogBuilder:
+    """A second org of alice in which she adds `bot6` (generation 2): it supersedes `bot` in every log."""
+    log = LogBuilder(ORG_B)
+    log.genesis(default_wg=WB)  # 0
+    log.agent_add("alice", "bot6", "alice", 2)  # 1
+    return log
+
+
 def scope_key(scope: str, scope_id: str, epoch: int) -> bytes:
     """The fixed key of a scope epoch."""
     return fixed(f"log/key/{scope}/{scope_id}/{epoch}")
@@ -467,8 +587,10 @@ class Context:
                 require_active=a.get("require_active", False),
             ),
             "check_cred_wrap": lambda a: wraps.check_cred_wrap(
-                a["wrap"], a["wrapped_by"], [self.log(a)], a["current_epoch"], a.get("excluded", [])
+                a["wrap"], a["wrapped_by"], self.logs_of(a), a["current_epoch"], a.get("excluded", [])
             ),
+            "cred_readers": lambda a: sorted(wraps.cred_readers([log.state for log in self.logs_of(a)], a["owner"])),
+            "revoked_agents": lambda a: sorted(wraps.revoked_agents([log.state for log in self.logs_of(a)])),
             "check_event": lambda a: events.check_event(
                 a["event"], self.log(a), session_device=a.get("session_device"), excluded=a.get("excluded", [])
             ),
@@ -498,6 +620,10 @@ class Context:
     def log(self, args: Json) -> verify.VerifiedLog:
         """The verified membership log of `args`."""
         return verify.verify_log(self.entries(args), args["founder"], platform=self.platform(args))
+
+    def logs_of(self, args: Json) -> list[verify.VerifiedLog]:
+        """The verified logs of `args["logs"]` (each `{log, founder}`), else the one log of `args`."""
+        return [self.log(ref) for ref in args["logs"]] if "logs" in args else [self.log(args)]
 
     def _append_log(self, args: Json) -> object:
         now = parse_time(args["now"]) if "now" in args else None
@@ -545,7 +671,7 @@ def _identities() -> Json:
             "sig_sk": b64u_encode(fixed("log/" + name + "/sig")),
             **pub(name),
         }
-        for name in (*NAMES, "root")
+        for name in (*NAMES, *AGENTS, "root")
     }
 
 
@@ -582,6 +708,7 @@ def build_log() -> Json:
     recert = recertified_builder()
     admit = admit_builder()
     orgwide = orgwide_builder()
+    agents = agents_builder()
     ctx = Context(
         {
             "main": main.entries,
@@ -589,6 +716,7 @@ def build_log() -> Json:
             "platform_recertified": recert.entries,
             "admit": admit.entries,
             "orgwide": orgwide.entries,
+            "agents": agents.entries,
         }
     )
     founder = sig_pk("alice")
@@ -994,6 +1122,8 @@ def build_log() -> Json:
         neg("L10_lh_beyond_head", "require_lh", _main_args(27, lh=27), "log_fork"),
         *_admit_negatives(ctx, admit),
     ]
+    agents_valid, agents_invalid = _agent_log_part(ctx, agents)
+    invalid += agents_invalid
     return {
         "about": "Membership log of 04-crypto.md section 4.7: a valid chain with every entry type, its states, and "
         "one broken variant per rule L1-L10 (06-1) with the expected code. See README.md, 'Log vectors'.",
@@ -1007,6 +1137,7 @@ def build_log() -> Json:
             "platform_recertified": recert.entries,
             "admit": admit.entries,
             "orgwide": orgwide.entries,
+            "agents": agents.entries,
         },
         "excluded": [
             {"platform": _platform_ref(), "log": _ref("main", 27), "excluded": []},
@@ -1036,8 +1167,264 @@ def build_log() -> Json:
         ],
         "lh": {"log": _ref("main", 27), "needs_refresh": [{"lh": 26, "refresh": False}, {"lh": 27, "refresh": True}]},
         "orgwide": _orgwide_valid(orgwide, plat),
+        "agents_valid": agents_valid,
         "invalid": invalid,
     }
+
+
+def _agents_args(count: int, name: str = "agents", **extra: object) -> Json:
+    return {"log": _ref(name, count), "founder": sig_pk("alice"), **extra}
+
+
+def _agent_log_part(ctx: Context, agents: LogBuilder) -> tuple[Json, list[Json]]:
+    """log.json, ADR-082: the valid agents log (heads, projections) and the negatives of the agent rules."""
+    verified = verify.verify_log(agents.entries, sig_pk("alice"))
+    neg = ctx.negative
+
+    def broken(count: int, build: Callable[[LogBuilder], object]) -> Json:
+        prefix = LogBuilder(ORG, agents.entries[:count])
+        build(prefix)
+        return _agents_args(count, entries=prefix.entries[count:])
+
+    def first(build: Callable[[LogBuilder], Json]) -> Json:
+        return build(LogBuilder())
+
+    def genesis_with(member: Json, signer: str = "bot") -> Json:
+        body = LogBuilder().body(
+            "genesis", "alice", subject=pid("alice"), pub=pub("alice"), default_wg=W0, private=False, agent=member
+        )
+        return sign_log_entry(body, identity(signer).sig)
+
+    agent_genesis = first(lambda b: b.genesis(agent="bot"))
+    bot2 = agent_member("bot2", "bob", 1)
+    added = agents.entries[6]  # agent_add of bot3 by carol
+    without_gen = {**added, "body": {key: value for key, value in added["body"].items() if key != "gen"}}
+    invalid = [
+        # agent_add by the hub, by another agent or for keys, users or generations the user did not certify
+        neg(
+            "agent_add_cert_by_other_key",
+            "verify_log",
+            broken(6, lambda b: b.agent_add("bot3", "bot3", "carol", 1, cert={"signer": "hub"})),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_cert_for_other_pub",
+            "verify_log",
+            broken(6, lambda b: b.agent_add("carol", "bot3", "carol", 1, cert={"pub_of": "hub"})),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_cert_for_other_user",
+            "verify_log",
+            broken(6, lambda b: b.agent_add("carol", "bot3", "carol", 1, cert={"user_of": "alice"})),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_cert_for_other_gen",
+            "verify_log",
+            broken(6, lambda b: b.agent_add("carol", "bot3", "carol", 1, cert={"gen_of": 2})),
+            "log_agent",
+        ),
+        neg(
+            "agent_adds_another_agent",
+            "verify_log",
+            broken(6, lambda b: b.agent_add("bot2", "bot3", "bob", 2)),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_by_member_for_other_user",
+            "verify_log",
+            broken(6, lambda b: b.agent_add("bob", "bot3", "carol", 1)),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_user_not_member",
+            "verify_log",
+            broken(6, lambda b: b.agent_add("bot3", "bot3", "dave", 1)),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_subject_is_a_user",
+            "verify_log",
+            broken(6, lambda b: b.agent_add("carol", "bob", "carol", 1)),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_subject_is_a_device",
+            "verify_log",
+            broken(11, lambda b: b.agent_add("carol", "device", "carol", 2)),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_second_agent_same_gen",
+            "verify_log",
+            broken(7, lambda b: b.agent_add("carol", "bot4", "carol", 1)),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_gen_of_removed_agent",
+            "verify_log",
+            broken(12, lambda b: b.agent_add("carol", "bot4", "carol", 1)),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_lower_gen",
+            "verify_log",
+            broken(13, lambda b: b.agent_add("carol", "bot6", "carol", 1)),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_removed_agent_again",
+            "verify_log",
+            broken(12, lambda b: b.agent_add("carol", "bot3", "carol", 1)),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_returning_agent_other_gen",
+            "verify_log",
+            broken(
+                16,
+                lambda b: (b.accept("bob", code_label="bob-again"), b.agent_add("bob", "bot5", "bob", 3)),
+            ),
+            "log_agent",
+        ),
+        neg(
+            "accept_with_agent_removed_otherwise",
+            "verify_log",
+            broken(16, lambda b: b.accept("bob", code_label="bob-again", agent=bot2)),
+            "log_agent",
+        ),
+        neg(
+            "agent_add_signed_by_other_key",
+            "verify_log",
+            broken(6, lambda b: b.agent_add("bot3", "bot3", "carol", 1, signer="hub")),
+            "log_signature",
+        ),
+        neg(
+            "agent_add_unknown_author",
+            "verify_log",
+            broken(6, lambda b: b.agent_add("dave", "bot3", "carol", 1)),
+            "log_signature",
+        ),
+        neg(
+            "agent_add_by_removed_user",
+            "verify_log",
+            broken(15, lambda b: b.agent_add("bob", "bot6", "bob", 3)),
+            "log_rights",
+        ),
+        # genesis and accept with an agent member
+        neg(
+            "genesis_with_agent_signed_by_user",
+            "verify_log",
+            {**_agents_args(0), "entries": [_resign(agent_genesis, "alice")]},
+            "log_genesis",
+        ),
+        neg(
+            "genesis_with_agent_cert_by_agent",
+            "verify_log",
+            {**_agents_args(0), "entries": [genesis_with(agent_member("bot", "alice", 1, signer="bot"))]},
+            "log_agent",
+        ),
+        neg(
+            "genesis_agent_is_the_founder",
+            "verify_log",
+            {**_agents_args(0), "entries": [genesis_with({**agent_member("bot", "alice", 1), "id": pid("alice")})]},
+            "log_agent",
+        ),
+        neg(
+            "accept_with_agent_signed_by_user",
+            "verify_log",
+            _agents_args(3, entries=[_resign(agents.entries[3], "bob")]),
+            "log_accept",
+        ),
+        neg(
+            "accept_with_agent_cert_by_hub",
+            "verify_log",
+            broken(3, lambda b: b.accept("bob", agent=agent_member("bot2", "bob", 1, signer="hub"))),
+            "log_agent",
+        ),
+        neg(
+            "accept_device_with_agent",
+            "verify_log",
+            broken(10, lambda b: b.accept("device", "device", agent=agent_member("bot6", "device", 1))),
+            "log_agent",
+        ),
+        # an agent has its user's rights and no rights of its own
+        neg(
+            "agent_of_member_invites",
+            "verify_log",
+            broken(4, lambda b: b.invite_user("bot2", "carol")),
+            "log_rights",
+        ),
+        neg(
+            "agent_of_member_rotates_org",
+            "verify_log",
+            broken(4, lambda b: b.add("rotate", "bot2", scope="org", scope_id=ORG, epoch=2)),
+            "log_rights",
+        ),
+        neg(
+            "grant_to_agent",
+            "verify_log",
+            broken(4, lambda b: b.add("grant", "alice", subject=pid("bot2"), wg=W1, access="write")),
+            "log_rights",
+        ),
+        neg(
+            "role_of_agent",
+            "verify_log",
+            broken(4, lambda b: b.add("role", "alice", subject=pid("bot2"), role="admin")),
+            "log_rights",
+        ),
+        neg(
+            "member_removes_agent_of_other_user",
+            "verify_log",
+            broken(4, lambda b: b.add("remove", "bob", subject=pid("bot"))),
+            "log_rights",
+        ),
+        neg(
+            "agent_removes_agent_of_other_user",
+            "verify_log",
+            broken(4, lambda b: b.add("remove", "bot2", subject=pid("bot"))),
+            "log_rights",
+        ),
+        neg(
+            "last_admin_leaves_through_agent",
+            "verify_log",
+            broken(4, lambda b: b.add("remove", "bot", subject=pid("alice"))),
+            "last_admin",
+        ),
+        neg(
+            "removed_agent_authors",
+            "verify_log",
+            broken(14, lambda b: b.add("rotate", "bot2", scope="wg", scope_id=W1, epoch=3)),
+            "log_rights",
+        ),
+        # formats
+        neg(
+            "agent_member_extra_key",
+            "verify_log",
+            {**_agents_args(0), "entries": [genesis_with({**agent_member("bot", "alice", 1), "name": "x"})]},
+            "header_invalid",
+        ),
+        neg(
+            "agent_member_gen_zero",
+            "verify_log",
+            {**_agents_args(0), "entries": [genesis_with(agent_member("bot", "alice", 1) | {"gen": 0})]},
+            "header_invalid",
+        ),
+        neg(
+            "agent_member_on_wg_create",
+            "verify_log",
+            _agents_args(1, entries=[_resign(agents.entries[1], "bot", agent=bot2)]),
+            "header_invalid",
+        ),
+        neg("agent_add_without_gen", "verify_log", _agents_args(6, entries=[without_gen]), "header_invalid"),
+    ]
+    section = {
+        "log": _ref("agents", AGENTS_COUNT),
+        "heads": [{"seq": s.seq, "hash": s.head} for s in verified.states],
+        "projections": [s.projection() for s in verified.states],
+    }
+    return section, invalid
 
 
 def _admit_negatives(ctx: Context, admit: LogBuilder) -> list[Json]:
@@ -1449,18 +1836,31 @@ def _r_case(name: str, log_name: str, prefix: LogBuilder, count: int) -> Json:
         "entry": entry,
         "subject": subject,
         "required": rotation.as_json(rotation.required_set(before.state, after, subject)),
+        **_lost(before.state, after, entry["body"]),
+    }
+
+
+def _lost(before: OrgState, after: OrgState, body: Json) -> Json:
+    """`losers` and the union R `lost` of an entry (ADR-082)."""
+    return {
+        "losers": sorted(rotation.losers(before, body)),
+        "lost": rotation.as_json(rotation.lost(before, after, body)),
+        "self_owed": rotation.self_owed(before, body),
     }
 
 
 def build_rotation() -> Json:
     """The rotate set R for every entry type and the edge cases, and batches with and without the exact R."""
     main, plat, edge, rejoin = main_builder(), platform_builder(), edge_builder(), _rejoin_builder()
+    agents = agents_builder()
     logs = {
         "main": main.entries,
         "platform": plat.entries,
         "edge": edge.entries,
         "rejoin": rejoin.entries,
         "orgwide": orgwide_builder().entries,
+        "agents": agents.entries,
+        "member_agent": member_agent_builder().entries,
     }
     ctx = Context(logs)
     plat_state = platform.verify_platform_log(plat.entries, sig_pk("root")).state
@@ -1477,6 +1877,7 @@ def build_rotation() -> Json:
                 "entry": main.entries[seq],
                 "subject": subject,
                 "required": rotation.as_json(rotation.required_set(before, after, subject)),
+                **_lost(before, after, body),
             }
         )
 
@@ -1515,6 +1916,15 @@ def build_rotation() -> Json:
     cases.append(rejoin_accept)
     orgwide_prefix = LogBuilder(ORG, orgwide_builder().entries[:7])
     cases.append(_r_case("org_device_unassigned_keeps_explicit", "orgwide", orgwide_prefix, 6))
+    for name, count in (
+        ("agent_removed_by_its_user", 11),
+        ("agent_added_by_itself", 12),
+        ("agent_replaced_by_higher_gen", 13),
+        ("user_removed_with_its_agent", 14),
+        ("agent_returns_with_its_user", 16),
+        ("agent_leaves", 17),
+    ):
+        cases.append(_r_case(name, "agents", agents, count))
 
     now = ts(60)
     base = {"log": _ref("edge", EDGE_COUNT), "founder": sig_pk("alice"), "wrapped_by": pid("alice"), "now": now}
@@ -1706,6 +2116,7 @@ def build_rotation() -> Json:
             "rotation_required",
         ),
     ]
+    agent_batches, agent_invalid = _agent_rotation_part(ctx, agents, now)
     return {
         "about": "Rotation obligation of 04-crypto.md section 4.7: R(before, after, subject) for every entry type and "
         "the edge cases, and append batches that must contain exactly R as rotate entries (section 5.10, "
@@ -1716,9 +2127,193 @@ def build_rotation() -> Json:
         "logs": logs,
         "platform": _platform_ref(),
         "cases": cases,
-        "batches": valid_batches,
-        "invalid": invalid,
+        "batches": valid_batches + agent_batches,
+        "invalid": invalid + agent_invalid,
     }
+
+
+def _agent_rotation_part(ctx: Context, agents: LogBuilder, now: str) -> tuple[list[Json], list[Json]]:
+    """log-rotation.json, ADR-082: R of an agent's removal, of its replacement and of its user's removal."""
+    base = {"log": _ref("agents", AGENTS_COUNT), "founder": sig_pk("alice"), "wrapped_by": pid("alice"), "now": now}
+
+    def batch(*build: Callable[[LogBuilder], object]) -> list[Json]:
+        prefix = agents.copy()
+        for step in build:
+            step(prefix)
+        return prefix.entries[AGENTS_COUNT:]
+
+    def rotates(by: str, scopes: Sequence[tuple[str, str]]) -> Callable[[LogBuilder], object]:
+        return lambda b: [b.add("rotate", by, scope=scope, scope_id=scope_id, epoch=3) for scope, scope_id in scopes]
+
+    def wraps_for(by: str, readers: Mapping[tuple[str, str], Sequence[str]]) -> list[Json]:
+        return [make_wrap(by, scope, scope_id, 3, r) for (scope, scope_id), names in readers.items() for r in names]
+
+    every = (("org", ORG), ("wg", W0), ("wg", W1))
+    without_bot = {
+        ("org", ORG): ("alice", "bob", "bot5", "carol", "device"),
+        ("wg", W0): ("alice", "bob", "bot5", "carol"),
+        ("wg", W1): ("alice", "device"),
+    }
+    with_bot6 = {
+        ("org", ORG): ("alice", "bob", "bot5", "bot6", "carol", "device"),
+        ("wg", W0): ("alice", "bob", "bot5", "bot6", "carol"),
+        ("wg", W1): ("alice", "bot6", "device"),
+    }
+    without_bob = {("org", ORG): ("alice", "bot", "carol", "device"), ("wg", W0): ("alice", "bot", "carol")}
+
+    def remove(by: str, subject: str) -> Callable[[LogBuilder], object]:
+        return lambda b: b.add("remove", by, subject=pid(subject))
+
+    def add_bot6(by: str) -> Callable[[LogBuilder], object]:
+        return lambda b: b.agent_add(by, "bot6", "alice", 2)
+
+    member_batches, member_invalid = _member_agent_batches(ctx, now)
+    replaced = batch(add_bot6("alice"), rotates("alice", every))
+    bob_removed = batch(remove("alice", "bob"), rotates("alice", every[:2]))
+    valid = []
+    for name, append, batch_wraps, wrapper in (
+        ("user_removes_its_agent", batch(remove("alice", "bot"), rotates("alice", every)), without_bot, "alice"),
+        ("agent_leaves_without_rotation", batch(remove("bot", "bot")), {}, "bot"),
+        ("user_leaves_through_its_agent", batch(remove("bot5", "bob")), {}, "bot5"),
+        ("user_removed_with_its_agent", bob_removed, without_bob, "alice"),
+        (
+            "replacement_remove_then_add",
+            batch(remove("alice", "bot"), rotates("alice", every), add_bot6("alice")),
+            with_bot6,
+            "alice",
+        ),
+        ("replacement_by_higher_gen", replaced, with_bot6, "alice"),
+        ("replacement_by_the_new_agent", batch(add_bot6("bot6"), rotates("bot6", every)), with_bot6, "bot6"),
+    ):
+        args = {**base, "append": append, "wraps": wraps_for(wrapper, batch_wraps), "wrapped_by": pid(wrapper)}
+        valid.append(_batch_case(ctx, name, args))
+    neg = ctx.negative
+    invalid = [
+        neg(
+            "agent_removed_by_user_without_rotation",
+            "check_batch",
+            {**base, "append": batch(remove("alice", "bot")), "wraps": []},
+            "rotation_required",
+        ),
+        neg(
+            "replacement_without_rotation",
+            "check_batch",
+            {**base, "append": batch(add_bot6("alice")), "wraps": []},
+            "rotation_required",
+        ),
+        neg(
+            "replacement_without_wrap_for_new_agent",
+            "check_batch",
+            {**base, "append": replaced, "wraps": wraps_for("alice", without_bot)},
+            "rotation_required",
+        ),
+        neg(
+            "wrap_for_replaced_agent",
+            "check_batch",
+            {
+                **base,
+                "append": replaced,
+                "wraps": [*wraps_for("alice", with_bot6), make_wrap("alice", "wg", W1, 3, "bot")],
+            },
+            "wrap_unauthorized",
+        ),
+        neg(
+            "wrap_for_agent_of_removed_user",
+            "check_batch",
+            {
+                **base,
+                "append": bob_removed,
+                "wraps": [*wraps_for("alice", without_bob), make_wrap("alice", "org", ORG, 3, "bot5")],
+            },
+            "wrap_unauthorized",
+        ),
+    ]
+    return valid + member_batches, invalid + member_invalid
+
+
+def _batch_case(ctx: Context, name: str, args: Json) -> Json:
+    result = cast(Any, ctx.run("check_batch", args))
+    return {
+        "name": name,
+        "args": args,
+        "required": rotation.as_json(result.required),
+        "pending": rotation.as_json(result.log.state.pending),
+        "head": result.log.head.to_json(),
+    }
+
+
+MEMBER_AGENT_COUNT = AGENTS_COUNT + 1
+
+
+def member_agent_builder() -> LogBuilder:
+    """The agents log, then bob (a member with the agent `bot5`) gets read access to W1: bob can rotate neither the
+    org scope nor W1 by its own rights."""
+    log = agents_builder()
+    log.add("grant", "alice", subject=pid("bob"), wg=W1, access="read")  # 20
+    return log
+
+
+def _member_agent_batches(ctx: Context, now: str) -> tuple[list[Json], list[Json]]:
+    """log-rotation.json, ADR-082 section 4: a member that is no admin removes or replaces its agent and rotates its
+    R (org scope, a read-only workgroup) itself; another member may not."""
+    member = member_agent_builder()
+    base = {"log": _ref("member_agent", MEMBER_AGENT_COUNT), "founder": sig_pk("alice"), "now": now}
+    every = (("org", ORG), ("wg", W0), ("wg", W1))
+
+    def batch(*build: Callable[[LogBuilder], object]) -> list[Json]:
+        prefix = member.copy()
+        for step in build:
+            step(prefix)
+        return prefix.entries[MEMBER_AGENT_COUNT:]
+
+    def rotates(by: str) -> Callable[[LogBuilder], object]:
+        return lambda b: [b.add("rotate", by, scope=scope, scope_id=sid, epoch=3) for scope, sid in every]
+
+    def wraps_for(by: str, agent: str | None) -> list[Json]:
+        readers = {
+            ("org", ORG): ["alice", "bob", "bot", "carol", "device"],
+            ("wg", W0): ["alice", "bob", "bot", "carol"],
+            ("wg", W1): ["alice", "bob", "bot", "device"],
+        }
+        return [
+            make_wrap(by, scope, sid, 3, r)
+            for (scope, sid), names in readers.items()
+            for r in sorted([*names, *([agent] if agent else [])])
+        ]
+
+    def remove_bot5(b: LogBuilder) -> object:
+        return b.add("remove", "bob", subject=pid("bot5"))
+
+    def add_bot7(by: str) -> Callable[[LogBuilder], object]:
+        return lambda b: b.agent_add(by, "bot7", "bob", 3)
+
+    valid = [
+        _batch_case(
+            ctx,
+            name,
+            {**base, "append": append, "wraps": wraps_for(wrapper, agent), "wrapped_by": pid(wrapper)},
+        )
+        for name, append, wrapper, agent in (
+            ("member_removes_its_agent_and_rotates", batch(remove_bot5, rotates("bob")), "bob", None),
+            ("member_replaces_its_agent_and_rotates", batch(add_bot7("bob"), rotates("bob")), "bob", "bot7"),
+            ("member_agent_replaces_itself_and_rotates", batch(add_bot7("bot7"), rotates("bot7")), "bot7", "bot7"),
+        )
+    ]
+    invalid = [
+        ctx.negative(
+            "owed_rotation_by_other_member",
+            "check_batch",
+            {**base, "append": batch(remove_bot5, rotates("carol")), "wraps": [], "wrapped_by": pid("carol")},
+            "log_rights",
+        ),
+        ctx.negative(
+            "member_rotates_without_removing_its_agent",
+            "check_batch",
+            {**base, "append": batch(rotates("bob")), "wraps": [], "wrapped_by": pid("bob")},
+            "log_rights",
+        ),
+    ]
+    return valid, invalid
 
 
 # --- log-wraps.json ---
@@ -1727,7 +2322,17 @@ def build_rotation() -> Json:
 def build_wraps() -> Json:
     """W1-W3 against the final state of the main log, `cred` wraps and catch-up plans (sections 5.11, 6.3)."""
     main, plat, edge, admit = main_builder(), platform_builder(), edge_builder(), admit_builder()
-    ctx = Context({"main": main.entries, "platform": plat.entries, "edge": edge.entries, "admit": admit.entries})
+    agents, other = agents_builder(), other_org_builder()
+    ctx = Context(
+        {
+            "main": main.entries,
+            "platform": plat.entries,
+            "edge": edge.entries,
+            "admit": admit.entries,
+            "agents": agents.entries,
+            "agents_other_org": other.entries,
+        }
+    )
     full = len(main.entries)
 
     def edge_args(wrapper: str, scope: str, scope_id: str, epoch: int, recipient: str, **extra: object) -> Json:
@@ -1954,6 +2559,12 @@ def build_wraps() -> Json:
         }
         for wrapper in ("dev2", "bob", "carol")
     ]
+    agent_section, agent_invalid = _agent_wraps_part(ctx, agents, edge)
+    revocation_logs = revocation_builders()
+    ctx.logs.update({name: log.entries for name, log in revocation_logs.items()})
+    revocation, revocation_invalid = _revocation_part(ctx)
+    agent_section["revocation"] = revocation
+    agent_invalid += revocation_invalid
     return {
         "about": "Wrap rules W1-W3 of 04-crypto.md section 6.3 against the final state of the main log of log.json "
         "and, for admins without explicit workgroup access (ADR-058), the edge log of log-rotation.json; cred wraps, "
@@ -1968,6 +2579,10 @@ def build_wraps() -> Json:
             "edge": edge.entries,
             "edge_rotated": rotated.entries,
             "admit": admit.entries,
+            "agents": agents.entries,
+            "agents_other_org": other.entries,
+            "edge_agent": agent_section.pop("edge_agent"),
+            **{name: log.entries for name, log in revocation_logs.items()},
         },
         "scope_keys": {
             f"{scope}/{scope_id}/{epoch}": b64u_encode(scope_key(scope, scope_id, epoch))
@@ -1989,8 +2604,236 @@ def build_wraps() -> Json:
             "existing": [slot.to_json() for slot in edge_existing],
             "plans": admin_plans,
         },
-        "invalid": invalid,
+        "agents": agent_section,
+        "invalid": invalid + agent_invalid,
     }
+
+
+def _agent_wraps_part(ctx: Context, agents: LogBuilder, edge: LogBuilder) -> tuple[Json, list[Json]]:
+    """log-wraps.json, ADR-082: wraps to and by agents, credential readers over two logs, catch-up of agents."""
+    founder = sig_pk("alice")
+    agents_ref = {"log": _ref("agents", AGENTS_COUNT), "founder": founder}
+    other_ref = {"log": _ref("agents_other_org", 2), "founder": founder}
+
+    def args(wrapper: str, scope: str, scope_id: str, epoch: int, recipient: str, **extra: object) -> Json:
+        wrapped = make_wrap(wrapper, scope, scope_id, epoch, recipient)
+        return {**agents_ref, "wrap": wrapped, "wrapped_by": pid(wrapper), **extra}
+
+    def cred(wrapper: str, recipient: str, logs: Sequence[Json]) -> Json:
+        return {**args(wrapper, "cred", pid("alice"), 1, recipient), "current_epoch": 1, "logs": list(logs)}
+
+    valid = []
+    for name, case in (
+        ("W2_user_for_its_agent", args("alice", "wg", W1, 2, "bot")),
+        ("W2_older_epoch_for_agent", args("alice", "wg", W1, 1, "bot")),
+        ("W1_agent_self", args("bot", "org", ORG, 2, "bot")),
+        ("W2_agent_for_device", args("bot", "wg", W1, 2, "device")),
+        ("W2_returned_agent_for_its_user", args("bot5", "wg", W0, 2, "bob")),
+    ):
+        ctx.run("check_wrap", case)
+        valid.append({"name": name, "args": case})
+    cred_valid = []
+    for name, case in (
+        ("cred_owner_for_its_agent", cred("alice", "bot", [agents_ref])),
+        ("cred_agent_for_device", cred("bot", "device", [agents_ref])),
+        ("cred_superseding_agent", cred("alice", "bot6", [agents_ref, other_ref])),
+    ):
+        ctx.run("check_cred_wrap", case)
+        cred_valid.append({"name": name, "args": case})
+    neg = ctx.negative
+    invalid = [
+        neg("wrap_to_agent_that_left", "check_wrap", args("alice", "org", ORG, 2, "bot4"), "wrap_unauthorized"),
+        neg("wrap_to_replaced_agent", "check_wrap", args("alice", "org", ORG, 1, "bot2"), "wrap_unauthorized"),
+        neg("wrap_to_removed_agent", "check_wrap", args("alice", "org", ORG, 1, "bot3"), "wrap_unauthorized"),
+        neg(
+            "agent_receives_no_scope_its_user_cannot_read",
+            "check_wrap",
+            args("alice", "wg", W1, 2, "bot5"),
+            "wrap_unauthorized",
+        ),
+        neg(
+            "agent_wraps_epoch_it_never_held",
+            "check_wrap",
+            args("bot5", "wg", W1, 1, "device"),
+            "wrap_unauthorized",
+        ),
+        neg(
+            "cred_superseded_agent_is_no_reader",
+            "check_cred_wrap",
+            cred("alice", "bot", [agents_ref, other_ref]),
+            "wrap_unauthorized",
+        ),
+        neg(
+            "cred_no_consent_of_org_joined_through_revoked_agent",
+            "check_cred_wrap",
+            cred("alice", "device", [agents_ref, other_ref]),
+            "wrap_unauthorized",
+        ),
+        neg(
+            "cred_left_agent_is_no_reader",
+            "check_cred_wrap",
+            {**cred("carol", "bot4", [agents_ref]), "wrap": make_wrap("carol", "cred", pid("carol"), 1, "bot4")},
+            "wrap_unauthorized",
+        ),
+    ]
+    readers = [
+        {"logs": logs, "owner": pid(owner), "readers": ctx.run("cred_readers", {"logs": logs, "owner": pid(owner)})}
+        for logs, owner in (
+            ([agents_ref], "alice"),
+            ([agents_ref, other_ref], "alice"),
+            ([agents_ref], "bob"),
+            ([agents_ref], "carol"),
+        )
+    ]
+    revoked = [
+        {"logs": logs, "revoked": ctx.run("revoked_agents", {"logs": logs})}
+        for logs in ([agents_ref], [other_ref], [agents_ref, other_ref])
+    ]
+    log = ctx.log(agents_ref)
+    existing = [
+        wraps.WrapSlot("org", ORG, 1, pid("alice")),
+        wraps.WrapSlot("org", ORG, 2, pid("alice")),
+        wraps.WrapSlot("wg", W1, 1, pid("alice")),
+        wraps.WrapSlot("wg", W1, 2, pid("alice")),
+        wraps.WrapSlot("wg", W0, 2, pid("alice")),
+    ]
+    plans = [
+        {
+            "wrapper": pid(wrapper),
+            "missing": [slot.to_json() for slot in catchup.missing_wraps(log, pid(wrapper), existing)],
+        }
+        for wrapper in ("alice", "bot", "bob")
+    ]
+    cred_existing = [wraps.WrapSlot("cred", pid("alice"), e, pid("alice")) for e in (1, 2)]
+    cred_plans = [
+        {
+            "owner": pid("alice"),
+            "wrapper": pid(wrapper),
+            "current_epoch": 2,
+            "missing": [
+                slot.to_json()
+                for slot in catchup.missing_cred_wraps(
+                    [log], pid("alice"), pid(wrapper), current_epoch=2, existing=cred_existing
+                )
+            ],
+        }
+        for wrapper in ("alice", "bot")
+    ]
+    # an admin without explicit access and its agent get every epoch of the workgroup (ADR-058 section 2)
+    edge_agent = edge.copy()
+    edge_agent.agent_add("carol", "bot3", "carol", 1)  # 13
+    edge_agent.add("rotate", "alice", scope="wg", scope_id=W1, epoch=2)  # 14
+    edge_log = verify.verify_log(edge_agent.entries, founder)
+    edge_existing = [wraps.WrapSlot("wg", W1, 2, r) for r in (pid("alice"), pid("bob"), pid("dev2"))]
+    edge_missing = catchup.missing_wraps(edge_log, pid("alice"), edge_existing)
+    section = {
+        "valid": valid,
+        "cred_valid": cred_valid,
+        "cred_readers": readers,
+        "revoked_agents": revoked,
+        "catch_up": {
+            "log": _ref("agents", AGENTS_COUNT),
+            "existing": [slot.to_json() for slot in existing],
+            "plans": plans,
+        },
+        "cred_catch_up": {"existing": [slot.to_json() for slot in cred_existing], "plans": cred_plans},
+        "admin_catch_up": {
+            "log": _ref("edge_agent", EDGE_COUNT + 2),
+            "existing": [slot.to_json() for slot in edge_existing],
+            "plans": [
+                {
+                    "wrapper": pid("alice"),
+                    "missing": [slot.to_json() for slot in edge_missing],
+                }
+            ],
+        },
+        "edge_agent": edge_agent.entries,
+    }
+    return section, invalid
+
+
+ORG_C = pid("org/c")
+ORG_D = pid("org/d")
+
+
+def revocation_builders() -> dict[str, LogBuilder]:
+    """Logs of the global revocation (ADR-082 section 9.1): in org C bob's agent `bot2` is removed by the admin alice
+    (`agent_removed_by_admin`, it only leaves org C) or by bob itself (`agent_removed_by_owner`, revoked everywhere);
+    in org D, founded by bob, `bot2` stays active. `agent_rejoined` gives the catch-up of an agent whose user rejoined
+    after rotations: no epoch from before the user's current membership."""
+    logs: dict[str, LogBuilder] = {}
+    for name, remover in (("agent_removed_by_admin", "alice"), ("agent_removed_by_owner", "bob")):
+        log = LogBuilder(ORG_C)
+        log.genesis(default_wg=pid("wg/c"))  # 0
+        log.invite_user("alice", "bob")  # 1
+        log.accept("bob", agent=agent_member("bot2", "bob", 1))  # 2
+        log.add("remove", remover, subject=pid("bot2"))  # 3
+        logs[name] = log
+    own = LogBuilder(ORG_D)
+    own.genesis("bob", default_wg=pid("wg/d"), agent="bot2")  # 0
+    logs["bob_org"] = own
+    rejoined = LogBuilder()
+    rejoined.genesis()  # 0
+    rejoined.invite_user("alice", "bob")  # 1
+    rejoined.accept("bob", agent=agent_member("bot2", "bob", 1))  # 2
+    rejoined.add("remove", "alice", subject=pid("bob"))  # 3 (bot2 with its user)
+    rejoined.add("rotate", "alice", scope="org", scope_id=ORG, epoch=2)  # 4
+    rejoined.add("rotate", "alice", scope="wg", scope_id=W0, epoch=2)  # 5
+    rejoined.invite_user("alice", "bob-again")  # 6
+    rejoined.accept("bob", code_label="bob-again", agent=agent_member("bot2", "bob", 1))  # 7
+    rejoined.add("rotate", "alice", scope="wg", scope_id=W0, epoch=3)  # 8
+    logs["agent_rejoined"] = rejoined
+    return logs
+
+
+def _revocation_part(ctx: Context) -> tuple[Json, list[Json]]:
+    """log-wraps.json: only its user (or the agent itself) revokes an agent everywhere; and catch-up after a rejoin."""
+    by_admin = {"log": _ref("agent_removed_by_admin", 4), "founder": sig_pk("alice")}
+    by_owner = {"log": _ref("agent_removed_by_owner", 4), "founder": sig_pk("alice")}
+    bob_org = {"log": _ref("bob_org", 1), "founder": sig_pk("bob")}
+
+    def cred(logs: Sequence[Json]) -> Json:
+        wrapped = make_wrap("bob", "cred", pid("bob"), 1, "bot2")
+        return {"wrap": wrapped, "wrapped_by": pid("bob"), "current_epoch": 1, "logs": list(logs)}
+
+    readers = [
+        {"logs": logs, "owner": pid("bob"), "readers": ctx.run("cred_readers", {"logs": logs, "owner": pid("bob")})}
+        for logs in ([by_admin, bob_org], [by_owner, bob_org])
+    ]
+    revoked = [
+        {"logs": logs, "revoked": ctx.run("revoked_agents", {"logs": logs})}
+        for logs in ([by_admin, bob_org], [by_owner, bob_org])
+    ]
+    ctx.run("check_cred_wrap", cred([by_admin, bob_org]))
+    invalid = [
+        ctx.negative(
+            "cred_agent_revoked_by_its_user_in_another_org",
+            "check_cred_wrap",
+            cred([by_owner, bob_org]),
+            "wrap_unauthorized",
+        )
+    ]
+    rejoined_ref = {"log": _ref("agent_rejoined", 9), "founder": sig_pk("alice")}
+    log = ctx.log(rejoined_ref)
+    existing = [
+        wraps.WrapSlot(scope, sid, epoch, pid("bob")) for scope, sid in (("org", ORG), ("wg", W0)) for epoch in (1, 2)
+    ]
+    section = {
+        "cred_readers": readers,
+        "revoked_agents": revoked,
+        "cred_valid": [{"name": "cred_agent_removed_by_admin_elsewhere", "args": cred([by_admin, bob_org])}],
+        "rejoin_catch_up": {
+            "log": rejoined_ref["log"],
+            "existing": [slot.to_json() for slot in existing],
+            "plans": [
+                {
+                    "wrapper": pid("alice"),
+                    "missing": [slot.to_json() for slot in catchup.missing_wraps(log, pid("alice"), existing)],
+                }
+            ],
+        },
+    }
+    return section, invalid
 
 
 # --- log-events.json ---
@@ -2001,8 +2844,8 @@ SESSION = pid("session")
 
 def build_events() -> Json:
     """The kind matrix and event checks E1-E9 for readers and the hub against the main log (section 6.4)."""
-    main, plat = main_builder(), platform_builder()
-    ctx = Context({"main": main.entries, "platform": plat.entries})
+    main, plat, agents = main_builder(), platform_builder(), agents_builder()
+    ctx = Context({"main": main.entries, "platform": plat.entries, "agents": agents.entries})
     full = len(main.entries)
 
     def ev(
@@ -2302,6 +3145,7 @@ def build_events() -> Json:
             "event_conflict",
         ),
     ]
+    agent_section, agent_invalid = _agent_events_part(ctx)
     return {
         "about": "Event rules E1-E9 of 04-crypto.md section 6.4 for readers and the hub against the main log of "
         "log.json, and the kind matrix of section 4.3 (CON-03, equal to contracts/enums/event-kinds.json). "
@@ -2309,14 +3153,106 @@ def build_events() -> Json:
         "identities": _identities(),
         "ids": {**_ids(), "task": TASK, "session": SESSION},
         "founder": sig_pk("alice"),
-        "logs": {"main": main.entries, "platform": plat.entries},
+        "logs": {"main": main.entries, "platform": plat.entries, "agents": agents.entries},
         "matrix": events.matrix(),
         "grace_seconds": int(events.GRACE.total_seconds()),
         "valid": valid,
         "hub_valid": hub_valid,
         "replay": {"stored": reader_cases["settings"], "incoming": reader_cases["settings"], "replayed": True},
-        "invalid": invalid,
+        "agents": agent_section,
+        "invalid": invalid + agent_invalid,
     }
+
+
+def _agent_events_part(ctx: Context) -> tuple[Json, list[Json]]:
+    """log-events.json, ADR-082: events of agents with their users' rights (against the agents log)."""
+
+    def ev(
+        author: str, kind: str, scope: str, scope_id: str, epoch: int, /, *, lh: int, label: str, **extra: str
+    ) -> Json:
+        return make_event(author, kind, scope=scope, scope_id=scope_id, epoch=epoch, lh=lh, label=label, **extra)
+
+    cases = {
+        "prompt_by_agent": ev("bot", "prompt", "wg", W1, 2, lh=8, label="agent-prompt", wg=W1, task=TASK),
+        "prompt_by_agent_of_writer": ev("bot2", "prompt", "wg", W1, 2, lh=8, label="agent2-prompt", wg=W1, task=TASK),
+        "member_profile_by_agent": ev(
+            "bot", "member.profile", "org", ORG, 1, lh=8, label="agent-profile", ref=pid("alice")
+        ),
+        "org_profile_by_agent_of_admin": ev("bot", "org.profile", "org", ORG, 1, lh=8, label="agent-org-profile"),
+        "member_name_by_agent_of_admin": ev(
+            "bot", "member.name", "org", ORG, 1, lh=8, label="agent-member-name", ref=pid("bob")
+        ),
+    }
+    valid = []
+    for name, sealed in cases.items():
+        args = _agents_args(AGENTS_COUNT, event=sealed)
+        ctx.run("check_event", args)
+        valid.append({"name": name, "args": args, "scope_key": b64u_encode(scope_key(*_scope_of(sealed)))})
+    hub = _agents_args(AGENTS_COUNT, event=cases["prompt_by_agent"], now=ts(200))
+    ctx.run("check_event_hub", hub)
+    neg = ctx.negative
+    invalid = [
+        neg(
+            "agent_member_profile_ref_is_agent",
+            "check_event",
+            _agents_args(
+                AGENTS_COUNT,
+                event=ev("bot", "member.profile", "org", ORG, 1, lh=8, label="agent-profile-self", ref=pid("bot")),
+            ),
+            "header_invalid",
+        ),
+        neg(
+            "agent_of_member_writes_org_profile",
+            "check_event",
+            _agents_args(AGENTS_COUNT, event=ev("bot2", "org.profile", "org", ORG, 1, lh=8, label="agent2-org")),
+            "author_not_writer",
+        ),
+        neg(
+            "agent_writes_session_output",
+            "check_event",
+            _agents_args(
+                AGENTS_COUNT,
+                event=ev(
+                    "bot", "session.output", "wg", W1, 2, lh=8, label="agent-output", wg=W1, task=TASK, session=SESSION
+                ),
+            ),
+            "kind_not_allowed",
+        ),
+        neg(
+            "agent_of_reader_prompts",
+            "check_event",
+            _agents_args(
+                AGENTS_COUNT,
+                event=ev("bot2", "prompt", "wg", W1, 1, lh=6, label="agent2-read-only", wg=W1, task=TASK),
+            ),
+            "author_not_writer",
+        ),
+        neg(
+            "replaced_agent_at_lh",
+            "check_event",
+            _agents_args(
+                AGENTS_COUNT,
+                event=ev("bot2", "prompt", "wg", W1, 2, lh=13, label="agent2-replaced", wg=W1, task=TASK),
+            ),
+            "author_not_writer",
+        ),
+        neg(
+            "member_name_of_an_agent",
+            "check_event",
+            _agents_args(
+                AGENTS_COUNT,
+                event=ev("bot", "member.name", "org", ORG, 1, lh=8, label="agent-name-agent", ref=pid("bot2")),
+            ),
+            "header_invalid",
+        ),
+        neg(
+            "hub_replaced_agent_at_receipt",
+            "check_event_hub",
+            _agents_args(AGENTS_COUNT, event=cases["prompt_by_agent_of_writer"], now=ts(200)),
+            "author_not_writer",
+        ),
+    ]
+    return {"valid": valid, "hub_valid": [{"name": "prompt_by_agent", "args": hub}]}, invalid
 
 
 def _scope_of(sealed: Json) -> tuple[str, str, int]:

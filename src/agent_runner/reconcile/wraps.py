@@ -9,7 +9,11 @@ For every wrap addressed to this device whose slot `(scope, scope_id, epoch)` th
 3. W1-W3 against the verified log (`crypto.log.wraps.check_wrap`; the wrapper's signature, its right to hold the
    epoch, this device's entitlement now, decertified platform devices excluded). `cred` wraps are checked against
    every acting org's log (`check_cred_wrap`); the device does not learn the owner's current `CK` epoch from the
-   logs, so the bound is the wrap's own epoch (decisions/RUN-03.md);
+   logs, so the bound is the wrap's own epoch (decisions/RUN-03.md). A `cred` wrap that a former agent of the owner
+   made (an agent of the owner in a verified log, removed or superseded since, so no reader any more; its
+   signature under its key from the log) to a device that reads the owner's `CK` now is kept with source
+   `former_agent`: it opens records sealed under that epoch, never the epoch a new record is sealed under (ADR-082
+   section 9.5); a wrap of anybody else stays refused;
 4. unwrap with the device's X25519 key (`decrypt_failed`, `hpke_short`);
 5. store sealed with the storage key (`orgs.keys`, source `wrap`).
 
@@ -30,13 +34,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
+from agent_runner.crypto.encoding import b64u_decode
 from agent_runner.crypto.errors import CryptoError
-from agent_runner.crypto.log.wraps import CRED, WRAP_KEYS, check_cred_wrap, check_wrap
-from agent_runner.crypto.wrap import unwrap_key
+from agent_runner.crypto.log.state import AGENT
+from agent_runner.crypto.log.verify import VerifiedLog
+from agent_runner.crypto.log.wraps import CRED, WRAP_KEYS, check_cred_wrap, check_wrap, cred_readers
+from agent_runner.crypto.wrap import unwrap_key, verify_wrap
 from agent_runner.orgs import audit
 from agent_runner.orgs.book import OrgBook
 from agent_runner.orgs.db import session
-from agent_runner.orgs.keys import held_slots, store_scope_key
+from agent_runner.orgs.keys import FORMER_AGENT, held_slots, store_scope_key
 from agent_runner.reconcile import logs, wire
 from agent_runner.reconcile.engine import Run
 
@@ -75,13 +82,37 @@ def _slot(wrap: Mapping[str, Any]) -> tuple[str, str, int]:
     return str(wrap["scope"]), scope_id, cast(int, epoch)
 
 
-def check(book: OrgBook, kem: Any, wrap: Mapping[str, Any]) -> tuple[tuple[str, str, int], bytes]:
-    """Verify one stored wrap for this device; returns its slot and the unwrapped key (`CryptoError`, `Pending`)."""
+def former_agent(
+    logs: list[VerifiedLog], item: Mapping[str, Any], wrapped_by: str, device: str, excluded: frozenset[str]
+) -> bool:
+    """A `cred` wrap a former agent of the owner made to this device while the device reads the owner's `CK` (module
+    docstring); `wrap_unauthorized` for a forged signature."""
+    owner = str(item["scope_id"])
+    states = [log.state for log in logs]
+    agent = next((p for s in states if (p := s.principals.get(wrapped_by)) is not None and p.kind == AGENT), None)
+    if agent is None or agent.parent != owner or device not in cred_readers(states, owner, excluded):
+        return False
+    verify_wrap(
+        b64u_decode(agent.sig, 32),
+        scope=CRED,
+        scope_id=owner,
+        epoch=int(item["epoch"]),
+        recipient=device,
+        wrap=str(item["wrap"]),
+        signature=str(item["sig"]),
+    )
+    return True
+
+
+def check(book: OrgBook, kem: Any, wrap: Mapping[str, Any]) -> tuple[tuple[str, str, int], bytes, str]:
+    """Verify one stored wrap for this device; returns its slot, the unwrapped key and its source (`CryptoError`,
+    `Pending`)."""
     scope, scope_id, epoch = _slot(wrap)
     if wrap["recipient_id"] != book.device_id:
         raise CryptoError("wrap_unauthorized")
     item = {key: wrap[key] for key in WRAP_KEYS}
     wrapped_by = cast(str, wrap["wrapped_by"])
+    source = "wrap"
     if scope in ORG_SCOPES:
         org = scope_id if scope == "org" else book.org_of_wg(scope_id)
         log = None if org is None else book.log(org)
@@ -94,9 +125,17 @@ def check(book: OrgBook, kem: Any, wrap: Mapping[str, Any]) -> tuple[tuple[str, 
         if not logs:
             raise Pending
         excluded = frozenset().union(*(book.excluded(org) for org in acting))
-        check_cred_wrap(item, wrapped_by, logs, epoch, excluded)
+        try:
+            check_cred_wrap(item, wrapped_by, logs, epoch, excluded)
+        except CryptoError as refused:
+            former = refused.code == "wrap_unauthorized" and former_agent(
+                logs, item, wrapped_by, book.device_id, excluded
+            )
+            if not former:
+                raise
+            source = FORMER_AGENT
     key = unwrap_key(kem, scope=scope, scope_id=scope_id, epoch=epoch, recipient=book.device_id, wrap=item["wrap"])
-    return (scope, scope_id, epoch), key
+    return (scope, scope_id, epoch), key, source
 
 
 def _position(book: OrgBook, wrap: Mapping[str, Any]) -> tuple[object, ...]:
@@ -148,7 +187,7 @@ async def sync_wraps(run: Run, *, counting: bool = False) -> int:
                 continue
             try:
                 try:
-                    slot, key = check(book, kem, wrap)
+                    slot, key, source = check(book, kem, wrap)
                 except CryptoError as ahead:
                     # "not entitled" of a wrap for this device may only mean the verified logs are behind the hub:
                     # judge it again against the hub's current logs, never before
@@ -157,7 +196,7 @@ async def sync_wraps(run: Run, *, counting: bool = False) -> int:
                     if refreshed is None:
                         refreshed = await logs.refresh_acting(run, conn)
                     try:
-                        slot, key = check(book, kem, wrap)
+                        slot, key, source = check(book, kem, wrap)
                     except CryptoError as again:
                         # the logs could not all be refreshed: judged against the copy only after REFRESH_TRIES runs
                         unsure = not refreshed and _log_dependent(book, wrap, again)
@@ -183,7 +222,7 @@ async def sync_wraps(run: Run, *, counting: bool = False) -> int:
                     )
                 continue
             async with conn.transaction():
-                await store_scope_key(conn, run.sync.storage_key, slot, key, source="wrap")
+                await store_scope_key(conn, run.sync.storage_key, slot, key, source=source)
             held.add(slot)
             stored += 1
     if stored:

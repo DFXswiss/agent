@@ -59,9 +59,9 @@ def _cred_wraps(account: Account, mine: list[WrapSlot]) -> list[dict[str, object
     states = [found.state for found in logs]
     skip = [device for found in logs for device in excluded(account, found)]
     return [
-        make_wrap(account.identity, slot, _kem(states, slot.recipient), key)
+        make_wrap(account.signer, slot, _kem(states, slot.recipient), key)
         for slot in mine
-        if slot.epoch == epoch and may_wrap_cred(states, slot, account.user_id, epoch, skip)
+        if slot.epoch == epoch and may_wrap_cred(states, slot, account.actor, epoch, skip)
     ]
 
 
@@ -75,8 +75,8 @@ def org_catch_up(account: Account, org: str) -> dict[str, Any]:
     scoped = [s for s in slots if s.scope in (ORG, WG) and s.epoch == state.epoch(s.scope, s.scope_id)]
     for slot in scoped:
         key = ring.get((slot.scope, slot.scope_id, slot.epoch))
-        if key is not None and may_wrap(log, slot, account.user_id, skip):
-            wraps.append(make_wrap(account.identity, slot, _kem([state], slot.recipient), key))
+        if key is not None and may_wrap(log, slot, account.actor, skip):
+            wraps.append(make_wrap(account.signer, slot, _kem([state], slot.recipient), key))
     mine = [slot for slot in slots if slot.scope == CRED and slot.scope_id == account.user_id]
     if mine:
         wraps += _cred_wraps(account, mine)

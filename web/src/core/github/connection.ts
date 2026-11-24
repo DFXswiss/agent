@@ -2,8 +2,8 @@
 //
 // - `loadGithub`: `GET /v1/me/credentials` lists the user's credential kinds; with a `github` record, the record
 //   (`GET /v1/me/credentials/github`) is verified and opened in the browser: its owner is the user, its author the
-//   user or a device entitled to the user's `CK` by the verified logs (the device that ran the device flow,
-//   04-crypto.md section 4.4), its signature checks with that author's key, and it opens with the user's `CK` of the
+//   user, a device entitled to the user's `CK` by the verified logs (the device that ran the device flow,
+//   04-crypto.md section 4.4) or the user's active, not revoked agent (ADR-082 section 9.5), its signature checks with that author's key, and it opens with the user's `CK` of the
 //   record's epoch (the user's own self-wrap). Only the GitHub login, the scopes, the source (device flow or a stored
 //   token; records without it came from the device flow), the creation time and whether the token is one the platform
 //   minted (`revocable`: a token of a device flow - the GitHub App's `ghu_` or the OAuth App's `gho_`, KOR-65 - which
@@ -38,7 +38,8 @@ import type { Fields } from '../crypto/fields';
 import type { Identity } from '../crypto/keys';
 import type { Secret } from '../crypto/secret';
 import { unwrapKey, verifyWrap } from '../crypto/wrap';
-import { CRED } from '../log/wraps';
+import { AGENT } from '../log/state';
+import { CRED, revokedAgents } from '../log/wraps';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import { setGithub } from '../store/slices/github';
@@ -89,7 +90,10 @@ function refuse(code: string): never {
   throw new RequestError(code);
 }
 
-/** The user's `CK` of `epoch` from the own self-wrap (signature checked with the own identity), or null. */
+/**
+ * The user's `CK` of `epoch` to open a record: from a self-wrap by the user, its active agent (`selfWrapperKey`) or a
+ * former agent of the user (`formerAgentKey`), or null.
+ */
 export async function credentialKey(
   context: RequestsContext,
   userId: string,
@@ -106,11 +110,15 @@ export async function credentialKey(
       found.scope_id === userId &&
       found.epoch === epoch &&
       found.recipient_id === userId &&
-      found.wrapped_by === userId &&
       typeof found.wrap === 'string';
     if (!own) continue;
     try {
-      await verifyWrap(identity.sigPublic(), slot, found.wrap as string, found.sig);
+      // opening a record: also an epoch a former agent of the user created
+      const wrapper =
+        selfWrapperKey(context.store, userId, identity, found.wrapped_by) ??
+        formerAgentKey(context.store, userId, found.wrapped_by) ??
+        refuse('author_not_writer');
+      await verifyWrap(wrapper, slot, found.wrap as string, found.sig);
       return await unwrapKey(identity.kem, slot, found.wrap as string);
     } catch {
       // the next one may open
@@ -119,11 +127,48 @@ export async function credentialKey(
   return null;
 }
 
-/** The signing key of a record's author: the user, or a device the verified logs entitle to the user's `CK`. */
+/**
+ * The signing key of the user's active agent `author` that no verified log revokes (ADR-082 section 9.5: superseded
+ * or removed other than with its user in any verified, unblocked log), else null.
+ */
+export function activeAgentKey(store: Store, userId: string, author: unknown): Uint8Array | null {
+  const states = Object.values(store.getState().orgs.byId).flatMap((entry) =>
+    entry.log === null || entry.blocked !== null ? [] : [entry.log.state],
+  );
+  const revoked = revokedAgents(states);
+  const agent = states.map((state) => state.activeAgent(userId)).find((found) => found?.id === author);
+  return agent === undefined || revoked.has(agent!.id) ? null : b64uDecode(agent!.sig);
+}
+
+/**
+ * The signing key of a former agent `author` of the user: an agent principal of the user in a verified, unblocked log
+ * (its certificate verified there under the user's key), whether active, removed or superseded; else null. Only for
+ * opening what it wrapped or wrote before (ADR-082 section 9.5), never to take its epoch as the current one.
+ */
+export function formerAgentKey(store: Store, userId: string, author: unknown): Uint8Array | null {
+  for (const entry of Object.values(store.getState().orgs.byId)) {
+    const found = entry.blocked === null ? entry.log?.state.principals.get(author as string) : undefined;
+    if (found?.kind === AGENT && found.parent === userId) return b64uDecode(found.sig);
+  }
+  return null;
+}
+
+/**
+ * The signing key of the creator of a self-wrap of the user's `CK` (`wrapped_by`): the user, or the user's active, not
+ * revoked agent (it rotates `CK` as the user's client, ADR-082 section 9.5); null for anyone else.
+ */
+export function selfWrapperKey(store: Store, userId: string, identity: Identity, wrapper: unknown): Uint8Array | null {
+  return wrapper === userId ? identity.sigPublic() : activeAgentKey(store, userId, wrapper);
+}
+
+/**
+ * The signing key of a record's author: the user, a device the verified logs entitle to the user's `CK`, or the
+ * user's active, not revoked agent.
+ */
 export function authorKey(store: Store, userId: string, identity: Identity, author: unknown): Uint8Array | null {
   if (author === userId) return identity.sigPublic();
   const device = typeof author === 'string' ? deviceKeys(store, author) : null;
-  return device === null ? null : b64uDecode(device.sig);
+  return device === null ? activeAgentKey(store, userId, author) : b64uDecode(device.sig);
 }
 
 /** The body exactly as `contracts/credentials/github.json` allows it (`requests/bodies.ts`). */

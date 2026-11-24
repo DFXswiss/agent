@@ -26,6 +26,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_hub.agents.identity import actor
 from agent_hub.agents.notify import account_change
 from agent_hub.credentials.eligibility import eligible_devices
 from agent_hub.crypto.encoding import format_time
@@ -110,7 +111,8 @@ async def post_request(context: Context, principal: CurrentPrincipal, body: Requ
     org = None if body.org_id is None else UUID(body.org_id)
 
     def work(connection: Any) -> tuple[store.Created, list[Notification]]:
-        created = store.create_request(connection, user, body.envelope, now, org_id=org)
+        sender = actor(principal)  # the user's own-identity agent signs as itself (ADR-082)
+        created = store.create_request(connection, user, body.envelope, now, org_id=org, sender=UUID(sender.id))
         if created.replayed:
             return created, []
         # an agent sent a device request (e.g. connect GitHub): the user is told (KOR-24)

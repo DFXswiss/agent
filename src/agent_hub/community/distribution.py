@@ -149,14 +149,22 @@ def _may_wrap(connection: Connection, wrapper: UUID) -> None:
         raise HubError("forbidden")
 
 
+ENABLED_REQUESTER = (
+    "(EXISTS (SELECT 1 FROM hub.principal p WHERE p.id = r.user_id AND p.disabled_at IS NULL)"
+    " OR EXISTS (SELECT 1 FROM hub.agent a JOIN hub.principal p ON p.id = a.user_id AND p.disabled_at IS NULL"
+    " WHERE a.id = r.user_id AND a.state = 'active' AND a.own_identity))"
+)
+"""The requester is an enabled user or the active own-identity agent of one (ADR-082 section 9.12)."""
+
+
 def open_requests(connection: Connection, holder: UUID, limit: int, now: datetime) -> list[dict[str, str]]:
     """Open requests a holder may serve, oldest first; each is leased to the holder for `LEASE_SECONDS`."""
     require_holder(connection, holder)
     _may_wrap(connection, holder)
     rows = connection.execute(
         "SELECT r.user_id, r.id, r.kem_pub FROM hub.community_request r"
-        " JOIN hub.principal p ON p.id = r.user_id AND p.disabled_at IS NULL"
         " WHERE r.wrap IS NULL AND r.user_id <> %s AND (r.offered_at IS NULL OR r.offered_at <= %s)"
+        f" AND {ENABLED_REQUESTER}"
         " AND NOT EXISTS (SELECT 1 FROM hub.community_reject j WHERE j.wrapper_id = %s AND j.user_id = r.user_id)"
         " ORDER BY r.offered_at NULLS FIRST, r.created_at, r.id LIMIT %s FOR UPDATE OF r SKIP LOCKED",
         (holder, now - timedelta(seconds=LEASE_SECONDS), holder, limit),
@@ -313,8 +321,9 @@ def _own_wrap(connection: Connection, epoch: int, user: UUID) -> dict[str, Any] 
 
 def _own_request(connection: Connection, user: UUID) -> dict[str, Any] | None:
     row = connection.execute(
-        "SELECT r.id, r.epoch, r.wrap, r.wrap_sig, r.wrapped_by, i.sig_pub FROM hub.community_request r"
-        " LEFT JOIN hub.user_identity i ON i.user_id = r.wrapped_by WHERE r.user_id = %s",
+        "SELECT r.id, r.epoch, r.wrap, r.wrap_sig, r.wrapped_by, COALESCE(i.sig_pub, a.sig_pub)"
+        " FROM hub.community_request r LEFT JOIN hub.user_identity i ON i.user_id = r.wrapped_by"
+        " LEFT JOIN hub.agent a ON a.id = r.wrapped_by AND a.own_identity WHERE r.user_id = %s",
         (user,),
     ).fetchone()
     if row is None:

@@ -141,7 +141,8 @@ def valid_body(kind: str, body: object) -> bool:
 
 
 def read_record(account: Account, kind: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """`(stored record, its body)`: the body only when the user authored it and a verified `CK` opens it."""
+    """`(stored record, its body)`: the body only when the user, this agent or a former agent of the user authored it
+    and a verified `CK` opens it."""
     try:
         answer = account.call("GET", f"/v1/me/credentials/{kind}")
     except PlatformError as error:
@@ -152,12 +153,14 @@ def read_record(account: Account, kind: str) -> tuple[dict[str, Any] | None, dic
     if not isinstance(record, dict):
         raise unverified("response_invalid")
     try:
-        header = verify_credential(record, account.identity.sig_public())
+        found = record.get("header")
+        author = account.author_key(str(found.get("author") if isinstance(found, dict) else None))
+        header = verify_credential(record, author)
         key = account.cred_keys()[int(str(header["epoch"]))]
-        body = parse_json(open_credential(key, record, account.identity.sig_public()))
+        body = parse_json(open_credential(key, record, author))
     except (CryptoError, KeyError, ValueError):
         return record, None
-    if header["owner"] != account.user_id or header["author"] != account.user_id or not isinstance(body, dict):
+    if header["owner"] != account.user_id or not isinstance(body, dict):
         return record, None
     return record, body
 
@@ -177,10 +180,10 @@ def _put(account: Account, kind: str, body: dict[str, Any], guard: Guard | None)
         kind=kind,
         version=version + 1,
         epoch=epoch,
-        author=account.user_id,
+        author=account.actor,
         ts=format_time(datetime.now(UTC)),
     )
-    sealed = seal_credential(key, fields, body_json(body), account.identity.sig)
+    sealed = seal_credential(key, fields, body_json(body), account.signer.sig)
     answer = account.call("PUT", f"/v1/me/credentials/{kind}", {"record": sealed, "expected_version": version})
     return {"stored": True, "version": answer.get("version")}
 

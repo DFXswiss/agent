@@ -89,8 +89,8 @@ class Unverifiable(Exception):
 
 
 def _author_key(account: Account, author: object) -> bytes:
-    if author == account.user_id:
-        return account.identity.sig_public()
+    if isinstance(author, str) and (author in (account.user_id, account.actor) or author in account.former_agents()):
+        return account.author_key(author)
     found = devicereq.device_keys(account, author) if isinstance(author, str) else None
     if found is None:
         raise Unverifiable("author_not_writer")

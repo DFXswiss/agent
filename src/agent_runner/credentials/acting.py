@@ -13,10 +13,10 @@ keeps it so).
   organisation carries (A15; the model gateways and quota reads of `model`/`quota`).
 - **Turn** (`prompt_accepted`, `turn_ended`; the observer `credentials/session_state.py`, which runs in the journal
   transaction in the guest's order): the verified author of an accepted prompt (`runner.prompt_event.author_id`, set
-  by the inbox from the signed event; only users author prompts, a user's own agent signs as that user) becomes the
-  acting user of the main session when no turn is open; a second prompt in the same open turn (no `idle` since) by
-  another or an unknown author makes it unknown (NULL) until the next turn. `idle` closes the turn; the last acting
-  user stays for what the turn still journals.
+  by the inbox from the signed event; only users and their agents author prompts, and an agent's prompt counts as its
+  user's, ADR-082) becomes the acting user of the main session when no turn is open; a second prompt in the same
+  open turn (no `idle` since) by another or an unknown author makes it unknown (NULL) until the next turn. `idle`
+  closes the turn; the last acting user stays for what the turn still journals.
 - `stamp(conn, session)`: the acting user at the receipt of an operation request (journal handler): the turn's
   acting user of a main session; for a child session (`depth` > 0) the acting user of the `subagent.request` that
   started it - children inherit the person who instructed their parent's turn. The stamp is stored with the operation

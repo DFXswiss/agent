@@ -66,7 +66,7 @@ function Message({
         <header className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           {message.name !== null && (
             <span className="break-all font-semibold" data-testid="community.message.name">
-              {message.name}
+              {message.agent === true ? t('community.agent-of', { name: message.name }) : message.name}
             </span>
           )}
           <Mark user={message.author} testId="community.message.mark" />

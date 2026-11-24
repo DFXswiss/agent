@@ -4,8 +4,9 @@ A scope key (`org`, `wg` or `cred`, one per epoch) is kept in `runner.scope_key`
 (`crypto.storage.seal_local`, purpose `scope_key`, context `<scope>:<scope_id>:<epoch>`), so a row moved to another
 scope or epoch does not open. Keys are opened only into memory, for the duration of one use.
 
-`source` is `wrap` (an unwrapped key wrap, reconcile step 3) or `package` (an invitation package, org devices,
-RUN-06). A stored key never changes: storing the same slot again is a no-op (`ON CONFLICT DO NOTHING`), so a
+`source` is `wrap` (an unwrapped key wrap, reconcile step 3), `former_agent` (a `CK` wrap a former agent of the owner
+made: it opens records, nothing new is sealed under it, ADR-082 section 9.5) or `package` (an invitation package, org
+devices, RUN-06). A stored key never changes: storing the same slot again is a no-op (`ON CONFLICT DO NOTHING`), so a
 repeated reconcile is idempotent.
 """
 
@@ -17,7 +18,8 @@ from psycopg import AsyncConnection
 
 from agent_runner.crypto.storage import open_local, scope_key_context, seal_local
 
-SOURCES = frozenset({"package", "wrap"})
+FORMER_AGENT = "former_agent"
+SOURCES = frozenset({"package", "wrap", FORMER_AGENT})
 Slot = tuple[str, str, int]
 """`(scope, scope_id, epoch)`."""
 

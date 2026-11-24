@@ -28,13 +28,15 @@ COMPANY = {
 
 
 def answer(real: RealHub, device: Actor, who: Person, request: str, body: dict[str, Any]) -> None:
-    """The device fetches the request and answers it finally with `body`, sealed to the user."""
+    """The device fetches the request and answers it finally with `body`, sealed to the requester: the person's
+    own-identity agent (ADR-082)."""
     client = real.fleet.client(device)
+    ((kem,),) = real.fleet.rows("SELECT kem_pub FROM hub.agent WHERE id = %s", who.agent_id)
     assert client.get(f"/v1/device/requests/{request}").status_code == 200
     header = {
         "v": 1,
         "id": uuid7(),
-        "user": who.id,
+        "user": who.agent_id,
         "device": device.id,
         "kind": "github.connect",
         "in_reply_to": request,
@@ -43,9 +45,7 @@ def answer(real: RealHub, device: Actor, who: Person, request: str, body: dict[s
         "ts": format_time(real.harness.clock()),
         "enc_alg": request_format.ENC_ALG,
     }
-    envelope = request_format.seal_response(
-        header, who.actor.identity.kem_public(), json.dumps(body).encode(), device.identity.sig
-    )
+    envelope = request_format.seal_response(header, bytes(kem), json.dumps(body).encode(), device.identity.sig)
     response = client.post(f"/v1/device/requests/{request}/responses", json={"envelope": envelope})
     assert response.status_code == 200, response.text
 
@@ -59,7 +59,8 @@ def connect(real: RealHub, ada: Person, device: Actor, org: str, *extra: str) ->
 
 
 def device_reads(real: RealHub, device: Actor, org: str, identity: str, author: Person) -> object:
-    """The company record as the org's device reads it: the record from its route, the key from its wrap."""
+    """The company record as the org's device reads it: the record from its route, the key from its wrap; the author
+    is the person's own-identity agent."""
     served = real.fleet.client(device).get(f"/v1/device/github-identities/{identity}")
     assert served.status_code == 200, served.text
     record = served.json()["record"]
@@ -73,7 +74,7 @@ def device_reads(real: RealHub, device: Actor, org: str, identity: str, author: 
     key = wrap_format.unwrap_key(
         device.identity.kem, scope="cred", scope_id=org, epoch=epoch, recipient=device.id, wrap=b64u_encode(wrap)
     )
-    return json.loads(open_credential(key, record, author.actor.identity.sig_public()))
+    return json.loads(open_credential(key, record, author.agent_sig))  # written by the own-identity agent (ADR-082)
 
 
 def test_company_account_defaults_and_task_choice(real: RealHub) -> None:

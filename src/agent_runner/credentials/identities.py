@@ -12,7 +12,8 @@ cache (`cache.py`, `credential_cache`), which is what `opened(context, owner, "g
   record is verified before it is cached: the answer's form, the header (form, `id` = the asked ID, `owner` = the
   answer's owner, `kind` = `github`), the author signature with the author rule of the owner's kind - a user's record
   is authored by the user or a device eligible for the user's `CK` (`cache.author_key`), an organization's record by
-  an **active admin** of that organization in the verified membership log (decertified devices are no authors) - and
+  an **active admin** of that organization in the verified membership log, or the active agent of one that is not
+  revoked in any verified log (ADR-082 section 9.1; decertified devices are no authors) - and
   no rollback (a version older than the cached one is `version_conflict`). A hub that names another owner kind cannot
   pass: a record named `user` whose owner is an organization the device knows is `header_invalid` (its member devices
   read the organization's `cred` scope but never author its records), and no user ID has an organization log. `404`
@@ -62,6 +63,7 @@ from agent_runner.credentials.cache import CredentialUnavailable, RecordRefused
 from agent_runner.crypto import credential as credential_format
 from agent_runner.crypto.encoding import b64u_decode, parse_json
 from agent_runner.crypto.errors import CryptoError
+from agent_runner.crypto.log.wraps import revoked_agents
 from agent_runner.orgs import audit
 from agent_runner.orgs.book import OrgBook, book_for
 from agent_runner.orgs.db import session
@@ -164,10 +166,16 @@ def _author_key(context: Any, book: OrgBook, owner: str, owner_kind: str, author
             raise RecordRefused("header_invalid")
         return cache.author_key(context, book, owner, author)
     log = book.log(owner)
-    admin = None if log is None or author in book.excluded(owner) else log.state.member(author)
-    if admin is None or admin.role != "admin":
+    states = [found.state for org in book.acting_orgs() if (found := book.log(org)) is not None]
+    # an active admin, or the active agent of one that no verified log revokes (ADR-082 section 9.1)
+    if (
+        log is None
+        or author in book.excluded(owner)
+        or not log.state.is_admin(author)
+        or author in revoked_agents(states)
+    ):
         raise RecordRefused("wrap_unauthorized")
-    return b64u_decode(admin.sig)
+    return b64u_decode(log.state.principals[author].sig)
 
 
 def _answer(identity_id: str, answer: Mapping[str, object]) -> tuple[str, str, bool, object]:

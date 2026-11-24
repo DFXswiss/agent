@@ -134,20 +134,63 @@ class Handover:
         return {"claim": b64u_encode(self.claim)}
 
 
-def handover(agent: TestAgent, user_id: uuid.UUID | str, identity: Identity, secret: bytes | None = None) -> Handover:
-    """Seal the user's identity to the agent under `r`, seal the label to the user and hash the claim."""
+def handover(
+    agent: TestAgent,
+    user_id: uuid.UUID | str,
+    identity: Identity,
+    secret: bytes | None = None,
+    *,
+    gen: int = 1,
+    old: bool = False,
+    batches: list[dict[str, Any]] | None = None,
+    cred_wraps: list[dict[str, Any]] | None = None,
+) -> Handover:
+    """The browser's confirmation: the label sealed to the user and the claim hash, and - in the new form (ADR-082
+    section 2) - the user's certificate of generation `gen`, the user's anchor sealed to the agent under `r`, the log
+    `batches` and `cred_wraps` (none: a user without organizations); `old`: the old form with the user's identity
+    sealed to the agent."""
     r = secret or secrets.token_bytes(32)
     agent_text, user_text = str(agent.agent_id), str(user_id)
     claim = agent_format.claim(r, agent_text, user_text)
-    body = {
+    body: dict[str, Any] = {
         "pairing_id": agent_text,
-        "bundle_ct": agent_format.seal_identity(agent.identity.kem_public(), r, agent_text, user_text, identity),
         "label_ct": agent_format.seal_label(
             identity.kem_public(), agent_text, user_text, {"host": "Büro-Mac", "name": "Claude Code"}
         ),
         "claim_hash": b64u_encode(agent_format.claim_hash(claim)),
     }
+    if old:
+        body["bundle_ct"] = agent_format.seal_identity(agent.identity.kem_public(), r, agent_text, user_text, identity)
+    else:
+        cert = certificate(agent, user_text, identity, gen)
+        body.update(
+            gen=gen,
+            cert=cert,
+            user_ct=agent_format.seal_user(
+                agent.identity.kem_public(), r, agent_text, user_text, user_pub=identity.public(), cert=cert
+            ),
+            batches=batches or [],
+            cred_wraps=cred_wraps or [],
+        )
     return Handover(secret=r, claim=claim, body=body)
+
+
+def certificate(agent: TestAgent, user_id: uuid.UUID | str, identity: Identity, gen: int) -> str:
+    """The user's delegation certificate of the agent (ADR-082 section 9.1)."""
+    return agent_format.sign_cert(identity.sig, str(agent.agent_id), agent.identity.public(), str(user_id), gen)
+
+
+def user_with_identity(hub: HubHarness) -> tuple[uuid.UUID, Identity]:
+    """A user with a passkey session and a registered identity."""
+    user, identity = uuid7(hub.clock()), Identity.generate()
+    hub.keys.session(user)
+    with hub.pool.connection() as connection:
+        connection.execute(
+            "INSERT INTO hub.user_identity (user_id, kem_pub, sig_pub, recovery_id, created_at)"
+            " VALUES (%s, %s, %s, %s, %s)",
+            (user, identity.kem_public(), identity.sig_public(), b64u_encode(uuid.uuid4().bytes), hub.clock()),
+        )
+    return user, identity
 
 
 def gesture_client(

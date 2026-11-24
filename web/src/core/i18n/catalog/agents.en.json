@@ -22,8 +22,8 @@
   "disconnect-all": "Disconnect all agents",
   "dialog.title": "Disconnect {name}?",
   "dialog.all-title": "Disconnect all agents?",
-  "dialog.body": "The agent loses all access at once. What it has already read stays with it.",
-  "dialog.all-body": "Every agent loses all access at once. What they have already read stays with them.",
+  "dialog.body": "The agent loses all access at once: it is removed from every organization and the keys it could read are replaced, so it cannot open anything new. What it has already read stays with it.",
+  "dialog.all-body": "Every agent loses all access at once: they are removed from every organization and the keys they could read are replaced, so they cannot open anything new. What they have already read stays with them.",
   "dialog.cancel": "Cancel",
   "dialog.failed": "Disconnecting failed: {reason}",
   "hint.connected": "Your agent was connected. The list below shows its state.",
@@ -34,5 +34,9 @@
   "activity.by-agent": "by agent {name}",
   "activity.by-unknown-agent": "by agent",
   "activity.by-you": "by you",
-  "remote": "Runs on another computer"
+  "remote": "Runs on another computer",
+  "dialog.held": "This agent was connected before agents got their own key and received a copy of your account key. That copy keeps opening what is encrypted for you; your account key itself cannot be replaced.",
+  "dialog.cleaning": "Removing the agent from your organizations …",
+  "runs.ownComputer": "Runs on its computer with its own key",
+  "held": "Received a copy of your account key when it was connected"
 }

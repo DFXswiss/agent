@@ -4,7 +4,10 @@
 //
 // Any key holder computes from the verified log the recipients that are entitled to the current epoch of a scope
 // but have no wrap yet. Older epochs are wrapped only on request (section 5.10), with one exception: an admin that
-// reads a workgroup by inheritance gets every epoch of it (`catchUpEpochs`, ADR-058 section 2).
+// reads a workgroup by inheritance gets every epoch of it (`catchUpEpochs`, ADR-058 section 2). The active agent of a
+// user (ADR-082 section 9.4) gets what its user gets, and in addition every slot its user has since its current
+// membership (`agentSlots`: also older epochs delivered on request or after a promotion, but none current before the
+// user's last `accept`/`admit`; for `cred` every CK epoch the owner has a wrap of).
 //
 // Transition rule (ADR-058 section 2, `compatSkip`): until every runner verifies ADR-058, the browser does not wrap a
 // `wg` key for a device when its own user reads that workgroup only by inheritance and did not create the epoch (an
@@ -53,33 +56,58 @@ export function compatSkip(state: OrgState, wrapper: string, slot: WrapSlot): bo
   );
 }
 
-/** Sorted `org`/`wg` slots (current epochs, `catchUpEpochs`) without a wrap that `wrapper` may create. */
+/** Every slot of a user implies the same slot for the user's active agent (ADR-082 section 9.4). */
+export function agentSlots(log: VerifiedLog, existing: Iterable<WrapSlot>): WrapSlot[] {
+  const state = log.state;
+  return [...existing].flatMap((slot) => {
+    const agent = state.activeAgent(slot.recipient);
+    if (agent === null || slot.epoch < joinedEpoch(log, slot.recipient, slot.scope, slot.scope_id)) return [];
+    return [{ ...slot, recipient: agent.id }];
+  });
+}
+
+/** The epoch of a scope current when `user` (re)joined: its current membership starts there. */
+function joinedEpoch(log: VerifiedLog, user: string, scope: string, scopeId: string): number {
+  return log.states[log.state.principals.get(user)!.joinedSeq]!.epoch(scope, scopeId);
+}
+
+/** Unique slots, sorted. */
+const uniqueSorted = (slots: Iterable<WrapSlot>): WrapSlot[] =>
+  [...new Map([...slots].map((slot) => [slotKey(slot), slot])).values()].sort(compareSlots);
+
+/**
+ * Sorted `org`/`wg` slots (current epochs, `catchUpEpochs`, and the slots of agents, `agentSlots`) without a wrap that
+ * `wrapper` may create.
+ */
 export function missingWraps(
   log: VerifiedLog,
   wrapper: string,
   existing: Iterable<WrapSlot>,
   excluded: Iterable<string> = [],
 ): WrapSlot[] {
-  const have = new Set([...existing].map(slotKey));
+  const known = [...existing];
+  const have = new Set(known.map(slotKey));
   const skip = [...excluded];
   const state = log.state;
-  return state
-    .scopes()
-    .flatMap(([scope, scopeId]) =>
-      state.readers(scope, scopeId, skip).flatMap((recipient) =>
-        catchUpEpochs(state, scope, scopeId, recipient).map((epoch) => ({
-          scope,
-          scope_id: scopeId,
-          epoch,
-          recipient,
-        })),
-      ),
-    )
-    .filter((slot) => !have.has(slotKey(slot)) && mayWrap(log, slot, wrapper, skip))
-    .sort(compareSlots);
+  const slots = state.scopes().flatMap(([scope, scopeId]) =>
+    state.readers(scope, scopeId, skip).flatMap((recipient) =>
+      catchUpEpochs(state, scope, scopeId, recipient).map((epoch) => ({
+        scope,
+        scope_id: scopeId,
+        epoch,
+        recipient,
+      })),
+    ),
+  );
+  return uniqueSorted([...slots, ...agentSlots(log, known)]).filter(
+    (slot) => !have.has(slotKey(slot)) && mayWrap(log, slot, wrapper, skip),
+  );
 }
 
-/** Sorted `cred` slots of the owner's current CK epoch without a wrap that `wrapper` may create. */
+/**
+ * Sorted `cred` slots of the owner's current CK epoch without a wrap that `wrapper` may create, and for the owner's
+ * agents every CK epoch the owner has a wrap of (ADR-082 section 9.4).
+ */
 export function missingCredWraps(
   logs: readonly VerifiedLog[],
   owner: string,
@@ -88,13 +116,18 @@ export function missingCredWraps(
   existing: Iterable<WrapSlot>,
   excluded: Iterable<string> = [],
 ): WrapSlot[] {
-  const have = new Set([...existing].map(slotKey));
+  const known = [...existing];
+  const have = new Set(known.map(slotKey));
   const skip = [...excluded];
   const states = logs.map((log) => log.state);
-  return [...credReaders(states, owner, skip)]
-    .map((recipient) => ({ scope: CRED, scope_id: owner, epoch: currentEpoch, recipient }))
-    .filter((slot) => !have.has(slotKey(slot)) && mayWrapCred(states, slot, wrapper, currentEpoch, skip))
-    .sort(compareSlots);
+  const readers = credReaders(states, owner, skip);
+  const agents = new Set(states.flatMap((state) => state.activeAgent(owner)?.id ?? []).filter((id) => readers.has(id)));
+  const owned = known.filter((slot) => slot.scope === CRED && slot.scope_id === owner && slot.recipient === owner);
+  const older = owned.flatMap((slot) => [...agents].map((agent) => ({ ...slot, recipient: agent })));
+  const current = [...readers].map((recipient) => ({ scope: CRED, scope_id: owner, epoch: currentEpoch, recipient }));
+  return uniqueSorted([...current, ...older]).filter(
+    (slot) => !have.has(slotKey(slot)) && mayWrapCred(states, slot, wrapper, currentEpoch, skip),
+  );
 }
 
 const isSlot = (slot: unknown): slot is WrapSlot => {
@@ -108,10 +141,26 @@ const isSlot = (slot: unknown): slot is WrapSlot => {
 };
 
 /**
- * The slots of the hub's catch-up answer that the verified log confirms: well-formed, an epoch `catchUpEpochs` gives
- * the recipient (the current one; every epoch for an admin reading a workgroup by inheritance), recipient entitled
- * now, `wrapper` allowed (W1/W2) and not withheld by the transition rule (`compatSkip`). Anything else is dropped (a
- * malicious hub could ask for a wrap to an outsider or for history). Sorted, without duplicates.
+ * An epoch the verified log confirms for the slot's recipient: one `catchUpEpochs` gives it, or for an agent one its
+ * user gets, or one its user held by the log (`epochHolders`) since its current membership (the hub's `agentSlots`
+ * come from the user's wraps, which the client cannot see).
+ */
+function confirmedEpoch(log: VerifiedLog, slot: WrapSlot): boolean {
+  const state = log.state;
+  const own = (recipient: string) => catchUpEpochs(state, slot.scope, slot.scope_id, recipient).includes(slot.epoch);
+  if (own(slot.recipient)) return true;
+  const user = state.member(slot.recipient)?.parent ?? null;
+  if (user === null) return false;
+  const held = log.epochHolders(slot.scope, slot.scope_id, slot.epoch).has(user);
+  return own(user) || (held && slot.epoch >= joinedEpoch(log, user, slot.scope, slot.scope_id));
+}
+
+/**
+ * The slots of the hub's catch-up answer that the verified log confirms: well-formed, an epoch `confirmedEpoch` gives
+ * the recipient (the current one; every epoch for an admin reading a workgroup by inheritance; for an agent the
+ * epochs of its user), recipient entitled now, `wrapper` allowed (W1/W2) and not withheld by the transition rule
+ * (`compatSkip`). Anything else is dropped (a malicious hub could ask for a wrap to an outsider or for history).
+ * Sorted, without duplicates.
  */
 export function confirmedSlots(
   log: VerifiedLog,
@@ -124,10 +173,7 @@ export function confirmedSlots(
   const unique = new Map([...offered].filter(isSlot).map((slot) => [slotKey(slot), slot]));
   return [...unique.values()]
     .filter(
-      (slot) =>
-        catchUpEpochs(state, slot.scope, slot.scope_id, slot.recipient).includes(slot.epoch) &&
-        mayWrap(log, slot, wrapper, skip) &&
-        !compatSkip(state, wrapper, slot),
+      (slot) => confirmedEpoch(log, slot) && mayWrap(log, slot, wrapper, skip) && !compatSkip(state, wrapper, slot),
     )
     .sort(compareSlots);
 }

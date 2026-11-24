@@ -6,9 +6,13 @@
 // and the warning. "Confirm with passkey" runs the login ceremony tagged with the pairing, unlocks the identity (PRF;
 // without it the guidance of `ui/prf-missing`) and loads the user's agents (`GET /v1/me/agents`): when there is a main
 // orchestrator the user was not yet shown, the page names it ("Replaces “X”", label opened like the settings list) and
-// asks once more before anything is sent. Then it seals identity and label and posts the confirmation;
-// `pairing_gesture_required` (more than 300 s since the ceremony) offers the gesture again with the same confirmation
-// body. Then the same tab hands over to the agent's loopback listener with a form POST. A tab that is already
+// asks once more before anything is sent. Then it reads the generation the hub counts for the user, signs the agent's
+// certificate, seals the user's public keys for the agent and the label for the user, and posts the confirmation with
+// one batch per organization (the agent added, a replaced orchestrator removed with its rotations, ADR-082 section 2)
+// and the credential-key wraps; the user's credential key is rotated when the logs owe it (`confirmPairing`).
+// `pairing_gesture_required` (more than 300 s since the ceremony) offers the gesture again with the same fixed
+// confirmation values; `client_outdated` asks to reload. Then the same tab hands over to the agent's loopback listener
+// with a form POST. A tab that is already
 // unlocked loads the agents at once, so the replaced agent is named before the gesture.
 //
 // After an invitation with pairing (11-agent-access.md section 5.2) the invitation screen navigates here with the
@@ -30,13 +34,14 @@ import { type SignIn, signIn } from '../../../core/account/login';
 import { type PairingLink, pairingFragment, parsePairingLink } from '../../../core/agents/link';
 import { loadAgents } from '../../../core/agents/list';
 import {
+  confirmPairing,
   loopbackForm,
   lookupPairing,
   type Pairing,
+  pairingGen,
   pairingOutcome,
   type PreparedPairing,
   preparePairing,
-  submitPairing,
 } from '../../../core/agents/pairing';
 import { formatCode } from '../../../core/crypto/agent';
 import type { Identity } from '../../../core/crypto/keys';
@@ -147,8 +152,11 @@ export function ConnectScreen() {
   const confirm = async (identity: Identity) => {
     const userId = app.userId!;
     try {
-      prepared.current ??= await preparePairing(pairing!, link!, userId, identity, app.rootKey);
-      await submitPairing(app.client, prepared.current);
+      if (prepared.current === null) {
+        const gen = await pairingGen(app.client, link!.pairingId);
+        prepared.current = await preparePairing(pairing!, link!, userId, identity, app.rootKey, gen);
+      }
+      await confirmPairing({ ...app.tasks, prefs: app.prefs }, prepared.current);
     } catch (caught) {
       fail(caught);
       return;

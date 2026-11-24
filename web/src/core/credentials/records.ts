@@ -3,14 +3,16 @@
 // encrypted and opened here; only the non-secret summary of a record (`summarize`) leaves this module – tokens, API
 // keys and passwords never reach the store or the UI.
 //
-// - `ownKeys`: the user's own `CK` self-wraps (`GET /v1/wraps?scope=cred&scope_id=<me>`): wrapped by and for the user,
-//   signature checked with the own identity, opened with the own X25519 key; newest epoch first, with the hub's
-//   `created_at` of the wrap (the start of the epoch, used by the rotation job). Wraps that do not verify or open are
-//   skipped.
+// - `ownKeys`/`listOwnKeys`: the user's own `CK` self-wraps (`GET /v1/wraps?scope=cred&scope_id=<me>`): wrapped for the
+//   user by the user or its active agent (signature checked with that key), opened with the own X25519 key; newest
+//   epoch first, with the hub's `created_at` of the wrap (the start of the epoch, used by the rotation job). An epoch
+//   only a former agent of the user wrapped (ADR-082 section 9.5) is taken for opening existing records alone
+//   (`opening`: listing them and the rotation that re-encrypts them under a new epoch the user creates), never for new
+//   records nor as the current epoch. Wraps that do not verify or open, or of a stranger, are skipped.
 // - `sealRecord`: the record of a body (`crypto/credential.ts`): header `{v, alg, id, owner, kind, version, epoch,
 //   author, ts}` + fresh salt and nonce, encrypted under `CK_epoch`, signed by the author.
-// - `openRecord`: owner = the user, kind as asked, author the user or a device the verified logs entitle to the user's
-//   `CK` (a caller may widen this, `AuthorKeys`), signature, `CK` of the record's epoch, and a body exactly as
+// - `openRecord`: owner = the user, kind as asked, author the user, a device the verified logs entitle to the user's
+//   `CK` or the user's active, not revoked agent (ADR-082 section 9.5; a caller may widen this, `AuthorKeys`), signature, `CK` of the record's epoch, and a body exactly as
 //   `contracts/credentials/<kind>.json` allows it (`params_invalid` otherwise).
 // - `putCredential`: `PUT /v1/me/credentials/{kind}` with `expected_version` (0 = create; an update keeps the stored
 //   record ID, HUB-13); a `409 version_conflict` (another browser or device wrote in between) is retried once with
@@ -28,7 +30,7 @@ import type { Identity } from '../crypto/keys';
 import type { Secret } from '../crypto/secret';
 import type { Sealed } from '../crypto/signed';
 import { unwrapKey, verifyWrap } from '../crypto/wrap';
-import { authorKey, isGithubBody } from '../github/connection';
+import { authorKey, formerAgentKey, isGithubBody, selfWrapperKey } from '../github/connection';
 import { CRED } from '../log/wraps';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
@@ -194,31 +196,55 @@ const createdAt = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-/** The user's own `CK` self-wraps that verify and open, newest epoch first (module comment). */
-export async function ownKeys(context: RequestsContext, userId: string, identity: Identity): Promise<OwnKey[]> {
+/** The user's `CK`s as `listOwnKeys` finds them. */
+export interface OwnKeys {
+  /** Self-wraps by the user or its active agent, newest epoch first: the epochs the browser builds on. */
+  readonly keys: OwnKey[];
+  /** `keys` and the epochs only a former agent of the user wrapped: for opening existing records, never for new ones
+   *  and never as the start of the current epoch (ADR-082 section 9.5). */
+  readonly opening: OwnKey[];
+  /** The newest epoch of any self-wrap the hub lists (also one this browser does not take; 0 without one). */
+  readonly listed: number;
+}
+
+/** The user's `CK` self-wraps that verify and open, by their wrapper (module comment). */
+export async function listOwnKeys(context: RequestsContext, userId: string, identity: Identity): Promise<OwnKeys> {
   const body = await context.client.request('GET', `/v1/wraps?scope=cred&scope_id=${encodeURIComponent(userId)}`);
   const wraps = isRecord(body) && Array.isArray(body.wraps) ? body.wraps.filter(isRecord) : [];
   const own = wraps
-    .filter((w) => w.scope === CRED && w.scope_id === userId && w.recipient_id === userId && w.wrapped_by === userId)
+    .filter((w) => w.scope === CRED && w.scope_id === userId && w.recipient_id === userId)
     .filter((w) => Number.isSafeInteger(w.epoch) && (w.epoch as number) >= 1 && typeof w.wrap === 'string')
     .sort((a, b) => (b.epoch as number) - (a.epoch as number));
   const found = new Map<number, OwnKey>();
+  const former = new Map<number, OwnKey>();
   for (const wrap of own) {
     const epoch = wrap.epoch as number;
     if (found.has(epoch)) continue;
     const slot = { scope: CRED, scope_id: userId, epoch, recipient: userId };
     try {
-      await verifyWrap(identity.sigPublic(), slot, wrap.wrap as string, wrap.sig);
-      found.set(epoch, {
+      const trusted = selfWrapperKey(context.store, userId, identity, wrap.wrapped_by);
+      const wrapper = trusted ?? formerAgentKey(context.store, userId, wrap.wrapped_by) ?? refuse('author_not_writer');
+      await verifyWrap(wrapper, slot, wrap.wrap as string, wrap.sig);
+      const key = {
         epoch,
         key: await unwrapKey(identity.kem, slot, wrap.wrap as string),
         createdAt: createdAt(wrap.created_at),
-      });
+      };
+      (trusted === null ? former : found).set(epoch, key);
     } catch {
       // a wrap that does not verify or open is skipped (another one of the epoch may)
     }
   }
-  return [...found.values()];
+  const keys = [...found.values()];
+  const opening = [...keys, ...[...former.values()].filter((key) => !found.has(key.epoch))].sort(
+    (a, b) => b.epoch - a.epoch,
+  );
+  return { keys, opening, listed: (own[0]?.epoch as number | undefined) ?? 0 };
+}
+
+/** The user's own `CK`s the browser builds on, newest epoch first (`listOwnKeys`). */
+export async function ownKeys(context: RequestsContext, userId: string, identity: Identity): Promise<OwnKey[]> {
+  return (await listOwnKeys(context, userId, identity)).keys;
 }
 
 /** The newest own `CK`, or `epoch_stale` when none opens. */
@@ -339,7 +365,7 @@ export async function loadCredentials(context: RequestsContext): Promise<readonl
   const { userId, identity } = context.store.getState().me;
   if (userId === null || identity === null) refuse('unauthorized');
   const listed = await listCredentials(context);
-  const keys = listed.length === 0 ? [] : await ownKeys(context, userId, identity);
+  const keys = listed.length === 0 ? [] : (await listOwnKeys(context, userId, identity)).opening;
   const entries: CredentialEntry[] = [];
   for (const item of listed) {
     const record = await fetchRecord(context, item.kind);

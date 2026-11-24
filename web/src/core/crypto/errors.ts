@@ -31,6 +31,7 @@ export const LOG_CODES = [
   'log_genesis',
   'log_accept',
   'log_admit',
+  'log_agent',
   'log_signature',
   'log_rights',
   'log_epoch',

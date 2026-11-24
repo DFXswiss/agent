@@ -65,6 +65,7 @@ class TableRule:
 AGENT_EXPORT: Mapping[str, str] = {
     "state": "'revoked'",
     "bundle_ct": "NULL::bytea",
+    "user_ct": "NULL::bytea",
     "handover_ct": "NULL::bytea",
     "revoked_at": "COALESCE(revoked_at, %(now)s)",
 }

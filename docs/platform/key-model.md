@@ -33,7 +33,7 @@ whoever can open it; *entitled* = the verified log makes a principal a reader of
 | **Human user** (optionally with the root-signed platform role `inviter`) | user ID (UUIDv7), registered identity `pub{kem,sig}`, passkeys | user identity (X25519 + Ed25519) in the identity bundle | browser sessions, its agent | yes |
 | **Browser session** of a user | P-256 session key in a 12 h session certificate signed by a passkey assertion | the session key; it holds the user's unlocked identity in memory while the tab is open; a **remembered browser** also keeps it at rest under a non-extractable IndexedDB key (`persist/device-key`, [06 §3.3](spec/06-web.md#33-prf-required-prf_missing-guidance)) | the user's identity | yes |
 | **Execution device** – org device (enrolled by an org invitation) or platform device (certified by the platform root) | device ID, `pub{kem,sig}` in the membership log (org device) or the platform log (platform device) | device identity (X25519 + Ed25519), runner storage key derived from it | the runner; the sessions it runs | yes |
-| **Agent of the user** (main orchestrator, [idea 34](KONZEPT.md#k-idee-34), [ADR-056](adr/056-delegated-agent-access.md)) | agent ID (key ID `agent.<hex>` at the hub, not a principal of any log) | agent key pair (X25519 opens the sealed identity, Ed25519 signs requests); **plus a copy of the user's identity** | the user's identity; requests signed with the agent key | yes (local); on DFX hardware: [gap KOR-57](#kor-57--own-identity-of-the-agent-real-revocation-orchestrator-on-dfx-hardware) |
+| **Agent of the user** (main orchestrator, [idea 34](KONZEPT.md#k-idee-34), [ADR-056](adr/056-delegated-agent-access.md)) | agent ID (key ID `agent.<hex>` at the hub), a sub-principal of kind `agent` with its user as parent in every log of the user ([ADR-082](adr/082-agent-own-identity.md)) | agent key pair = its identity (X25519 opens its wraps, Ed25519 signs requests, entries, events, wraps, records); a delegation certificate by the user's identity; the registering agent of an account without a person holds the account's identity ([E-27](KONZEPT.md#e-27)) | its own identity with its user's rights | yes (local); on DFX hardware: [gap KOR-57](#kor-57--own-identity-of-the-agent-real-revocation-orchestrator-on-dfx-hardware) |
 | **Platform session** (a Claude Code session, its subagents) | session ID, bearer session token inside the VM | **none** | the device that runs it (device-signed events, operations and reads) | yes |
 | **Work, test and browser VM** ([E-08](KONZEPT.md#e-08), ideas [27](KONZEPT.md#k-idee-27), [28](KONZEPT.md#k-idee-28)) | VM ID | none (no scope key, no credential) | platform operations of its session | work VM yes; test/browser VM: KOR-43, KOR-44 |
 | **Platform root** (operator) | compiled public key | Ed25519 platform root, offline | root-signed platform-log entries and operator requests | yes |
@@ -53,7 +53,7 @@ identity (its prompt is an event signed by itself); the session reads with the r
 |---|---|---|---|
 | PRF output `prf_i`, `KEK_i` | browser, per passkey and login; bound to the relying-party ID (a domain change loses every passkey slot, [ADR-004](adr/004-invitation-identity-without-keys-file.md)) | memory only | hub, device, agent |
 | Recovery code, `KEK_rec` | the user (written down); browser at use | – | hub (only `recovery_id`) |
-| User identity (private) | browser memory after unlock; the user's agent (copy) | hub: only sealed bundle slots (passkey, recovery) and the agent's sealed handover; **a remembered browser**: IndexedDB under a non-extractable key; **the agent tool**: its state holds the sealed identity and the handover secret next to the agent key, which together open it | device, VM |
+| User identity (private) | browser memory after unlock; the agent of an account without a person (it is the account's holder) | hub: only sealed bundle slots (passkey, recovery); **a remembered browser**: IndexedDB under a non-extractable key; **the agent tool of an account without a person**: its state holds the sealed identity and the handover secret next to the agent key | device, VM, the agent of a person (since ADR-082; agents paired before are converted and delete their copy) |
 | Browser session key | browser | IndexedDB, non-extractable | anywhere else |
 | Device identity, storage key | the runner of that device | `keys/device.key` 0600; storage key derived, memory only | hub (public keys only), VM |
 | Agent key | the agent tool on the user's computer | login keychain or 0600 file | hub (public keys only) |
@@ -93,7 +93,7 @@ workgroup → task, [Grundprinzip](KONZEPT.md#k-gp)).
 | `role` → admin | new admin: every epoch of every workgroup it reads by inheritance (never `CK` of others) | appointing batch, then catch-up of all epochs |
 | `wg_create` | creator, every admin, granted members: `WK_1` | the creating batch (refused without these wraps) |
 | `device_assign` (and `accept` of a device invitation) | device: `WK` of the workgroup, `OK`; the `CK` of every user with explicit access there in an org that user joined by its own entry – the assigning user's own `CK` only under that condition | assigning batch / package; other `CK` by catch-up from the owners' clients or from devices already eligible for them |
-| Pairing of the user's agent | agent: the user's identity, hence everything the user holds | sealed handover (`r` + agent key); the agent opens the user's existing wraps |
+| Pairing of the user's agent (`agent_add` in every log of the user, [ADR-082](adr/082-agent-own-identity.md)) | agent: every epoch of every scope its user reads and the user's `CK` (KM-40) | the confirming batches (wraps of every epoch the browser holds), later epochs by catch-up from any holder |
 | Passkey added / recovery | the new passkey slot of the same identity | browser upload after a PRF login |
 | "Remember this browser" | the browser profile: a local copy of the identity | IndexedDB, never sent |
 | Platform session started | nothing: the device decrypts and gives the VM plaintext of its own workgroup only | runner |
@@ -126,7 +126,7 @@ last sentence) – the client says so where it matters.
 | `user_decertify` | nothing: it ends the identity anchor for **new** admissions; memberships stay | operator | – |
 | `wg_archive` | nothing: readers keep reading the archived workgroup | – | – |
 | Invitation revoked | nothing | – | **if the code leaked and its package was looked up before the revocation**: the package epochs (`OK`, `WK` of the invited and default workgroup) until the next rotation of those scopes – [decision D2](#decisions-for-the-orchestrator) |
-| Agent revoked or replaced | **nothing** today: the agent key is refused, its sealed identity deleted at the hub | the user (or the agent itself) | **a copy of the user's identity**: it opens future wraps to the user from a copy of the hub's data and can sign entries, events and wraps as the user; under equal rights it may also have replaced the recovery code or registered a passkey of its own through recovery (the user checks the passkey list and replaces the recovery code) – [gap KOR-57](#kor-57--own-identity-of-the-agent-real-revocation-orchestrator-on-dfx-hardware) |
+| Agent revoked or replaced | every scope it read (= its user's), in the removing or replacing batch of every log; afterwards the user's `CK` | the user's client (browser or active agent), the agent itself as `pending`, an admin | everything read and every old epoch it held; an agent paired before ADR-082 also a copy of the user's identity it may have made (no rekey); under equal rights it may have replaced the recovery code or registered a passkey through recovery (the user checks the passkey list) |
 | Remembered browser forgotten | nothing: "Forget" deletes the local key; it works only on that browser | the user, on that browser | a lost or stolen remembered browser keeps the identity: as a leaked identity (next row) |
 | Leaked user identity (lost unlocked device, remembered browser, a passkey or recovery code used by somebody else, the agent's copy) | **nothing exists today**: identities do not rotate | – | everything the identity can open and sign, now and later – [gap KOR-57](#kor-57--own-identity-of-the-agent-real-revocation-orchestrator-on-dfx-hardware) point 5 |
 | Passkey removed | nothing: the slot is deleted; the identity stays | the user | – (if the passkey was compromised before: as a leaked identity) |
@@ -145,7 +145,7 @@ open what it could open before, never what is written after the rotation.
 | Place | Plaintext of | Why |
 |---|---|---|
 | Browser (open tab) | everything the user can read, after unlock; a remembered browser keeps the identity at rest | the user reads it |
-| The user's computer with the agent tool | everything the user can read (the agent holds the identity) | [E-04](KONZEPT.md#e-04), [A3](KONZEPT.md#a-3) |
+| The user's computer with the agent tool | everything the user can read (the agent receives every scope of its user, KM-40) | [E-04](KONZEPT.md#e-04), [A3](KONZEPT.md#a-3) |
 | Execution device (runner) | every scope of every workgroup assigned to it, the org scope, the credentials of eligible users, the operator's tokens on platform devices; at rest under the storage key, in memory in clear | the device executes ([§5 point 4](KONZEPT.md#k-5-b4), [A7](KONZEPT.md#a-7)) |
 | Session VM (guest) | its own workgroup's content that the runner hands over, the model credential of running sessions in memory; with KOR-45 also what it read from other workgroups ([§8](#8-reading-across-workgroups)); with KOR-57 on DFX hardware the orchestrator session's own agent key and everything its user can read | the session works on it |
 | Work, test and browser VM | what the session copies into it (no keys, no platform credentials) | [E-08](KONZEPT.md#e-08), [E-09](KONZEPT.md#e-09) |
@@ -248,9 +248,9 @@ test of a rule that only one component enforces, as `path::test name`. `gap KOR-
 | KM-25 | The runner keeps scope keys and outbox content only under its storage key, derived from the device identity. | runner | `kdf.json#storage_key`; test:`tests/platform/runner/crypto/test_storage.py::test_storage_key_matches_the_shared_vector` |
 | KM-26 | Invitation code: one use, expiry, revocation; the sealed package opens only with the code and carries `OK` and the keys of the invited and default workgroups. | all | `invite.json#package_other_code`; `log.json#L7_accept_twice`; `log.json#invite_revoked`; `log.json#invite_expired`; `log.json#L5_invite_default_wg` |
 | KM-27 | Org and platform device identities are bound to their invitation by `enroll_sig` and `inv_sig` over the enrollment text. | all | `enroll.json#other_invite_key`; `enroll.json#enroll_sig_missing`; `platform-log.json#certify_swapped_key` |
-| KM-28 | The user's agent receives the user's identity only sealed to its own key **and** bound to a handover secret the hub never sees; its label is sealed to the user. | all (agent tool, hub, web) | `agent.json#identity_without_secret`; `agent.json#identity_other_agent`; `agent.json#label_to_agent_key` |
+| KM-28 | The agent of a person never receives the person's identity: it holds its own key pair and receives the user's public keys and its delegation certificate sealed to its key **and** bound to a handover secret the hub never sees; its label is sealed to the user ([ADR-082](adr/082-agent-own-identity.md)). | all (agent tool, hub, web) | `agent.json#user_anchor_other_agent`; `agent.json#cert_other_user`; `agent.json#cert_other_gen`; `agent.json#label_to_agent_key` |
 | KM-29 | Exactly one active main orchestrator per user; a new pairing needs a passkey gesture and replaces the previous one; revocation refuses its key at once and deletes its sealed identity. | hub | test:`tests/platform/hub/agents/test_pairing.py::test_a_new_confirmation_replaces_the_main_orchestrator`; test:`tests/platform/hub/agents/test_pairing.py::test_concurrent_confirmations_of_one_user_leave_exactly_one_main_orchestrator`; test:`tests/platform/hub/agents/test_revoke.py::test_the_session_revokes_one_agent_at_once` |
-| KM-30 | Revoking or replacing the agent ends its reach: an agent with its own identity is rotated out; for an agent that held the user's identity, the user's identity is rekeyed. | – | gap KOR-57 |
+| KM-30 | Revoking or replacing the agent rotates it out: its removal (or its replacement by a higher generation) puts every scope it read into R of the same batch, a removed, replaced or superseded agent is no recipient of any scope or of `CK`, and the user's client rotates `CK` afterwards. An agent that held the user's identity before its conversion keeps that copy (no rekey, [ADR-082](adr/082-agent-own-identity.md) §5). | all | `log-rotation.json#agent_removed_by_user_without_rotation`; `log-rotation.json#agent_replaced_by_higher_gen`; `log-wraps.json#wrap_to_removed_agent`; `log-wraps.json#wrap_to_replaced_agent`; `log-wraps.json#cred_superseded_agent_is_no_reader` |
 | KM-31 | A platform device trusts an org (founder, platform access) only on evidence it verifies itself against the root key. | runner | gap KOR-55 |
 | KM-32 | Write access to the default workgroup can be reduced to read by an admin (R stays empty: the member still reads; E5 refuses its writes); new members still start with write. | – | gap KOR-55 |
 | KM-33 | A support person reads or writes a workgroup only through an explicit, revocable release of that workgroup to support in the log plus a valid root-signed support role; revocation rotates. | – | gap KOR-56 |
@@ -259,6 +259,9 @@ test of a rule that only one component enforces, as `path::test name`. `gap KOR-
 | KM-36 | The hub never holds a scope key, private key, PRF output, code or credential value; a full flow leaves no canary in its database or logs. | hub | test:`e2e/platform/specs/e2e-09-zero-knowledge.spec.ts::the hub sees no confidential content over the full flows`; test:`tests/platform/hub/requests/test_devices_and_zero_knowledge.py::test_canaries_never_reach_hub_storage` |
 | KM-37 | VMs hold no scope key and no platform credential at rest: the guest has no cryptography library at all, and a work VM holds none of the platform's credentials. | runner, guest | test:`tests/platform/test_import_boundaries.py::test_guest_and_doubles_use_the_standard_library_only`; test:`tests/platform/images/test_workvm_attack_probes.py::test_credential_search_reports_counts_and_paths_never_the_secret` |
 | KM-38 | A remembered browser keeps the identity only under a non-extractable key of that browser profile; "Forget" deletes it there. | web | test:`web/tests/core/persist/device-key.test.ts::stores the key itself non-extractable`; test:`web/tests/core/persist/device-key.test.ts::remembers, survives a reload, unlocks the same identity and forgets` |
+| KM-39 | The agent is a sub-principal of its user in every membership log: added only with a delegation certificate signed by the user's identity (by the user or by the certified agent itself), at most one active agent per user with a strictly higher generation than any earlier one, never re-added after a removal other than together with its user; an agent cannot add another agent and a hub cannot insert one. | all | `log.json#agent_add_cert_by_other_key`; `log.json#agent_add_cert_for_other_pub`; `log.json#agent_adds_another_agent`; `log.json#agent_add_second_agent_same_gen`; `log.json#agent_add_lower_gen`; `log.json#agent_add_removed_agent_again` |
+| KM-40 | The active agent receives exactly what its user receives and authors with exactly its user's rights: every scope and epoch (also older ones and inherited reads), the user's `CK`, nothing its user cannot read. | all | `log-wraps.json#W2_user_for_its_agent`; `log-wraps.json#W2_older_epoch_for_agent`; `log-wraps.json#agent_receives_no_scope_its_user_cannot_read`; `log-wraps.json#cred_owner_for_its_agent`; `log-events.json#prompt_by_agent_of_writer`; `log.json#agent_of_member_invites` |
+| KM-41 | The orchestrator on platform hardware draws its key in the session VM under an account of its own, only in the user's private organization on a platform device, receives the handover signed by the user and ends with the session. | – | gap KOR-57 |
 
 ## 10. Concordance with the concept
 
@@ -310,7 +313,7 @@ bearing on keys).
 | [Idea 31](KONZEPT.md#k-idee-31) | Humans, main agents and subagents distinguishable: humans and devices are principals with keys, main agents and subagents are platform sessions without keys; names and GitHub mapping are not keys (KOR-52, KOR-47). | carried | [§1](#1-principals) |
 | [Idea 32](KONZEPT.md#k-idee-32) | Autonomous-first: catch-up needs no human online. | carried | [§4](#4-who-receives-which-scope-when) |
 | [Idea 33](KONZEPT.md#k-idee-33) | Analysis session reads authorised logs: a platform session, same rules. | carried | KM-23 |
-| [Idea 34](KONZEPT.md#k-idee-34) | One delegated orchestrator with own identity, passkey approval, audit, revocation; local or on DFX hardware. | gap → KOR-57 | KM-28, KM-29, KM-30 |
+| [Idea 34](KONZEPT.md#k-idee-34) | One delegated orchestrator with own identity, passkey approval, audit, revocation; local or on DFX hardware. | gap → KOR-57 | KM-28, KM-29, KM-30, KM-39, KM-41 |
 | [Idea 35](KONZEPT.md#k-idee-35) | Own hardware for a workgroup or the whole org: the device necessarily holds the keys of what it serves, which is data access of the device (not of people). | decision needed | [§6](#6-where-plaintext-lies) |
 | [Idea 36](KONZEPT.md#k-idee-36) | Every writer can continue a session: writers hold `WK`, their prompts are signed by themselves. | carried | KM-12, KM-22 |
 | [Idea 37](KONZEPT.md#k-idee-37) | GitHub identities of the org: company credentials live in the organization's `cred` scope, readable by its devices only (KOR-47). | carried | KM-35 |
@@ -326,8 +329,8 @@ bearing on keys).
 | [Idea 47](KONZEPT.md#k-idee-47) | Prepaid credit. | none | – |
 | [E-01](KONZEPT.md#e-01) | The full concept is the basis of this concordance. | carried | this section |
 | [E-02](KONZEPT.md#e-02) | No upper limit: catch-up and wraps scale with principals, no fixed count. | carried | [§4](#4-who-receives-which-scope-when) |
-| [E-03](KONZEPT.md#e-03) | The user creates only a passkey; the agent sets up everything with the user's identity. | carried | KM-28 |
-| [E-04](KONZEPT.md#e-04) | The agent can do everything the user can: it holds the user's identity. | carried | KM-28, [§6](#6-where-plaintext-lies) |
+| [E-03](KONZEPT.md#e-03) | The user creates only a passkey; the agent sets up everything with its own identity and its user's rights. | carried | KM-28, KM-40 |
+| [E-04](KONZEPT.md#e-04) | The agent can do everything the user can: as a sub-principal it receives and authors exactly what its user does. | carried | KM-39, KM-40, [§6](#6-where-plaintext-lies) |
 | [E-05](KONZEPT.md#e-05) | A missing key is shown as "being unlocked" and delivered by catch-up; a key the device cannot get triggers the assignment. | carried | [§4](#4-who-receives-which-scope-when), [§8](#8-reading-across-workgroups) |
 | [E-06](KONZEPT.md#e-06) | Operator GitHub account: a company account of the operator's organization in its device-only `cred` scope (KOR-47, ADR-078 §7); copies for listed users outside it stay in their `CK`. | carried | [§2](#2-keys-per-principal) |
 | [E-07](KONZEPT.md#e-07) | Operator subscriptions on platform devices, outside the scope keys. | carried | [§2](#2-keys-per-principal) |
@@ -355,7 +358,7 @@ bearing on keys).
 | [E-29](KONZEPT.md#e-29) | GitHub with every repository the account can reach (the token stays a `github` credential under the user's `CK`). | none | – |
 | [A1](KONZEPT.md#a-1) | Subagents have the parent's rights and no keys. | carried | [§1](#1-principals) |
 | [A2](KONZEPT.md#a-2) | Conflict fix by merge commit. | none | – |
-| [A3](KONZEPT.md#a-3) | The agent holds the user's identity; own identity with rotation later. | gap → KOR-57 | KM-28, KM-30 |
+| [A3](KONZEPT.md#a-3) | The hardening is built: the agent has its own identity as a sub-principal and is rotated out on revocation (ADR-082); the rekey of the user's identity for copies made before is a decision of the owner. | decision needed | KM-28, KM-30, KM-39 |
 | [A4](KONZEPT.md#a-4) | Counters in clear at the hub. | carried | [§7](#7-what-the-hub-sees) |
 | [A5](KONZEPT.md#a-5) | Limits as settings. | none | – |
 | [A6](KONZEPT.md#a-6) | Test and browser VMs as platform operations, no keys inside. | carried | KM-37 |
@@ -423,6 +426,11 @@ vectors (in all three verifiers) or tests and sets the concordance row to "carri
    support writes.
 
 ### KOR-57 – Own identity of the agent, real revocation, orchestrator on DFX hardware
+
+**Status (KOR-57, [ADR-082](adr/082-agent-own-identity.md)):** points 1–3 and 7 built (KM-39, KM-40, KM-30); point 4
+built as an automatic conversion whose residual (a copy made earlier) is stated; point 5 evaluated and not built – a
+decision of the owner ([E-25](KONZEPT.md#e-25)); point 6 built with the orchestrator session (stage b).
+
 
 1. **Sub-principal** (KM-30): the agent gets its own identity as a sub-principal of its user in every org log the user
    is in, appended with the user's signature (passkey gesture at pairing); it is entitled to exactly what its user is

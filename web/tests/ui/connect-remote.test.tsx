@@ -82,6 +82,7 @@ async function world(remoteAtHub = true): Promise<World> {
     pairing_id: PAIRING,
     pub: agent.public(),
     state: 'open',
+    gen: 1,
     expires_at: formatTime(Date.now() + 240_000),
     ...(remoteAtHub ? { remote: true, nonce: NONCE } : {}),
   }));

@@ -16,7 +16,11 @@ user ID as the form field `u` (decisions/KOR-24.md); a handover without it ends 
 
 With a candidate `r` the tool claims (`POST /v1/agent/claim` with `HKDF(r, ...)`; `r` itself is never sent). A wrong
 `r` is refused by the hub (`claim_invalid`) and treated like any bad request. After a successful claim the tool opens
-the identity with its key and `r`, checks it against `GET /v1/me`, stores the state and answers `303` to
+the user's anchor with its key and `r` - the user's public keys and the delegation certificate (`user_ct`, ADR-082
+section 2; the certificate must verify under those keys for this agent's keys and the generation of the answer) or,
+for an account of an agent alone and an old confirmation form, the user's identity (`bundle_ct`; such an agent
+converts itself later when the hub asks, `convert.py`) - checks the user's keys against `GET /v1/me`, stores the
+state and answers `303` to
 `<origin>/settings?agent=connected` (`?agent=failed` when the claimed identity does not open or does not match;
 `pairing_failed`). The origin comes from the tool's own state, never from the request. The wait ends after
 `PAIRING_TIMEOUT_S` (`pairing_timeout`).
@@ -283,11 +287,26 @@ class Pairing:
                 raise _WrongSecret from None
             raise
         try:
-            identity = agent_crypto.open_identity(
-                self.agent.kem, handover.secret, self.pairing_id, user_id, str(first.get("bundle_ct"))
-            )
+            if first.get("identity") == "own":
+                anchor = agent_crypto.open_user(
+                    self.agent.kem, handover.secret, self.pairing_id, user_id, str(first.get("user_ct"))
+                )
+                agent_crypto.verify_cert(
+                    b64u_decode(anchor["sig"], 32),
+                    anchor["cert"],
+                    agent_id=self.pairing_id,
+                    pub=self.agent.public(),
+                    user_id=user_id,
+                    gen=first.get("gen"),
+                )
+                user_pub = {"kem": anchor["kem"], "sig": anchor["sig"]}
+            else:
+                identity = agent_crypto.open_identity(
+                    self.agent.kem, handover.secret, self.pairing_id, user_id, str(first.get("bundle_ct"))
+                )
+                user_pub = identity.public()
             me = client.call("GET", "/v1/me")
-            expected = {"kem_pub": identity.public()["kem"], "sig_pub": identity.public()["sig"]}
+            expected = {"kem_pub": user_pub["kem"], "sig_pub": user_pub["sig"]}
             same_user = me.get("user_id") == user_id and first.get("agent_id") == self.pairing_id
             if me.get("identity") != expected or not same_user:
                 raise CryptoError("decrypt_failed")
@@ -312,7 +331,11 @@ class Pairing:
                 "agent_id": self.pairing_id,
                 "user_id": user_id,
                 "label": {"name": self.name, "host": self.host},
-                "bundle_ct": str(first["bundle_ct"]),
+                **(
+                    {"user_ct": str(first["user_ct"]), "gen": first["gen"]}
+                    if first.get("identity") == "own"
+                    else {"bundle_ct": str(first["bundle_ct"])}
+                ),
                 "secret": b64u_encode(handover.secret),
                 "key_store": where,
             }

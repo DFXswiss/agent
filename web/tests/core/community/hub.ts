@@ -50,6 +50,8 @@ export class CommunityHub {
   readonly moderators = new Set<string>();
   readonly rows: Row[] = [];
   readonly keys = new Map<string, string>();
+  /** The `agent` member served with an author (an own-identity agent, ADR-082). */
+  readonly agents = new Map<string, unknown>();
   /** Served instead of the real author keys (`null` drops the author). */
   readonly servedKeys = new Map<string, string | null>();
   readonly calls: string[] = [];
@@ -240,11 +242,14 @@ export class CommunityHub {
         rows = older.slice(0, limit);
         if (older.length > limit) nextBefore = String(rows[rows.length - 1]!.seq);
       }
-      const authors: Record<string, { sig_pub: string; moderator: boolean }> = {};
+      const authors: Record<string, { sig_pub: string; moderator: boolean; agent?: unknown }> = {};
       for (const row of rows) {
         if (row.deleted !== null) continue;
         const served = this.servedKeys.has(row.author) ? this.servedKeys.get(row.author)! : this.keys.get(row.author)!;
-        if (served !== null) authors[row.author] = { sig_pub: served, moderator: this.moderators.has(row.author) };
+        const agent = this.agents.has(row.author) ? { agent: this.agents.get(row.author) } : {};
+        if (served !== null) {
+          authors[row.author] = { sig_pub: served, moderator: this.moderators.has(row.author), ...agent };
+        }
       }
       return { messages: rows.map((row) => ({ ...row })), authors, next_before: nextBefore };
     }

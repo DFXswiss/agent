@@ -6,7 +6,8 @@ An agent signs every request with its Ed25519 key under the key ID `agent.<32 he
 - an unknown agent, an `open` pairing, or a `confirmed` pairing past its claim deadline: None (`401 key_unknown`);
 - a revoked agent or a disabled user: `401 key_revoked` (after the signature verified, response-signed);
 - otherwise the principal of kind `agent` acting for its user (`principal_id` = user ID, audit actor `user`) with
-  `attributes` `agent_id` and `state` (`confirmed` or `active`) and the verifier of the agent's key.
+  `attributes` `agent_id`, `state` (`confirmed` or `active`) and `own_identity` (the agent signs log entries, events,
+  wraps and records under its own ID, ADR-082; `agents.identity.actor`) and the verifier of the agent's key.
 
 The pipeline then admits the principal only on the routes of `agent_hub.agents.scope`. `last_used_at` is written by
 `touch`, which the pipeline calls only after the signature verified (an unsigned or forged request writes nothing,
@@ -48,13 +49,13 @@ def resolve_agent(context: KeyContext, key_id: str) -> ResolvedKey | None:
     now = context.clock()
     with context.pool.connection() as connection:
         row = connection.execute(
-            "SELECT a.state, a.sig_pub, a.user_id, a.expires_at, u.disabled_at IS NOT NULL"
+            "SELECT a.state, a.sig_pub, a.user_id, a.expires_at, u.disabled_at IS NOT NULL, a.own_identity"
             " FROM hub.agent a LEFT JOIN hub.principal u ON u.id = a.user_id WHERE a.id = %s",
             (agent_id,),
         ).fetchone()
         if row is None:
             return None
-        state, sig_pub, user_id, expires_at, disabled = row
+        state, sig_pub, user_id, expires_at, disabled, own_identity = row
     if state == "open" or (state == "confirmed" and expires_at <= now):
         return None
     principal = Principal(
@@ -62,7 +63,7 @@ def resolve_agent(context: KeyContext, key_id: str) -> ResolvedKey | None:
         key_id=key_id,
         principal_id=user_id,
         actor_kind="user",
-        attributes=MappingProxyType({"agent_id": agent_id, "state": state}),
+        attributes=MappingProxyType({"agent_id": agent_id, "state": state, "own_identity": own_identity}),
     )
     refusal = "key_revoked" if state == "revoked" or disabled else None
     return ResolvedKey(principal=principal, verify=ed25519_verifier(bytes(sig_pub)), refusal=refusal)

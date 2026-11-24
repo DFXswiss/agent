@@ -6,6 +6,8 @@
   "person.given": "Vorläufiger Name, eingetragen von {by}. Er wird durch den eigenen Namen der Person ersetzt, sobald sie diese Organisation öffnet.",
   "person.invited": "Name aus der Einladung von {by}. Er wird durch den eigenen Namen der Person ersetzt, sobald sie diese Organisation öffnet.",
   "person.someone": "einem Admin",
+  "agent.of": "Agent von {name}",
+  "agent.unknown": "Agent eines Mitglieds, dessen Name noch nicht bekannt ist",
   "id.show": "Kennung anzeigen",
   "id.value": "Kennung: {id}",
   "device.unknown": "Gerät ohne Namen",

@@ -211,6 +211,9 @@ export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
   open_handover: async (a) => agent.openHandover(await kem(a.agent_kem_sk), a.agent_id, a.user_id, a.sealed),
   verify_account: async (a) => agent.verifyText(b(a.signer), a.signature, agent.accountText(accountFields(a))),
   verify_recover: async (a) => agent.verifyText(b(a.signer), a.signature, agent.recoverText(recoverFields(a))),
+  verify_cert: async (a) =>
+    agent.verifyCert(b(a.signer), a.cert, { agent: a.agent_id, pub: a.pub, user: a.user_id, gen: a.gen }),
+  open_user: async (a) => agent.openUser(await kem(a.agent_kem_sk), b(a.secret), a.agent_id, a.user_id, a.sealed),
   verify_context_manifest: async (a) => context.verifyManifest(a.manifest, a.sig, b(a.author_sig_pk)),
   open_context: async (a) =>
     context.openContext(Secret.of(b(a.workgroup_key)), a.manifest, a.sig, b(a.author_sig_pk), a.chunks.map(b)),
@@ -340,6 +343,21 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       await agent.verifyText(pair.publicKey, signature, recoverText);
       same(await keys.ed25519Sign(pair.privateKey, recoverText), signature, `recover ${what}`);
     }
+    // the agent's own identity (ADR-082): the delegation certificate and the user anchor sealed to the agent
+    const cert = data.own_identity.cert;
+    const certified = { agent: cert.agent_id, pub: cert.pub, user: cert.user_id, gen: cert.gen };
+    same(certified, { agent: ag.id, pub: { kem: ag.kem, sig: ag.sig }, user: user.id, gen: cert.gen }, 'cert fields');
+    same(agent.certText(certified), cert.text, 'cert text');
+    same(await agent.signCert(alice.sig.privateKey, certified), cert.cert, 'cert');
+    await agent.verifyCert(b(user.sig), cert.cert, certified);
+    const anchorVector = data.own_identity.user_anchor;
+    const anchor = { cert: cert.cert, kem: user.kem, sig: user.sig };
+    same(agent.userInfo(ag.id, user.id), anchorVector.info, 'user info');
+    same(fromUtf8(agent.userPlaintext(anchor)), anchorVector.plaintext, 'user plaintext');
+    const anchorFixed = { nonce: b(anchorVector.nonce), ephemeral: b(anchorVector.ephemeral_sk) };
+    const sealedUser = await agent.sealUser(b(ag.kem), b(sec.secret), ag.id, user.id, anchor, anchorFixed);
+    same(sealedUser, anchorVector.sealed, 'sealed user anchor');
+    same(await agent.openUser(agentKem, b(sec.secret), ag.id, user.id, anchorVector.sealed), anchor, 'opened anchor');
   },
   encoding: async (data) => {
     for (const item of data.b64u) {

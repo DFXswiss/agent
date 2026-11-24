@@ -82,8 +82,8 @@ def submit(
             built = build_batch(
                 log,
                 org=org,
-                author=account.user_id,
-                identity=account.identity,
+                author=account.actor,
+                identity=account.signer,
                 fields=fields,
                 ts=now_text(),
                 held=account.keys(org),
@@ -316,7 +316,7 @@ def invite_revoke(account: Account, org: str, invite: str) -> dict[str, Any]:
             return {"org_id": org, "invite_id": invite, "changed": False}
         fields: Fields = [{"type": "invite_revoke", "invite_id": invite}]
         built = build_batch(
-            log, org=org, author=account.user_id, identity=account.identity, fields=fields, ts=now_text(), held={}
+            log, org=org, author=account.actor, identity=account.signer, fields=fields, ts=now_text(), held={}
         )
         target = f"/v1/orgs/{segment(org)}/invites/{segment(invite)}/revoke"
         answer = account.call("POST", target, {"entry": built.entries[0]})

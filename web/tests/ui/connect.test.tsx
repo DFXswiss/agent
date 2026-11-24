@@ -75,6 +75,7 @@ async function connectPage(options: Options = {}) {
         pairing_id: PAIRING,
         pub: agent.public(),
         state: 'open',
+        gen: 1,
         expires_at: formatTime(Date.now() + (options.expiresIn ?? 600_000)),
       })),
   );
@@ -163,7 +164,15 @@ describe('ConnectScreen', () => {
     fireEvent.click(screen.getByTestId('connect.confirm'));
     await waitFor(() => expect(submitted).toHaveLength(1));
     expect(confirmations).toHaveLength(2);
-    expect(confirmations[1]).toEqual(confirmations[0]);
+    // the fixed values are the same (a lost answer is answered alike); the batches are built from the logs each time
+    const fixed = (body: unknown) => {
+      const { batches: _b, cred_wraps: _c, ...rest } = body as Record<string, unknown>;
+      return rest;
+    };
+    expect(fixed(confirmations[1])).toEqual(fixed(confirmations[0]));
+    expect(Object.keys(fixed(confirmations[0])).sort()).toEqual(
+      ['cert', 'claim_hash', 'gen', 'label_ct', 'pairing_id', 'user_ct'].sort(),
+    );
   });
 
   it('shows refusals of the confirmation and of the sign-in', async () => {
@@ -269,7 +278,13 @@ describe('ConnectScreen', () => {
   it('refuses keys that do not match the link', async () => {
     const other = await Identity.generate();
     await connectPage({
-      lookup: () => ({ pairing_id: PAIRING, pub: other.public(), state: 'open', expires_at: formatTime(Date.now()) }),
+      lookup: () => ({
+        pairing_id: PAIRING,
+        pub: other.public(),
+        state: 'open',
+        gen: 1,
+        expires_at: formatTime(Date.now()),
+      }),
     });
     expect(await screen.findByTestId('connect.error')).toHaveAttribute('data-code', 'pairing_mismatch');
   });
@@ -283,7 +298,13 @@ describe('ConnectScreen', () => {
     one.view.unmount();
     // the request reaches the hub only after the screen was left
     await waitFor(() => expect(asked).toBe(1));
-    const open = { pairing_id: PAIRING, pub: one.agent.public(), state: 'open', expires_at: formatTime(Date.now()) };
+    const open = {
+      pairing_id: PAIRING,
+      pub: one.agent.public(),
+      state: 'open',
+      gen: 1,
+      expires_at: formatTime(Date.now()),
+    };
     await act(async () => answer(open));
     const two = await connectPage({ lookup: pending });
     two.view.unmount();

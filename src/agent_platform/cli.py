@@ -192,8 +192,9 @@ def cmd_status(account: Account, args: argparse.Namespace, context: Context) -> 
     return {
         "hub": account.origin,
         "agent_id": account.agent_id,
+        "identity": account.mode,
         "user_id": account.user_id,
-        "account_code": format_account_code(account_code(account.user_id, account.identity.public())),
+        "account_code": format_account_code(account_code(account.user_id, account.user_pub)),
         "display_name": account.display_name(),
         "settings": me.get("settings"),
         "orgs": orgs.org_list(account)["orgs"],

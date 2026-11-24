@@ -4,9 +4,12 @@
 //   opened with the user's identity key (`crypto/agent.ts`), one that does not open is an unknown agent (label null).
 //   Malformed rows are left out. `replaces` names the main orchestrator a row replaced at its confirmation (or null);
 //   `remote` marks an agent paired from another computer (ADR-067; a row without it, from a hub of before KOR-42, is
-//   not remote).
+//   not remote). `own_identity`, `held_identity`, `gen` and `revoked_reason` (ADR-082) are false/null in a row of a
+//   hub that does not send them; `pub` and `cert` (when the hub sends them) only for the job. `fetchAgentRows` is the checked list without labels (the background job `agents`).
 // - `revokeAgent`: `DELETE /v1/me/agents/{id}`; `revokeAllAgents`: `DELETE /v1/me/agents` (→ the number revoked).
-//   Both take effect at once at the hub; the list is loaded again afterwards.
+//   Both take effect at once at the hub; the list is loaded again afterwards, then the log clean-up runs at once
+//   (`cleanUp`: the log job of every org of the user, which runs the job `agents` – the revoked agent is removed from
+//   every log with its rotations – and the credential-key rotation after it, ADR-082 section 4).
 // - `agentChanges`: how many notifications say that the user's agents changed elsewhere (`agent_paired_remote`, a
 //   remote pairing confirmed in another client; `agent_revoked`); a new one makes the shell load the list again, so
 //   the banner of a remote main orchestrator (ADR-067 section 4.4) appears in every open client, not only after the
@@ -28,6 +31,7 @@ import {
 import type { TasksContext } from '../tasks/pull';
 
 type Context = Pick<TasksContext, 'store' | 'client'>;
+type RevokeContext = Pick<TasksContext, 'store' | 'client' | 'refreshLog'>;
 
 /** The `agent.account_change` actions after which the agent list is loaded again. */
 export const LIST_CHANGES: readonly string[] = ['agent_paired_remote', 'agent_revoked'];
@@ -42,7 +46,7 @@ export function agentChanges(rows: Readonly<Record<string, NotificationRow>>): n
 const isTime = (value: unknown): value is string => typeof value === 'string' && !Number.isNaN(Date.parse(value));
 const isTimeOrNull = (value: unknown): value is string | null => value === null || isTime(value);
 
-interface Row {
+export interface Row {
   readonly agent_id: string;
   readonly state: AgentState;
   readonly label_ct: string;
@@ -53,7 +57,19 @@ interface Row {
   readonly revoked_at: string | null;
   readonly replaces: string | null;
   readonly remote?: boolean;
+  readonly own_identity?: boolean;
+  readonly held_identity?: boolean;
+  readonly gen?: number | null;
+  readonly revoked_reason?: string | null;
+  /** The agent's public keys and certificate (hubs since KOR-57 stage b; checked by the job `agents`). */
+  readonly pub?: { readonly kem: string; readonly sig: string } | null;
+  readonly cert?: string | null;
 }
+
+const isPub = (value: unknown): boolean =>
+  value === undefined ||
+  value === null ||
+  (isRecord(value) && typeof value.kem === 'string' && typeof value.sig === 'string');
 
 function isRow(value: unknown): value is Row {
   return (
@@ -67,8 +83,23 @@ function isRow(value: unknown): value is Row {
     isTimeOrNull(value.last_used_at) &&
     isTimeOrNull(value.revoked_at) &&
     (value.replaces === null || isUuid7(value.replaces)) &&
-    (value.remote === undefined || typeof value.remote === 'boolean')
+    (value.remote === undefined || typeof value.remote === 'boolean') &&
+    (value.own_identity === undefined || typeof value.own_identity === 'boolean') &&
+    (value.held_identity === undefined || typeof value.held_identity === 'boolean') &&
+    (value.gen === undefined ||
+      value.gen === null ||
+      (Number.isSafeInteger(value.gen) && (value.gen as number) >= 1)) &&
+    (value.revoked_reason === undefined || value.revoked_reason === null || typeof value.revoked_reason === 'string') &&
+    isPub(value.pub) &&
+    (value.cert === undefined || value.cert === null || typeof value.cert === 'string')
   );
+}
+
+/** The checked rows of `GET /v1/me/agents` (malformed rows left out; a malformed answer is `unavailable`). */
+export async function fetchAgentRows(client: Context['client']): Promise<Row[]> {
+  const body = await client.request('GET', '/v1/me/agents');
+  if (!isRecord(body) || !Array.isArray(body.agents)) throw new HubError('unavailable', 200);
+  return body.agents.filter(isRow);
 }
 
 /** Loads and opens the list (module comment); failures land in the slice with their code. */
@@ -79,10 +110,8 @@ export async function loadAgents(context: Context): Promise<void> {
   setAgentsLoading(store);
   try {
     if (userId === null || identity === null) throw new RequestError('unauthorized');
-    const body = await context.client.request('GET', '/v1/me/agents');
-    if (!isRecord(body) || !Array.isArray(body.agents)) throw new HubError('unavailable', 200);
     const entries: AgentEntry[] = [];
-    for (const row of body.agents.filter(isRow)) {
+    for (const row of await fetchAgentRows(context.client)) {
       const label = await openLabel(identity.kem, row.agent_id, userId, row.label_ct).catch(() => null);
       entries.push({
         agentId: row.agent_id,
@@ -95,6 +124,10 @@ export async function loadAgents(context: Context): Promise<void> {
         revokedAt: row.revoked_at,
         replaces: row.replaces,
         remote: row.remote === true,
+        ownIdentity: row.own_identity === true,
+        heldIdentity: row.held_identity === true,
+        gen: row.gen ?? null,
+        revokedReason: row.revoked_reason ?? null,
       });
     }
     if (store.generation === generation) setAgents(store, entries);
@@ -103,15 +136,22 @@ export async function loadAgents(context: Context): Promise<void> {
   }
 }
 
-/** Disconnects one agent at once, then reloads the list. */
-export async function revokeAgent(context: Context, agentId: string): Promise<void> {
-  await context.client.request('DELETE', `/v1/me/agents/${encodeURIComponent(agentId)}`);
-  await loadAgents(context);
+/** The log clean-up after a revocation (module comment): the log job of every org the store holds, one at a time. */
+export async function cleanUp(context: RevokeContext): Promise<void> {
+  for (const org of Object.keys(context.store.getState().orgs.byId).sort()) await context.refreshLog(org);
 }
 
-/** Disconnects every agent of the user at once, then reloads the list; returns how many were revoked. */
-export async function revokeAllAgents(context: Context): Promise<number> {
+/** Disconnects one agent at once, reloads the list, then removes it from the logs. */
+export async function revokeAgent(context: RevokeContext, agentId: string): Promise<void> {
+  await context.client.request('DELETE', `/v1/me/agents/${encodeURIComponent(agentId)}`);
+  await loadAgents(context);
+  await cleanUp(context);
+}
+
+/** Disconnects every agent of the user at once, reloads the list, cleans up the logs; returns how many were revoked. */
+export async function revokeAllAgents(context: RevokeContext): Promise<number> {
   const body = await context.client.request('DELETE', '/v1/me/agents');
   await loadAgents(context);
+  await cleanUp(context);
   return isRecord(body) && Number.isSafeInteger(body.revoked) ? (body.revoked as number) : 0;
 }

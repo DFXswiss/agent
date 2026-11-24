@@ -1,0 +1,19 @@
+{
+  "description": "Endpoints of the agent's own identity (11-agent-access.md section 4, KOR-57, ADR-082 section 5): an agent that holds its user's identity converts itself into an own-identity agent.",
+  "rights": [
+    "agent"
+  ],
+  "auth": [
+    "agent"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/v1/agent/identity",
+      "rights": [
+        "agent"
+      ],
+      "section": "11.4"
+    }
+  ]
+}

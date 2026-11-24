@@ -54,9 +54,13 @@ def create_remote(hub: HubHarness) -> tuple[TestAgent, dict[str, Any]]:
     return agent, response.json()
 
 
-def remote_handover(agent: TestAgent, user: uuid.UUID, identity: Identity) -> Handover:
-    """The browser's part of a remote confirmation: the loopback body plus `handover_ct`."""
-    confirm = handover(agent, user, identity)
+IDENTITIES: dict[uuid.UUID, Identity] = {}
+"""The registered identities of the users of `new_user`."""
+
+
+def remote_handover(agent: TestAgent, user: uuid.UUID, identity: Identity, **options: Any) -> Handover:
+    """The browser's part of a remote confirmation: the loopback body plus `handover_ct` (`options` of `handover`)."""
+    confirm = handover(agent, user, identity, **options)
     sealed = agent_format.seal_handover(
         agent.identity.kem_public(), str(agent.agent_id), str(user), confirm.secret, ROOT_KEY
     )
@@ -64,14 +68,22 @@ def remote_handover(agent: TestAgent, user: uuid.UUID, identity: Identity) -> Ha
 
 
 def new_user(hub: HubHarness) -> uuid.UUID:
-    user = uuid7(hub.clock())
+    """A user with a passkey session and a registered identity (`IDENTITIES`)."""
+    user, identity = uuid7(hub.clock()), Identity.generate()
     hub.keys.session(user)
+    with hub.pool.connection() as connection:
+        connection.execute(
+            "INSERT INTO hub.user_identity (user_id, kem_pub, sig_pub, recovery_id, created_at)"
+            " VALUES (%s, %s, %s, %s, %s)",
+            (user, identity.kem_public(), identity.sig_public(), b64u_encode(uuid.uuid4().bytes), hub.clock()),
+        )
+    IDENTITIES[user] = identity
     return user
 
 
-def confirm_remote(hub: HubHarness, user: uuid.UUID) -> tuple[TestAgent, Handover]:
+def confirm_remote(hub: HubHarness, user: uuid.UUID, gen: int = 1) -> tuple[TestAgent, Handover]:
     agent, _answer = create_remote(hub)
-    confirm = remote_handover(agent, user, Identity.generate())
+    confirm = remote_handover(agent, user, IDENTITIES[user], gen=gen)
     response = gesture_client(hub, user, agent.agent_id).post("/v1/me/agents", json=confirm.body)
     assert response.json() == {"agent_id": str(agent.agent_id)}
     return agent, confirm
@@ -126,7 +138,7 @@ def test_a_loopback_pairing_and_an_old_agent_are_answered_as_before(hub: HubHarn
 
 def test_the_confirmation_requires_the_handover_for_remote_and_refuses_it_for_loopback(hub: HubHarness) -> None:
     user = new_user(hub)
-    identity = Identity.generate()
+    identity = IDENTITIES[user]
     remote, _answer = create_remote(hub)
     without = handover(remote, user, identity).body
     response = gesture_client(hub, user, remote.agent_id).post("/v1/me/agents", json=without)
@@ -156,7 +168,7 @@ def test_the_remote_confirmation_notifies_audits_and_gives_600_seconds(
     user = new_user(hub)
     agent, _answer = create_remote(hub)
     hub.clock.advance(200)
-    confirm = remote_handover(agent, user, Identity.generate())
+    confirm = remote_handover(agent, user, IDENTITIES[user])
     session = gesture_client(hub, user, agent.agent_id)
     assert session.post("/v1/me/agents", json=confirm.body).json() == {"agent_id": str(agent.agent_id)}
     row = agent_row(hub, agent.agent_id)
@@ -173,7 +185,7 @@ def test_the_remote_confirmation_notifies_audits_and_gives_600_seconds(
     published.clear()
     assert session.post("/v1/me/agents", json=confirm.body).json() == {"agent_id": str(agent.agent_id)}
     assert published.items() == []
-    other = {**confirm.body, "handover_ct": remote_handover(agent, user, Identity.generate()).body["handover_ct"]}
+    other = {**confirm.body, "handover_ct": remote_handover(agent, user, IDENTITIES[user]).body["handover_ct"]}
     response = session.post("/v1/me/agents", json=other)
     assert (response.status_code, response.json()) == (409, {"error": "id_conflict"})
     repeat_without = {key: value for key, value in confirm.body.items() if key != "handover_ct"}
@@ -187,7 +199,7 @@ def test_the_agent_fetches_the_handover_checks_the_return_code_and_claims(hub: H
     client = agent.client(hub)
     # while open the agent's key is not known yet
     assert client.get("/v1/agent/handover").json() == {"error": "key_unknown"}
-    identity = Identity.generate()
+    identity = IDENTITIES[user]
     confirm = remote_handover(agent, user, identity)
     assert gesture_client(hub, user, agent.agent_id).post("/v1/me/agents", json=confirm.body).status_code == 200
     hub.clock.advance(store.REMOTE_CLAIM_SECONDS - 1)
@@ -206,10 +218,8 @@ def test_the_agent_fetches_the_handover_checks_the_return_code_and_claims(hub: H
     claim = agent_format.claim(secret, str(agent.agent_id), str(user))
     claimed = client.post("/v1/agent/claim", json={"claim": b64u_encode(claim)}).json()
     assert claimed["agent_id"] == str(agent.agent_id)
-    opened = agent_format.open_identity(
-        agent.identity.kem, secret, str(agent.agent_id), str(user), claimed["bundle_ct"]
-    )
-    assert opened.public() == identity.public()
+    opened = agent_format.open_user(agent.identity.kem, secret, str(agent.agent_id), str(user), claimed["user_ct"])
+    assert opened == {"cert": confirm.body["cert"], **identity.public()}
     row = agent_row(hub, agent.agent_id)
     assert row is not None
     assert (row["state"], row["handover_ct"]) == ("active", None)
@@ -229,7 +239,7 @@ def test_the_handover_route_is_only_for_confirmed_remote_rows(hub: HubHarness) -
     user = new_user(hub)
     loopback = new_agent(hub)
     assert hub.anon.post("/v1/agent-pairings", json=loopback.pairing_body()).status_code == 200
-    confirm = handover(loopback, user, Identity.generate())
+    confirm = handover(loopback, user, IDENTITIES[user])
     assert gesture_client(hub, user, loopback.agent_id).post("/v1/me/agents", json=confirm.body).status_code == 200
     response = loopback.client(hub).get("/v1/agent/handover")
     assert (response.status_code, response.json()) == (404, {"error": "pairing_unknown"})
@@ -255,13 +265,16 @@ def test_the_claim_deadline_ends_the_handover_and_the_job_clears_it(hub: HubHarn
     with hub.pool.connection() as connection, pytest.raises(HubError) as refused:
         store.handover(connection, agent.agent_id, hub.clock())
     assert refused.value.code == "pairing_unknown"
-    assert agent_jobs.purge(hub.app.state.hub) == 2
+    # the job clears both handovers and revokes both unclaimed own-identity agents (their generations stay counted)
+    assert agent_jobs.purge(hub.app.state.hub) == 4
     for found in (agent, other):
         row = agent_row(hub, found.agent_id)
         assert row is not None
-        assert (row["state"], row["handover_ct"]) == ("confirmed", None)
+        assert (row["state"], row["handover_ct"], row["revoked_reason"]) == ("revoked", None, "unclaimed")
     listed = hub.client(hub.keys.session(user)).get("/v1/me/agents").json()["agents"]
-    assert [(item["state"], item["remote"]) for item in listed] == [("expired", True)]
+    assert [(item["state"], item["remote"], item["revoked_reason"]) for item in listed] == [
+        ("revoked", True, "unclaimed")
+    ]
     assert agent_jobs.purge(hub.app.state.hub) == 0
 
 
@@ -275,8 +288,8 @@ def test_revoking_a_confirmed_remote_agent_clears_the_handover(hub: HubHarness) 
     assert (row["state"], row["handover_ct"], row["bundle_ct"]) == ("revoked", None, None)
     assert agent.client(hub).get("/v1/agent/handover").json() == {"error": "key_revoked"}
     # a new remote pairing replaces a confirmed remote one and clears its handover
-    first, _confirm = confirm_remote(hub, user)
-    second, _confirm = confirm_remote(hub, user)
+    first, _confirm = confirm_remote(hub, user, gen=2)
+    second, _confirm = confirm_remote(hub, user, gen=3)
     row = agent_row(hub, first.agent_id)
     assert row is not None
     assert (row["state"], row["handover_ct"]) == ("revoked", None)

@@ -2,12 +2,18 @@
 
 - `POST /v1/agent-pairings` (anon): the agent registers its public keys with a proof of possession.
 - `GET /v1/agent-pairings/{id}` (anon): public keys and state while open or confirmed (the browser's fingerprint
-  check), else `404 pairing_unknown`.
+  check), else `404 pairing_unknown`; signed by a user (browser session or agent) also `gen`, the generation the
+  user's certificate of this pairing must name (`store.next_gen`, ADR-082 section 9.1).
 - `POST /v1/me/agents` (browser session; agent of an account without a passkey): the user confirms with the session
   of the pairing-tagged login (the passkey gesture). The new agent replaces the user's previous main orchestrator,
   which is revoked at once (concept idea 34, `store.confirm`). The agent of an account without a passkey (an account
   of an agent alone, KOR-62) confirms itself, with no gesture; the agent of an account with a passkey gets
-  `403 forbidden`.
+  `403 forbidden`, an own-identity agent too (it holds no identity that could sign a certificate). The new form
+  (ADR-082 section 2) carries `gen`, `cert`, `user_ct`, `batches` and `cred_wraps` instead of `bundle_ct`; the
+  confirmation, the replacement and every batch are stored in one transaction (`agents.identity.apply_batches`) and
+  the log frames are published after the commit. The old form (`bundle_ct`) is `409 client_outdated` for a browser.
+- `POST /v1/agent/identity` (agent key, `active`): an agent that still holds its user's identity converts itself
+  (ADR-082 section 5) with `{gen, cert, user_ct, batches, cred_wraps}`; one transaction, audit `agent.identity`.
 - `POST /v1/agent-accounts` (anon): an account of an agent alone through an invitation (`agents/accounts.py`).
 - `GET /v1/me/agents`, `DELETE /v1/me/agents/{id}`, `DELETE /v1/me/agents` (user: browser session or agent): list,
   revoke one, revoke all. Account-changing actions of an agent notify the user (`agents/notify.py`).
@@ -16,19 +22,21 @@
 - `GET /v1/agent/handover` (agent key, `confirmed`): the handover of a confirmed remote pairing, sealed to the agent
   by the confirming browser (ADR-067); the confirmation of a remote pairing notifies every client of the user
   (`agent_paired_remote`).
-- `GET /v1/agent/me` (agent key, `active`): the agent's own row with the sealed identity.
+- `GET /v1/agent/me` (agent key, `active`): the agent's own row with the sealed identity, or with the sealed user
+  anchor of an own-identity agent (`store.me`: `identity`, `gen`, `migrate`, `migrate_gen`).
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import Request
-from pydantic import StringConstraints
+from pydantic import Field, StrictInt, StringConstraints
 
 from agent_hub.agents import accounts, store
+from agent_hub.agents.identity import Batch, apply_batches
 from agent_hub.agents.keys import key_id_of
 from agent_hub.agents.notify import account_change, remote_notice
 from agent_hub.agents.revocation import revoke_agents
@@ -38,8 +46,10 @@ from agent_hub.db.pool import transaction
 from agent_hub.errors import HubError
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.pipeline import source_address
-from agent_hub.http.routing import HubRouter
+from agent_hub.http.routing import EVENT_BATCH_BYTES, HubRouter
 from agent_hub.notifications.rules import publish_rows
+from agent_hub.orgs.append import AppendResult
+from agent_hub.orgs.routes import publish_append
 from agent_hub.stream.publish import close_keys
 
 router = HubRouter()
@@ -59,12 +69,55 @@ class PairingCreate(Strict):
     remote: bool = False
 
 
+class LogBatch(Strict):
+    """One append batch of a confirmation or conversion (the body of `POST /v1/orgs/{org}/log` plus its org)."""
+
+    org: Uuid7
+    expected_seq: StrictInt = Field(ge=0)
+    entries: list[dict[str, Any]] = Field(min_length=1, max_length=1000)
+    wraps: list[dict[str, Any]] = Field(max_length=10000)
+
+
+class OwnForm(Strict):
+    """The parts of the new form (ADR-082 section 2)."""
+
+    gen: StrictInt = Field(ge=1, le=2**31 - 1)
+    cert: B64u64Sig
+    user_ct: BundleCt
+    batches: list[LogBatch] = Field(max_length=1000)
+    cred_wraps: list[dict[str, Any]] = Field(max_length=1000)
+
+
 class AgentConfirm(Strict):
     pairing_id: Uuid7
-    bundle_ct: BundleCt
     label_ct: BundleCt
     claim_hash: B64u32
     handover_ct: BundleCt | None = None
+    bundle_ct: BundleCt | None = None
+    gen: StrictInt | None = Field(default=None, ge=1, le=2**31 - 1)
+    cert: B64u64Sig | None = None
+    user_ct: BundleCt | None = None
+    batches: list[LogBatch] | None = Field(default=None, max_length=1000)
+    cred_wraps: list[dict[str, Any]] | None = Field(default=None, max_length=1000)
+
+    def own_form(self) -> OwnForm | None:
+        """The new form, None for the old one; `400 request_invalid` unless exactly one form is complete."""
+        if self.bundle_ct is not None:
+            if (self.gen, self.cert, self.user_ct, self.batches, self.cred_wraps) == (None,) * 5:
+                return None
+        elif self.gen is not None and self.cert is not None and self.user_ct is not None and self.batches is not None:
+            return OwnForm(
+                gen=self.gen,
+                cert=self.cert,
+                user_ct=self.user_ct,
+                batches=self.batches,
+                cred_wraps=self.cred_wraps or [],
+            )
+        raise HubError("request_invalid", detail={"pointers": ["/bundle_ct"]})
+
+
+class IdentityConvert(OwnForm):
+    """Body of `POST /v1/agent/identity`."""
 
 
 class AgentClaim(Strict):
@@ -114,7 +167,7 @@ async def create_pairing(body: PairingCreate, request: Request, context: Context
     return await asyncio.to_thread(_create, context, body, source_address(request.scope))
 
 
-def _get(context: HubContext, pairing_id: str) -> dict[str, Any]:
+def _get(context: HubContext, pairing_id: str, principal: Principal) -> dict[str, Any]:
     try:
         key = _uuid(pairing_id)
     except HubError:
@@ -122,12 +175,16 @@ def _get(context: HubContext, pairing_id: str) -> dict[str, Any]:
     with context.pool.connection() as connection:
         now = context.clock()
         pairing = store.visible_pairing(connection, key, now)
-    return store.pairing_json(pairing, now)
+        answer = store.pairing_json(pairing, now)
+        if principal.kind in ("session", "agent") and principal.principal_id is not None:
+            # the generation the user's certificate must name (ADR-082 section 9.1)
+            answer["gen"] = store.next_gen(connection, principal.principal_id)
+    return answer
 
 
 @router.get("/v1/agent-pairings/{pairing_id}", auth="anon", right="anon")
-async def get_pairing(pairing_id: str, context: Context) -> dict[str, Any]:
-    return await asyncio.to_thread(_get, context, pairing_id)
+async def get_pairing(pairing_id: str, principal: CurrentPrincipal, context: Context) -> dict[str, Any]:
+    return await asyncio.to_thread(_get, context, pairing_id, principal)
 
 
 def _sealed(text: str, pointer: str) -> bytes:
@@ -139,22 +196,48 @@ def _sealed(text: str, pointer: str) -> bytes:
     return raw
 
 
+def _own(form: OwnForm) -> store.OwnIdentity:
+    return store.OwnIdentity(gen=form.gen, cert=decode(form.cert), user_ct=_sealed(form.user_ct, "/user_ct"))
+
+
+def _batches(form: OwnForm) -> list[Batch]:
+    return [Batch(UUID(item.org), item.expected_seq, item.entries, item.wraps) for item in form.batches]
+
+
 def _confirm(context: HubContext, principal: Principal, body: AgentConfirm) -> dict[str, Any]:
     if principal.kind not in ("session", "agent") or principal.principal_id is None or principal.key_id is None:
         raise HubError("forbidden")
+    if principal.attributes.get("own_identity") is True:
+        # an own-identity agent holds no identity of its user that could sign a certificate (ADR-082 section 7)
+        raise HubError("forbidden")
     user = principal.principal_id
+    form = body.own_form()
     confirmation = store.Confirmation(
         pairing_id=UUID(body.pairing_id),
-        bundle_ct=_sealed(body.bundle_ct, "/bundle_ct"),
+        bundle_ct=None if body.bundle_ct is None else _sealed(body.bundle_ct, "/bundle_ct"),
         label_ct=_sealed(body.label_ct, "/label_ct"),
         claim_hash=decode(body.claim_hash),
         handover_ct=None if body.handover_ct is None else _sealed(body.handover_ct, "/handover_ct"),
+        own=None if form is None else _own(form),
     )
     now = context.clock()
+    appended: list[AppendResult] = []
     with transaction(context.pool) as connection:
         confirmed = store.confirm(
             connection, user, principal.key_id, confirmation, now, by_agent=principal.kind == "agent"
         )
+        if confirmed.changed and form is not None and confirmation.own is not None:
+            appended = apply_batches(
+                connection,
+                user=user,
+                agent_id=confirmation.pairing_id,
+                own=confirmation.own,
+                pub=confirmed.pub,
+                batches=_batches(form),
+                cred_wraps=form.cred_wraps,
+                now=now,
+                root_key=context.config.platform_root_key,
+            )
         changed_remote = confirmed.changed and confirmed.remote
         notices = []
         if changed_remote and principal.kind == "agent":
@@ -164,10 +247,12 @@ def _confirm(context: HubContext, principal: Principal, body: AgentConfirm) -> d
             notices = remote_notice(connection, user, now, confirmation.pairing_id)
     publish_rows(notices)
     close_keys(user, [key_id_of(agent) for agent in confirmed.replaced])
+    for result in appended:
+        publish_append(result)
     return {"agent_id": str(confirmation.pairing_id)}
 
 
-@router.post("/v1/me/agents", auth="browser", right="user")
+@router.post("/v1/me/agents", auth="browser", right="user", max_body=EVENT_BATCH_BYTES)
 async def confirm_agent(body: AgentConfirm, principal: CurrentPrincipal, context: Context) -> dict[str, Any]:
     return await asyncio.to_thread(_confirm, context, principal, body)
 
@@ -236,6 +321,36 @@ def _handover(context: HubContext, principal: Principal) -> dict[str, Any]:
 @router.get("/v1/agent/handover", auth="agent", right="agent:confirmed", read_resource="agent.handover")
 async def agent_handover(principal: CurrentPrincipal, context: Context) -> dict[str, Any]:
     return await asyncio.to_thread(_handover, context, principal)
+
+
+def _convert(context: HubContext, principal: Principal, body: IdentityConvert) -> dict[str, Any]:
+    agent_id = _agent_id(principal)
+    user = cast(UUID, principal.principal_id)  # an agent principal always has its user
+    own = _own(body)
+    now = context.clock()
+    appended: list[AppendResult] = []
+    with transaction(context.pool) as connection:
+        converted = store.convert(connection, agent_id, user, own, now)
+        if converted.changed:
+            appended = apply_batches(
+                connection,
+                user=user,
+                agent_id=agent_id,
+                own=own,
+                pub=converted.pub,
+                batches=_batches(body),
+                cred_wraps=body.cred_wraps,
+                now=now,
+                root_key=context.config.platform_root_key,
+            )
+    for result in appended:
+        publish_append(result)
+    return {"agent_id": str(agent_id), "gen": own.gen}
+
+
+@router.post("/v1/agent/identity", auth="agent", right="agent", max_body=EVENT_BATCH_BYTES)
+async def convert_identity(body: IdentityConvert, principal: CurrentPrincipal, context: Context) -> dict[str, Any]:
+    return await asyncio.to_thread(_convert, context, principal, body)
 
 
 @router.post("/v1/agent-accounts", auth="anon", right="anon")

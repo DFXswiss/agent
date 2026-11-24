@@ -260,6 +260,10 @@ describe('audit view', () => {
           revokedAt: null,
           replaces: null,
           remote: false,
+          ownIdentity: false,
+          heldIdentity: false,
+          gen: null,
+          revokedReason: null,
         },
       ]),
     );

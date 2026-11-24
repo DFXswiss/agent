@@ -195,7 +195,7 @@ def device_invite(account: Account, org: str, wgs: list[str], hours: int) -> dic
         }
         try:
             built = build_batch(
-                log, org=org, author=account.user_id, identity=account.identity, fields=[fields], ts=now_text(), held={}
+                log, org=org, author=account.actor, identity=account.signer, fields=[fields], ts=now_text(), held={}
             )
         except CryptoError as error:
             raise crypto_refusal(error) from None

@@ -9,7 +9,13 @@
       "claimed_at": "2026-11-23T12:00:00.000Z",
       "last_used_at": null,
       "revoked_at": null,
-      "replaces": null
+      "replaces": null,
+      "pub": {
+        "kem": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "cert": null,
+      "session_id": null
     }
   ]
 }

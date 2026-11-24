@@ -16,7 +16,8 @@ import {
   searchText,
   selectOverview,
 } from '../../../src/core/tasks/overview';
-import { idOf } from '../log/world';
+import { signCert } from '../../../src/core/crypto/agent';
+import { actor, idOf } from '../log/world';
 import { taskRow, taskWorld, type TaskWorld } from './world';
 
 const at = (second: number) =>
@@ -157,6 +158,18 @@ describe('merge', () => {
     const view = (overrides: Partial<OverviewQuery>) =>
       ids(overview(t.store.getState(), query(t, [t.wg], overrides)).rows);
     expect(view({ mine: t.me.id })).toEqual(['t1']);
+    // a task of the user's agent is the user's own (ADR-082)
+    const bot = await actor('overview bot');
+    const pub = bot.identity.public();
+    const cert = await signCert(t.me.identity.sig.privateKey, { agent: bot.id, pub, user: t.me.id, gen: 1 });
+    t.world.add(bot);
+    await t.world.batch(bot, [{ type: 'agent_add', subject: bot.id, user: t.me.id, pub, gen: 1, cert }], {
+      keys: t.world.ring(t.ada.id),
+    });
+    setLog(t.store, t.org, t.world.log!);
+    putEvents(t.store, t.wg, [meta(t, 3, t.wg, 't3', bot.id, 'Agent notes')]);
+    expect(view({ mine: t.me.id })).toEqual(['t1', 't3']);
+    expect(view({ mine: t.ada.id })).toEqual(['t2']);
     expect(view({ search: ' report ' })).toEqual(['t1', 't2']);
     expect(view({ search: 'QUARTER', mine: t.me.id })).toEqual(['t1']);
     expect(view({ search: 'draft', mine: t.me.id })).toEqual([]);

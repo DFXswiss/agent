@@ -4,10 +4,20 @@
     "body": "Eine Kontokennung hat 12 Zeichen (Buchstaben und die Ziffern 2–7).",
     "action": "Prüfe die Kennung und gib sie erneut ein."
   },
+  "agent_batches_incomplete": {
+    "title": "Organisationen geändert",
+    "body": "Die Bestätigung umfasste nicht jede deiner Organisationen, oder dein Schlüssel für Zugangsdaten hat sich inzwischen geändert.",
+    "action": "Lade die Seite neu und bestätige noch einmal."
+  },
   "agent_exited": {
     "title": "Agent beendet",
     "body": "Claude Code wurde unerwartet beendet.",
     "action": "Starte den Task noch einmal."
+  },
+  "agent_gen_mismatch": {
+    "title": "Agentenverbindung geändert",
+    "body": "Inzwischen wurde ein anderer KI-Agent verbunden oder getrennt.",
+    "action": "Lade die Seite neu und bestätige noch einmal."
   },
   "agent_start_failed": {
     "title": "Agent nicht gestartet",
@@ -78,6 +88,11 @@
     "title": "Passkey-Antwort ungültig",
     "body": "Der Browser hat eine ungültige Passkey-Antwort geliefert.",
     "action": "Versuche es noch einmal oder verwende einen anderen Browser."
+  },
+  "client_outdated": {
+    "title": "Seite veraltet",
+    "body": "Diese Seite verwendet ein Format, das die Plattform nicht mehr annimmt.",
+    "action": "Lade die Seite neu und versuche es noch einmal."
   },
   "community_epoch_exists": {
     "title": "Community-Schlüssel existiert bereits",
@@ -298,6 +313,11 @@
     "title": "Aufnahme abgelehnt",
     "body": "Das Konto konnte nicht aufgenommen werden: Seine Identität ließ sich nicht bestätigen.",
     "action": "Prüfe das Konto und versuche es erneut, oder sende einen Einladungslink."
+  },
+  "log_agent": {
+    "title": "Agent nicht anerkannt",
+    "body": "Das Mitgliederprotokoll der Organisation enthält einen Agenten, den sein Benutzer nicht bestätigt hat, oder einen ersetzten oder entfernten Agenten.",
+    "action": "Lade neu. Bleibt der Fehler, verbinde den Agenten in deinen Einstellungen erneut."
   },
   "log_chain": {
     "title": "Mitgliederhistorie unterbrochen",

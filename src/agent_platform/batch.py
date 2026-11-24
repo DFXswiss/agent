@@ -1,17 +1,21 @@
 """Building membership-log batches like the web client (`web/src/core/log/rotation.ts` `buildBatch`, 04-crypto.md
 sections 4.7 and 5.10, 03-api.md section 4.3).
 
-`build_batch` signs the requested entries as the user and computes the rotation obligation R over them (the union of
-`required_set(before, after, subject)` per entry; a member that removes itself owes nothing, its R becomes the
-log's `pending`, which `rotation.rotate_pending` serves). It appends one `rotate` per element of R after the requested
-entries, draws a fresh key for every epoch the batch creates (`genesis`, `wg_create`, `rotate`), wraps those keys for
-every reader after the batch (decertified platform devices excluded) and wraps the current epochs the user holds for
-every principal the batch newly entitles (grant, device assignment, accept; with `history` also the older epochs of a
-granted workgroup); then it runs the hub's own check (`check_batch`) on its result before anything is sent. The
-checking code is the copy of the reference (`agent_runner.crypto.log`). The caller keeps the new keys of the scopes
-the user still reads (`Account.learn`), so events of the same batch and later ones use the new epochs. Workgroups
-named in `by_catch_up` may lack a key the user does not hold (an `admit` of an admin that is no member there,
-ADR-060): those wraps are left to the holders' catch-up.
+`build_batch` signs the requested entries as the author (`by`: the user, or the user's agent with its own identity,
+ADR-082) with `identity` and computes the rotation obligation R over them (the union of `lost` per entry: what its
+subject and the agents it replaces or removes lose; a member that leaves - also through its agent - owes nothing,
+`self_owed`, its R becomes the log's `pending`, which `rotation.rotate_pending` serves). The wraps are made by
+`wrapper` (default the author; an agent that signs the user's `genesis`/`accept` wraps as itself). It appends one
+`rotate` per element of R after the requested entries, draws a fresh key for every epoch the batch creates (`genesis`,
+`wg_create`, `rotate`), wraps those keys for every reader after the batch (decertified platform devices excluded) and
+wraps the current epochs the user holds for every principal the batch newly entitles (grant, device assignment, accept;
+with `history` also the older epochs of a granted workgroup; a newly entitled agent gets the range of its user, and with
+`agent_history` - the confirmation, conversion and self-add of an agent, ADR-082 section 9.4 - every epoch the user
+holds); then it runs the hub's own check (`check_batch`) on its result before anything is sent. The checking code is the
+copy of the reference (`agent_runner.crypto.log`). The caller keeps the new keys of the scopes the user still reads
+(`Account.learn`), so events of the same batch and later ones use the new epochs. Workgroups named in `by_catch_up` may
+lack a key the user does not hold (an `admit` of an admin that is no member there, ADR-060): those wraps are left to the
+holders' catch-up.
 
 With `held_only` the wraps for newly entitled principals cover only the current epochs the user holds (an assignment
 to the whole organization wraps `OK` and every `WK` the admin has; the remaining keys reach the device by catch-up,
@@ -34,8 +38,8 @@ from agent_runner.crypto.keys import Identity
 from agent_runner.crypto.log.batch import check_batch
 from agent_runner.crypto.log.entries import VERSION, Head, entry_hash, sign_log_entry
 from agent_runner.crypto.log.platform import PlatformState
-from agent_runner.crypto.log.rotation import entry_subject, required_set
-from agent_runner.crypto.log.state import ORG, WG, OrgState, Scope
+from agent_runner.crypto.log.rotation import lost, self_owed
+from agent_runner.crypto.log.state import AGENT, ORG, WG, OrgState, Scope
 from agent_runner.crypto.log.verify import VerifiedLog, append_entries
 from agent_runner.crypto.log.wraps import WrapSlot
 
@@ -91,15 +95,15 @@ def _created(body: Mapping[str, object]) -> list[Scope]:
 
 
 def _required(log: VerifiedLog, requested: Sequence[Mapping[str, object]]) -> list[Scope]:
-    """R over the requested entries of `log` (the log after them); a self-remove owes no rotation."""
+    """R over the requested entries of `log` (the log after them); a member that leaves owes no rotation."""
     first = len(log.entries) - len(requested)
     found: set[Scope] = set()
     for index, entry in enumerate(requested):
         seq = first + index
         body = cast(dict[str, object], entry["body"])
-        if seq == 0 or (body["type"] == "remove" and entry_subject(body) == body["by"]):
+        if seq == 0 or self_owed(log.states[seq - 1], body):
             continue
-        found |= required_set(log.states[seq - 1], log.states[seq], entry_subject(body))
+        found |= lost(log.states[seq - 1], log.states[seq], body)
     return sorted(found)
 
 
@@ -121,9 +125,11 @@ def build_batch(
     history: bool = False,
     by_catch_up: frozenset[str] = frozenset(),
     held_only: bool = False,
+    wrapper: str | None = None,
+    agent_history: bool = False,
 ) -> Built:
     """The batch of the module docstring; refusals are `CryptoError`s with the hub's codes."""
-    founder = identity.public()["sig"]
+    founder = str(cast(Mapping[str, object], fields[0]["pub"])["sig"]) if log is None else log.state.founder
     head = None if log is None else log.head
     requested = sign_entries(org, head, author, identity.sig, fields, ts=ts, invite=invite)
     trial = append_entries(log, requested, founder=founder, platform=platform)
@@ -155,8 +161,13 @@ def build_batch(
         for recipient in state.readers(scope, scope_id, skip):
             if cast(OrgState, before).can_read(recipient, scope, scope_id):
                 continue
-            oldest = 1 if scope == WG and (recipient, scope_id) in grants else current
+            # an agent gets exactly the range of its user (ADR-082 section 9.4)
+            oldest = 1 if scope == WG and (state.acting(recipient), scope_id) in grants else current
             slots += [WrapSlot(scope, scope_id, epoch, recipient) for epoch in range(oldest, current + 1)]
+            if agent_history and state.principals[recipient].kind == AGENT:
+                slots += [
+                    WrapSlot(*slot, recipient) for slot in held if slot[:2] == (scope, scope_id) and slot[2] < oldest
+                ]
     ring = {**held, **new_keys}
     wraps: list[dict[str, object]] = []
     for slot in sorted(slots):
@@ -168,7 +179,8 @@ def build_batch(
                 continue
             fail("epoch_stale")
         wraps.append(make_wrap(identity, slot, _kem(state, slot.recipient), key))
-    check_batch(log, entries, wraps, wrapped_by=author, founder=founder, platform=platform, excluded=skip)
+    wrapped_by = author if wrapper is None else wrapper
+    check_batch(log, entries, wraps, wrapped_by=wrapped_by, founder=founder, platform=platform, excluded=skip)
     return Built(0 if head is None else head.seq + 1, entries, wraps, new_keys, after, tuple(required))
 
 

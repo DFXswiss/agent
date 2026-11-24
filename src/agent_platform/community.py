@@ -1,12 +1,16 @@
 """The Community: one group chat of all users (14-community.md sections 3 and 4, ADR-069; twin of the web client's
 `core/community/engine.ts`).
 
+The community principal is the actor (ADR-082 section 1): an agent with its own identity joins, asks for the key,
+wraps and posts under its agent ID with its own key ("Agent of <user>"); an account that holds the user's identity
+acts as the user.
+
 Every command joins first (`POST /v1/community/join`, idempotent) and reads `GET /v1/community`. The commands that
 need the community key run the key flow of section 4.2 (`ensure_key`), as the browser does when it starts:
 
 - no epoch: draw `CMK_1`, its key check and the self-wrap, `POST /v1/community/epochs` (`community_epoch_exists`:
   read again once);
-- a self-wrap: check its signature under the user's identity, open it, compare the key check;
+- a self-wrap: check its signature under the actor's key, open it, compare the key check;
 - the tool's own open request (its one-off X25519 key is kept in the state file, `state["community"]["request"]`, so
   a later run can open the wrap): wrapped: check the wrapper's signature, open, compare the key check, store the
   self-wrap (`POST /v1/community/wraps`), else reject the wrap (`POST /v1/community/request/reject`); not wrapped yet:
@@ -182,9 +186,9 @@ def _matches(secret: bytes, epoch: int, check: str) -> None:
 
 
 def _self_wrap(account: Account, epoch: int, secret: bytes) -> dict[str, Any]:
-    user = account.user_id
-    wrap = fmt.wrap_community_key(account.identity.kem_public(), epoch=epoch, recipient=user, key=secret)
-    sig = fmt.sign_community_wrap(account.identity.sig, epoch=epoch, recipient=user, wrap_text=wrap)
+    user = account.actor
+    wrap = fmt.wrap_community_key(account.signer.kem_public(), epoch=epoch, recipient=user, key=secret)
+    sig = fmt.sign_community_wrap(account.signer.sig, epoch=epoch, recipient=user, wrap_text=wrap)
     return {"epoch": epoch, "wrap": wrap, "sig": sig}
 
 
@@ -201,13 +205,13 @@ def _bootstrap(account: Account, retry: bool) -> Key:
 
 
 def _own(account: Account, epoch: int, check: str, wrap: dict[str, Any]) -> Key:
-    user = account.user_id
+    user = account.actor
     try:
         text = str(wrap["wrap"])
         fmt.verify_community_wrap(
-            account.identity.sig_public(), epoch=epoch, recipient=user, wrap_text=text, signature=str(wrap["sig"])
+            account.signer.sig_public(), epoch=epoch, recipient=user, wrap_text=text, signature=str(wrap["sig"])
         )
-        secret = fmt.unwrap_community_key(account.identity.kem, epoch=epoch, recipient=user, wrap_text=text)
+        secret = fmt.unwrap_community_key(account.signer.kem, epoch=epoch, recipient=user, wrap_text=text)
         _matches(secret, epoch, check)
     except CryptoError as error:
         # a broken self-wrap cannot be repaired by a client (the hub refuses requests of holders)
@@ -261,7 +265,7 @@ def _open(  # noqa: PLR0917
 def _new_request(account: Account, epoch: int) -> Key:
     kem = X25519PrivateKey.generate()
     request_id, kem_pub = uuid7(), b64u_encode(x25519_public_raw(kem))
-    sig = fmt.sign_request(account.identity.sig, id=request_id, kem_pub=kem_pub, user=account.user_id)
+    sig = fmt.sign_request(account.signer.sig, id=request_id, kem_pub=kem_pub, user=account.actor)
     local = _local(account)
     local.pop("foreign", None)
     local["request"] = {"id": request_id, "kem_sk": b64u_encode(x25519_private_raw(kem))}
@@ -364,7 +368,7 @@ class Reader:
             "id": row["id"],
             "author": user,
             "mark": mark(user),
-            "own": user == self.account.user_id,
+            "own": user == self.account.actor,
             "moderator": author is not None and author["moderator"],
             "created_at": row["created_at"],
             "deleted": row["deleted"],
@@ -433,8 +437,8 @@ def community_status(account: Account) -> dict[str, Any]:
     epoch, request, member = view["epoch"], view["request"], view["member"]
     mine = _mine(_local(account))
     return {
-        "user_id": account.user_id,
-        "mark": mark(account.user_id),
+        "user_id": account.actor,
+        "mark": mark(account.actor),
         "epoch": None if epoch is None else epoch["epoch"],
         "key_held": view["wrap"] is not None,
         "request": None
@@ -493,7 +497,7 @@ def community_serve(account: Account) -> dict[str, Any]:
                 # an entry that cannot be sealed is skipped (14-community.md section 4.2)
                 result["skipped"] += 1
                 continue
-            sig = fmt.sign_community_wrap(account.identity.sig, epoch=epoch, recipient=str(request_id), wrap_text=wrap)
+            sig = fmt.sign_community_wrap(account.signer.sig, epoch=epoch, recipient=str(request_id), wrap_text=wrap)
             wraps.append({"request": request_id, "epoch": epoch, "wrap": wrap, "sig": sig})
         result["offered"] += len(found)
         if wraps:
@@ -533,9 +537,9 @@ def _sealed(account: Account, key: Key, name: str, text: str, kept: object) -> d
     except CryptoError:
         raise PlatformError("invalid_argument", reason="community_body") from None
     header = fmt.new_header(
-        id=uuid7(), author=account.user_id, epoch=cast(int, key.epoch), ts=format_time(datetime.now(UTC))
+        id=uuid7(), author=account.actor, epoch=cast(int, key.epoch), ts=format_time(datetime.now(UTC))
     )
-    return fmt.seal_message(require_key(key), header, body, account.identity.sig)
+    return fmt.seal_message(require_key(key), header, body, account.signer.sig)
 
 
 def community_post(account: Account, text: str, name: str | None) -> dict[str, Any]:

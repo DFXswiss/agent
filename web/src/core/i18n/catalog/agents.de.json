@@ -22,8 +22,8 @@
   "disconnect-all": "Alle Agenten trennen",
   "dialog.title": "{name} trennen?",
   "dialog.all-title": "Alle Agenten trennen?",
-  "dialog.body": "Der Agent verliert sofort jeden Zugriff. Was er schon gelesen hat, bleibt bei ihm.",
-  "dialog.all-body": "Jeder Agent verliert sofort jeden Zugriff. Was sie schon gelesen haben, bleibt bei ihnen.",
+  "dialog.body": "Der Agent verliert sofort jeden Zugriff: Er wird aus jeder Organisation entfernt und die Schlüssel, die er lesen konnte, werden ersetzt, damit er nichts Neues mehr öffnen kann. Was er schon gelesen hat, bleibt bei ihm.",
+  "dialog.all-body": "Jeder Agent verliert sofort jeden Zugriff: Sie werden aus jeder Organisation entfernt und die Schlüssel, die sie lesen konnten, werden ersetzt, damit sie nichts Neues mehr öffnen können. Was sie schon gelesen haben, bleibt bei ihnen.",
   "dialog.cancel": "Abbrechen",
   "dialog.failed": "Trennen fehlgeschlagen: {reason}",
   "hint.connected": "Dein Agent wurde verbunden. Die Liste unten zeigt seinen Zustand.",
@@ -34,5 +34,9 @@
   "activity.by-agent": "durch Agent {name}",
   "activity.by-unknown-agent": "durch einen Agenten",
   "activity.by-you": "durch dich",
-  "remote": "Läuft auf einem anderen Computer"
+  "remote": "Läuft auf einem anderen Computer",
+  "dialog.held": "Dieser Agent wurde verbunden, bevor Agenten einen eigenen Schlüssel bekamen, und erhielt eine Kopie deines Kontoschlüssels. Diese Kopie öffnet weiterhin, was für dich verschlüsselt ist; deinen Kontoschlüssel selbst kann man nicht ersetzen.",
+  "dialog.cleaning": "Der Agent wird aus deinen Organisationen entfernt …",
+  "runs.ownComputer": "Läuft auf seinem Computer mit eigenem Schlüssel",
+  "held": "Erhielt beim Verbinden eine Kopie deines Kontoschlüssels"
 }

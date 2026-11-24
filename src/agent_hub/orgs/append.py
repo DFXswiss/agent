@@ -3,8 +3,10 @@
 `append_batch` runs inside the caller's transaction, under `SELECT ... FOR UPDATE` of the org row, in this order:
 
 1. the org exists (`404 not_found`);
-2. every entry is authored by the appending principal (`403 forbidden`: a client never submits entries of others),
-   `expected_seq` is the current head + 1 (`409 seq_conflict`, `detail.expected_seq` only for members);
+2. every entry is authored by the appending principal (`403 forbidden`: a client never submits entries of others;
+   `authored`: an own-identity agent appends entries `by` itself, and a `genesis`/`accept` of its user that carries
+   it as the `agent` member, ADR-082), `expected_seq` is the current head + 1 (`409 seq_conflict`,
+   `detail.expected_seq` only for members);
 3. `device_assign`/`device_assign_org` with `platform_seq` only for an org with platform access (`403
    platform_access_denied`, ADR-026; the hub reads the access from the verified platform log);
 4. L1-L8 before every entry against the hub's own verified log, the rotation obligation (the hub computes R itself,
@@ -24,6 +26,9 @@
    entries);
 7. the events of the batch through `agent_hub.events.store.append_events` (E1-E9 against the log after the batch,
    after its epochs are stored so that E6 sees the new rotation time).
+
+The verified log after the batch is cached (`logs.remember`) only after the commit, by `publish_append` of the
+routes: a batch that is rolled back (also one of several orgs in one transaction) never leaves a cached state (E-19).
 
 Refusals of the log rules keep their codes (03-api.md section 11). Other areas append through `append_batch` with an
 `extra` step that runs in the same transaction (HUB-11 stores the invitation package with its `invite` entry, HUB-08
@@ -63,12 +68,26 @@ Body = dict[str, Any]
 CRYPTO_FALLBACK = {"log_fork": "header_invalid"}
 
 
+AGENT_APPENDER = "agent"
+
+
 @dataclass(frozen=True)
 class Appender:
-    """The principal that appends: a user (browser session) or a device."""
+    """The cryptographic actor that appends: a user (browser session, or an agent that signs with its user's
+    identity), a device, or an own-identity agent (`kind` `agent`, `user` its user; ADR-082 section 1). Audit rows name
+    the user of an agent (`actor_kind`, `actor_id`; the agent ID is in `audit.agent_id`)."""
 
     id: str
     kind: str
+    user: str | None = None
+
+    @property
+    def actor_kind(self) -> str:
+        return "user" if self.kind == AGENT_APPENDER else self.kind
+
+    @property
+    def actor_id(self) -> str:
+        return self.user if self.kind == AGENT_APPENDER and self.user is not None else self.id
 
 
 @dataclass(frozen=True)
@@ -108,11 +127,26 @@ def _body(entry: object) -> Body | None:
     return None
 
 
+def authored(body: Body, appender: Appender) -> bool:
+    """Whether the entry is the appender's: `by` is the appender, or - for an own-identity agent - a `genesis` or
+    `accept` of its user that carries this agent as the `agent` member (signed by the agent's key, ADR-082 §1)."""
+    if body.get("by") == appender.id:
+        return True
+    member = body.get("agent")
+    return (
+        appender.kind == AGENT_APPENDER
+        and body.get("type") in ("genesis", "accept")
+        and body.get("by") == appender.user
+        and isinstance(member, dict)
+        and member.get("id") == appender.id
+    )
+
+
 def require_authored(entries: Sequence[object], appender: Appender) -> None:
-    """Every (well-formed) entry is by the appender; malformed entries are left to the format check."""
+    """Every (well-formed) entry is the appender's (`authored`); malformed entries are left to the format check."""
     for entry in entries:
         body = _body(entry)
-        if body is not None and body.get("by") != appender.id:
+        if body is not None and not authored(body, appender):
             raise HubError("forbidden")
 
 
@@ -138,8 +172,8 @@ def _audit(connection: Connection, org: UUID, body: Body, appender: Appender, no
         connection,
         AuditRow(
             at=now,
-            actor_kind=appender.kind,
-            actor_id=UUID(appender.id),
+            actor_kind=appender.actor_kind,
+            actor_id=UUID(appender.actor_id),
             action=f"log.{body['type']}",
             result="ok",
             org_id=org,
@@ -185,12 +219,19 @@ def delete_wraps_of(connection: Connection, state: OrgState, principal: str) -> 
     )
 
 
+def removed(before: OrgState | None, after: OrgState) -> list[str]:
+    """The principals active before an entry and no longer after it, sorted."""
+    if before is None:
+        return []
+    return sorted(p.id for p in before.principals.values() if p.active and not after.principals[p.id].active)
+
+
 def _accepts(connection: Connection, org: UUID, bodies: Sequence[Body], appender: Appender, now: datetime) -> None:
     for body in bodies:
         if body["type"] != "accept":
             continue
         if body["kind"] == USER:
-            identity = logs.identity_keys(connection, appender.id)
+            identity = logs.identity_keys(connection, appender.actor_id)
             pub = cast(dict[str, str], body["pub"])
             if identity != (pub["kem"], pub["sig"]):
                 raise HubError("log_accept")
@@ -198,7 +239,7 @@ def _accepts(connection: Connection, org: UUID, bodies: Sequence[Body], appender
                 "SELECT registered_user FROM hub.invite WHERE id = %s AND org_id = %s FOR UPDATE",
                 (body["invite_id"], org),
             ).fetchone()
-            if row is not None and row[0] is not None and str(row[0]) != appender.id:
+            if row is not None and row[0] is not None and str(row[0]) != appender.actor_id:
                 raise HubError("invite_registered")
         connection.execute(
             "UPDATE hub.invite SET used_at = %s, used_by = %s, package_ct = NULL WHERE id = %s AND org_id = %s",
@@ -209,8 +250,8 @@ def _accepts(connection: Connection, org: UUID, bodies: Sequence[Body], appender
             connection,
             invite_id=str(body["invite_id"]),
             kind="device" if device else "user",
-            actor_kind=appender.kind,
-            actor_id=UUID(appender.id),
+            actor_kind=appender.actor_kind,
+            actor_id=UUID(appender.actor_id),
             at=now,
             org_id=org,
             device_id=UUID(str(body["subject"])) if device else None,
@@ -335,17 +376,16 @@ def append_batch(
     admits = check_admits(connection, after, bodies, excluded)
     persist_range(connection, org_id, batch, first=log.head.seq + 1, wraps=wraps, appender=appender, now=now)
     notices: list[Notification] = admitted_notices(connection, org_id, admits, now)
-    if appender.kind == "user" and any(body["type"] in ROLE_CHANGES for body in bodies):
+    if appender.actor_kind == "user" and any(body["type"] in ROLE_CHANGES for body in bodies):
         # an agent's role change or removal: the user is told (ADR-056 §5; nothing for a browser session), live after
         # the commit (`publish_append`)
-        notices += account_change(connection, UUID(appender.id), "role_changed", now, target=org_id)
+        notices += account_change(connection, UUID(appender.actor_id), "role_changed", now, target=org_id)
     stored = store_batch_events(connection, events, after, root_key=root_key, author=appender.id, now=now)
     projection.update_org(connection, org_id, after, platform, access)
     users, devices = members(after.state)
     result = AppendResult(org_id, after.head, after, batch, stored, users=users, devices=devices, notices=notices)
     if extra is not None:
         extra(connection, result)
-    logs.remember(org_id, after)
     return result
 
 
@@ -380,7 +420,8 @@ def persist_range(
         )
         before = log.states[seq - 1] if seq > 0 else None
         projection.project_entry(connection, org, before, log.states[seq], seq=seq, at=now)
-        if body["type"] == "remove":
-            delete_wraps_of(connection, log.states[seq], str(body["subject"]))
+        for principal in removed(before, log.states[seq]):
+            # the subject of a `remove`, an agent removed with its user and an agent replaced by `agent_add`
+            delete_wraps_of(connection, log.states[seq], principal)
         _audit(connection, org, body, appender, now)
     _store_wraps(connection, batch, wraps, appender.id, now)

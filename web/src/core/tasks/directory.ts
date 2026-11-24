@@ -4,17 +4,18 @@
 //   names, `ref` = author), `member.name` (a name an admin gave, `ref` = a member or an invitation, ADR-073); the
 //   verified event with the highest `scope_seq` of each wins. A member's name is its own `member.profile` first, else
 //   the admin-given name of the member, else the admin-given name of the invitation its current membership started
-//   with (the log's `accept`); an admin-given name counts only while its author is an admin in the current verified
+//   with (the log's `accept`); an agent of the verified log is named through its user (`agents`, "Agent of <name>",
+//   ADR-082 section 1); an admin-given name counts only while its author is an admin in the current verified
 //   log and – for a member – only from the member's current membership on (`lh` ≥ its `joinedSeq`). Only the own name
 //   is the member's own (`ownNames`: proposed when joining another org, written into an org opened without one);
 // - a workgroup scope: the task titles, `task.meta` of a task (the row's `title_event_id` when present, else the
 //   newest verified one of the task, never another task's event; a session's `task.set_title` writes a newer one);
-// - the owner of a task: the author of its first verified user-authored `task.meta` (the one `POST /v1/tasks` sends
-//   with the task), in `scope_seq` order, never the hub's `owner_id` metadata – a hub could name anyone (ADR-003;
+// - the owner of a task: the author of its first verified `task.meta` written by a user or an agent (the one
+//   `POST /v1/tasks` sends with the task; an agent is shown as the agent of its user), in `scope_seq` order, never the hub's `owner_id` metadata – a hub could name anyone (ADR-003;
 //   KOR-04, AUD-01 A-16). Not the signed `ts`: its writer chooses it, so a writer of the workgroup could backdate a
 //   `task.meta` of someone else's task. Device-authored ones (`task.set_title`) are skipped; an author the verified org
 //   state does not know ends the search (no owner rather than a later one).
-import { DEVICE, type OrgState, USER } from '../log/state';
+import { AGENT, DEVICE, type OrgState, USER } from '../log/state';
 import { orgEntry } from '../store/slices/orgs';
 import { memoize } from '../store/selectors';
 import type { EventEntry, ScopeEvents } from '../store/slices/events';
@@ -55,6 +56,8 @@ export interface Directory {
   readonly sources: ReadonlyMap<string, NameSource>;
   /** Invitation ID → the name an admin gave the invited person. */
   readonly invitations: ReadonlyMap<string, GivenName>;
+  /** Agent ID → its user, for every agent of the verified log (shown as "Agent of <user>", ADR-082 section 1). */
+  readonly agents: ReadonlyMap<string, string>;
 }
 
 /** A directory without any name (also the start of test fixtures). */
@@ -65,6 +68,7 @@ export const EMPTY_DIRECTORY: Directory = {
   ownNames: new Map(),
   sources: new Map(),
   invitations: new Map(),
+  agents: new Map(),
 };
 
 const text = (body: unknown, field: string): string | null =>
@@ -129,7 +133,7 @@ function directoryOf(profiles: Profiles, state: OrgState | null): Directory {
   const { orgName, workgroups, own: ownNames } = profiles;
   if (state === null) {
     for (const [ref, events] of profiles.given) give(ref, newest(events, null, 0), 'admin');
-    return { orgName, workgroups, members, ownNames, sources, invitations };
+    return { orgName, workgroups, members, ownNames, sources, invitations, agents: new Map() };
   }
   for (const invite of state.invites.values()) {
     const name = newest(profiles.given.get(invite.inviteId), state, 0);
@@ -142,7 +146,10 @@ function directoryOf(profiles: Profiles, state: OrgState | null): Directory {
     const member = invite.acceptedSeq === null ? undefined : joinedBy.get(invite.acceptedSeq);
     if (member !== undefined) give(member, invitations.get(invite.inviteId), 'invitation');
   }
-  return { orgName, workgroups, members, ownNames, sources, invitations };
+  const agents = new Map(
+    [...state.principals.values()].filter((p) => p.kind === AGENT).map((p) => [p.id, p.parent!] as const),
+  );
+  return { orgName, workgroups, members, ownNames, sources, invitations, agents };
 }
 
 const NO_STATE = {};
@@ -224,7 +231,7 @@ export const selectTitle =
 
 /**
  * The owner of `task` in workgroup `wg` of `org` (module comment): the author of the task's first verified `task.meta`
- * that a user of the verified org state wrote; null while none is known.
+ * that a user or an agent of the verified org state wrote; null while none is known.
  */
 export const selectOwner =
   (org: string, wg: string, task: string) =>
@@ -234,7 +241,7 @@ export const selectOwner =
     if (scope === undefined || principals === undefined) return null;
     for (const author of titlesOf(scope).authors.get(task) ?? []) {
       const kind = principals.get(author)?.kind;
-      if (kind !== DEVICE) return kind === USER ? author : null;
+      if (kind !== DEVICE) return kind === USER || kind === AGENT ? author : null;
     }
     return null;
   };

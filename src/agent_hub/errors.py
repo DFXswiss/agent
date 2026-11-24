@@ -85,6 +85,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "log_genesis": (400,),
     "log_accept": (400,),
     "log_admit": (400,),
+    "log_agent": (400,),
     "log_signature": (400,),
     "log_rights": (400,),
     "log_epoch": (400,),
@@ -99,10 +100,13 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "handover_required": (400,),
     "handover_unexpected": (400,),
     "identity_forbidden": (403,),
+    "client_outdated": (409,),
+    "agent_batches_incomplete": (409,),
+    "agent_gen_mismatch": (409,),
 }
 
 # The detail keys of `contracts/common.json#/$defs/error` (closed).
-DETAIL_KEYS = frozenset({"pointers", "expected_seq", "expected", "candidates_available", "devices", "quota"})
+DETAIL_KEYS = frozenset({"pointers", "expected_seq", "expected", "candidates_available", "devices", "quota", "orgs"})
 INTERNAL_ERROR = "unavailable"
 
 

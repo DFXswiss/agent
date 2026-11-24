@@ -9,7 +9,13 @@
       "claimed_at": null,
       "last_used_at": null,
       "revoked_at": null,
-      "replaces": null
+      "replaces": null,
+      "pub": {
+        "kem": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "cert": null,
+      "session_id": null
     }
   ]
 }

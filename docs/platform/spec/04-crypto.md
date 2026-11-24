@@ -226,7 +226,8 @@ Entry hash = `b64u(SHA-256(canonical(entry)))` (whole entry including signatures
 | `device_unassign` | `device`, `wg` | admin; an explicit assignment of `device` to `wg` exists |
 | `device_assign_org` **(new, ADR-075)** | `device`, `platform_seq` (as `device_assign`) | admin; `device` not yet assigned to the organization; with `platform_seq` only if the org has platform access; the hub also requires that every active device member announced `log.org_assign` |
 | `device_unassign_org` **(new, ADR-075)** | `device` | admin; `device` assigned to the organization |
-| `remove` | `subject` (user or device) | admin, or `subject == by` (leave); at least one admin must remain |
+| `remove` | `subject` (user, device or agent) | admin, or `subject == by` (leave), or for an agent: its user or the user's agent (`acting(by)` is the parent); at least one admin must remain; removing a user removes its agent at the same `seq` (ADR-082) |
+| `agent_add` **(new, ADR-082)** | `subject` (agent ID), `user`, `pub{kem,sig}`, `gen`, `cert` | the user or the agent itself (`by == subject`, signed with `pub.sig`); `user` an active user; `cert = Ed25519_user(P‖"agent-cert\0"‖canonical({agent,gen,pub,user,v:1}))` valid under the user's key; `subject` never a principal of the org except the same agent returning with its user and its own `gen`; `gen` greater than every other agent generation of that user in the log; an active agent of the user with a lower `gen` is removed by this entry (its R owed in the batch); otherwise `log_agent` |
 | `rotate` | `scope` org\|wg, `scope_id`, `epoch` (= current + 1) | org: admin; wg: admin or wg writer |
 | `admit` **(new, ADR-060)** | `subject`, `pub{kem,sig}`, `platform_seq`, `id_sig` (`""` or 64-byte b64u), `by_platform_seq`, `by_id_sig` (`""` or 64-byte b64u), `role` admin\|member, `wgs{wg: read\|write}` | admin; every `wgs` workgroup writable and not the default one (`log_rights`); then (`log_admit`) `subject` not an active principal (a former **user** with the same keys may be admitted again) and two identity anchors in the platform log (§4.8): the subject's `pub` at `platform_seq` with `id_sig`, and the admitting admin's keys (state before the entry) at `by_platform_seq` with `by_id_sig`; no platform state: `log_admit`. Effect as `accept` of a user invitation with `role` and `wgs`, but the principal has **not consented** (below). At the hub additionally: `pub` is the subject's registered identity of an active user, certifications still valid (`log_admit`), the batch wraps the current org epoch and default-workgroup epoch for the subject (`log_admit`), every active device of the org announced `log.admit` (`409 peer_outdated`) |
 
@@ -234,6 +235,13 @@ Entry hash = `b64u(SHA-256(canonical(entry)))` (whole entry including signatures
 entered by `admit` has not, until it leaves and joins again through an invitation (its own `accept`). The devices of an org in which the owner has not
 consented are no recipients of the owner's credential key (§6.3), so being admitted never shares the admitted user's
 credentials. Everything else (reading, writing, leaving with `remove`) is the same as for any member.
+
+**Agents (ADR-082):** `genesis` and `accept` (user) may carry `agent{id,pub,gen,cert}`; the entry is then signed by the
+agent's key and adds the agent with the `agent_add` rule. An agent principal has exactly the rights of its active user
+(`acting(by)` for every right of an author; never for `subject`), is a reader of every scope its user reads and of the
+user's `cred` scope, and never has a role, access or assignment of its own. `revoked_agents(states)` – superseded by a
+higher generation in any log, or removed other than with its user – are no credential readers, and an org whose user
+entry was signed by such an agent gives no consent.
 
 Derived rights: org member ⇒ read on org scope and **write on the default workgroup** (not reducible in v1);
 admin ⇒ org write (management, org whiteboard, profiles) **and read on every workgroup of the org** (inherited read,
@@ -612,9 +620,9 @@ outputs, scope keys, private keys, credential values, the handover secret of an 
 Crypto/format: `non_ascii`, `header_invalid`, `signature_invalid`, `decrypt_failed`, `prf_length`, `prf_missing`,
 `recovery_code_length`, `hpke_short`, `invite_code_length`, `invite_code_invalid`, `event_conflict`,
 `epoch_stale`, `kind_not_allowed`, `size_exceeded`, `wrap_unauthorized`, `platform_root_mismatch`, `account_code_invalid`.
-Log: `seq_conflict`, `log_empty`, `log_chain`, `log_genesis`, `log_accept`, `log_admit`, `log_signature`, `log_rights`,
-`log_epoch`, `log_type`, `log_rollback`, `log_fork`, `invite_not_in_log`, `invite_consumed`, `invite_expired`,
-`invite_revoked`, `author_not_writer`, `last_admin`, `rotation_required`.
+Log: `seq_conflict`, `log_empty`, `log_chain`, `log_genesis`, `log_accept`, `log_admit`, `log_agent`, `log_signature`,
+`log_rights`, `log_epoch`, `log_type`, `log_rollback`, `log_fork`, `invite_not_in_log`, `invite_consumed`,
+`invite_expired`, `invite_revoked`, `author_not_writer`, `last_admin`, `rotation_required`.
 
 ## 9. Threat model
 

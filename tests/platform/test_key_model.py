@@ -75,9 +75,12 @@ def section(text: str, number: int) -> str:
 
 
 def vector_names(document: Any) -> set[str]:
-    """Names a vector file offers: top-level keys and the `name` of every object in a top-level list."""
+    """Names a vector file offers: top-level keys and the `name` of every object in a top-level list or in a list of
+    a top-level section (e.g. the `agents` section of the log vectors, KOR-57)."""
     names = set(document)
-    for value in document.values():
+    lists = [value for value in document.values() if isinstance(value, list)]
+    lists += [inner for value in document.values() if isinstance(value, dict) for inner in value.values()]
+    for value in lists:
         if isinstance(value, list):
             names |= {item["name"] for item in value if isinstance(item, dict) and "name" in item}
     return names

@@ -6,12 +6,13 @@ and `credentials/login.ts`). The hub relays opaque envelopes only; everything is
   decertified platform devices excluded), never from the hub; anything else is `device_not_assigned`.
 - Without a device (a fresh private org) the tool assigns one to the default workgroup first, as the web does: a
   missing connection is started, not explained.
-- A request is sealed with HPKE to the device and signed with the user's identity (`POST /v1/device-requests`); a
-  `github.connect` for a company account also names its organization in plaintext (`org_id`, the hub's admin check,
-  ADR-078 section 1).
-- Every response of `GET /v1/device-requests/{id}` must be signed by the request's device, name this request, user,
-  device, kind and its `seq`, open with the user's key and hold a body the contracts allow for the kind; anything else
-  is `unverifiable` and never shown as content.
+- A request is sealed with HPKE to the device and signed by the actor (`POST /v1/device-requests`): the agent with
+  its own key under its own ID (`header.user`; the device acts for the agent's user, ADR-082), or the user's
+  identity. A `github.connect` for a company account also names its organization in plaintext (`org_id`, the hub's
+  admin check, ADR-078 section 1).
+- Every response of `GET /v1/device-requests/{id}` must be signed by the request's device, name this request, the
+  actor, device, kind and its `seq`, open with the actor's key and hold a body the contracts allow for the kind;
+  anything else is `unverifiable` and never shown as content.
 - The tool waits (polling) up to `--wait` seconds for the next step a person would act on, then returns; a later call
   with `--request` continues. A device code or authorization link is opened in the user's browser.
 """
@@ -214,14 +215,14 @@ def submit(
     header = {
         "v": 1,
         "id": uuid7(),
-        "user": account.user_id,
+        "user": account.actor,
         "device": device,
         "kind": kind,
         "follows": follows,
         "ts": now_text(),
         "enc_alg": ENC_ALG,
     }
-    envelope = seal_request(header, keys[0], body_json(body), account.identity.sig)
+    envelope = seal_request(header, keys[0], body_json(body), account.signer.sig)
     plain = {} if org is None else {"org_id": org}
     answer = account.call("POST", "/v1/device-requests", {"envelope": envelope, **plain})
     if answer.get("request_id") != header["id"] or not isinstance(answer.get("state"), str):
@@ -238,14 +239,14 @@ def _open(account: Account, prepared: dict[str, Any], item: dict[str, Any]) -> d
         header = verify_response(envelope, sig)
         expected = {
             "in_reply_to": prepared["id"],
-            "user": account.user_id,
+            "user": account.actor,
             "device": prepared["device"],
             "kind": prepared["kind"],
             "seq": seq,
         }
         if seq < 1 or any(header[name] != value for name, value in expected.items()):
             return {"seq": seq, "status": "unverifiable", "code": "header_invalid"}
-        body = response_body(prepared["kind"], parse_json(open_response(account.identity.kem, envelope, sig)))
+        body = response_body(prepared["kind"], parse_json(open_response(account.signer.kem, envelope, sig)))
         if body is None:
             return {"seq": seq, "status": "unverifiable", "code": "params_invalid"}
         return {"seq": seq, "status": "verified", "final": header["final"] is True, "body": body}

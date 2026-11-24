@@ -19,17 +19,19 @@ the web is still verifying: the check waits (`not_owed` with `reason: org_log_un
 fails with the refusal), so a flaky or malicious hub cannot make the tool rotate `CK` away from entitled devices or
 delete their records.
 
-It is owed for a loss not clearly older than the start of the current epoch (`SKEW` margin; unknown or future:
-owed). The start is the hub's `created_at` of the user's own self-wrap, which nothing signs: like the web client
-(`spec-deviations.md`, 06 §11 job 5), a hub that dates the self-wrap after a loss makes the loss look handled and so
-withholds a rotation the logs owe, as it can by refusing the rotation request; it cannot make the new key reach a
-device the verified logs do not entitle. A loss is handled once: like the browser per sign-in, the tool keeps the keys
-of the losses a rotation handled with its pairing (`handled_losses` in `state.json`, the newest `HANDLED_MAX`), so the
-checks around every writing command (`upkeep`) do not rotate again for the same loss. `--force` rotates without a
-loss.
+It is owed when the newest epoch was wrapped only by a former agent of the user (it opens records, but nothing new
+is sealed under it, ADR-082 section 9.5), and for a loss not clearly older than the start of the current epoch (`SKEW`
+margin; unknown or future: owed). The start is the hub's `created_at` of the user's own self-wrap, which nothing signs:
+like the web client (`spec-deviations.md`, 06 §11 job 5), a hub that dates the self-wrap after a loss makes the loss
+look handled and so withholds a rotation the logs owe, as it can by refusing the rotation request; it cannot make the
+new key reach a device the verified logs do not entitle. A loss is handled once: like the browser per sign-in, the tool
+keeps the keys of the losses a rotation handled with its pairing (`handled_losses` in `state.json`, the newest
+`HANDLED_MAX`), so the checks around every writing command (`upkeep`) do not rotate again for the same loss. `--force`
+rotates without a loss.
 
-The rotation: a fresh `CK_{e+1}`, wrapped for the user and every device entitled now; every record re-encrypted by the
-user under it (same ID and kind, `version + 1`), all in one `POST /v1/me/credentials/rotate`. A record written by a
+The rotation: a fresh `CK_{e+1}`, wrapped for the user, the user's active agents and every device entitled now; every
+record re-encrypted by the actor under it (same ID and kind, `version + 1`; a record of an agent of the user, also of
+a revoked one, is re-signed, ADR-082 section 9.5), all in one `POST /v1/me/credentials/rotate`. A record written by a
 device that lost eligibility is deleted first (re-signing it would launder what that device wrote); any other record
 that cannot be opened (signature, epoch, body as `contracts/credentials/<kind>.json` allows) blocks the rotation and
 nothing is deleted. A `409 version_conflict` is retried once from the start. The primary `github` record is one of
@@ -88,6 +90,8 @@ class OwnKey:
     epoch: int
     key: bytes
     created_at: datetime | None
+    sealable: bool = True
+    """False for an epoch only a former agent of the user wrapped: it opens records, the rotation replaces it."""
 
 
 def _excluded(platform: VerifiedPlatformLog | None, states: Iterable[OrgState]) -> list[str]:
@@ -163,19 +167,26 @@ def remember_handled(account: Account, losses: Iterable[Loss]) -> None:
 
 
 def own_keys(account: Account) -> list[OwnKey]:
-    """The user's verified `CK` epochs, newest first, with the hub's `created_at` of the self-wrap."""
-    keys = account.cred_keys()
+    """The user's verified `CK` epochs, newest first, with the hub's `created_at` of the wrap to the actor."""
+    epochs = account.cred_epochs()
+    keys = {epoch: key for epoch, (key, _sealable) in epochs.items()}
     created: dict[int, datetime | None] = {}
     for item in account.wraps():
         epoch = item.get("epoch")
-        own = (item.get("scope"), item.get("scope_id"), item.get("recipient_id"), item.get("wrapped_by"))
-        if own != (CRED, account.user_id, account.user_id, account.user_id) or epoch not in keys or epoch in created:
+        own = (item.get("scope"), item.get("scope_id"), item.get("recipient_id"))
+        mine = own == (CRED, account.user_id, account.actor) and item.get("wrapped_by") in (
+            account.user_id,
+            account.actor,
+        )
+        if not mine or epoch not in keys or epoch in created:
             continue
         try:
             created[cast(int, epoch)] = parse_time(item.get("created_at"))
         except CryptoError:
             created[cast(int, epoch)] = None
-    return [OwnKey(epoch, keys[epoch], created.get(epoch)) for epoch in sorted(keys, reverse=True)]
+    return [
+        OwnKey(epoch, epochs[epoch][0], created.get(epoch), epochs[epoch][1]) for epoch in sorted(keys, reverse=True)
+    ]
 
 
 def _holders(me: Mapping[str, Any]) -> tuple[int, list[str]] | None:
@@ -287,7 +298,7 @@ def _view(account: Account, former: Sequence[VerifiedLog]) -> _View:
 
 def _kem(view: _View, account: Account, recipient: str) -> bytes:
     if recipient == account.user_id:
-        return account.identity.kem_public()
+        return account.user_kem_public()
     found = next(state.principals[recipient] for state in view.all_states if recipient in state.principals)
     return b64u_decode(found.kem, 32)
 
@@ -318,7 +329,7 @@ def _attempt(account: Account, force: bool, former: Sequence[VerifiedLog]) -> di
     lost_holders = from_holders if view.holders is not None and view.holders[0] == latest.epoch else {}
     # a device may have lost eligibility in several ways (a log entry, leaving, holding the key): each loss counts
     groups = [*from_logs, lost_holders]
-    if not force and not rotation_owed(_every(groups), latest.created_at, now, handled_losses(account)):
+    if not force and not _owed(account, latest, groups, now):
         return {"status": "not_owed", "lost_devices": _devices(groups)}
     opened: list[tuple[dict[str, Any], object]] = []
     dropped: list[str] = []
@@ -330,9 +341,7 @@ def _attempt(account: Account, force: bool, former: Sequence[VerifiedLog]) -> di
         header = record.get("header")
         author = header.get("author") if isinstance(header, dict) else None
         try:
-            sig_key = (
-                account.identity.sig_public() if author == user else _author_key(account, view, author, lost_holders)
-            )
+            sig_key = _author_key(account, view, author, lost_holders)
             if sig_key is None:
                 dropped.append(kind)
                 continue
@@ -347,9 +356,7 @@ def _attempt(account: Account, force: bool, former: Sequence[VerifiedLog]) -> di
     key = secrets.token_bytes(32)
     excluded = _excluded(view.platform, view.states)
     recipients = sorted(cred_readers(view.states, user, excluded))
-    wraps = [
-        make_wrap(account.identity, WrapSlot(CRED, user, epoch, r), _kem(view, account, r), key) for r in recipients
-    ]
+    wraps = [make_wrap(account.signer, WrapSlot(CRED, user, epoch, r), _kem(view, account, r), key) for r in recipients]
     ts = format_time(now)
     records = []
     for header, body in opened:
@@ -359,10 +366,10 @@ def _attempt(account: Account, force: bool, former: Sequence[VerifiedLog]) -> di
             kind=str(header["kind"]),
             version=cast(int, header["version"]) + 1,
             epoch=epoch,
-            author=user,
+            author=account.actor,
             ts=ts,
         )
-        records.append(seal_credential(key, fields, body_json(body), account.identity.sig))
+        records.append(seal_credential(key, fields, body_json(body), account.signer.sig))
     account.call("POST", "/v1/me/credentials/rotate", {"epoch": epoch, "wraps": wraps, "records": records})
     account.refresh_wraps()
     remember_handled(account, _every(groups))
@@ -376,6 +383,11 @@ def _attempt(account: Account, force: bool, former: Sequence[VerifiedLog]) -> di
     }
 
 
+def _owed(account: Account, latest: OwnKey, groups: Sequence[Losses], now: datetime) -> bool:
+    """A rotation is owed for the newest epoch (module docstring)."""
+    return not latest.sealable or rotation_owed(_every(groups), latest.created_at, now, handled_losses(account))
+
+
 def _every(groups: Sequence[Losses]) -> list[Loss]:
     return [loss for found in groups for loss in found.values()]
 
@@ -385,8 +397,14 @@ def _devices(groups: Sequence[Losses]) -> list[str]:
 
 
 def _author_key(account: Account, view: _View, author: object, lost_holders: Mapping[str, Loss]) -> bytes | None:
-    """The key of a device author entitled now; None for a device that lost eligibility (its record is dropped);
-    `author_not_writer` for any other author (the record blocks the rotation)."""
+    """The key of the user, of the actor, of an agent of the user in the verified logs (its record is re-signed) or of
+    a device author entitled now; None for a device that lost eligibility (its record is dropped); `author_not_writer`
+    for any other author (the record blocks the rotation)."""
+    if author in (account.user_id, account.actor):
+        return account.key_of(str(author))
+    agent = next((p for s in view.all_states if (p := s.principals.get(str(author))) is not None), None)
+    if agent is not None and agent.parent == account.user_id:
+        return b64u_decode(agent.sig, 32)
     try:
         return device_key(account, view.states, view.platform, str(author))
     except CryptoError:

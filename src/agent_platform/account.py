@@ -1,15 +1,29 @@
 """The paired account and what the tool verifies itself (11-agent-access.md section 8.3).
 
-`Account.open` loads the state and the private keys and opens the user's identity from the sealed bundle with the
-agent's key and `r` (the authenticity comes from `k`, section 3). Everything the tool uses is verified like a browser
-verifies it:
+`Account.open` loads the state and the private keys. The account has one of two modes (ADR-082 sections 1, 2 and 7):
 
-- membership logs: L1-L8 (`verify_log`) against the founder named by genesis, accepted only when the identity itself
-  created the org (genesis by the user with the user's key) or accepted an invitation into it (an `accept` of the
-  user signed with the user's key: its `prev` chain pins every entry before it, so the founder is authenticated);
-  the served head must be the head of the verified entries;
-- scope keys: only wraps that pass W1/W2 against the verified log (`check_wrap`); foreign wraps are ignored;
-- the credential key `CK`: only self-wraps of the user signed by the user's identity (W1);
+- **own** (every agent of a person): the state holds `user_ct`, the user's **public** keys and the delegation
+  certificate sealed to the agent under `r`; the certificate must verify under those keys for this agent's keys and
+  generation. The agent signs entries, events, wraps, requests and records with its own key, under its own ID
+  (`actor` = the agent ID, `signer` = the agent's keys), and reads the wraps made to it;
+- **user** (the registering agent of an account of an agent alone, and an agent paired before ADR-082 until it
+  converts, `convert.py`): the state holds `bundle_ct`, the user's identity sealed to the agent under `r` (the
+  authenticity comes from `k`, section 3); `actor` is the user and `signer` the identity.
+
+`user_id` is always the user: owner, routes and rights (an agent's rights are its user's, `OrgState.acting`).
+Everything the tool uses is verified like a browser verifies it:
+
+- membership logs: L1-L8 (`verify_log`) against the founder named by genesis, accepted only when the user created the
+  org, accepted an invitation into it or was admitted with its own keys (a `genesis`/`accept`/`admit` with the user's
+  public keys: its `prev` chain pins every entry before it, so the founder is authenticated; a `genesis`/`accept`
+  signed by an agent counts only while that agent is not revoked, `revoked_agents` over the verified logs), or when the
+  log adds this agent (`agent_add`, whose certificate L5 checked) under the user's public keys; the served head must be
+  the head of the verified entries;
+- scope keys: only wraps to the actor that pass W1/W2 against the verified log (`check_wrap`); foreign wraps are
+  ignored;
+- the credential key `CK`: only wraps of the user's `CK` to the actor made by the user or by the actor itself, signed
+  by its key (W1); a wrap made by a former agent of the user (in a verified log) opens the records sealed under its
+  epoch, but new records are never sealed under such an epoch (the owed rotation replaces it);
 - the platform log: against the platform root key received over the loopback (or `--platform-root-key`);
 - profile events (names): the reader checks E1-E5 of every event against the verified log (`check_event`; admins only
   for org, workgroup and admin-given names, `ref == author` for own member names); events that fail are skipped. A
@@ -39,9 +53,11 @@ from agent_runner.crypto.log.events import check_event
 from agent_runner.crypto.log.platform import PlatformState, VerifiedPlatformLog, verify_platform_log
 from agent_runner.crypto.log.state import ORG, USER, WG, OrgState
 from agent_runner.crypto.log.verify import VerifiedLog, verify_log
-from agent_runner.crypto.log.wraps import CRED, WRAP_KEYS, check_wrap
+from agent_runner.crypto.log.wraps import CRED, WRAP_KEYS, check_wrap, revoked_agents
 
 PAGE = 1000
+OWN, USER_MODE = "own", "user"
+"""The two modes of an account (module docstring)."""
 MEMBER_NAME = "member.name"
 """The kind of a name an admin gives to a member or an invitation (ADR-073)."""
 KeyRing = dict[tuple[str, str, int], bytes]
@@ -112,20 +128,44 @@ class Names:
         return self
 
 
+def open_anchor(agent: Identity, state: dict[str, Any]) -> dict[str, str]:
+    """The user's public keys and certificate of an own-identity state (`user_ct`), the certificate verified for this
+    agent's keys and generation (`CryptoError` otherwise)."""
+    agent_id, user_id = str(state["agent_id"]), str(state["user_id"])
+    secret = b64u_decode(state["secret"], 32)
+    anchor = agent_crypto.open_user(agent.kem, secret, agent_id, user_id, str(state["user_ct"]))
+    agent_crypto.verify_cert(
+        b64u_decode(anchor["sig"], 32),
+        anchor["cert"],
+        agent_id=agent_id,
+        pub=agent.public(),
+        user_id=user_id,
+        gen=state["gen"],
+    )
+    return anchor
+
+
 @dataclass
 class Account:
-    """The paired agent: state, keys, the opened identity and a signed client."""
+    """The paired agent: state, keys, the user's public keys (and in mode "user" the opened identity) and a signed
+    client."""
 
     home: Home
     state: dict[str, Any]
     agent: Identity
-    identity: Identity
+    identity: Identity | None
+    """The user's identity (mode "user" only)."""
     client: AgentClient
+    user_pub: dict[str, str] = field(default_factory=dict)
+    """The user's public keys `{kem, sig}` (b64u)."""
+    cert: str = ""
+    """The delegation certificate (mode "own")."""
     platform_root: str | None = None
     _wraps: list[dict[str, Any]] | None = None
     _platform: VerifiedPlatformLog | None = None
     _logs: dict[str, VerifiedLog] = field(default_factory=dict)
     _learned: KeyRing = field(default_factory=dict)
+    _former: dict[str, bytes] | None = None
 
     @classmethod
     def open(cls, home: Home, platform_root: str | None = None) -> Account:
@@ -135,7 +175,14 @@ class Account:
             origin, hub_key = str(state["hub"]), b64u_decode(state["hub_key"]["public_key"], 32)
             secret = b64u_decode(state["secret"], 32)
             agent = home.load_keys(agent_id, state.get("key_store"))
-            identity = agent_crypto.open_identity(agent.kem, secret, agent_id, user_id, str(state["bundle_ct"]))
+            identity: Identity | None = None
+            cert = ""
+            if "user_ct" in state:
+                anchor = open_anchor(agent, state)
+                user_pub, cert = {"kem": anchor["kem"], "sig": anchor["sig"]}, anchor["cert"]
+            else:
+                identity = agent_crypto.open_identity(agent.kem, secret, agent_id, user_id, str(state["bundle_ct"]))
+                user_pub = identity.public()
         except (KeyError, TypeError, ValueError, CryptoError):
             raise PlatformError("state_damaged") from None
 
@@ -144,10 +191,11 @@ class Account:
 
         client = AgentClient(origin, agent_id, agent, hub_key, on_revoked=revoked)
         root = platform_root or cast(str | None, state.get("platform_root_key"))
-        return cls(home, state, agent, identity, client, root)
+        return cls(home, state, agent, identity, client, user_pub, cert, root)
 
     @property
     def user_id(self) -> str:
+        """The user: owner, routes and rights."""
         return str(self.state["user_id"])
 
     @property
@@ -155,12 +203,78 @@ class Account:
         return str(self.state["agent_id"])
 
     @property
+    def mode(self) -> str:
+        """`own` (the agent's own identity) or `user` (it holds the user's identity)."""
+        return USER_MODE if self.identity is not None else OWN
+
+    @property
+    def actor(self) -> str:
+        """The cryptographic actor: who authors entries, events, wraps, requests and records (and receives wraps)."""
+        return self.user_id if self.identity is not None else self.agent_id
+
+    @property
+    def signer(self) -> Identity:
+        """The keys of the actor."""
+        return self.identity if self.identity is not None else self.agent
+
+    @property
     def origin(self) -> str:
         return str(self.state["hub"])
 
     @property
     def sig_public(self) -> str:
-        return str(self.identity.public()["sig"])
+        """The user's signing key (b64u)."""
+        return self.user_pub["sig"]
+
+    def user_sig_public(self) -> bytes:
+        return b64u_decode(self.user_pub["sig"], 32)
+
+    def user_kem_public(self) -> bytes:
+        return b64u_decode(self.user_pub["kem"], 32)
+
+    def agent_member(self) -> dict[str, object]:
+        """The `agent` member of the user's `genesis`/`accept` in mode "own" (the agent signs the entry; ADR-082
+        section 1), else nothing."""
+        if self.identity is not None:
+            return {}
+        member = {"id": self.agent_id, "pub": self.agent.public(), "gen": int(self.state["gen"]), "cert": self.cert}
+        return {"agent": member}
+
+    def key_of(self, principal: str) -> bytes:
+        """The signing key of the user (`principal` is the user) or else of the actor (callers name one of the two;
+        `author_key` checks every other principal)."""
+        return self.user_sig_public() if principal == self.user_id else self.signer.sig_public()
+
+    def former_agents(self) -> dict[str, bytes]:
+        """Agent ID -> signing key of every other agent of the user in the verified logs of the user's orgs (also a
+        removed or superseded one; L5 checked its certificate under the user's key), read once per run."""
+        if self._former is not None:
+            return self._former
+        found: dict[str, bytes] = {}
+        try:
+            listed = self.me().get("orgs", [])
+        except PlatformError:
+            return found
+        for item in listed:
+            try:
+                log = self.org_log(str(item["org_id"]))
+            except (PlatformError, KeyError, TypeError):
+                continue
+            for principal in log.state.principals.values():
+                if principal.parent == self.user_id and principal.id != self.actor:
+                    found[principal.id] = b64u_decode(principal.sig, 32)
+        self._former = found
+        return found
+
+    def author_key(self, principal: str) -> bytes:
+        """The key of the user, the actor or a former agent of the user (records and wraps they made are opened, never
+        trusted as the epoch new records are sealed under); `wrap_unauthorized` for anybody else."""
+        if principal in (self.user_id, self.actor):
+            return self.key_of(principal)
+        found = self.former_agents().get(principal)
+        if found is None:
+            raise CryptoError("wrap_unauthorized")
+        return found
 
     def call(self, method: str, path: str, body: object | None = None) -> dict[str, Any]:
         return self.client.call(method, path, body)
@@ -172,7 +286,7 @@ class Account:
         """`GET /v1/me`; its identity must be the opened identity (consistency check)."""
         me = self.call("GET", "/v1/me")
         identity = me.get("identity")
-        expected = {"kem_pub": self.identity.public()["kem"], "sig_pub": self.sig_public}
+        expected = {"kem_pub": self.user_pub["kem"], "sig_pub": self.sig_public}
         if me.get("user_id") != self.user_id or identity != expected:
             raise unverified("identity_mismatch")
         return me
@@ -240,13 +354,23 @@ class Account:
         return log
 
     def _trusts(self, log: VerifiedLog) -> bool:
-        """The identity created the org, accepted an invitation into it or was admitted with its own keys (an `admit`
-        whose admitter's identity rule L5 proved through the platform log, so a hub cannot invent the org; ADR-060)."""
+        """The user created the org, accepted an invitation into it or was admitted with its own keys (an `admit`
+        whose admitter's identity rule L5 proved through the platform log, so a hub cannot invent the org; ADR-060) -
+        a `genesis`/`accept` signed by an agent only while that agent is not revoked - or the log adds this agent under
+        the user's keys (module docstring)."""
         own = self.sig_public
+        user = log.state.principals.get(self.user_id)
+        if user is None or user.sig != own:
+            return False
+        revoked = revoked_agents([*(found.state for found in self._logs.values()), log.state])
         for entry in log.entries:
             body = cast(dict[str, Any], entry["body"])
-            joined = body["type"] in ("genesis", "accept", "admit")
-            if joined and body["subject"] == self.user_id and body["pub"]["sig"] == own:
+            member = body.get("agent")
+            signer = member.get("id") if isinstance(member, dict) else None
+            joined = body["type"] in ("genesis", "accept", "admit") and body["subject"] == self.user_id
+            if joined and body["pub"]["sig"] == own and (signer is None or signer not in revoked):
+                return True
+            if body["type"] == "agent_add" and body["subject"] == self.agent_id:
                 return True
         return False
 
@@ -292,10 +416,10 @@ class Account:
                 continue
             try:
                 slot = check_wrap(_wrap_record(item), str(item.get("wrapped_by")), log)
-                if slot.recipient != self.user_id:
+                if slot.recipient != self.actor:
                     continue
                 key = wrap_format.unwrap_key(
-                    self.identity.kem,
+                    self.signer.kem,
                     scope=slot.scope,
                     scope_id=slot.scope_id,
                     epoch=slot.epoch,
@@ -308,37 +432,46 @@ class Account:
         return ring
 
     def cred_keys(self) -> dict[int, bytes]:
-        """The user's `CK` epochs from self-wraps signed by the identity (W1); other wraps are ignored."""
-        found: dict[int, bytes] = {}
+        """Every `CK` epoch of the user the actor can open: from wraps to the actor made by the user, the actor itself
+        or a former agent of the user (an agent that rotated `CK` before it was revoked: its epoch still opens the
+        records sealed under it, ADR-082 section 9.5); other wraps are ignored."""
+        return {epoch: key for epoch, (key, _sealable) in self.cred_epochs().items()}
+
+    def cred_epochs(self) -> dict[int, tuple[bytes, bool]]:
+        """Epoch -> (key, sealable): sealable when the user or the actor made a wrap of it (W1), not only a former
+        agent (module docstring)."""
+        found: dict[int, tuple[bytes, bool]] = {}
+        user, actor = self.user_id, self.actor
         for item in self.wraps():
-            if item.get("scope") != CRED or item.get("scope_id") != self.user_id:
-                continue
-            if item.get("recipient_id") != self.user_id or item.get("wrapped_by") != self.user_id:
+            if item.get("scope") != CRED or item.get("scope_id") != user or item.get("recipient_id") != actor:
                 continue
             epoch = item.get("epoch")
             try:
                 if not isinstance(epoch, int) or isinstance(epoch, bool):
                     raise CryptoError("header_invalid")
-                wrap, user = str(item.get("wrap")), self.user_id
+                wrap = str(item.get("wrap"))
+                wrapper = str(item.get("wrapped_by"))
+                sealable = wrapper in (user, actor)
                 wrap_format.verify_wrap(
-                    self.identity.sig_public(),
+                    self.author_key(wrapper),
                     scope=CRED,
                     scope_id=user,
                     epoch=epoch,
-                    recipient=user,
+                    recipient=actor,
                     wrap=wrap,
                     signature=str(item.get("sig")),
                 )
-                found[epoch] = wrap_format.unwrap_key(
-                    self.identity.kem, scope=CRED, scope_id=user, epoch=epoch, recipient=user, wrap=wrap
+                key = wrap_format.unwrap_key(
+                    self.signer.kem, scope=CRED, scope_id=user, epoch=epoch, recipient=actor, wrap=wrap
                 )
             except CryptoError:
                 continue
+            found[epoch] = (key, sealable or found.get(epoch, (key, False))[1])
         return found
 
     def cred_key(self) -> tuple[int, bytes]:
-        """The newest verified `CK` epoch and key."""
-        found = self.cred_keys()
+        """The newest `CK` epoch and key new records are sealed under (sealable, `cred_epochs`)."""
+        found = {epoch: key for epoch, (key, sealable) in self.cred_epochs().items() if sealable}
         if not found:
             raise unverified("cred_key_missing")
         epoch = max(found)

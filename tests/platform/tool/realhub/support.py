@@ -11,9 +11,12 @@ What a browser does is done here as the web client does it:
 
 - `person`: a registered identity with a browser session, its private organization and the credential key `CK_1`
   (the `cred` epoch as the registration stores it and the user's self-wrap, `POST /v1/wraps`);
-- `pair` / `remote_pair`: the confirmation `POST /v1/me/agents` from the pairing-tagged sign-in session with the
-  identity sealed to the agent under `r`, then the loopback handover (`POST /agent-pairing` to the tool) or, for a
-  remote pairing, `handover_ct` and the return code the page shows;
+- `pair` / `remote_pair`: the confirmation `POST /v1/me/agents` from the pairing-tagged sign-in session in the form
+  of ADR-082 section 2 (`confirmation`): the certificate of the generation the hub names, the user's public keys
+  sealed to the agent under `r`, per organization of the user an `agent_add` batch with the wraps of every epoch the
+  browser holds (built from the logs and wraps the hub serves to the person's browser, `agent_platform.batch`), the
+  `CK` wraps; then the loopback handover (`POST /agent-pairing` to the tool) or, for a remote pairing,
+  `handover_ct` and the return code the page shows;
 - `ring`: every scope key ever wrapped for a person (`GET /v1/wraps` of its tool), as that person could unwrap it.
 """
 
@@ -48,6 +51,11 @@ from agent_hub.crypto.event import open_event
 from agent_hub.db.pool import open_pool
 from agent_hub.stream.publish import LIVE
 from agent_hub.stream.service import service_of
+from agent_platform.batch import build_batch
+from agent_runner.crypto.encoding import format_time
+from agent_runner.crypto.keys import Identity as RunnerIdentity
+from agent_runner.crypto.log.platform import verify_platform_log
+from agent_runner.crypto.log.verify import verify_log
 from tests.platform.hub.agents.support import gesture_client
 from tests.platform.hub.conftest import (
     FixedClock,
@@ -162,6 +170,9 @@ class Person:
     actor: Actor
     tool: Tool
     cred_key: bytes
+    agent_id: str = ""
+    """The person's agent once paired (it signs with its own key, ADR-082)."""
+    agent_sig: bytes = b""
 
     @property
     def id(self) -> str:
@@ -194,16 +205,90 @@ def _pairing_keys(real: RealHub, pairing_id: str) -> tuple[bytes, bytes, dict[st
     return b64u_decode(answer["pub"]["kem"], 32), b64u_decode(answer["pub"]["sig"], 32), answer
 
 
-def _confirmation(pairing_id: str, kem: bytes, who: Person, secret: bytes) -> dict[str, Any]:
-    """The body of `POST /v1/me/agents`: the identity sealed to the agent under `r`, the label and the claim hash."""
-    claim = agent_format.claim(secret, pairing_id, who.id)
+def browser_ring(real: RealHub, who: Person) -> tuple[Ring, dict[int, bytes]]:
+    """The scope keys and `CK` epochs of the person's browser: every wrap to the person, unwrapped."""
+    scopes: Ring = {}
+    cred: dict[int, bytes] = {}
+    for item in who.actor.browser.get("/v1/wraps").json()["wraps"]:
+        if item["recipient_id"] != who.id:
+            continue
+        slot = (str(item["scope"]), str(item["scope_id"]), int(item["epoch"]))
+        key = wrap_format.unwrap_key(
+            who.actor.identity.kem, scope=slot[0], scope_id=slot[1], epoch=slot[2], recipient=who.id, wrap=item["wrap"]
+        )
+        if slot[0] == "cred":
+            cred[slot[2]] = key
+        else:
+            scopes[slot] = key
+    return scopes, cred
+
+
+def _batches(real: RealHub, who: Person, add: dict[str, object]) -> list[dict[str, Any]]:
+    """One `agent_add` batch per organization of the person, as its browser builds it from the served logs."""
+    answer = who.actor.browser.get("/v1/platform/log?limit=1000")
+    entries = [item["entry"] for item in answer.json()["entries"]] if answer.status_code == 200 else []
+    platform = verify_platform_log(entries, ROOT_KEY).state if entries else None
+    held, _cred = browser_ring(real, who)
+    batches = []
+    for item in who.actor.browser.get("/v1/me").json()["orgs"]:
+        org = str(item["org_id"])
+        page = who.actor.browser.get(f"/v1/orgs/{org}/log?limit=1000").json()
+        served = [entry["entry"] for entry in page["entries"]]
+        log = verify_log(served, served[0]["body"]["pub"]["sig"], platform=platform)
+        ring = {slot: key for slot, key in held.items() if slot[1] == org or slot[1] in log.state.workgroups}
+        built = build_batch(
+            log,
+            org=org,
+            author=who.id,
+            identity=RunnerIdentity(who.actor.identity.kem, who.actor.identity.sig),
+            fields=[add],
+            ts=format_time(datetime.now(UTC)),
+            held=ring,
+            platform=platform,
+            held_only=True,
+        )
+        batches.append({"org": org, "expected_seq": built.expected_seq, "entries": built.entries, "wraps": built.wraps})
+    return batches
+
+
+def confirmation(real: RealHub, who: Person, pairing_id: str, secret: bytes) -> dict[str, Any]:
+    """The body of `POST /v1/me/agents` in the form of ADR-082 section 2 (module docstring)."""
+    answer = who.actor.browser.get(f"/v1/agent-pairings/{pairing_id}").json()
+    gen, pub = int(answer["gen"]), dict(answer["pub"])
+    kem = b64u_decode(pub["kem"], 32)
+    user = who.id
+    cert = agent_format.sign_cert(who.actor.identity.sig, pairing_id, pub, user, gen)
+    add = {"type": "agent_add", "subject": pairing_id, "user": user, "pub": pub, "gen": gen, "cert": cert}
+    _held, cred = browser_ring(real, who)
+    cred_wraps = []
+    for epoch, key in sorted(cred.items()):
+        fields: dict[str, Any] = {"scope": "cred", "scope_id": user, "epoch": epoch, "recipient": pairing_id}
+        sealed = wrap_format.wrap_key(kem, **fields, key=key)
+        signature = wrap_format.sign_wrap(who.actor.identity.sig, **fields, wrap=sealed)
+        cred_wraps.append(
+            {
+                "scope": "cred",
+                "scope_id": user,
+                "epoch": epoch,
+                "recipient_id": pairing_id,
+                "wrap": sealed,
+                "sig": signature,
+            }
+        )
+    claim = agent_format.claim(secret, pairing_id, user)
     return {
         "pairing_id": pairing_id,
-        "bundle_ct": agent_format.seal_identity(kem, secret, pairing_id, who.id, who.actor.identity),
         "label_ct": agent_format.seal_label(
-            who.actor.identity.kem_public(), pairing_id, who.id, {"name": "Claude Code", "host": "mac"}
+            who.actor.identity.kem_public(), pairing_id, user, {"name": "Claude Code", "host": "mac"}
         ),
         "claim_hash": b64u_encode(agent_format.claim_hash(claim)),
+        "gen": gen,
+        "cert": cert,
+        "user_ct": agent_format.seal_user(
+            kem, secret, pairing_id, user, user_pub=who.actor.identity.public(), cert=cert
+        ),
+        "batches": _batches(real, who, add),
+        "cred_wraps": cred_wraps,
     }
 
 
@@ -229,8 +314,9 @@ def pair(real: RealHub, who: Person) -> dict[str, Any]:
     pairing_id = link["p"]
     kem, sig, _answer = _pairing_keys(real, pairing_id)
     assert link["f"] == agent_format.fingerprint(kem, sig)  # the page shows the fingerprint of the hub's keys
+    who.agent_id, who.agent_sig = pairing_id, sig
     secret = secrets.token_bytes(32)
-    _confirm(real, who, pairing_id, _confirmation(pairing_id, kem, who, secret))
+    _confirm(real, who, pairing_id, confirmation(real, who, pairing_id, secret))
     handover = {"p": pairing_id, "r": b64u_encode(secret), "k": ROOT_KEY, "u": who.id}
     status, headers = post_form(int(link["c"]), handover)
     assert (status, headers["Location"]) == (303, f"{real.origin}/settings?agent=connected")
@@ -247,7 +333,7 @@ def confirm_remote(real: RealHub, who: Person, pairing_id: str, code: str) -> st
     derived = agent_format.agent_code(pairing_id, agent_format.fingerprint(kem, sig), nonce, real.origin)
     assert agent_format.format_code(derived) == code
     secret = secrets.token_bytes(32)
-    body = _confirmation(pairing_id, kem, who, secret)
+    body = confirmation(real, who, pairing_id, secret)
     body["handover_ct"] = agent_format.seal_handover(kem, pairing_id, who.id, secret, ROOT_KEY)
     _confirm(real, who, pairing_id, body)
     return agent_format.format_code(agent_format.return_code(secret, pairing_id, who.id))
@@ -263,9 +349,10 @@ def run_ok(tool: Tool, *argv: str, stdin: str = "") -> dict[str, Any]:
 
 
 def ring(who: Person) -> Ring:
-    """Every org and workgroup key wrapped for the person (its own `GET /v1/wraps`), unwrapped with its identity."""
+    """Every org and workgroup key wrapped for the person (what its browser reads, `GET /v1/wraps`), unwrapped with
+    its identity."""
     found: Ring = {}
-    for item in run_ok(who.tool, "api", "GET", "/v1/wraps")["answer"]["wraps"]:
+    for item in who.actor.browser.get("/v1/wraps").json()["wraps"]:
         if item["recipient_id"] != who.id or item["scope"] == "cred":
             continue
         slot = (str(item["scope"]), str(item["scope_id"]), int(item["epoch"]))
@@ -281,10 +368,10 @@ def ring(who: Person) -> Ring:
 
 
 def opens(keys: Ring, event: dict[str, Any], author: Person) -> bool:
-    """Whether any key of `keys` opens the event."""
+    """Whether any key of `keys` opens the event the person's agent wrote."""
     for key in keys.values():
         try:
-            open_event(key, event, author.actor.identity.sig_public())
+            open_event(key, event, author.agent_sig)
         except CryptoError:
             continue
         return True

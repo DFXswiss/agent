@@ -2,7 +2,9 @@
 
 `create_org` runs inside the caller's transaction:
 
-1. the genesis entry is well formed and of type `genesis` (`log_genesis`), authored by the caller (`403 forbidden`);
+1. the genesis entry is well formed and of type `genesis` (`log_genesis`), authored by the caller (`403 forbidden`;
+   an own-identity agent creates the org of its user with itself as the `agent` member, ADR-082 section 1: `by` and
+   `pub` are its user's, who is the creator `created_by`);
 2. idempotency: an org with the genesis' ID that the caller created with exactly this genesis is answered again with
    `replayed: true`; any other existing org, or a default workgroup ID that is already taken, is `409 id_conflict`;
 3. `pub` is the caller's registered identity (`log_genesis`; the founder key L3 is pinned to it);
@@ -40,6 +42,7 @@ from agent_hub.orgs import logs, projection
 from agent_hub.orgs.append import (
     Appender,
     AppendResult,
+    authored,
     check,
     hub_error,
     members,
@@ -68,7 +71,7 @@ def _genesis_body(genesis: object, appender: Appender) -> dict[str, Any]:
         raise hub_error(error) from None
     if body["type"] != "genesis":
         raise HubError("log_genesis")
-    if body["by"] != appender.id:
+    if not authored(body, appender):
         raise HubError("forbidden")
     return body
 
@@ -78,7 +81,7 @@ def _existing(connection: Connection, org_id: UUID, default_wg: UUID, genesis: o
     org = logs.org_row(connection, org_id, lock=True)
     if org is not None:
         stored = logs.entries(connection, org_id, limit=1)
-        if org.created_by == UUID(appender.id) and canonical(stored[0]) == canonical(genesis):
+        if org.created_by == UUID(appender.actor_id) and canonical(stored[0]) == canonical(genesis):
             return True
         raise HubError("id_conflict")
     taken = connection.execute(
@@ -101,18 +104,19 @@ def _consume_platform_invite(
             " WHERE id = %s AND scope = 'platform' AND kind = 'user' FOR UPDATE",
             (invite_id,),
         ).fetchone()
-    if row is None or row[0] is None or str(row[0]) != appender.id or row[1] is not None or row[2] is not None:
+    user = appender.actor_id
+    if row is None or row[0] is None or str(row[0]) != user or row[1] is not None or row[2] is not None:
         raise HubError("platform_invite_required")
     connection.execute(
         "UPDATE hub.invite SET used_at = %s, used_by = %s, package_ct = NULL WHERE id = %s",
-        (now, appender.id, invite_id),
+        (now, user, invite_id),
     )
     audit_invite_use(
         connection,
         invite_id=str(invite_id),
         kind="user",
-        actor_kind=appender.kind,
-        actor_id=UUID(appender.id),
+        actor_kind=appender.actor_kind,
+        actor_id=UUID(user),
         at=now,
         org_id=org_id,
     )
@@ -148,7 +152,7 @@ def create_org(
     if _existing(connection, org_id, default_wg, genesis, appender):
         unchanged()
         return Created(org_id, default_wg, replayed=True, result=None)
-    identity = logs.identity_keys(connection, appender.id)
+    identity = logs.identity_keys(connection, appender.actor_id)
     pub = cast(dict[str, str], body["pub"])
     if identity is None or identity != (pub["kem"], pub["sig"]):
         raise HubError("log_genesis")
@@ -167,12 +171,11 @@ def create_org(
     connection.execute(
         "INSERT INTO hub.org (id, private, platform_access, default_wg, created_by, created_at, log_head_seq,"
         " log_head_hash, rotation_pending) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '[]')",
-        (org_id, private, access, default_wg, appender.id, now, log.head.seq, log.head.hash),
+        (org_id, private, access, default_wg, appender.actor_id, now, log.head.seq, log.head.hash),
     )
     persist_range(connection, org_id, batch, first=0, wraps=wraps, appender=appender, now=now)
     projection.update_org(connection, org_id, log, platform, access)
     stored = store_batch_events(connection, events, log, root_key=root_key, author=appender.id, now=now)
     users, devices = members(log.state)
-    logs.remember(org_id, log)
     result = AppendResult(org_id, log.head, log, batch, stored, users=users, devices=devices)
     return Created(org_id, default_wg, replayed=False, result=result)

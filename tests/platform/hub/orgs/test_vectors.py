@@ -50,10 +50,11 @@ from agent_hub.orgs.projections import rebuild_orgs
 from tests.platform.hub.conftest import FixedClock, HubDatabase, HubHarness, hub_environ, start_hub
 from tests.platform.hub.orgs.support import insert_device, insert_identity, insert_platform_entries
 
-VECTORS = json.loads((Path(__file__).parents[4] / "contracts" / "vectors" / "log.json").read_text(encoding="utf-8"))
+VECTORS_DIR = Path(__file__).parents[4] / "contracts" / "vectors"
+VECTORS = json.loads((VECTORS_DIR / "log.json").read_text(encoding="utf-8"))
 USERS = ("alice", "bob", "carol", "dave", "erin", "hub")
 DEVICES = ("device", "dev2", "pdev", "qdev")
-LABELS = {vectors.pid(label): label for label in (*USERS, *DEVICES)} | {vectors.uid("erin"): "erin"}
+LABELS = {vectors.pid(label): label for label in (*USERS, *DEVICES, *vectors.AGENTS)} | {vectors.uid("erin"): "erin"}
 HUB_CODES = {"L1_seq_gap": "seq_conflict", "L1_duplicate_entry": "seq_conflict"}
 NOT_AT_THE_HUB = {"log_empty", "L3_founder_not_pinned"}
 NO_PLATFORM_ACCESS = {
@@ -102,8 +103,28 @@ def vector_hub(migrated_db: HubDatabase, hub_pool: Pool, clock: FixedClock) -> I
     yield from start_hub(config, hub_pool, clock)
 
 
-def _platform(hub: HubHarness, ref: Json) -> None:
-    insert_platform_entries(hub.pool, VECTORS["logs"][ref["name"]][: ref["count"]], hub.clock())
+def _platform(hub: HubHarness, ref: Json | None) -> None:
+    """The platform log prefix of a case (the agent cases of ADR-082 name none: the full platform log)."""
+    found = ref or {"name": "platform", "count": len(VECTORS["logs"]["platform"])}
+    insert_platform_entries(hub.pool, VECTORS["logs"][found["name"]][: found["count"]], hub.clock())
+
+
+def _parents(*documents: Json) -> dict[str, str]:
+    """The user of every vector agent, from the `agent_add` entries and `agent` members of every vector log (an agent
+    appends as itself with its user's rights, ADR-082)."""
+    found: dict[str, str] = {}
+    for document in documents:
+        for entries in document["logs"].values():
+            for entry in entries:
+                body = entry["body"]
+                if body["type"] == "agent_add":
+                    found[body["subject"]] = body["user"]
+                elif isinstance(body.get("agent"), dict):
+                    found[body["agent"]["id"]] = body["subject"]
+    return found
+
+
+PARENTS = _parents(VECTORS, json.loads((VECTORS_DIR / "log-rotation.json").read_text(encoding="utf-8")))
 
 
 def _seed(hub: HubHarness, count: int, *, private: bool, log: str | list[Json] = "main") -> None:
@@ -139,6 +160,8 @@ def _seed(hub: HubHarness, count: int, *, private: bool, log: str | list[Json] =
 
 
 def _appender(by: str) -> Appender:
+    if by in PARENTS:
+        return Appender(by, "agent", PARENTS[by])
     return Appender(by, "device" if LABELS.get(by) in DEVICES else "user")
 
 
@@ -178,7 +201,7 @@ def test_broken_vector_is_refused_with_its_code(vector_hub: HubHarness, case: Js
         assert case["op"] == "verify_log"
         return
     args = case["args"]
-    _platform(vector_hub, args["platform"])
+    _platform(vector_hub, args.get("platform"))
     count = args["log"]["count"]
     appended = args.get("entries", args.get("append"))
     expected = NO_PLATFORM_ACCESS.get(case["name"], HUB_CODES.get(case["name"], case["error"]))

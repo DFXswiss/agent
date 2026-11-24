@@ -7,9 +7,10 @@ epoch, held sealed with the storage key in `runner.scope_key`). The cache keeps 
 duration of one use (`opened`) and is never written, logged or put into an answer.
 
 - `fetch(context, owner, kind)`: `GET /v1/device/credentials/{owner}/{kind}`; the record is verified before it is
-  cached: form and author signature, the header names the owner and kind asked for, the author is the owner or a
-  device eligible for the owner's `CK` in an acting org (`crypto.log.wraps.cred_readers`, decertified devices
-  excluded; the keys come from the verified logs) and its version is not older than the cached one (no rollback).
+  cached: form and author signature, the header names the owner and kind asked for, the author is the owner, the
+  owner's active agent that is not revoked (ADR-082 section 9.5) or a device eligible for the owner's `CK` in an
+  acting org (`crypto.log.wraps.cred_readers`, decertified devices excluded; the keys come from the verified logs)
+  and its version is not older than the cached one (no rollback).
   `404` purges the cached record (deleted at the hub: disconnect, 03-api.md section 4.8). A refused record is not
   cached, logged, counted (`verify_failures`) and audited (`runner.inbound_rejected`, source `credential`, target
   `<owner>:<kind>`, metadata only; KOR-07); a hub refusal or transport error leaves the cache unchanged.
@@ -55,7 +56,7 @@ from agent_runner.crypto.log.wraps import CRED, cred_readers
 from agent_runner.orgs import audit
 from agent_runner.orgs.book import OrgBook, book_for
 from agent_runner.orgs.db import session
-from agent_runner.orgs.keys import held_slots, load_scope_key
+from agent_runner.orgs.keys import FORMER_AGENT, load_scope_key
 from agent_runner.sessions.records import time_text
 from agent_runner.sync.http import HubRefusal, HubTransportError
 from agent_runner.sync.runtime import SyncRuntime, runtime
@@ -210,14 +211,18 @@ def eligible(context: Any, owner: str) -> bool:
 
 
 def author_key(context: Any, book: OrgBook, owner: str, author: str) -> bytes:
-    """The Ed25519 key of a record's author: this device, or the owner or an eligible device of an acting org."""
+    """The Ed25519 key of a record's author: this device, or the owner, the owner's active agent that is not revoked or
+    an eligible device of an acting org."""
     identity = context.identity
     if author == identity.device.device_id:
         return b64u_decode(identity.keys.sig_public)
     states = [log.state for org in book.acting_orgs() if (log := book.log(org)) is not None]
     excluded = {device for org in book.acting_orgs() for device in book.excluded(org)}
     if author not in cred_readers(states, owner, excluded):
-        raise RecordRefused("wrap_unauthorized")
+        former = next((p for state in states if (p := state.principals.get(author)) is not None), None)
+        if former is None or former.parent != owner:
+            raise RecordRefused("wrap_unauthorized")
+        return b64u_decode(former.sig)  # a former agent's record: opened, re-signed by the owed rotation
     for state in states:
         found = state.member(author)
         if found is not None:
@@ -330,11 +335,15 @@ async def _open(context: Any, owner: str, kind: str, record: object) -> dict[str
 
 
 async def newest_epoch(context: Any, owner: str) -> int | None:
-    """The newest `CK` epoch of the owner this device holds."""
+    """The newest `CK` epoch of the owner this device holds and may seal under (not one only a former agent of the
+    owner wrapped, `orgs.keys.FORMER_AGENT`)."""
     async with session(context.pool) as conn:
-        slots = await held_slots(conn)
-    epochs = [epoch for scope, scope_id, epoch in slots if scope == CRED and scope_id == owner]
-    return max(epochs, default=None)
+        cur = await conn.execute(
+            "SELECT max(epoch) FROM runner.scope_key WHERE scope = %s AND scope_id = %s AND source <> %s",
+            (CRED, owner, FORMER_AGENT),
+        )
+        row = await cur.fetchone()
+    return None if row is None or row[0] is None else int(row[0])
 
 
 async def current_slot(context: Any, owner: str, kind: str) -> tuple[int, str]:

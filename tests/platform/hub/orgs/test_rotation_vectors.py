@@ -4,7 +4,8 @@ For every R case the hub refuses the triggering entry alone (`rotation_required`
 leaves by itself (then R becomes `org.rotation_pending`), and accepts the entry with exactly one `rotate` per element of
 R and the wraps of every new epoch. The batch vectors are accepted and the invalid batches refused with their codes.
 A hub batch has one appender, which authors every entry and every wrap: the two vectors whose wraps are created by
-another principal than the entries' author are refused earlier with `forbidden` (decision HUB-05 2).
+another principal than the entries' author, and the vector whose entries have two authors, are refused earlier with
+`forbidden` (decision HUB-05 2).
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ ROTATION = json.loads(
 Json = dict[str, Any]
 PLATFORM = verify_platform_log(ROTATION["logs"]["platform"], vectors.sig_pk("root")).state
 __all__ = ["vector_hub"]
-ONE_APPENDER = {"leave_without_rotation", "wrap_signed_by_other"}
+ONE_APPENDER = {"leave_without_rotation", "wrap_signed_by_other", "owed_rotation_by_other_member"}
 
 
 def _submit(hub: HubHarness, by: str, entries: list[Json], wraps: list[Json], now: Any = None) -> None:
@@ -66,7 +67,10 @@ def test_hub_computes_the_rotate_set(vector_hub: HubHarness, case: Json) -> None
     _platform(vector_hub, {"name": "platform", "count": 11})
     prefix = ROTATION["logs"][case["log"]["name"]][: case["log"]["count"]]
     _seed(vector_hub, len(prefix), private=True, log=prefix)
-    entry, required = case["entry"], case["required"]
+    entry = case["entry"]
+    # an `agent_add` that replaces an agent of a lower generation owes the replaced agent's R in its batch (ADR-082
+    # section 9.1): the vector names it as `lost` of the `losers`
+    required = case["required"] or ([] if case.get("self_owed") or not case.get("losers") else case["lost"])
     body = entry["body"]
     # leaving and self-demotion owe their R to the others (`pending`, ADR-058)
     leave = body["type"] in ("remove", "role") and body.get("subject") == body["by"]
@@ -112,6 +116,7 @@ def test_rotation_batch_vectors(vector_hub: HubHarness, vector: Json) -> None:
     now = parse_time(args["now"])
     if vector["name"] in ONE_APPENDER:
         assert {entry["body"]["by"] for entry in args["append"]} != {args["wrapped_by"]}
+        assert any(entry["body"]["by"] != args["wrapped_by"] for entry in args["append"])
         with pytest.raises(HubError) as refused:
             _submit(vector_hub, args["wrapped_by"], args["append"], args["wraps"], now)
         assert refused.value.code == "forbidden"

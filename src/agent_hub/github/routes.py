@@ -14,8 +14,9 @@
 | `PUT /v1/device/github-identities/{id}` | `device_eligible` and answering an active `github.connect` of the owner |
 
 Writes of a record follow `agent_hub.credentials.records.put_identity`: a personal record (`owner_id` = the caller)
-is signed by the caller's identity and sealed under the caller's current `CK` epoch; a company record (`owner_id` = an
-organization the caller is an active admin of; `403 forbidden` for anybody else) is signed by the admin and sealed
+is signed by the caller's identity - or by the caller's own-identity agent as its author (ADR-082 section 9.5) - and
+sealed under the caller's current `CK` epoch; a company record (`owner_id` = an organization the caller is an active
+admin of; `403 forbidden` for anybody else) is signed by the admin or the admin's own-identity agent and sealed
 under a fresh epoch of the org credential key that the request creates (`key`). A device writes a user's record only
 (a company record or an organization owner is `403 forbidden`) while answering an active `github.connect` of that user
 that names no organization (`agent_hub.requests.store.authorizes_write`). Reads, deletes and the primary mark answer
@@ -47,6 +48,7 @@ from agent_hub.agents.notify import account_change
 from agent_hub.audit.recorder import unchanged
 from agent_hub.credentials import notices, records
 from agent_hub.credentials.eligibility import holds, is_eligible, org_device_ids
+from agent_hub.credentials.routes import user_author
 from agent_hub.device.keys import ActiveDevice, device_id
 from agent_hub.errors import HubError
 from agent_hub.github import identities
@@ -126,13 +128,6 @@ def _path(text: str, *, write: bool = False) -> UUID:
     return found
 
 
-def _author(connection: Any, user: UUID) -> records.Author:
-    key = records.identity_key(connection, user)
-    if key is None:
-        raise HubError("forbidden")
-    return records.Author(id=user, kind="user", sig_public=key)
-
-
 def _owner(connection: Any, owner_id: UUID, user: UUID) -> records.Owner:
     """The owner of a browser write: the caller itself, or an organization the caller is an active admin of."""
     if owner_id == user:
@@ -168,13 +163,14 @@ async def put_identity(context: Context, principal: CurrentPrincipal, id: str, b
 
     def work(connection: Any) -> tuple[records.Change, records.Owner, list[Notification]]:
         owner = _owner(connection, UUID(body.owner_id), user)
+        author = user_author(connection, principal)
         change = records.put_identity(
             connection,
             owner=owner,
             record_id=record_id,
             record=body.record,
             expected_version=body.expected_version,
-            author=_author(connection, user),
+            author=author,
             now=now,
             key=key,
             root_key=context.config.platform_root_key,

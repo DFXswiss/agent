@@ -76,6 +76,83 @@
           "remote": {
             "type": "boolean",
             "description": "the agent was paired from another computer (ADR-067); the web client shows a banner while such a main orchestrator is confirmed or active"
+          },
+          "own_identity": {
+            "type": "boolean",
+            "description": "the agent signs with its own key as a sub-principal of its user (ADR-082)"
+          },
+          "held_identity": {
+            "type": "boolean",
+            "description": "the agent held a sealed copy of the user's identity at some time (paired before ADR-082 or in the old form): the revocation dialog says that this copy keeps opening what is encrypted for the user"
+          },
+          "gen": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the generation of an own-identity agent"
+          },
+          "revoked_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "revoked",
+                  "replaced",
+                  "unclaimed",
+                  "session_ended"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "why a revoked agent was revoked"
+          },
+          "pub": {
+            "type": "object",
+            "properties": {
+              "kem": {
+                "$ref": "../common.json#/$defs/b64u_32"
+              },
+              "sig": {
+                "$ref": "../common.json#/$defs/b64u_32"
+              }
+            },
+            "required": [
+              "kem",
+              "sig"
+            ],
+            "additionalProperties": false,
+            "description": "the agent's public keys"
+          },
+          "cert": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/b64u_64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the user's delegation certificate of an own-identity agent (ADR-082 section 9.1), else null"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the orchestrator session the agent runs in (stage b of ADR-082 section 6), null otherwise"
           }
         },
         "required": [
@@ -88,7 +165,14 @@
           "last_used_at",
           "revoked_at",
           "replaces",
-          "remote"
+          "remote",
+          "own_identity",
+          "held_identity",
+          "gen",
+          "revoked_reason",
+          "pub",
+          "cert",
+          "session_id"
         ],
         "additionalProperties": false
       }

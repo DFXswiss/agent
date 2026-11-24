@@ -4,7 +4,8 @@ The hub stores a record `{header, ct, sig}` as it was sent (`header_text` = cano
 only the metadata of 04-crypto.md section 7 (owner, kind, version, epoch). Every write checks, in this order:
 
 1. the record form and the author's signature (`agent_hub.crypto.credential.verify_credential` with the key of the
-   expected author: the owner's identity for browser writes and rotations, the device key for device writes) -
+   expected author: the owner's identity for browser writes and rotations, the key of the owner's own-identity agent
+   for its writes and rotations (ADR-082 section 9.5; author = the agent ID), the device key for device writes) -
    `header_invalid`, `non_ascii`, `size_exceeded`, `signature_invalid`;
 2. that the header names the owner, kind and author of the request (`header_invalid`) and that `version` is
    `expected_version + 1` (`request_invalid`, pointer `/record/header/version`);
@@ -75,15 +76,24 @@ MAX_CT_CHARS = 87382
 
 @dataclass(frozen=True)
 class Author:
-    """Who writes a record: a user (the owner) or a device, with the Ed25519 public key of its signatures."""
+    """Who writes a record: a user (the owner), the owner's own-identity agent (`kind` `agent`, `user` the owner) or a
+    device, with the Ed25519 public key of its signatures."""
 
     id: UUID
     kind: str
     sig_public: bytes
+    user: UUID | None = None
 
     @property
     def device_id(self) -> UUID | None:
         return self.id if self.kind == "device" else None
+
+    @property
+    def actor(self) -> tuple[str, UUID]:
+        """The audit actor `(kind, id)`: an agent's user (the agent ID is in `audit.agent_id`)."""
+        if self.kind == "agent" and self.user is not None:
+            return "user", self.user
+        return self.kind, self.id
 
 
 @dataclass(frozen=True)
@@ -252,12 +262,13 @@ def _audit(
     detail: Mapping[str, Any],
     org_id: UUID | None = None,
 ) -> None:
+    actor_kind, actor_id = actor.actor
     append_audit(
         connection,
         AuditRow(
             at=now,
-            actor_kind=actor.kind,
-            actor_id=actor.id,
+            actor_kind=actor_kind,
+            actor_id=actor_id,
             action=action,
             result="ok",
             org_id=org_id,
@@ -563,8 +574,11 @@ def rotate(
     records: Sequence[Mapping[str, Any]],
     now: datetime,
     root_key: bytes,
+    author: Author | None = None,
 ) -> Rotation:
-    """Rotate the owner's `CK` and re-encrypt every record atomically (module docstring)."""
+    """Rotate the owner's `CK` and re-encrypt every record atomically (module docstring); `author` signs the records
+    and the wraps when it is not the owner (the owner's own-identity agent, ADR-082 section 9.5)."""
+    writer = author or owner
     lock_owner(connection, owner.id)
     current = cred_epoch(connection, str(owner.id)) or 0
     if epoch != current + 1:
@@ -586,7 +600,7 @@ def rotate(
         kind = header.get("kind") if isinstance(header, dict) else None
         if not isinstance(kind, str) or kind not in KINDS:
             raise HubError("header_invalid")
-        checked = verify_record(record, owner=owner.id, kind=kind, author=owner, epoch=epoch)
+        checked = verify_record(record, owner=owner.id, kind=kind, author=writer, epoch=epoch)
         previous = optional.pop(cast(str, checked["id"]), None) or stored.pop(kind, None)
         rotated_kinds.append(kind)
         if previous is None or checked["version"] != previous[1] + 1:
@@ -610,7 +624,7 @@ def rotate(
         "INSERT INTO hub.scope_epoch (scope, scope_id, epoch, created_at) VALUES ('cred', %s, %s, %s)",
         (owner.id, epoch, now),
     )
-    stored_wraps = store_wraps(connection, list(wraps), wrapper=str(owner.id), now=now, root_key=root_key)
+    stored_wraps = store_wraps(connection, list(wraps), wrapper=str(writer.id), now=now, root_key=root_key)
     for values in updates:
         connection.execute(
             "UPDATE hub.credential SET version = %s, epoch = %s, header_text = %s, ct = %s, sig = %s, updated_at = %s"
@@ -620,7 +634,7 @@ def rotate(
     _audit(
         connection,
         "credential.rotate",
-        owner,
+        writer,
         now,
         target_kind="credential_key",
         target_id=str(owner.id),

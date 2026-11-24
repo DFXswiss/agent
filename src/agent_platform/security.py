@@ -3,15 +3,17 @@
 `platform/invites.ts` and `web/src/ui/screens/security/build.ts`).
 
 - `passkey list`: the passkeys of `GET /v1/me` and whether a recovery code exists (the recovery slot is not the unset
-  slot of a registration without code, which only the identity can recognize).
+  slot of a registration without code, which only the identity can recognize: an agent with its own identity says
+  `null`, unknown).
 - `passkey remove --id`: `DELETE /v1/passkeys/{id}` (the hub refuses the last one with `last_passkey`).
 - `passkey add`: a passkey needs the user's authenticator, so the tool opens the settings page in the user's browser.
 - `recovery new`: draws a recovery code, seals the identity for the recovery slot with its `KEK_rec` and replaces
   the slot (`PUT /v1/me/bundles/recovery {bundle_ct, new_recovery_id}`; the agent's signed request is the proof the
-  web client gets from a passkey assertion). The code is printed once (`secret_fields`).
-- `agents list`: `GET /v1/me/agents`, each label opened with the identity (an unknown agent when it does not open);
-  `agents revoke --id|--all`: `DELETE /v1/me/agents/{id}` or `DELETE /v1/me/agents`. Revoking this agent removes its
-  local state.
+  web client gets from a passkey assertion). The code is printed once (`secret_fields`). It needs the user's identity:
+  an agent with its own identity opens the settings page in the user's browser instead, as for a passkey (ADR-082).
+- `agents list`: `GET /v1/me/agents`, each label opened with the identity (an unknown agent when it does not open;
+  always for an agent with its own identity, which holds no key the label is sealed to); `agents revoke`:
+  `revoke.py`.
 - `platform invite|list|revoke`: platform user invitations of users with the platform role `inviter`, or of every
   user while the switch `open_platform_invites` is on (both read from the verified platform log, never from the hub's
   word; ADR-079): the code is drawn here, only `invite_id`, `pk_inv` and the expiry go to the hub; the link is printed
@@ -34,16 +36,17 @@ import httpx
 from agent_platform.account import Account, unverified
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
-from agent_platform.eventio import rows_of, uuid_argument
+from agent_platform.eventio import rows_of
 from agent_platform.hub import ANON_TIMEOUT_S, segment
 from agent_platform.pairing import open_browser
+from agent_platform.revoke import agents_revoke
 from agent_runner.crypto import agent as agent_crypto
 from agent_runner.crypto import invite as invite_format
 from agent_runner.crypto.bundle import RECOVERY_SLOT, seal_bundle
 from agent_runner.crypto.encoding import P, b64u_decode, format_time, is_b64u
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.kdf import hkdf, kek_from_recovery_code
-from agent_runner.crypto.keys import ed25519_seed
+from agent_runner.crypto.keys import Identity, ed25519_seed
 from agent_runner.crypto.log.entries import PLATFORM_POLICIES, PLATFORM_ROLES
 from agent_runner.crypto.recovery import format_recovery_code, generate_recovery_code, recovery_id
 
@@ -66,6 +69,10 @@ AGENT_FIELDS = (
     "last_used_at",
     "revoked_at",
     "replaces",
+    "own_identity",
+    "held_identity",
+    "gen",
+    "revoked_reason",
 )
 INVITE_FIELDS = ("invite_id", "kind", "state", "created_by", "created_at", "expires_at", "registered", "used_at")
 
@@ -73,13 +80,14 @@ INVITE_FIELDS = ("invite_id", "kind", "state", "created_by", "created_at", "expi
 # --- passkeys and recovery ---
 
 
-def unset_slot(account: Account, bundle_ct: str) -> bool:
+def unset_slot(identity: Identity, user_id: str, bundle_ct: str) -> bool:
     """The recovery slot is the unset one (no code was ever shown): its nonce is derived from the identity."""
-    nonce = hkdf(ed25519_seed(account.identity.sig), P + RECOVERY_UNSET + account.user_id.encode())[:NONCE_BYTES]
+    nonce = hkdf(ed25519_seed(identity.sig), P + RECOVERY_UNSET + user_id.encode())[:NONCE_BYTES]
     return b64u_decode(bundle_ct)[:NONCE_BYTES] == nonce
 
 
-def recovery_code_exists(account: Account) -> bool:
+def recovery_code_exists(account: Account) -> bool | None:
+    """Whether a recovery code was set; None (unknown) without the user's identity."""
     try:
         answer = account.call("GET", "/v1/me/bundles/recovery")
     except PlatformError as error:
@@ -89,7 +97,7 @@ def recovery_code_exists(account: Account) -> bool:
     bundle = answer.get("bundle_ct")
     if not isinstance(bundle, str) or not is_b64u(bundle):
         raise unverified("response_invalid")
-    return not unset_slot(account, bundle)
+    return None if account.identity is None else not unset_slot(account.identity, account.user_id, bundle)
 
 
 def passkey_list(account: Account) -> dict[str, Any]:
@@ -117,7 +125,11 @@ def passkey_add(account: Account, environ: Any) -> dict[str, Any]:
     return {"opened": url}
 
 
-def recovery_new(account: Account) -> dict[str, Any]:
+def recovery_new(account: Account, environ: Any) -> dict[str, Any]:
+    if account.identity is None:
+        url = f"{account.origin}/settings#settings-passkeys"
+        open_browser(environ, url, f"agent-platform: open {url} and choose 'New recovery code'")
+        return {"opened": url}
     raw = generate_recovery_code()
     code = format_recovery_code(raw)
     body = {
@@ -144,30 +156,16 @@ def agents_list(account: Account) -> dict[str, Any]:
         agent, sealed = row.get("agent_id"), row.get("label_ct")
         if not isinstance(agent, str) or not isinstance(sealed, str):
             continue
-        try:
-            label: dict[str, str] | None = agent_crypto.open_label(account.identity.kem, agent, account.user_id, sealed)
-        except (CryptoError, ValueError):
-            label = None
+        label: dict[str, str] | None = None
+        if account.identity is not None:
+            try:
+                label = agent_crypto.open_label(account.identity.kem, agent, account.user_id, sealed)
+            except (CryptoError, ValueError):
+                label = None
         agents.append(
             {**{key: row.get(key) for key in AGENT_FIELDS}, "label": label, "this": agent == account.agent_id}
         )
     return {"agents": agents}
-
-
-def agents_revoke(account: Account, agent: str | None, every: bool) -> dict[str, Any]:
-    if every == (agent is not None):
-        raise PlatformError("invalid_argument")
-    if agent is not None:
-        account.call("DELETE", f"/v1/me/agents/{segment(uuid_argument(agent))}")
-        result: dict[str, Any] = {"revoked": 1, "agent_id": agent}
-    else:
-        answer = account.call("DELETE", "/v1/me/agents")
-        count = answer.get("revoked")
-        result = {"revoked": count if isinstance(count, int) else None}
-    itself = every or agent == account.agent_id
-    if itself:
-        account.home.delete(account.agent_id, account.state.get("key_store"))
-    return {**result, "this_agent_revoked": itself}
 
 
 # --- platform invitations ---
@@ -278,7 +276,7 @@ def _passkey_add(account: Account, args: Any, context: Context) -> dict[str, Any
 
 
 def _recovery_new(account: Account, args: Any, context: Context) -> dict[str, Any]:
-    return recovery_new(account)
+    return recovery_new(account, context.environ)
 
 
 def _agents_list(account: Account, args: Any, context: Context) -> dict[str, Any]:
@@ -343,7 +341,8 @@ def register(tree: Tree) -> None:
         group,
         "new",
         _recovery_new,
-        "a new recovery code (printed once; the old one stops working)",
+        "a new recovery code (printed once; the old one stops working); an agent with its own identity opens the"
+        " settings page in the browser",
         example="agent-platform recovery new",
         words="notfallcode wiederherstellungscode wiederherstellung backup emergency",
     )

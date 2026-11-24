@@ -3,9 +3,13 @@
 // from `GET /v1/me/agents`, each with name and computer (opened from the sealed label; "Unknown agent" when it does
 // not open), the agent it replaced (when that one's name is known), created, last used and state; "Disconnect" and
 // "Disconnect all agents" after a dialog that says the agent loses all access at once and keeps what it has already
-// read. `?agent=connected|failed` (the agent's redirect after a pairing) is only a hint above the list; the
-// state shown is always the hub's. An agent paired from another computer is marked "Runs on another computer"
-// (ADR-067).
+// read, that it is removed from every organization with its keys replaced, and – for an agent that held a copy of the
+// user's identity (`held_identity`, paired before ADR-082) – that this copy keeps opening what is encrypted for the
+// user. The log clean-up runs right after the revocation (`revokeAgent`: the log job of every org, the job `agents`
+// removes the agent with its rotations, the credential key is rotated); the dialog stays open meanwhile.
+// `?agent=connected|failed` (the agent's redirect after a pairing) is only a hint above the list; the state shown is
+// always the hub's. Where the agent runs: "Runs on another computer" (ADR-067) or, for an agent with its own key, on
+// its computer (stage b adds the orchestrator session).
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { loadAgents, revokeAgent, revokeAllAgents } from '../../../../core/agents/list';
@@ -55,6 +59,16 @@ function Item({ entry, onDisconnect }: { readonly entry: AgentEntry; readonly on
         {entry.remote && (
           <span className="text-sm font-semibold text-red-800" data-testid="agents.item.remote">
             {t('agents.remote')}
+          </span>
+        )}
+        {!entry.remote && entry.ownIdentity && (
+          <span className="text-sm text-gray-700" data-testid="agents.item.runs">
+            {t('agents.runs.ownComputer')}
+          </span>
+        )}
+        {entry.heldIdentity && (
+          <span className="text-sm text-gray-700" data-testid="agents.item.held">
+            {t('agents.held')}
           </span>
         )}
         {replaced !== null && (
@@ -118,6 +132,10 @@ export function AgentsSection() {
   const history = entries.filter((entry) => entry !== main);
   const anyLive = entries.some((entry) => LIVE_STATES.includes(entry.state));
   const name = target === null || target === 'all' ? '' : (target.label?.name ?? t('agents.unknown'));
+  const held =
+    target === 'all'
+      ? entries.some((entry) => LIVE_STATES.includes(entry.state) && entry.heldIdentity)
+      : target?.heldIdentity === true;
   return (
     <div className="flex flex-col gap-3" data-testid="agents.section">
       {(hint === 'connected' || hint === 'failed') && (
@@ -176,6 +194,16 @@ export function AgentsSection() {
           <p data-testid="agents.dialog.body">
             {target === 'all' ? t('agents.dialog.all-body') : t('agents.dialog.body')}
           </p>
+          {held && (
+            <p className="font-semibold" data-testid="agents.dialog.held">
+              {t('agents.dialog.held')}
+            </p>
+          )}
+          {busy && (
+            <p role="status" data-testid="agents.dialog.cleaning">
+              {t('agents.dialog.cleaning')}
+            </p>
+          )}
           {failure !== null && (
             <p role="alert" data-testid="agents.dialog.failed" data-code={failure}>
               {t('agents.dialog.failed', { reason: reason(failure) })}

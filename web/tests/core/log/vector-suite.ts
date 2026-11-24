@@ -53,7 +53,15 @@ export class LogContext {
       check_wrap: async (a) =>
         wraps.checkWrap(a.wrap, a.wrapped_by, await this.log(a), a.excluded ?? [], a.require_active ?? false),
       check_cred_wrap: async (a) =>
-        wraps.checkCredWrap(a.wrap, a.wrapped_by, [await this.log(a)], a.current_epoch, a.excluded ?? []),
+        wraps.checkCredWrap(a.wrap, a.wrapped_by, await this.logsOf(a), a.current_epoch, a.excluded ?? []),
+      cred_readers: async (a) =>
+        [
+          ...wraps.credReaders(
+            (await this.logsOf(a)).map((log) => log.state),
+            a.owner,
+          ),
+        ].sort(),
+      revoked_agents: async (a) => [...wraps.revokedAgents((await this.logsOf(a)).map((log) => log.state))].sort(),
       check_event: async (a) =>
         events.checkEvent(a.event, await this.log(a), {
           sessionDevice: a.session_device ?? null,
@@ -87,6 +95,12 @@ export class LogContext {
   /** The verified membership log of `args`. */
   async log(args: Any): Promise<verify.VerifiedLog> {
     return verify.verifyLog(this.entries(args), args.founder, await this.platform(args));
+  }
+
+  /** The verified logs of `args.logs` (each `{log, founder}`), else the one log of `args`. */
+  async logsOf(args: Any): Promise<verify.VerifiedLog[]> {
+    if (!args.logs) return [await this.log(args)];
+    return Promise.all(args.logs.map((ref: Any) => this.log(ref)));
   }
 
   /** Runs `op(args)` and returns the code it fails with (null if it succeeds; other errors propagate). */
@@ -152,7 +166,20 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       'admit projections',
     );
     const orgwide = await ctx.log({ ...data.orgwide, founder: data.founder });
-    const types = new Set([...log.entries, ...admitted.entries, ...orgwide.entries].map((entry) => entry.body.type));
+    // ADR-082: agents as sub-principals of their users (agent_add, the agent member of genesis/accept)
+    const agents = await ctx.log({ ...data.agents_valid, founder: data.founder });
+    same(
+      agents.states.map((s) => ({ seq: s.seq, hash: s.head })),
+      data.agents_valid.heads,
+      'agents heads',
+    );
+    same(
+      agents.states.map((s) => s.projection()),
+      data.agents_valid.projections,
+      'agents projections',
+    );
+    const all = [...log.entries, ...admitted.entries, ...orgwide.entries, ...agents.entries];
+    const types = new Set(all.map((entry) => entry.body.type));
     same([...types].sort(), [...LOG_TYPES].sort(), 'every entry type');
     // ADR-075: a device assigned to the organization reads every workgroup, also a later one; ending the
     // organization assignment keeps its explicit assignment; `remove` ends both
@@ -248,38 +275,67 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       same(key.reveal(b64uEncode), expected, 'unwrapped key');
       opened += 1;
     };
-    for (const item of data.valid) {
-      await ctx.ops.check_wrap!(item.args);
-      await opens(item.args.wrap);
-    }
-    for (const item of data.cred_valid) {
-      await ctx.ops.check_cred_wrap!(item.args);
-      await opens(item.args.wrap);
-    }
+    const wrapSection = async (section: Any, what: string) => {
+      for (const item of section.valid) {
+        await ctx.ops.check_wrap!(item.args);
+        await opens(item.args.wrap);
+      }
+      for (const item of section.cred_valid) {
+        await ctx.ops.check_cred_wrap!(item.args);
+        await opens(item.args.wrap);
+      }
+      const ref = section.catch_up.log ? { log: section.catch_up.log, founder: data.founder } : section.valid[0].args;
+      const log = await ctx.log(ref);
+      const existing = slots(section.catch_up.existing);
+      for (const plan of section.catch_up.plans) {
+        const missing = catchup.missingWraps(log, plan.wrapper, existing, plan.excluded);
+        same(missing.map(wraps.slotJson), plan.missing, `${what}catch-up ${plan.wrapper}`);
+      }
+      // admins reading by inheritance get every epoch (ADR-058 section 2); the browser confirms exactly these slots
+      const adminLog = await ctx.log({ log: section.admin_catch_up.log, founder: data.founder });
+      const adminExisting = slots(section.admin_catch_up.existing);
+      for (const plan of section.admin_catch_up.plans) {
+        const missing = catchup.missingWraps(adminLog, plan.wrapper, adminExisting, plan.excluded);
+        same(missing.map(wraps.slotJson), plan.missing, `${what}admin catch-up ${plan.wrapper}`);
+        const offered = plan.missing.map(wraps.slotOf);
+        const confirmed = catchup
+          .confirmedSlots(adminLog, plan.wrapper, offered, plan.excluded)
+          .concat(offered.filter((slot: wraps.WrapSlot) => catchup.compatSkip(adminLog.state, plan.wrapper, slot)))
+          .sort(wraps.compareSlots);
+        same(confirmed.map(wraps.slotJson), plan.missing, `${what}admin catch-up confirmed ${plan.wrapper}`);
+      }
+      const credExisting = slots(section.cred_catch_up.existing);
+      for (const plan of section.cred_catch_up.plans) {
+        const missing = catchup.missingCredWraps([log], plan.owner, plan.wrapper, plan.current_epoch, credExisting);
+        same(missing.map(wraps.slotJson), plan.missing, `${what}cred catch-up ${plan.wrapper}`);
+      }
+    };
+    await wrapSection(data, '');
     same(opened >= data.valid.length, true, 'wraps opened to the vector keys');
-    const log = await ctx.log(data.valid[0].args);
-    const existing = slots(data.catch_up.existing);
-    for (const plan of data.catch_up.plans) {
-      const missing = catchup.missingWraps(log, plan.wrapper, existing, plan.excluded);
-      same(missing.map(wraps.slotJson), plan.missing, `catch-up ${plan.wrapper}`);
+    // ADR-082: agents receive what their users receive; revoked agents and the consent of their joins
+    await wrapSection(data.agents, 'agents ');
+    for (const item of data.agents.cred_readers) {
+      same(await ctx.ops.cred_readers!(item), item.readers, 'cred readers');
     }
-    // admins reading by inheritance get every epoch (ADR-058 section 2); the browser confirms exactly these slots
-    const adminLog = await ctx.log({ log: data.admin_catch_up.log, founder: data.founder });
-    const adminExisting = slots(data.admin_catch_up.existing);
-    for (const plan of data.admin_catch_up.plans) {
-      const missing = catchup.missingWraps(adminLog, plan.wrapper, adminExisting, plan.excluded);
-      same(missing.map(wraps.slotJson), plan.missing, `admin catch-up ${plan.wrapper}`);
-      const offered = plan.missing.map(wraps.slotOf);
-      const confirmed = catchup
-        .confirmedSlots(adminLog, plan.wrapper, offered, plan.excluded)
-        .concat(offered.filter((slot: wraps.WrapSlot) => catchup.compatSkip(adminLog.state, plan.wrapper, slot)))
-        .sort(wraps.compareSlots);
-      same(confirmed.map(wraps.slotJson), plan.missing, `admin catch-up confirmed ${plan.wrapper}`);
+    for (const item of data.agents.revoked_agents) {
+      same(await ctx.ops.revoked_agents!(item), item.revoked, 'revoked agents');
     }
-    const credExisting = slots(data.cred_catch_up.existing);
-    for (const plan of data.cred_catch_up.plans) {
-      const missing = catchup.missingCredWraps([log], plan.owner, plan.wrapper, plan.current_epoch, credExisting);
-      same(missing.map(wraps.slotJson), plan.missing, `cred catch-up ${plan.wrapper}`);
+    // only its user (or the agent itself) revokes an agent everywhere; catch-up after a rejoin
+    const revocation = data.agents.revocation;
+    for (const item of revocation.cred_readers) {
+      same(await ctx.ops.cred_readers!(item), item.readers, 'revocation cred readers');
+    }
+    for (const item of revocation.revoked_agents) {
+      same(await ctx.ops.revoked_agents!(item), item.revoked, 'revocation revoked agents');
+    }
+    for (const item of revocation.cred_valid) await ctx.ops.check_cred_wrap!(item.args);
+    const rejoinLog = await ctx.log({ log: revocation.rejoin_catch_up.log, founder: data.founder });
+    const rejoinExisting = slots(revocation.rejoin_catch_up.existing);
+    for (const plan of revocation.rejoin_catch_up.plans) {
+      const missing = catchup.missingWraps(rejoinLog, plan.wrapper, rejoinExisting, plan.excluded);
+      same(missing.map(wraps.slotJson), plan.missing, `rejoin catch-up ${plan.wrapper}`);
+      const confirmed = catchup.confirmedSlots(rejoinLog, plan.wrapper, missing, plan.excluded);
+      same(confirmed.map(wraps.slotJson), plan.missing, `rejoin catch-up confirmed ${plan.wrapper}`);
     }
   },
   'log-events': async (data) => {
@@ -293,6 +349,16 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       same(opened.checked.header.id, item.args.event.header.id, `event ${item.name}`);
     }
     for (const item of data.hub_valid) await ctx.ops.check_event_hub!(item.args);
+    // ADR-082: events authored by agents with their users' rights
+    for (const item of data.agents.valid) {
+      const log = await ctx.log(item.args);
+      const opened = await events.openCheckedEvent(item.args.event, log, Secret.of(b64uDecode(item.scope_key)), {
+        sessionDevice: item.args.session_device ?? null,
+        excluded: item.args.excluded ?? [],
+      });
+      same(opened.checked.header.id, item.args.event.header.id, `agent event ${item.name}`);
+    }
+    for (const item of data.agents.hub_valid) await ctx.ops.check_event_hub!(item.args);
     same(events.checkReplay(data.replay.stored, data.replay.incoming), data.replay.replayed, 'replay');
     same(data.grace_seconds * 1000, events.GRACE_MS, 'grace');
     same(events.matrix(), data.matrix, 'CON-03 matrix (vector)');

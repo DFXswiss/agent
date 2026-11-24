@@ -77,7 +77,8 @@ audit: audit | seq:number at:time actor_id:uuid actor_kind:code action:code resu
 agent: agents | id:uuid user_id:uuid kem_pub:bytes sig_pub:bytes state:code bundle_ct:bytes@ciphertext
   label_ct:bytes@ciphertext claim_hash:bytes claim_misses:number source:code source_net:code created_at:time
   expires_at:time confirmed_at:time claimed_at:time last_used_at:time revoked_at:time replaces:uuid
-  remote:flag nonce:bytes handover_ct:bytes@ciphertext
+  remote:flag nonce:bytes handover_ct:bytes@ciphertext own_identity:flag held_identity:flag gen:number cert:bytes
+  user_ct:bytes@ciphertext session_id:uuid revoked_reason:code
 audit_checkpoint: audit | hub_key_id:code seq:number hash:code published_at:time signature:bytes
 browser_session: auth | key_id:code user_id:uuid@ids credential_id:bytes public_key:bytes statement:lines
   created_at:time expires_at:time ended_at:time pairing_id:uuid@agents

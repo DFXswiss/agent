@@ -14,6 +14,15 @@ One main orchestrator per user (concept idea 34, ADR-056 section 4): a user has 
 agent. The passkey confirmation of a new pairing revokes the previous one in the same transaction and records it in
 `replaces`; the unique index `agent_one_per_user` makes two at once impossible.
 
+Own identity (ADR-082): a pairing confirmed in the new form receives no identity. The row keeps the user's delegation
+certificate `cert` over the agent's ID, keys and generation, the generation `gen` (one more than the highest the hub has
+issued for the user, `next_gen`; the browser learns it from `GET /v1/agent-pairings/{id}` signed by its session) and
+`user_ct` (the user's public keys and the certificate sealed to the agent) in the place of `bundle_ct`; `own_identity`
+is set and `held_identity` cleared. The old form (`bundle_ct`) is refused for an account with a passkey
+(`409 client_outdated`, ADR-082 section 9.10); an account of an agent alone keeps both forms. An own-identity agent that
+is not claimed before its deadline is revoked (`unclaimed`) instead of deleted, so that its generation, which is in
+the logs, stays counted. Every revocation records its reason (`revoked_reason`).
+
 A pairing from another computer (`remote`, ADR-067, 11-agent-access.md section 5.4) has a 16-byte `nonce` drawn by
 the hub (input of the agent code the user types), must be confirmed within `REMOTE_PAIRING_SECONDS` of its creation
 and then has `REMOTE_CLAIM_SECONDS` to be claimed. Its confirmation must carry `handover_ct` (the handover sealed to
@@ -29,7 +38,7 @@ import ipaddress
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import psycopg
@@ -265,14 +274,25 @@ def check_open(connection: Connection, pairing_id: UUID, now: datetime) -> None:
 
 
 @dataclass(frozen=True)
+class OwnIdentity:
+    """What a confirmation or conversion in the new form stores instead of the sealed identity (ADR-082 section 2):
+    the generation, the user's certificate (64-byte Ed25519 signature) and the sealed user anchor."""
+
+    gen: int
+    cert: bytes
+    user_ct: bytes
+
+
+@dataclass(frozen=True)
 class Confirmation:
-    """The body of `POST /v1/me/agents`, decoded."""
+    """The body of `POST /v1/me/agents`, decoded: exactly one of `bundle_ct` (the old form) and `own`."""
 
     pairing_id: UUID
-    bundle_ct: bytes
     label_ct: bytes
     claim_hash: bytes
     handover_ct: bytes | None = None
+    bundle_ct: bytes | None = None
+    own: OwnIdentity | None = None
 
 
 def _audit(connection: Connection, action: str, user: UUID, agent_id: UUID, now: datetime, *, remote: bool) -> None:
@@ -306,12 +326,20 @@ def gesture_session(connection: Connection, key_id: str, pairing_id: UUID, now: 
 
 @dataclass(frozen=True)
 class Confirmed:
-    """The result of `confirm`: whether this call changed anything, the agents it replaced (revoked), and whether the
-    pairing is a remote one."""
+    """The result of `confirm`: whether this call changed anything, the agents it replaced (revoked), whether the
+    pairing is a remote one, and the agent's public keys `(kem, sig)`."""
 
     changed: bool
     replaced: tuple[UUID, ...] = ()
     remote: bool = False
+    pub: tuple[bytes, bytes] = (b"", b"")
+
+
+def next_gen(connection: Connection, user: UUID) -> int:
+    """The generation the next own-identity agent of the user gets: one more than the highest the hub has issued for
+    the user (revoked rows included; rows are never deleted once they have a generation)."""
+    row = connection.execute("SELECT max(gen) FROM hub.agent WHERE user_id = %s", (user,)).fetchone()
+    return 1 if row is None or row[0] is None else int(row[0]) + 1
 
 
 def has_passkey(connection: Connection, user: UUID) -> bool:
@@ -334,24 +362,31 @@ def confirm(
     """Confirm an open pairing for `user` by the browser session of the pairing-tagged login (the passkey gesture),
     or - `by_agent` - by the active agent of an account without a passkey (KOR-62: nobody's approval to ask; refused
     with `403 forbidden` once the account has a passkey, concept idea 34). The user's previous confirmed or active
-    agent is revoked and named in `replaces`. A repeat with identical values is idempotent (`changed` False,
-    nothing replaced). A remote pairing needs `handover_ct` (`400 handover_required`), a loopback pairing refuses it
-    (`400 handover_unexpected`)."""
+    agent is revoked (`replaced`) and named in `replaces`. A repeat with identical values is idempotent (`changed`
+    False, nothing replaced). A remote pairing needs `handover_ct` (`400 handover_required`), a loopback pairing
+    refuses it (`400 handover_unexpected`). The new form (`own`) is checked by `check_own`; the old form (`bundle_ct`)
+    only from the agent of an account without a passkey (a browser gets `409 client_outdated`). The log batches of
+    the new form are the caller's (`agents.identity`)."""
     if by_agent:
         lock_user(connection, user)
         if has_passkey(connection, user):
             raise HubError("forbidden")
     else:
         gesture_session(connection, key_id, body.pairing_id, now)
+        if body.bundle_ct is not None:
+            # a browser confirms after a passkey login: the old form would hand the identity of a person to the
+            # agent (ADR-082 section 9.10); the old tab reloads
+            raise HubError("client_outdated")
         lock_user(connection, user)
     row = connection.execute(
-        "SELECT state, user_id, expires_at, bundle_ct, label_ct, claim_hash, remote, handover_ct FROM hub.agent"
-        " WHERE id = %s FOR UPDATE",
+        "SELECT state, user_id, expires_at, bundle_ct, label_ct, claim_hash, remote, handover_ct, gen, cert, user_ct,"
+        " kem_pub, sig_pub FROM hub.agent WHERE id = %s FOR UPDATE",
         (body.pairing_id,),
     ).fetchone()
     if row is None or row[2] <= now:
         raise HubError("pairing_unknown")
-    state, owner, _expires, bundle_ct, label_ct, stored_hash, remote, handover_ct = row
+    state, owner, _expires, bundle_ct, label_ct, stored_hash, remote, handover_ct = row[:8]
+    pub = (bytes(row[11]), bytes(row[12]))
     repeat = state == "confirmed" and owner == user
     if state != "open" and not repeat:
         raise HubError("pairing_unknown")
@@ -361,15 +396,18 @@ def confirm(
         raise HubError("handover_unexpected")
     if repeat:
         stored = (
-            bytes(bundle_ct),
+            _raw(bundle_ct),
             bytes(label_ct),
             bytes(stored_hash),
-            None if handover_ct is None else bytes(handover_ct),
+            _raw(handover_ct),
+            None if row[8] is None else OwnIdentity(row[8], bytes(row[9]), bytes(row[10])),
         )
-        if stored == (body.bundle_ct, body.label_ct, body.claim_hash, body.handover_ct):
+        if stored == (body.bundle_ct, body.label_ct, body.claim_hash, body.handover_ct, body.own):
             unchanged()
-            return Confirmed(changed=False, remote=remote)
+            return Confirmed(changed=False, remote=remote, pub=pub)
         raise HubError("id_conflict")
+    if body.own is not None:
+        check_own(connection, user, body.pairing_id, pub, body.own)
     previous = [
         agent_id
         for (agent_id,) in connection.execute(
@@ -378,12 +416,14 @@ def confirm(
         ).fetchall()
     ]
     for agent_id in previous:
-        revoke(connection, user, agent_id, now)
+        revoke(connection, user, agent_id, now, reason="replaced")
+    own = body.own
     # a loopback agent claims at once; a remote agent gets the longer claim deadline from the confirmation on
     deadline = "%s" if remote else "LEAST(expires_at, %s)"
     connection.execute(
         "UPDATE hub.agent SET state = 'confirmed', user_id = %s, bundle_ct = %s, label_ct = %s, claim_hash = %s,"
         " handover_ct = %s, confirmed_at = %s, source = NULL, source_net = NULL, replaces = %s,"
+        " own_identity = %s, held_identity = %s, gen = %s, cert = %s, user_ct = %s,"
         f" expires_at = {deadline} WHERE id = %s",
         (
             user,
@@ -393,12 +433,164 @@ def confirm(
             body.handover_ct,
             now,
             previous[-1] if previous else None,
+            own is not None,
+            own is None,
+            None if own is None else own.gen,
+            None if own is None else own.cert,
+            None if own is None else own.user_ct,
             now + timedelta(seconds=REMOTE_CLAIM_SECONDS if remote else CLAIM_SECONDS),
             body.pairing_id,
         ),
     )
     _audit(connection, "agent.confirm", user, body.pairing_id, now, remote=remote)
-    return Confirmed(changed=True, replaced=tuple(previous), remote=remote)
+    return Confirmed(changed=True, replaced=tuple(previous), remote=remote, pub=pub)
+
+
+def _raw(value: object) -> bytes | None:
+    return None if value is None else bytes(cast(bytes, value))
+
+
+def check_own(connection: Connection, user: UUID, agent_id: UUID, pub: tuple[bytes, bytes], own: OwnIdentity) -> None:
+    """The generation is the next one of the user (`409 agent_gen_mismatch` with it in `detail.expected`) and the
+    certificate verifies under the user's registered identity for exactly this agent, keys and generation
+    (`401 signature_invalid`). The caller holds the user's lock."""
+    expected = next_gen(connection, user)
+    if own.gen != expected:
+        raise HubError("agent_gen_mismatch", detail={"expected": expected})
+    if not cert_valid(connection, user, agent_id, pub, gen=own.gen, cert=own.cert):
+        raise HubError("signature_invalid")
+
+
+def cert_valid(
+    connection: Connection, user: UUID, agent_id: UUID, pub: tuple[bytes, bytes], *, gen: int, cert: bytes
+) -> bool:
+    """Whether `cert` is the user's certificate (under the registered identity) of the agent with these keys and
+    generation (ADR-082 sections 1 and 9.1)."""
+    row = connection.execute("SELECT sig_pub FROM hub.user_identity WHERE user_id = %s", (user,)).fetchone()
+    if row is None:
+        return False
+    try:
+        agent_format.verify_cert(
+            bytes(row[0]),
+            b64u_encode(cert),
+            agent_id=str(agent_id),
+            pub=_public_json(pub),
+            user_id=str(user),
+            gen=gen,
+        )
+    except CryptoError:
+        return False
+    return True
+
+
+def agent_author_key(connection: Connection, user: UUID, agent_id: UUID) -> bytes:
+    """The Ed25519 key of the user's active own-identity agent whose certificate verifies under the user's registered
+    identity (`403 forbidden` otherwise)."""
+    row = connection.execute(
+        "SELECT kem_pub, sig_pub, gen, cert FROM hub.agent WHERE id = %s AND user_id = %s AND state = 'active'"
+        " AND own_identity",
+        (agent_id, user),
+    ).fetchone()
+    if row is None:
+        raise HubError("forbidden")
+    pub = (bytes(row[0]), bytes(row[1]))
+    if not cert_valid(connection, user, agent_id, pub, gen=int(row[2]), cert=bytes(row[3])):
+        raise HubError("forbidden")
+    return pub[1]
+
+
+def agent_keys(connection: Connection, agent_id: UUID) -> tuple[bytes, bytes] | None:
+    """`(kem_pub, sig_pub)` of an active own-identity agent whose certificate verifies under its user's registered
+    identity, else None (the community accepts an agent only while it is its user's active agent, ADR-082 §9.12)."""
+    row = connection.execute(
+        "SELECT user_id FROM hub.agent WHERE id = %s AND state = 'active' AND own_identity", (agent_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        sig = agent_author_key(connection, row[0], agent_id)
+    except HubError:
+        return None
+    kem = connection.execute("SELECT kem_pub FROM hub.agent WHERE id = %s", (agent_id,)).fetchone()
+    return bytes(cast(tuple[bytes], kem)[0]), sig
+
+
+def agent_authors(connection: Connection, agent_ids: list[UUID]) -> dict[str, dict[str, Any]]:
+    """The public description of own-identity agents (also revoked ones, whose messages stay readable): the agent's
+    keys, generation and certificate and its user with the user's signing key (readers check the certificate and
+    show "Agent of <user>", ADR-082 section 1)."""
+    rows = connection.execute(
+        "SELECT a.id, a.user_id, a.kem_pub, a.sig_pub, a.gen, a.cert, i.sig_pub FROM hub.agent a"
+        " JOIN hub.user_identity i ON i.user_id = a.user_id WHERE a.id = ANY(%s::uuid[]) AND a.own_identity",
+        (agent_ids,),
+    ).fetchall()
+    return {
+        str(agent_id): {
+            "sig_pub": b64u_encode(bytes(sig_pub)),
+            "moderator": False,
+            "agent": {
+                "user": str(user),
+                "user_sig_pub": b64u_encode(bytes(user_sig)),
+                "kem_pub": b64u_encode(bytes(kem_pub)),
+                "gen": gen,
+                "cert": b64u_encode(bytes(cert)),
+            },
+        }
+        for agent_id, user, kem_pub, sig_pub, gen, cert, user_sig in rows
+    }
+
+
+def acting_user(connection: Connection, principal: UUID) -> UUID:
+    """The user a principal acts for: the user of an agent (ADR-082), else the principal itself."""
+    found = connection.execute("SELECT user_id FROM hub.agent WHERE id = %s", (principal,)).fetchone()
+    return principal if found is None or found[0] is None else cast(UUID, found[0])
+
+
+def _public_json(pub: tuple[bytes, bytes]) -> dict[str, str]:
+    return {"kem": b64u_encode(pub[0]), "sig": b64u_encode(pub[1])}
+
+
+def convert(connection: Connection, agent_id: UUID, user: UUID, own: OwnIdentity, now: datetime) -> Confirmed:
+    """Convert the user's active agent that still holds the user's identity into an own-identity agent (ADR-082
+    section 5): `check_own`, then `own_identity`, `gen`, `cert`, `user_ct` are set and the sealed identity is deleted
+    (`held_identity` stays set); audit `agent.identity`. Only for an account with a passkey (`403 forbidden`: the
+    registering agent of an account alone holds the identity by design, ADR-082 section 7). A repeat with the stored
+    values is answered unchanged (`changed` False), other values are `409 id_conflict`; a row revoked meanwhile is
+    `401 key_revoked`. The answer carries the agent's keys; the log batches are the caller's (`agents.identity`)."""
+    lock_user(connection, user)
+    row = connection.execute(
+        "SELECT state, own_identity, gen, cert, user_ct, kem_pub, sig_pub FROM hub.agent WHERE id = %s FOR UPDATE",
+        (agent_id,),
+    ).fetchone()
+    if row is None or row[0] != "active":
+        raise HubError("key_revoked")
+    pub = (bytes(row[5]), bytes(row[6]))
+    if row[1]:
+        if (row[2], bytes(row[3]), _raw(row[4])) == (own.gen, own.cert, own.user_ct):
+            unchanged()
+            return Confirmed(changed=False, pub=pub)
+        raise HubError("id_conflict")
+    if not has_passkey(connection, user):
+        raise HubError("forbidden")
+    check_own(connection, user, agent_id, pub, own)
+    connection.execute(
+        "UPDATE hub.agent SET own_identity = true, gen = %s, cert = %s, user_ct = %s, bundle_ct = NULL WHERE id = %s",
+        (own.gen, own.cert, own.user_ct, agent_id),
+    )
+    append_audit(
+        connection,
+        AuditRow(
+            at=now,
+            actor_kind="user",
+            actor_id=user,
+            action="agent.identity",
+            result="ok",
+            target_kind="agent",
+            target_id=str(agent_id),
+            detail={"agent": str(agent_id), "gen": own.gen},
+        ),
+    )
+    return Confirmed(changed=True, pub=pub)
 
 
 @dataclass(frozen=True)
@@ -429,7 +621,7 @@ def install(connection: Connection, user: UUID, agent: Installed, now: datetime,
             ).fetchall()
         ]
         for agent_id in previous:
-            revoke(connection, user, agent_id, now)
+            revoke(connection, user, agent_id, now, reason="replaced")
     try:
         with connection.transaction():
             connection.execute(
@@ -458,31 +650,41 @@ def install(connection: Connection, user: UUID, agent: Installed, now: datetime,
     return tuple(previous)
 
 
-def _agent_json(row: tuple[Any, ...]) -> dict[str, Any]:
-    agent_id, user_id, bundle_ct, label_ct, created_at, claimed_at = row
-    return {
-        "agent_id": str(agent_id),
-        "user_id": str(user_id),
-        "bundle_ct": b64u_encode(bytes(bundle_ct)),
-        "label_ct": b64u_encode(bytes(label_ct)),
-        "created_at": format_time(created_at),
-        "claimed_at": format_time(claimed_at),
-    }
+def _agent_json(connection: Connection, row: tuple[Any, ...]) -> dict[str, Any]:
+    agent_id, user_id, bundle_ct, label_ct, created_at, claimed_at, user_ct, gen = row
+    answer: dict[str, Any] = {"agent_id": str(agent_id), "user_id": str(user_id)}
+    if user_ct is not None:
+        # an own-identity agent gets its anchor, never an identity (ADR-082 section 2)
+        answer.update(user_ct=b64u_encode(bytes(user_ct)), identity="own", gen=gen, migrate=False)
+    else:
+        migrate = has_passkey(connection, user_id)
+        answer.update(bundle_ct=b64u_encode(bytes(bundle_ct)), identity="user", migrate=migrate)
+        if migrate:
+            # the generation the conversion signs (ADR-082 sections 5 and 9.1)
+            answer["migrate_gen"] = next_gen(connection, user_id)
+    answer.update(
+        label_ct=b64u_encode(bytes(label_ct)), created_at=format_time(created_at), claimed_at=format_time(claimed_at)
+    )
+    return answer
 
 
 def claim(connection: Connection, agent_id: UUID, claim_raw: bytes, now: datetime) -> dict[str, Any] | None:
     """Activate a confirmed agent that proves the claim; a repeat by an active agent with the right claim returns the
-    same answer. A wrong claim is counted (the fifth deletes an unclaimed pairing) and answered None: the caller
-    commits the count and refuses with `401 claim_invalid`."""
+    same answer. A wrong claim is counted (the fifth deletes an unclaimed pairing, or revokes an own-identity one,
+    `unclaimed`) and answered None: the caller commits the count and refuses with `401 claim_invalid`."""
     row = connection.execute(
-        "SELECT state, user_id, expires_at, claim_hash, claim_misses, remote FROM hub.agent WHERE id = %s FOR UPDATE",
+        "SELECT state, user_id, expires_at, claim_hash, claim_misses, remote, own_identity FROM hub.agent"
+        " WHERE id = %s FOR UPDATE",
         (agent_id,),
     ).fetchone()
     if row is None or row[0] not in ("confirmed", "active") or (row[0] == "confirmed" and row[2] <= now):
         raise HubError("pairing_unknown")
-    state, user, _expires, stored_hash, misses, remote = row
+    state, user, _expires, stored_hash, misses, remote, own = row
     if not hmac.compare_digest(agent_format.claim_hash(claim_raw), bytes(stored_hash)):
-        if misses + 1 >= MAX_CLAIM_MISSES and state == "confirmed":
+        if misses + 1 >= MAX_CLAIM_MISSES and state == "confirmed" and own:
+            # the agent is in its user's logs: revoked, so that its generation stays counted
+            revoke(connection, user, agent_id, now, reason="unclaimed")
+        elif misses + 1 >= MAX_CLAIM_MISSES and state == "confirmed":
             connection.execute("DELETE FROM hub.agent WHERE id = %s", (agent_id,))
         else:
             connection.execute("UPDATE hub.agent SET claim_misses = claim_misses + 1 WHERE id = %s", (agent_id,))
@@ -513,15 +715,17 @@ def handover(connection: Connection, agent_id: UUID, now: datetime) -> dict[str,
 
 
 def me(connection: Connection, agent_id: UUID) -> dict[str, Any]:
-    """The answer of `GET /v1/agent/me` (and of a successful claim)."""
+    """The answer of `GET /v1/agent/me` (and of a successful claim): an own-identity agent gets `user_ct`,
+    `identity: "own"` and its `gen`; an agent holding the user's identity `bundle_ct`, `identity: "user"` and
+    `migrate` (it converts itself, ADR-082 section 5) - true when the user has a passkey, then with `migrate_gen`."""
     row = connection.execute(
-        "SELECT id, user_id, bundle_ct, label_ct, created_at, claimed_at FROM hub.agent"
+        "SELECT id, user_id, bundle_ct, label_ct, created_at, claimed_at, user_ct, gen FROM hub.agent"
         " WHERE id = %s AND state = 'active'",
         (agent_id,),
     ).fetchone()
     if row is None:
         raise HubError("key_revoked")
-    return _agent_json(row)
+    return _agent_json(connection, row)
 
 
 def _time(value: datetime | None) -> str | None:
@@ -530,14 +734,20 @@ def _time(value: datetime | None) -> str | None:
 
 def list_agents(connection: Connection, user: UUID, now: datetime) -> list[dict[str, Any]]:
     """The user's agents, newest first; an unclaimed one past its deadline is `expired`; `remote` for one paired from
-    another computer (the web client's banner, ADR-067 section 4.4)."""
+    another computer (the web client's banner, ADR-067 section 4.4); `own_identity`, `held_identity` (it held a copy
+    of the user's identity: the honest revocation dialog, ADR-082 section 4), `pub`, `gen` and `cert` (the user's
+    clients add the active agent to a log that does not name it yet, ADR-082 section 4), `revoked_reason` and
+    `session_id` (the orchestrator session of stage b, null until then)."""
     rows = connection.execute(
         "SELECT id, state, label_ct, created_at, confirmed_at, claimed_at, last_used_at, revoked_at, expires_at,"
-        " replaces, remote FROM hub.agent WHERE user_id = %s ORDER BY created_at DESC, id DESC",
+        " replaces, remote, own_identity, held_identity, gen, revoked_reason, kem_pub, sig_pub, cert, session_id"
+        " FROM hub.agent WHERE user_id = %s"
+        " ORDER BY created_at DESC, id DESC",
         (user,),
     ).fetchall()
     agents = []
-    for agent_id, state, label_ct, created, confirmed, claimed, used, revoked, expires, replaces, remote in rows:
+    for row in rows:
+        agent_id, state, label_ct, created, confirmed, claimed, used, revoked, expires, replaces, remote = row[:11]
         shown = "expired" if state == "confirmed" and expires <= now else state
         agents.append(
             {
@@ -551,14 +761,24 @@ def list_agents(connection: Connection, user: UUID, now: datetime) -> list[dict[
                 "revoked_at": _time(revoked),
                 "replaces": None if replaces is None else str(replaces),
                 "remote": remote,
+                "own_identity": row[11],
+                "held_identity": row[12],
+                "gen": row[13],
+                "revoked_reason": row[14],
+                "pub": _public_json((bytes(row[15]), bytes(row[16]))),
+                "cert": None if row[17] is None else b64u_encode(bytes(row[17])),
+                "session_id": None if row[18] is None else str(row[18]),
             }
         )
     return agents
 
 
-def revoke(connection: Connection, user: UUID, agent_id: UUID, now: datetime) -> bool:
-    """Revoke the user's agent at once (`404 not_found` for an unknown or foreign one); False when it was revoked
-    already (no change)."""
+REVOKED_REASONS = frozenset({"revoked", "replaced", "unclaimed", "session_ended"})
+
+
+def revoke(connection: Connection, user: UUID, agent_id: UUID, now: datetime, *, reason: str = "revoked") -> bool:
+    """Revoke the user's agent at once (`404 not_found` for an unknown or foreign one) for `reason`
+    (`REVOKED_REASONS`); False when it was revoked already (no change). The sealed identity or anchor is deleted."""
     row = connection.execute(
         "SELECT state FROM hub.agent WHERE id = %s AND user_id = %s FOR UPDATE", (agent_id, user)
     ).fetchone()
@@ -567,9 +787,12 @@ def revoke(connection: Connection, user: UUID, agent_id: UUID, now: datetime) ->
     if row[0] == "revoked":
         unchanged()
         return False
+    if reason not in REVOKED_REASONS:
+        raise ValueError("unknown revocation reason")
     connection.execute(
-        "UPDATE hub.agent SET state = 'revoked', revoked_at = %s, bundle_ct = NULL, handover_ct = NULL WHERE id = %s",
-        (now, agent_id),
+        "UPDATE hub.agent SET state = 'revoked', revoked_at = %s, revoked_reason = %s, bundle_ct = NULL,"
+        " user_ct = NULL, handover_ct = NULL WHERE id = %s",
+        (now, reason, agent_id),
     )
     _audit(connection, "agent.revoke", user, agent_id, now, remote=False)
     return True
@@ -597,9 +820,18 @@ def clear_expired_handovers(connection: Connection, now: datetime) -> int:
 
 
 def purge_unclaimed(connection: Connection, now: datetime) -> int:
-    """Delete open and confirmed rows one hour after their claim deadline; the number deleted."""
+    """Revoke (`unclaimed`) own-identity rows past their claim deadline: the agent is in its user's logs and its
+    generation stays counted; delete the other open and confirmed rows one hour after their claim deadline. The number
+    of rows revoked or deleted."""
+    expired = connection.execute(
+        "SELECT id, user_id FROM hub.agent WHERE state = 'confirmed' AND own_identity AND expires_at <= %s"
+        " ORDER BY id FOR UPDATE",
+        (now,),
+    ).fetchall()
+    for agent_id, user in expired:
+        revoke(connection, user, agent_id, now, reason="unclaimed")
     cursor = connection.execute(
-        "DELETE FROM hub.agent WHERE state IN ('open', 'confirmed') AND expires_at < %s",
+        "DELETE FROM hub.agent WHERE state IN ('open', 'confirmed') AND NOT own_identity AND expires_at < %s",
         (now - timedelta(seconds=UNCLAIMED_RETENTION_SECONDS),),
     )
-    return cursor.rowcount
+    return len(expired) + cursor.rowcount

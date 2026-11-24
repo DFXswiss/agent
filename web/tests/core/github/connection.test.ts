@@ -1,11 +1,12 @@
-// The GitHub connection (06-web.md section 8.1): records verified and opened in the browser (author user or an
-// entitled device, the user's CK of the record's epoch, only the login leaves), disconnect, the device choice with the
+// The GitHub connection (06-web.md section 8.1): records verified and opened in the browser (author user, an
+// entitled device or the user's active agent, the user's CK of the record's epoch, only the login leaves), disconnect, the device choice with the
 // automatic assignment for a fresh org, and the connect progress from the opened responses.
 import { describe, expect, it } from 'vitest';
 import { bodyJson } from '../../../src/core/encoding/json';
 import { newHeader, sealCredential } from '../../../src/core/crypto/credential';
 import { Secret } from '../../../src/core/crypto/secret';
 import {
+  activeAgentKey,
   authorKey,
   connectDevices,
   connectProgress,
@@ -24,9 +25,11 @@ import { fromUtf8 } from '../../../src/core/encoding/bytes';
 import { HubError } from '../../../src/core/net/signedFetch';
 import type { RequestView } from '../../../src/core/requests/client';
 import { setProfile } from '../../../src/core/store/slices/me';
-import { setLog } from '../../../src/core/store/slices/orgs';
+import { blockOrg, ensureOrg, setLog } from '../../../src/core/store/slices/orgs';
+import { signCert } from '../../../src/core/crypto/agent';
+import type { LogFields } from '../../../src/core/log/entries';
 import { setActiveOrg } from '../../../src/core/store/slices/session';
-import { actor, type Actor, T0 } from '../log/world';
+import { actor, type Actor, idOf, T0, World } from '../log/world';
 import { candidate, taskWorld, type TaskWorld } from '../tasks/world';
 
 const BODY = {
@@ -224,6 +227,36 @@ describe('credentialKey and authorKey', () => {
     expect(authorKey(t.store, t.me.id, t.me.identity, t.device.id)).toEqual(t.device.identity.sigPublic());
     expect(authorKey(t.store, t.me.id, t.me.identity, 7)).toBeNull();
     expect(authorKey(t.store, t.me.id, t.me.identity, t.org)).toBeNull();
+  });
+
+  it("knows the user's active agent while no verified log revokes it (ADR-082 section 9.5)", async () => {
+    const t = await world();
+    const [bot, newer, foreign] = [await actor('gh bot'), await actor('gh bot 2'), await actor('gh foreign')];
+    const add = async (user: Actor, agent: Actor, gen: number): Promise<LogFields> => {
+      const pub = agent.identity.public();
+      const cert = await signCert(user.identity.sig.privateKey, { agent: agent.id, pub, user: user.id, gen });
+      return { type: 'agent_add', subject: agent.id, user: user.id, pub, gen, cert };
+    };
+    t.world.add(bot, newer);
+    await t.world.batch(t.me, [await add(t.me, bot, 1)]);
+    setLog(t.store, t.org, t.world.log!);
+    expect(authorKey(t.store, t.me.id, t.me.identity, bot.id)).toEqual(bot.identity.sigPublic());
+    expect(activeAgentKey(t.store, foreign.id, bot.id)).toBeNull();
+    // a newer agent of the user in another verified log supersedes it
+    const other = new World(await idOf('gh second org'), await idOf('gh second wg'));
+    other.add(t.me, newer);
+    await other.batch(t.me, [
+      { type: 'genesis', subject: t.me.id, pub: t.me.identity.public(), default_wg: other.defaultWg, private: true },
+    ]);
+    await other.batch(t.me, [await add(t.me, newer, 2)]);
+    ensureOrg(t.store, other.org);
+    setLog(t.store, other.org, other.log!);
+    expect(authorKey(t.store, t.me.id, t.me.identity, bot.id)).toBeNull();
+    expect(authorKey(t.store, t.me.id, t.me.identity, newer.id)).toEqual(newer.identity.sigPublic());
+    // a blocked org counts for nothing
+    blockOrg(t.store, other.org, { code: 'log_chain', stored: null, served: null, lh: null });
+    expect(authorKey(t.store, t.me.id, t.me.identity, newer.id)).toBeNull();
+    expect(authorKey(t.store, t.me.id, t.me.identity, bot.id)).toEqual(bot.identity.sigPublic());
   });
 });
 

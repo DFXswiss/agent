@@ -31,6 +31,8 @@ SPEC_ERRORS: dict[int, str] = {
     " invite_revoked author_not_writer"
     # ADR-060 (KOR-37)
     " account_code_invalid log_admit"
+    # ADR-082 (KOR-57)
+    " log_agent"
     # 11-agent-access.md section 4 (KOR-42, ADR-067)
     " handover_required handover_unexpected",
     401: "signature_missing key_unknown key_revoked time_skew signature_invalid nonce_replayed session_expired"
@@ -46,6 +48,8 @@ SPEC_ERRORS: dict[int, str] = {
     404: "not_found invite_unknown pairing_unknown identity_unproven",
     409: "id_conflict event_conflict seq_conflict version_conflict origin_seq_gap origin_seq_conflict no_device"
     " already_assigned rotation_required no_device_available invite_registered peer_outdated"
+    # ADR-082 (KOR-57)
+    " client_outdated agent_batches_incomplete agent_gen_mismatch"
     # 14-community.md section 4.1 (KOR-26)
     " community_not_member community_epoch_exists community_no_key placement_invalid",
     410: "invite_expired",
@@ -60,7 +64,7 @@ SPEC_CRYPTO = (
     "non_ascii header_invalid signature_invalid decrypt_failed prf_length prf_missing recovery_code_length hpke_short"
     " invite_code_length invite_code_invalid event_conflict epoch_stale kind_not_allowed size_exceeded"
     " wrap_unauthorized platform_root_mismatch account_code_invalid seq_conflict log_empty log_chain log_genesis"
-    " log_accept log_admit log_signature"
+    " log_accept log_admit log_agent log_signature"
     " log_rights log_epoch log_type log_rollback log_fork invite_not_in_log invite_consumed invite_expired"
     " invite_revoked author_not_writer last_admin rotation_required"
 )
@@ -113,7 +117,7 @@ SPEC_AUDIT_FIXED = (
 SPEC_AUDIT_PATTERNS = {
     # 04-crypto.md section 4.7
     "log": "genesis invite invite_revoke accept role wg_create wg_archive grant ungrant device_assign device_unassign"
-    " device_assign_org device_unassign_org remove rotate admit",
+    " device_assign_org device_unassign_org remove rotate admit agent_add",
     # 02-data-model.md section 2.4.1
     "session": "requested vm_assigning vm_ready sandbox_ready agent_starting prompt_delivering working idle suspended"
     " resuming stopping stopped failed",
@@ -130,6 +134,8 @@ SPEC_AUDIT_PATTERNS = {
 DECIDED_AUDIT = (
     "invite.lookup invite.create invite.revoke invite.register invite.release invite.use invite.expire"
     " credential.rotate outbox.rejected agent.confirm agent.claim agent.revoke notification.read"
+    # KOR-57, ADR-082 section 5: the conversion of an agent that held its user's identity
+    " agent.identity"
     # KOR-40, ADR-063: the request pipeline's rows, read repeats, terminal watching, batched session events and the
     # rows of the formerly unaudited writes.
     " request.refused request.write audit.repeat read.stream.terminal event.append_batch settings.put"

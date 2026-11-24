@@ -1,6 +1,6 @@
 """The community commands against the real hub (14-community.md, ADR-069): the key is created, requested, served and
-opened by two agents, messages are posted, read, deleted and moderated, and the post limit answers with its wait, all
-checked by the hub's own code."""
+opened by two agents with their own identities (community principals of their own, ADR-082), messages are posted, read,
+deleted and moderated, and the post limit answers with its wait, all checked by the hub's own code."""
 
 from __future__ import annotations
 
@@ -26,19 +26,20 @@ def test_two_agents_use_the_community(real: RealHub) -> None:
         "verified",
         "Bob",
         "Hello\nworld",
-        bob.id,
-        community.mark(bob.id),
+        bob.agent_id,
+        community.mark(bob.agent_id),
     )
     assert read["last_read_seq"] == posted["seq"]
     assert run_ok(ada.tool, "community", "status")["unread"] == 0
-    # moderation: the operator grants the role, the moderator mutes, unmutes and removes
+    # moderation: the operator grants the role to the user, whose agent mutes the author (Bob's agent), unmutes and
+    # removes
     granted = real.harness.root.post("/v1/community/moderators", json={"user": ada.id, "granted": True})
     assert granted.status_code == 200, granted.text
-    assert run_ok(ada.tool, "community", "mute", "--user", bob.id)["muted"] is True
-    assert [row["user"] for row in run_ok(ada.tool, "community", "mutes")["mutes"]] == [bob.id]
+    assert run_ok(ada.tool, "community", "mute", "--user", bob.agent_id)["muted"] is True
+    assert [row["user"] for row in run_ok(ada.tool, "community", "mutes")["mutes"]] == [bob.agent_id]
     code, refused = bob.tool.run("community", "post", "--text", "more")
     assert (code, refused["hub_error"]) == (1, "community_muted")
-    assert run_ok(ada.tool, "community", "unmute", "--user", bob.id)["muted"] is False
+    assert run_ok(ada.tool, "community", "unmute", "--user", bob.agent_id)["muted"] is False
     assert run_ok(ada.tool, "community", "delete", "--id", posted["id"])["deleted"] == "moderator"
     assert run_ok(bob.tool, "community", "messages")["messages"][-1]["status"] == "removed"
     # the post limit (5, then one every 6 s) answers with the wait; authors delete their own messages

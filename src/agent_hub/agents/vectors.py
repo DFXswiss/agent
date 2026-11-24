@@ -3,7 +3,8 @@
 Fingerprint, proof of possession, the handover secret with its bundle key, claim and claim hash, the identity sealed
 to the agent and the label sealed to the user, and for a pairing from another computer (ADR-067) the agent code, the
 handover sealed to the agent, the return code and the typed forms of a code, and for an account of an agent alone
-(rule E-27, KOR-62) the registration and recovery texts with their signatures, all with fixed keys, nonces and HPKE
+(rule E-27, KOR-62) the registration and recovery texts with their signatures, and for the agent's own identity
+(ADR-082) the delegation certificate and the user's anchor sealed to the agent, all with fixed keys, nonces and HPKE
 ephemeral keys. Negative vectors
 name an operation of `OPS` (this module), its arguments and the expected error code; the generator refuses a vector
 whose code differs.
@@ -14,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from agent_hub.crypto import agent, hpke, invite, keys
+from agent_hub.crypto import aead, agent, hpke, invite, keys
 from agent_hub.crypto.bundle import bundle_plaintext
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode
 from agent_hub.crypto.errors import CryptoError
@@ -76,6 +77,15 @@ def _recover_text(a: Json) -> bytes:
     )
 
 
+def _open_user(a: Json) -> object:
+    kem = keys.x25519_private(_b(a["agent_kem_sk"]))
+    return agent.open_user(kem, _b(a["secret"]), a["agent_id"], a["user_id"], a["sealed"])
+
+
+OPS["open_user"] = _open_user
+OPS["verify_cert"] = lambda a: agent.verify_cert(
+    _b(a["signer"]), a["cert"], agent_id=a["agent_id"], pub=a["pub"], user_id=a["user_id"], gen=a["gen"]
+)
 OPS["verify_account"] = lambda a: agent.verify_text(_b(a["signer"]), a["signature"], _account_text(a))
 OPS["verify_recover"] = lambda a: agent.verify_text(_b(a["signer"]), a["signature"], _recover_text(a))
 
@@ -223,6 +233,79 @@ def build_own_account(bot: keys.Identity, alice: keys.Identity, user: str) -> tu
     return section, invalid
 
 
+def build_own_identity(bot: keys.Identity, alice: keys.Identity, user: str, secret: bytes) -> tuple[Json, list[Json]]:
+    """The agent's own identity (ADR-082): the delegation certificate and the user's anchor, and their negatives."""
+    gen = 1
+    text = agent.cert_text(AGENT_ID, bot.public(), user, gen)
+    cert = agent.sign_cert(alice.sig, AGENT_ID, bot.public(), user, gen)
+    nonce, ephemeral = fixed("agent-user-nonce", 12), fixed("agent-user-eph")
+    sealed = agent.seal_user(
+        bot.kem_public(),
+        secret,
+        AGENT_ID,
+        user,
+        user_pub=alice.public(),
+        cert=cert,
+        nonce=nonce,
+        ephemeral=keys.x25519_private(ephemeral),
+    )
+    info = agent.user_info(AGENT_ID, user)
+    key = agent.bundle_key(secret, AGENT_ID, user)
+
+    def resealed(plaintext: bytes, label: str) -> str:
+        inner = aead.seal_blob(key, plaintext, info, fixed(f"agent-user-nonce/{label}", 12))
+        return b64u_encode(hpke.seal(bot.kem_public(), info, inner, keys.x25519_private(fixed(f"agent-user/{label}"))))
+
+    pub = alice.public()
+    loose = f'{{"cert": "{cert}", "kem": "{pub["kem"]}", "sig": "{pub["sig"]}"}}'.encode()
+    extra = f'{{"cert":"{cert}","kem":"{pub["kem"]}","name":"x","sig":"{pub["sig"]}"}}'.encode()
+    certified: Json = {"signer": pub["sig"], "cert": cert, "agent_id": AGENT_ID, "pub": bot.public()}
+    certified |= {"user_id": user, "gen": gen}
+    opened = {
+        "agent_kem_sk": b64u_encode(fixed("agent/kem")),
+        "secret": b64u_encode(secret),
+        "agent_id": AGENT_ID,
+        "user_id": user,
+        "sealed": sealed,
+    }
+    other = identity("bob").public()
+    section = {
+        "cert": {"agent_id": AGENT_ID, "user_id": user, "gen": gen, "pub": bot.public(), "text": b64u_encode(text)}
+        | {"cert": cert},
+        "user_anchor": {
+            "info": b64u_encode(info),
+            "plaintext": agent.user_plaintext(pub, cert).decode(),
+            "nonce": b64u_encode(nonce),
+            "ephemeral_sk": b64u_encode(ephemeral),
+            "sealed": sealed,
+        },
+    }
+    invalid = [
+        negative("cert_other_gen", "verify_cert", {**certified, "gen": 2}, "signature_invalid"),
+        negative("cert_other_pub", "verify_cert", {**certified, "pub": other}, "signature_invalid"),
+        negative("cert_other_user", "verify_cert", {**certified, "user_id": ACTORS["bob"]}, "signature_invalid"),
+        negative("cert_other_agent", "verify_cert", {**certified, "agent_id": OTHER_AGENT}, "signature_invalid"),
+        negative("cert_by_agent_key", "verify_cert", {**certified, "signer": bot.public()["sig"]}, "signature_invalid"),
+        negative("cert_gen_zero", "verify_cert", {**certified, "gen": 0}, "header_invalid"),
+        negative("cert_pub_extra_key", "verify_cert", {**certified, "pub": {**other, "x": "y"}}, "header_invalid"),
+        negative(
+            "user_anchor_without_secret",
+            "open_user",
+            {**opened, "secret": b64u_encode(fixed("agent-other-secret"))},
+            "decrypt_failed",
+        ),
+        negative("user_anchor_other_agent", "open_user", {**opened, "agent_id": OTHER_AGENT}, "decrypt_failed"),
+        negative("user_anchor_other_user", "open_user", {**opened, "user_id": ACTORS["bob"]}, "decrypt_failed"),
+        negative(
+            "user_anchor_not_canonical", "open_user", {**opened, "sealed": resealed(loose, "loose")}, "header_invalid"
+        ),
+        negative(
+            "user_anchor_extra_key", "open_user", {**opened, "sealed": resealed(extra, "extra")}, "header_invalid"
+        ),
+    ]
+    return section, invalid
+
+
 def build_agent() -> Json:
     """Every format of 11-agent-access.md section 3."""
     bot, alice, user = identity("agent"), identity("alice"), ACTORS["alice"]
@@ -249,9 +332,10 @@ def build_agent() -> Json:
     opened = {"agent_kem_sk": agent_sk, "secret": secret_text, "agent_id": AGENT_ID, "user_id": user, "sealed": sealed}
     remote, remote_invalid = build_remote(bot, user, secret)
     own, own_invalid = build_own_account(bot, alice, user)
+    own_identity, own_identity_invalid = build_own_identity(bot, alice, user, secret)
     return {
         "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-067, account "
-        "of an agent alone KOR-62).",
+        "of an agent alone KOR-62, own identity of the agent ADR-082).",
         "agent": {"id": AGENT_ID, "kem_sk": agent_sk, "sig_sk": b64u_encode(fixed("agent/sig")), **bot.public()},
         "user": {"id": user, "kem_sk": alice_sk, **alice.public()},
         "fingerprint": agent.fingerprint(kem_pub, sig_pub),
@@ -277,6 +361,7 @@ def build_agent() -> Json:
         },
         "remote": remote,
         "own_account": own,
+        "own_identity": own_identity,
         "invalid": [
             negative(
                 "pop_other_pairing",
@@ -328,6 +413,7 @@ def build_agent() -> Json:
             ),
             *remote_invalid,
             *own_invalid,
+            *own_identity_invalid,
         ],
     }
 

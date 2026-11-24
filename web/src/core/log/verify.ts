@@ -20,6 +20,15 @@
 //    `by_platform_seq` with `by_id_sig` (`PlatformState.identityAnchored`; without platform state refused)
 //    (`log_admit`). The admitted user has not consented (`Principal.consented`): devices of this org are no
 //    recipients of its credential key.
+//    `agent_add` (ADR-082 sections 1 and 9): L4 with `by == subject` checks `sig` under `body.pub.sig` (the agent is
+//    not yet a principal; L8 does not apply), with `by == user` under the user's key. L5 (`log_agent`): `user` an
+//    active user member, `by` the user or the agent, the subject never a principal (except the same agent coming
+//    back with its own `gen` and keys after it was removed together with its user), `cert` valid under the user's key,
+//    `gen` above the generation of every other agent of the user in the log. An active agent of the user with a lower
+//    generation is replaced: removed at the same `seq`. The `agent` member of `genesis`/`accept` (only for a user)
+//    adds the agent by the same rule; the entry's `sig` is then made by the agent's key.
+//    Every right of an agent author resolves through `OrgState.acting`; "self" rules (leaving, self-demotion) compare
+//    `acting(by)` with the subject. `remove` of a user removes its active agent at the same `seq`.
 // `now` (hub receipt time, unix ms) switches on the checks only the hub can make at append time (invitation expiry,
 // platform access and a still valid certification for `device_assign` of a platform device). A reader replaying
 // the log checks neither. L9 is `checkExtends` (stored heads, `refreshLog`), L10 `needsRefresh`/`requireLh`.
@@ -34,18 +43,26 @@ import {
   type Head,
   logText,
   signatureValid,
+  succeeds,
 } from './entries';
 import type { PlatformState } from './platform';
+import { verifyCert } from '../crypto/agent';
+import { b64uDecode } from '../encoding/b64u';
+import type { AgentMember } from './entries';
 import {
   ADMIN,
+  AGENT,
   DEVICE,
   epochKey,
   type Invite,
   ORG,
   OrgState,
+  lost,
   pairKey,
+  PLAIN,
   type Principal,
   requiredSet,
+  selfOwed,
   USER,
   WG,
   WRITE,
@@ -71,10 +88,93 @@ const rights = (allowed: boolean): void => {
   if (!allowed) fail('log_rights');
 };
 
+/** The agent an entry adds: `agent_add`, or the `agent` member of `genesis`/`accept`. */
+interface NewAgent {
+  readonly id: string;
+  readonly user: string;
+  readonly pub: { kem: string; sig: string };
+  readonly gen: number;
+  readonly cert: string;
+}
+
+const memberOf = (body: Body): AgentMember | undefined => body.agent as AgentMember | undefined;
+
+const certValid = (userSig: string, agent: NewAgent): Promise<boolean> =>
+  succeeds(() => verifyCert(b64uDecode(userSig), agent.cert, { ...agent, agent: agent.id }));
+
+/**
+ * L5 of a new agent (`log_agent`) and the state with it: the user is an active user member, the subject is new (or
+ * the same agent returning after its user rejoined), the certificate holds and the generation is higher than that of
+ * every other agent of the user; an active agent of the user is replaced (removed at this `seq`).
+ */
+async function addAgent(state: OrgState, agent: NewAgent, seq: number): Promise<OrgState> {
+  const user = state.member(agent.user);
+  const former = state.principals.get(agent.id);
+  const returning =
+    former === undefined ||
+    (former.parent === agent.user &&
+      former.removedWithUser &&
+      former.gen === agent.gen &&
+      former.kem === agent.pub.kem &&
+      former.sig === agent.pub.sig);
+  const others = state.agentsOf(agent.user).filter((other) => other.id !== agent.id);
+  const valid =
+    user !== null &&
+    user.kind === USER &&
+    returning &&
+    others.every((other) => agent.gen > other.gen!) &&
+    (await certValid(user.sig, agent));
+  if (!valid) fail('log_agent');
+  const principals = new Map(state.principals);
+  const replaced = state.activeAgent(agent.user);
+  if (replaced !== null) principals.set(replaced.id, { ...replaced, removedSeq: seq });
+  principals.set(agent.id, {
+    ...PLAIN,
+    id: agent.id,
+    kind: AGENT,
+    role: AGENT,
+    kem: agent.pub.kem,
+    sig: agent.pub.sig,
+    joinedSeq: seq,
+    removedSeq: null,
+    platformSeq: null,
+    consented: true,
+    parent: agent.user,
+    gen: agent.gen,
+  });
+  const after = state.with({ principals });
+  return replaced === null ? after : owe(after, requiredSet(state, after, replaced.id), agent.user);
+}
+
+/** The rotation of `scopes` is owed by `user`, who removed or replaced its agent (ADR-082 section 4). */
+function owe(state: OrgState, scopes: Iterable<string>, user: string): OrgState {
+  const agentOwed = new Map(state.agentOwed);
+  for (const scope of scopes) agentOwed.set(scope, user);
+  return state.with({ agentOwed });
+}
+
+/** `agent_add`: by the user or by the agent itself (nobody else holds a certificate for this key). */
+function agentAdd(state: OrgState, body: Body, seq: number): Promise<OrgState> {
+  if (body.by !== body.user && body.by !== body.subject) fail('log_agent');
+  const agent: NewAgent = {
+    id: body.subject as string,
+    user: body.user as string,
+    pub: body.pub as { kem: string; sig: string },
+    gen: body.gen as number,
+    cert: body.cert as string,
+  };
+  return addAgent(state, agent, seq);
+}
+
+/** The agent of the `agent` member of a user's `genesis`/`accept`. */
+const joiningAgent = (body: Body, member: AgentMember): NewAgent => ({ ...member, user: body.subject as string });
+
 async function genesis(body: Body, entry: Body, founder: string): Promise<OrgState> {
   const pub = body.pub as { kem: string; sig: string };
+  const member = memberOf(body);
+  const signer = member?.pub.sig ?? founder;
   const valid =
-    body.subject === body.by && pub.sig === founder && (await signatureValid(founder, entry.sig, logText(body)));
+    body.subject === body.by && pub.sig === founder && (await signatureValid(signer, entry.sig, logText(body)));
   if (!valid) fail('log_genesis');
   const org = body.org as string;
   const wg = body.default_wg as string;
@@ -89,8 +189,10 @@ async function genesis(body: Body, entry: Body, founder: string): Promise<OrgSta
     removedSeq: null,
     platformSeq: null,
     consented: true,
+    ...PLAIN,
+    joinAgent: member?.id ?? null,
   };
-  return new OrgState({
+  const state = new OrgState({
     org,
     founder,
     defaultWg: wg,
@@ -112,7 +214,9 @@ async function genesis(body: Body, entry: Body, founder: string): Promise<OrgSta
       [epochKey(WG, wg, 1), user],
     ]),
     pending: new Set(),
+    agentOwed: new Map(),
   });
+  return member === undefined ? state : addAgent(state, joiningAgent(body, member), 0);
 }
 
 async function accept(state: OrgState, body: Body, entry: Body, seq: number, now: number | null): Promise<OrgState> {
@@ -123,6 +227,7 @@ async function accept(state: OrgState, body: Body, entry: Body, seq: number, now
   if (now !== null && now >= parseTime(invite.expires)) fail('invite_expired');
   const subject = body.subject as string;
   const pub = body.pub as { kem: string; sig: string };
+  const member = memberOf(body);
   const former = state.principals.get(subject);
   const message = logText(body);
   const rejoinValid =
@@ -135,7 +240,7 @@ async function accept(state: OrgState, body: Body, entry: Body, seq: number, now
     body.by === subject &&
     body.kind === invite.kind &&
     rejoinValid &&
-    (await signatureValid(pub.sig, entry.sig, message)) &&
+    (await signatureValid(member?.pub.sig ?? pub.sig, entry.sig, message)) &&
     (await signatureValid(invite.pkInv, entry.inv_sig, message));
   if (!valid) fail('log_accept');
   const principal: Principal = {
@@ -148,6 +253,8 @@ async function accept(state: OrgState, body: Body, entry: Body, seq: number, now
     removedSeq: null,
     platformSeq: null,
     consented: true,
+    ...PLAIN,
+    joinAgent: member?.id ?? null,
   };
   const access = new Map(state.access);
   const assignments = new Map(state.assignments);
@@ -155,12 +262,13 @@ async function accept(state: OrgState, body: Body, entry: Body, seq: number, now
     if (invite.kind === USER) access.set(pairKey(subject, wg), level);
     else assignments.set(pairKey(subject, wg), seq);
   }
-  return state.with({
+  const after = state.with({
     principals: new Map(state.principals).set(subject, principal),
     invites: new Map(state.invites).set(invite.inviteId, { ...invite, acceptedSeq: seq }),
     access,
     assignments,
   });
+  return member === undefined ? after : addAgent(after, joiningAgent(body, member), seq);
 }
 
 function inviteEntry(state: OrgState, body: Body, seq: number): OrgState {
@@ -199,9 +307,10 @@ function role(state: OrgState, body: Body): OrgState {
   let after = state.with({
     principals: new Map(state.principals).set(principal.id, { ...principal, role: body.role as string }),
   });
-  if (principal.id === body.by) {
-    // self-demotion: like leaving, the subject cannot rotate what it no longer reads (ADR-058 section 3)
-    after = after.with({ pending: new Set([...after.pending, ...requiredSet(state, after, principal.id)]) });
+  if (selfOwed(state, body)) {
+    // self-demotion (also through its agent): like leaving, the subject cannot rotate what it no longer reads
+    // (ADR-058 section 3)
+    after = after.with({ pending: new Set([...after.pending, ...lost(state, after, body)]) });
   }
   return after;
 }
@@ -213,7 +322,7 @@ function wgCreate(state: OrgState, body: Body, seq: number): OrgState {
   if (body.epoch !== 1) fail('log_epoch');
   return state.with({
     workgroups: new Map(state.workgroups).set(wg, { id: wg, isDefault: false, createdSeq: seq, archivedSeq: null }),
-    access: new Map(state.access).set(pairKey(by, wg), WRITE),
+    access: new Map(state.access).set(pairKey(state.acting(by), wg), WRITE),
     epochs: new Map(state.epochs).set(pairKey(WG, wg), 1),
     epochAuthors: new Map(state.epochAuthors).set(epochKey(WG, wg, 1), by),
   });
@@ -270,6 +379,7 @@ function platformDevice(state: OrgState, body: Body, seq: number, ctx: Context):
     removedSeq: null,
     platformSeq: cert.seq,
     consented: true,
+    ...PLAIN,
   };
 }
 
@@ -311,7 +421,9 @@ async function admit(state: OrgState, body: Body, seq: number, ctx: Context): Pr
   const rejoinValid =
     former === undefined ||
     (former.removedSeq !== null && former.kind === USER && former.kem === pub.kem && former.sig === pub.sig);
-  const author = state.principals.get(by)!;
+  // an agent admits with its user's anchored identity
+  const anchor = state.acting(by);
+  const author = state.principals.get(anchor)!;
   const { platform } = ctx;
   const current = ctx.now !== null;
   const anchored =
@@ -319,7 +431,7 @@ async function admit(state: OrgState, body: Body, seq: number, ctx: Context): Pr
     (await platform.identityAnchored(body.platform_seq as number, subject, pub, body.id_sig, current)) &&
     (await platform.identityAnchored(
       body.by_platform_seq as number,
-      by,
+      anchor,
       { kem: author.kem, sig: author.sig },
       body.by_id_sig,
       current,
@@ -335,6 +447,7 @@ async function admit(state: OrgState, body: Body, seq: number, ctx: Context): Pr
     removedSeq: null,
     platformSeq: null,
     consented: false,
+    ...PLAIN,
   };
   const access = new Map(state.access);
   for (const [wg, level] of Object.entries(wgs)) access.set(pairKey(subject, wg), level);
@@ -367,17 +480,28 @@ function remove(state: OrgState, body: Body, seq: number): OrgState {
   const subject = body.subject as string;
   const by = body.by as string;
   const found = state.member(subject);
-  if (found === null || !(subject === by || state.isAdmin(by))) fail('log_rights');
+  // the subject itself, the user through its agent, the user (or its agent) removing its agent, or an admin
+  const acting = state.acting(by);
+  if (found === null || !(acting === subject || acting === found.parent || state.isAdmin(by))) fail('log_rights');
   if (found.role === ADMIN && state.admins().length === 1) fail('last_admin');
+  // an agent removed by its user, the user's agent or itself is revoked in every log (`wraps.revokedAgents`)
+  const byOwner = found.parent !== null && acting === found.parent;
+  const principals = new Map(state.principals).set(subject, { ...found, removedSeq: seq, removedByOwner: byOwner });
+  // "with its user" (ADR-082 section 9.2): the agent may come back when the user rejoins
+  const agent = state.activeAgent(subject);
+  if (agent !== null) principals.set(agent.id, { ...agent, removedSeq: seq, removedWithUser: true });
   let after = state.with({
-    principals: new Map(state.principals).set(subject, { ...found, removedSeq: seq }),
+    principals,
     access: without(state.access, subject),
     assignments: without(state.assignments, subject),
     orgAssignments: new Map([...state.orgAssignments].filter(([device]) => device !== subject)),
   });
-  if (subject === by) {
+  if (selfOwed(state, body)) {
     // leaving: the leaver cannot rotate (L8), so the rotation is owed by the remaining holders
-    after = after.with({ pending: new Set([...after.pending, ...requiredSet(state, after, subject)]) });
+    after = after.with({ pending: new Set([...after.pending, ...lost(state, after, body)]) });
+  } else if (byOwner) {
+    // the user (or its agent) removes its agent: it may rotate what the agent read without admin or write right
+    after = owe(after, lost(state, after, body), found.parent!);
   }
   return after;
 }
@@ -386,16 +510,21 @@ function rotate(state: OrgState, body: Body): OrgState {
   const scope = body.scope as string;
   const scopeId = body.scope_id as string;
   const by = body.by as string;
-  if (scope === ORG) rights(scopeId === state.org && state.isAdmin(by));
-  else rights(state.workgroups.has(scopeId) && (state.isAdmin(by) || state.wgAccess(by, scopeId) === WRITE));
+  // the user that removed its agent (or its active agent) rotates what that agent read
+  const owed = state.agentOwed.get(pairKey(scope, scopeId)) === state.acting(by);
+  if (scope === ORG) rights(scopeId === state.org && (state.isAdmin(by) || owed));
+  else rights(state.workgroups.has(scopeId) && (state.isAdmin(by) || owed || state.wgAccess(by, scopeId) === WRITE));
   const epoch = state.epoch(scope, scopeId) + 1;
   if (body.epoch !== epoch) fail('log_epoch');
   const pending = new Set(state.pending);
   pending.delete(pairKey(scope, scopeId));
+  const agentOwed = new Map(state.agentOwed);
+  agentOwed.delete(pairKey(scope, scopeId));
   return state.with({
     epochs: new Map(state.epochs).set(pairKey(scope, scopeId), epoch),
     epochAuthors: new Map(state.epochAuthors).set(epochKey(scope, scopeId, epoch), by),
     pending,
+    agentOwed,
   });
 }
 
@@ -417,6 +546,7 @@ const ADMIN_ONLY: Record<string, Transition> = {
 const OTHERS: Record<string, Transition> = {
   remove: (state, body, seq) => remove(state, body, seq),
   rotate: (state, body) => rotate(state, body),
+  agent_add: (state, body, seq) => agentAdd(state, body, seq),
 };
 
 function applyType(state: OrgState, body: Body, seq: number, ctx: Context): OrgState | Promise<OrgState> {
@@ -450,9 +580,11 @@ export async function apply(
   } else if (body.type === 'accept') {
     after = await accept(state, body, data, seq, options.now ?? null);
   } else {
-    const author = state.principals.get(body.by as string);
-    if (author === undefined || !(await signatureValid(author.sig, data.sig, logText(body)))) fail('log_signature');
-    rights(author.removedSeq === null);
+    // an agent adding itself is not a principal yet: its key is the one it brings (L8 does not apply)
+    const self = body.type === 'agent_add' && body.by === body.subject;
+    const key = self ? (body.pub as { sig: string }).sig : state.principals.get(body.by as string)?.sig;
+    if (key === undefined || !(await signatureValid(key, data.sig, logText(body)))) fail('log_signature');
+    rights(self || state.member(body.by as string) !== null);
     const ctx = {
       platform: options.platform ?? null,
       now: options.now ?? null,

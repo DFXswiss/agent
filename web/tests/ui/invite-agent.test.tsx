@@ -46,6 +46,7 @@ async function agentInvite(options: Options = {}) {
     pairing_id: PAIRING,
     pub: agent.public(),
     state: options.state ?? 'open',
+    gen: 1,
     expires_at: formatTime(Date.now() + 600_000),
   }));
   hub.override.set('POST /v1/me/agents', (body) => (confirmations.push(body), { agent_id: PAIRING }));
@@ -147,6 +148,7 @@ describe('ConnectScreen with a pairing in the route state', () => {
       pairing_id: PAIRING,
       pub: agent.public(),
       state: 'open',
+      gen: 1,
       expires_at: formatTime(Date.now() + 600_000),
     }));
     const fp = await fingerprint(agent.kemPublic(), agent.sigPublic());

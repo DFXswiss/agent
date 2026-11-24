@@ -14,11 +14,14 @@
 // - Read: pages before the oldest loaded message, pulls after the newest on the frame `message` (and after a
 //   reconnect); every message is checked under its author's identity key, which is pinned on first sight per viewer
 //   after a valid signature (a changed key makes the message unverifiable), and only a verified message shows content.
+//   An author that is an own-identity agent (ADR-082) also needs a certificate that verifies under its user's signing
+//   key, pinned like a user's key; its messages are marked `agent` ("Agent of <name>"), else they are unverifiable.
 // - Post (a `429` notes `retryAt` from `Retry-After`), delete, read position and moderation are the screen's actions.
 import type { Prefs } from '../account/prefs';
 import { b64uDecode, b64uEncode } from '../encoding/b64u';
 import { uuid7 } from '../encoding/ids';
 import { formatTime, parseTime } from '../encoding/time';
+import { verifyCert } from '../crypto/agent';
 import * as C from '../crypto/community';
 import { CryptoError } from '../crypto/errors';
 import { type Identity, type KeyPair, x25519KeyPair } from '../crypto/keys';
@@ -71,6 +74,8 @@ interface Row {
 interface Author {
   readonly sig_pub: string;
   readonly moderator: boolean;
+  /** An own-identity agent (ADR-082): its user, the user's signing key, its keys and certificate (unchecked here). */
+  readonly agent?: unknown;
 }
 
 interface Page {
@@ -127,7 +132,8 @@ function parsePage(body: unknown): Page {
   const authors = new Map<string, Author>();
   for (const [user, entry] of Object.entries(body.authors)) {
     if (isRecord(entry) && isText(entry.sig_pub)) {
-      authors.set(user, { sig_pub: entry.sig_pub, moderator: entry.moderator === true });
+      const agent = entry.agent === undefined ? {} : { agent: entry.agent };
+      authors.set(user, { sig_pub: entry.sig_pub, moderator: entry.moderator === true, ...agent });
     }
   }
   const nextBefore = isText(body.next_before) ? body.next_before : null;
@@ -477,6 +483,27 @@ export class Community {
     return true;
   }
 
+  /**
+   * An agent author (ADR-082): its certificate must verify under its user's signing key, which is pinned like the key
+   * of a user author (first sight, then it must not change); true when it does, null otherwise.
+   */
+  async #agentOk(agentId: string, author: Author): Promise<true | null> {
+    const agent = author.agent;
+    if (!isRecord(agent) || !isText(agent.user) || !isText(agent.user_sig_pub) || !isText(agent.kem_pub)) return null;
+    try {
+      const pub = { kem: agent.kem_pub, sig: author.sig_pub };
+      await verifyCert(b64uDecode(agent.user_sig_pub, 32), agent.cert, {
+        agent: agentId,
+        pub,
+        user: agent.user,
+        gen: agent.gen,
+      });
+    } catch {
+      return null;
+    }
+    return this.#pinned(agent.user, agent.user_sig_pub) ? true : null;
+  }
+
   async #read(row: Row, author: Author | undefined): Promise<CommunityMessage> {
     const base = {
       seq: row.seq,
@@ -501,6 +528,8 @@ export class Community {
     if (header.id !== row.id || header.author !== row.author || !this.#pinned(row.author, author.sig_pub)) {
       return failed;
     }
+    const agent = author.agent === undefined ? false : await this.#agentOk(row.author, author);
+    if (agent === null) return failed;
     const key = this.#key;
     if (key === null) {
       this.#pending.set(row.seq, { row, author });
@@ -509,7 +538,7 @@ export class Community {
     if (header.epoch !== key.epoch) return failed;
     try {
       const body = await C.openMessage(key.secret, row.message, sigPublic);
-      return { ...base, removed: false, status: 'verified', name: body.name, text: body.text };
+      return { ...base, removed: false, status: 'verified', name: body.name, text: body.text, agent };
     } catch {
       return failed;
     }

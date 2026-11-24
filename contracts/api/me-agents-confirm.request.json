@@ -2,14 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/me-agents-confirm.request.json",
   "title": "POST /v1/me/agents request",
-  "description": "Body of POST /v1/me/agents (11-agent-access.md section 4).",
+  "description": "Body of POST /v1/me/agents (11-agent-access.md section 4): the new form (gen, cert, user_ct, batches, cred_wraps; ADR-082 section 2) or the old form with bundle_ct (only from the agent of an account without a passkey; a browser gets 409 client_outdated).",
   "type": "object",
   "properties": {
     "pairing_id": {
       "$ref": "../common.json#/$defs/uuid"
     },
     "bundle_ct": {
-      "$ref": "../common.json#/$defs/bundle_ct"
+      "$ref": "../common.json#/$defs/bundle_ct",
+      "description": "the old form (ADR-056): the user's identity sealed to the agent"
     },
     "label_ct": {
       "$ref": "../common.json#/$defs/bundle_ct"
@@ -20,11 +21,73 @@
     "handover_ct": {
       "$ref": "../common.json#/$defs/bundle_ct",
       "description": "the handover sealed to the agent (11-agent-access.md section 3): required for a remote pairing (400 handover_required), refused for a loopback pairing (400 handover_unexpected)"
+    },
+    "gen": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "description": "the generation the certificate names: the gen of GET /v1/agent-pairings/{id} signed by the user (409 agent_gen_mismatch otherwise)"
+    },
+    "cert": {
+      "$ref": "../common.json#/$defs/b64u_64",
+      "description": "the user's delegation certificate (Ed25519 signature, ADR-082 section 9.1)"
+    },
+    "user_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct",
+      "description": "the user's public keys and the certificate sealed to the agent under the handover secret (ADR-082 section 2)"
+    },
+    "batches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "one append batch per organization in which the user is an active member: the body of POST /v1/orgs/{org}/log without events, entries by the user (ADR-082 section 2)",
+        "properties": {
+          "org": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "expected_seq": {
+            "$ref": "../common.json#/$defs/seq"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/log_entry"
+            },
+            "minItems": 1,
+            "maxItems": 1000
+          },
+          "wraps": {
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/wrap"
+            },
+            "minItems": 0,
+            "maxItems": 10000
+          }
+        },
+        "required": [
+          "org",
+          "expected_seq",
+          "entries",
+          "wraps"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    },
+    "cred_wraps": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/wrap"
+      },
+      "minItems": 0,
+      "maxItems": 1000,
+      "description": "the user's CK epochs wrapped to the agent (scope cred, scope_id the user, recipient the agent)"
     }
   },
   "required": [
     "pairing_id",
-    "bundle_ct",
     "label_ct",
     "claim_hash"
   ],

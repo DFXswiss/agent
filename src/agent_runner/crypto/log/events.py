@@ -19,6 +19,9 @@ implementation; the first failing check gives the code):
    author device (`author_not_writer`). Readers accept any epoch they hold a key for. E9 (`event_conflict`) is
    `check_replay`, run by the hub against the stored event with the same `id`.
 
+An agent (ADR-082) writes with its user's rights: E3 treats it as a user, E5 resolves its rights through
+`OrgState.acting`, and the `ref` of its `member.profile` is its user.
+
 Every function takes the clock as a parameter (`now`, `rotated_at`).
 """
 
@@ -33,7 +36,7 @@ from agent_runner.crypto import event as event_format
 from agent_runner.crypto.encoding import b64u_decode, canonical, require_keys
 from agent_runner.crypto.errors import fail
 from agent_runner.crypto.ids import is_uuid7
-from agent_runner.crypto.log.state import DEVICE, USER, OrgState, Principal
+from agent_runner.crypto.log.state import AGENT, DEVICE, USER, OrgState, Principal
 from agent_runner.crypto.log.verify import VerifiedLog
 
 GRACE = timedelta(seconds=600)
@@ -157,8 +160,8 @@ def _field_valid(rule: str, value: object, header: Mapping[str, object], state: 
         return value == header["scope_id"]
     if rule == "target":
         return value in state.workgroups
-    if rule == "author":
-        return value == header["author"]
+    if rule == "author":  # an agent's profile is its user's
+        return value == state.acting(cast(str, header["author"]))
     if rule in ("read_target", "subject"):
         return value != "" if rule == "read_target" else _is_subject(value, state)
     # set, device, entry, operation: a UUID
@@ -177,7 +180,7 @@ def has_right(rule: KindRule, state: OrgState, header: Mapping[str, object]) -> 
     if rule.right == ORG_ADMIN:
         return state.is_admin(author)
     if rule.right == ORG_MEMBER_SELF:
-        return state.member(author) is not None and header["ref"] == author
+        return state.member(author) is not None and header["ref"] == state.acting(author)
     if rule.right == WG_WRITE:
         return state.can_write_wg(author, scope_id)
     return state.assigned(author, scope_id) and state.writable(scope_id)
@@ -205,7 +208,9 @@ def check_event(
         fail("header_invalid")
     state = log.state_at(cast(int, header["lh"]))
     author = _author(state, header, excluded)
-    rule = kind_rule(cast(str, header["kind"]), cast(str, header["scope"]), author.kind)
+    rule = kind_rule(
+        cast(str, header["kind"]), cast(str, header["scope"]), USER if author.kind == AGENT else author.kind
+    )
     check_header_rules(rule, header, state)
     event_format.verify_event(event, b64u_decode(author.sig))
     if not has_right(rule, state, header):

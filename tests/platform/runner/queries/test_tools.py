@@ -11,7 +11,7 @@ import pytest
 
 from agent_runner.queries import projection
 
-from ..reconcile.rig import Rig
+from ..reconcile.rig import Rig, pid
 from .kit import (
     ALICE,
     BOB,
@@ -119,6 +119,19 @@ def test_list_members_leaves_out_removed_members(rig: Rig) -> None:
         org = (await k.ok(sid, "list_members", {"scope": "org"}))["members"]
         assert CAROL not in {m["id"] for m in org}
         assert {ALICE, BOB} <= {m["id"] for m in org}
+
+    run(rig, body)
+
+
+def test_list_members_leaves_out_agents_which_act_as_their_users(rig: Rig) -> None:
+    async def body(k: RKit) -> None:
+        await k.pull()
+        sid = await k.session(1)
+        await k.extend(lambda log: log.agent_add("alice", "bot", "alice", 1))
+        for scope in ("org", "workgroup"):
+            members = (await k.ok(sid, "list_members", {"scope": scope}))["members"]
+            assert pid("bot") not in {m["id"] for m in members}
+            assert ALICE in {m["id"] for m in members}
 
     run(rig, body)
 

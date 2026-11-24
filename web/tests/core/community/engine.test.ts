@@ -5,6 +5,7 @@
 // community, failures and sign-outs in flight.
 import { describe, expect, it } from 'vitest';
 import { Prefs, type PrefStorage } from '../../../src/core/account/prefs';
+import { signCert } from '../../../src/core/crypto/agent';
 import {
   Community,
   community,
@@ -388,6 +389,41 @@ describe('reading', () => {
     again.prefs.setCommunityKeys(b.id, { [a.id]: hub.keys.get(b.id)! });
     await again.engine.start();
     expect(state(again).messages.at(-1)).toMatchObject({ status: 'unverifiable', name: null, text: null });
+  });
+
+  it("shows an agent's message when its certificate verifies under its user's pinned key (ADR-082)", async () => {
+    const { hub, a, raw } = await withHolder();
+    const agentOf = async (user: User, signer: User = user) => {
+      const bot = await hub.user();
+      const pub = bot.identity.public();
+      const cert = await signCert(signer.identity.sig.privateKey, { agent: bot.id, pub, user: user.id, gen: 1 });
+      const info = { user: user.id, user_sig_pub: hub.keys.get(user.id)!, kem_pub: pub.kem, gen: 1, cert };
+      hub.agents.set(bot.id, info);
+      return { bot, info };
+    };
+    const { bot } = await agentOf(a);
+    await hub.sealed(bot, raw, body('Anna', 'from the agent'));
+    // a certificate the user did not sign, a malformed agent member
+    const { bot: forged } = await agentOf(a, await hub.user());
+    await hub.sealed(forged, raw, body('Anna', 'x'));
+    const { bot: odd } = await agentOf(a);
+    hub.agents.set(odd.id, 'x');
+    await hub.sealed(odd, raw, body('Anna', 'x'));
+    const reader = connect(hub, hub.signIn(a));
+    await reader.engine.start();
+    expect(state(reader).messages.map((m) => [m.status, m.agent ?? false])).toEqual([
+      ['verified', true],
+      ['unverifiable', false],
+      ['unverifiable', false],
+    ]);
+    expect(state(reader).messages[0]).toMatchObject({ name: 'Anna', text: 'from the agent' });
+    expect(reader.prefs.communityKeys(a.id)[a.id]).toBe(hub.keys.get(a.id));
+    // the user's key is pinned like a user author's: another key of that user makes the agent unverifiable
+    const pinned = connect(hub, hub.signIn(a));
+    pinned.prefs.setCommunityKeys(a.id, { [a.id]: hub.keys.get(bot.id)! });
+    await pinned.engine.start();
+    expect(state(pinned).messages[0]).toMatchObject({ status: 'unverifiable', name: null, text: null });
+    expect(state(pinned).messages[0]).not.toHaveProperty('agent');
   });
 
   it('shows no content of a message that fails any check', async () => {

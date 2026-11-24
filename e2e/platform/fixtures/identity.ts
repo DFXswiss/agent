@@ -254,7 +254,8 @@ export async function memberLog(member: PageUser, org: string): Promise<Verified
 /**
  * The events of a scope (newest last) opened with `keys` – the keys a principal holds: an event is opened with the key
  * of its epoch; an event whose epoch key the principal does not hold is tried with every key of the scope it holds and
- * counts as `locked` (by its epoch) only when none of them opens it. The author keys come from the hub's tables.
+ * counts as `locked` (by its epoch) only when none of them opens it. The author keys come from the hub's tables (an
+ * agent with its own identity authors under its own ID, ADR-082).
  */
 export async function openScopeEvents(
   orchestrator: Orchestrator,
@@ -268,8 +269,9 @@ export async function openScopeEvents(
     `/v1/scopes/${scope.id}/events?kinds=${encodeURIComponent(kinds.join(','))}`,
   )) as { events: { event: { header: { id: string; epoch: number } } }[] };
   const authors = await orchestrator.hubQuery<{ id: string; sig_pub: string }>(
-    `SELECT e.id, encode(coalesce(d.sig_pub, u.sig_pub), 'hex') AS sig_pub FROM hub.event e
+    `SELECT e.id, encode(coalesce(d.sig_pub, u.sig_pub, a.sig_pub), 'hex') AS sig_pub FROM hub.event e
        LEFT JOIN hub.device d ON d.id = e.author_id LEFT JOIN hub.user_identity u ON u.user_id = e.author_id
+       LEFT JOIN hub.agent a ON a.id = e.author_id AND a.own_identity
       WHERE e.scope_id = '${uuid(scope.id)}'`,
   );
   const authorOf = new Map(authors.map((author) => [author.id, hex(author.sig_pub)]));

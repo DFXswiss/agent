@@ -109,6 +109,13 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("remote", BOOL),  # KOR-42, migration 0017
         ("nonce", B),
         ("handover_ct", B),
+        ("own_identity", BOOL),  # KOR-57, migration 0026 (ADR-082)
+        ("held_identity", BOOL),
+        ("gen", INT),
+        ("cert", B),
+        ("user_ct", B),
+        ("session_id", U),
+        ("revoked_reason", T),
     ],
     "request_nonce": [("key_id", T), ("nonce", T), ("seen_at", TS)],
     "device": [

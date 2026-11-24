@@ -18,6 +18,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from agent_hub import signals
+from agent_hub.agents.identity import actor
 from agent_hub.errors import HubError
 from agent_hub.events.notify import announce
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
@@ -70,20 +71,24 @@ def user_id(principal: CurrentPrincipal) -> UUID:
 
 
 def user_of(principal: CurrentPrincipal) -> Appender:
-    """The appending user of a browser request."""
-    return Appender(str(user_id(principal)), "user")
+    """The cryptographic actor of a browser request: the user, or the user's own-identity agent (ADR-082)."""
+    return actor(principal)
 
 
 def publish_append(result: AppendResult) -> None:
-    """The live frames and the signal of a committed append (module docstring)."""
+    """The live frames and the signal of a committed append (module docstring); the verified log after the append
+    is cached only now, after the commit (`logs.remember`)."""
+    logs.remember(result.org_id, result.log)
     head = result.head
     publish(Audience("org", result.org_id), "log", {"org_id": str(result.org_id), "head": head.to_json()})
     for device in sorted(result.devices):
         publish(Audience("device", UUID(device)), "log", {"org_id": str(result.org_id), "seq": head.seq})
     state = result.log.state
     for recipient in sorted({slot.recipient for slot in result.batch.wraps}):
-        kind: AudienceKind = "device" if state.principals[recipient].kind == DEVICE else "user"
-        publish(Audience(kind, UUID(recipient)), "wraps", {})
+        principal = state.principals[recipient]
+        kind: AudienceKind = "device" if principal.kind == DEVICE else "user"
+        # an agent receives on its user's channel (ADR-082)
+        publish(Audience(kind, UUID(principal.parent or recipient)), "wraps", {})
     announce(result.events)
     publish_rows(result.notices)
     signals.emit("log.appended", org_id=result.org_id, seq=head.seq)

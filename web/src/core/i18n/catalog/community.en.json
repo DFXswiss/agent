@@ -20,6 +20,7 @@
   "removed": "Message removed",
   "unverifiable": "Message could not be verified",
   "pending": "Waiting for the community key…",
+  "agent-of": "Agent of {name}",
   "unknown": "Unknown",
   "link.external": "(opens in a new tab)",
   "menu": "Actions for the message of {name}",

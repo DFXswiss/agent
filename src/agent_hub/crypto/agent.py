@@ -45,8 +45,17 @@ its method (`method`, today only `PROOF_METHODS` = `agent-signature-v1`):
   "user"})` with the 32-byte challenge of `recovery/begin`, signed by the identity opened with the recovery code and
   by the new agent key; it binds the new main orchestrator to that recovery.
 
-The hub uses only `verify_pop`, `verify_text`, `claim_hash` and the format checks; sealing and opening belong to the
-browser and the agent tool (this module is the reference for the vectors).
+The agent's own identity (ADR-082 sections 1, 2 and 9.1): the agent is a sub-principal of its user.
+
+- `cert_text`/`sign_cert`/`verify_cert`: the delegation certificate, the user's Ed25519 signature over
+  `P || "agent-cert\0" || canonical({"agent", "gen", "pub": {kem, sig}, "user", "v": 1})` with the generation
+  `gen` >= 1 the hub counts per user. Every verifier checks it under the user's signing key from its verified log.
+- `seal_user`/`open_user`: the agent's anchor, the user's **public** identity keys and the certificate sealed like the
+  identity (`k` from `r`, AES-GCM inner with AAD = info, HPKE outer), `info = P || "agent-user\0" ||
+  canonical({"agent", "user"})`, plaintext exactly `canonical({"cert", "kem", "sig"})` (`header_invalid` otherwise).
+
+The hub uses only `verify_pop`, `verify_text`, `verify_cert`, `claim_hash` and the format checks; sealing and opening
+belong to the browser and the agent tool (this module is the reference for the vectors).
 """
 
 from __future__ import annotations
@@ -58,7 +67,7 @@ import unicodedata
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
-from agent_hub.crypto import aead, hpke
+from agent_hub.crypto import aead, fields, hpke
 from agent_hub.crypto.bundle import bundle_plaintext, parse_bundle_plaintext
 from agent_hub.crypto.encoding import (
     P,
@@ -68,6 +77,7 @@ from agent_hub.crypto.encoding import (
     canonical,
     parse_json,
     require_bytes,
+    require_int,
     require_keys,
 )
 from agent_hub.crypto.errors import CryptoError, fail
@@ -86,6 +96,13 @@ LABEL_AGENT_HANDOVER = b"agent-handover\x00"
 LABEL_AGENT_RETURN = b"agent-return\x00"
 LABEL_AGENT_ACCOUNT = b"agent-account\x00"
 LABEL_AGENT_RECOVER = b"agent-recover\x00"
+LABEL_AGENT_CERT = b"agent-cert\x00"
+LABEL_AGENT_USER = b"agent-user\x00"
+CERT_VERSION = 1
+MAX_GEN = 2**31 - 1
+SIGNATURE_BYTES = 64
+_PUB_KEYS = frozenset({"kem", "sig"})
+_USER_KEYS = frozenset({"cert", "kem", "sig"})
 METHOD_AGENT_SIGNATURE = "agent-signature-v1"
 PROOF_METHODS = (METHOD_AGENT_SIGNATURE,)
 CHALLENGE_BYTES = 32
@@ -388,3 +405,70 @@ def sign_text(key: Ed25519PrivateKey, text: bytes) -> str:
 def verify_text(sig_pub: bytes, signature: object, text: bytes) -> None:
     """`signature_invalid` unless `signature` is the signature of `sig_pub` over `text`."""
     ed25519_verify_b64u(sig_pub, signature, text)
+
+
+def public_keys(pub: object) -> dict[str, str]:
+    """Exactly `{"kem", "sig"}`, each the b64u text of a 32-byte key (`header_invalid` otherwise)."""
+    value = require_keys(pub, _PUB_KEYS)
+    return _public(b64u_decode(value["kem"], RAW_KEY_BYTES), b64u_decode(value["sig"], RAW_KEY_BYTES))
+
+
+def cert_text(agent_id: str, pub: object, user_id: str, gen: object) -> bytes:
+    """The text of the delegation certificate (`header_invalid` for malformed IDs, keys or generation)."""
+    certified = {
+        "agent": fields.uuid(agent_id),
+        "gen": require_int(gen, 1, MAX_GEN),
+        "pub": public_keys(pub),
+        "user": fields.uuid(user_id),
+        "v": CERT_VERSION,
+    }
+    return P + LABEL_AGENT_CERT + canonical(certified)
+
+
+def sign_cert(user_sig: Ed25519PrivateKey, agent_id: str, pub: object, user_id: str, gen: object) -> str:
+    """The user's b64u signature over `cert_text` (made by the user's client at the confirmation)."""
+    return b64u_encode(ed25519_sign(user_sig, cert_text(agent_id, pub, user_id, gen)))
+
+
+def verify_cert(user_sig_pub: bytes, cert: object, *, agent_id: str, pub: object, user_id: str, gen: object) -> None:
+    """`signature_invalid` unless `cert` is the user's signature over `cert_text`."""
+    ed25519_verify_b64u(user_sig_pub, cert, cert_text(agent_id, pub, user_id, gen))
+
+
+def user_info(agent_id: str, user_id: str) -> bytes:
+    """The HPKE `info` (and inner AAD) of the user's anchor sealed to the agent."""
+    return P + LABEL_AGENT_USER + _ids(agent_id, user_id)
+
+
+def user_plaintext(user_pub: object, cert: object) -> bytes:
+    """`canonical({"cert", "kem", "sig"})`: the plaintext of `user_ct`."""
+    return canonical({"cert": b64u_encode(b64u_decode(cert, SIGNATURE_BYTES)), **public_keys(user_pub)})
+
+
+def seal_user(
+    agent_kem_pub: bytes,
+    secret: bytes,
+    agent_id: str,
+    user_id: str,
+    *,
+    user_pub: object,
+    cert: object,
+    nonce: bytes | None = None,
+    ephemeral: X25519PrivateKey | None = None,
+) -> str:
+    """`user_ct`: the user's public keys and the certificate under `k` and sealed to the agent (`nonce`, `ephemeral`
+    only for test vectors)."""
+    info = user_info(agent_id, user_id)
+    inner = aead.seal_blob(bundle_key(secret, agent_id, user_id), user_plaintext(user_pub, cert), info, nonce)
+    return b64u_encode(hpke.seal(agent_kem_pub, info, inner, ephemeral))
+
+
+def open_user(agent_kem: X25519PrivateKey, secret: bytes, agent_id: str, user_id: str, sealed: str) -> dict[str, str]:
+    """The inverse of `seal_user`: `{"cert", "kem", "sig"}` (`hpke_short`, `decrypt_failed`, `header_invalid`)."""
+    info = user_info(agent_id, user_id)
+    inner = hpke.open_(agent_kem, info, b64u_decode(sealed))
+    plaintext = aead.open_blob(bundle_key(secret, agent_id, user_id), inner, info)
+    value = require_keys(parse_json(plaintext), _USER_KEYS)
+    if user_plaintext({"kem": value["kem"], "sig": value["sig"]}, value["cert"]) != plaintext:
+        fail("header_invalid")
+    return {"cert": str(value["cert"]), "kem": str(value["kem"]), "sig": str(value["sig"])}

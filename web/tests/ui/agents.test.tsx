@@ -13,6 +13,7 @@ import { HubError } from '../../src/core/net/signedFetch';
 import { I18nProvider } from '../../src/ui/i18n';
 import { AgentsSection, section } from '../../src/ui/settings/sections/agents';
 import { AppEnvProvider } from '../../src/ui/shell/context';
+import { ensureOrg } from '../../src/core/store/slices/orgs';
 import { AGENT, agentWorld, type Handler, OTHER, USER } from '../core/agents/world';
 
 // the passkey flows run real WebCrypto: allow them time on a loaded machine
@@ -154,11 +155,95 @@ describe('AgentsSection', () => {
 
     // disconnect all
     fireEvent.click(screen.getByTestId('agents.disconnect-all'));
-    expect(screen.getByTestId('agents.dialog.body')).toHaveTextContent('Every agent loses all access at once.');
+    expect(screen.getByTestId('agents.dialog.body')).toHaveTextContent('Every agent loses all access at once:');
     agents = [];
     fireEvent.click(screen.getByTestId('agents.dialog.confirm'));
     expect(await screen.findByTestId('agents.empty')).toHaveTextContent('No AI agent is connected.');
     expect(screen.queryByTestId('agents.disconnect-all')).toBeNull();
+  });
+
+  it('marks own-identity and held-identity agents, says what a held copy keeps, and cleans up the logs', async () => {
+    const label = (id: string, w: World) => sealLabel(w.identity.kemPublic(), id, USER, { name: 'Bot', host: 'Mac' });
+    let agents: unknown[] = [];
+    const w = await world({
+      'GET /v1/me/agents': () => ({ agents }),
+      [`DELETE /v1/me/agents/${AGENT}`]: () => ({}),
+      'DELETE /v1/me/agents': () => ({ revoked: 1 }),
+      'GET /v1/me/audit': () => ({ rows: [], next_before: null }),
+    });
+    const row = async (agent_id: string, extra: Record<string, unknown>) => ({
+      agent_id,
+      state: 'active',
+      label_ct: await label(agent_id, w),
+      created_at: T,
+      confirmed_at: T,
+      claimed_at: T,
+      last_used_at: null,
+      revoked_at: null,
+      replaces: null,
+      remote: false,
+      own_identity: false,
+      held_identity: false,
+      gen: null,
+      revoked_reason: null,
+      ...extra,
+    });
+    agents = [
+      await row(AGENT, { own_identity: true, gen: 2 }),
+      await row(OTHER, { held_identity: true }),
+      await row(THIRD, { own_identity: true, remote: true, gen: 1, state: 'revoked' }),
+    ];
+    ensureOrg(w.store, 'org-a');
+    let release: (() => void) | null = null;
+    const refreshLog = () => new Promise<boolean>((resolve) => (release = () => resolve(true)));
+    const router = createMemoryRouter([{ path: '/settings', element: <AgentsSection /> }], {
+      initialEntries: ['/settings'],
+    });
+    const app = { store: w.store, tasks: { ...w.context, refreshLog, now: () => Date.parse(T) }, client: w.client };
+    render(
+      <AppEnvProvider value={{ app: app as never, credentials: {} as never, origin: 'https://hub.example' }}>
+        <I18nProvider value={createI18n('en')}>
+          <RouterProvider router={router} />
+        </I18nProvider>
+      </AppEnvProvider>,
+    );
+    const items = await screen.findAllByTestId('agents.item');
+    expect(within(items[0]!).getByTestId('agents.item.runs')).toHaveTextContent(
+      'Runs on its computer with its own key',
+    );
+    expect(within(items[0]!).queryByTestId('agents.item.held')).toBeNull();
+    expect(within(items[1]!).getByTestId('agents.item.held')).toHaveTextContent('Received a copy of your account key');
+    expect(within(items[1]!).queryByTestId('agents.item.runs')).toBeNull();
+    expect(within(items[2]!).queryByTestId('agents.item.runs')).toBeNull();
+    // an own-identity agent: no word about a copy of the account key
+    fireEvent.click(within(items[0]!).getByTestId('agents.item.disconnect'));
+    expect(screen.getByTestId('agents.dialog.body')).toHaveTextContent('it is removed from every organization');
+    expect(screen.queryByTestId('agents.dialog.held')).toBeNull();
+    fireEvent.click(screen.getByTestId('agents.dialog.cancel'));
+    // a held copy keeps opening what is encrypted for the user
+    fireEvent.click(within(items[1]!).getByTestId('agents.item.disconnect'));
+    expect(screen.getByTestId('agents.dialog.held')).toHaveTextContent(
+      'That copy keeps opening what is encrypted for you',
+    );
+    fireEvent.click(screen.getByTestId('agents.dialog.cancel'));
+    fireEvent.click(screen.getByTestId('agents.disconnect-all'));
+    expect(screen.getByTestId('agents.dialog.held')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('agents.dialog.cancel'));
+    // the disconnect waits for the log clean-up
+    const only = [await row(AGENT, { own_identity: true, gen: 2 })];
+    agents = only;
+    fireEvent.click(within(items[0]!).getByTestId('agents.item.disconnect'));
+    fireEvent.click(screen.getByTestId('agents.dialog.confirm'));
+    expect(await screen.findByTestId('agents.dialog.cleaning')).toHaveTextContent('Removing the agent');
+    // the clean-up starts after the revocation and the reload of the list
+    await waitFor(() => expect(release).not.toBeNull());
+    act(() => release!());
+    await waitFor(() => expect(screen.queryByTestId('agents.dialog')).toBeNull());
+    expect(screen.getAllByTestId('agents.item')).toHaveLength(1);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('agents.disconnect-all'));
+    });
+    expect(screen.queryByTestId('agents.dialog.held')).toBeNull();
   });
 
   it('shows failures with a retry and an empty account audit', async () => {

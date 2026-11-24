@@ -60,7 +60,7 @@ from agent_hub.events import hooks
 from agent_hub.events import notify as event_notify
 from agent_hub.log.events import DEVICE_ASSIGNED_WG_SESSION, KIND_RULES, NOTIFY_ALLOWED, check_event_hub, check_replay
 from agent_hub.log.platform import PlatformState
-from agent_hub.log.state import DEVICE
+from agent_hub.log.state import AGENT, DEVICE, USER
 from agent_hub.log.verify import VerifiedLog
 from agent_hub.orgs import logs
 
@@ -109,6 +109,8 @@ class _Checked:
     author_kind: str
     notify: bool
     devices: frozenset[str]
+    actor_id: str
+    """The audit actor: the author, or the user of an agent author (ADR-082)."""
 
 
 def hub_error(error: CryptoError) -> HubError:
@@ -211,14 +213,16 @@ def _check(
     author = cast(str, header["author"])
     readers = log.state.readers(scope, scope_id, excluded)
     devices = frozenset(p for p in readers if p != author and log.state.principals[p].kind == DEVICE)
+    principal = log.state.principals[author]
     return _Checked(
         index=index,
         header=header,
         event=cast(dict[str, Any], event),
         log=log,
-        author_kind=log.state.principals[author].kind,
+        author_kind=principal.kind,
         notify=notify,
         devices=devices,
+        actor_id=principal.parent or author,
     )
 
 
@@ -299,8 +303,8 @@ def _store(connection: Connection, item: _Checked, *, now: datetime, origin_seq:
             connection,
             AuditRow(
                 at=now,
-                actor_kind=item.author_kind,
-                actor_id=UUID(author),
+                actor_kind=USER if item.author_kind == AGENT else item.author_kind,
+                actor_id=UUID(item.actor_id),
                 action="event.append",
                 result="ok",
                 org_id=UUID(cast(str, header["org"])),

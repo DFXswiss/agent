@@ -654,7 +654,8 @@ def test_the_agent_of_an_account_without_a_passkey_replaces_itself(hub: HubHarne
     account = register(hub, seed_invite(hub))
     user = uuid.UUID(account.user_id)
     successor, _answer = create_remote(hub)
-    confirm = remote_handover(successor, user, account.identity)
+    # the old form (the identity sealed to the successor) stays open to an account of an agent alone (ADR-082 §7)
+    confirm = remote_handover(successor, user, account.identity, old=True)
     response = account.client(hub).post("/v1/me/agents", json=confirm.body)
     assert (response.status_code, response.json()) == (200, {"agent_id": str(successor.agent_id)})
     # the confirming agent is revoked at once and named in `replaces`

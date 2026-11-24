@@ -5,7 +5,9 @@
 // for the `cred` scope of a user the owner plus devices assigned to any workgroup in which the owner has **explicit**
 // access, in any org in which the owner joined by its own entry, not by `admit` (section 2, ADR-007, ADR-058 section
 // 1: the inherited read of an admin does not spread credentials; ADR-060: an admission without consent does not
-// either). Decertified platform devices are passed as `excluded`.
+// either). Decertified platform devices are passed as `excluded`. The owner's active agent (ADR-082) is a reader of
+// the credential key too, unless it is revoked (`revokedAgents`); an org whose `genesis`/`accept` of the owner was
+// signed by a revoked agent gives no consent.
 // - W1: a principal may wrap a scope epoch for itself if it holds the key (it is entitled now).
 // - W2: a holder may wrap for any principal that is entitled now. A holder of `(scope, scope_id, e)` is the creator
 //   of epoch e, a principal that could read the scope while e was current, or a principal entitled now.
@@ -19,7 +21,7 @@ import { fail } from '../crypto/errors';
 import * as F from '../crypto/fields';
 import { verifyWrap } from '../crypto/wrap';
 import { refusalCode } from './entries';
-import { compareText, DEVICE, ORG, type OrgState, type Principal, WG } from './state';
+import { AGENT, compareText, DEVICE, ORG, type OrgState, type Principal, WG } from './state';
 import type { VerifiedLog } from './verify';
 
 export const CRED = 'cred';
@@ -67,10 +69,29 @@ export function slotOf(value: { scope: string; scope_id: string; epoch: number; 
 }
 
 /**
- * For a user: the owner and every active device assigned to a workgroup in which the owner has explicit access, over
- * all orgs in which the owner joined by its own entry (an org that admitted the owner without its consent gets no
- * credential key, ADR-060). For an organization among `states` (the credential key of its company accounts, KM-35,
- * ADR-078): every active device assigned to a workgroup of it – devices only, no user.
+ * The agents that are revoked across the verified states of a user's logs (ADR-082 section 9.1): superseded (an agent
+ * of the same user with a higher generation exists in any state) or removed by its user, an agent of its user or itself
+ * in any
+ * state.
+ */
+export function revokedAgents(states: Iterable<OrgState>): Set<string> {
+  const agents = [...states].flatMap((state) => [...state.principals.values()].filter((p) => p.kind === AGENT));
+  return new Set(
+    agents
+      .filter(
+        (agent) =>
+          agent.removedByOwner || agents.some((other) => other.parent === agent.parent && other.gen! > agent.gen!),
+      )
+      .map((agent) => agent.id),
+  );
+}
+
+/**
+ * For a user: the owner, its active agents that are not revoked, and every active device assigned to a workgroup in
+ * which the owner has explicit access, over all orgs in which the owner joined by its own entry (an org that admitted
+ * the owner without its consent gets no credential key, ADR-060; neither does one whose join of the owner a revoked
+ * agent signed, ADR-082). For an organization among `states` (the credential key of its company accounts, KM-35,
+ * ADR-078): every active device assigned to a workgroup of it – devices only, no user, no agent.
  */
 export function credReaders(states: Iterable<OrgState>, owner: string, excluded: Iterable<string> = []): Set<string> {
   const skip = new Set(excluded);
@@ -84,8 +105,13 @@ export function credReaders(states: Iterable<OrgState>, owner: string, excluded:
     );
   }
   const found = new Set([owner]);
+  const revoked = revokedAgents(list);
   for (const state of list) {
-    if (state.member(owner)?.consented !== true) continue;
+    const user = state.member(owner);
+    if (user === null) continue;
+    const agent = state.activeAgent(owner);
+    if (agent !== null && !revoked.has(agent.id)) found.add(agent.id);
+    if (!user.consented || (user.joinAgent !== null && revoked.has(user.joinAgent))) continue;
     for (const device of state.principals.values()) {
       const eligible = state.deviceWgs(device.id).some((wg) => state.explicitAccess(owner, wg) !== null);
       if (device.kind === DEVICE && !skip.has(device.id) && eligible) found.add(device.id);

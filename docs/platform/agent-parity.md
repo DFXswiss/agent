@@ -62,11 +62,11 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | passkey-add | settings/passkeys | `passkey add` (opens the settings page in the user's browser: a passkey needs the user's authenticator) | done |
 | passkey-remove | settings/passkeys | `passkey remove --id` | done |
 | passkey-forget-browser | settings/passkeys | (forgets the unlock key this browser keeps without passkey PRF; an agent keeps no such key) | n/a |
-| recovery-new | settings/passkeys | `recovery new` | done |
+| recovery-new | settings/passkeys | `recovery new` (an agent with its own identity, ADR-082, holds no identity to seal: it opens the settings page in the user's browser, as passkey add does) | done |
 | agents-list | settings/agents | `agents list` | done |
 | agents-pair | settings/agents | `pair` (the user's passkey approval replaces the main orchestrator; `pair` opens the page) | done |
 | agents-confirm | screens/connect (the main orchestrator of an account without a passkey confirms a remote pairing itself, KOR-62) | `agents confirm --link --code` | done |
-| agents-revoke | settings/agents | `agents revoke --id --all` | done |
+| agents-revoke | settings/agents | `agents revoke --id --all` (ADR-082 section 4: the hub refuses the key, the agent is removed from every log with its R and the user's credential key rotated; revoking itself leaves every log first) | done |
 | agents-activity | settings/agents | `audit` | done |
 | org-list | shell (org switcher) | `org list` | done |
 | org-create | screens/home | `org create` | done |
@@ -282,6 +282,7 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | action:connect-agent | `register --own-account` (an account of its own through an invitation), `recover --hub` (an account of its own on another computer) | built |
 | action:register | `register --own-account` | built |
 | action:agents-pair | `agents confirm` (an account without a passkey: its main orchestrator confirms the new agent) | built |
+| action:recovery-new | `recovery new` (an account of an agent alone: its agent holds the account's identity and makes the code itself; only the agent of an account with a passkey opens the browser) | built |
 | action:passkey-add | `status` (an account of an agent alone needs no passkey: the agent signs with its key) | built |
 | action:credential-claude-login | `claude connect` (the Claude Code login of this computer, read only), `credentials set-api-key`, `settings set --model-access` (the DFX model access); `claude setup-token` needs a person's click at claude.ai | outside |
 | action:credential-claude-relay | `claude connect`, `credentials set-api-key` (the relayed login needs a person at claude.ai) | outside |

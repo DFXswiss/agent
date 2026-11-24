@@ -101,8 +101,8 @@ def _revoke(account: Account, org: str, invite: str) -> None:
         built = build_batch(
             log,
             org=org,
-            author=account.user_id,
-            identity=account.identity,
+            author=account.actor,
+            identity=account.signer,
             fields=[{"type": "invite_revoke", "invite_id": invite}],
             ts=now_text(),
             held={},

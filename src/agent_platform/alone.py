@@ -19,11 +19,14 @@ browser at any step.
   carries the new code once (`secret_fields`), the old one no longer works.
 - `agents confirm --link <connect link> --code <agent code>` (`confirm`): the main orchestrator of an account
   without a passkey confirms a pairing from another computer (`pair --remote` of the new agent) the way the page does
-  it: link and hub must agree (fingerprint, mode, nonce), the agent code must match, then it seals the identity,
-  label and handover to the new agent and `POST /v1/me/agents` makes the new agent the main orchestrator. This agent
-  is replaced by it (the hub revokes it at once; the tool deletes its state). The result names the return code the
-  new agent needs (`pair --wait --return-code`). On an account with a passkey the hub refuses (`not_own_account`):
-  there the person's passkey approval decides (concept idea 34).
+  it: link and hub must agree (fingerprint, mode, nonce), the agent code must match, then it hands the account's
+  identity to the new agent (`bundle_ct`, ADR-082 section 7 unchanged: the successor is again the account's only
+  holder and can confirm pairings and make recovery codes without a person), seals label and handover and
+  `POST /v1/me/agents` makes the new agent the main orchestrator. An account that has a passkey by now would get the
+  new form as a browser builds it (`delegate.delegation`), which the hub refuses from an agent (`not_own_account`). This
+  agent is replaced by it (the hub revokes it at once; the tool deletes its state). The result names the return code the
+  new agent needs (`pair --wait --return-code`). On an account with a passkey the hub refuses (`not_own_account`): there
+  the person's passkey approval decides (concept idea 34).
 
 Secrets never leave as program arguments or in outputs, except the recovery code in its `secret_fields`.
 """
@@ -33,12 +36,13 @@ from __future__ import annotations
 import os
 import secrets as random
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+from agent_platform import delegate
 from agent_platform.account import Account
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
@@ -334,7 +338,7 @@ def recover(
     sealed.store(home, origin, hub_key, root)
     account = Account.open(home)
     try:
-        fresh = recovery_new(account)
+        fresh = recovery_new(account, {})
     finally:
         account.close()
     return {"agent_id": sealed.agent_id, "user_id": user, "hub": origin, **fresh}
@@ -366,16 +370,19 @@ def confirm(account: Account, *, link: str, code: str) -> dict[str, Any]:
     except CryptoError:
         raise PlatformError("invalid_argument") from None
     pairing_id = fields["p"]
-    found = anon_request(account.origin, "GET", f"/v1/agent-pairings/{segment(pairing_id)}")
+    found = account.call("GET", f"/v1/agent-pairings/{segment(pairing_id)}")
     try:
-        pub = cast(dict[str, Any], found.get("pub"))
-        kem_pub, sig_pub = b64u_decode(pub.get("kem"), 32), b64u_decode(pub.get("sig"), 32)
+        pub = agent_crypto.public_keys(found.get("pub"))
+        kem_pub, sig_pub = b64u_decode(pub["kem"], 32), b64u_decode(pub["sig"], 32)
         nonce = b64u_decode(found.get("nonce"), agent_crypto.NONCE_BYTES)
+        gen = found.get("gen")
+        if not isinstance(gen, int) or isinstance(gen, bool) or gen < 1:
+            raise CryptoError("header_invalid")
         if found.get("pairing_id") != pairing_id or found.get("state") != "open" or found.get("remote") is not True:
             raise CryptoError("header_invalid")
         if agent_crypto.fingerprint(kem_pub, sig_pub) != fields["f"]:
             raise CryptoError("header_invalid")
-    except (AttributeError, CryptoError):
+    except CryptoError:
         raise PlatformError("pairing_failed", reason="pairing_mismatch") from None
     expected = agent_crypto.agent_code(pairing_id, fields["f"], nonce, account.origin)
     if typed != expected:
@@ -386,15 +393,25 @@ def confirm(account: Account, *, link: str, code: str) -> dict[str, Any]:
     secret = random.token_bytes(SECRET_BYTES)
     user = account.user_id
     label = {"name": fields["a"], "host": fields["h"]}
-    body = {
+    sealed = {
         "pairing_id": pairing_id,
-        "bundle_ct": agent_crypto.seal_identity(kem_pub, secret, pairing_id, user, account.identity),
-        "label_ct": agent_crypto.seal_label(account.identity.kem_public(), pairing_id, user, label),
+        "label_ct": agent_crypto.seal_label(account.user_kem_public(), pairing_id, user, label),
         "claim_hash": b64u_encode(agent_crypto.claim_hash(agent_crypto.claim(secret, pairing_id, user))),
         "handover_ct": agent_crypto.seal_handover(kem_pub, pairing_id, user, secret, root),
     }
+
+    alone = not account.me().get("passkeys")
+
+    def send() -> dict[str, Any]:
+        if alone:  # the account's identity goes to the successor (ADR-082 section 7)
+            identity = delegate.holder(account)
+            own = {"bundle_ct": agent_crypto.seal_identity(kem_pub, secret, pairing_id, user, identity)}
+        else:
+            own = delegate.delegation(account, agent_id=pairing_id, pub=pub, gen=gen, secret=secret)
+        return account.call("POST", "/v1/me/agents", {**sealed, **own})
+
     try:
-        answer = account.call("POST", "/v1/me/agents", body)
+        answer = delegate.submit(account, send)
     except PlatformError as error:
         if error.fields.get("hub_error") == "forbidden":
             raise PlatformError("not_own_account") from None

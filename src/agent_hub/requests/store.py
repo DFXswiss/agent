@@ -12,13 +12,16 @@ transition is audited as `device_request.<state>`.
 A **chain** is a request with `follows = ""` (its root) and the follow-up requests that name it in `follows` (e.g. the
 authorization code typed during `claude.login`). Rules:
 
+- the envelope is signed by its sender `header.user`: the user (registered identity) or the user's own-identity agent
+  (its key, certificate checked; ADR-082 section 1) - the request belongs to the user either way;
 - the device must be eligible for the user (`agent_hub.credentials.eligibility`, the set of `GET /v1/me/devices`),
   else `403 device_not_assigned`;
 - at most one active root per user, device and kind: a new root replaces an active one, whose chain becomes `failed`;
 - a `github.connect` for a company identity names the organization (`org_id`, ADR-078 section 1): only an active
   admin of it may send one, and only of kind `github.connect` (`403 forbidden` otherwise); it is stored as
   `device_request.org_id`, and the device stores no record while answering it (`agent_hub.github.routes`);
-- a follow-up is accepted only while its root (same user, device and kind, itself no follow-up) is `pending` or
+- a follow-up is accepted only while its root (same user - senders compared through the user they act for, ADR-082
+  section 9.12 -, device and kind, itself no follow-up) is `pending` or
   `delivered` and not past its expiry; anything else is `400 params_invalid` (pointer `/envelope/header/follows`;
   one answer for unknown, foreign and closed roots);
 - a final response to any request of a chain answers the whole chain; when a root expires, its active follow-ups
@@ -41,6 +44,7 @@ from uuid import UUID
 import psycopg
 import psycopg.errors
 
+from agent_hub.agents.store import agent_author_key
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.audit.recorder import unchanged
 from agent_hub.config import LIMITS
@@ -226,11 +230,11 @@ def _lock_user(connection: Connection, user_id: UUID) -> None:
     connection.execute("SELECT 1 FROM hub.principal WHERE id = %s FOR UPDATE", (user_id,))
 
 
-def _check_follows(connection: Connection, header: dict[str, object], now: datetime) -> RequestRow:
+def _check_follows(connection: Connection, header: dict[str, object], user_id: UUID, now: datetime) -> RequestRow:
     original = load(connection, UUID(cast(str, header["follows"])), lock=True)
     if (
         original is None
-        or str(original.user_id) != header["user"]
+        or original.user_id != user_id
         or str(original.device_id) != header["device"]
         or original.kind != header["kind"]
         or original.follows
@@ -247,10 +251,11 @@ def request_org(connection: Connection, request_id: UUID) -> UUID | None:
 
 
 def _checked_header(
-    connection: Connection, user_id: UUID, envelope: dict[str, Any], org_id: UUID | None
+    connection: Connection, user_id: UUID, envelope: dict[str, Any], org_id: UUID | None, sender: UUID
 ) -> dict[str, object]:
-    """The request's verified header: the user's signature, a known kind, the size, the user and the organization."""
-    user_sig = identity_key(connection, user_id)
+    """The request's verified header: the sender's signature (the user or the user's own-identity agent), a known
+    kind, the size, the sender and the organization."""
+    user_sig = identity_key(connection, user_id) if sender == user_id else agent_author_key(connection, user_id, sender)
     if user_sig is None:
         raise HubError("forbidden")
     try:
@@ -261,7 +266,7 @@ def _checked_header(
         raise HubError("header_invalid")
     if envelope_too_large(envelope):
         raise HubError("size_exceeded")
-    if header["user"] != str(user_id):
+    if header["user"] != str(sender):
         raise HubError("forbidden")
     if org_id is not None and (
         header["kind"] != "github.connect" or not rights.can(connection, user_id, rights.ORG_ADMIN, org_id=org_id)
@@ -271,10 +276,17 @@ def _checked_header(
 
 
 def create_request(
-    connection: Connection, user_id: UUID, envelope: dict[str, Any], now: datetime, *, org_id: UUID | None = None
+    connection: Connection,
+    user_id: UUID,
+    envelope: dict[str, Any],
+    now: datetime,
+    *,
+    org_id: UUID | None = None,
+    sender: UUID | None = None,
 ) -> Created:
-    """Store a new request of the user (module docstring); an identical repeat is answered as `replayed`."""
-    header = _checked_header(connection, user_id, envelope, org_id)
+    """Store a new request of the user (module docstring); an identical repeat is answered as `replayed`. `sender` is
+    the user's own-identity agent that signs the envelope (default: the user)."""
+    header = _checked_header(connection, user_id, envelope, org_id, sender or user_id)
     text = canonical(envelope).decode("ascii")
     _lock_user(connection, user_id)
     request_id = UUID(cast(str, header["id"]))
@@ -290,7 +302,7 @@ def create_request(
     expire_due(connection, now, user_id=user_id)
     expires_at = now + TTL
     if header["follows"]:
-        expires_at = min(expires_at, _check_follows(connection, header, now).expires_at)
+        expires_at = min(expires_at, _check_follows(connection, header, user_id, now).expires_at)
     replaced = False
     if not header["follows"]:
         for record in connection.execute(
@@ -392,12 +404,10 @@ def add_response(
         header = request_format.verify_response(envelope, device_key(connection, device_id))
     except CryptoError as error:
         raise _crypto_refusal(error) from None
-    if (header["in_reply_to"], header["device"], header["user"], header["kind"]) != (
-        str(row.id),
-        str(device_id),
-        str(row.user_id),
-        row.kind,
-    ):
+    # the response names the request's sender: the user, or the user's own-identity agent (ADR-082)
+    addressed = (str(row.id), str(device_id), row.kind)
+    senders = (str(row.user_id), json.loads(row.envelope)["header"]["user"])
+    if (header["in_reply_to"], header["device"], header["kind"]) != addressed or header["user"] not in senders:
         raise HubError("header_invalid")
     if envelope_too_large(envelope):
         raise HubError("size_exceeded")

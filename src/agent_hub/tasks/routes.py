@@ -18,6 +18,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_hub.agents.identity import actor
 from agent_hub.errors import HubError
 from agent_hub.events.routes import parse_count, parse_uuid
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
@@ -93,7 +94,9 @@ async def create_task(context: Context, principal: CurrentPrincipal, body: Creat
             raise HubError("request_invalid", detail={"pointers": ["/placement/vm_id"]})
         requested = (body_id(body.placement.device_id, "/placement/device_id"), vm)
     identity = None if body.github_identity is None else body_id(body.github_identity, "/github_identity")
-    write = functools.partial(service.create_task, requested=requested, github_identity=identity)
+    write = functools.partial(
+        service.create_task, requested=requested, github_identity=identity, author=actor(principal).id
+    )
     return await asyncio.to_thread(_run, context, write, user, task_id, wg_id, body.events)
 
 
@@ -142,7 +145,8 @@ async def get_task(context: Context, principal: CurrentPrincipal, task: str) -> 
 @router.post("/v1/tasks/{task}/prompts", auth="browser", right="task:write")
 async def post_prompt(context: Context, principal: CurrentPrincipal, task: str, body: PromptRequest) -> dict[str, Any]:
     user = cast(UUID, principal.principal_id)
-    return await asyncio.to_thread(_run, context, service.add_prompt, user, path_id(task), body.event)
+    write = functools.partial(service.add_prompt, author=actor(principal).id)
+    return await asyncio.to_thread(_run, context, write, user, path_id(task), body.event)
 
 
 @router.post("/v1/tasks/{task}/close", auth="browser", right="task:write")

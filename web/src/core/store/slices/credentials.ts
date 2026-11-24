@@ -3,7 +3,7 @@
 // a token, key or password) – and the toasts of the credential re-wrap job (a rotation runs silently; one blocked by
 // records the browser cannot open leaves a notice until it is dismissed; at most `MAX_NOTICES`, oldest dropped).
 import type { CredentialKind, Summary } from '../../credentials/records';
-import type { RotationResult } from '../../jobs/credential-rewrap';
+import type { RotationResult } from '../../credentials/rotation';
 import type { Slice, Store } from '../store';
 
 export interface CredentialEntry {

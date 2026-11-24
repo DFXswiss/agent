@@ -3,7 +3,8 @@
 // stand-in in the user's page and confirms with the passkey; the page then hands the secret over to the tool's
 // loopback listener (T1: browser and tool on one machine). `agentTool` runs any other command and returns the JSON
 // object it printed; `agentToolRun` returns the whole run (exit code and output) for commands that are meant to fail.
-// `copyAgentHome` copies one computer's agent state to a new computer.
+// `copyAgentHome` copies one computer's agent state to a new computer; `agentState` reads a computer's stored state and
+// private keys (what an attacker holding that copy has).
 import { expect, type Page } from '@playwright/test';
 import { anonymousBudget, COST } from './identity.ts';
 import type { Orchestrator } from './orchestrator.ts';
@@ -59,12 +60,24 @@ export async function copyAgentHome(orchestrator: Orchestrator, from: string, to
   await orchestrator.call('POST', '/agent-tool/copy-home', { from, to });
 }
 
-/** Pairs the agent of `home` with the account signed in on `page` (passkey gesture on `/connect`). */
+/** The stored agent state of the computer `home` (`state.json`) and its private keys (`agent.key`, null without). */
+export async function agentState(
+  orchestrator: Orchestrator,
+  home: string,
+): Promise<{ state: Record<string, unknown>; key: string | null }> {
+  return orchestrator.call('POST', '/agent-tool/state', { home });
+}
+
+/**
+ * Pairs the agent of `home` with the account signed in on `page` (passkey gesture on `/connect`); `replaces`: the
+ * account has a main orchestrator, which the page names and the user confirms to replace.
+ */
 export async function pairAgent(
   orchestrator: Orchestrator,
   page: Page,
   hubOrigin: string,
   home: string,
+  replaces = false,
 ): Promise<Record<string, unknown>> {
   // the tool's anonymous requests (config, pairing) and the page's (config, ceremony)
   await anonymousBudget(2 * COST.lookup + COST.page + COST.signIn);
@@ -85,6 +98,10 @@ export async function pairAgent(
   await page.goto(link!);
   await expect(page.getByTestId('connect.request')).toBeVisible({ timeout: 30_000 });
   await page.getByTestId('connect.confirm').click();
+  if (replaces) {
+    await expect(page.getByTestId('connect.replace')).toBeVisible({ timeout: 30_000 });
+    await page.getByTestId('connect.replace.confirm').click();
+  }
   const run = await finished(orchestrator, id, 60_000);
   expect(run.rc, `agent-platform pair: ${run.stderr_tail}`).toBe(0);
   // the tool's listener answers with `303 /settings?agent=connected`; that new document holds no session, so the

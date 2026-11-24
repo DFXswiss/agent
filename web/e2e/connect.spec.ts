@@ -2,10 +2,14 @@
 // the real hub: the `/connect` page of a pairing link (fragment removed, name, computer, age, full access, main
 // orchestrator, warning), the pairing-tagged passkey gesture, the same-tab form POST to the agent's loopback listener
 // (r never in a URL), the agent's claim, "Connected agents" in the settings; an agent cannot pair another one; a second
-// pairing confirmed with the passkey names and replaces the first, which is revoked at once; the audit marker of an
+// pairing confirmed with the passkey names and replaces the first, which is revoked at once; the agent never receives
+// the user's identity, only the user's public keys and its certificate, and is an agent of the user in the org's log
+// (ADR-082); the replacement removes the first from the log and the second's own disconnect is cleaned up by the
+// user's browser; the audit marker of an
 // agent's action, the disconnect dialogs and the account-level notification; a forged fingerprint, an unknown
 // pairing, a malformed link and the repeated gesture after `pairing_gesture_required`; the unlock without PRF; the
-// agent's personal message (rule E-28) quoted as plain text, and nothing of it without one.
+// agent's personal message (rule E-28) quoted as plain text, and nothing of it without one; a member without admin
+// right replaces its orchestrator, rotating what the first one read in the org (ADR-082 section 4).
 //
 // Pairing an AI agent that runs on another computer (ADR-067, 11-agent-access.md section 5.4): the `m=remote` link,
 // the warning that names the computer, the agent code typed by the user (a wrong code keeps the passkey button
@@ -15,7 +19,8 @@
 // "Disconnect"; a mode that link and hub disagree on, both ways; the invitation that asks for the code before the
 // passkey is created. These tests live in this file because pairings count against the limit of 3 open pairings per
 // source (the tests of one file run one at a time, and each remote test claims every pairing it creates).
-import { openIdentity } from '../src/core/crypto/agent';
+import { openUser } from '../src/core/crypto/agent';
+import { Identity } from '../src/core/crypto/keys';
 import { b64uDecode } from '../src/core/encoding/b64u';
 import { uuid7 } from '../src/core/encoding/ids';
 import { TEST_ROOT_KEY } from './fixtures/env.ts';
@@ -23,7 +28,8 @@ import { expect, test } from './fixtures/test.ts';
 import { catchHandover, TestAgent } from './helpers/agent.ts';
 import { addAuthenticator, withoutPrf } from './helpers/authenticator.ts';
 import { cancelNext } from './helpers/cancel.ts';
-import { onboard } from './helpers/onboard.ts';
+import { joinWithCode } from './helpers/members.ts';
+import { navigateInApp, onboard } from './helpers/onboard.ts';
 import { platformInvite } from './helpers/platform.ts';
 import { PageUser } from './helpers/user.ts';
 
@@ -85,17 +91,31 @@ test('connects the main orchestrator with one gesture; a second one replaces it;
   await expect(first.getByTestId('agents.item.replaces')).toHaveCount(0);
   await expect(first.getByTestId('agents.item.state')).toHaveText('Active');
 
-  // the agent acts: it reads the org (audit "by agent"); it can never pair another agent itself
-  expect((await agent.request('GET', `/v1/orgs/${ada.org}`)).status).toBe(200);
-  const identity = await openIdentity(
+  // the agent got the user's public keys and its certificate, never the identity, and is the user's agent in the log
+  const claimedBody = claimed!.body as Record<string, unknown>;
+  expect(claimedBody).not.toHaveProperty('bundle_ct');
+  expect(claimedBody.identity).toBe('own');
+  const anchor = await openUser(
     agent.keys.kem,
     b64uDecode(sent.fields.get('r')),
     agent.id,
     user.userId,
-    (claimed!.body as { bundle_ct: string }).bundle_ct,
+    claimedBody.user_ct as string,
   );
+  expect({ kem: anchor.kem, sig: anchor.sig }).toEqual(user.identity.public());
+  expect((await user.log(ada.org)).state.activeAgent(user.userId)?.id).toBe(agent.id);
+  // the agent writes on the org whiteboard with its own key: the page names it as the agent of its user
+  expect(await agent.writeBoard(await user.log(ada.org), null, 'Noted by the agent')).toBe(200);
+  await navigateInApp(page, `/o/${ada.org}/whiteboard`);
+  const noted = page.getByTestId('whiteboard.item').filter({ hasText: 'Noted by the agent' });
+  await expect(noted.getByTestId('whiteboard.item.author')).toHaveText('Agent of Ada Lovelace');
+  await navigateInApp(page, '/settings');
+  await expect(first.getByTestId('agents.item.runs')).toHaveText('Runs on its computer with its own key');
+
+  // the agent acts: it reads the org (audit "by agent"); it can never pair another agent itself
+  expect((await agent.request('GET', `/v1/orgs/${ada.org}`)).status).toBe(200);
   const second = await TestAgent.pair(origin);
-  expect((await agent.confirm(second, user.userId, identity, 'Helper')).status).toBe(403);
+  expect((await agent.confirm(second, user.userId, await Identity.generate(), 'Helper')).status).toBe(403);
 
   // the user confirms the second pairing with the passkey: the page names the agent it replaces and asks once more
   let claimedSecond: { status: number; body: unknown } | null = null;
@@ -128,6 +148,11 @@ test('connects the main orchestrator with one gesture; a second one replaces it;
     second.id,
   );
   await expect(helper).toHaveAttribute('data-state', 'active');
+  // the replaced agent is out of the log, whose keys were replaced in the same batch
+  const replaced = (await user.log(ada.org)).state;
+  expect(replaced.activeAgent(user.userId)?.id).toBe(second.id);
+  expect(replaced.member(agent.id)).toBeNull();
+  expect(replaced.epoch('org', ada.org)).toBe(2);
   await expect(helper.getByTestId('agents.item.replaces')).toHaveText('Replaced Claude Code');
   await expect(page.getByTestId('agents.history').locator(`[data-agent="${agent.id}"]`)).toHaveAttribute(
     'data-state',
@@ -149,13 +174,16 @@ test('connects the main orchestrator with one gesture; a second one replaces it;
   await page.getByTestId('shell.settings').click();
   await helper.getByTestId('agents.item.disconnect').click();
   await expect(page.getByTestId('agents.dialog.body')).toHaveText(
-    'The agent loses all access at once. What it has already read stays with it.',
+    'The agent loses all access at once: it is removed from every organization and the keys it could read are ' +
+      'replaced, so it cannot open anything new. What it has already read stays with it.',
   );
+  await expect(page.getByTestId('agents.dialog.held')).toHaveCount(0);
   await page.getByTestId('agents.dialog.cancel').click();
   await expect(page.getByTestId('agents.dialog')).toHaveCount(0);
   await page.getByTestId('agents.disconnect-all').click();
   await expect(page.getByTestId('agents.dialog.body')).toHaveText(
-    'Every agent loses all access at once. What they have already read stays with them.',
+    'Every agent loses all access at once: they are removed from every organization and the keys they could read ' +
+      'are replaced, so they cannot open anything new. What they have already read stays with them.',
   );
   await page.getByTestId('agents.dialog.cancel').click();
 
@@ -171,6 +199,9 @@ test('connects the main orchestrator with one gesture; a second one replaces it;
   await expect(helper).toHaveAttribute('data-state', 'revoked');
   await expect(page.getByTestId('agents.main.none')).toBeVisible();
   await expect(page.getByTestId('agents.disconnect-all')).toHaveCount(0);
+  // the user's browser removed the revoked agent from the log with its rotations (job "agents")
+  await expect.poll(async () => (await user.log(ada.org)).state.member(second.id)).toBeNull();
+  expect((await user.log(ada.org)).state.epoch('org', ada.org)).toBe(3);
 });
 
 test('a forged fingerprint, an unknown pairing and a malformed link are refused', async ({ page, baseURL }) => {
@@ -339,4 +370,48 @@ test('an invitation asks for the agent code before the passkey is created', asyn
   await expect(page.getByTestId('connect.outcome.connected')).toBeVisible();
   const me = await agent.request('GET', '/v1/me');
   expect((me.body as { orgs: unknown[] }).orgs).toHaveLength(1);
+});
+
+test('a member without admin right replaces its orchestrator; the batch of the org rotates what the first one read', async ({
+  page,
+  baseURL,
+  newContext,
+}) => {
+  const origin = baseURL!;
+  await addAuthenticator(page);
+  const ada = await onboard(page, { origin, name: 'Ada Admin' });
+  const admin = await PageUser.open(page, ada.recoveryCode);
+  await page.getByTestId('shell.nav.members').click();
+  await page.getByTestId('members.invite.open').click();
+  await page.getByTestId('members.invite.name').fill('Invited person');
+  await page.getByTestId('members.invite.submit').click();
+  const code = (await page.getByTestId('members.invite.code').textContent())!;
+  const bobPage = await (await newContext()).newPage();
+  await addAuthenticator(bobPage);
+  const bob = await onboard(bobPage, { origin, name: 'Bob Member' });
+  const member = await PageUser.open(bobPage, bob.recoveryCode);
+  await joinWithCode(member, origin, code, 'Bob Member');
+  expect((await admin.log(ada.org)).state.isAdmin(member.userId)).toBe(false);
+
+  const connect = async (agent: TestAgent, replaces: boolean) => {
+    let status = 0;
+    const handover = catchHandover(bobPage, origin, async (sent) => {
+      status = (await agent.claim(sent.fields.get('r')!, sent.fields.get('u')!)).status;
+    });
+    await bobPage.goto(`/connect#${await agent.fragment()}`);
+    await bobPage.getByTestId('connect.confirm').click();
+    if (replaces) await bobPage.getByTestId('connect.replace.confirm').click();
+    await handover;
+    expect(status).toBe(200);
+  };
+  const first = await TestAgent.pair(origin);
+  await connect(first, false);
+  expect((await admin.log(ada.org)).state.activeAgent(member.userId)?.id).toBe(first.id);
+  const second = await TestAgent.pair(origin);
+  await connect(second, true);
+  const state = (await admin.log(ada.org)).state;
+  expect(state.activeAgent(member.userId)?.id).toBe(second.id);
+  expect(state.member(first.id)).toBeNull();
+  expect(state.epoch('org', ada.org)).toBe(2);
+  expect(state.pendingScopes()).toEqual([]);
 });

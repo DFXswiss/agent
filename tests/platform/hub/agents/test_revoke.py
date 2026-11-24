@@ -49,6 +49,14 @@ def test_the_list_shows_every_agent_of_the_user_newest_first(hub: HubHarness) ->
         "revoked_at": None,
         "replaces": str(replaced.agent_id),
         "remote": False,
+        # paired before ADR-082: it holds the user's identity
+        "own_identity": False,
+        "held_identity": True,
+        "gen": None,
+        "revoked_reason": None,
+        "pub": active.identity.public(),
+        "cert": None,
+        "session_id": None,
     }
     assert agents[2]["revoked_at"] is not None
     assert agents[2]["replaces"] is None

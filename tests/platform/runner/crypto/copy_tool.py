@@ -81,10 +81,12 @@ SOURCE_ADAPTATIONS: dict[str, list[tuple[str, str]]] = {
             "from agent_hub.crypto.vectors import Section, fixed, fixed_id\n"
             "from agent_hub.log import catchup, events, platform, rotation, verify, wraps\n"
             "from agent_hub.log.batch import check_batch\n"
-            "from agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry\n",
+            "from agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry\n"
+            "from agent_hub.log.state import OrgState\n",
             "from agent_hub.log import catchup, events, platform, rotation, verify, wraps\n"
             "from agent_hub.log.batch import check_batch\n"
             "from agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry\n"
+            "from agent_hub.log.state import OrgState\n"
             "from agent_hub.crypto.vectors import Section, fixed, fixed_id\n",
         ),
     ],
@@ -125,8 +127,8 @@ TEST_ADAPTATIONS: dict[str, list[tuple[str, str]]] = {
         # After renaming, agent_runner.crypto.agents sorts after agent_runner.crypto (ruff isort).
         (
             "from agent_hub.agents import vectors as agent_vectors\n"
-            "from agent_hub.crypto import agent, hpke, keys, vectors\n",
-            "from agent_hub.crypto import agent, hpke, keys, vectors\n"
+            "from agent_hub.crypto import aead, agent, hpke, keys, vectors\n",
+            "from agent_hub.crypto import aead, agent, hpke, keys, vectors\n"
             "from agent_hub.agents import vectors as agent_vectors\n",
         ),
     ],

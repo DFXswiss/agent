@@ -8,29 +8,30 @@ open).
 
 - `github accounts`: `GET /v1/me/github-identities` (metadata and the defaults of organizations and workgroups), then
   every own record (`GET /v1/github-identities/{id}`), checked like `github status` checks the primary one: the answer
-  names the user as owner (`owner_kind` `user`), the header names the record (`id`), the user and the kind `github`;
-  the author is the user or a device the verified logs entitle to the user's `CK`; signature; the user's `CK` of the
-  record's epoch; the body exactly as `contracts/credentials/github.json` allows. Only login, display name, source,
-  scopes, whether it holds a signing key, the connection time and whether the platform minted the token are printed,
-  never the token or the key seed. A record that does not open is `unverifiable` with its code; a company record is
-  `company` with its organization and times (KM-35).
+  names the user as owner (`owner_kind` `user`), the header names the record (`id`), the user and the kind `github`; the
+  author is the user, the user's own-identity agent running the tool (ADR-082 section 9.5) or a device the verified logs
+  entitle to the user's `CK`; signature; the user's `CK` of the record's epoch; the body exactly as
+  `contracts/credentials/github.json` allows. Only login, display name, source, scopes, whether it holds a signing key,
+  the connection time and whether the platform minted the token are printed, never the token or the key seed. A record
+  that does not open is `unverifiable` with its code; a company record is `company` with its organization and times
+  (KM-35).
 - `github primary --identity`: `PUT /v1/github-identities/{id}/primary`; `github remove --identity`:
   `DELETE /v1/github-identities/{id}` (`404` counts as done); for an own record the result says, as `github
   disconnect` does, whether the devices revoke the token at GitHub (a token the platform minted) or where to revoke it.
 - `github default set (--org | --wg) (--identity | --none)`: `PUT /v1/github-defaults/{scope}/{scope_id}`.
 - `task github-identity --task (--identity | --none)`: `PUT /v1/tasks/{task}/github-identity`. A `409 peer_outdated`
   of a choice or default names the devices to update (`devices`, `agent_platform.hub`).
-- Company accounts (`github connect --org`, `store_company`): the final answer of the device carries the credential
-  body for the requesting admin. The tool writes it into the record being reconnected (same ID, version + 1) or a new
-  UUIDv7 (version 1) under a fresh 32-byte key of a new epoch of the organization's `cred` scope (the epoch after the
-  newest one the hub lists for the organization's records), wrapped (and each wrap signed) for every reader device of
-  the organization (the active devices assigned to one of its workgroups, keys from the verified log, decertified
-  platform devices left out), the body sealed under it (header owner the organization, author the user), all in one
-  `PUT /v1/github-identities/{id}` with `key {epoch, wraps}`; the key is dropped afterwards. One retry after
-  `version_conflict` or `epoch_stale` (another admin wrote meanwhile) with a fresh list; when the record's version did
-  not change, the conflict was the epoch and the hub's `detail.expected` names it.
+- Company accounts (`github connect --org`, `store_company`): the final answer of the device carries the credential body
+  for the requesting admin. The tool writes it into the record being reconnected (same ID, version + 1) or a new UUIDv7
+  (version 1) under a fresh 32-byte key of a new epoch of the organization's `cred` scope (the epoch after the newest
+  one the hub lists for the organization's records), wrapped (and each wrap signed) for every reader device of the
+  organization (the active devices assigned to one of its workgroups, keys from the verified log, decertified platform
+  devices left out), the body sealed under it (header owner the organization, author the actor: the user or its
+  own-identity agent, ADR-082), all in one `PUT /v1/github-identities/{id}` with `key {epoch, wraps}`; the key is
+  dropped afterwards. One retry after `version_conflict` or `epoch_stale` (another admin wrote meanwhile) with a fresh
+  list; when the record's version did not change, the conflict was the epoch and the hub's `detail.expected` names it.
 - `rewrap_own` (`github rewrap`, and after every rotation of `CK`, `credkey`): own non-primary records under an epoch
-  older than the newest own `CK` are re-sealed under it (same ID, version + 1, author the user); records that do not
+  older than the newest own `CK` are re-sealed under it (same ID, version + 1, author the actor); records that do not
   open are left alone, a concurrent write (`version_conflict`, `epoch_stale`) waits for the next run.
 - `names`: how the operations of a task show their identity (`task operations`): the login of an own account, the
   organization of a company account, `other` for anything else.
@@ -146,8 +147,8 @@ def fetch_identity(account: Account, identity: str) -> dict[str, Any] | None:
 
 
 def _author_key(account: Account, author: object) -> bytes:
-    if author == account.user_id:
-        return account.identity.sig_public()
+    if isinstance(author, str) and author in (account.user_id, account.actor):
+        return account.key_of(author)  # the user or its own-identity agent (ADR-082 section 9.5)
     found = device_keys(account, author) if isinstance(author, str) else None
     if found is None:
         raise Unverifiable("author_not_writer")
@@ -361,17 +362,17 @@ def _store_once(
     record_id = uuid7() if known is None else known.id
     key = secrets.token_bytes(32)
     kems = {reader: b64u_decode(log.state.principals[reader].kem, 32) for reader in readers}
-    wraps = [make_wrap(account.identity, WrapSlot(CRED, org, epoch, r), kems[r], key) for r in readers]
+    wraps = [make_wrap(account.signer, WrapSlot(CRED, org, epoch, r), kems[r], key) for r in readers]
     fields = new_header(
         id=record_id,
         owner=org,
         kind=KIND,
         version=expected + 1,
         epoch=epoch,
-        author=account.user_id,
+        author=account.actor,
         ts=format_time(datetime.now(UTC)),
     )
-    record = seal_credential(key, fields, body_json(body), account.identity.sig)
+    record = seal_credential(key, fields, body_json(body), account.signer.sig)
     del key  # the admin cannot read the record back (module docstring)
     put = {"owner_id": org, "record": record, "expected_version": expected, "key": {"epoch": epoch, "wraps": wraps}}
     try:
@@ -415,10 +416,10 @@ def _reseal(account: Account, meta: Meta, keys: dict[int, bytes], latest: int) -
         kind=KIND,
         version=version + 1,
         epoch=latest,
-        author=account.user_id,
+        author=account.actor,
         ts=format_time(datetime.now(UTC)),
     )
-    record = seal_credential(keys[latest], fields, body_json(body), account.identity.sig)
+    record = seal_credential(keys[latest], fields, body_json(body), account.signer.sig)
     put = {"owner_id": account.user_id, "record": record, "expected_version": version}
     try:
         account.call("PUT", f"/v1/github-identities/{segment(meta.id)}", put)

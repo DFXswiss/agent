@@ -21,13 +21,20 @@ from agent_hub.agents import store
 from agent_hub.auth import jobs as auth_jobs
 from agent_hub.config import load_config
 from agent_hub.crypto import agent as agent_format
-from agent_hub.crypto.keys import Identity
 from agent_hub.errors import HubError
 from agent_hub.jobs import Job
 from agent_hub.registry import JOBS, concat_sequences
-from tests.platform.hub.agents.support import agent_row, gesture_client, handover, new_agent, rows, stored_agent
+from tests.platform.hub.agents.support import (
+    agent_row,
+    gesture_client,
+    handover,
+    new_agent,
+    rows,
+    stored_agent,
+    user_with_identity,
+)
 from tests.platform.hub.auth.authenticator import FakeBrowser, seed_invite
-from tests.platform.hub.conftest import FixedClock, HubDatabase, HubHarness, hub_environ, start_hub, uuid7
+from tests.platform.hub.conftest import FixedClock, HubDatabase, HubHarness, hub_environ, start_hub
 
 
 def test_the_purge_job_is_registered_and_deletes_unclaimed_pairings_after_an_hour(hub: HubHarness) -> None:
@@ -62,12 +69,10 @@ def test_an_orphaned_registration_loses_its_agents(browser: FakeBrowser) -> None
 
 
 def test_the_confirmation_shortens_the_claim_deadline_to_60_seconds(hub: HubHarness) -> None:
-    user = uuid7(hub.clock())
-    hub.keys.session(user)
+    user, identity = user_with_identity(hub)
     agent = new_agent(hub)
     assert hub.anon.post("/v1/agent-pairings", json=agent.pairing_body()).status_code == 200
     hub.clock.advance(30)
-    identity = Identity.generate()
     confirm = handover(agent, user, identity)
     assert gesture_client(hub, user, agent.agent_id).post("/v1/me/agents", json=confirm.body).status_code == 200
     row = agent_row(hub, agent.agent_id)
@@ -81,7 +86,7 @@ def test_the_confirmation_shortens_the_claim_deadline_to_60_seconds(hub: HubHarn
     assert hub.anon.post("/v1/agent-pairings", json=late.pairing_body()).status_code == 200
     created = hub.clock()
     hub.clock.advance(570)
-    body = handover(late, user, identity).body
+    body = handover(late, user, identity, gen=2).body
     assert gesture_client(hub, user, late.agent_id).post("/v1/me/agents", json=body).status_code == 200
     row = agent_row(hub, late.agent_id)
     assert row is not None

@@ -104,7 +104,7 @@ def _append(
     connection: Connection,
     *,
     org_id: UUID,
-    user: UUID,
+    appender: Appender,
     entry: Mapping[str, Any],
     seq: int,
     now: datetime,
@@ -114,7 +114,7 @@ def _append(
     return append_batch(
         connection,
         org_id=org_id,
-        appender=Appender(str(user), "user"),
+        appender=appender,
         expected_seq=seq,
         entries=[dict(entry)],
         wraps=[],
@@ -134,8 +134,11 @@ def create(
     package: bytes,
     now: datetime,
     root_key: bytes,
+    appender: Appender | None = None,
 ) -> Stored:
-    """Append the `invite` entry and store the invitation with its package (module docstring)."""
+    """Append the `invite` entry and store the invitation with its package (module docstring); `appender` is the
+    cryptographic actor of the request (the user's own-identity agent signs the entry `by` itself, ADR-082), by
+    default the user."""
     body = entry_body(entry, "invite")
     invite_id = cast(str, body["invite_id"])
     rights.require(connection, user, rights.ORG_ADMIN, org_id=org_id, write=True)
@@ -170,7 +173,14 @@ def create(
             result.notices.extend(account_change(connection, user, "invite_created", now, target=org_id))
 
     result = _append(
-        connection, org_id=org_id, user=user, entry=entry, seq=body["seq"], now=now, root_key=root_key, extra=store
+        connection,
+        org_id=org_id,
+        appender=appender or Appender(str(user), "user"),
+        entry=entry,
+        seq=body["seq"],
+        now=now,
+        root_key=root_key,
+        extra=store,
     )
     return Stored(invite_id, result.head.seq, result)
 
@@ -184,8 +194,10 @@ def revoke(
     entry: Mapping[str, Any],
     now: datetime,
     root_key: bytes,
+    appender: Appender | None = None,
 ) -> Stored:
-    """Append the `invite_revoke` entry, mark the invitation revoked and delete its package."""
+    """Append the `invite_revoke` entry, mark the invitation revoked and delete its package (`appender` as for
+    `create`)."""
     body = entry_body(entry, "invite_revoke")
     if body["invite_id"] != invite_id:
         raise HubError("request_invalid", detail={"pointers": ["/entry/body/invite_id"]})
@@ -212,7 +224,14 @@ def revoke(
         _audit(connection, "invite.revoke", user=user, org_id=org_id, invite_id=invite_id, kind=kind, now=now)
 
     result = _append(
-        connection, org_id=org_id, user=user, entry=entry, seq=body["seq"], now=now, root_key=root_key, extra=store
+        connection,
+        org_id=org_id,
+        appender=appender or Appender(str(user), "user"),
+        entry=entry,
+        seq=body["seq"],
+        now=now,
+        root_key=root_key,
+        extra=store,
     )
     return Stored(invite_id, result.head.seq, result)
 

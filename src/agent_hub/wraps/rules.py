@@ -13,7 +13,7 @@ is ignored (wraps are insert-only, 02-data-model.md section 2.2) and counted in 
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -63,10 +63,10 @@ def cred_epoch(connection: Connection, owner: str) -> int | None:
 class _Logs:
     """Verified logs loaded once per request."""
 
-    def __init__(self, connection: Connection, root_key: bytes) -> None:
+    def __init__(self, connection: Connection, root_key: bytes, known: Mapping[UUID, VerifiedLog]) -> None:
         self.connection = connection
         self.platform: PlatformState | None = logs.platform_state(connection, root_key)
-        self._logs: dict[UUID, VerifiedLog] = {}
+        self._logs: dict[UUID, VerifiedLog] = dict(known)
 
     def of(self, org_id: UUID) -> VerifiedLog:
         found = self._logs.get(org_id)
@@ -113,16 +113,23 @@ def check_one(connection: Connection, loaded: _Logs, wrap: object, wrapper: str)
 def org_cred_readers(connection: Connection, org_id: UUID, root_key: bytes) -> frozenset[str]:
     """The readers of the org's own `cred` scope in the hub's verified log: its active devices assigned to a
     workgroup of it, decertified platform devices left out (KM-35)."""
-    loaded = _Logs(connection, root_key)
+    loaded = _Logs(connection, root_key, {})
     log = loaded.of(org_id)
     return cred_readers([log.state], str(org_id), loaded.excluded(log))
 
 
 def store_wraps(
-    connection: Connection, wraps: Sequence[object], *, wrapper: str, now: datetime, root_key: bytes
+    connection: Connection,
+    wraps: Sequence[object],
+    *,
+    wrapper: str,
+    now: datetime,
+    root_key: bytes,
+    known: Mapping[UUID, VerifiedLog] | None = None,
 ) -> Stored:
-    """Check every wrap (W3) and store the new ones; refusals as `HubError`."""
-    loaded = _Logs(connection, root_key)
+    """Check every wrap (W3) and store the new ones; refusals as `HubError`. `known` maps an org to its verified log
+    appended in the same transaction (used instead of the stored log, which is not cached before the commit)."""
+    loaded = _Logs(connection, root_key, known or {})
     try:
         slots = [check_one(connection, loaded, wrap, wrapper) for wrap in wraps]
     except CryptoError as error:

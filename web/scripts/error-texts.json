@@ -23,6 +23,30 @@
       "action": "Starte den Task noch einmal."
     }
   },
+  "agent_batches_incomplete": {
+    "en": {
+      "title": "Organizations changed",
+      "body": "The confirmation did not cover every organization you belong to, or your credential key changed meanwhile.",
+      "action": "Reload the page and confirm again."
+    },
+    "de": {
+      "title": "Organisationen geändert",
+      "body": "Die Bestätigung umfasste nicht jede deiner Organisationen, oder dein Schlüssel für Zugangsdaten hat sich inzwischen geändert.",
+      "action": "Lade die Seite neu und bestätige noch einmal."
+    }
+  },
+  "agent_gen_mismatch": {
+    "en": {
+      "title": "Agent connection changed",
+      "body": "Another AI agent was connected or disconnected meanwhile.",
+      "action": "Reload the page and confirm again."
+    },
+    "de": {
+      "title": "Agentenverbindung geändert",
+      "body": "Inzwischen wurde ein anderer KI-Agent verbunden oder getrennt.",
+      "action": "Lade die Seite neu und bestätige noch einmal."
+    }
+  },
   "already_assigned": {
     "en": {
       "title": "Already assigned",
@@ -1379,6 +1403,18 @@
       "action": "Prüfe das Konto und versuche es erneut, oder sende einen Einladungslink."
     }
   },
+  "log_agent": {
+    "en": {
+      "title": "Agent not accepted",
+      "body": "The organization's membership log contains an agent its user did not confirm, or an agent that was replaced or removed.",
+      "action": "Reload. If this stays, connect the agent again from your settings."
+    },
+    "de": {
+      "title": "Agent nicht anerkannt",
+      "body": "Das Mitgliederprotokoll der Organisation enthält einen Agenten, den sein Benutzer nicht bestätigt hat, oder einen ersetzten oder entfernten Agenten.",
+      "action": "Lade neu. Bleibt der Fehler, verbinde den Agenten in deinen Einstellungen erneut."
+    }
+  },
   "identity_unproven": {
     "en": {
       "title": "Account not found",
@@ -1605,6 +1641,18 @@
       "title": "GitHub-Konto nicht verfügbar",
       "body": "Das GitHub-Konto für diesen Schritt ist nicht verbunden oder kann dafür nicht genutzt werden.",
       "action": "Verbinde dein eigenes GitHub-Konto in den Einstellungen und versuche es dann erneut."
+    }
+  },
+  "client_outdated": {
+    "en": {
+      "title": "Page out of date",
+      "body": "This page uses a form the platform no longer accepts.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Seite veraltet",
+      "body": "Diese Seite verwendet ein Format, das die Plattform nicht mehr annimmt.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
     }
   }
 }

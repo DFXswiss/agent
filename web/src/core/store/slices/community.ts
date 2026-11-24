@@ -23,6 +23,8 @@ export interface CommunityMessage {
   readonly name: string | null;
   readonly text: string | null;
   readonly moderator: boolean;
+  /** Written by an own-identity agent whose certificate verified (shown as "Agent of <name>", ADR-082). */
+  readonly agent?: boolean;
 }
 
 export interface CommunityState {

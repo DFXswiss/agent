@@ -8,29 +8,39 @@ import { describe, expect, it } from 'vitest';
 import { parseJson } from '../../../src/core/encoding/json';
 import { formatTime } from '../../../src/core/encoding/time';
 import { openCredential } from '../../../src/core/crypto/credential';
+import { signCert } from '../../../src/core/crypto/agent';
+import { Secret } from '../../../src/core/crypto/secret';
+import { signWrap, wrapKey } from '../../../src/core/crypto/wrap';
+import { b64uDecode } from '../../../src/core/encoding/b64u';
+import { listOwnKeys, ownKeys } from '../../../src/core/credentials/records';
+import { credentialKey, formerAgentKey, selfWrapperKey } from '../../../src/core/github/connection';
+import { ownCredentialKey } from '../../../src/core/jobs/catch-up';
 import { ed25519KeyPair } from '../../../src/core/crypto/keys';
 import { unwrapKey, verifyWrap } from '../../../src/core/crypto/wrap';
 import { backgroundJobs, type JobContext } from '../../../src/core/jobs';
 import {
   credentialLosses,
-  exclusive,
   handledFor,
   holderLosses,
-  job,
+  KEPT_LOSSES,
+  rememberHandled,
   type Loss,
+  ownAgentKey,
   removalLosses,
   rewrap,
   rotateCredentialKey,
   rotationOwed,
   SKEW_MS,
-  verifiedLogs,
-} from '../../../src/core/jobs/credential-rewrap';
+} from '../../../src/core/credentials/rotation';
+import { exclusive, job, verifiedLogs } from '../../../src/core/jobs/credential-rewrap';
 import { buildPlatformEntries, entryHash } from '../../../src/core/log/entries';
 import { verifyPlatformLog } from '../../../src/core/log/platform';
 import { HubError } from '../../../src/core/net/signedFetch';
+import { Prefs } from '../../../src/core/account/prefs';
 import { createStore } from '../../../src/core/store';
+import { setSession } from '../../../src/core/store/slices/me';
 import { blockOrg, ensureOrg, setLog, setPlatform } from '../../../src/core/store/slices/orgs';
-import { actor, idOf, seed as seedOf, T0, World } from '../log/world';
+import { actor, type Actor, idOf, seed as seedOf, T0, World } from '../log/world';
 import { API_KEY, credWorld, type CredWorld, LOGIN_TOKEN, MAILBOX, seed, SUBSCRIPTION } from '../credentials/world';
 
 /** The epoch start of the world's CK_1 self-wrap (`credWorld`). */
@@ -102,6 +112,16 @@ async function secondOrg(founder: CredWorld['me']): Promise<World> {
 }
 
 const loss = (at: number, key = `k${at}`): Loss => ({ at, key });
+
+/** A `localStorage` stand-in. */
+const memoryStorage = () => {
+  const items = new Map<string, string>();
+  return {
+    getItem: (key: string) => items.get(key) ?? null,
+    setItem: (key: string, value: string) => void items.set(key, value),
+    removeItem: (key: string) => void items.delete(key),
+  };
+};
 
 describe('credentialLosses', () => {
   it('finds devices that lost eligibility and when', async () => {
@@ -228,6 +248,26 @@ describe('rotationOwed', () => {
 });
 
 describe('rotateCredentialKey', () => {
+  it('re-signs the records of an agent of the user, also of one that was removed (ADR-082 section 9.5)', async () => {
+    const t = await credWorld();
+    const bot = await actor('cred bot');
+    const pub = bot.identity.public();
+    const cert = await signCert(t.me.identity.sig.privateKey, { agent: bot.id, pub, user: t.me.id, gen: 1 });
+    t.world.add(bot);
+    await t.world.batch(t.me, [{ type: 'agent_add', subject: bot.id, user: t.me.id, pub, gen: 1, cert }]);
+    await seed(t, 'anthropic_api_key', API_KEY, { author: bot });
+    await t.world.batch(t.me, [{ type: 'remove', subject: bot.id }], { ts: AFTER });
+    setLog(t.store, t.org, t.world.log!);
+    expect(await rotateCredentialKey(t.context)).toEqual({ status: 'rotated', epoch: 2, records: 1, dropped: 0 });
+    const record = t.hub.rotations[0]!.records[0]!;
+    expect((record.header as { author: string }).author).toBe(t.me.id);
+    const states = [t.world.state];
+    expect(ownAgentKey(states, t.me.id, bot.id)).toEqual(bot.identity.sigPublic());
+    expect(ownAgentKey(states, (await actor('someone')).id, bot.id)).toBeNull();
+    expect(ownAgentKey(states, t.me.id, t.device.id)).toBeNull();
+    expect(ownAgentKey(states, t.me.id, 'unknown')).toBeNull();
+  });
+
   it('does nothing without a user, logs, losses or own key, or for a loss clearly older than the epoch', async () => {
     const bare = await credWorld();
     expect(await rotateCredentialKey({ ...bare.context, store: createStore() })).toBeNull();
@@ -496,6 +536,92 @@ describe('rotateCredentialKey', () => {
   });
 });
 
+describe('credential-key epochs created by an agent of the user (ADR-082 section 9.5)', () => {
+  /** A self-wrap of the user's CK of `epoch` made by `wrapper` (as the agent tool's rotation stores it). */
+  async function agentSelfWrap(t: CredWorld, wrapper: Actor, epoch: number, key: Secret) {
+    const slot = { scope: 'cred', scope_id: t.me.id, epoch, recipient: t.me.id };
+    const wrap = await wrapKey(b64uDecode(t.me.identity.public().kem), slot, key);
+    const sig = await signWrap(wrapper.identity.sig.privateKey, slot, wrap);
+    return {
+      ...slot,
+      recipient_id: t.me.id,
+      wrap,
+      sig,
+      wrapped_by: wrapper.id,
+      created_at: '2026-11-21T12:10:00.000Z',
+    };
+  }
+
+  async function withAgent() {
+    const t = await credWorld();
+    const bot = await actor('rotating bot');
+    const pub = bot.identity.public();
+    const cert = await signCert(t.me.identity.sig.privateKey, { agent: bot.id, pub, user: t.me.id, gen: 1 });
+    t.world.add(bot);
+    await t.world.batch(t.me, [{ type: 'agent_add', subject: bot.id, user: t.me.id, pub, gen: 1, cert }]);
+    setLog(t.store, t.org, t.world.log!);
+    return { t, bot };
+  }
+
+  it("takes the active agent's epoch as the user's own, never one of a stranger or of a removed agent", async () => {
+    const { t, bot } = await withAgent();
+    const stranger = await actor('stranger wrapper');
+    const key2 = Secret.of(new Uint8Array(32).fill(2));
+    t.hub.wraps.push(await agentSelfWrap(t, bot, 2, key2), await agentSelfWrap(t, stranger, 3, key2));
+    expect(selfWrapperKey(t.store, t.me.id, t.me.identity, t.me.id)).toEqual(t.me.identity.sigPublic());
+    expect(selfWrapperKey(t.store, t.me.id, t.me.identity, bot.id)).toEqual(bot.identity.sigPublic());
+    expect(selfWrapperKey(t.store, t.me.id, t.me.identity, stranger.id)).toBeNull();
+    expect((await ownKeys(t.context, t.me.id, t.me.identity)).map((k) => k.epoch)).toEqual([2, 1]);
+    expect((await ownCredentialKey(jobContext(t), t.me.id, t.me.identity))?.epoch).toBe(2);
+    expect(await credentialKey(t.context, t.me.id, t.me.identity, 2)).not.toBeNull();
+    expect(await credentialKey(t.context, t.me.id, t.me.identity, 3)).toBeNull();
+    // the agent stored a record under its epoch
+    await seed(t, 'anthropic_api_key', API_KEY, { author: bot, key: key2, epoch: 2 });
+    // removed: its epoch is the user's no more, only for opening; the stranger's never
+    await t.world.batch(t.me, [{ type: 'remove', subject: bot.id }], { ts: AFTER });
+    setLog(t.store, t.org, t.world.log!);
+    ensureOrg(t.store, 'an org not verified yet');
+    expect(formerAgentKey(t.store, t.me.id, bot.id)).toEqual(bot.identity.sigPublic());
+    expect(formerAgentKey(t.store, t.me.id, stranger.id)).toBeNull();
+    expect((await ownKeys(t.context, t.me.id, t.me.identity)).map((k) => k.epoch)).toEqual([1]);
+    const listed = await listOwnKeys(t.context, t.me.id, t.me.identity);
+    expect(listed.opening.map((k) => k.epoch)).toEqual([2, 1]);
+    expect(listed.listed).toBe(3);
+    expect(await ownCredentialKey(jobContext(t), t.me.id, t.me.identity)).toMatchObject({ epoch: 1 });
+    expect(await credentialKey(t.context, t.me.id, t.me.identity, 2)).not.toBeNull();
+    expect(await credentialKey(t.context, t.me.id, t.me.identity, 3)).toBeNull();
+    // the rotation its removal owes opens the record and re-encrypts it, signed by the user, under a new epoch
+    t.hub.epoch = 3;
+    const handled = new Set<string>();
+    expect(await rotateCredentialKey(t.context, handled)).toEqual({
+      status: 'rotated',
+      epoch: 4,
+      records: 1,
+      dropped: 0,
+    });
+    const header = t.hub.rotations[0]!.records[0]!.header as Record<string, unknown>;
+    expect([header.epoch, header.author]).toEqual([4, t.me.id]);
+    expect(await rotateCredentialKey(t.context, handled)).toBeNull();
+    t.client.on('GET /v1/wraps', () => ({ wraps: [] }));
+    expect(await listOwnKeys(t.context, t.me.id, t.me.identity)).toEqual({ keys: [], opening: [], listed: 0 });
+    // a blocked log names no former agent
+    blockOrg(t.store, t.org, { code: 'log_chain', stored: null, served: null, lh: null });
+    expect(formerAgentKey(t.store, t.me.id, bot.id)).toBeNull();
+  });
+
+  it('rotates when only a former agent wrapped the current key (an unknown epoch start fails closed)', async () => {
+    const { t, bot } = await withAgent();
+    const key2 = Secret.of(new Uint8Array(32).fill(2));
+    t.hub.wraps.splice(0, t.hub.wraps.length, await agentSelfWrap(t, bot, 2, key2));
+    await t.world.batch(t.me, [{ type: 'remove', subject: bot.id }], { ts: BEFORE });
+    setLog(t.store, t.org, t.world.log!);
+    t.hub.epoch = 2;
+    expect(await rotateCredentialKey(t.context)).toMatchObject({ status: 'rotated', epoch: 3 });
+    t.hub.wraps.splice(0, t.hub.wraps.length);
+    expect(await rotateCredentialKey(t.context)).toBeNull();
+  });
+});
+
 describe('the job', () => {
   it('rotates silently, retries a version conflict once and passes other failures on', async () => {
     const t = await credWorld();
@@ -555,6 +681,46 @@ describe('the job', () => {
     expect(handledFor(store)).toBe(first);
     store.reset();
     expect(handledFor(store).has('x')).toBe(false);
+  });
+
+  it('rotates once for a loss within the margin of its own new epoch, also after a new sign-in in this browser', async () => {
+    const t = await credWorld();
+    // the loss is signed two minutes before the hub creates the next epoch (13:00): within the margin
+    await unassign(t, '2026-11-21T12:58:00.000Z');
+    const prefs = new Prefs(memoryStorage());
+    const context = { ...jobContext(t), prefs };
+    expect(await rewrap(context, run(t))).toMatchObject({ status: 'rotated', epoch: 2 });
+    const key = `${t.device.id} ${Date.parse('2026-11-21T12:58:00.000Z')}`;
+    expect(prefs.handledLosses(t.me.id)).toEqual([key]);
+    // a new sign-in of this browser remembers it: nothing is owed
+    expect(await rotateCredentialKey(t.context, new Set(prefs.handledLosses(t.me.id)))).toBeNull();
+    // without the remembered loss the same check would rotate again
+    expect(await rotateCredentialKey(t.context, new Set())).toMatchObject({ status: 'rotated', epoch: 3 });
+  });
+
+  it('starts the handled losses of a sign-in from the browser and remembers only lasting ones', () => {
+    const store = createStore();
+    const prefs = new Prefs(memoryStorage());
+    prefs.setHandledLosses('u1', ['d1 5']);
+    expect([...handledFor(store, prefs)]).toEqual([]);
+    rememberHandled(store, new Set(['x']), prefs);
+    expect(prefs.handledLosses('u1')).toEqual(['d1 5']);
+    store.reset();
+    setSession(store, 'u1', { keyId: 'k', expiresAt: 0 });
+    const handled = handledFor(store, prefs);
+    expect([...handled]).toEqual(['d1 5']);
+    handled.add('blocked github');
+    handled.add('d2 holds');
+    handled.add('d3 left o1');
+    rememberHandled(store, handled);
+    expect(prefs.handledLosses('u1')).toEqual(['d1 5']);
+    rememberHandled(store, handled, prefs);
+    expect(prefs.handledLosses('u1')).toEqual(['d1 5', 'd3 left o1']);
+    rememberHandled(store, new Set(Array.from({ length: KEPT_LOSSES + 2 }, (_, i) => `d ${i}`)), prefs);
+    expect(prefs.handledLosses('u1')).toHaveLength(KEPT_LOSSES);
+    expect(prefs.handledLosses('u1')[0]).toBe('d 2');
+    store.reset();
+    expect(handledFor(store).size).toBe(0);
   });
 
   it('runs one rotation at a time per store', async () => {

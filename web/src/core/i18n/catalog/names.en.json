@@ -6,6 +6,8 @@
   "person.given": "Provisional name, entered by {by}. It is replaced by the person's own name as soon as they open this organization.",
   "person.invited": "Name from the invitation by {by}. It is replaced by the person's own name as soon as they open this organization.",
   "person.someone": "an admin",
+  "agent.of": "Agent of {name}",
+  "agent.unknown": "Agent of a member whose name is not known yet",
   "id.show": "Show ID",
   "id.value": "ID: {id}",
   "device.unknown": "Device without a name",

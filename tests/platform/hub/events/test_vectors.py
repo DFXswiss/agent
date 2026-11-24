@@ -79,19 +79,21 @@ def _decertify(platform: list[Json], devices: list[str]) -> list[Json]:
     return entries
 
 
-def _seed(hub: HubHarness, platform_count: int, excluded: list[str] | None = None) -> None:
+def _seed(hub: HubHarness, platform_count: int, excluded: list[str] | None = None, log: Json | None = None) -> None:
+    """The platform prefix and the case's membership log (`log` `{name, count}`, default the main log)."""
     platform = _decertify(PLATFORM[:platform_count], excluded or [])
     insert_platform_entries(hub.pool, platform, hub.clock())
-    entries = EVENTS["logs"]["main"]
+    entries = EVENTS["logs"]["main"] if log is None else EVENTS["logs"][log["name"]][: log["count"]]
     state = verify_platform_log(platform, vectors.sig_pk("root")).state
     verified = verify_log(entries, EVENTS["founder"], platform=state)
     now = hub.clock()
-    org = EVENTS["ids"]["org"]
+    genesis = entries[0]["body"]
+    org = genesis["org"]
     with hub.pool.connection() as connection, connection.transaction():
         connection.execute(
             "INSERT INTO hub.org (id, private, platform_access, default_wg, created_by, created_at, log_head_seq,"
             " log_head_hash) VALUES (%s, true, true, %s, %s, %s, %s, %s)",
-            (org, EVENTS["ids"]["default_wg"], vectors.pid("alice"), now, verified.head.seq, verified.head.hash),
+            (org, genesis["default_wg"], genesis["subject"], now, verified.head.seq, verified.head.hash),
         )
         for seq, entry in enumerate(entries):
             body = entry["body"]
@@ -105,7 +107,9 @@ def _seed(hub: HubHarness, platform_count: int, excluded: list[str] | None = Non
 
 def _prepare(hub: HubHarness, args: Json) -> datetime:
     """Seed the case's world; the receipt time."""
-    _seed(hub, args["platform"]["count"], args.get("excluded"))
+    # the agent cases of ADR-082 name the agents log and no platform prefix (the whole platform log)
+    platform = args.get("platform", {"count": len(PLATFORM)})
+    _seed(hub, platform["count"], args.get("excluded"), args.get("log"))
     header = args["event"]["header"]
     with hub.pool.connection() as connection, connection.transaction():
         if args.get("rotated_at"):

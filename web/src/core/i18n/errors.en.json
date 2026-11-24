@@ -4,10 +4,20 @@
     "body": "An account code has 12 characters (letters and the digits 2–7).",
     "action": "Check the code and enter it again."
   },
+  "agent_batches_incomplete": {
+    "title": "Organizations changed",
+    "body": "The confirmation did not cover every organization you belong to, or your credential key changed meanwhile.",
+    "action": "Reload the page and confirm again."
+  },
   "agent_exited": {
     "title": "Agent stopped",
     "body": "Claude Code ended unexpectedly.",
     "action": "Retry the task."
+  },
+  "agent_gen_mismatch": {
+    "title": "Agent connection changed",
+    "body": "Another AI agent was connected or disconnected meanwhile.",
+    "action": "Reload the page and confirm again."
   },
   "agent_start_failed": {
     "title": "Agent did not start",
@@ -78,6 +88,11 @@
     "title": "Passkey response invalid",
     "body": "The browser returned an invalid passkey response.",
     "action": "Try again, or use another browser."
+  },
+  "client_outdated": {
+    "title": "Page out of date",
+    "body": "This page uses a form the platform no longer accepts.",
+    "action": "Reload the page and try again."
   },
   "community_epoch_exists": {
     "title": "Community key already exists",
@@ -298,6 +313,11 @@
     "title": "Admission refused",
     "body": "The account could not be admitted: its identity could not be confirmed.",
     "action": "Check the account and try again, or send an invitation link."
+  },
+  "log_agent": {
+    "title": "Agent not accepted",
+    "body": "The organization's membership log contains an agent its user did not confirm, or an agent that was replaced or removed.",
+    "action": "Reload. If this stays, connect the agent again from your settings."
   },
   "log_chain": {
     "title": "Membership history broken",

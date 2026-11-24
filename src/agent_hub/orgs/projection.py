@@ -4,7 +4,8 @@
 
 - `org_member`: a principal that becomes active (join, rejoin, a platform device at its first `device_assign`) gets
   `joined_seq`, no `removed_seq` and `consented` (False after `admit`, ADR-060); `remove` sets `removed_seq`; `role`
-  changes the role;
+  changes the role. Users and devices only: an agent (a sub-principal of its user, ADR-082) never gets a row, so it
+  never holds a route right of its own - its requests are authorised as its user's;
 - `wg`: `created_seq` at genesis/`wg_create`, `archived_seq` at `wg_archive`;
 - `wg_access`: the **effective** access of every active user (explicit access plus `write` on the default workgroup for
   every member, ADR-024 addendum: not reducible, plus `read` on every other workgroup for every admin without explicit
@@ -34,7 +35,7 @@ from psycopg.types.json import Jsonb
 
 from agent_hub.log import rotation
 from agent_hub.log.platform import PlatformState
-from agent_hub.log.state import USER, OrgState, Scope
+from agent_hub.log.state import DEVICE, USER, OrgState, Scope
 from agent_hub.log.verify import VerifiedLog
 
 Connection = psycopg.Connection[Any]
@@ -71,8 +72,14 @@ def org_assignments(state: OrgState | None) -> set[str]:
     return {device for device in state.org_assignments if state.org_assigned(device)}
 
 
+MEMBER_KINDS = frozenset({USER, DEVICE})
+"""The principal kinds of `org_member` (no agent, module docstring)."""
+
+
 def _members(connection: Connection, org: UUID, before: OrgState | None, after: OrgState, seq: int) -> None:
     for principal in after.principals.values():
+        if principal.kind not in MEMBER_KINDS:
+            continue
         old = None if before is None else before.principals.get(principal.id)
         if principal.active and (old is None or not old.active):
             connection.execute(

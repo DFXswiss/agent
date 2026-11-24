@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/log/membership/agent_add.json",
+  "title": "membership-log entry agent_add",
+  "description": "Membership-log entry of type agent_add (04-crypto.md section 4.7, ADR-082): body signed with P||'log\\0' by the user `by`, or by the agent itself (`by` = `subject`) with `pub.sig`.",
+  "type": "object",
+  "properties": {
+    "body": {
+      "$ref": "../../common.json#/$defs/log_body_agent_add"
+    },
+    "sig": {
+      "$ref": "../../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "body",
+    "sig"
+  ],
+  "additionalProperties": false
+}

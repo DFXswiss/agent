@@ -138,6 +138,9 @@ CASES: list[tuple[str, object, bool]] = [
     ("positive", 1, True),
     ("epoch", 1, True),
     ("epoch", 0, False),
+    ("agent_gen", 1, True),
+    ("agent_gen", 0, False),
+    ("agent_gen", 2147483648, False),
     # query texts
     ("q_seq", "0", True),
     ("q_seq", "17", True),

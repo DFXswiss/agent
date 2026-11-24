@@ -97,6 +97,24 @@ describe('names helpers', () => {
     expect(knownPersonName(t, directory, null)).toBeUndefined();
   });
 
+  it('names an agent as the agent of its user (ADR-082)', () => {
+    const agents: Directory = {
+      ...directory,
+      agents: new Map([
+        ['bot', 'own'],
+        ['given-bot', 'admin'],
+        ['lost-bot', 'nobody'],
+      ]),
+    };
+    expect(personName(t, agents, 'bot')).toBe('Agent of Olga');
+    expect(personName(t, agents, 'given-bot')).toBe('Agent of Adam (provisional)');
+    expect(personName(t, agents, 'lost-bot')).toBe('Agent of a member whose name is not known yet');
+    expect(knownPersonName(t, agents, 'bot')).toBe('Agent of Olga');
+    expect(knownPersonName(t, agents, 'lost-bot')).toBe('Agent of a member whose name is not known yet');
+    expect(knownPersonName(t, agents, 'nobody')).toBeUndefined();
+    expect(knownPersonName(t, agents, null)).toBeUndefined();
+  });
+
   it('says who gave a provisional name, "an admin" when that person has no name', () => {
     expect(givenBy(t, directory, 'own')).toBeNull();
     expect(givenBy(t, directory, 'nobody')).toBeNull();

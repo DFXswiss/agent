@@ -12,7 +12,8 @@
       "$ref": "../common.json#/$defs/uuid"
     },
     "bundle_ct": {
-      "$ref": "../common.json#/$defs/bundle_ct"
+      "$ref": "../common.json#/$defs/bundle_ct",
+      "description": "the user's identity sealed to the agent: an agent that still holds it (identity user)"
     },
     "label_ct": {
       "$ref": "../common.json#/$defs/bundle_ct"
@@ -22,15 +23,44 @@
     },
     "claimed_at": {
       "$ref": "../common.json#/$defs/time"
+    },
+    "user_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct",
+      "description": "the user's public keys and certificate sealed to the agent: an own-identity agent (identity own, ADR-082 section 2)"
+    },
+    "identity": {
+      "type": "string",
+      "enum": [
+        "own",
+        "user"
+      ],
+      "description": "own: the agent signs with its own key as a sub-principal of its user; user: it holds its user's identity"
+    },
+    "gen": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "description": "the generation of an own-identity agent"
+    },
+    "migrate": {
+      "type": "boolean",
+      "description": "identity user and the user has a passkey: the agent converts itself (POST /v1/agent/identity, ADR-082 section 5)"
+    },
+    "migrate_gen": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "description": "present exactly with migrate true: the generation the conversion's certificate names"
     }
   },
   "required": [
     "agent_id",
     "user_id",
-    "bundle_ct",
     "label_ct",
     "created_at",
-    "claimed_at"
+    "claimed_at",
+    "identity",
+    "migrate"
   ],
   "additionalProperties": false
 }

@@ -17,9 +17,17 @@
 //   without the user's consent (`Principal.consented` false until it leaves and joins again by an own `accept`).
 // `remove` deletes every access and assignment of the subject; a former member who accepts a new invitation starts
 // again from that invitation (rejoin).
+//
+// Agents (ADR-082 sections 1 and 9): an agent is a sub-principal of its user (`parent`), added by `agent_add` or the
+// `agent` member of `genesis`/`accept`. It has no role, access or assignment of its own: every right resolves
+// through `acting` (the parent of an agent, else the principal itself), so the active agent of a user reads exactly
+// what its user reads. An agent is active while it is not removed and its parent is an active member; `remove` of a
+// user removes its active agent at the same `seq` (`removedWithUser`); only such an agent may come back with its user.
+// Agents never count as admins (`admins`).
 
 export const USER = 'user';
 export const DEVICE = 'device';
+export const AGENT = 'agent';
 export const ADMIN = 'admin';
 export const MEMBER = 'member';
 export const READ = 'read';
@@ -45,7 +53,8 @@ export const compareText = (a: string, b: string): number => (a < b ? -1 : a > b
 /** Orders two scopes (`org` before `wg`, then by ID). */
 export const compareScopes = (a: Scope, b: Scope): number => compareText(pairKey(...a), pairKey(...b));
 
-/** A user or device of the org. `role` is `admin`/`member` for users and `device` for devices. */
+/** A user, device or agent of the org. `role` is `admin`/`member` for users, `device` for devices and `agent` for
+ *  agents. */
 export interface Principal {
   readonly id: string;
   readonly kind: string;
@@ -61,7 +70,27 @@ export interface Principal {
    * this org are then no recipients of the user's credential key.
    */
   readonly consented: boolean;
+  /** Agents: the user the agent acts for; null for users and devices. */
+  readonly parent: string | null;
+  /** Agents: the generation of the certificate (ADR-082 section 9.1); null for users and devices. */
+  readonly gen: number | null;
+  /** Agents: removed together with its user (it may come back when the user rejoins, section 9.2). */
+  readonly removedWithUser: boolean;
+  /** Agents: removed by its user, an agent of its user or itself (a revocation in every log, unlike a removal by an
+   *  admin, which only ends its membership in this org). */
+  readonly removedByOwner: boolean;
+  /** Users: the agent that signed the user's `genesis`/`accept` (its revocation withdraws the consent). */
+  readonly joinAgent: string | null;
 }
+
+/** The fields of a new principal that only agents and agent-signed joins set. */
+export const PLAIN: Pick<Principal, 'parent' | 'gen' | 'removedWithUser' | 'removedByOwner' | 'joinAgent'> = {
+  parent: null,
+  gen: null,
+  removedWithUser: false,
+  removedByOwner: false,
+  joinAgent: null,
+};
 
 /** An `invite` entry and what happened to it. */
 export interface Invite {
@@ -108,6 +137,9 @@ export interface OrgStateFields {
   /** `pairKey(scope, scope_id)` of scopes whose rotation is still owed (a member left by itself, decision CRY-02, or an
    *  admin demoted itself, ADR-058 section 3). */
   readonly pending: ReadonlySet<string>;
+  /** `pairKey(scope, scope_id) -> user`: the rotation of a scope its agent read, owed by the user that removed or
+   *  replaced that agent (ADR-082 section 4); the user or its active agent may rotate it without admin or write right. */
+  readonly agentOwed: ReadonlyMap<string, string>;
 }
 
 /** The key of an epoch author. */
@@ -130,6 +162,7 @@ export class OrgState implements OrgStateFields {
   declare readonly epochs: ReadonlyMap<string, number>;
   declare readonly epochAuthors: ReadonlyMap<string, string>;
   declare readonly pending: ReadonlySet<string>;
+  declare readonly agentOwed: ReadonlyMap<string, string>;
 
   constructor(fields: OrgStateFields) {
     Object.assign(this, fields);
@@ -147,15 +180,30 @@ export class OrgState implements OrgStateFields {
 
   // --- principals and roles ---
 
-  /** The active principal `principal`, else null. */
+  /** The active principal `principal`, else null (an agent is removed with its user, so its parent is active). */
   member(principal: string): Principal | null {
     const found = this.principals.get(principal);
     return found !== undefined && found.removedSeq === null ? found : null;
   }
 
-  /** Active admin. */
+  /** The principal whose rights `principal` uses: the parent of an agent, else the principal itself. */
+  acting(principal: string): string {
+    return this.principals.get(principal)?.parent ?? principal;
+  }
+
+  /** The active agent of `user`, else null. */
+  activeAgent(user: string): Principal | null {
+    return [...this.principals.values()].find((p) => p.parent === user && this.member(p.id) !== null) ?? null;
+  }
+
+  /** Every agent (active or not) of `user`. */
+  agentsOf(user: string): Principal[] {
+    return [...this.principals.values()].filter((p) => p.parent === user);
+  }
+
+  /** Active admin, or an active agent of one. */
   isAdmin(principal: string): boolean {
-    return this.member(principal)?.role === ADMIN;
+    return this.member(principal) !== null && this.member(this.acting(principal))?.role === ADMIN;
   }
 
   /** Active admins, sorted. */
@@ -171,10 +219,11 @@ export class OrgState implements OrgStateFields {
   /** `read`/`write` of an active user on a workgroup from membership alone (default workgroup: `write`), else null;
    *  the admin role adds nothing here (credential scope, ADR-058 section 1). */
   explicitAccess(principal: string, wg: string): string | null {
-    const found = this.member(principal);
-    if (found === null || found.kind !== USER || !this.workgroups.has(wg)) return null;
+    if (this.member(principal) === null) return null;
+    const user = this.acting(principal);
+    if (this.member(user)?.kind !== USER || !this.workgroups.has(wg)) return null;
     if (wg === this.defaultWg) return WRITE;
-    return this.access.get(pairKey(principal, wg)) ?? null;
+    return this.access.get(pairKey(user, wg)) ?? null;
   }
 
   /** The effective `read`/`write` of an active user on a workgroup: the explicit access, else `read` for an active
@@ -229,8 +278,9 @@ export class OrgState implements OrgStateFields {
   canRead(principal: string, scope: string, scopeId: string): boolean {
     const found = this.member(principal);
     if (found === null) return false;
-    if (scope === ORG) return scopeId === this.org && (found.kind === USER || this.deviceWgs(principal).length > 0);
-    if (found.kind === USER) return this.wgAccess(principal, scopeId) !== null;
+    const device = found.kind === DEVICE;
+    if (scope === ORG) return scopeId === this.org && (!device || this.deviceWgs(principal).length > 0);
+    if (!device) return this.wgAccess(principal, scopeId) !== null;
     return this.assigned(principal, scopeId);
   }
 
@@ -278,6 +328,15 @@ export class OrgState implements OrgStateFields {
         removed_seq: p.removedSeq,
         platform_seq: p.platformSeq,
         consented: p.consented,
+        ...(p.joinAgent === null ? {} : { join_agent: p.joinAgent }),
+        ...(p.parent === null
+          ? {}
+          : {
+              parent: p.parent,
+              gen: p.gen,
+              removed_with_user: p.removedWithUser,
+              removed_by_owner: p.removedByOwner,
+            }),
         ...(this.orgAssignments.has(p.id) ? { org_assigned_seq: this.orgAssignments.get(p.id) } : {}),
       })),
       workgroups: byId(this.workgroups.values(), (wg) => wg.id).map((wg) => ({
@@ -304,6 +363,13 @@ export class OrgState implements OrgStateFields {
         accepted_seq: inv.acceptedSeq,
       })),
       pending_rotation: this.pendingScopes().map(([scope, id]) => ({ scope, scope_id: id })),
+      ...(this.agentOwed.size === 0
+        ? {}
+        : {
+            agent_owed: [...this.agentOwed]
+              .sort(([a], [b]) => compareScopes(splitKey(a), splitKey(b)))
+              .map(([key, user]) => ({ scope: splitKey(key)[0], scope_id: splitKey(key)[1], user })),
+          }),
     };
   }
 }
@@ -322,4 +388,38 @@ export function requiredSet(before: OrgState, after: OrgState, subject: string):
     lost.add(pairKey(ORG, before.org));
   }
   return lost;
+}
+
+/** The principal an entry is about: `subject`, else `device`, else its author `by`. */
+export function entrySubject(body: Readonly<Record<string, unknown>>): string {
+  if (Object.hasOwn(body, 'subject')) return String(body.subject);
+  if (Object.hasOwn(body, 'device')) return String(body.device);
+  return String(body.by);
+}
+
+/**
+ * The principals that may lose access by an entry (ADR-082): its subject and the active agent (in `before`) of the
+ * subject, or for `agent_add` of the agent's user (that agent is replaced).
+ */
+export function losers(before: OrgState, body: Readonly<Record<string, unknown>>): Set<string> {
+  const subject = entrySubject(body);
+  const agent = before.activeAgent(String(body.user ?? subject));
+  return new Set(agent === null ? [subject] : [subject, agent.id]);
+}
+
+/** The union of R over `losers`. */
+export function lost(before: OrgState, after: OrgState, body: Readonly<Record<string, unknown>>): Set<string> {
+  return new Set([...losers(before, body)].flatMap((loser) => [...requiredSet(before, after, loser)]));
+}
+
+/** Entry types whose R is owed by the others when the subject is the author itself (or the user of the author). */
+export const SELF_OWED: ReadonlySet<string> = new Set(['remove', 'role']);
+
+/**
+ * R is owed by the others (`OrgState.pending`): `remove`/`role` whose subject is the author or the author's user
+ * (a member leaving or an admin demoting itself, also through its agent).
+ */
+export function selfOwed(before: OrgState, body: Readonly<Record<string, unknown>>): boolean {
+  const by = String(body.by);
+  return SELF_OWED.has(body.type as string) && (body.subject === by || body.subject === before.acting(by));
 }

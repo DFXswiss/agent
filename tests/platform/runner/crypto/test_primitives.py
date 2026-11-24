@@ -50,7 +50,7 @@ def test_error_codes_are_the_lists_of_section_8() -> None:
     crypto, log = _section_8()
     assert crypto == errors.CRYPTO_CODES
     assert log == errors.LOG_CODES
-    assert {"account_code_invalid", "log_admit"} <= errors.CODES
+    assert {"account_code_invalid", "log_admit", "log_agent"} <= errors.CODES
     assert errors.CODES == errors.CRYPTO_CODES | errors.LOG_CODES
     error = CryptoError("decrypt_failed")
     assert error.code == "decrypt_failed"

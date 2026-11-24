@@ -65,6 +65,7 @@ def test_con02_every_log_code_has_a_vector() -> None:
         "log_chain",
         "log_genesis",
         "log_accept",
+        "log_agent",
         "log_signature",
         "log_rights",
         "log_epoch",
@@ -172,8 +173,22 @@ def test_con02_rotation_cases_and_batches() -> None:
         assert rotation.entry_subject(case["entry"]["body"]) == case["subject"]
         required = rotation.required_set(before.state, after, case["subject"])
         assert rotation.as_json(required) == case["required"], case["name"]
+        body = case["entry"]["body"]
+        assert sorted(rotation.losers(before.state, body)) == case["losers"], case["name"]
+        assert rotation.as_json(rotation.lost(before.state, after, body)) == case["lost"], case["name"]
+        assert rotation.self_owed(before.state, body) is case["self_owed"], case["name"]
         seen.add(case["entry"]["body"]["type"])
-    assert seen >= {"remove", "ungrant", "device_unassign", "accept", "grant", "role", "rotate", "wg_create"}
+    assert seen >= {
+        "remove",
+        "ungrant",
+        "device_unassign",
+        "accept",
+        "grant",
+        "role",
+        "rotate",
+        "wg_create",
+        "agent_add",
+    }
     for case in data["batches"]:
         result = cast(BatchResult, ctx.run("check_batch", case["args"]))
         assert rotation.as_json(result.required) == case["required"]
@@ -244,3 +259,84 @@ def test_generator_refuses_a_vector_with_another_code() -> None:
     valid = {"log": data["valid"]["log"], "founder": data["founder"], "platform": data["valid"]["platform"]}
     with pytest.raises(RuntimeError, match="no error"):
         ctx.negative("y", "verify_log", valid, "log_chain")
+
+
+def test_agents_log_valid_chain_and_projections() -> None:
+    """ADR-082: the agents log (genesis and accept through agents, agent_add by the user and by the agent itself,
+    replacement, removal with the user and return) reproduces its heads and projections."""
+    data = load("log")
+    ctx = context(data)
+    section = data["agents_valid"]
+    log = ctx.log({**section, "founder": data["founder"]})
+    assert [{"seq": s.seq, "hash": s.head} for s in log.states] == section["heads"]
+    assert [s.projection() for s in log.states] == section["projections"]
+    bodies = [cast(dict[str, Any], entry["body"]) for entry in log.entries]
+    assert {"agent_add", "genesis", "accept"} <= {body["type"] for body in bodies}
+    assert "agent" in bodies[0]
+    members = {m["principal_id"]: m for m in section["projections"][-1]["members"]}
+    assert {m["kind"] for m in members.values()} == {"user", "device", "agent"}
+    assert all(("parent" in m) is (m["kind"] == "agent") for m in members.values())
+
+
+def test_agent_wrap_cases_cred_readers_and_catch_up() -> None:
+    data = load("log-wraps")
+    ctx = context(data)
+    section = data["agents"]
+    for case in section["valid"]:
+        ctx.run("check_wrap", case["args"])
+    for case in section["cred_valid"]:
+        ctx.run("check_cred_wrap", case["args"])
+    for case in section["cred_readers"]:
+        assert ctx.run("cred_readers", case) == case["readers"]
+    for case in section["revoked_agents"]:
+        assert ctx.run("revoked_agents", case) == case["revoked"]
+    assert section["revoked_agents"][0]["revoked"] != section["revoked_agents"][2]["revoked"]
+    founder = data["founder"]
+    for name, plans in (("catch_up", section["catch_up"]), ("admin_catch_up", section["admin_catch_up"])):
+        log = ctx.log({"log": plans["log"], "founder": founder})
+        existing = [wraps.WrapSlot(s["scope"], s["scope_id"], s["epoch"], s["recipient_id"]) for s in plans["existing"]]
+        for plan in plans["plans"]:
+            missing = catchup.missing_wraps(log, plan["wrapper"], existing)
+            assert [slot.to_json() for slot in missing] == plan["missing"], name
+    log = ctx.log({"log": section["catch_up"]["log"], "founder": founder})
+    cred = section["cred_catch_up"]
+    cred_existing = [wraps.WrapSlot(s["scope"], s["scope_id"], s["epoch"], s["recipient_id"]) for s in cred["existing"]]
+    for plan in cred["plans"]:
+        missing = catchup.missing_cred_wraps(
+            [log], plan["owner"], plan["wrapper"], current_epoch=plan["current_epoch"], existing=cred_existing
+        )
+        assert [slot.to_json() for slot in missing] == plan["missing"]
+
+
+def test_only_its_user_revokes_an_agent_everywhere_and_catch_up_starts_at_the_current_membership() -> None:
+    """ADR-082 section 9.1: a removal by an admin ends the agent's membership in that org only; a removal by its user
+    revokes it in every log. Catch-up gives an agent no epoch from before its user's current membership."""
+    data = load("log-wraps")
+    ctx = context(data)
+    section = data["agents"]["revocation"]
+    for case in section["cred_readers"]:
+        assert ctx.run("cred_readers", case) == case["readers"]
+    for case in section["revoked_agents"]:
+        assert ctx.run("revoked_agents", case) == case["revoked"]
+    assert section["revoked_agents"][0]["revoked"] == []
+    assert section["revoked_agents"][1]["revoked"] != []
+    for case in section["cred_valid"]:
+        ctx.run("check_cred_wrap", case["args"])
+    plans = section["rejoin_catch_up"]
+    log = ctx.log({"log": plans["log"], "founder": data["founder"]})
+    existing = [wraps.WrapSlot(s["scope"], s["scope_id"], s["epoch"], s["recipient_id"]) for s in plans["existing"]]
+    for plan in plans["plans"]:
+        missing = catchup.missing_wraps(log, plan["wrapper"], existing)
+        assert [slot.to_json() for slot in missing] == plan["missing"]
+        assert all(slot.epoch > 1 for slot in missing)
+
+
+def test_agent_event_cases() -> None:
+    data = load("log-events")
+    ctx = context(data)
+    for case in data["agents"]["valid"]:
+        header, rule = cast(tuple[dict[str, Any], events.KindRule], ctx.run("check_event", case["args"]))
+        assert header["id"] == case["args"]["event"]["header"]["id"]
+        assert "user" in rule.authors
+    for case in data["agents"]["hub_valid"]:
+        ctx.run("check_event_hub", case["args"])

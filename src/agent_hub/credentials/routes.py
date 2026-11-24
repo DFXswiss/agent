@@ -34,7 +34,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_hub.agents.identity import actor, audience_of
 from agent_hub.agents.notify import account_change
+from agent_hub.agents.store import agent_author_key
 from agent_hub.credentials import notices, records
 from agent_hub.credentials.eligibility import holds, is_eligible
 from agent_hub.device.keys import ActiveDevice, device_id
@@ -42,11 +44,12 @@ from agent_hub.errors import HubError
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import EVENT_BATCH_BYTES, HubRouter
 from agent_hub.notifications.rules import Notification, publish_rows
+from agent_hub.orgs.append import AGENT_APPENDER
 from agent_hub.orgs.routes import parse_id, user_id
 from agent_hub.requests.store import authorizes_write
 from agent_hub.sessions import model_retry
 from agent_hub.sessions.effects import Effects
-from agent_hub.stream.publish import Audience, AudienceKind, publish
+from agent_hub.stream.publish import Audience, publish
 
 router = HubRouter()
 MAX_SAFE_INTEGER = 2**53 - 1
@@ -90,11 +93,18 @@ def _kind(kind: str) -> str:
     return kind
 
 
-def _user_author(connection: Any, user: UUID) -> records.Author:
-    key = records.identity_key(connection, user)
-    if key is None:
+def user_author(connection: Any, principal: CurrentPrincipal) -> records.Author:
+    """The author of a user's write: the user (registered identity), or the user's own-identity agent whose
+    certificate verifies under it (ADR-082 section 9.5)."""
+    user, writer = user_id(principal), actor(principal)
+    if writer.kind == AGENT_APPENDER:
+        agent = UUID(writer.id)
+        key = agent_author_key(connection, user, agent)
+        return records.Author(id=agent, kind="agent", sig_public=key, user=user)
+    found = records.identity_key(connection, user)
+    if found is None:
         raise HubError("forbidden")
-    return records.Author(id=user, kind="user", sig_public=key)
+    return records.Author(id=user, kind="user", sig_public=found)
 
 
 @router.get("/v1/me/credentials", auth="browser", right="user", read_resource="me.credentials")
@@ -125,7 +135,7 @@ async def put_credential(context: Context, principal: CurrentPrincipal, kind: st
             kind=found_kind,
             record=body.record,
             expected_version=body.expected_version,
-            author=_user_author(connection, user),
+            author=user_author(connection, principal),
             now=now,
             root_key=context.config.platform_root_key,
         )
@@ -161,10 +171,12 @@ async def delete_credential(context: Context, principal: CurrentPrincipal, kind:
 async def rotate_credentials(context: Context, principal: CurrentPrincipal, body: RotateBody) -> dict[str, Any]:
     user, now = user_id(principal), context.clock()
 
-    def work(connection: Any) -> tuple[records.Rotation, dict[str, str]]:
+    def work(connection: Any) -> tuple[records.Rotation, list[Audience]]:
+        author = user_author(connection, principal)
         rotation = records.rotate(
             connection,
-            owner=_user_author(connection, user),
+            owner=records.Author(id=user, kind="user", sig_public=author.sig_public),
+            author=author,
             epoch=body.epoch,
             wraps=body.wraps,
             records=body.records,
@@ -176,13 +188,12 @@ async def rotate_credentials(context: Context, principal: CurrentPrincipal, body
                 "SELECT id::text, kind FROM hub.principal WHERE id = ANY(%s::uuid[])", (sorted(rotation.recipients),)
             ).fetchall()
         )
-        return rotation, kinds
+        return rotation, [audience_of(connection, item, kinds.get(item)) for item in sorted(rotation.recipients)]
 
-    rotation, kinds = await _in_transaction(context, work)
+    rotation, audiences = await _in_transaction(context, work)
     notices.hint_devices(rotation.devices, user)
-    for recipient in sorted(rotation.recipients):
-        audience: AudienceKind = "device" if kinds[recipient] == "device" else "user"
-        publish(Audience(audience, UUID(recipient)), "wraps", {})
+    for audience in audiences:
+        publish(audience, "wraps", {})
     return {}
 
 

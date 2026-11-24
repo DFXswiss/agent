@@ -3,9 +3,12 @@
 Log entries of the membership log (04-crypto.md section 4.7) and the platform log (section 4.8): exact body
 formats, signing texts, signatures and entry hashes.
 
-Entry `{"body": {...}, "sig": b64u}` (plus `"inv_sig"` exactly on `accept`). `sig = Ed25519_by(P || label ||
-canonical(body))` with label `log\\0` (membership) or `platform-log\\0` (platform). Entry hash
-`b64u(SHA-256(canonical(entry)))` over the whole entry including signatures; `prev` of the next entry is this hash.
+Entry `{"body": {...}, "sig": b64u}` (plus `"inv_sig"` exactly on `accept`). `genesis` and `accept` may carry the
+optional member `agent` `{id, pub{kem,sig}, gen, cert}` (ADR-082: the entry also adds the user's agent and is signed
+by the agent's key); `agent_add` adds an agent `{subject, user, pub{kem,sig}, gen, cert}`.
+`sig = Ed25519_by(P || label || canonical(body))` with label `log\\0` (membership) or `platform-log\\0` (platform).
+Entry hash `b64u(SHA-256(canonical(entry)))` over the whole entry including signatures; `prev` of the next entry is
+this hash.
 After Spike D `keyflow.entry_hash`/`_signed_text`; the body key sets are those of `contracts/common.json`
 (`log_body_*`, `platform_body_*`).
 
@@ -42,6 +45,8 @@ SIGNATURE_BYTES = 64
 _ENTRY_KEYS = frozenset({"body", "sig"})
 _ACCEPT_ENTRY_KEYS = frozenset({"body", "sig", "inv_sig"})
 _PUB_KEYS = frozenset({"kem", "sig"})
+_AGENT_KEYS = frozenset({"id", "pub", "gen", "cert"})
+MAX_GEN = 2**31 - 1
 _CAPACITY_KEYS = frozenset(
     {"vm_memory_budget_mib", "vm_memory_used_mib", "vm_slots_total", "vm_slots_free", "pool_ready"}
 )
@@ -80,6 +85,18 @@ def _pub(value: object) -> object:
     pub = require_keys(value, _PUB_KEYS)
     _key(pub["kem"])
     return _key(pub["sig"])
+
+
+def _gen(value: object) -> object:
+    return require_int(value, 1, MAX_GEN)
+
+
+def _agent(value: object) -> object:  # the optional `agent` member of `genesis` and `accept` (ADR-082)
+    agent = require_keys(value, _AGENT_KEYS)
+    fields.uuid(agent["id"])
+    _pub(agent["pub"])
+    _gen(agent["gen"])
+    return _sig(agent["cert"])
 
 
 def _one_of(*allowed: str) -> Check:
@@ -167,6 +184,7 @@ _LOG_TYPES: dict[str, dict[str, Check]] = {
         "role": _one_of("admin", "member"),
         "wgs": _wgs(_WG_ACCESS),
     },
+    "agent_add": {"subject": fields.uuid, "user": fields.uuid, "pub": _pub, "gen": _gen, "cert": _sig},
 }
 _INVITE_COMMON: dict[str, Check] = {"invite_id": _invite_id, "pk_inv": _key, "kind": _one_of("user", "device")}
 _INVITE_USER: dict[str, Check] = {
@@ -227,6 +245,8 @@ def _type_fields(body: dict[str, object]) -> dict[str, Check]:
     own = dict(_LOG_TYPES[cast(str, kind)])
     if kind in ("device_assign", "device_assign_org") and "platform_seq" in body:
         own["platform_seq"] = _seq
+    if kind in ("genesis", "accept") and "agent" in body:
+        own["agent"] = _agent
     return own
 
 

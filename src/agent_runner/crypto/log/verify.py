@@ -24,6 +24,20 @@ against the state **before** it, in this order (the same in every implementation
    `by_id_sig` (`PlatformState.identity_anchored`; without platform state refused) (`log_admit`). The admitted user
    has not consented (`Principal.consented`): devices of this org are no recipients of its credential key.
 
+Agents (ADR-082, `log_agent` for the agent rules): `genesis`/`accept` with the member `agent` are signed by the agent's
+key (`log_genesis`/`log_accept` otherwise; `inv_sig` unchanged) and add the agent; `agent_add` is signed by its user
+(`by == user`, L4/L8 as usual) or by the agent itself (`by == subject`, under `pub.sig` from the body). The agent rule
+(`log_agent`): `user` is an active user member; `by` is the user or the subject; the subject is no principal of the
+org, except an agent of the same user with the same keys and generation that was removed with its user; `gen` is
+greater than the generation of every other agent of the user in the log; `cert` is valid under the user's signing key
+in the state before the entry. An active agent of the user with a lower generation is replaced (removed at the same
+`seq`). An agent authors every other entry with the rights of its user (`OrgState.acting`); `remove` of a user
+removes its active agent at the same `seq`; an agent is removed by itself (leaving), its user (or the user's agent) or
+an admin; `remove`/`role` by a principal whose subject is the author's user counts as the user leaving or demoting
+itself (`rotation.self_owed`). When a user (or its agent) removes its agent, or an `agent_add` replaces it, the R of
+that agent is owed by the user (`OrgState.agent_owed`): the user or its active agent may `rotate` those scopes
+without the admin or write right; a `rotate` clears the scope from `agent_owed` and from `pending`.
+
 `now` (hub receipt time) switches on the checks that only the hub can make at append time: invitation expiry and,
 for `device_assign` of a platform device, that the org has platform access (ADR-026, the hub answers
 `platform_access_denied` before; here `log_rights` as backstop) and that the certification named by `platform_seq`
@@ -38,6 +52,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import cast
 
+from agent_runner.crypto import agent as agent_format
 from agent_runner.crypto.encoding import b64u_decode, parse_time
 from agent_runner.crypto.errors import fail
 from agent_runner.crypto.log import rotation
@@ -45,6 +60,7 @@ from agent_runner.crypto.log.entries import Head, check_log_entry, entry_hash, l
 from agent_runner.crypto.log.platform import PlatformState
 from agent_runner.crypto.log.state import (
     ADMIN,
+    AGENT,
     DEVICE,
     ORG,
     USER,
@@ -60,17 +76,70 @@ from agent_runner.crypto.log.state import (
 Body = dict[str, object]
 
 
+def _signer(body: Body, own: str) -> str:
+    """The key that signs a `genesis`/`accept`: the agent's when the entry carries an `agent` member."""
+    agent = cast(dict[str, dict[str, str]] | None, body.get("agent"))
+    return own if agent is None else agent["pub"]["sig"]
+
+
+def _add_agent(state: OrgState, user: str, agent: Body, seq: int) -> OrgState:
+    """The agent rule of ADR-082 sections 1 and 9.1 (`log_agent`); replaces the user's active agent."""
+    agent_id, gen, pub = cast(str, agent["id"]), cast(int, agent["gen"]), cast(dict[str, str], agent["pub"])
+    parent = state.member(user)
+    former = state.principals.get(agent_id)
+    # a new agent, or the same agent (keys, generation) coming back after it was removed together with its user
+    keys = (pub["kem"], pub["sig"])
+    allowed = former is None or (
+        former.removed_with_user and former.parent == user and former.gen == gen and (former.kem, former.sig) == keys
+    )
+    newest = all(gen > cast(int, p.gen) for p in state.principals.values() if p.parent == user and p.id != agent_id)
+    valid = (
+        parent is not None
+        and parent.kind == USER
+        and allowed
+        and newest
+        and signature_valid(b64u_decode(parent.sig), agent["cert"], agent_format.cert_text(agent_id, pub, user, gen))
+    )
+    if not valid:
+        fail("log_agent")
+    principals = dict(state.principals)
+    replaced = state.agent_of(user)
+    if replaced is not None:
+        principals[replaced.id] = replace(replaced, removed_seq=seq)
+    principals[agent_id] = Principal(agent_id, AGENT, AGENT, pub["kem"], pub["sig"], seq, parent=user, gen=gen)
+    after = replace(state, principals=principals)
+    if replaced is None:
+        return after
+    return _owe(after, rotation.required_set(state, after, replaced.id), user)
+
+
+def _owe(state: OrgState, scopes: frozenset[Scope], user: str) -> OrgState:
+    """The rotation of `scopes` is owed by `user`, who removed or replaced its agent (ADR-082 section 4)."""
+    return replace(state, agent_owed={**state.agent_owed, **dict.fromkeys(scopes, user)})
+
+
+def _join_agent(state: OrgState, body: Body, seq: int) -> OrgState:
+    """The optional `agent` member of `genesis`/`accept`: added, and recorded as the signer of the user's entry."""
+    agent = cast(Body | None, body.get("agent"))
+    if agent is None:
+        return state
+    user = cast(str, body["subject"])
+    after = _add_agent(state, user, agent, seq)
+    joined = replace(after.principals[user], join_agent=cast(str, agent["id"]))
+    return replace(after, principals={**after.principals, user: joined})
+
+
 def _genesis(body: Body, entry: Body, founder: str) -> OrgState:
     pub = cast(dict[str, str], body["pub"])
     valid = (
         body["subject"] == body["by"]
         and pub["sig"] == founder
-        and signature_valid(b64u_decode(founder), entry["sig"], log_text(body))
+        and signature_valid(b64u_decode(_signer(body, founder)), entry["sig"], log_text(body))
     )
     if not valid:
         fail("log_genesis")
     org, wg, user = cast(str, body["org"]), cast(str, body["default_wg"]), cast(str, body["by"])
-    return OrgState(
+    state = OrgState(
         org=org,
         founder=founder,
         default_wg=wg,
@@ -85,6 +154,7 @@ def _genesis(body: Body, entry: Body, founder: str) -> OrgState:
         epochs={(ORG, org): 1, (WG, wg): 1},
         epoch_authors={(ORG, org, 1): user, (WG, wg, 1): user},
     )
+    return _join_agent(state, body, 0)
 
 
 def _accept(state: OrgState, body: Body, entry: Body, seq: int, now: datetime | None) -> OrgState:
@@ -111,7 +181,7 @@ def _accept(state: OrgState, body: Body, entry: Body, seq: int, now: datetime | 
         body["by"] == subject
         and body["kind"] == invite.kind
         and rejoin_valid
-        and signature_valid(b64u_decode(pub["sig"]), entry["sig"], text)
+        and signature_valid(b64u_decode(_signer(body, pub["sig"])), entry["sig"], text)
         and signature_valid(b64u_decode(invite.pk_inv), entry["inv_sig"], text)
     )
     if not valid:
@@ -124,13 +194,14 @@ def _accept(state: OrgState, body: Body, entry: Body, seq: int, now: datetime | 
             access[(subject, wg)] = level
         else:
             assignments[(subject, wg)] = seq
-    return replace(
+    after = replace(
         state,
         principals={**state.principals, subject: principal},
         invites={**state.invites, invite.invite_id: replace(invite, accepted_seq=seq)},
         access=access,
         assignments=assignments,
     )
+    return _join_agent(after, body, seq)
 
 
 def _admit(state: OrgState, body: Body, seq: int, ctx: _Context) -> OrgState:
@@ -141,13 +212,13 @@ def _admit(state: OrgState, body: Body, seq: int, ctx: _Context) -> OrgState:
     rejoin_valid = former is None or (
         not former.active and former.kind == USER and (former.kem, former.sig) == (pub["kem"], pub["sig"])
     )
-    author = state.principals[by]
+    author = state.principals[state.acting(by)]  # an agent admits with its user's anchor
     platform, current = ctx.platform, ctx.now is not None
     anchored = platform is not None and (
         platform.identity_anchored(cast(int, body["platform_seq"]), subject, pub, body["id_sig"], current=current)
         and platform.identity_anchored(
             cast(int, body["by_platform_seq"]),
-            by,
+            author.id,
             {"kem": author.kem, "sig": author.sig},
             body["by_id_sig"],
             current=current,
@@ -205,9 +276,9 @@ def _role(state: OrgState, body: Body) -> OrgState:
     if principal.role == ADMIN and state.admins() == [principal.id]:
         fail("last_admin")
     after = replace(state, principals={**state.principals, principal.id: replace(principal, role=str(body["role"]))})
-    if principal.id == body["by"]:
+    if rotation.self_owed(state, body):
         # self-demotion: like leaving, the subject cannot rotate what it no longer reads (ADR-058 section 3)
-        after = replace(after, pending=after.pending | rotation.required_set(state, after, principal.id))
+        after = replace(after, pending=after.pending | rotation.lost(state, after, body))
     return after
 
 
@@ -219,7 +290,7 @@ def _wg_create(state: OrgState, body: Body, seq: int) -> OrgState:
     return replace(
         state,
         workgroups={**state.workgroups, wg: Workgroup(wg, False, seq)},
-        access={**state.access, (by, wg): WRITE},
+        access={**state.access, (state.acting(by), wg): WRITE},
         epochs={**state.epochs, (WG, wg): 1},
         epoch_authors={**state.epoch_authors, (WG, wg, 1): by},
     )
@@ -323,30 +394,41 @@ def _device_unassign_org(state: OrgState, body: Body) -> OrgState:
 def _remove(state: OrgState, body: Body, seq: int) -> OrgState:
     subject, by = cast(str, body["subject"]), cast(str, body["by"])
     found = state.member(subject)
-    if found is None or not (subject == by or state.is_admin(by)):
+    # the subject itself, the user through its agent, the user (or its agent) removing its agent, or an admin
+    if found is None or not (state.acting(by) in (subject, found.parent) or state.is_admin(by)):
         fail("log_rights")
     if found.role == ADMIN and state.admins() == [subject]:
         fail("last_admin")
+    # an agent removed by its user, the user's agent or itself is revoked in every log (`wraps.revoked_agents`)
+    by_owner = found.parent is not None and state.acting(by) == found.parent
+    principals = {**state.principals, subject: replace(found, removed_seq=seq, removed_by_owner=by_owner)}
+    agent = state.agent_of(subject)
+    if agent is not None:  # "with its user" (ADR-082 section 9.2)
+        principals[agent.id] = replace(agent, removed_seq=seq, removed_with_user=True)
     after = replace(
         state,
-        principals={**state.principals, subject: replace(found, removed_seq=seq)},
+        principals=principals,
         access={key: value for key, value in state.access.items() if key[0] != subject},
         assignments={key: value for key, value in state.assignments.items() if key[0] != subject},
         org_assignments={key: value for key, value in state.org_assignments.items() if key != subject},
     )
-    if subject == by:
+    if rotation.self_owed(state, body):
         # leaving: the leaver cannot rotate (L8), so the rotation is owed by the remaining holders
-        after = replace(after, pending=after.pending | rotation.required_set(state, after, subject))
+        after = replace(after, pending=after.pending | rotation.lost(state, after, body))
+    elif by_owner:
+        # the user (or its agent) removes its agent: it may rotate what the agent read without admin or write right
+        after = _owe(after, rotation.lost(state, after, body), cast(str, found.parent))
     return after
 
 
 def _rotate(state: OrgState, body: Body) -> OrgState:
     scope = cast(Scope, (body["scope"], body["scope_id"]))
     by = cast(str, body["by"])
+    owed = state.agent_owed.get(scope) == state.acting(by)  # the user that removed its agent, or its agent
     if scope[0] == ORG:
-        _rights(scope[1] == state.org and state.is_admin(by))
+        _rights(scope[1] == state.org and (state.is_admin(by) or owed))
     else:
-        _rights(scope[1] in state.workgroups and (state.is_admin(by) or state.wg_access(by, scope[1]) == WRITE))
+        _rights(scope[1] in state.workgroups and (state.is_admin(by) or owed or state.wg_access(by, scope[1]) == WRITE))
     epoch = state.epoch(*scope) + 1
     if body["epoch"] != epoch:
         fail("log_epoch")
@@ -355,7 +437,22 @@ def _rotate(state: OrgState, body: Body) -> OrgState:
         epochs={**state.epochs, scope: epoch},
         epoch_authors={**state.epoch_authors, (*scope, epoch): by},
         pending=state.pending - {scope},
+        agent_owed={key: user for key, user in state.agent_owed.items() if key != scope},
     )
+
+
+def _agent_add(state: OrgState, body: Body, entry: Body, seq: int) -> OrgState:
+    """`agent_add`: L4 under the user's key (`by == user`) or the agent's own key from the body (`by == subject`, the
+    agent is no principal yet), L8 for an author that is a principal, then the agent rule (`log_agent`)."""
+    by, subject, user = cast(str, body["by"]), cast(str, body["subject"]), cast(str, body["user"])
+    author = state.principals.get(by)
+    key = cast(dict[str, str], body["pub"])["sig"] if by == subject else None if author is None else author.sig
+    if key is None or not signature_valid(b64u_decode(key), entry["sig"], log_text(body)):
+        fail("log_signature")
+    _rights(by == subject or cast(Principal, author).active)
+    if by not in (user, subject):
+        fail("log_agent")
+    return _add_agent(state, user, {"id": subject, **{k: body[k] for k in ("pub", "gen", "cert")}}, seq)
 
 
 Transition = Callable[[OrgState, Body, int, _Context], OrgState]
@@ -416,6 +513,8 @@ def apply(
         after = _genesis(body, data, founder)
     elif body["type"] == "accept":
         after = _accept(state, body, data, seq, now)
+    elif body["type"] == "agent_add":
+        after = _agent_add(state, body, data, seq)
     else:
         author = state.principals.get(cast(str, body["by"]))
         if author is None or not signature_valid(b64u_decode(author.sig), data["sig"], log_text(body)):

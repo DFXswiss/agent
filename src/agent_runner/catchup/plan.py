@@ -17,6 +17,11 @@ hub uses for `GET /v1/orgs/{org}/catch-up`):
   epoch, so different company records of one organization may have different epochs: the device plans **every**
   epoch of the organization it holds, so a newly assigned device can open each record.
 
+Agents (ADR-082 sections 1, 9.1 and 9.4): the active agent of a user is a recipient of every slot of its user (the
+copied `crypto.log.catchup` adds it, also for older epochs of slots this daemon uploaded for the user); an agent that is
+revoked in any acting org (`revoked_agents`: superseded or removed other than with its user) is excluded like a
+decertified device, also in a log where it is still active (the user's clients remove it there).
+
 A slot is planned only when the device holds the key of that epoch. The device does not see which wraps the hub
 already stores for others: slots uploaded once (stored or ignored as existing) are remembered per daemon (`done`), so
 every slot is sent at most once per daemon; slots the hub refused are skipped until a verified log head changes or
@@ -33,8 +38,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent_runner.crypto.log.catchup import missing_cred_wraps, missing_wraps
-from agent_runner.crypto.log.state import DEVICE
-from agent_runner.crypto.log.wraps import CRED, WrapSlot
+from agent_runner.crypto.log.state import USER
+from agent_runner.crypto.log.wraps import CRED, WrapSlot, revoked_agents
 from agent_runner.orgs.book import OrgBook
 
 MAX_WRAPS = 200
@@ -72,17 +77,14 @@ def heads(book: OrgBook) -> Heads:
 
 def _cred_owners(book: OrgBook, held: Iterable[Slot]) -> dict[str, list[int]]:
     """Owner -> the `cred` epochs to plan: the newest one the device holds for a user, every held one for an acting
-    organization (a `cred` scope is keyed by its owner; other IDs are left out)."""
+    organization (a `cred` scope is keyed by its owner, never by an agent or a device; other IDs are left out)."""
     owners: dict[str, set[int]] = {}
     for scope, scope_id, epoch in held:
         if scope == CRED:
             owners.setdefault(scope_id, set()).add(epoch)
     orgs = set(book.acting_orgs())
     users = {
-        principal.id
-        for org in orgs
-        for principal in book.logs[org].state.principals.values()
-        if principal.kind != DEVICE
+        principal.id for org in orgs for principal in book.logs[org].state.principals.values() if principal.kind == USER
     }
     found = {owner: [max(epochs)] for owner, epochs in owners.items() if owner in users}
     found.update({owner: sorted(epochs) for owner, epochs in owners.items() if owner in orgs})
@@ -96,12 +98,13 @@ def plan(book: OrgBook, held: Iterable[Slot], memory: Memory, limit: int | None 
     skip = set(memory.done) | memory.waiting(now)
     chosen: set[WrapSlot] = set()
     acting = book.acting_orgs()
+    logs = [book.logs[org] for org in acting]
+    revoked = revoked_agents(log.state for log in logs)
     for org in acting:
-        for slot in missing_wraps(book.logs[org], book.device_id, skip, book.excluded(org)):
+        for slot in missing_wraps(book.logs[org], book.device_id, skip, book.excluded(org) | revoked):
             if (slot.scope, slot.scope_id, slot.epoch) in holding:
                 chosen.add(slot)
-    logs = [book.logs[org] for org in acting]
-    excluded = frozenset().union(*(book.excluded(org) for org in acting))
+    excluded = revoked.union(*(book.excluded(org) for org in acting))
     for owner, epochs in sorted(_cred_owners(book, holding).items()):
         for epoch in epochs:
             chosen.update(

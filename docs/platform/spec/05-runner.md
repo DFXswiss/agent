@@ -1031,8 +1031,8 @@ Pipeline for every `request_operation`:
    module decides and opens the credential (`credentials/acting.py`); a structural test keeps it the only one. An
    operation needing a personal connection without acting user is rejected at once with `github_not_connected` and
    uses nobody's connection; it is not held (nobody could be asked). The `operation.result` event names the user
-   whose connection an executed operation used (`connection_of`). Only users author prompts; a user's own agent
-   signs as that user. Credential kinds of a session (inventory): `github` is the only personal connection an
+   whose connection an executed operation used (`connection_of`). Users and their agents author prompts; a prompt
+   of an agent counts as its user's (ADR-082). Credential kinds of a session (inventory): `github` is the only personal connection an
    operation uses; the model access is the session's, chosen at its start, its consumption carried by the
    organisation (KONZEPT A15); `mailbox` and the login kinds serve only that user's own device requests.
    **Held instead of rejected (KOR-25, ADR-066).** If the check of a `github.*` type fails with `github_not_connected` (no

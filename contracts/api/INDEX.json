@@ -2091,6 +2091,23 @@
       "owner": "KOR-24"
     },
     {
+      "method": "POST",
+      "path": "/v1/agent/identity",
+      "name": "agent-identity",
+      "section": "11.4",
+      "auth": "agent",
+      "rights": [
+        "agent"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/agent-identity.request.json",
+      "response": "api/agent-identity.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-57"
+    },
+    {
       "method": "GET",
       "path": "/v1/agent/handover",
       "name": "agent-handover",

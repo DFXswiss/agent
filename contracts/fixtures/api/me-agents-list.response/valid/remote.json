@@ -10,7 +10,17 @@
       "last_used_at": null,
       "revoked_at": null,
       "replaces": null,
-      "remote": true
+      "remote": true,
+      "own_identity": false,
+      "held_identity": true,
+      "gen": null,
+      "revoked_reason": null,
+      "pub": {
+        "kem": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "cert": null,
+      "session_id": null
     }
   ]
 }

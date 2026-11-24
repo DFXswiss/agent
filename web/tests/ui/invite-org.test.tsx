@@ -754,6 +754,7 @@ describe('OrgInvite: with the pairing of an agent (11-agent-access.md section 5.
       pairing_id: PAIRING,
       pub: agent.public(),
       state: 'open',
+      gen: 1,
       expires_at: formatTime(Date.now() + 600_000),
     }));
     hub.override.set('POST /v1/me/agents', () => ({ agent_id: PAIRING }));
@@ -824,6 +825,7 @@ describe('OrgInvite: with the pairing of an agent (11-agent-access.md section 5.
       pairing_id: PAIRING,
       pub: agent.public(),
       state: 'open',
+      gen: 1,
       expires_at: formatTime(Date.now() + 300_000),
       remote: true,
       nonce,

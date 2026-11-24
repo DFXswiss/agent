@@ -11,6 +11,8 @@
 // (`header_invalid`); canonical JSON of the body (`non_ascii`, `header_invalid`); field formats, common fields first
 // in the order `org, seq, prev, type, by, ts, v`, then the type's fields in the order of the contract
 // (`header_invalid`). Entry signatures are not format: a malformed or wrong `sig`/`inv_sig` is a rule failure.
+// `genesis` and `accept` may carry an optional `agent` member `{id, pub{kem,sig}, gen, cert}` (ADR-082), checked after
+// the type's other fields.
 import { b64uDecode, b64uEncode } from '../encoding/b64u';
 import { concat } from '../encoding/bytes';
 import { canonical, isPlainObject } from '../encoding/json';
@@ -41,6 +43,7 @@ type Check = (value: unknown) => unknown;
 
 const ENTRY_KEYS = ['body', 'sig'];
 const ACCEPT_ENTRY_KEYS = ['body', 'sig', 'inv_sig'];
+const AGENT_KEYS = ['id', 'pub', 'gen', 'cert'];
 const CAPACITY_KEYS = ['pool_ready', 'vm_memory_budget_mib', 'vm_memory_used_mib', 'vm_slots_free', 'vm_slots_total'];
 const VERSION_TEXT_RE = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/;
 /** `os` and `arch` of the enrollment body (`contracts/api/device-enroll.request.json`). */
@@ -60,6 +63,18 @@ function pub(value: unknown): unknown {
   const keys = F.requireKeys(value, ['kem', 'sig']);
   key(keys.kem);
   return key(keys.sig);
+}
+
+/** The generation of an agent certificate (ADR-082 section 9.1). */
+const gen: Check = (value) => F.requireInt(value, 1, MAX_EPOCH);
+
+/** The optional `agent` member of `genesis`/`accept`: `{id, pub, gen, cert}`. */
+function agentMember(value: unknown): unknown {
+  const fields = F.requireKeys(value, AGENT_KEYS);
+  F.uuid(fields.id);
+  pub(fields.pub);
+  gen(fields.gen);
+  return bodySig(fields.cert);
 }
 
 function oneOf(...allowed: string[]): Check {
@@ -126,6 +141,7 @@ const LOG_TYPE_FIELDS: Record<string, Record<string, Check>> = {
   device_unassign_org: { device: F.uuid },
   remove: { subject: F.uuid },
   rotate: { scope: oneOf('org', 'wg'), scope_id: F.uuid, epoch },
+  agent_add: { subject: F.uuid, user: F.uuid, pub, gen, cert: bodySig },
   admit: {
     subject: F.uuid,
     pub,
@@ -194,6 +210,7 @@ function typeFields(body: Body): Record<string, Check> {
   const own = { ...LOG_TYPE_FIELDS[type] };
   if ((type === 'device_assign' || type === 'device_assign_org') && Object.hasOwn(body, 'platform_seq'))
     own.platform_seq = seq;
+  if ((type === 'genesis' || type === 'accept') && Object.hasOwn(body, 'agent')) own.agent = agentMember;
   return own;
 }
 
@@ -293,8 +310,23 @@ export async function checkExtends(stored: Head | null, entries: readonly unknow
 // --- builders ---
 
 /** The fields of one membership-log entry without the common fields (`org`, `seq`, `prev`, `by`, `ts`, `v`). */
+/** The `agent` member of `genesis`/`accept` (the entry is then signed by the agent's key). */
+export interface AgentMember {
+  id: string;
+  pub: { kem: string; sig: string };
+  gen: number;
+  cert: string;
+}
+
 export type LogFields =
-  | { type: 'genesis'; subject: string; pub: { kem: string; sig: string }; default_wg: string; private: boolean }
+  | {
+      type: 'genesis';
+      subject: string;
+      pub: { kem: string; sig: string };
+      default_wg: string;
+      private: boolean;
+      agent?: AgentMember;
+    }
   | {
       type: 'invite';
       invite_id: string;
@@ -313,7 +345,14 @@ export type LogFields =
       expires: string;
     }
   | { type: 'invite_revoke'; invite_id: string }
-  | { type: 'accept'; invite_id: string; subject: string; kind: 'user' | 'device'; pub: { kem: string; sig: string } }
+  | {
+      type: 'accept';
+      invite_id: string;
+      subject: string;
+      kind: 'user' | 'device';
+      pub: { kem: string; sig: string };
+      agent?: AgentMember;
+    }
   | { type: 'role'; subject: string; role: 'admin' | 'member' }
   | { type: 'wg_create'; wg: string; epoch: 1 }
   | { type: 'wg_archive'; wg: string }
@@ -325,6 +364,7 @@ export type LogFields =
   | { type: 'device_unassign_org'; device: string }
   | { type: 'remove'; subject: string }
   | { type: 'rotate'; scope: 'org' | 'wg'; scope_id: string; epoch: number }
+  | { type: 'agent_add'; subject: string; user: string; pub: { kem: string; sig: string }; gen: number; cert: string }
   | {
       type: 'admit';
       subject: string;

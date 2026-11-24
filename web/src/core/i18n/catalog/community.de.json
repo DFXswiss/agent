@@ -20,6 +20,7 @@
   "removed": "Nachricht entfernt",
   "unverifiable": "Nachricht konnte nicht überprüft werden",
   "pending": "Wartet auf den Community-Schlüssel …",
+  "agent-of": "Agent von {name}",
   "unknown": "Unbekannt",
   "link.external": "(öffnet in einem neuen Tab)",
   "menu": "Aktionen zur Nachricht von {name}",

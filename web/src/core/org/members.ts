@@ -4,13 +4,14 @@
 // re-read log): a change another admin already made is "nothing to do" (null), a change that is no longer allowed is
 // refused with the code the log rules would give.
 //
-// Rights mirror the log rules (04-crypto.md section 4.7): role, grant, ungrant and remove of others need an admin;
+// Rights mirror the log rules (04-crypto.md section 4.7): role, grant, ungrant and remove of others need an admin,
+// except the removal of an agent by its own user (ADR-082 section 4);
 // the last admin can neither be demoted nor removed nor leave (`last_admin`); the default workgroup's write access is
 // not reducible (ADR-024 addendum: no `ungrant`, no `grant` on it). Every admin reads every workgroup by inheritance
 // (ADR-058): `grant` and `ungrant` act on the explicit access only (a `grant` of `read` to an admin makes it explicit,
 // an `ungrant` of an admin's explicit access leaves the inherited read). A grant needs no key of the granting admin:
 // the key holders deliver it by catch-up. Demoting an admin is a normal batch; `buildBatch` adds the rotation.
-import { ADMIN, MEMBER, type OrgState, READ, USER, WRITE } from '../log/state';
+import { ADMIN, AGENT, MEMBER, type OrgState, READ, USER, WRITE } from '../log/state';
 import { type Directory, type NameSource, selectDirectory } from '../tasks/directory';
 import type { StoreState } from '../store/store';
 import { type Planner, refuse } from './batch';
@@ -139,15 +140,32 @@ export function ungrantPlan(subject: string, wg: string): Planner {
   };
 }
 
-/** `remove` of another member (+ R: the org and every workgroup it read); null once it is gone. */
+/** `remove` of another member (+ R: the org and every workgroup it read); null once it is gone. An agent is removed
+ *  as `removeAgentPlan` says (also by its user). */
 export function removePlan(subject: string): Planner {
   return (log, me) => {
     const state = log.state;
+    if (state.member(subject)?.kind === AGENT) return removeAgentPlan(subject)(log, me);
     requireAdmin(state, me);
     if (subject === me) refuse('forbidden');
     // (another admin remains: the actor is one, and removing oneself is leaving)
     if (state.member(subject) === null) return null;
     return { entries: [{ type: 'remove', subject }] };
+  };
+}
+
+/**
+ * `remove` of an agent (ADR-082 section 4): by its user (also through the user's other agent) or an admin, with R –
+ * everything its user reads – in the same batch; null once it is gone, `not_found` for a principal that is no agent.
+ */
+export function removeAgentPlan(agent: string): Planner {
+  return (log, me) => {
+    const state = log.state;
+    const found = state.member(agent);
+    if (found === null) return null;
+    if (found.kind !== AGENT) refuse('not_found');
+    if (found.parent !== state.acting(me) && !state.isAdmin(me)) refuse('forbidden');
+    return { entries: [{ type: 'remove', subject: agent }] };
   };
 }
 

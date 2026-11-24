@@ -15,6 +15,7 @@ from uuid import UUID
 
 from pydantic import StringConstraints
 
+from agent_hub.agents.identity import actor
 from agent_hub.auth.fields import Strict, decode
 from agent_hub.db.pool import transaction
 from agent_hub.errors import HubError
@@ -71,7 +72,14 @@ async def create_invite(org: str, body: CreateInvite, context: Context, principa
     stored = await _in_transaction(
         context,
         lambda c: orgs.create(
-            c, org_id=org_id, user=user_id(principal), entry=body.entry, package=package, now=now, root_key=root
+            c,
+            org_id=org_id,
+            user=user_id(principal),
+            entry=body.entry,
+            package=package,
+            now=now,
+            root_key=root,
+            appender=actor(principal),
         ),
     )
     _answer(stored)
@@ -96,7 +104,14 @@ async def revoke_invite(
     stored = await _in_transaction(
         context,
         lambda c: orgs.revoke(
-            c, org_id=org_id, user=user_id(principal), invite_id=id, entry=body.entry, now=now, root_key=root
+            c,
+            org_id=org_id,
+            user=user_id(principal),
+            invite_id=id,
+            entry=body.entry,
+            now=now,
+            root_key=root,
+            appender=actor(principal),
         ),
     )
     _answer(stored)

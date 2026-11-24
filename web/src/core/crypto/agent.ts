@@ -27,16 +27,31 @@
 //   "pub":{kem,sig},"user"})`, signed by `sk_inv`, the new identity and the new agent key (`verifyText`).
 // - `recoverText`: `P || "agent-recover\0" || canonical({"agent","agent_pub":{kem,sig},"challenge","method","user"})`
 //   with the 32-byte challenge of `recovery/begin`, signed by the recovered identity and the new agent key.
+//
+// The agent's own identity (ADR-082 sections 1, 2 and 9.1): the agent never receives the user's identity.
+// - `certText`: the delegation certificate `P || "agent-cert\0" || canonical({"agent","gen","pub":{kem,sig},"user",
+//   "v":1})`, signed once by the user's identity (`signCert`); every verifier checks it under the user's signing key
+//   from its verified log (`verifyCert`). `gen` >= 1 is the generation the hub counts per user.
+// - `sealUser`/`openUser`: the agent's anchor, the user's public keys and the certificate, sealed like the identity
+//   (`k` from `r`, AES-GCM inner with AAD = info, HPKE outer) with `info = P || "agent-user\0" || ids` and the
+//   plaintext `canonical({"cert","kem","sig"})` (exact keys, canonical, else `header_invalid`).
 import { b64uDecode, b64uEncode } from '../encoding/b64u';
 import { concat, equalBytes } from '../encoding/bytes';
 import { bodyJson, canonical, parseJson } from '../encoding/json';
 import * as aead from './aead';
 import { bundlePlaintext, parseBundlePlaintext } from './bundle';
 import { fail } from './errors';
-import { requireKeys } from './fields';
+import { b64uBytes, requireInt, requireKeys, uuid } from './fields';
 import * as hpke from './hpke';
 import { hkdf, hkdfAesKey } from './kdf';
-import { ed25519VerifyB64u, type Identity, type KeyPair, RAW_KEY_BYTES } from './keys';
+import {
+  ED25519_SIGNATURE_BYTES,
+  ed25519Sign,
+  ed25519VerifyB64u,
+  type Identity,
+  type KeyPair,
+  RAW_KEY_BYTES,
+} from './keys';
 import * as L from './labels';
 import { Secret } from './secret';
 import { sha256 } from './subtle';
@@ -377,4 +392,103 @@ export function recoverText(f: RecoverFields): Uint8Array<ArrayBuffer> {
 /** `signature_invalid` unless `signature` (b64u) is the signature of `sigPub` over `text`. */
 export function verifyText(sigPub: Uint8Array, signature: unknown, text: Uint8Array): Promise<void> {
   return ed25519VerifyB64u(sigPub, signature, text);
+}
+
+/** The version inside the certificate text. */
+export const CERT_VERSION = 1;
+/** The highest certificate generation. */
+export const MAX_GEN = 2 ** 31 - 1;
+const PUB_KEYS = ['kem', 'sig'];
+const USER_KEYS = ['cert', 'kem', 'sig'];
+
+/** Public keys as b64u texts (`{kem, sig}` of a log entry). */
+export interface PublicKeys {
+  readonly kem: string;
+  readonly sig: string;
+}
+
+/** Exactly `{kem, sig}`, each the b64u text of a 32-byte key (`header_invalid` otherwise). */
+export function publicKeysOf(pub: unknown): PublicKeys {
+  const value = requireKeys(pub, PUB_KEYS);
+  return { kem: b64uBytes(value.kem, RAW_KEY_BYTES), sig: b64uBytes(value.sig, RAW_KEY_BYTES) };
+}
+
+/** What a delegation certificate binds: the agent, its keys, its user and its generation. */
+export interface CertFields {
+  readonly agent: string;
+  readonly pub: unknown;
+  readonly user: string;
+  readonly gen: unknown;
+}
+
+/** The text the user's identity signs to make `pub` the keys of its agent (`header_invalid` if malformed). */
+export function certText(f: CertFields): Uint8Array<ArrayBuffer> {
+  const fields = {
+    agent: uuid(f.agent),
+    gen: requireInt(f.gen, 1, MAX_GEN),
+    pub: publicKeysOf(f.pub),
+    user: uuid(f.user),
+    v: CERT_VERSION,
+  };
+  return concat(L.label(L.LABEL_AGENT_CERT), canonical(fields));
+}
+
+/** The certificate (b64u Ed25519 signature) by the user's signing key. */
+export async function signCert(userSig: CryptoKey, f: CertFields): Promise<string> {
+  return b64uEncode(await ed25519Sign(userSig, certText(f)));
+}
+
+/** `signature_invalid` unless `cert` is the user's signature (`userSigPub`, raw) over `certText(f)`. */
+export function verifyCert(userSigPub: Uint8Array, cert: unknown, f: CertFields): Promise<void> {
+  return ed25519VerifyB64u(userSigPub, cert, certText(f));
+}
+
+/** The user anchor the agent receives: the user's public keys and the certificate. */
+export interface UserAnchor {
+  readonly kem: string;
+  readonly sig: string;
+  readonly cert: string;
+}
+
+/** The HPKE `info` (and inner AAD) of the user anchor sealed to the agent. */
+export function userInfo(agentId: string, userId: string): Uint8Array<ArrayBuffer> {
+  return concat(L.label(L.LABEL_AGENT_USER), ids(agentId, userId));
+}
+
+/** `canonical({"cert","kem","sig"})` of a well-formed anchor (`header_invalid` otherwise). */
+export function userPlaintext(anchor: UserAnchor): Uint8Array<ArrayBuffer> {
+  const cert = b64uBytes(anchor.cert, ED25519_SIGNATURE_BYTES);
+  return canonical({ cert, ...publicKeysOf({ kem: anchor.kem, sig: anchor.sig }) });
+}
+
+/** `user_ct`: the user anchor under `k` and sealed to the agent's X25519 key (b64u). */
+export async function sealUser(
+  agentKemPub: Uint8Array,
+  secret: Raw,
+  agentId: string,
+  userId: string,
+  anchor: UserAnchor,
+  fixed: Fixed = {},
+): Promise<string> {
+  const info = userInfo(agentId, userId);
+  const key = await bundleKey(secret, agentId, userId);
+  const inner = await aead.sealBlob(key, userPlaintext(anchor), info, fixed.nonce);
+  return b64uEncode(await hpke.seal(agentKemPub, info, inner, fixed.ephemeral));
+}
+
+/** The inverse of `sealUser` (`hpke_short`, `decrypt_failed`, `header_invalid`). */
+export async function openUser(
+  agentKem: KeyPair,
+  secret: Raw,
+  agentId: string,
+  userId: string,
+  sealed: string,
+): Promise<UserAnchor> {
+  const info = userInfo(agentId, userId);
+  const inner = await hpke.open(agentKem, info, b64uDecode(sealed));
+  const plaintext = await aead.openBlob(await bundleKey(secret, agentId, userId), inner, info);
+  const value = requireKeys(parseJson(plaintext), USER_KEYS);
+  const anchor = { kem: value.kem as string, sig: value.sig as string, cert: value.cert as string };
+  if (!equalBytes(userPlaintext(anchor), plaintext)) fail('header_invalid');
+  return anchor;
 }

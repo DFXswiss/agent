@@ -4,9 +4,11 @@ sections 4.7 and 5.10): entries, the rotation obligation and the wraps.
 `check_batch` runs, in this order:
 
 1. L1-L8 for every entry (`verify.append_entries`; a wrong first `seq` is `seq_conflict`);
-2. the rotation obligation: R = the union of `R(state before, state after, subject)` over the entries, except a
-   member that leaves by itself or an admin that demotes itself (it cannot rotate what it no longer reads; its R
-   becomes `OrgState.pending`, ADR-058 section 3). If R is not empty the batch
+2. the rotation obligation: R = the union of `R(state before, state after, p)` over the entries and every principal
+   `p` the entry may take access from (`rotation.losers`: the subject, the active agent of a user subject, the agent
+   an `agent_add` replaces, ADR-082), except a member that leaves by itself or an admin that demotes itself, also
+   through its agent (`rotation.self_owed`: it cannot rotate what it no longer reads; its R becomes
+   `OrgState.pending`, ADR-058 section 3). If R is not empty the batch
    MUST contain exactly one `rotate` per element of R and no other `rotate`, each after the last entry that
    contributes to R (`rotation_required`);
 3. W3 for every wrap of the batch, created by the appending principal `wrapped_by`, which must be active after the
@@ -29,13 +31,10 @@ from typing import cast
 
 from agent_hub.crypto.errors import fail
 from agent_hub.log.platform import PlatformState
-from agent_hub.log.rotation import entry_subject, required_set
+from agent_hub.log.rotation import lost, self_owed
 from agent_hub.log.state import ORG, WG, Scope
 from agent_hub.log.verify import VerifiedLog, append_entries
 from agent_hub.log.wraps import WrapSlot, check_wrap
-
-SELF_OWED = frozenset({"remove", "role"})
-"""Entry types whose R is owed by the others (`OrgState.pending`) when the subject is the author itself."""
 
 
 @dataclass(frozen=True)
@@ -84,12 +83,11 @@ def check_batch(
         seq = first + index
         if body["type"] == "rotate":
             rotates.append((index, cast(Scope, (body["scope"], body["scope_id"]))))
-        subject = entry_subject(body)
-        if seq == 0 or (body["type"] in SELF_OWED and subject == body["by"]):
+        if seq == 0 or self_owed(after.states[seq - 1], body):
             continue
-        lost = required_set(after.states[seq - 1], after.states[seq], subject)
-        if lost:
-            required |= lost
+        taken = lost(after.states[seq - 1], after.states[seq], body)
+        if taken:
+            required |= taken
             last_trigger = index
     if required:
         scopes = [scope for _, scope in rotates]

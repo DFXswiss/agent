@@ -99,6 +99,9 @@ class AgentClient:
         self._on_revoked = on_revoked
 
     def close(self) -> None:
+        """Close the client and its event loop (once; a second call does nothing)."""
+        if self._loop.is_closed():
+            return
         self._loop.run_until_complete(self._client.aclose())
         self._loop.close()
 

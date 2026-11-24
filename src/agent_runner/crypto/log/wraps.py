@@ -7,10 +7,14 @@ users with access to a workgroup (explicit, or inherited as admin, ADR-058) and 
 `cred` scope of a user the owner plus devices assigned to any workgroup in which the owner has **explicit** access, in
 any org in which the owner joined by its own entry, not by `admit` (section 2, ADR-007, ADR-058 section 1: the
 inherited read of an admin does not spread credentials; ADR-060: an admission without consent does not either).
-Decertified platform devices are passed as `excluded`. The `cred` scope of an **organization** (the org credential
-key of its company credentials, KM-35, ADR-078) has devices as its only readers: every active device assigned to a
-workgroup of that org (no user, not even an admin). An active admin of the org may additionally wrap it (the admin
-creates each epoch with the company record it seals and wraps it to the reader devices, but never receives it).
+Decertified platform devices are passed as `excluded`. The owner's active agents (ADR-082) are credential readers in
+every org in which the owner is an active member (consent concerns devices only), unless they are revoked
+(`revoked_agents`: superseded by a higher generation of the same user, or removed by the user, an agent of the user
+or itself, in any of the verified logs); an org whose user entry (`genesis`/`accept`) was signed by a revoked agent
+gives no consent. The `cred` scope of an **organization** (the org credential key of its company credentials, KM-35,
+ADR-078) has devices as its only readers: every active device assigned to a workgroup of that org (no user, no agent,
+not even an admin). An active admin of the org may additionally wrap it (the admin creates each epoch with the
+company record it seals and wraps it to the reader devices, but never receives it).
 
 - W1: a principal may wrap a scope epoch for itself if it holds the key (it is entitled now; e.g. the self-wrap of
   the package keys after `accept`, section 5.2).
@@ -60,24 +64,41 @@ def _org_state(states: Iterable[OrgState], owner: str) -> OrgState | None:
     return next((state for state in states if state.org == owner), None)
 
 
+def revoked_agents(states: Iterable[OrgState]) -> frozenset[str]:
+    """Agents that are no agent of their user any more (ADR-082 section 9.1), judged over the verified states of
+    several logs: superseded (an agent of the same user with a higher generation exists in any state) or removed by its
+    user, an agent of its user or itself in any state. A removal by an admin only ends its membership in that org."""
+    agents = [p for state in states for p in state.principals.values() if p.parent is not None]
+    newest: dict[str, int] = {}
+    for found in agents:
+        newest[cast(str, found.parent)] = max(newest.get(cast(str, found.parent), 0), cast(int, found.gen))
+    return frozenset(p.id for p in agents if cast(int, p.gen) < newest[cast(str, p.parent)] or p.removed_by_owner)
+
+
 def cred_readers(states: Iterable[OrgState], owner: str, excluded: Iterable[str] = ()) -> frozenset[str]:
-    """For a user: the owner and every active device assigned to a workgroup in which the owner has explicit access,
-    over all orgs in which the owner joined by its own entry (an org that admitted the owner without its consent gets
-    no credential key, ADR-060). For an organization among `states`: every active device assigned to a workgroup of
-    it (devices only, KM-35)."""
-    skip = set(excluded)
-    states = list(states)
-    org = _org_state(states, owner)
+    """For a user: the owner, its active agents that are not revoked, and every active device assigned to a workgroup
+    in which the owner has explicit access, over all orgs in which the owner joined by its own entry (an org that
+    admitted the owner without its consent gets no credential key, ADR-060), signed by itself or by an agent that is
+    not revoked (ADR-082). For an organization among `states`: every active device assigned to a workgroup of it
+    (devices only, KM-35)."""
+    skip, known = set(excluded), list(states)
+    org = _org_state(known, owner)
     if org is not None:
         return frozenset(
             device.id
             for device in org.principals.values()
             if device.kind == DEVICE and device.id not in skip and org.device_wgs(device.id)
         )
+    revoked = revoked_agents(known)
     found = {owner}
-    for state in states:
+    for state in known:
         member = state.member(owner)
-        if member is None or not member.consented:
+        if member is None:
+            continue
+        agent = state.agent_of(owner)
+        if agent is not None and agent.id not in revoked:
+            found.add(agent.id)
+        if not member.consented or member.join_agent in revoked:
             continue
         for device in state.principals.values():
             eligible = any(state.explicit_access(owner, wg) is not None for wg in state.device_wgs(device.id))

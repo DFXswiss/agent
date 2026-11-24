@@ -8,13 +8,17 @@
   stand-in (`AGENT_PLATFORM_SECURITY`) that answers like macOS for the item `Claude Code-credentials` from a file the
   spec writes. Answers `{"id"}`.
 - `GET /agent-tool/{id}`: `{"done", "rc", "result", "stderr_tail", "opened": [urls]}`; `result` is the parsed JSON
-  object the tool printed (None until it ended).
+  object the tool printed (None until it ended); `opened` are the URLs this run handed to the browser stand-in (an
+  earlier run on the same computer, e.g. of another spec, never leaves a stale link there).
 - `POST /agent-tool/claude-login` (`{"home", "access_token", "expires_at_ms", "refresh_token"}`): the local Claude Code
   login of that computer as Claude Code stores it (keychain item for macOS-like homes). The refresh token is a canary:
   specs assert it never reaches the hub, the page or any output.
 - `POST /agent-tool/copy-home` (`{"from", "to"}`): a copy of one computer's agent state (its state directory and the
   keychain stand-in, modes kept) on a new computer `to` that must not exist yet: a second copy of a paired agent that
   still holds the old key after the first one revoked itself (E2E-49: the hub answers `key_revoked`).
+- `POST /agent-tool/state` (`{"home"}`): what an attacker holding that computer's agent state has: `state.json` as
+  stored and the private keys of `agent.key` (null without the file). E2E-63 opens the wraps of a revoked agent's copy
+  with them and signs log entries as the agent.
 No real keychain, profile or browser of the machine is touched.
 """
 
@@ -54,6 +58,7 @@ class Run:
     stdout: str = ""
     stderr: str = ""
     collected: bool = field(default=False)
+    opened_from: int = 0
 
 
 _runs: dict[str, Run] = {}
@@ -96,6 +101,12 @@ def _env(ctx: Context, root: Path) -> dict[str, str]:
     return env
 
 
+def _opened(root: Path) -> list[str]:
+    """Every URL the browser stand-in of the computer `root` recorded, oldest first."""
+    opened_file = root / "tools" / "opened.txt"
+    return opened_file.read_text().split() if opened_file.exists() else []
+
+
 def post_start(ctx: Context, _params: dict[str, str], body: Any) -> tuple[int, Any]:
     args = body.get("args") if isinstance(body, dict) else None
     stdin = body.get("stdin") if isinstance(body, dict) else None
@@ -104,6 +115,7 @@ def post_start(ctx: Context, _params: dict[str, str], body: Any) -> tuple[int, A
     if stdin is not None and not isinstance(stdin, str):
         raise RouteError(400, "invalid", "stdin must be text")
     root = _home(ctx, body.get("home"))
+    opened_from = len(_opened(root))
     process = subprocess.Popen(
         [ctx.agent_python, "-m", "agent_platform", *args],
         env=_env(ctx, root),
@@ -112,7 +124,7 @@ def post_start(ctx: Context, _params: dict[str, str], body: Any) -> tuple[int, A
         stderr=subprocess.PIPE,
         text=True,
     )
-    run = Run(process=process, home=root)
+    run = Run(process=process, home=root, opened_from=opened_from)
     run_id = str(next(_ids))
     with _lock:
         _runs[run_id] = run
@@ -130,8 +142,7 @@ def get_run(_ctx: Context, params: dict[str, str], _body: Any) -> tuple[int, Any
         run = _runs.get(params["id"])
     if run is None:
         raise RouteError(404, "not_found", f"no agent-tool run {params['id']}")
-    opened_file = run.home / "tools" / "opened.txt"
-    opened = opened_file.read_text().split() if opened_file.exists() else []
+    opened = _opened(run.home)[run.opened_from :]
     result = None
     if run.collected:
         lines = [line for line in run.stdout.splitlines() if line.strip()]
@@ -189,9 +200,24 @@ def post_copy_home(ctx: Context, _params: dict[str, str], body: Any) -> tuple[in
     return 200, {"home": str(target)}
 
 
+def post_state(ctx: Context, _params: dict[str, str], body: Any) -> tuple[int, Any]:
+    name = body.get("home") if isinstance(body, dict) else None
+    if not isinstance(name, str) or not name.isidentifier():
+        raise RouteError(400, "invalid", 'body must be {"home": "<simple name>"}')
+    state = Path(ctx.scratch or "/tmp") / "agent-tool" / name / "state" / "agent-platform"
+    if not (state / "state.json").is_file():
+        raise RouteError(404, "not_found", f"no agent state on computer {name}")
+    key = state / "agent.key"
+    return 200, {
+        "state": json.loads((state / "state.json").read_text()),
+        "key": key.read_text().strip() if key.is_file() else None,
+    }
+
+
 ROUTES = [
     Route("POST", "/agent-tool", post_start),
     Route("POST", "/agent-tool/claude-login", post_claude_login),
     Route("POST", "/agent-tool/copy-home", post_copy_home),
+    Route("POST", "/agent-tool/state", post_state),
     Route("GET", "/agent-tool/{id}", get_run),
 ]

@@ -21,6 +21,13 @@ The rights state of one organization as derived from its verified membership log
 
 `remove` deletes every access and assignment of the subject; a former member who accepts a new invitation starts
 again from that invitation (rejoin).
+
+Agents (ADR-082): an agent is a sub-principal of its user (`kind` and `role` `agent`, `parent` the user, `gen` its
+generation). `acting(p)` is the parent of an agent, else `p`; every right of an agent (`is_admin`, `explicit_access`,
+`wg_access`, `inherited`, `can_write_wg`, `can_read`) is the right of its parent, so the active agent of a user reads
+exactly what the user reads. An agent never has a role, explicit access or assignments of its own and never counts as
+an admin (`admins`). `remove` of a user removes its active agent at the same `seq` (`removed_with_user`); only such an
+agent may come back with its user.
 """
 
 from __future__ import annotations
@@ -30,6 +37,7 @@ from dataclasses import dataclass, field
 
 USER = "user"
 DEVICE = "device"
+AGENT = "agent"
 ADMIN = "admin"
 MEMBER = "member"
 READ = "read"
@@ -43,7 +51,8 @@ Scope = tuple[str, str]
 
 @dataclass(frozen=True)
 class Principal:
-    """A user or device of the org. `role` is `admin`/`member` for users and `device` for devices."""
+    """A user, device or agent of the org. `role` is `admin`/`member` for users, `device` for devices and `agent` for
+    agents."""
 
     id: str
     kind: str
@@ -57,6 +66,17 @@ class Principal:
     consented: bool = True
     """A user that joined by its own signed entry (`genesis`, `accept`); False after `admit` (ADR-060): the devices
     of this org are then no recipients of the user's credential key."""
+    parent: str | None = None
+    """Agents: the user whose agent it is."""
+    gen: int | None = None
+    """Agents: the generation of the delegation certificate (ADR-082 section 9.1)."""
+    removed_with_user: bool = False
+    """Agents: removed at the `seq` of its user's removal (it may come back when the user rejoins)."""
+    removed_by_owner: bool = False
+    """Agents: removed by its user, by an agent of its user or by itself (a revocation in every log, unlike a removal
+    by an admin, which only ends its membership in this org)."""
+    join_agent: str | None = None
+    """Users: the agent that signed the user's `genesis`/`accept` (its revocation withdraws the consent)."""
 
     @property
     def active(self) -> bool:
@@ -114,17 +134,33 @@ class OrgState:
     """Scopes whose rotation is still owed (a member left by itself and cannot rotate, decision CRY-02)."""
     org_assignments: Mapping[str, int] = field(default_factory=dict)
     """`device -> seq` of its assignment to the whole organization (ADR-075)."""
+    agent_owed: Mapping[Scope, str] = field(default_factory=dict)
+    """`scope -> user`: the rotation of a scope its agent read, owed by the user that removed or replaced that agent
+    (ADR-082 section 4); the user or its active agent may rotate it even without the admin or write right."""
 
     # --- principals and roles ---
 
     def member(self, principal: str) -> Principal | None:
-        """The active principal `principal`, else None."""
+        """The active principal `principal`, else None (an agent is removed together with its user)."""
         found = self.principals.get(principal)
         return found if found is not None and found.active else None
 
-    def is_admin(self, principal: str) -> bool:
-        """Active admin."""
+    def acting(self, principal: str) -> str:
+        """The principal whose rights `principal` uses: the parent of an agent, else `principal` itself."""
+        found = self.principals.get(principal)
+        return principal if found is None or found.parent is None else found.parent
+
+    def _acting_member(self, principal: str) -> Principal | None:
         found = self.member(principal)
+        return found if found is None or found.parent is None else self.member(found.parent)
+
+    def agent_of(self, user: str) -> Principal | None:
+        """The active agent of `user`, else None."""
+        return next((p for p in self.principals.values() if p.parent == user and p.active), None)
+
+    def is_admin(self, principal: str) -> bool:
+        """Active admin (an agent: its parent)."""
+        found = self._acting_member(principal)
         return found is not None and found.role == ADMIN
 
     def admins(self) -> list[str]:
@@ -134,14 +170,14 @@ class OrgState:
     # --- workgroups ---
 
     def explicit_access(self, principal: str, wg: str) -> str | None:
-        """`read`/`write` of an active user on a workgroup from membership alone (default workgroup: `write`), else
-        None; the admin role adds nothing here (credential scope, ADR-058 section 1)."""
-        found = self.member(principal)
+        """`read`/`write` of an active user (or its agent) on a workgroup from membership alone (default workgroup:
+        `write`), else None; the admin role adds nothing here (credential scope, ADR-058 section 1)."""
+        found = self._acting_member(principal)
         if found is None or found.kind != USER or wg not in self.workgroups:
             return None
         if wg == self.default_wg:
             return WRITE
-        return self.access.get((principal, wg))
+        return self.access.get((found.id, wg))
 
     def wg_access(self, principal: str, wg: str) -> str | None:
         """The effective `read`/`write` of an active user on a workgroup: the explicit access, else `read` for an
@@ -185,8 +221,8 @@ class OrgState:
     # --- scopes ---
 
     def can_read(self, principal: str, scope: str, scope_id: str) -> bool:
-        """Read right on an `org` or `wg` scope (the entitlement to its key)."""
-        found = self.member(principal)
+        """Read right on an `org` or `wg` scope (the entitlement to its key; an agent: its parent's)."""
+        found = self._acting_member(principal)
         if found is None:
             return False
         if scope == ORG:
@@ -214,6 +250,7 @@ class OrgState:
 
     def projection(self) -> dict[str, object]:
         """A JSON view of the state (vectors and the hub projections of 02-data-model.md section 2.2)."""
+        owed = [{"scope": s, "scope_id": i, "user": u} for (s, i), u in sorted(self.agent_owed.items())]
         return {
             "org": self.org,
             "default_wg": self.default_wg,
@@ -228,6 +265,17 @@ class OrgState:
                     "removed_seq": p.removed_seq,
                     "platform_seq": p.platform_seq,
                     "consented": p.consented,
+                    **({"join_agent": p.join_agent} if p.join_agent is not None else {}),
+                    **(
+                        {
+                            "parent": p.parent,
+                            "gen": p.gen,
+                            "removed_with_user": p.removed_with_user,
+                            "removed_by_owner": p.removed_by_owner,
+                        }
+                        if p.parent is not None
+                        else {}
+                    ),
                     **({"org_assigned_seq": self.org_assignments[p.id]} if p.id in self.org_assignments else {}),
                 }
                 for p in sorted(self.principals.values(), key=lambda p: p.id)
@@ -257,4 +305,5 @@ class OrgState:
                 for inv in sorted(self.invites.values(), key=lambda inv: inv.invite_id)
             ],
             "pending_rotation": [{"scope": s, "scope_id": i} for s, i in sorted(self.pending)],
+            **({"agent_owed": owed} if owed else {}),
         }
