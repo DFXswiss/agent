@@ -1,11 +1,12 @@
 // The operation card (06-web.md sections 5.2 and 5.4), shared by the chat items `operation.params` /
-// `operation.result` and the Operations tab: type, live state badge (from the `operation` frames), a short subject
-// from the decrypted parameters, the result links and values (PR URL, commit SHA, comment URL, branch, subagent
-// session, issue, login), "Renamed by session" for `task.set_title`, a test run's summary with "Open log"
-// (`test.run`, ADR-080), the error code, and "Duplicate of …" linking the original. Listed issues and pull requests show number (linked), title, state and labels; a read issue shows its text
-// and its page of comments. Text from GitHub is untrusted: it is only rendered as React text (never as HTML or
-// Markdown), links are https only (`httpsUrl`). Unverifiable parameters or results are shown as such with their code,
-// never as content.
+// `operation.result` and the Operations tab: type, live state badge (from the `operation` frames), "Triggered by
+// <name>" for the person whose instruction it followed from (`triggered_by`, ADR-083), a short subject from the
+// decrypted parameters, the result links and values (PR URL, commit SHA, comment URL, branch, subagent session, issue,
+// login), "Renamed by session" for `task.set_title`, a test run's summary with "Open log" (`test.run`, ADR-080), the
+// error code, and "Duplicate of …" linking the original. Listed issues and pull requests show number (linked), title,
+// state and labels; a read issue shows its text and its page of comments. Text from GitHub is untrusted: it is only
+// rendered as React text (never as HTML or Markdown), links are https only (`httpsUrl`). Unverifiable parameters or
+// results are shown as such with their code, never as content.
 import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { LINK_REL } from '../../../core/chat/links';
@@ -23,6 +24,7 @@ import {
 import { useStore } from '../../hooks/useStore';
 import { OpenLog } from '../../logs/LogView';
 import { useSummaryText } from '../test.run';
+import { TriggeredBy } from '../../task-tabs/people';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 
@@ -295,6 +297,7 @@ export function CardBody({
             {t('operations.renamed')}
           </span>
         )}
+        <TriggeredBy org={org} user={view.row?.triggered_by} testId="operation.triggered-by" />
       </div>
       {view.subject !== null && (
         <p className="break-all text-sm" data-testid="operation.subject">

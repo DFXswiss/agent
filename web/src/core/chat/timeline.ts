@@ -43,6 +43,8 @@ export interface TimelineItem {
   readonly seq: number;
   readonly sessionId: string | null;
   readonly author: string | null;
+  /** The event ID of a verified event (the queue's withdrawals name prompts by it). */
+  readonly eventId?: string;
   /** The decrypted body (events) or the system row's data. */
   readonly body: unknown;
   /** The reader's code (`unverifiable`). */
@@ -81,6 +83,7 @@ function eventItem(entry: EventEntry, nodes: ReadonlyMap<string, SessionNode>): 
     seq: entry.scopeSeq,
     sessionId: session,
     author: header.author as string,
+    eventId: header.id as string,
     body: entry.body,
     code: null,
     subagent: node !== undefined && node.depth > 0 ? node : null,

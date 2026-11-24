@@ -32,6 +32,8 @@
   "chat.usage": "Usage",
   "chat.author.you": "You",
   "chat.author.unknown": "Member",
+  "triggered-by": "Triggered by {name}",
+  "triggered-by.you": "Triggered by you",
   "chat.subagent": "Subagent {path}",
   "chat.output.truncated": "The message was cut (longer than 64 KiB).",
   "chat.tool.error": "Error",

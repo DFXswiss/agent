@@ -7,12 +7,13 @@ import {
   loadOrgBilling,
   loadTaskCharges,
   orgBilling,
+  people,
   priceRows,
   taskCharges,
 } from '../../../src/core/billing/billing';
 import { HubError } from '../../../src/core/net/signedFetch';
 import { credWorld } from '../credentials/world';
-import { BILLING, totals } from './world';
+import { BILLING, PEOPLE, totals } from './world';
 
 describe('org billing', () => {
   it('parses the answer and drops malformed rows', () => {
@@ -31,6 +32,17 @@ describe('org billing', () => {
       { day: '2026-11-21', tokensMicroUsd: 445_200, runtimeMicroUsd: 3000, tokens: 1_100_000, runtimeMs: 30_000 },
     ]);
     expect(found?.workgroups.map((row) => row.wgId)).toEqual(['wg-1']);
+    expect(found?.people).toBeNull();
+  });
+
+  it('reads the consumption per person when the hub sends it (ADR-083)', () => {
+    const found = orgBilling({ ...BILLING, people: PEOPLE });
+    expect(found?.people).toEqual([
+      { userId: 'u-1', tokensMicroUsd: 445_200, runtimeMicroUsd: 3000, tokens: 1_100_000, runtimeMs: 30_000 },
+      { userId: null, tokensMicroUsd: 445_200, runtimeMicroUsd: 3000, tokens: 1_100_000, runtimeMs: 30_000 },
+    ]);
+    expect(people(undefined)).toBeNull();
+    expect(people([])).toEqual([]);
   });
 
   it('accepts an answer without price list and lists, and refuses malformed answers', () => {
@@ -73,8 +85,16 @@ describe('task charges', () => {
       sessions: [
         { sessionId: 's1', tokensMicroUsd: 445_200, runtimeMicroUsd: 3000, tokens: 1_100_000, runtimeMs: 30_000 },
       ],
+      people: null,
     });
-    expect(taskCharges({ sessions: 'x', total_micro_usd: 0 })).toEqual({ totalMicroUsd: 0, sessions: [] });
+    expect(taskCharges({ sessions: 'x', total_micro_usd: 0 })).toEqual({
+      totalMicroUsd: 0,
+      sessions: [],
+      people: null,
+    });
+    expect(taskCharges({ sessions: [], total_micro_usd: 0, people: PEOPLE })?.people?.map((row) => row.userId)).toEqual(
+      ['u-1', null],
+    );
     expect(taskCharges({ sessions: [] })).toBeNull();
     expect(taskCharges(null)).toBeNull();
   });
@@ -88,7 +108,7 @@ describe('loaders', () => {
     t.client.on('GET /v1/orgs/o%2F1/billing', () => ({}));
     await expect(loadOrgBilling(t.context, 'o/1')).rejects.toBeInstanceOf(HubError);
     t.client.on('GET /v1/tasks/t1/charges', () => ({ sessions: [], total_micro_usd: 0 }));
-    expect(await loadTaskCharges(t.context, 't1')).toEqual({ sessions: [], totalMicroUsd: 0 });
+    expect(await loadTaskCharges(t.context, 't1')).toEqual({ sessions: [], totalMicroUsd: 0, people: null });
     t.client.on('GET /v1/tasks/t1/charges', () => null);
     await expect(loadTaskCharges(t.context, 't1')).rejects.toBeInstanceOf(HubError);
   });

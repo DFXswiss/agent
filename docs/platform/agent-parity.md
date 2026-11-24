@@ -122,6 +122,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | task-github-identity | screens/home, screens/tasks, screens/task (the task's GitHub identity at creation and changed later, ADR-078 section 3) | `task create --github-identity`, `task github-identity --task --identity --none` | done |
 | task-view | screens/task (chat) | `task show` | done |
 | task-prompt | screens/task (composer) | `task prompt` | done |
+| task-queue | screens/task (chat: the instructions waiting with sender and state, ADR-083) | `task queue --task` | done |
+| task-prompt-withdraw | screens/task (queue: "Withdraw" of one's own waiting instruction and the marks of withdrawn prompts, ADR-083) | `task prompt --cancel --task`, `task queue --task` | done |
+| triggered-by | screens/task (operation cards, operation drawer and tab "Sessions": "Triggered by" and the name, ADR-083) | `task operations --task --operation`, `session show --session` | done |
+| consumption-per-person | settings/billing, screens/task (tab "Costs": consumption per person, ADR-083) | `billing --org`, `task charges --task` | done |
 | task-close | screens/task | `task close --task` | done |
 | task-model-switch | screens/task (line "Model switched" from the audit row `session.model_switched`, ADR-081) | `audit --org --task --action` | done |
 | session-view | screens/session | `session show --session` | done |
@@ -213,13 +217,13 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/community/wraps` | community-key |
 | `GET /v1/notifications` | notifications-list |
 | `POST /v1/notifications/read` | notifications-read |
-| `GET /v1/operations/{operation}` | operations |
+| `GET /v1/operations/{operation}` | operations, triggered-by |
 | `POST /v1/orgs` | org-create |
 | `GET /v1/orgs/{org}/attention` | attention-view, attention-list |
 | `GET /v1/orgs/{org}/attention/summary` | attention-view |
 | `GET /v1/orgs/{org}/audit` | audit, task-model-switch |
 | `GET /v1/orgs/{org}/audit/verify` | audit |
-| `GET /v1/orgs/{org}/billing` | settings-billing, credit-balance |
+| `GET /v1/orgs/{org}/billing` | settings-billing, credit-balance, consumption-per-person |
 | `GET /v1/orgs/{org}/quotas` | model-quotas, attention-quota-counter |
 | `GET /v1/orgs/{org}/catch-up` | key-catch-up |
 | `GET /v1/orgs/{org}/devices` | devices-list, task-runtime |
@@ -241,20 +245,22 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/recovery/finish` | recover |
 | `GET /v1/scopes/{scope}/events` | task-view, session-follow, session-terminal, operations, wg-settings, tasks-overview, session-workvm, task-workvm-items, task-waiting, task-guest-errors |
 | `POST /v1/session/end` | sign-out |
-| `GET /v1/sessions/{session}` | session-view, monitoring, session-workvm, task-runtime |
+| `GET /v1/sessions/{session}` | session-view, monitoring, session-workvm, task-runtime, triggered-by |
 | `POST /v1/sessions/{session}/control` | session-control |
 | `GET /v1/stream` | session-follow |
 | `POST /v1/tasks` | task-create, task-github-identity |
 | `GET /v1/tasks/{task}` | task-view, task-runtime |
-| `GET /v1/tasks/{task}/charges` | task-charges |
+| `GET /v1/tasks/{task}/charges` | task-charges, consumption-per-person |
 | `POST /v1/tasks/{task}/close` | task-close |
 | `GET /v1/tasks/{task}/logs/{object}` | test-runs |
 | `GET /v1/tasks/{task}/logs/{object}/chunks/{index}` | test-runs |
 | `POST /v1/tasks/{task}/model-consent` | attention-model-consent |
-| `GET /v1/tasks/{task}/operations` | operations, session-workvm, task-waiting |
+| `GET /v1/tasks/{task}/operations` | operations, session-workvm, task-waiting, triggered-by |
 | `PUT /v1/tasks/{task}/placement` | task-create, task-view |
 | `POST /v1/tasks/{task}/prompts` | task-prompt |
 | `PUT /v1/tasks/{task}/github-identity` | task-github-identity |
+| `POST /v1/tasks/{task}/prompts/{event}/withdraw` | task-prompt-withdraw |
+| `GET /v1/tasks/{task}/queue` | task-queue, task-prompt-withdraw |
 | `GET /v1/users/lookup` | members-admit |
 | `GET /v1/users/{user}/identity` | members-admit |
 | `GET /v1/whiteboards` | whiteboard-list |

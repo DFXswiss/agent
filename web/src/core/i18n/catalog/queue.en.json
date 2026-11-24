@@ -1,0 +1,17 @@
+{
+  "heading.one": "1 instruction waiting",
+  "heading.other": "{count} instructions waiting",
+  "you": "You",
+  "you.via-agent": "You (through your agent)",
+  "via-agent": "{name} (through their agent)",
+  "state.waiting": "Waiting",
+  "state.waiting_for_device": "Waiting for the device",
+  "state.withdrawing": "Being withdrawn",
+  "withdraw": "Withdraw",
+  "withdrawing": "Withdrawing …",
+  "error": "The instruction could not be withdrawn: {reason}",
+  "error.peer_outdated": "The instruction could not be withdrawn yet: the device of the session must be updated first.",
+  "prompt.withdrawn": "Withdrawn",
+  "prompt.withdrawing": "Being withdrawn",
+  "prompt.too_late": "Could not be withdrawn: it had already reached the AI"
+}

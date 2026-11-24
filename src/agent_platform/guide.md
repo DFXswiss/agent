@@ -324,6 +324,8 @@ agent-platform task overview --org <org_id> [--state working] [--mine] [--search
 agent-platform task close --task <task_id>
 agent-platform task operations --task <task_id> [--operation <operation_id>]                 # pushes, PRs, results
 agent-platform task charges --task <task_id>                    # its costs per session (tokens, VM runtime), total
+agent-platform task queue --task <task_id>                      # instructions waiting for the session, withdrawals
+agent-platform task prompt --task <task_id> --cancel <event_id>  # withdraw your user's own waiting instruction
 agent-platform session show --session <session_id>
 agent-platform session interrupt --session <session_id>        # stop the current turn
 agent-platform session stop --session <session_id>
@@ -352,6 +354,15 @@ runs (`run_id` `tr-…`, `state` `running|passed|failed|error|timed_out|cancelle
 a window of `--limit` bytes from `--offset` (`next_offset` goes on; `truncated` means only the last `stored_bytes` of
 `bytes` were kept), or with `--output FILE` the whole kept log. It also reads the full output of a long work VM command
 (its `j-…` job id from `session workvm`). A log that does not match its run is refused (`hub_refused`).
+
+Several members may instruct one task. `task queue` lists the prompts that wait for the session in the order they
+will be delivered: `position`, `event_id`, `author_id`, `via_agent` (it came through that person's agent), `state`
+(`waiting`, `waiting_for_device`: the session's device is offline, `withdrawing`) and the task's `withdrawals` with
+their outcome (`withdrawn`, `withdrawing`, `too_late`: it had already reached the AI). `task prompt --cancel` takes
+back one of your user's own waiting prompts; `peer_outdated` means the session's device must be updated first. An
+operation (`task operations`) and a session (`session show`) name the person whose instruction they followed from in
+`triggered_by` (null: not attributed), and `billing` and `task charges` give the consumption per person in `people`
+(`user_id` null: not attributed) when the hub sends it.
 
 **Whiteboards** (one per organization, workgroup and task; `--wg` and `--task` choose the level):
 

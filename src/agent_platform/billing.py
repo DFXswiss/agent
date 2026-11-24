@@ -8,6 +8,10 @@
 - `task charges --task`: `GET /v1/tasks/{task}/charges`: the charges of the task per session (model tokens and VM
   runtime) and the total.
 
+Both show `people` when the hub sends it (ADR-083 section 2): the consumption per person who triggered it, `user_id`
+null for unattributed consumption; the charges stay booked to the organization. A hub without it sends no `people`
+and the tool shows none.
+
 Amounts are micro-USD as the hub sends them. An answer the web client would call malformed (no finite balance, no
 boolean `exhausted`/`billing_active`, no finite total) is `response_invalid`; rows that do not have the web's form are
 left out, as the web leaves them out. There is no payment and no top-up: the operator adds credit, the tool only reads.
@@ -58,6 +62,21 @@ def _keyed(key: str, out: str) -> Callable[[dict[str, Any]], dict[str, Any] | No
         return {out: row[key], **found, "total_micro_usd": found["tokens_micro_usd"] + found["runtime_micro_usd"]}
 
     return make
+
+
+def _person(row: dict[str, Any]) -> dict[str, Any] | None:
+    """A `charge_person` row with its total (`user_id` a text or null)."""
+    found = consumption(row)
+    user = row.get("user_id")
+    if found is None or not (user is None or isinstance(user, str)):
+        return None
+    return {"user_id": user, **found, "total_micro_usd": found["tokens_micro_usd"] + found["runtime_micro_usd"]}
+
+
+def _people(answer: dict[str, Any]) -> dict[str, Any]:
+    """`{"people": [...]}` when the hub sent the list, else nothing."""
+    listed = answer.get("people")
+    return {"people": _rows(listed, _person)} if isinstance(listed, list) else {}
 
 
 def _record(value: object) -> dict[str, Any]:
@@ -122,6 +141,7 @@ def org_billing(account: Account, org: str) -> dict[str, Any]:
         "credits": _rows(answer.get("credits"), _credit),
         "days": _rows(answer.get("days"), _keyed("day", "day")),
         "workgroups": _rows(answer.get("workgroups"), _keyed("wg_id", "wg_id")),
+        **_people(answer),
     }
 
 
@@ -134,6 +154,7 @@ def task_charges(account: Account, task: str) -> dict[str, Any]:
         "task_id": task,
         "total_micro_usd": total,
         "sessions": _rows(answer.get("sessions"), _keyed("session_id", "session_id")),
+        **_people(answer),
     }
 
 

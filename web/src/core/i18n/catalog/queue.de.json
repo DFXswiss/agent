@@ -1,0 +1,17 @@
+{
+  "heading.one": "1 Anweisung wartet",
+  "heading.other": "{count} Anweisungen warten",
+  "you": "Du",
+  "you.via-agent": "Du (über deinen Agenten)",
+  "via-agent": "{name} (über den eigenen Agenten)",
+  "state.waiting": "Wartet",
+  "state.waiting_for_device": "Wartet auf das Gerät",
+  "state.withdrawing": "Wird zurückgezogen",
+  "withdraw": "Zurückziehen",
+  "withdrawing": "Wird zurückgezogen …",
+  "error": "Die Anweisung konnte nicht zurückgezogen werden: {reason}",
+  "error.peer_outdated": "Die Anweisung kann noch nicht zurückgezogen werden: Das Gerät der Session muss zuerst aktualisiert werden.",
+  "prompt.withdrawn": "Zurückgezogen",
+  "prompt.withdrawing": "Wird zurückgezogen",
+  "prompt.too_late": "Konnte nicht zurückgezogen werden: Sie hatte die KI bereits erreicht"
+}

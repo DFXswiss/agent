@@ -32,6 +32,8 @@
   "chat.usage": "Verbrauch",
   "chat.author.you": "Du",
   "chat.author.unknown": "Mitglied",
+  "triggered-by": "Ausgelöst von {name}",
+  "triggered-by.you": "Von dir ausgelöst",
   "chat.subagent": "Subagent {path}",
   "chat.output.truncated": "Die Nachricht wurde gekürzt (länger als 64 KiB).",
   "chat.tool.error": "Fehler",

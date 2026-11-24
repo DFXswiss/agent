@@ -9,7 +9,8 @@
   session in the order of their first charge and the total.
 
 `Billing.prices` is the price list in force (None: billing inactive), `credits`, `days` and `workgroups` the rows the
-hub would read per org, `charges` the session rows per task.
+hub would read per org, `charges` the session rows per task, `people` the consumption per person of an org or a task
+(ADR-083; only sent when set).
 """
 
 from __future__ import annotations
@@ -42,6 +43,8 @@ class Billing:
     days: dict[str, list[Json]] = field(default_factory=dict)
     workgroups: dict[str, list[Json]] = field(default_factory=dict)
     charges: dict[str, list[Json]] = field(default_factory=dict)
+    # `people` per org and per task (ADR-083); absent keys: the answer has no `people`, as from an older hub
+    people: dict[str, list[Any]] = field(default_factory=dict)
 
 
 def billing(hub: HubFake) -> Billing:
@@ -80,6 +83,7 @@ def install(hub: HubFake) -> None:
             "credits": found.credits.get(org, []),
             "days": found.days.get(org, []),
             "workgroups": found.workgroups.get(org, []),
+            **({"people": found.people[org]} if org in found.people else {}),
         }
 
     def task_charges(request: Request, body: Any, task: str) -> tuple[int, Any]:
@@ -91,7 +95,8 @@ def install(hub: HubFake) -> None:
             return 404, {"error": "not_found"}
         sessions = found.charges.get(task, [])
         total = sum(row["tokens_micro_usd"] + row["runtime_micro_usd"] for row in sessions)
-        return 200, {"sessions": sessions, "total_micro_usd": total}
+        people = {"people": found.people[task]} if task in found.people else {}
+        return 200, {"sessions": sessions, "total_micro_usd": total, **people}
 
     hub.add_route("GET", r"/v1/orgs/(?P<org>[0-9a-f-]+)/billing", org_billing)
     hub.add_route("GET", r"/v1/tasks/(?P<task>[0-9a-f-]+)/charges", task_charges)

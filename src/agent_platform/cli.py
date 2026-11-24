@@ -365,9 +365,17 @@ def cmd_task_create(account: Account, args: argparse.Namespace, context: Context
 
 
 def cmd_task_prompt(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    if args.cancel is not None:
+        if args.text is not None or args.approve or args.decline:
+            raise PlatformError("invalid_argument")
+        return tasks.prompt_withdraw(account, args.task, args.cancel)
     decision = "approve" if args.approve else "decline" if args.decline else None
     text = None if args.text is None else text_argument(args, context)
     return tasks.task_prompt(account, args.task, tasks.answer_text(decision, text))
+
+
+def cmd_task_queue(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tasks.task_queue(account, args.task)
 
 
 def cmd_task_show(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -573,6 +581,16 @@ def _task_commands(tree: Tree) -> None:
     decision = sub.add_mutually_exclusive_group()
     decision.add_argument("--approve", action="store_true", help="answer an approval: Approved.")
     decision.add_argument("--decline", action="store_true", help="answer an approval: Declined.")
+    sub.add_argument("--cancel", metavar="EVENT_ID", help="withdraw one's own waiting prompt (instead of --text)")
+    sub = tree.add(
+        group,
+        "queue",
+        with_account(cmd_task_queue),
+        "the task's waiting prompts and withdrawals",
+        example="agent-platform task queue --task <task_id>",
+        words="warteschlange wartend zurückziehen absender queue waiting withdraw sender",
+    )
+    sub.add_argument("--task", required=True)
     sub = tree.add(
         group,
         "show",

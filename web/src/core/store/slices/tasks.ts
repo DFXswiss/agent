@@ -45,6 +45,8 @@ export interface SessionRow {
   readonly first_working_at: string | null;
   /** When the session ended (absent from an older hub: the runtime of an ended session is then not shown). */
   readonly ended_at?: string | null;
+  /** The person whose instruction created the session (ADR-083 section 2); absent from an older hub. */
+  readonly triggered_by?: string | null;
 }
 
 /** `session_transition`: `at` is the device clock, `received_at` the hub clock. */

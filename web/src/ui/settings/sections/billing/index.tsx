@@ -1,6 +1,7 @@
 // Settings section "Credit and usage" (12-billing.md section 9, ADR-062 section 7): the active organization's balance,
-// a clear notice when the credit is used up, the prices in force, the credit history and the consumption per day and
-// per workgroup (`GET /v1/orgs/{org}/billing`). There is no payment and no top-up: the operator adds credit.
+// a clear notice when the credit is used up, the prices in force, the credit history and the consumption per day, per
+// workgroup and, when the hub sends it, per person (ADR-083) (`GET /v1/orgs/{org}/billing`). There is no payment and
+// no top-up: the operator adds credit.
 import { useCallback, useEffect, useState } from 'react';
 import {
   formatRuntime,
@@ -14,6 +15,7 @@ import type { SettingsSection } from '../../../registries/settings-sections';
 import { useStore } from '../../../hooks/useStore';
 import { useI18n } from '../../../i18n';
 import { useAppEnv } from '../../../shell/context';
+import { PeopleUsage } from '../../../task-tabs/people';
 import { useReason } from '../github/reason';
 
 function UsageRows({
@@ -41,7 +43,7 @@ function UsageRows({
   );
 }
 
-function Details({ billing }: { readonly billing: OrgBilling }) {
+function Details({ billing, org }: { readonly billing: OrgBilling; readonly org: string }) {
   const { t, locale } = useI18n();
   return (
     <>
@@ -108,6 +110,12 @@ function Details({ billing }: { readonly billing: OrgBilling }) {
           testid="billing.workgroups"
         />
       </section>
+      {billing.people !== null && (
+        <section>
+          <h3 className="font-semibold">{t('billing.people')}</h3>
+          <PeopleUsage org={org} rows={billing.people} testId="billing.people" />
+        </section>
+      )}
     </>
   );
 }
@@ -136,7 +144,7 @@ export function BillingSection() {
         </p>
       )}
       {loadError === null && billing === null && <p data-testid="billing.loading">{t('billing.loading')}</p>}
-      {billing !== null && <Details billing={billing} />}
+      {billing !== null && <Details billing={billing} org={org!} />}
       <button
         type="button"
         className="min-h-11 self-start rounded border border-gray-400 px-4"

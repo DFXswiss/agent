@@ -8,6 +8,8 @@
 // | `task.failed` | "Task Y failed" | the task |
 // | `task.attention` | "Task Y needs your decision: <reason>" / "Task Y is stuck: <reason>" (`ref` =
 //   `<category>:<reason>:<seq>` or `<category>:<reason>:wg`, KOR-39) | the situation view (the org's home) |
+// | `prompt.waiting_for_device` | "Your instruction in task Y waits for the device of its session" (`ref` = the
+//   prompt event, ADR-083 section 3) | the task |
 // | `invite.accepted` | "Z accepted the invitation to X" | the org's members |
 // | `rotation.required` | "Access in X is being updated" (neutral; the hub no longer creates it, ADR-058) | the org's members |
 // | `org.admitted` | "Z admitted you to X" (`ref` = the admitting admin, ADR-060) | the org |
@@ -139,6 +141,8 @@ export function notificationMessage(row: NotificationRow, names: Names, fallback
         reason: reasonKey(attention.category, attention.reason),
       };
     }
+    case 'prompt.waiting_for_device':
+      return { key: 'notifications.text.prompt.waiting_for_device', params: { task, org } };
     case 'invite.accepted':
       return { key: 'notifications.text.invite.accepted', params: { subject, org } };
     case 'rotation.required':
@@ -177,6 +181,7 @@ export function notificationTarget(row: NotificationRow): string {
     case 'task.idle':
     case 'task.failed':
     case 'model.switched':
+    case 'prompt.waiting_for_device':
       return row.task_id === null ? org : `${org}/t/${encodeURIComponent(row.task_id)}`;
     case 'invite.accepted':
     case 'rotation.required':

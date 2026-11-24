@@ -2,6 +2,10 @@
 // (`GET /v1/orgs/{org}/billing`) and the charges of a task (`GET /v1/tasks/{task}/charges`). Amounts arrive in
 // micro-USD. There is no payment method and no top-up: the operator adds credit, the web only shows it. A malformed
 // answer is `unavailable` (the hub of an older release has no billing routes and answers `not_found`).
+//
+// Both answers may carry `people` (ADR-083 section 2): the consumption per person who triggered it, `user_id` null for
+// unattributed consumption. The charges stay booked to the organization; an older hub sends no `people` (null here,
+// nothing shown).
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import type { RequestsContext } from '../requests/client';
@@ -27,6 +31,11 @@ export interface PriceRow {
   readonly output: number;
 }
 
+/** The consumption of one person (`user_id` null: not attributed). */
+export interface PersonConsumption extends Consumption {
+  readonly userId: string | null;
+}
+
 export interface OrgBilling {
   readonly balanceMicroUsd: number;
   readonly exhausted: boolean;
@@ -37,6 +46,8 @@ export interface OrgBilling {
   readonly credits: readonly CreditEntry[];
   readonly days: readonly (Consumption & { readonly day: string })[];
   readonly workgroups: readonly (Consumption & { readonly wgId: string })[];
+  /** Absent from an older hub. */
+  readonly people: readonly PersonConsumption[] | null;
 }
 
 export interface SessionCharges extends Consumption {
@@ -46,6 +57,8 @@ export interface SessionCharges extends Consumption {
 export interface TaskCharges {
   readonly sessions: readonly SessionCharges[];
   readonly totalMicroUsd: number;
+  /** Absent from an older hub. */
+  readonly people: readonly PersonConsumption[] | null;
 }
 
 const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : NaN);
@@ -65,6 +78,16 @@ function rows<T>(value: unknown, make: (row: Record<string, unknown>) => T | nul
   return value.flatMap((row) => {
     const made = isRecord(row) ? make(row) : null;
     return made === null ? [] : [made];
+  });
+}
+
+/** The `people` list of an answer (rows with a malformed person or amount are left out), null when absent. */
+export function people(value: unknown): PersonConsumption[] | null {
+  if (!Array.isArray(value)) return null;
+  return rows(value, (row) => {
+    const found = consumption(row);
+    const user = row.user_id;
+    return found !== null && (user === null || typeof user === 'string') ? { ...found, userId: user } : null;
   });
 }
 
@@ -120,6 +143,7 @@ export function orgBilling(body: unknown): OrgBilling | null {
       const found = consumption(row);
       return found !== null && typeof row.wg_id === 'string' ? { ...found, wgId: row.wg_id } : null;
     }),
+    people: people(body.people),
   };
 }
 
@@ -132,6 +156,7 @@ export function taskCharges(body: unknown): TaskCharges | null {
       const found = consumption(row);
       return found !== null && typeof row.session_id === 'string' ? { ...found, sessionId: row.session_id } : null;
     }),
+    people: people(body.people),
   };
 }
 

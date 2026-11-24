@@ -1,7 +1,8 @@
 // Tab "Sessions" of a task (06-web.md section 5.3): the tree of the task's sessions – main sessions and their
-// subagent children by `parent_session_id`, depth ≤ 2 – with state, device (its label,
-// `ui/screens/devices/labels.ts`), model and usage (tokens and cost of the session, slice `usage`); each node links to
-// the session detail `/o/:org/s/:session` (terminal, session chat, children).
+// subagent children by `parent_session_id`, depth ≤ 2 – with state, "Triggered by <name>" (the person whose
+// instruction created the session, ADR-083), device (its label, `ui/screens/devices/labels.ts`), model and usage
+// (tokens and cost of the session, slice `usage`); each node links to the session detail `/o/:org/s/:session`
+// (terminal, session chat, children).
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { formatMoney, formatNumber } from '../../../core/i18n';
@@ -17,6 +18,7 @@ import { useDevicePresence } from '../../screens/devices/presence';
 import { useAppEnv } from '../../shell/context';
 import type { TaskTabProps } from '../../registries/task-tabs';
 import '../../../core/i18n/lazy/model';
+import { TriggeredBy } from '../people';
 
 /** The runtime of a running session is redrawn once a second. */
 export const RUNTIME_TICK_MS = 1000;
@@ -115,6 +117,7 @@ function Node({ org, node }: { readonly org: string; readonly node: SessionNode 
         </span>
         <SessionState state={node.entry.row.state} />
         <SessionFacts node={node} />
+        <TriggeredBy org={org} user={node.entry.row.triggered_by} testId="session.triggered-by" />
       </Link>
       {node.children.length > 0 && (
         <ul className="ml-4 border-l-2 border-gray-200 pl-3">

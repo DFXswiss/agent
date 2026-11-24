@@ -1,7 +1,10 @@
 // Chat item `prompt` (06-web.md section 5.2): a right-aligned bubble with the author's name (the verified author of the
-// event, named from the org's verified `member.profile`), plain text, `CLIP_CHARS` characters at a time (HOT-05).
+// event, named from the org's verified `member.profile`), plain text, `CLIP_CHARS` characters at a time (HOT-05). A
+// prompt the queue of the task names as withdrawn is marked "Withdrawn", "Being withdrawn" or "Could not be withdrawn"
+// (it had already reached the AI; ADR-083 section 3).
 import { isRecord } from '../../core/registry';
 import type { TimelineItem } from '../../core/chat/timeline';
+import { selectWithdrawal } from '../../core/store/slices/queue';
 import { selectDirectory } from '../../core/tasks/directory';
 import type { ChatItem, ChatItemProps } from '../registries/chat-items';
 import { useStore } from '../hooks/useStore';
@@ -12,19 +15,24 @@ import { useClipped } from './file/Clipped';
 import { knownPersonName } from '../names/names';
 
 function Prompt({ item }: ChatItemProps) {
-  const { at, author, body } = item as TimelineItem;
+  const { at, author, body, eventId } = item as TimelineItem;
   const { app } = useAppEnv();
   const { t } = useI18n();
   const org = useStore((state) => state.session.activeOrg ?? '', app.store);
   const directory = useStore(selectDirectory(org), app.store);
   const me = useStore((state) => state.me.userId, app.store);
+  const withdrawal = useStore(selectWithdrawal(eventId!), app.store);
   const name =
     author === me
       ? t('task.chat.author.you')
       : (knownPersonName(t, directory, author!) ?? t('task.chat.author.unknown'));
   const { shown, more } = useClipped(isRecord(body) && typeof body.text === 'string' ? body.text : '');
   return (
-    <div className="ml-auto flex max-w-[85%] flex-col items-end gap-1" data-testid="chat.prompt">
+    <div
+      className="ml-auto flex max-w-[85%] flex-col items-end gap-1"
+      data-testid="chat.prompt"
+      data-withdrawal={withdrawal ?? undefined}
+    >
       <span className="text-xs text-gray-600">
         <span data-testid="chat.prompt.author">{name}</span> <EventTime at={at} />
       </span>
@@ -32,6 +40,11 @@ function Prompt({ item }: ChatItemProps) {
         {shown}
       </p>
       {more}
+      {withdrawal !== null && (
+        <span className="text-xs text-gray-600" data-testid="chat.prompt.withdrawal">
+          {t(`queue.prompt.${withdrawal}`)}
+        </span>
+      )}
     </div>
   );
 }

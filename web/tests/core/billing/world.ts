@@ -33,3 +33,12 @@ export const BILLING = {
   days: [{ day: '2026-11-21', ...totals }, { day: 5, ...totals }, { day: '2026-11-20' }],
   workgroups: [{ wg_id: 'wg-1', ...totals }, { ...totals }],
 };
+
+/** `people` of ADR-083 with malformed rows: a person, unattributed consumption, a bad user and a bad amount. */
+export const PEOPLE = [
+  { user_id: 'u-1', ...totals },
+  { user_id: null, ...totals },
+  { user_id: 5, ...totals },
+  { user_id: 'u-2', tokens: 'x' },
+  'broken',
+];

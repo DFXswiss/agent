@@ -154,3 +154,31 @@ def test_task_charges(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -
     assert other.run("task", "charges", "--task", task)[1]["hub_error"] == "not_found"
     hub.hooks[("GET", f"/v1/tasks/{task}/charges")] = lambda body, request: (200, {"sessions": []})
     assert tool.run("task", "charges", "--task", task)[1]["reason"] == "response_invalid"
+
+
+def test_consumption_per_person(tool: Tool, hub: HubFake, account: User) -> None:
+    """`people` of ADR-083 section 2: shown when the hub sends it, rows of another form left out."""
+    org = private_org(hub, account)
+    task = new_task(tool, default_wg(hub, account))
+    rows: list[Any] = [
+        {"user_id": account.id, **consumption(1000, 200, 50, 1000)},
+        {"user_id": None, **consumption(5, 0, 3, 0)},
+        {"user_id": 7, **consumption(1, 1, 1, 1)},
+        {"user_id": account.id, "tokens": "x"},
+        "x",
+    ]
+    expected = [
+        {"user_id": account.id, **consumption(1000, 200, 50, 1000), "total_micro_usd": 1200},
+        {"user_id": None, **consumption(5, 0, 3, 0), "total_micro_usd": 5},
+    ]
+    billing(hub).people[org] = rows
+    billing(hub).people[task] = rows
+    assert tool.run("billing", "--org", org)[1]["people"] == expected
+    assert tool.run("task", "charges", "--task", task)[1]["people"] == expected
+    billing(hub).people[task] = []
+    assert tool.run("task", "charges", "--task", task)[1]["people"] == []
+    hub.hooks[("GET", f"/v1/tasks/{task}/charges")] = lambda body, request: (
+        200,
+        {"sessions": [], "total_micro_usd": 0, "people": "x"},
+    )
+    assert "people" not in tool.run("task", "charges", "--task", task)[1]

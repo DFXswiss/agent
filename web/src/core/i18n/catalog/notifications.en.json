@@ -13,6 +13,7 @@
   "text.whiteboard.task": "New whiteboard entry in task “{task}”",
   "text.task.idle": "Task “{task}” is waiting for you",
   "text.task.failed": "Task “{task}” failed",
+  "text.prompt.waiting_for_device": "Your instruction in task “{task}” waits for the device of its session",
   "text.invite.accepted": "{subject} accepted the invitation to “{org}”",
   "text.rotation.required": "Access in “{org}” is being updated.",
   "text.org.admitted": "{subject} admitted you to “{org}”",

@@ -1,5 +1,6 @@
 // Tab "Costs" of a task (12-billing.md sections 6 and 9, ADR-062 section 7): the charges of the task per session -
-// model tokens and VM runtime - and the total (`GET /v1/tasks/{task}/charges`), read when the tab opens.
+// model tokens and VM runtime - the total and, when the hub sends it, the consumption per person (ADR-083)
+// (`GET /v1/tasks/{task}/charges`), read when the tab opens.
 import { useCallback, useEffect, useState } from 'react';
 import { formatRuntime, formatUsd, loadTaskCharges, type TaskCharges } from '../../../core/billing/billing';
 import { requestErrorCode } from '../../../core/requests/client';
@@ -7,8 +8,9 @@ import type { TaskTabProps } from '../../registries/task-tabs';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { useReason } from '../../settings/sections/github/reason';
+import { PeopleUsage } from '../people';
 
-export function ChargesTab({ taskId }: TaskTabProps) {
+export function ChargesTab({ orgId, taskId }: TaskTabProps) {
   const { app } = useAppEnv();
   const { t, locale } = useI18n();
   const reason = useReason();
@@ -50,6 +52,12 @@ export function ChargesTab({ taskId }: TaskTabProps) {
               </li>
             ))}
           </ul>
+          {charges.people !== null && (
+            <section>
+              <h3 className="font-semibold">{t('billing.task.people')}</h3>
+              <PeopleUsage org={orgId} rows={charges.people} testId="charges.people" />
+            </section>
+          )}
         </>
       )}
       <button

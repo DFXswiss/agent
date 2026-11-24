@@ -1,7 +1,7 @@
 """Tasks of the agent tool (stage c, 11-agent-access.md section 8.4; twin of `web/src/core/tasks/`): `task list`,
-`task create`, `task prompt`, `task show` and `task follow`. An answer to an approval (KOR-39, ADR-076 section 8)
-is a prompt whose first line is exactly `Approved.` or `Declined.`, followed by a blank line and the comment when one
-is given (`answer_text`, the same text the web client sends).
+`task create`, `task prompt`, `task show`, `task follow` and `task queue`. An answer to an approval (KOR-39, ADR-076
+section 8) is a prompt whose first line is exactly `Approved.` or `Declined.`, followed by a blank line and the
+comment when one is given (`answer_text`, the same text the web client sends).
 
 The tool seals what the web client seals: a new task is `POST /v1/tasks` with the events `task.meta` (`{"title"}`,
 derived from the prompt as `web/src/core/tasks/title.ts`, vectors `contracts/tasks/title.json`) and `prompt`
@@ -24,6 +24,14 @@ default or the automatic choice applies), and the task is created even when no d
 assigns the first certified platform candidate (`ensure_device`, rule E-05, ADR-079; `assigned_device` in the answer),
 as the web client does. `task show` prints the device and VM of the main session and, while the task waits, its
 reason (`waiting`, a code of the closed list of `diagnose`).
+
+The queue (ADR-083 section 3; twin of `web/src/core/chat/queue.ts`): `task queue` lists the task's prompts not yet
+delivered to a live main session in event order (`GET /v1/tasks/{task}/queue`) - position, prompt event, author,
+whether the hub received it from the author's agent (`via_agent`), holding session and device, state (`waiting`,
+`waiting_for_device`, `withdrawing`) - and the task's withdrawals with their outcome (`withdrawn`, `withdrawing`,
+`too_late`). `task prompt --cancel EVENT` withdraws one's own waiting prompt
+(`POST /v1/tasks/{task}/prompts/{event}/withdraw`): `withdrawn` at once, or `withdrawing` until the session's device
+decides; a device that cannot decide yet is `peer_outdated`.
 """
 
 from __future__ import annotations
@@ -218,6 +226,37 @@ def task_prompt(account: Account, task: str, text: str) -> dict[str, Any]:
     event = _seal(account, (find_org(account, wg), wg, task), "prompt", {"attachments": [], "text": _prompt(text)})
     answer = account.call("POST", f"/v1/tasks/{segment(task)}/prompts", {"event": event})
     return {"task_id": task, "scope_seq": answer.get("scope_seq"), "session_id": answer.get("session_id")}
+
+
+QUEUE_FIELDS = ("event_id", "author_id", "via_agent", "state", "scope_seq", "received_at", "session_id", "device_id")
+WITHDRAWAL_FIELDS = ("event_id", "state", "requested_at")
+WITHDRAW_STATES = ("withdrawn", "withdrawing")
+
+
+def _objects(value: object) -> list[dict[str, Any]]:
+    return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
+def task_queue(account: Account, task: str) -> dict[str, Any]:
+    """The task's waiting prompts in delivery order and its withdrawals (module docstring)."""
+    answer = account.call("GET", f"/v1/tasks/{segment(_id(task))}/queue")
+    if not isinstance(answer.get("prompts"), list):
+        raise PlatformError("hub_refused", reason="response_invalid")
+    prompts = [
+        {"position": position, **{key: row.get(key) for key in QUEUE_FIELDS}}
+        for position, row in enumerate(_objects(answer["prompts"]), start=1)
+    ]
+    withdrawals = [{key: row.get(key) for key in WITHDRAWAL_FIELDS} for row in _objects(answer.get("withdrawals"))]
+    return {"task_id": task, "prompts": prompts, "withdrawals": withdrawals}
+
+
+def prompt_withdraw(account: Account, task: str, event: str) -> dict[str, Any]:
+    """Withdraws the waiting prompt `event` of the task (only its author may)."""
+    path = f"/v1/tasks/{segment(_id(task))}/prompts/{segment(_id(event))}/withdraw"
+    state = account.call("POST", path, {}).get("state")
+    if state not in WITHDRAW_STATES:
+        raise PlatformError("hub_refused", reason="response_invalid")
+    return {"task_id": task, "event_id": event, "state": state}
 
 
 def _open(account: Account, org: str, wg: str, item: object, ring: KeyRing) -> dict[str, Any] | None:

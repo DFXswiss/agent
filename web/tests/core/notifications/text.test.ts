@@ -56,6 +56,10 @@ describe('notificationMessage', () => {
       key: 'notifications.text.task.failed',
       params: { task: 'a task', org: 'an organization' },
     });
+    expect(message('prompt.waiting_for_device')).toEqual({
+      key: 'notifications.text.prompt.waiting_for_device',
+      params: { task: 'Fix the build', org: 'Acme' },
+    });
     expect(message('invite.accepted', NONE)).toEqual({
       key: 'notifications.text.invite.accepted',
       params: { subject: 'Someone', org: 'an organization' },
@@ -122,6 +126,9 @@ describe('notificationTarget', () => {
       `/o/${ORG}/t/${TASK}`,
     );
     expect(notificationTarget(notification('n1', { org_id: ORG, kind: 'task.failed' }))).toBe(`/o/${ORG}`);
+    expect(
+      notificationTarget(notification('n1', { org_id: ORG, kind: 'prompt.waiting_for_device', task_id: TASK })),
+    ).toBe(`/o/${ORG}/t/${TASK}`);
     expect(notificationTarget(notification('n1', { org_id: ORG, kind: 'invite.accepted' }))).toBe(`/o/${ORG}/members`);
     expect(notificationTarget(notification('n1', { org_id: ORG, kind: 'rotation.required' }))).toBe(
       `/o/${ORG}/members`,
