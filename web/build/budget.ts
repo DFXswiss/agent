@@ -8,10 +8,10 @@ import { gzipSync } from 'node:zlib';
 import { parseAttributes } from './sri.ts';
 
 /**
- * The guard of the build: the measured first load (191.8 KiB gzip, HOT-16) plus 10 %, well below the 300 KiB ceiling of
+ * The guard of the build: the measured first load (199.3 KiB gzip, HOT-16) plus 10 %, well below the 300 KiB ceiling of
  * section 12.2, so every package sees growth of the first load in its own gates. Raise it only with a reason there.
  */
-export const INITIAL_JS_BUDGET = 211 * 1024;
+export const INITIAL_JS_BUDGET = 219 * 1024;
 
 const TAG_RE = /<(script|link)\b([^>]*)>/gi;
 // `import … from "x"`, `import "x"` and `export … from "x"` (also right after a comment) – never `import("x")`

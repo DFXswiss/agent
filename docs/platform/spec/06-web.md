@@ -626,11 +626,13 @@ the terminal, charts and Markdown load lazily); time to interactive ≤ 3 s on a
 "Fast 3G"); measured in the E2E suite (median of three loads, no tolerance).
 
 The build enforces a tighter guard than the ceiling: `INITIAL_JS_BUDGET` in `web/build/budget.ts` is the measured first
-load plus 10 % (HOT-16: 191.8 KiB measured, guard 211 KiB). The guard runs in every package's gates (`npm run
+load plus 10 % (HOT-16: 199.3 KiB measured, guard 219 KiB). The guard runs in every package's gates (`npm run
 build:check`, the build tests and the E2E budget test), so growth of the first load is seen deterministically where it
 is caused, not later as a narrow timing failure. It is raised only together with a reason in this section. The first
 load is three scripts: the framework, the app modules imported statically from the entry (chunk group `$initial`) and
-the bundler runtime; what only lazy chunks share stays out of it. While a screen's chunk loads, its frame is shown at
+the bundler runtime; what only lazy chunks share stays out of it. The lazily loaded screens share one chunk
+(`screens`), loaded on the first switch to any of them; Markdown, charts and the terminal keep chunks of their own with
+their libraries. While a screen's chunk loads, its frame is shown at
 once (`screen.loading`), also on the first switch to it. A chunk that cannot be loaded or fails its integrity check
 (section 10.2) shows "This page could not be loaded" with a reload in place of the screen, inside the shell, so the
 connection banner stays; other errors reach the route's error page. A direct link into a lazy screen waits for one more

@@ -13,10 +13,10 @@ import { lazyIntegrity, sri } from './build/sri.ts';
 export const WEB_DIR = fileURLToPath(new URL('.', import.meta.url));
 export const OUT_DIR = fileURLToPath(new URL('../src/agent_hub/static', import.meta.url));
 
-/** App code, and the lazily loaded parts that keep chunks of their own (with their libraries). */
+/** App code, and the lazily loaded parts that keep chunks of their own with their libraries (Markdown, chart, terminal). */
 const SCREEN_CODE = /[\\/]src[\\/]/;
 const LAZY_PARTS =
-  /[\\/]src[\\/]ui[\\/](?:task-tabs[\\/]chat[\\/]Markdown|charts[\\/]UPlotChart|terminal[\\/]TerminalView)\.tsx$/;
+  /[\\/]src[\\/]ui[\\/](?:task-tabs[\\/]chat[\\/]Markdown\.tsx$|charts[\\/]UPlotChart\.tsx$|terminal[\\/])/;
 
 /** Path of a source map entry relative to web/ (`src/main.tsx`), whatever the output directory. */
 const fromWeb = (source: string, map: string): string => relative(WEB_DIR, resolve(dirname(map), source));

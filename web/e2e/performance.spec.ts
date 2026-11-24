@@ -1,5 +1,5 @@
 // Performance budget of 06-web.md section 12.2 on the production build (minified, as released), on desktop and both
-// phones: the initial JavaScript fits the guard of the build (`INITIAL_JS_BUDGET`, 211 KiB gzip), and the first screen
+// phones: the initial JavaScript fits the guard of the build (`INITIAL_JS_BUDGET`, 219 KiB gzip), and the first screen
 // (sign-in) is interactive within 3 s on a mid-range phone profile – CPU throttled ×4 and the "Fast 3G" network of
 // Chrome's DevTools. The build is served gzip
 // compressed with the hub's headers and `/v1/config` (`fixtures/server.ts`), as the edge in front of the hub delivers

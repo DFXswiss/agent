@@ -3,7 +3,8 @@
 // the shell stays and the screen area says the page could not be loaded, with a reload.
 import { expect, test } from './fixtures/test.ts';
 
-const CHUNK = /\/assets\/RecoverScreen-[\w-]+\.js$/;
+// the lazily loaded screens share one chunk (06-web.md section 12.2)
+const CHUNK = /\/assets\/screens-[\w-]+\.js$/;
 
 test('the first switch to a lazily loaded screen shows its frame at once, then the screen', async ({ page }) => {
   let release!: () => void;
