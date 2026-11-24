@@ -98,15 +98,9 @@ def test_an_allowed_repository_the_owner_cannot_reach_is_held_with_a_next_step(s
     async def body(kit: OKit) -> None:
         sid = await kit.session()
         op = await kit.run(sid, "github.create_branch", {"repo": "octo-org/hidden", "branch": "x", "from": "main"})
-<<<<<<< HEAD
         assert (op.state, op.held_reason) == ("received", "github_access")
         assert kit.hub.requests == []
-        assert github.paths() == ["GET /repos/octo-org/hidden"]
-=======
-        assert (op.state, op.error_code) == ("rejected", "repo_not_accessible")
-        assert kit.hub.requests[0]["local_check"] == "rejected"
         assert github.paths() == ["GET /user", "GET /repos/octo-org/hidden"]
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 
     pipeline_run(store_dsn, github, body)
 

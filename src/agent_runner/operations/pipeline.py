@@ -28,22 +28,17 @@
    so the result comes with `operation.finished`). At `until` the hold ends with `github_not_connected` and
    `TIMEOUT_MESSAGES` (registered `rejected` like every local rejection). A held operation whose session ended
    (`SESSION_ENDED`; closing a task stops its sessions) is released and registered `rejected` with `not_found`, so it
-<<<<<<< HEAD
-   never runs. A cached credential that the check refused (a revoked token, `401`) is remembered by its version
-   (`held_credential`): the checks are skipped - no request with the refused token - until another version arrives.
-   **Repository access** (KOR-65, rule E-29): a check that fails with `repo_not_accessible` and a next step
-   (`github.reach`: the connection does not see the repository, an organisation restricts OAuth Apps or classic tokens,
-   SAML single sign-on) is held the same way with the reason `github_access`; its `waiting` event carries `next`
-   (`held_next`). The access is checked again at most every `ACCESS_RECHECK_S` (an installation, an approval or an
-   authorisation at GitHub changes nothing the runner sees) and at once when a new credential of the acting user
-   arrives; a changed reason or step (connected, but no access yet) is announced again. At `until` the operation is
-   rejected with the timeout text followed by the step.
-=======
    never runs. A check refused with the GitHub state of the device as it was (a revoked token, `401`, or no usable
    identity) is remembered by the generation of that state (`held_credential` = `credentials.identities.generation`:
    every cached `github` and identity record with its version, the choices and defaults, KOR-47): the checks are
    skipped - no request with the refused token - until any of them changed.
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+   **Repository access** (KOR-65, rule E-29): a check that fails with `repo_not_accessible` and a next step
+   (`github.reach`: the resolved identity's connection does not see the repository, an organisation restricts OAuth
+   Apps or classic tokens, SAML single sign-on) is held the same way with the reason `github_access`; its `waiting`
+   event carries `next` (`held_next`). The access is checked again at most every `ACCESS_RECHECK_S` (an installation,
+   an approval or an authorisation at GitHub changes nothing the runner sees) and at once when the GitHub generation
+   changes; a changed reason or step (connected, but no access yet) is announced again. At `until` the operation is
+   rejected with the timeout text followed by the step.
    Flood limits per session: at most `HOLD_MAX` held at a time (more are rejected at once with `FULL_MESSAGES`), at
    most one `waiting` event per reason per `WAITING_EVERY_S` (a held operation whose event was left out gets it at a
    later scan). The state lives in the store, so a restarted daemon goes on with it.
@@ -97,11 +92,7 @@ from agent_runner.credentials import acting, identities
 from agent_runner.credentials import cache as credential_cache
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import uuid7
-<<<<<<< HEAD
-from agent_runner.github import reach
-=======
-from agent_runner.github import identity
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+from agent_runner.github import identity, reach
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.operations import checks, records, register, results, rules
 from agent_runner.operations import settings as workgroup_settings

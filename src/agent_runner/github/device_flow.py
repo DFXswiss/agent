@@ -1,19 +1,8 @@
 """Device request `github.connect` (05-runner.md section 11.4, ADR-015, 04-crypto.md section 4.4, KOR-25, KOR-47).
 
-<<<<<<< HEAD
-The body is `{}` (the device flow this device prefers), `{app}` (the device flow of the named app: `oauth_app` or
-`github_app`, KOR-65) or `{token}` (an existing GitHub token: a GitHub CLI login or a personal access token); any other
-body is `upstream_error`, a token that is not printable ASCII up to 4096 characters `token_invalid`.
-
-**Which device flow** (KOR-65, ADR-015 addendum): the **OAuth App** (`GITHUB_OAUTH_CLIENT_ID`, scopes `OAUTH_SCOPES`)
-is preferred when it is set up - its token reaches every repository the account can reach, like the GitHub CLI's
-(own account, forks, organisations; an organisation that restricts OAuth Apps asks its owners for approval, which
-the next step of a held operation links). Otherwise the **GitHub App** (`GITHUB_CLIENT_ID`), whose token reaches only
-repositories of owners where the App is installed. A flow that is not set up on this device is `flow_unavailable`
-(the device does not announce `github.device_flow` then, `sync.ws.features`, so the web does not offer it).
-=======
 The body (`contracts/requests/github.connect.request.json`, `parse_request`) may hold `token` (an existing GitHub
-token: a GitHub CLI login or a personal access token; without it the device flow of the GitHub App runs),
+token: a GitHub CLI login or a personal access token; without it a device flow runs) or `app` (the device flow of
+the named app: `oauth_app` or `github_app`, KOR-65; not together with `token`),
 `identity_id` (the record of the requesting user to fill), `org_id` (a company account of that organization) and
 `signing_key` (also an own signing key); IDs are UUIDv7 text. Any other key or form is `upstream_error`, a token that
 is not printable ASCII up to 4096 characters `token_invalid`.
@@ -41,7 +30,14 @@ without a new key a reconnect of the same account keeps the previous version's k
 network errors, `5xx` and rate limits end the connect like the other GitHub calls (`upstream_unreachable`). A user
 of `OPERATOR_GITHUB_USERS` gets `signing:"refused"` without a request: a key in the operator's account is only
 created for an admin of its organization. The seed is never logged.
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+
+**Which device flow** (KOR-65, ADR-077, ADR-015 addendum): the **OAuth App** (`GITHUB_OAUTH_CLIENT_ID`, scopes
+`OAUTH_SCOPES`) is preferred when it is set up - its token reaches every repository the account can reach, like the
+GitHub CLI's (own account, forks, organisations; an organisation that restricts OAuth Apps asks its owners for
+approval, which the next step of a held operation links). Otherwise the **GitHub App** (`GITHUB_CLIENT_ID`), whose
+token reaches only repositories of owners where the App is installed. A flow that is not set up on this device is
+`flow_unavailable` (the device does not announce `github.device_flow` then, `sync.ws.features`, so the web does not
+offer it).
 
 **Token** (no `GITHUB_CLIENT_ID` needed): `GET <GITHUB_API_URL>/user` with the token: `401` -> `token_refused`
 (revoked or unknown), `403` naming an SSO requirement -> `sso_required`, network errors and `5xx` ->
@@ -52,8 +48,7 @@ token with neither `repo` nor `public_repo` is `scope_missing`. Then the credent
 
 **Device flow** (body `{}`):
 
-1. `POST <GITHUB_WEB_URL>/login/device/code` with the public client ID of the chosen app (and, for the OAuth App, the
-   scopes `OAUTH_SCOPES`); a
+1. `POST <GITHUB_WEB_URL>/login/device/code` with the public client ID of the GitHub App (`GITHUB_CLIENT_ID`); a
    network error or `5xx` is tried again after `DEVICE_CODE_DELAYS` (2 s, then 8 s: three attempts, the first two
    waits of the operation pipeline's backoff), then `upstream_unreachable` (KOR-16: the request has no effect a user
    sees - an unused device code expires - so one lost connection must not end the connect);
@@ -93,9 +88,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-<<<<<<< HEAD
-from agent_runner.credentials.cache import CredentialUnavailable, put
-from agent_runner.github import operator, ops, revoke
+from agent_runner.credentials.cache import CredentialUnavailable
+from agent_runner.encoding import b64u_encode
+from agent_runner.github import connect_store, operator, ops, revoke, signing
 from agent_runner.github.client import (
     TOKEN_RE,
     GitHubClient,
@@ -104,16 +99,9 @@ from agent_runner.github.client import (
     GitHubSettings,
     settings_for,
 )
-from agent_runner.requests.service import RESPOND_DELAYS, Flow
-=======
-from agent_runner.credentials.cache import CredentialUnavailable
-from agent_runner.encoding import b64u_encode
-from agent_runner.github import connect_store, operator, ops, revoke, signing
-from agent_runner.github.client import TOKEN_RE, GitHubClient, GitHubError, GitHubResponse, settings_for
 from agent_runner.orgs.book import book_for
 from agent_runner.orgs.db import session
 from agent_runner.requests.service import Flow
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 from agent_runner.sessions.records import time_text
 from agent_runner.sync.http import HubRefusal, HubTransportError
 
@@ -262,7 +250,7 @@ async def poll(flow: Flow, web: GitHubClient, client_id: str, grant: tuple[str, 
 
 SCOPES_HEADER = "x-oauth-scopes"
 REPO_SCOPES = frozenset({"repo", "public_repo"})
-BODY_KEYS = frozenset({"token", "identity_id", "org_id", "signing_key"})
+BODY_KEYS = frozenset({"token", "app", "identity_id", "org_id", "signing_key"})
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 SIGNING_PATH = "/user/ssh_signing_keys"
 SIGNING_TITLE = "agent.dfx.swiss"
@@ -274,6 +262,7 @@ class Request:
     """The checked body of `github.connect`."""
 
     token: str | None = None
+    app: str | None = None
     identity_id: str | None = None
     org_id: str | None = None
     signing_key: bool = False
@@ -295,7 +284,8 @@ class Account:
 def parse_request(body: dict[str, Any]) -> Request:
     """The body of the request (module docstring); `ConnectFailed` for anything else."""
     invalid = ConnectFailed("upstream_error", "step=request kind=body")
-    if set(body) - BODY_KEYS:
+    app = body.get("app")
+    if set(body) - BODY_KEYS or ("token" in body and "app" in body) or ("app" in body and app not in APPS):
         raise invalid
     for name in ("identity_id", "org_id"):
         if name in body and not (isinstance(body[name], str) and UUID_RE.fullmatch(body[name])):
@@ -305,7 +295,7 @@ def parse_request(body: dict[str, Any]) -> Request:
     token = body.get("token")
     if "token" in body and (not isinstance(token, str) or not TOKEN_RE.fullmatch(token)):
         raise ConnectFailed("token_invalid", "step=request kind=token")
-    return Request(token, body.get("identity_id"), body.get("org_id"), body.get("signing_key", False))
+    return Request(token, app, body.get("identity_id"), body.get("org_id"), body.get("signing_key", False))
 
 
 async def _user(client: GitHubClient) -> tuple[str, int, GitHubResponse]:
@@ -338,13 +328,8 @@ async def _operator_account(flow: Flow) -> Account:
     return Account(token, login, user_id, scopes(answer.headers.get(SCOPES_HEADER)), "operator")
 
 
-<<<<<<< HEAD
-async def _device_flow(flow: Flow, app: str | None) -> tuple[str, int, list[str]]:
-    """The device flow of `app` (None: the preferred one) up to the stored credential; `(login, user_id, scopes)`."""
-=======
-async def _device_flow(flow: Flow) -> Account:
-    """The device flow up to the checked account."""
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+async def _device_flow(flow: Flow, app: str | None) -> Account:
+    """The device flow of `app` (None: the preferred one) up to the checked account."""
     settings = settings_for(flow.context)
     chosen = flow_app(settings, app)
     if chosen is None:
@@ -388,16 +373,6 @@ async def _token(flow: Flow, token: str) -> Account:
     return Account(token, login, user_id, granted, "token")
 
 
-<<<<<<< HEAD
-async def _connect(flow: Flow) -> tuple[str, int, list[str], str]:
-    """The connection the body asks for: `(login, user_id, scopes, source)`."""
-    body = flow.body
-    app = body.get("app")
-    if set(body) - {"token", "app"} or len(body) > 1 or (app is not None and app not in APPS):
-        raise ConnectFailed("upstream_error", "step=request kind=body")
-    if "token" not in body:
-        return (*await _device_flow(flow, app), "device_flow")
-=======
 async def _check_org(flow: Flow, org: str) -> None:
     """A company connect: this device acts in the organization and is assigned to one of its workgroups, and the
     requesting user is an active admin of it, in the verified membership log."""
@@ -451,7 +426,6 @@ def _body(flow: Flow, account: Account, key: dict[str, Any] | None) -> dict[str,
 
 async def _store(flow: Flow, body: dict[str, Any], identity_id: str | None, account: Account) -> str:
     """Store the body for the requesting user (`connect_store.store`); the record ID of the identity."""
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
     token = body["token"]
     try:
         stored = await connect_store.store(flow, body, identity_id, replace_primary=account.source == "operator")
@@ -476,7 +450,7 @@ async def _account(flow: Flow, request: Request, by_operator: bool) -> Account:
     if by_operator:
         return await _operator_account(flow)
     if request.token is None:
-        return await _device_flow(flow)
+        return await _device_flow(flow, request.app)
     return await _token(flow, request.token)
 
 

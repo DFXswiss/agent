@@ -6,20 +6,13 @@ booleans; the guest's `local_check:"passed"` is only a hint) and adds the rules 
 
 1. type known (`unknown_type`), parameters (`params_invalid` with every JSON pointer, at most 32): required and
    unknown keys, types, lengths in code points, `repo`, branch rules (`refs/heads/` removed first), `ref` (branch or
-<<<<<<< HEAD
    tag name or 7-40 hex SHA), full SHAs, PR numbers, single-line title, model ID syntax, label names, pages, the
-   question of `human.question` / `human.approval` (1-4000 characters); `github.update_issue` names at least one of
-   `state`, `title`, `body`, `labels`, and `state_reason` only together with a fitting `state` (`reopened` with
-   `open`, `completed`/`not_planned` with `closed`; `params_invalid`; the contract leaves this to the runner, KOR-25);
-=======
-   tag name or 7-40 hex SHA), full SHAs, PR numbers, single-line title, model ID syntax, label names, pages;
-   `github_identity`, `author`, `committer` and `co_authors` are identity and user IDs (canonical UUIDs, never free
-   text); `github.commit`: a message without a trailer-like line `co-authored-by:`, `signed-off-by:` or
-   `committed-by:` (any case, leading spaces allowed) and every co-author once (`params_invalid`, KOR-47);
-   `github.update_issue` names at least one of `state`, `title`, `body`, `labels`, and `state_reason` only together
-   with a fitting `state` (`reopened` with `open`, `completed`/`not_planned` with `closed`; `params_invalid`; the
-   contract leaves this to the runner, KOR-25);
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+   question of `human.question` / `human.approval` (1-4000 characters); `github_identity`, `author`, `committer` and
+   `co_authors` are identity and user IDs (canonical UUIDs, never free text); `github.commit`: a message without a
+   trailer-like line `co-authored-by:`, `signed-off-by:` or `committed-by:` (any case, leading spaces allowed) and
+   every co-author once (`params_invalid`, KOR-47); `github.update_issue` names at least one of `state`, `title`,
+   `body`, `labels`, and `state_reason` only together with a fitting `state` (`reopened` with `open`,
+   `completed`/`not_planned` with `closed`; `params_invalid`; the contract leaves this to the runner, KOR-25);
 2. commit paths (`path_invalid`, with pointers): relative, no empty, `.`, `..` or `.git` segment;
 3. repository allow-list of the workgroup settings when it is set (`repo_not_allowed`; every type with `repo`, so
    not `github.list_repositories` and `github.request_connection`; without a list every repository passes, KOR-30);

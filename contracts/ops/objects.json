@@ -91,7 +91,6 @@
       "additionalProperties": false
     },
     "params_github_list_repositories": {
-      "$ref": "../common.json#/$defs/empty",
       "type": "object",
       "properties": {
         "github_identity": {

@@ -3,13 +3,6 @@
 - `actor_client(context, operation)`: a client with the token of the operation's **acting user** - the person whose
   instruction started the turn (`credentials.acting`, the only place that decides it and opens the credential;
   HOT-14, ADR-070, replacing the task owner's credential of ADR-015) - decrypted from the credential cache only for
-<<<<<<< HEAD
-  the duration of the block. No acting user, no cached or fetchable record, a record that does not open or a body
-  without a usable token is `NotConnected`; a hub that cannot be asked for a missing record is
-  `GitHubError("unreachable")` (retryable).
-- `executor(body)`: a `403` that refuses access (SAML single sign-on, an organisation's restriction, a right the token
-  lacks) is `repo_not_accessible` with the one next step in its message (`reach`, KOR-65); everything else is
-=======
   the duration of the block.
 - `identity_body(context, operation, data)` / `identity_client(context, operation, data)`: the body of, and a client
   with the token of, the GitHub identity a pre-check resolved for the acting user (`identity.Resolved.data()` in the
@@ -19,7 +12,8 @@
   identity when the data names one, else the acting user's primary record (`actor_client`).
 - No acting user, no cached or fetchable record, a record that does not open or a body without a usable token is
   `NotConnected`; a hub that cannot be asked for a missing record is `GitHubError("unreachable")` (retryable).
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+- `executor(body)`: a `403` that refuses access (SAML single sign-on, an organisation's restriction, a right the token
+  lacks) is `repo_not_accessible` with the one next step in its message (`reach`, KOR-65); everything else is
 - `failure(error, not_found=...)`: the operation failure of a `GitHubError`: `401` -> `github_not_connected`, `404`
   -> the type's code, `410` (the repository's issues are disabled, KOR-25) -> `not_found` with `ISSUES_DISABLED`,
   retryable errors (network, `5xx`, `429`, secondary and primary rate limits) -> `upstream_error` with `retryable`
@@ -36,14 +30,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
-<<<<<<< HEAD
-from agent_runner.credentials import acting
-from agent_runner.credentials.cache import CredentialUnavailable
-from agent_runner.github import reach
-=======
 from agent_runner.credentials import acting, identities
 from agent_runner.credentials.cache import CredentialUnavailable, RecordRefused
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+from agent_runner.github import reach
 from agent_runner.github.client import TOKEN_RE, GitHubClient, GitHubError, settings_for
 from agent_runner.operations.extensions import OperationContext, OperationFailed
 from agent_runner.operations.records import Operation
@@ -81,6 +70,8 @@ async def client_of(context: Any, body: Mapping[str, Any], label: str) -> AsyncI
     if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
         raise NotConnected
     client = settings_for(context).client(token, label)
+    source = body.get("source")
+    client.source = source if isinstance(source, str) else "device_flow"  # the kind of connection (`reach`, KOR-65)
     del token
     async with client:
         yield client
@@ -89,25 +80,11 @@ async def client_of(context: Any, body: Mapping[str, Any], label: str) -> AsyncI
 @asynccontextmanager
 async def actor_client(context: Any, operation: Operation) -> AsyncIterator[GitHubClient]:
     try:
-<<<<<<< HEAD
-        async with acting.opened(context, operation, "github") as body:
-            token = body.get("token")
-            if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
-                raise NotConnected
-            assert operation.actor_id is not None
-            client = settings_for(context).client(token, operation.actor_id)
-            source = body.get("source")
-            client.source = source if isinstance(source, str) else "device_flow"
-            del token
-            async with client:
-                yield client
-=======
         async with (
             acting.opened(context, operation, "github") as body,
             client_of(context, body, str(operation.actor_id)) as client,
         ):
             yield client
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
     except (CredentialUnavailable, HubRefusal):
         raise NotConnected from None
     except HubTransportError:

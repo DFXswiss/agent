@@ -275,11 +275,9 @@ def test_github_types_need_the_owners_connection(op_type: str) -> None:
     assert refused(op_type, VALID[op_type], connected=False).code == "github_not_connected"
 
 
-<<<<<<< HEAD
-@pytest.mark.parametrize("op_type", ["subagent.request", "task.set_title", "human.question", "human.approval"])
-=======
-@pytest.mark.parametrize("op_type", ["subagent.request", "task.set_title", "github.list_identities"])
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+@pytest.mark.parametrize(
+    "op_type", ["subagent.request", "task.set_title", "human.question", "human.approval", "github.list_identities"]
+)
 def test_other_types_need_no_github_connection(op_type: str) -> None:
     checks.check(request(op_type, VALID[op_type], connected=False))
 
