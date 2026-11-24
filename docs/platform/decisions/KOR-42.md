@@ -28,3 +28,18 @@ The draft of ADR-062 was reviewed by a reviewer without the author's context. Fi
 - The parity table (`agent-parity.md`) knows three states only: `done` (a command of its own exists and is tested),
   `pending` (a parallel package delivers the action; the row names it) and `n/a` (nothing an agent does, with the
   reason). The former `api`/`stage b`/`stage c` states are gone; `api` stays as a fallback command only.
+
+## Independent review of the agent tool (fresh context) – findings and handling
+
+1. **High – owed rotations and the credential-key re-wrap ran only after the tool's own changes.** A browser runs
+   catch-up, pending rotation and the CK re-wrap on every sync; an account with only an agent must get the same
+   protection (E-04). Handling: see the fix entry below.
+2. **Medium – a refused (not: unverifiable) org log counted as "entitles nobody"** in the CK check, so a flaky or
+   malicious hub could cause a rotation away from entitled devices and the deletion of their records. Handling: see
+   below.
+3. **Medium – the hub fake was only checked against itself.** Handling: see below.
+4. **Medium – `wg ungrant` used the effective access (incl. an admin's inherited read, KOR-34)** instead of the
+   explicit access; error codes differed from the web. Handling: see below.
+5. **Low** – two event readers, two copies of the credential body checks, unchecked event ID in the whiteboard send,
+   an over-strong docstring claim about the CK epoch start, a lost claim answer reported as timeout, the guide's
+   "no command prints a code" sentence, the outdated §8.4 of the spec. Handling: see below.

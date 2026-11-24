@@ -176,7 +176,9 @@ never falls back from loopback to remote.
 
 Banner: while the user's main orchestrator (`confirmed` or `active`) is a remote one, every web client shows in the
 shell "Your main orchestrator runs on another computer (<host>), connected <time>" with "Disconnect"; it comes from
-the row (`remote` of `GET /v1/me/agents`), so no read state of a notification hides it. Both notification and banner
+the row (`remote` of `GET /v1/me/agents`), so no read state of a notification hides it; a client that is open while
+the pairing is confirmed elsewhere loads the list again when the notification `agent_paired_remote` (or
+`agent_revoked`) arrives, so the banner appears there at once. Both notification and banner
 are in-app only (no e-mail or push in this version). The settings list marks such rows "another computer".
 
 ## 6. Scope of an agent: everything its user can do (`agent_hub/agents/scope.py`)
@@ -244,10 +246,14 @@ pairing. Texts it prints (`reason`, `next`) come from fixed lists in the tool, n
 
 ### 8.4 Commands
 
-Parity: every action and view of the web client has a row in `docs/platform/agent-parity.md`; a test of `agent-core`
-fails when a screen or settings section of the web client has no row, a test of the agent repository when a `done`
-row names a command the tool lacks. Rows in stage c are not built yet. Until a convenient command exists, `agent-platform api
-<METHOD> <path> [--body <json>|-]` sends any signed request and prints the verified answer.
+Parity (rules E-04 and E-19 of KOR-42): every action and view of the web client has a row in
+`docs/platform/agent-parity.md` and its own command; `tests/platform/test_agent_parity.py` reads the web client's
+source, the hub's registered routes and the tool's parser of the same checkout and fails when a screen, settings
+section or route of the web client has no row, when a route the browser calls has no `done` row (or only `n/a` and
+`pending` rows with their reason), when a `done` row names a command the tool lacks, or when a command has no example
+in the agent guide. `agent-platform api <METHOD> <path> [--body <json>|-]` sends any signed request and prints the
+verified answer; it is a fallback, not the way for any action of the web client. One row per command group (the
+commands and options as `agent-platform <group> --help` lists them):
 
 | Command | Effect |
 |---|---|
@@ -263,12 +269,17 @@ row names a command the tool lacks. Rows in stage c are not built yet. Until a c
 | `claude setup-token` | run `claude setup-token` locally (browser approval only), store as `setup_token` |
 | `settings set [--model-access] [--model] [--locale]` | `PUT /v1/me/settings` |
 | `api <METHOD> <path> [--body …]` | the generic signed call |
-| `org list|create|show`, `org invite --org [--role admin|member] [--wg …] [--expires-hours]`, `org join`, `org admit --org --user <id|account code> [--role admin|member] [--wg …]` | organizations and invitations of every role, joining with an invitation, admitting an existing account directly (ADR-060; the identities are verified against the platform log like in the web client) |
-| `wg list|create|grant`, `repos list|allow|disallow`, `device assign` | workgroups, allowed repositories, platform device |
-| `github connect` | device request `github.connect`; opens the verification page, copies the user code to the clipboard, waits |
+| `org list|create|show|leave|rotate|catch-up`, `org invite --org [--role admin|member] [--wg …] [--expires-hours]`, `org invite-revoke --org --invite`, `org join`, `org admit --org --user <id|account code> [--role admin|member] [--wg …]`, `org invitees [--org]` | organizations and invitations of every role, joining with an invitation, admitting an existing account directly and the accounts of the user's own platform invitations (ADR-060; every identity verified against the platform log like in the web client), leaving, owed key rotations and catch-up wraps |
+| `member list|role|remove --org` | the members with their role and access (explicit, or `inherited` as an admin, ADR-058); role changes and removal with the key rotation that follows |
+| `wg list|create|rename|grant|ungrant|archive|settings`, `repos list|allow|disallow --wg` | workgroups (`my_access`, `my_access_inherited`), grants (`ungrant` acts on the explicit access only), the workgroup settings and allowed repositories |
+| `device list|assign|unassign|rename|invite` | execution devices: the platform device from the verified platform log, an own computer through a device invitation |
+| `credentials list|set-api-key|set-mailbox|check|delete|rotate`, `claude login`, `github status|connect|disconnect` | credentials sealed under `CK` on this computer, checks and logins through a device request, the `CK` rotation the web client's job runs |
 | `diagnose [--task <id>]` | why a task does not start: device, assignment, model access, credentials (incl. expiry), last transition, with `reason` and `next` from fixed lists |
-| `task list --wg [--state]`, `task create --wg --text`, `task prompt --task --text`, `task show --task`, `task follow --task [--after] [--wait]` | tasks sealed and opened on the user's computer like the web client (`task.meta` with the derived title and `prompt` under the workgroup's current epoch, signed by the identity; reading runs the reader checks and opens with the user's own workgroup key; `--text -` reads stdin; `follow` returns the new chat events after a position and `next_after` for the next call, waiting up to `--wait` seconds for the first) |
-| `task close|stop|interrupt`, `whiteboard …`, `notifications …`, `member …`, `audit`, `monitoring`, `quotas`, `passkey list|remove|add`, `recovery new`, `agents list|revoke` | the rest of the parity matrix: through `api` today; the convenient commands, and those that need the client's encryption (whiteboard entry, `CK` rotation), are stage c, not built yet |
+| `task list|create|prompt|show|follow|close|operations|overview` | tasks sealed and opened on the user's computer like the web client (`task.meta` with the derived title and `prompt` under the workgroup's current epoch, signed by the identity; reading runs the reader checks and opens with the user's own workgroup key; `--text -` reads stdin; the chat includes the work VM runs and states; `follow` returns the new chat events after a position and `next_after` for the next call, waiting up to `--wait` seconds for the first), the operations with their verified events, the overview of every readable workgroup |
+| `session show|stop|interrupt|terminal|workvm --session` | a session with transitions, usage, VM and children, its control, the terminal output as text, and its work VM (KOR-29, ADR-059: state, size, runtime of the session and the task, runs) |
+| `whiteboard list|history|add|edit|delete` | whiteboard entries of an organization, workgroup or task, sealed on this computer |
+| `notifications list|read`, `quotas`, `monitoring`, `audit` | the user's notifications, subscription quotas, monitoring of devices, VMs, sessions and work VMs, account and org audit (with the chain check) |
+| `passkey list|remove|add`, `recovery new`, `agents list|revoke`, `platform invite|list|revoke`, `security` | the account's security: passkeys (`add` opens the settings page), a new recovery code, the agents, platform invitations (inviters), the web build check |
 | `guide` | prints the guide for AI agents shipped with the tool |
 
 Notification (hub, `agents/notify.py`): every account-changing action of an agent – passkey removed, recovery code
@@ -319,8 +330,8 @@ token as the lasting way.
 | Someone reads the return code | useful only to the holder of the agent's private key, within the claim deadline | – |
 
 ## 10. Tests
-Not built yet, so not tested yet: E2E-42
-(stage c, needs the commands of the parity matrix in stage c). Everything else below is part of this package.
+The end-to-end scenarios of the agent access are E2E-46 and E2E-47 (`07-testing.md` §2.1; E2E-40 and E2E-41 there
+are other scenarios). Everything else below is part of this package.
 
 Hub: resolver, route parity (every registered user route admits an active agent, the exception list exactly the
 WebAuthn ceremonies and `POST /v1/me/agents`), an agent cannot confirm a pairing, a second pairing replaces the
@@ -332,23 +343,26 @@ seal/open against the vectors, `/connect` screen (mismatch, expired, gesture ret
 <name>"), invitation with pairing (platform and org invitation, broken link, expired request, expiry before the sign-in, `/connect` resumed from the route state), settings list (main orchestrator and history) and disconnect, audit marker,
 `login_token` records in the settings and the CK re-wrap job. Agent tool: every command against a real hub (test
 PostgreSQL) and the doubles, the listener (host header, foreign pairing, bad `r`, bind address), token readers
-against fake `security` programs and credential files, secret canaries on every output and error path. E2E-40
-(pairing of an existing account, token transfer, a second pairing that replaces the first, revocation), E2E-41 (new
-account through the invitation with pairing), E2E-42 (stage c; after the pairing the agent alone, without a browser, runs a
-whole user journey: organization, invitation with role admin, workgroup, device, task with prompt followed to the
-result, whiteboard entry, role change, its attempt to confirm a pairing refused, revoking itself); attack tests: a
+against fake `security` programs and credential files, secret canaries on every output and error path, every command
+of §8.4 against the hub fake with the web client's checks and crypto (also the work VM panel, the invitees and the
+inherited access of admins), and the parity test of §8.4 (web source, hub routes, parser and guide). E2E-46
+(the loopback pairing of an existing account, then the agent alone, without a browser, runs a whole user journey:
+team organization, invitation, workgroup with a grant, platform device, task with prompt followed to the result,
+further prompt, interrupt, stop and close, whiteboard entry, member removal with key rotation, its attempt to confirm
+a pairing refused, revoking itself), E2E-47 (the pairing from another computer below, a second pairing that replaces
+the first); the new account through the invitation with pairing is covered by the web client tests; attack tests: a
 link opened on another computer (no listener), a reused pairing, a revoked agent, a foreign account's pairing, a
 hub-substituted bundle, an agent that tries to confirm a pairing (`403 forbidden`).
 
 Remote pairing (ADR-062, KOR-42): vectors of §3 (agent code, handover, return code, typed forms) in all three
 implementations; hub: creation and lookup with nonce and 300 s, `handover_required`/`handover_unexpected`, the 600 s
 claim deadline, `GET /v1/agent/handover` only for confirmed remote rows, `handover_ct` cleared at claim, revocation
-and deadline, notification and audit details, `remote` in the list, loopback answers unchanged, migration 0011 on the
+and deadline, notification and audit details, `remote` in the list, loopback answers unchanged, migration 0014 on the
 previous schema with data; web: link parsing with `m=remote`, mode mismatch both ways, code input (normalisation,
 wrong code keeps the button disabled), return code, waiting state, banner, invitation asks the code before the
 passkey; tool: `pair --remote`, every outcome of `--wait`, `hub_too_old`, pending state removed in every terminal
 case, `register --remote`, secret canaries, an end-to-end run against the hub fake whose "browser" seals the
-handover.
+handover; E2E-47 against the real hub and web client.
 
 ## 11. Orchestrator on platform hardware (design; not built in this package, follow-up package)
 
@@ -369,7 +383,9 @@ from §5.1:
    step 3 (the same replacement in one transaction).
 3. **Sealed handover instead of the loopback.** The browser draws `r` and seals `{p, u, r, k}` (the fields of §5.1
    step 4) with HPKE to the session's `kem_pub` (`info = P‖"agent-handover\0"‖ids`), and sends the ciphertext as a
-   session input of a new kind; the runner passes it unopened into the VM. Only the session's private key opens it;
+   session input of a new kind (the label `agent-handover` is now defined by the remote pairing, §3: the follow-up
+   package reuses that format, `canonical({"k","r"})` with pairing and user in `ids`, rather than a second plaintext
+   under the same label); the runner passes it unopened into the VM. Only the session's private key opens it;
    the tool then claims and opens the identity exactly as §5.1 step 5. The loopback claim secret is replaced by this
    channel, authenticated by the device signature of the pairing and of `fp`, and bound to the session's key.
 4. **End.** Session end, VM reset, device unassignment or revocation in the settings revoke the orchestrator; no key
