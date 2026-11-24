@@ -33,5 +33,8 @@
   "live.announce": "Verbindung ist live",
   "reconnecting.announce": "Verbindung unterbrochen, wird wiederhergestellt",
   "connecting.announce": "Verbinde",
-  "offline.announce": "Sie sind offline"
+  "offline.announce": "Sie sind offline",
+  "remote-agent": "Dein Hauptorchestrator läuft auf einem anderen Computer ({host}), verbunden {time}.",
+  "remote-agent.unknown-host": "unbekannter Computer",
+  "remote-agent.disconnect": "Trennen"
 }

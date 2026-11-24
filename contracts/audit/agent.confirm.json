@@ -7,6 +7,13 @@
   "properties": {
     "agent": {
       "$ref": "../common.json#/$defs/uuid"
+    },
+    "remote": {
+      "type": "boolean",
+      "enum": [
+        true
+      ],
+      "description": "present (true) only for a pairing from another computer (ADR-058)"
     }
   },
   "required": [

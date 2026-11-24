@@ -8,7 +8,11 @@
   (concept idea 34, `store.confirm`); an agent never confirms (scope.EXCEPTIONS).
 - `GET /v1/me/agents`, `DELETE /v1/me/agents/{id}`, `DELETE /v1/me/agents` (user: browser session or agent): list,
   revoke one, revoke all. Account-changing actions of an agent notify the user (`agents/notify.py`).
-- `POST /v1/agent/claim` (agent key, `confirmed`): the agent proves the claim from the loopback and gets its keys.
+- `POST /v1/agent/claim` (agent key, `confirmed`): the agent proves the claim from the loopback (or from the
+  handover of a remote pairing) and gets its keys.
+- `GET /v1/agent/handover` (agent key, `confirmed`): the handover of a confirmed remote pairing, sealed to the agent
+  by the confirming browser (ADR-058); the confirmation of a remote pairing notifies every client of the user
+  (`agent_paired_remote`).
 - `GET /v1/agent/me` (agent key, `active`): the agent's own row with the sealed identity.
 """
 
@@ -23,6 +27,7 @@ from pydantic import StringConstraints
 
 from agent_hub.agents import store
 from agent_hub.agents.keys import key_id_of
+from agent_hub.agents.notify import remote_notice
 from agent_hub.agents.revocation import revoke_agents
 from agent_hub.auth.fields import B64u32, BundleCt, Strict, Uuid7, decode
 from agent_hub.auth.keys import Principal
@@ -31,6 +36,7 @@ from agent_hub.errors import HubError
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.pipeline import source_address
 from agent_hub.http.routing import HubRouter
+from agent_hub.notifications.rules import publish_rows
 from agent_hub.stream.publish import close_keys
 
 router = HubRouter()
@@ -47,6 +53,7 @@ class PairingCreate(Strict):
     pairing_id: Uuid7
     pub: PublicKeys
     pop: B64u64Sig
+    remote: bool = False
 
 
 class AgentConfirm(Strict):
@@ -54,6 +61,7 @@ class AgentConfirm(Strict):
     bundle_ct: BundleCt
     label_ct: BundleCt
     claim_hash: B64u32
+    handover_ct: BundleCt | None = None
 
 
 class AgentClaim(Strict):
@@ -85,9 +93,17 @@ def _create(context: HubContext, body: PairingCreate, source: str) -> dict[str, 
     now = context.clock()
     with transaction(context.pool) as connection:
         pairing = store.create_pairing(
-            connection, UUID(body.pairing_id), kem=body.pub.kem, sig=body.pub.sig, pop=body.pop, source=source, now=now
+            connection,
+            UUID(body.pairing_id),
+            kem=body.pub.kem,
+            sig=body.pub.sig,
+            pop=body.pop,
+            source=source,
+            now=now,
+            remote=body.remote,
         )
-    return {"pairing_id": str(pairing.id), "expires_at": store.pairing_json(pairing, now)["expires_at"]}
+    answer = store.pairing_json(pairing, now)
+    return {"pairing_id": answer["pairing_id"], "expires_at": answer["expires_at"], **store.remote_json(pairing)}
 
 
 @router.post("/v1/agent-pairings", auth="anon", right="anon")
@@ -129,10 +145,14 @@ def _confirm(context: HubContext, principal: Principal, body: AgentConfirm) -> d
         bundle_ct=_sealed(body.bundle_ct, "/bundle_ct"),
         label_ct=_sealed(body.label_ct, "/label_ct"),
         claim_hash=decode(body.claim_hash),
+        handover_ct=None if body.handover_ct is None else _sealed(body.handover_ct, "/handover_ct"),
     )
     now = context.clock()
     with transaction(context.pool) as connection:
         confirmed = store.confirm(connection, user, principal.key_id, confirmation, now)
+        changed_remote = confirmed.changed and confirmed.remote
+        notices = remote_notice(connection, user, now, confirmation.pairing_id) if changed_remote else []
+    publish_rows(notices)
     close_keys(user, [key_id_of(agent) for agent in confirmed.replaced])
     return {"agent_id": str(confirmation.pairing_id)}
 
@@ -195,3 +215,14 @@ def _me(context: HubContext, principal: Principal) -> dict[str, Any]:
 @router.get("/v1/agent/me", auth="agent", right="agent", read_resource="agent.me")
 async def agent_me(principal: CurrentPrincipal, context: Context) -> dict[str, Any]:
     return await asyncio.to_thread(_me, context, principal)
+
+
+def _handover(context: HubContext, principal: Principal) -> dict[str, Any]:
+    agent_id = _agent_id(principal)
+    with context.pool.connection() as connection:
+        return store.handover(connection, agent_id, context.clock())
+
+
+@router.get("/v1/agent/handover", auth="agent", right="agent:confirmed", read_resource="agent.handover")
+async def agent_handover(principal: CurrentPrincipal, context: Context) -> dict[str, Any]:
+    return await asyncio.to_thread(_handover, context, principal)

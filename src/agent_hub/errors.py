@@ -89,6 +89,8 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "pairing_unknown": (404,),
     "pairing_gesture_required": (403,),
     "claim_invalid": (401,),
+    "handover_required": (400,),
+    "handover_unexpected": (400,),
 }
 
 # The detail keys of `contracts/common.json#/$defs/error` (closed).

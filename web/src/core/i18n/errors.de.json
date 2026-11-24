@@ -144,6 +144,16 @@
     "body": "Die virtuelle Maschine antwortet nicht mehr.",
     "action": "Starte den Task noch einmal."
   },
+  "handover_required": {
+    "title": "Agentenverbindung abgelehnt",
+    "body": "Diese Seite hat nicht gesendet, was dein Agent auf dem anderen Computer braucht.",
+    "action": "Lade die Seite neu und bestätige noch einmal."
+  },
+  "handover_unexpected": {
+    "title": "Agentenverbindung abgelehnt",
+    "body": "Diese Seite hat die Anfrage wie eine von einem anderen Computer behandelt, sie ist es aber nicht.",
+    "action": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden."
+  },
   "header_invalid": {
     "title": "Ungültiger Header",
     "body": "Ein Anfrage- oder Datensatz-Header ist fehlerhaft.",

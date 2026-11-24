@@ -72,6 +72,10 @@
               }
             ],
             "description": "the main orchestrator this one replaced at its confirmation (revoked then), or null"
+          },
+          "remote": {
+            "type": "boolean",
+            "description": "the agent was paired from another computer (ADR-058); the web client shows a banner while such a main orchestrator is confirmed or active"
           }
         },
         "required": [
@@ -83,7 +87,8 @@
           "claimed_at",
           "last_used_at",
           "revoked_at",
-          "replaces"
+          "replaces",
+          "remote"
         ],
         "additionalProperties": false
       }

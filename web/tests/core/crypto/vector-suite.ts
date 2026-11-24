@@ -185,12 +185,20 @@ export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
   open_label: async (a) => agent.openLabel(await kem(a.user_kem_sk), a.agent_id, a.user_id, a.sealed),
   claim: async (a) => agent.claim(b(a.secret), a.agent_id, a.user_id),
   check_label: async (a) => agent.checkLabel(a.label),
+  agent_code: async (a) => agent.agentCode(a.pairing_id, a.fp, b(a.nonce), a.origin),
+  open_handover: async (a) => agent.openHandover(await kem(a.agent_kem_sk), a.agent_id, a.user_id, a.sealed),
+};
+
+/** Operations whose name one vector file uses for its own function (`agent.json` `parse_code`: the agent and return
+ * codes of ADR-058, not the invitation code); the Python generator keeps one `OPS` per area. */
+export const FILE_OPS: Record<string, Record<string, (a: Any) => Promise<unknown>>> = {
+  agent: { parse_code: async (a) => agent.parseCode(a.text, a.length) },
 };
 
 /** Runs `op(args)` and returns the error code it fails with (`null` if it succeeds; other errors propagate). */
-export async function refusal(op: string, args: unknown): Promise<string | null> {
+export async function refusal(op: string, args: unknown, name = ''): Promise<string | null> {
   try {
-    await OPS[op]!(args);
+    await (FILE_OPS[name]?.[op] ?? OPS[op])!(args);
   } catch (error) {
     if (error instanceof CryptoError) return error.code;
     throw error;
@@ -205,7 +213,7 @@ export function negativeChecks(): Check[] {
       name: `${name}: invalid ${vector.op}:${vector.name}`,
       run: async () => {
         if (!Object.hasOwn(OPS, vector.op)) throw new Mismatch(`unknown op ${vector.op}`);
-        same(await refusal(vector.op, vector.args), vector.error, `${vector.op}:${vector.name}`);
+        same(await refusal(vector.op, vector.args, name), vector.error, `${vector.op}:${vector.name}`);
       },
     })),
   );
@@ -245,6 +253,29 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
     same(agent.labelInfo(ag.id, user.id), lab.info, 'label info');
     same(await agent.sealLabel(b(user.kem), ag.id, user.id, lab.value, b(lab.ephemeral_sk)), lab.sealed, 'label');
     same(await agent.openLabel(await kem(user.kem_sk), ag.id, user.id, lab.sealed), lab.value, 'opened label');
+    const rem = data.remote;
+    const nonce = b(rem.nonce);
+    same(agent.codeInput(ag.id, data.fingerprint, nonce, rem.origin), rem.code_input, 'code input');
+    same(await agent.agentCode(ag.id, data.fingerprint, nonce, rem.origin), rem.agent_code, 'agent code');
+    same(agent.formatCode(rem.agent_code), rem.agent_code_shown, 'agent code shown');
+    const ho = rem.handover;
+    same(agent.handoverInfo(ag.id, user.id), ho.info, 'handover info');
+    same(fromUtf8(agent.handoverPlaintext(b(sec.secret), ho.root_key)), ho.plaintext, 'handover plaintext');
+    const sealedHandover = await agent.sealHandover(
+      b(ag.kem),
+      ag.id,
+      user.id,
+      b(sec.secret),
+      ho.root_key,
+      b(ho.ephemeral_sk),
+    );
+    same(sealedHandover, ho.sealed, 'handover');
+    const handover = await agent.openHandover(agentKem, ag.id, user.id, ho.sealed);
+    same({ k: handover.rootKey, r: b64uEncode(handover.secret) }, { k: ho.root_key, r: sec.secret }, 'opened handover');
+    same(agent.returnInfo(ag.id, user.id), rem.return_info, 'return info');
+    same(await agent.returnCode(b(sec.secret), ag.id, user.id), rem.return_code, 'return code');
+    same(agent.formatCode(rem.return_code), rem.return_code_shown, 'return code shown');
+    for (const item of rem.typed) same(agent.parseCode(item.text, item.length), item.code, `typed ${item.text}`);
   },
   encoding: async (data) => {
     for (const item of data.b64u) {

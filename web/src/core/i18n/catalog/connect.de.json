@@ -20,5 +20,15 @@
   "cancelled": "Nicht bestätigt. Versuche es erneut, wenn du bereit bist.",
   "handover": "Bestätigt. Übergabe an deinen Agenten…",
   "invalid.title": "Dieser Link ist nicht gültig",
-  "invalid.body": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden."
+  "invalid.body": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden.",
+  "remote.title": "Dieser KI-Agent läuft auf einem anderen Computer",
+  "remote.warning": "Dieser KI-Agent läuft auf einem anderen Computer ({host}). Mach nur weiter, wenn du gerade selbst deinen KI-Agenten gebeten hast, sich zu verbinden, und er dir diese Seite und einen Code gezeigt hat. Wer diesen Agenten steuert, erhält vollen Zugriff auf dein Konto.",
+  "remote.code.label": "Gib den Code ein, den dir dein KI-Agent zeigt",
+  "remote.code.hint": "10 Zeichen, zum Beispiel ABCDE-12345. Ohne den richtigen Code geht es nicht weiter.",
+  "remote.code.wrong": "Das ist nicht der Code dieser Anfrage. Prüfe den Code, den dir dein KI-Agent zeigt.",
+  "remote.return.title": "Gib diesen Code deinem KI-Agenten",
+  "remote.return.body": "Dein Agent braucht diesen Code, um fertig zu werden. Tippe oder füge ihn in dein Gespräch mit dem Agenten ein.",
+  "remote.outcome.waiting": "Warte auf deinen Agenten…",
+  "remote.outcome.connected": "Dein Agent ist verbunden.",
+  "remote.outcome.failed": "Das Verbinden des Agenten wurde nicht abgeschlossen. Bitte deinen KI-Agenten, sich neu zu verbinden."
 }

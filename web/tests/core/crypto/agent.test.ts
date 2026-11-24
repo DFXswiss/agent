@@ -49,6 +49,24 @@ describe('agent crypto', () => {
     expect(() => agent.checkLabel(['h', 'n'])).toThrow('header_invalid');
   });
 
+  it('reads typed codes leniently and refuses malformed handovers (ADR-058)', async () => {
+    expect(agent.tryParseCode('gk08v-h4mrf', 10)).toBe('GK08VH4MRF');
+    expect(agent.tryParseCode('gk08v-h4mr', 10)).toBeNull();
+    expect(agent.formatCode('669RH5EF')).toBe('669R-H5EF');
+    expect(agent.crockford32(new Uint8Array([255]))).toBe('ZW');
+    const holder = await Identity.generate();
+    const secret = Secret.random(32);
+    const root = Buffer.from(new Uint8Array(32)).toString('base64url');
+    const sealed = await agent.sealHandover(holder.kemPublic(), AGENT, USER, secret, root);
+    const opened = await agent.openHandover(holder.kem, AGENT, USER, sealed);
+    expect(opened.rootKey).toBe(root);
+    expect(await agent.returnCode(opened.secret, AGENT, USER)).toBe(await agent.returnCode(secret, AGENT, USER));
+    const extra = await hpke.seal(holder.kemPublic(), agent.handoverInfo(AGENT, USER), utf8('{"k":"x"}'));
+    const text = Buffer.from(extra).toString('base64url');
+    expect(await codeOf(() => agent.openHandover(holder.kem, AGENT, USER, text))).toBe('header_invalid');
+    expect(() => agent.handoverPlaintext(secret, 'short')).toThrow('header_invalid');
+  });
+
   it('refuses a label body that is not the exact body JSON', async () => {
     const user = await Identity.generate();
     const sealed = await hpke.seal(user.kemPublic(), agent.labelInfo(AGENT, USER), utf8('{"name":"n","host":"h"}'));

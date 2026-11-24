@@ -15,20 +15,30 @@
 // pairing in the route state (`resume`) instead of a fragment: the account was just made or joined with the
 // pairing-tagged sign-in, so the page confirms at once with the unlocked identity – no second gesture unless the hub
 // asks for one (`pairing_gesture_required`) or a main orchestrator is to be replaced.
+//
+// A pairing from another computer (`m=remote`, ADR-058): the link's mode must agree with the hub's (else "This link
+// is not valid"), the page shows the warning of section 4.2 and asks for the agent code; "Confirm with passkey" stays
+// disabled until the typed code equals the one computed from the link and the hub's nonce (the page never shows it).
+// The confirmation carries the handover sealed to the agent instead of the loopback form; then the page shows the
+// return code ("Give this code to your AI agent") and waits for the agent's claim, reading `GET /v1/me/agents` every
+// `POLL_MS` until the new row is active (connected) or expired, revoked or gone (failed). After an invitation the
+// code was asked there, before the passkey was created, so the resumed page does not ask again.
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { CeremonyCancelled } from '../../../core/account/ceremony';
 import { type SignIn, signIn } from '../../../core/account/login';
-import { type PairingLink, parsePairingLink } from '../../../core/agents/link';
+import { type PairingLink, pairingFragment, parsePairingLink } from '../../../core/agents/link';
 import { loadAgents } from '../../../core/agents/list';
 import {
   loopbackForm,
   lookupPairing,
   type Pairing,
+  pairingOutcome,
   type PreparedPairing,
   preparePairing,
   submitPairing,
 } from '../../../core/agents/pairing';
+import { formatCode } from '../../../core/crypto/agent';
 import type { Identity } from '../../../core/crypto/keys';
 import { isRecord } from '../../../core/registry';
 import { mainOrchestrator } from '../../../core/store/slices/agents';
@@ -39,6 +49,7 @@ import { unlockSignIn } from '../../prf-missing/device';
 import { PrfMissing } from '../../prf-missing/PrfMissing';
 import { useAppEnv } from '../../shell/context';
 import { errorCode } from '../../shell/errors';
+import { AgentCodeField, RemoteWarning, useAgentCode } from './AgentCode';
 import { takeConnectFragment } from './fragment';
 import { submitHandover } from './handover';
 
@@ -50,24 +61,20 @@ type Status =
   | { readonly step: 'working' }
   | { readonly step: 'recovery'; readonly signIn: SignIn }
   | { readonly step: 'replace'; readonly identity: Identity; readonly replaces: string }
-  | { readonly step: 'handover' };
+  | { readonly step: 'handover' }
+  | { readonly step: 'returned'; readonly code: string; readonly outcome: 'waiting' | 'connected' | 'failed' };
+
+/** How often the page reads the agent list while it waits for a remote agent's claim. */
+export const POLL_MS = 3_000;
 
 /** The pairing the invitation screen hands over in the route state, or null. */
 function resumedPairing(state: unknown): PairingLink | null {
   if (!isRecord(state) || !isRecord(state.resume)) return null;
-  const resume = state.resume as unknown as PairingLink;
-  return parsePairingLink(
-    new URLSearchParams({
-      p: resume.pairingId,
-      f: resume.fingerprint,
-      c: String(resume.port),
-      a: resume.name,
-      h: resume.host,
-    }).toString(),
-  );
+  return parsePairingLink(pairingFragment(state.resume as unknown as PairingLink));
 }
 
 const READY: Status = { step: 'ready', notice: null };
+type Returned = Extract<Status, { step: 'returned' }>;
 
 const BUTTON = 'min-h-11 rounded bg-gray-900 px-4 text-white disabled:opacity-60';
 const SECONDARY = 'min-h-11 rounded border border-gray-400 px-4';
@@ -94,11 +101,27 @@ export function ConnectScreen() {
   const current = useStore((state) => mainOrchestrator(state.agents.entries, link?.pairingId), app.store);
   /** The main orchestrator the page showed as replaced when the user last confirmed (null: none shown). */
   const shown = useRef<string | null>(null);
+  // after an invitation the code was typed there, before the passkey was created
+  const agentCode = useAgentCode(resume === null ? (pairing?.agentCode ?? null) : null);
+  const waiting = status.step === 'returned' && status.outcome === 'waiting';
+
+  // a remote agent claims within 10 minutes; the page reads the user's agents until the row says what happened
+  useEffect(() => {
+    if (!waiting) return;
+    const poll = async () => {
+      await loadAgents(app.tasks);
+      const outcome = pairingOutcome(app.store.getState().agents.entries, link!.pairingId);
+      if (outcome !== 'waiting') setStatus((current) => ({ ...(current as Returned), outcome }));
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), POLL_MS);
+    return () => clearInterval(timer);
+  }, [app, link, waiting]);
 
   useEffect(() => {
     if (link === null) return;
     let live = true;
-    lookupPairing(app.anon, link).then(
+    lookupPairing(app.anon, link, origin).then(
       (found) => {
         if (!live) return;
         setPairing(found);
@@ -123,14 +146,18 @@ export function ConnectScreen() {
   const confirm = async (identity: Identity) => {
     const userId = app.userId!;
     try {
-      prepared.current ??= await preparePairing(pairing!, link!, userId, identity);
+      prepared.current ??= await preparePairing(pairing!, link!, userId, identity, app.rootKey);
       await submitPairing(app.client, prepared.current);
     } catch (caught) {
       fail(caught);
       return;
     }
+    if (prepared.current.returnCode !== null) {
+      setStatus({ step: 'returned', code: prepared.current.returnCode, outcome: 'waiting' });
+      return;
+    }
     setStatus({ step: 'handover' });
-    submitHandover(loopbackForm(link!.port, prepared.current, app.rootKey));
+    submitHandover(loopbackForm(link!.port!, prepared.current, app.rootKey));
   };
 
   // the user's current main orchestrator, fresh from the hub: one not yet shown is named and asked about first
@@ -239,9 +266,22 @@ export function ConnectScreen() {
                 : t('connect.replaces', { name: current.label.name })}
             </p>
           )}
-          <p role="note" className="rounded border border-amber-600 bg-amber-50 p-3" data-testid="connect.warning">
-            {t('connect.warning')}
-          </p>
+          {pairing.remote ? (
+            <RemoteWarning host={link.host} testId="connect.remote-warning" />
+          ) : (
+            <p role="note" className="rounded border border-amber-600 bg-amber-50 p-3" data-testid="connect.warning">
+              {t('connect.warning')}
+            </p>
+          )}
+          {pairing.agentCode !== null && resume === null && (status.step === 'ready' || status.step === 'working') && (
+            <AgentCodeField
+              typed={agentCode.typed}
+              onChange={agentCode.setTyped}
+              matches={agentCode.matches}
+              disabled={status.step === 'working'}
+              testId="connect.code"
+            />
+          )}
         </section>
       )}
       {(status.step === 'ready' || status.step === 'working') && (
@@ -249,7 +289,7 @@ export function ConnectScreen() {
           type="button"
           className={BUTTON}
           onClick={() => void start()}
-          disabled={status.step === 'working'}
+          disabled={status.step === 'working' || !agentCode.matches}
           data-testid="connect.confirm"
         >
           {status.step === 'working' ? t('connect.working') : t('connect.confirm')}
@@ -289,6 +329,22 @@ export function ConnectScreen() {
             </button>
           </div>
         </div>
+      )}
+      {status.step === 'returned' && (
+        <section
+          className="flex flex-col gap-2 rounded border-2 border-gray-900 p-4"
+          data-testid="connect.returned"
+          data-outcome={status.outcome}
+        >
+          <p className="font-semibold">{t('connect.remote.return.title')}</p>
+          <p className="font-mono text-3xl tracking-widest" data-testid="connect.return-code">
+            {formatCode(status.code)}
+          </p>
+          <p>{t('connect.remote.return.body')}</p>
+          <p role="status" data-testid={`connect.outcome.${status.outcome}`}>
+            {t(`connect.remote.outcome.${status.outcome}`)}
+          </p>
+        </section>
       )}
       {status.step === 'handover' && (
         <p role="status" data-testid="connect.handover">

@@ -4,7 +4,8 @@
 // not open), the agent it replaced (when that one's name is known), created, last used and state; "Disconnect" and
 // "Disconnect all agents" after a dialog that says the agent loses all access at once and keeps what it has already
 // read. `?agent=connected|failed` (the agent's redirect after a pairing) is only a hint above the list; the
-// state shown is always the hub's.
+// state shown is always the hub's. An agent paired from another computer is marked "Runs on another computer"
+// (ADR-058).
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { loadAgents, revokeAgent, revokeAllAgents } from '../../../../core/agents/list';
@@ -49,6 +50,11 @@ function Item({ entry, onDisconnect }: { readonly entry: AgentEntry; readonly on
         {entry.label !== null && (
           <span className="break-words" data-testid="agents.item.host">
             {t('agents.host', { host: entry.label.host })}
+          </span>
+        )}
+        {entry.remote && (
+          <span className="text-sm font-semibold text-red-800" data-testid="agents.item.remote">
+            {t('agents.remote')}
           </span>
         )}
         {replaced !== null && (

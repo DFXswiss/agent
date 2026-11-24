@@ -1,5 +1,6 @@
 // The app shell (registration point `src/ui/shell/layout.tsx`, export `Layout`, see `ui/router.tsx`): skip link,
-// header, navigation, the banners (connection, session renewal, recovery reminder), the screen and the footer.
+// header, navigation, the banners (connection, main orchestrator on another computer, session renewal, recovery
+// reminder), the screen and the footer.
 // Responsive layout of 06-web.md section 12.1: below `md` a bottom navigation (hidden while the on-screen keyboard is
 // open; the page is then padded by the keyboard's height so a composer can stay above it), from `md` a navigation row,
 // from `lg` a left sidebar. Routes that need an unlocked identity send a locked or anonymous browser to
@@ -21,6 +22,7 @@ import { useAppEnv } from './context';
 import { loginTarget, needsUnlock } from './guard';
 import { Header } from './Header';
 import { Nav } from './Nav';
+import { RemoteAgentBanner } from './RemoteAgentBanner';
 import { RenewalNotice } from './RenewalNotice';
 
 export function Layout() {
@@ -59,6 +61,7 @@ export function Layout() {
       <SkipLink />
       <Header />
       {unlocked && <ConnectionBanner />}
+      {unlocked && <RemoteAgentBanner />}
       <RenewalNotice />
       <div className="flex flex-1 flex-col lg:flex-row">
         <Nav />

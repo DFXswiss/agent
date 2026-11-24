@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrgInvitation } from '../../src/core/account/join';
 import { signIn } from '../../src/core/account/login';
 import { codeToInviteId, register } from '../../src/core/account/register';
-import { fingerprint } from '../../src/core/crypto/agent';
+import { agentCode, fingerprint } from '../../src/core/crypto/agent';
+import { b64uDecode } from '../../src/core/encoding/b64u';
 import { Identity } from '../../src/core/crypto/keys';
 import { b64uEncode } from '../../src/core/encoding/b64u';
 import { formatTime } from '../../src/core/encoding/time';
@@ -788,5 +789,43 @@ describe('OrgInvite: with the pairing of an agent (11-agent-access.md section 5.
     await waitFor(() => expect(submitted).toHaveLength(1));
     expect(harness.router.state.location.pathname).toBe('/connect');
     expect(logins(hub).at(-1)).toEqual({ pairing_id: PAIRING });
+  });
+
+  it('asks for the code of an agent on another computer before any passkey gesture (ADR-058)', async () => {
+    const hub = new SimHub();
+    const agent = await Identity.generate();
+    const nonce = 'yw1CyUW_rzOg-hZzWeorVQ';
+    hub.override.set(`GET /v1/agent-pairings/${PAIRING}`, () => ({
+      pairing_id: PAIRING,
+      pub: agent.public(),
+      state: 'open',
+      expires_at: formatTime(Date.now() + 300_000),
+      remote: true,
+      nonce,
+    }));
+    hub.override.set('POST /v1/me/agents', () => ({ agent_id: PAIRING }));
+    hub.override.set('GET /v1/me/agents', () => ({ agents: [] }));
+    const fp = await fingerprint(agent.kemPublic(), agent.sigPublic());
+    const code = await agentCode(PAIRING, fp, b64uDecode(nonce), ORIGIN);
+    const harness = await openOrgInvite({
+      hub,
+      suffix: `&p=${PAIRING}&f=${fp}&m=remote&a=Claude+Code&h=server&u=Erin`,
+    });
+    expect(await screen.findByTestId('invite.agent.remote-warning')).toHaveTextContent('(server)');
+    const create = screen.getByTestId('invite.create-passkey');
+    expect(create).toBeDisabled();
+    fireEvent.submit(create.closest('form')!);
+    expect(screen.getByTestId('invite.org-intro')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('invite.existing-account'));
+    expect(screen.getByTestId('invite.sign-in')).toBeDisabled();
+    fireEvent.change(screen.getByTestId('invite.agent.code.input'), { target: { value: code } });
+    expect(screen.getByTestId('invite.sign-in')).toBeEnabled();
+    fireEvent.click(screen.getByTestId('invite.back'));
+    expect(screen.getByTestId('invite.create-passkey')).toBeEnabled();
+    fireEvent.click(screen.getByTestId('invite.create-passkey'));
+    fireEvent.click(await screen.findByTestId('invite.unlock'));
+    expect(await screen.findByTestId('connect.return-code')).toBeInTheDocument();
+    expect(harness.router.state.location.pathname).toBe('/connect');
+    expect(submitted).toHaveLength(0);
   });
 });

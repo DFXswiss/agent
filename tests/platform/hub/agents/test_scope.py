@@ -91,7 +91,7 @@ def test_every_route_a_browser_passes_admits_an_active_agent(hub: HubHarness) ->
         else:
             assert agent == browser, (method, path, spec.auth)
         assert scope.agent_allowed(method, path, spec.auth, "active") == agent
-        assert admitted(spec, confirmed, method, path) == ((method, path) == scope.CLAIM), path
+        assert admitted(spec, confirmed, method, path) == ((method, path) in scope.CONFIRMED_ROUTES), path
         checked += browser
     assert checked > 60
     # a request that matches no route: the agent gets the browser's 404 later, a confirmed agent nothing

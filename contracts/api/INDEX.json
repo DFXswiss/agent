@@ -1602,6 +1602,23 @@
       "owner": "KOR-24"
     },
     {
+      "method": "GET",
+      "path": "/v1/agent/handover",
+      "name": "agent-handover",
+      "section": "11.4",
+      "auth": "agent",
+      "rights": [
+        "agent:confirmed"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/agent-handover.request.json",
+      "response": "api/agent-handover.response.json",
+      "read_resource": "agent.handover",
+      "streaming": false,
+      "owner": "KOR-42"
+    },
+    {
       "method": "DELETE",
       "path": "/v1/me/agents",
       "name": "me-agents-revoke-all",

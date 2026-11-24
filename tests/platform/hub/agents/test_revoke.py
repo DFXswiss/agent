@@ -48,6 +48,7 @@ def test_the_list_shows_every_agent_of_the_user_newest_first(hub: HubHarness) ->
         "last_used_at": format_time(hub.clock()),
         "revoked_at": None,
         "replaces": str(replaced.agent_id),
+        "remote": False,
     }
     assert agents[2]["revoked_at"] is not None
     assert agents[2]["replaces"] is None

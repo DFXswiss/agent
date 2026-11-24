@@ -3,7 +3,7 @@
 `detail_violation(action, detail)` returns the name of the first property that breaks the detail schema of the
 action (a missing required property, a property the schema does not list, or a value none of its alternatives
 accepts), None when the detail fits. The schemas come resolved from `agent_hub.audit.detail_schemas`; each property
-has one or more leaf alternatives with the keywords `type` (`string`, `integer`, `null`), `enum`,
+has one or more leaf alternatives with the keywords `type` (`string`, `integer`, `boolean`, `null`), `enum`,
 `pattern` (ECMA-262: a final `$` matches only at the very end), `minLength`, `maxLength`, `minimum`, `maximum`.
 Integers are JSON integers only (a boolean is never an integer); `enum` compares by type and value.
 """
@@ -49,6 +49,8 @@ def _fits(rule: Mapping[str, Any], value: object) -> bool:
         return isinstance(value, str) and _string_fits(rule, value)
     if kind == "integer":
         return type(value) is int and _integer_fits(rule, value)
+    if kind == "boolean":
+        return isinstance(value, bool)
     return value is None
 
 

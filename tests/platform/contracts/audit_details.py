@@ -21,7 +21,7 @@ from tests.platform.contracts.harness import CONTRACTS, REPO_ROOT
 
 MODULE = REPO_ROOT / "src" / "agent_hub" / "audit" / "detail_schemas.py"
 LEAF_KEYWORDS = frozenset({"type", "enum", "pattern", "minLength", "maxLength", "minimum", "maximum"})
-LEAF_TYPES = frozenset({"string", "integer", "null"})
+LEAF_TYPES = frozenset({"string", "integer", "boolean", "null"})
 ANNOTATIONS = frozenset({"$schema", "$id", "title", "description", "$comment"})
 
 

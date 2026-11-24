@@ -20,5 +20,15 @@
   "cancelled": "Not confirmed. Try again when you are ready.",
   "handover": "Confirmed. Handing over to your agent…",
   "invalid.title": "This link is not valid",
-  "invalid.body": "Do not confirm. Ask your AI agent to connect again."
+  "invalid.body": "Do not confirm. Ask your AI agent to connect again.",
+  "remote.title": "This AI agent runs on another computer",
+  "remote.warning": "This AI agent runs on another computer ({host}). Continue only if you just asked your own AI agent to connect and it showed you this page and a code. Whoever controls this agent gets full access to your account.",
+  "remote.code.label": "Type the code your AI agent shows you",
+  "remote.code.hint": "10 characters, for example ABCDE-12345. Without the right code you cannot continue.",
+  "remote.code.wrong": "This is not the code of this request. Check the code your AI agent shows you.",
+  "remote.return.title": "Give this code to your AI agent",
+  "remote.return.body": "Your agent needs this code to finish. Type or paste it into your conversation with the agent.",
+  "remote.outcome.waiting": "Waiting for your agent…",
+  "remote.outcome.connected": "Your agent is connected.",
+  "remote.outcome.failed": "Connecting the agent did not complete. Ask your AI agent to connect again."
 }

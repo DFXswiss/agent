@@ -13,12 +13,20 @@ ceremony created (the passkey gesture), at most `GESTURE_SECONDS` before.
 One main orchestrator per user (concept idea 34, ADR-056 section 4): a user has at most one `confirmed` or `active`
 agent. The passkey confirmation of a new pairing revokes the previous one in the same transaction and records it in
 `replaces`; the unique index `agent_one_per_user` makes two at once impossible.
+
+A pairing from another computer (`remote`, ADR-058, 11-agent-access.md section 5.4) has a 16-byte `nonce` drawn by
+the hub (input of the agent code the user types), must be confirmed within `REMOTE_PAIRING_SECONDS` of its creation
+and then has `REMOTE_CLAIM_SECONDS` to be claimed. Its confirmation must carry `handover_ct` (the handover sealed to
+the agent; `handover_required`), a loopback confirmation must not (`handover_unexpected`). The hub relays
+`handover_ct` to the agent (`handover`) and clears it at the claim, the revocation and the claim deadline
+(`clear_expired_handovers`).
 """
 
 from __future__ import annotations
 
 import hmac
 import ipaddress
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -41,6 +49,12 @@ GESTURE_SECONDS = 300
 CLAIM_SECONDS = 60
 """After the confirmation the claim deadline is at most this far away: the agent listening on the loopback claims at
 once (review M1, decisions KOR-24)."""
+REMOTE_PAIRING_SECONDS = 300
+"""A remote pairing must be confirmed within this time of its creation (ADR-058 section 4.3)."""
+REMOTE_CLAIM_SECONDS = 600
+"""After the confirmation of a remote pairing the agent has this long to claim: a conversational agent may answer its
+user only at the end of a turn (ADR-058 section 3)."""
+NONCE_BYTES = agent_format.NONCE_BYTES
 UNCLAIMED_RETENTION_SECONDS = 3600
 MAX_OPEN_PAIRINGS = 10_000
 MAX_OPEN_PER_SOURCE = 3
@@ -51,7 +65,7 @@ PAIRING_LOCK = 742180240
 MAX_CLAIM_MISSES = 5
 MIN_SEALED_BYTES = 48
 """The shortest sealed identity or label `hub.agent` stores: HPKE `enc` (32) and tag (16)."""
-_PAIRING_COLUMNS = "id, kem_pub, sig_pub, state, expires_at, created_at"
+_PAIRING_COLUMNS = "id, kem_pub, sig_pub, state, expires_at, remote, nonce"
 
 
 @dataclass(frozen=True)
@@ -63,10 +77,21 @@ class Pairing:
     sig_pub: bytes
     state: str
     expires_at: datetime
+    remote: bool = False
+    nonce: bytes | None = None
 
 
 def _pairing(row: tuple[Any, ...]) -> Pairing:
-    return Pairing(id=row[0], kem_pub=bytes(row[1]), sig_pub=bytes(row[2]), state=row[3], expires_at=row[4])
+    nonce = None if row[6] is None else bytes(row[6])
+    return Pairing(
+        id=row[0],
+        kem_pub=bytes(row[1]),
+        sig_pub=bytes(row[2]),
+        state=row[3],
+        expires_at=row[4],
+        remote=row[5],
+        nonce=nonce,
+    )
 
 
 def public_state(state: str, expires_at: datetime, now: datetime) -> str:
@@ -78,13 +103,21 @@ def public_state(state: str, expires_at: datetime, now: datetime) -> str:
     return "closed"
 
 
+def remote_json(pairing: Pairing) -> dict[str, Any]:
+    """`{"remote": true, "nonce"}` of a remote pairing; nothing for a loopback pairing (answered as before KOR-42)."""
+    if not pairing.remote or pairing.nonce is None:
+        return {}
+    return {"remote": True, "nonce": b64u_encode(pairing.nonce)}
+
+
 def pairing_json(pairing: Pairing, now: datetime) -> dict[str, Any]:
-    """The answer of `POST /v1/agent-pairings` and `GET /v1/agent-pairings/{id}`."""
+    """The answer of `GET /v1/agent-pairings/{id}`."""
     return {
         "pairing_id": str(pairing.id),
         "pub": {"kem": b64u_encode(pairing.kem_pub), "sig": b64u_encode(pairing.sig_pub)},
         "state": public_state(pairing.state, pairing.expires_at, now),
         "expires_at": format_time(pairing.expires_at),
+        **remote_json(pairing),
     }
 
 
@@ -137,10 +170,19 @@ def _check_limits(connection: Connection, key: str, networks: list[tuple[str, in
 
 
 def create_pairing(
-    connection: Connection, pairing_id: UUID, *, kem: str, sig: str, pop: str, source: str, now: datetime
+    connection: Connection,
+    pairing_id: UUID,
+    *,
+    kem: str,
+    sig: str,
+    pop: str,
+    source: str,
+    now: datetime,
+    remote: bool = False,
 ) -> Pairing:
     """Store an open pairing after checking the proof of possession (`signature_invalid`); the same ID with the same
-    keys returns the stored pairing, other keys (or keys of another pairing) `409 id_conflict`; past the limits of
+    keys and mode returns the stored pairing, other keys or another mode (or keys of another pairing)
+    `409 id_conflict`; a remote pairing gets a fresh nonce and the shorter deadline; past the limits of
     unexpired open pairings - `MAX_OPEN_PER_SOURCE` per source, `NETWORK_LIMITS` per network, `MAX_OPEN_PAIRINGS` in
     all - `429 rate_limited`. Creations are serialised by the transaction lock `PAIRING_LOCK` (the counts hold until
     the insert commits)."""
@@ -153,20 +195,31 @@ def create_pairing(
     found = connection.execute(f"SELECT {_PAIRING_COLUMNS} FROM hub.agent WHERE id = %s", (pairing_id,)).fetchone()
     if found is not None:
         stored = _pairing(found)
-        if stored.kem_pub != kem_pub or stored.sig_pub != sig_pub:
+        if stored.kem_pub != kem_pub or stored.sig_pub != sig_pub or stored.remote != remote:
             raise HubError("id_conflict")
         unchanged()
         return stored
     key = source_key(source)
     parsed = _address(source)
     _check_limits(connection, key, source_limits(source), now)
-    expires_at = now + timedelta(seconds=PAIRING_SECONDS)
+    expires_at = now + timedelta(seconds=REMOTE_PAIRING_SECONDS if remote else PAIRING_SECONDS)
+    nonce = secrets.token_bytes(NONCE_BYTES) if remote else None
     try:
         with connection.transaction():
             connection.execute(
-                "INSERT INTO hub.agent (id, kem_pub, sig_pub, state, source, source_net, created_at, expires_at)"
-                " VALUES (%s, %s, %s, 'open', %s, %s, %s, %s)",
-                (pairing_id, kem_pub, sig_pub, key, None if parsed is None else str(parsed), now, expires_at),
+                "INSERT INTO hub.agent (id, kem_pub, sig_pub, state, source, source_net, created_at, expires_at,"
+                " remote, nonce) VALUES (%s, %s, %s, 'open', %s, %s, %s, %s, %s, %s)",
+                (
+                    pairing_id,
+                    kem_pub,
+                    sig_pub,
+                    key,
+                    None if parsed is None else str(parsed),
+                    now,
+                    expires_at,
+                    remote,
+                    nonce,
+                ),
             )
     except psycopg.errors.UniqueViolation:
         # the keys of an agent that is not revoked (`agent_sig_pub`)
@@ -182,7 +235,9 @@ def create_pairing(
             target_id=str(pairing_id),
         ),
     )
-    return Pairing(id=pairing_id, kem_pub=kem_pub, sig_pub=sig_pub, state="open", expires_at=expires_at)
+    return Pairing(
+        id=pairing_id, kem_pub=kem_pub, sig_pub=sig_pub, state="open", expires_at=expires_at, remote=remote, nonce=nonce
+    )
 
 
 def get_pairing(connection: Connection, pairing_id: UUID) -> Pairing:
@@ -217,9 +272,13 @@ class Confirmation:
     bundle_ct: bytes
     label_ct: bytes
     claim_hash: bytes
+    handover_ct: bytes | None = None
 
 
-def _audit(connection: Connection, action: str, user: UUID, agent_id: UUID, now: datetime) -> None:
+def _audit(connection: Connection, action: str, user: UUID, agent_id: UUID, now: datetime, *, remote: bool) -> None:
+    detail: dict[str, Any] = {"agent": str(agent_id)}
+    if remote:
+        detail["remote"] = True
     append_audit(
         connection,
         AuditRow(
@@ -230,7 +289,7 @@ def _audit(connection: Connection, action: str, user: UUID, agent_id: UUID, now:
             result="ok",
             target_kind="agent",
             target_id=str(agent_id),
-            detail={"agent": str(agent_id)},
+            detail=detail,
         ),
     )
 
@@ -247,10 +306,12 @@ def gesture_session(connection: Connection, key_id: str, pairing_id: UUID, now: 
 
 @dataclass(frozen=True)
 class Confirmed:
-    """The result of `confirm`: whether this call changed anything, and the agents it replaced (revoked)."""
+    """The result of `confirm`: whether this call changed anything, the agents it replaced (revoked), and whether the
+    pairing is a remote one."""
 
     changed: bool
     replaced: tuple[UUID, ...] = ()
+    remote: bool = False
 
 
 def _lock_user(connection: Connection, user: UUID) -> None:
@@ -261,28 +322,36 @@ def _lock_user(connection: Connection, user: UUID) -> None:
 def confirm(connection: Connection, user: UUID, key_id: str, body: Confirmation, now: datetime) -> Confirmed:
     """Confirm an open pairing for `user` by the browser session of the pairing-tagged login (the passkey gesture;
     an agent never confirms, scope.EXCEPTIONS). The user's previous confirmed or active agent is revoked and named
-    in `replaces`. A repeat with identical values is idempotent (`changed` False, nothing replaced)."""
+    in `replaces`. A repeat with identical values is idempotent (`changed` False, nothing replaced). A remote pairing
+    needs `handover_ct` (`400 handover_required`), a loopback pairing refuses it (`400 handover_unexpected`)."""
     gesture_session(connection, key_id, body.pairing_id, now)
     _lock_user(connection, user)
     row = connection.execute(
-        "SELECT state, user_id, expires_at, bundle_ct, label_ct, claim_hash FROM hub.agent WHERE id = %s FOR UPDATE",
+        "SELECT state, user_id, expires_at, bundle_ct, label_ct, claim_hash, remote, handover_ct FROM hub.agent"
+        " WHERE id = %s FOR UPDATE",
         (body.pairing_id,),
     ).fetchone()
     if row is None or row[2] <= now:
         raise HubError("pairing_unknown")
-    state, owner, _expires, bundle_ct, label_ct, stored_hash = row
-    if state == "confirmed" and owner == user:
-        same = (bytes(bundle_ct), bytes(label_ct), bytes(stored_hash)) == (
-            body.bundle_ct,
-            body.label_ct,
-            body.claim_hash,
-        )
-        if same:
-            unchanged()
-            return Confirmed(changed=False)
-        raise HubError("id_conflict")
-    if state != "open":
+    state, owner, _expires, bundle_ct, label_ct, stored_hash, remote, handover_ct = row
+    repeat = state == "confirmed" and owner == user
+    if state != "open" and not repeat:
         raise HubError("pairing_unknown")
+    if remote and body.handover_ct is None:
+        raise HubError("handover_required")
+    if not remote and body.handover_ct is not None:
+        raise HubError("handover_unexpected")
+    if repeat:
+        stored = (
+            bytes(bundle_ct),
+            bytes(label_ct),
+            bytes(stored_hash),
+            None if handover_ct is None else bytes(handover_ct),
+        )
+        if stored == (body.bundle_ct, body.label_ct, body.claim_hash, body.handover_ct):
+            unchanged()
+            return Confirmed(changed=False, remote=remote)
+        raise HubError("id_conflict")
     previous = [
         agent_id
         for (agent_id,) in connection.execute(
@@ -292,23 +361,26 @@ def confirm(connection: Connection, user: UUID, key_id: str, body: Confirmation,
     ]
     for agent_id in previous:
         revoke(connection, user, agent_id, now)
+    # a loopback agent claims at once; a remote agent gets the longer claim deadline from the confirmation on
+    deadline = "%s" if remote else "LEAST(expires_at, %s)"
     connection.execute(
         "UPDATE hub.agent SET state = 'confirmed', user_id = %s, bundle_ct = %s, label_ct = %s, claim_hash = %s,"
-        " confirmed_at = %s, source = NULL, source_net = NULL, replaces = %s,"
-        " expires_at = LEAST(expires_at, %s) WHERE id = %s",
+        " handover_ct = %s, confirmed_at = %s, source = NULL, source_net = NULL, replaces = %s,"
+        f" expires_at = {deadline} WHERE id = %s",
         (
             user,
             body.bundle_ct,
             body.label_ct,
             body.claim_hash,
+            body.handover_ct,
             now,
             previous[-1] if previous else None,
-            now + timedelta(seconds=CLAIM_SECONDS),
+            now + timedelta(seconds=REMOTE_CLAIM_SECONDS if remote else CLAIM_SECONDS),
             body.pairing_id,
         ),
     )
-    _audit(connection, "agent.confirm", user, body.pairing_id, now)
-    return Confirmed(changed=True, replaced=tuple(previous))
+    _audit(connection, "agent.confirm", user, body.pairing_id, now, remote=remote)
+    return Confirmed(changed=True, replaced=tuple(previous), remote=remote)
 
 
 def _agent_json(row: tuple[Any, ...]) -> dict[str, Any]:
@@ -328,12 +400,12 @@ def claim(connection: Connection, agent_id: UUID, claim_raw: bytes, now: datetim
     same answer. A wrong claim is counted (the fifth deletes an unclaimed pairing) and answered None: the caller
     commits the count and refuses with `401 claim_invalid`."""
     row = connection.execute(
-        "SELECT state, user_id, expires_at, claim_hash, claim_misses FROM hub.agent WHERE id = %s FOR UPDATE",
+        "SELECT state, user_id, expires_at, claim_hash, claim_misses, remote FROM hub.agent WHERE id = %s FOR UPDATE",
         (agent_id,),
     ).fetchone()
     if row is None or row[0] not in ("confirmed", "active") or (row[0] == "confirmed" and row[2] <= now):
         raise HubError("pairing_unknown")
-    state, user, _expires, stored_hash, misses = row
+    state, user, _expires, stored_hash, misses, remote = row
     if not hmac.compare_digest(agent_format.claim_hash(claim_raw), bytes(stored_hash)):
         if misses + 1 >= MAX_CLAIM_MISSES and state == "confirmed":
             connection.execute("DELETE FROM hub.agent WHERE id = %s", (agent_id,))
@@ -342,13 +414,27 @@ def claim(connection: Connection, agent_id: UUID, claim_raw: bytes, now: datetim
         return None
     if state == "confirmed":
         connection.execute(
-            "UPDATE hub.agent SET state = 'active', claimed_at = %s, last_used_at = %s WHERE id = %s",
+            "UPDATE hub.agent SET state = 'active', claimed_at = %s, last_used_at = %s, handover_ct = NULL"
+            " WHERE id = %s",
             (now, now, agent_id),
         )
-        _audit(connection, "agent.claim", user, agent_id, now)
+        _audit(connection, "agent.claim", user, agent_id, now, remote=remote)
     else:
         unchanged()  # the repeat of an active agent's claim
     return me(connection, agent_id)
+
+
+def handover(connection: Connection, agent_id: UUID, now: datetime) -> dict[str, Any]:
+    """The answer of `GET /v1/agent/handover`: the sealed handover of a confirmed remote pairing before its claim
+    deadline; `404 pairing_unknown` for anything else (a loopback pairing, claimed, revoked or expired)."""
+    row = connection.execute(
+        "SELECT user_id, handover_ct FROM hub.agent WHERE id = %s AND state = 'confirmed' AND remote"
+        " AND handover_ct IS NOT NULL AND expires_at > %s",
+        (agent_id, now),
+    ).fetchone()
+    if row is None:
+        raise HubError("pairing_unknown")
+    return {"agent_id": str(agent_id), "user_id": str(row[0]), "handover_ct": b64u_encode(bytes(row[1]))}
 
 
 def me(connection: Connection, agent_id: UUID) -> dict[str, Any]:
@@ -368,14 +454,15 @@ def _time(value: datetime | None) -> str | None:
 
 
 def list_agents(connection: Connection, user: UUID, now: datetime) -> list[dict[str, Any]]:
-    """The user's agents, newest first; an unclaimed one past its deadline is `expired`."""
+    """The user's agents, newest first; an unclaimed one past its deadline is `expired`; `remote` for one paired from
+    another computer (the web client's banner, ADR-058 section 4.4)."""
     rows = connection.execute(
         "SELECT id, state, label_ct, created_at, confirmed_at, claimed_at, last_used_at, revoked_at, expires_at,"
-        " replaces FROM hub.agent WHERE user_id = %s ORDER BY created_at DESC, id DESC",
+        " replaces, remote FROM hub.agent WHERE user_id = %s ORDER BY created_at DESC, id DESC",
         (user,),
     ).fetchall()
     agents = []
-    for agent_id, state, label_ct, created, confirmed, claimed, used, revoked, expires, replaces in rows:
+    for agent_id, state, label_ct, created, confirmed, claimed, used, revoked, expires, replaces, remote in rows:
         shown = "expired" if state == "confirmed" and expires <= now else state
         agents.append(
             {
@@ -388,6 +475,7 @@ def list_agents(connection: Connection, user: UUID, now: datetime) -> list[dict[
                 "last_used_at": _time(used),
                 "revoked_at": _time(revoked),
                 "replaces": None if replaces is None else str(replaces),
+                "remote": remote,
             }
         )
     return agents
@@ -405,9 +493,10 @@ def revoke(connection: Connection, user: UUID, agent_id: UUID, now: datetime) ->
         unchanged()
         return False
     connection.execute(
-        "UPDATE hub.agent SET state = 'revoked', revoked_at = %s, bundle_ct = NULL WHERE id = %s", (now, agent_id)
+        "UPDATE hub.agent SET state = 'revoked', revoked_at = %s, bundle_ct = NULL, handover_ct = NULL WHERE id = %s",
+        (now, agent_id),
     )
-    _audit(connection, "agent.revoke", user, agent_id, now)
+    _audit(connection, "agent.revoke", user, agent_id, now, remote=False)
     return True
 
 
@@ -422,6 +511,14 @@ def revoke_all(connection: Connection, user: UUID, now: datetime) -> list[UUID]:
     for (agent_id,) in rows:
         revoke(connection, user, agent_id, now)
     return [agent_id for (agent_id,) in rows]
+
+
+def clear_expired_handovers(connection: Connection, now: datetime) -> int:
+    """Clear the sealed handover of remote pairings past their claim deadline; the number cleared."""
+    cursor = connection.execute(
+        "UPDATE hub.agent SET handover_ct = NULL WHERE handover_ct IS NOT NULL AND expires_at <= %s", (now,)
+    )
+    return cursor.rowcount
 
 
 def purge_unclaimed(connection: Connection, now: datetime) -> int:

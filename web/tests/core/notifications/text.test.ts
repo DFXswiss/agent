@@ -236,9 +236,12 @@ describe('account-level notifications of an agent (11-agent-access.md section 8)
         lastUsedAt: null,
         revokedAt: null,
         replaces: null,
+        remote: true,
       },
     ]);
     expect(notificationNames(store.getState(), row).agent).toBe('Claude Code');
+    // a confirmed pairing from another computer has no acting agent: it names the new agent, its target
+    expect(notificationNames(store.getState(), change(`agent_paired_remote::${AGENT}`)).agent).toBe('Claude Code');
     expect(notificationNames(store.getState(), notification('n3', { org_id: null })).agent).toBeNull();
   });
 });

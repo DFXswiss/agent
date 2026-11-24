@@ -16,6 +16,10 @@
     },
     "claim_hash": {
       "$ref": "../common.json#/$defs/b64u_32"
+    },
+    "handover_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct",
+      "description": "the handover sealed to the agent (11-agent-access.md section 3): required for a remote pairing (400 handover_required), refused for a loopback pairing (400 handover_unexpected)"
     }
   },
   "required": [

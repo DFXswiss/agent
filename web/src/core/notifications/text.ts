@@ -10,7 +10,8 @@
 // | `rotation.required` | "Access in X is being updated" (neutral; the hub no longer creates it, ADR-058) | the org's members |
 // | `org.admitted` | "Z admitted you to X" (`ref` = the admitting admin, ADR-060) | the org |
 // | `agent.account_change` | "Agent A removed a passkey" (replaced the recovery code, disconnected an agent, …;
-//   `ref` = `<action>:<acting agent id>:<target>`, no org) | the settings |
+//   `ref` = `<action>:<acting agent id>:<target>`, no org; `agent_paired_remote` (ADR-058): a pairing from another
+//   computer was confirmed, named by the new agent, the target) | the settings |
 //
 // The level of a whiteboard notification follows from the row: a task → task level, else a workgroup → workgroup
 // level, else the org level. Names that are not (yet) decrypted are replaced by neutral fallbacks, never by IDs of
@@ -46,6 +47,7 @@ export const AGENT_ACTIONS = [
   'bundle_replaced',
   'invite_created',
   'device_request',
+  'agent_paired_remote',
 ];
 
 /** Action, acting agent and target of an `agent.account_change` row (`ref` = `<action>:<agent id>:<target>`). */
@@ -149,7 +151,10 @@ export function notificationNames(state: StoreState, row: NotificationRow): Name
 
 function readNames(state: StoreState, row: NotificationRow): Names {
   if (row.org_id === null) {
-    const agent = row.kind === ACCOUNT_KIND ? agentName(state, agentChange(row).agent) : null;
+    const change = agentChange(row);
+    // a confirmed pairing from another computer names the new agent (the target); every other action the acting one
+    const subject = change.action === 'agent_paired_remote' ? change.target : change.agent;
+    const agent = row.kind === ACCOUNT_KIND ? agentName(state, subject) : null;
     return { org: null, wg: null, task: null, subject: null, agent };
   }
   const directory = selectDirectory(row.org_id)(state);

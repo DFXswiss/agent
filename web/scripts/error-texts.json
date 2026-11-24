@@ -1402,5 +1402,29 @@
       "body": "Die Prüfung, die jeden Schritt der Session vor der Ausführung freigibt, war nicht erreichbar. Die Session wurde deshalb beendet, damit nichts ungeprüft läuft.",
       "action": "Starte den Task noch einmal."
     }
+  },
+  "handover_required": {
+    "en": {
+      "title": "Agent connection refused",
+      "body": "This page did not send what your agent on the other computer needs.",
+      "action": "Reload the page and confirm again."
+    },
+    "de": {
+      "title": "Agentenverbindung abgelehnt",
+      "body": "Diese Seite hat nicht gesendet, was dein Agent auf dem anderen Computer braucht.",
+      "action": "Lade die Seite neu und bestätige noch einmal."
+    }
+  },
+  "handover_unexpected": {
+    "en": {
+      "title": "Agent connection refused",
+      "body": "This page treated the request as one from another computer, but it is not.",
+      "action": "Do not confirm. Ask your AI agent to connect again."
+    },
+    "de": {
+      "title": "Agentenverbindung abgelehnt",
+      "body": "Diese Seite hat die Anfrage wie eine von einem anderen Computer behandelt, sie ist es aber nicht.",
+      "action": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden."
+    }
   }
 }

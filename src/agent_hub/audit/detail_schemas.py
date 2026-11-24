@@ -14,7 +14,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "agent": [
                 {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
-            ]
+            ],
+            "remote": [{"type": "boolean", "enum": [True]}],
         },
         "required": ["agent"],
     },
@@ -22,7 +23,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "agent": [
                 {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
-            ]
+            ],
+            "remote": [{"type": "boolean", "enum": [True]}],
         },
         "required": ["agent"],
     },
@@ -145,6 +147,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "identity_unproven",
                         "peer_outdated",
                         "account_code_invalid",
+                        "handover_required",
+                        "handover_unexpected",
                     ],
                 }
             ],
@@ -922,6 +926,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "identity_unproven",
                         "peer_outdated",
                         "account_code_invalid",
+                        "handover_required",
+                        "handover_unexpected",
                     ],
                 }
             ],
@@ -978,6 +984,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
     },
+    "read.agent.handover": {"properties": {}, "required": []},
     "read.agent.me": {"properties": {}, "required": []},
     "read.device.credential": {"properties": {}, "required": []},
     "read.device.logs": {"properties": {}, "required": []},

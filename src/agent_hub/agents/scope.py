@@ -11,7 +11,8 @@ The only exceptions are the WebAuthn ceremonies themselves, which cannot be perf
 the confirmation of a main orchestrator, whose essence is the user's passkey approval (concept idea 34: one main
 orchestrator per user, approved with a passkey; an agent never pairs or replaces an agent); each entry of
 `EXCEPTIONS` names its reason. Where the web client needs a passkey gesture (adding a passkey), the agent
-tool opens the page in the user's browser. A `confirmed` agent (paired, not yet claimed) may only claim; agents
+tool opens the page in the user's browser. A `confirmed` agent (paired, not yet claimed) may only claim and fetch
+the handover of a remote pairing (`CONFIRMED_ROUTES`, ADR-058); agents
 also have their own routes (authentication class `agent`). `tests/platform/hub/agents/test_scope.py` checks every
 registered route against this rule.
 """
@@ -23,6 +24,8 @@ from collections.abc import Mapping
 ACTIVE = "active"
 CONFIRMED = "confirmed"
 CLAIM = ("POST", "/v1/agent/claim")
+HANDOVER = ("GET", "/v1/agent/handover")
+CONFIRMED_ROUTES = frozenset({CLAIM, HANDOVER})
 # The authentication classes a signed browser session passes, plus the agent's own class (decisions KOR-24 item 1).
 # `device_enroll` is signed by the new device's key, which the enrolment route checks itself.
 BROWSER_ADMITTED = frozenset({"browser", "anon_or_browser", "anon", "device_enroll", "agent"})
@@ -40,7 +43,7 @@ EXCEPTIONS: Mapping[tuple[str, str], str] = {
 def agent_allowed(method: str, path: str, auth: str, state: object) -> bool:
     """Whether an agent in `state` may call the route `method path` (path template as declared) of the
     authentication class `auth`."""
-    if (method, path) == CLAIM:
+    if (method, path) in CONFIRMED_ROUTES:
         return state in (CONFIRMED, ACTIVE)
     if state != ACTIVE or (method, path) in EXCEPTIONS:
         return False

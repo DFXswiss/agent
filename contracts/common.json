@@ -225,7 +225,9 @@
         "claim_invalid",
         "identity_unproven",
         "peer_outdated",
-        "account_code_invalid"
+        "account_code_invalid",
+        "handover_required",
+        "handover_unexpected"
       ],
       "description": "codes the hub sends (enums/error-codes.json)"
     },

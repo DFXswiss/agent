@@ -33,5 +33,6 @@
   "activity.load-failed": "The security activity could not be loaded: {reason}",
   "activity.by-agent": "by agent {name}",
   "activity.by-unknown-agent": "by agent",
-  "activity.by-you": "by you"
+  "activity.by-you": "by you",
+  "remote": "Runs on another computer"
 }

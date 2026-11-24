@@ -175,3 +175,73 @@ def test_new_agent_keys_are_fresh_and_seal_with_random_values() -> None:
         agent.fingerprint(bytes(31), bytes(32))
     with pytest.raises(CryptoError):
         agent.claim_hash(bytes(16))
+
+
+CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def crockford(raw: bytes, length: int) -> str:
+    number = int.from_bytes(raw, "big")
+    bits = len(raw) * 8
+    return "".join(CROCKFORD[(number >> (bits - 5 * (index + 1))) & 31] for index in range(length))
+
+
+def test_the_remote_agent_code_is_reproduced_with_independent_code() -> None:
+    bot, remote = DATA["agent"], DATA["remote"]
+    fields = {
+        "fp": DATA["fingerprint"],
+        "mode": "remote",
+        "nonce": remote["nonce"],
+        "origin": remote["origin"],
+        "pairing_id": bot["id"],
+    }
+    text = PREFIX + b"agent-code\x00" + json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
+    assert b(remote["code_input"]) == text
+    assert remote["agent_code"] == crockford(hashlib.sha256(text).digest(), 10)
+    assert remote["agent_code_shown"] == remote["agent_code"][:5] + "-" + remote["agent_code"][5:]
+    code = agent.agent_code(bot["id"], DATA["fingerprint"], b(remote["nonce"]), remote["origin"])
+    assert code == remote["agent_code"]
+    assert agent.crockford32(bytes([0xFF, 0x00])) == "ZW00"
+
+
+def test_the_remote_handover_and_return_code_open_with_independent_code() -> None:
+    bot, user, remote = DATA["agent"], DATA["user"], DATA["remote"]
+    case = remote["handover"]
+    info = PREFIX + b"agent-handover\x00" + ids(bot["id"], user["id"])
+    assert b(case["info"]) == info
+    plaintext = SUITE.decrypt(b(case["sealed"]), X25519PrivateKey.from_private_bytes(b(bot["kem_sk"])), info=info)
+    assert plaintext.decode() == case["plaintext"]
+    assert json.loads(plaintext) == {"k": case["root_key"], "r": DATA["secret"]["secret"]}
+    kem = keys.x25519_private(b(bot["kem_sk"]))
+    secret, root_key = agent.open_handover(kem, bot["id"], user["id"], case["sealed"])
+    assert (b64u_encode(secret), root_key) == (DATA["secret"]["secret"], case["root_key"])
+    resealed = agent.seal_handover(
+        b(bot["kem"]), bot["id"], user["id"], secret, root_key, ephemeral=keys.x25519_private(b(case["ephemeral_sk"]))
+    )
+    assert resealed == case["sealed"]
+    return_info = PREFIX + b"agent-return\x00" + ids(bot["id"], user["id"])
+    assert b(remote["return_info"]) == return_info
+    assert remote["return_code"] == crockford(hkdf(secret, return_info), 8)
+    assert agent.return_code(secret, bot["id"], user["id"]) == remote["return_code"]
+    assert agent.format_code(remote["return_code"]) == remote["return_code_shown"]
+    assert agent.return_code_matches(secret, bot["id"], user["id"], remote["return_code_shown"].lower())
+    assert not agent.return_code_matches(secret, bot["id"], user["id"], "0000-0000")
+    assert not agent.return_code_matches(secret, bot["id"], user["id"], "not a code")
+
+
+@pytest.mark.parametrize("case", DATA["remote"]["typed"], ids=lambda case: case["text"])
+def test_typed_codes_are_normalised(case: dict[str, Any]) -> None:
+    assert agent.parse_code(case["text"], case["length"]) == case["code"]
+
+
+def test_a_handover_with_a_bad_secret_or_root_key_is_refused() -> None:
+    bot, user = DATA["agent"], DATA["user"]
+    kem = keys.x25519_private(b(bot["kem_sk"]))
+    info = agent.handover_info(bot["id"], user["id"])
+    for body in ({"k": "x", "r": DATA["secret"]["secret"]}, {"k": DATA["remote"]["handover"]["root_key"], "r": "AA"}):
+        sealed = b64u_encode(hpke.seal(b(bot["kem"]), info, json.dumps(body, separators=(",", ":")).encode()))
+        with pytest.raises(CryptoError) as refused:
+            agent.open_handover(kem, bot["id"], user["id"], sealed)
+        assert refused.value.code == "header_invalid"
+    with pytest.raises(CryptoError):
+        agent.seal_handover(b(bot["kem"]), bot["id"], user["id"], bytes(16), DATA["remote"]["handover"]["root_key"])

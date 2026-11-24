@@ -30,6 +30,7 @@
   "text.agent.bundle_replaced": "Agent „{agent}“ hat die Anmeldung mit einem Passkey neu eingerichtet",
   "text.agent.invite_created": "Agent „{agent}“ hat eine Einladung erstellt",
   "text.agent.device_request": "Agent „{agent}“ hat eine Anfrage an ein Ausführungsgerät gesendet",
+  "text.agent.agent_paired_remote": "Ein KI-Agent auf einem anderen Computer („{agent}“) wurde dein Hauptorchestrator",
   "text.agent.unknown": "Agent „{agent}“ hat dein Konto geändert",
   "unnamed.agent": "unbekannt"
 }

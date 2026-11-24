@@ -5,6 +5,15 @@
 // pairing confirmed with the passkey names and replaces the first, which is revoked at once; the audit marker of an
 // agent's action, the disconnect dialogs and the account-level notification; a forged fingerprint, an unknown
 // pairing, a malformed link and the repeated gesture after `pairing_gesture_required`; the unlock without PRF.
+//
+// Pairing an AI agent that runs on another computer (ADR-058, 11-agent-access.md section 5.4): the `m=remote` link,
+// the warning that names the computer, the agent code typed by the user (a wrong code keeps the passkey button
+// disabled; the page never shows the code), the confirmation with the handover sealed to the agent, the return code
+// the user hands back, the agent fetching and checking the handover before it claims; the notification
+// `agent_paired_remote`, the shell banner that marking notifications read does not hide, the settings marker and
+// "Disconnect"; a mode that link and hub disagree on, both ways; the invitation that asks for the code before the
+// passkey is created. These tests live in this file because pairings count against the limit of 3 open pairings per
+// source (the tests of one file run one at a time, and each remote test claims every pairing it creates).
 import { openIdentity } from '../src/core/crypto/agent';
 import { b64uDecode } from '../src/core/encoding/b64u';
 import { uuid7 } from '../src/core/encoding/ids';
@@ -14,6 +23,7 @@ import { catchHandover, TestAgent } from './helpers/agent.ts';
 import { addAuthenticator, withoutPrf } from './helpers/authenticator.ts';
 import { cancelNext } from './helpers/cancel.ts';
 import { onboard } from './helpers/onboard.ts';
+import { platformInvite } from './helpers/platform.ts';
 import { PageUser } from './helpers/user.ts';
 
 // at most 3 open pairings per source address (11-agent-access.md section 2): one test of this file at a time
@@ -218,4 +228,107 @@ test('without PRF the recovery code unlocks before the confirmation', async ({ p
   await page.getByTestId('prf-missing.recovery.input').fill(ada.recoveryCode);
   await page.getByTestId('prf-missing.recovery.submit').click();
   expect((await handover).fields.get('p')).toBe(agent.id);
+});
+
+test('connects an agent on another computer with the two codes; notification, banner, settings, disconnect', async ({
+  page,
+  baseURL,
+}) => {
+  const origin = baseURL!;
+  await addAuthenticator(page);
+  const ada = await onboard(page, { origin });
+  await PageUser.open(page, ada.recoveryCode);
+  const agent = await TestAgent.pair(origin, { remote: true });
+  const code = await agent.agentCode();
+
+  // a remote pairing behind a loopback link is not valid
+  await page.goto(`/connect#${(await agent.fragment()).replace('m=remote', 'c=40123')}`);
+  await expect(page.getByTestId('connect.error')).toHaveAttribute('data-code', 'pairing_mismatch');
+  await expect(page.getByTestId('connect.error')).toContainText('This link is not valid');
+
+  // a new page load: the page reads the fragment once
+  await page.goto('about:blank');
+  await page.goto(`/connect#${await agent.fragment({ host: 'build-server' })}`);
+  await expect(page).toHaveURL(/\/connect$/);
+  await expect(page.getByTestId('connect.remote-warning')).toContainText(
+    'This AI agent runs on another computer (build-server).',
+  );
+  await expect(page.getByTestId('connect.warning')).toHaveCount(0);
+  await expect(page.getByTestId('connect.confirm')).toBeDisabled();
+  expect(await page.locator('body').innerText()).not.toContain(code);
+  await page.getByTestId('connect.code.input').fill('ABCDE-FGHJK');
+  await expect(page.getByTestId('connect.code')).toContainText('This is not the code of this request.');
+  await expect(page.getByTestId('connect.confirm')).toBeDisabled();
+  await page.getByTestId('connect.code.input').fill(code.toLowerCase().replace('-', ' '));
+  await expect(page.getByTestId('connect.confirm')).toBeEnabled();
+  await page.getByTestId('connect.confirm').click();
+
+  const returned = page.getByTestId('connect.return-code');
+  await expect(returned).toHaveText(/^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+  await expect(page.getByTestId('connect.outcome.waiting')).toHaveText('Waiting for your agent…');
+  // the agent refuses a wrong return code without claiming, then accepts the right one
+  const shown = (await returned.textContent())!;
+  const wrong = shown.startsWith('0') ? `1${shown.slice(1)}` : `0${shown.slice(1)}`;
+  expect((await agent.finishRemote(wrong)).body).toBe('pairing_failed');
+  const claimed = await agent.finishRemote(shown);
+  expect(claimed.status).toBe(200);
+  await expect(page.getByTestId('connect.outcome.connected')).toHaveText('Your agent is connected.');
+  expect((await agent.request('GET', '/v1/agent/me')).status).toBe(200);
+  // the handover is gone once claimed
+  expect((await agent.request('GET', '/v1/agent/handover')).status).toBe(404);
+
+  // every client sees the notification; marking it read does not hide the banner
+  await page.goto('/notifications');
+  await page.getByTestId('login.submit').click();
+  const banner = page.getByTestId('shell.remote-agent');
+  await expect(banner).toContainText('Your main orchestrator runs on another computer (build-server), connected');
+  const notice = page.locator('[data-testid="notifications.item"][data-kind="agent.account_change"]').first();
+  await expect(notice).toHaveText(/An AI agent on another computer \(“Claude Code”\) became your main orchestrator/);
+  await notice.click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(banner).toBeVisible();
+  const item = page.locator(`[data-testid="agents.item"][data-agent="${agent.id}"]`);
+  await expect(item.getByTestId('agents.item.remote')).toHaveText('Runs on another computer');
+  await page.getByTestId('shell.remote-agent.disconnect').click();
+  await expect(banner).toHaveCount(0);
+  await expect(item).toHaveAttribute('data-state', 'revoked');
+  expect((await agent.request('GET', '/v1/agent/me')).status).toBe(401);
+
+  // a loopback pairing behind a remote link is not valid either; its own link then connects it (and closes it)
+  const loopback = await TestAgent.pair(origin);
+  await page.goto(`/connect#${(await loopback.fragment()).replace('c=40123', 'm=remote')}`);
+  await expect(page.getByTestId('connect.error')).toHaveAttribute('data-code', 'pairing_mismatch');
+  await page.goto('about:blank');
+  let claimedLoopback: { status: number } | null = null;
+  const handover = catchHandover(page, origin, async (sent) => {
+    claimedLoopback = await loopback.claim(sent.fields.get('r')!, sent.fields.get('u')!);
+  });
+  await page.goto(`/connect#${await loopback.fragment()}`);
+  await expect(page.getByTestId('connect.code')).toHaveCount(0);
+  await page.getByTestId('connect.confirm').click();
+  await handover;
+  expect(claimedLoopback!.status).toBe(200);
+});
+
+test('an invitation asks for the agent code before the passkey is created', async ({ page, baseURL }) => {
+  const origin = baseURL!;
+  const authenticator = await addAuthenticator(page);
+  const invite = await platformInvite(origin);
+  const agent = await TestAgent.pair(origin, { remote: true });
+  await page.goto(`/invite#${invite.code}&${await agent.fragment({ host: 'build-server' })}&u=Ada+Lovelace`);
+  await expect(page.getByTestId('invite.agent.remote-warning')).toContainText('build-server');
+  await expect(page.getByTestId('invite.create-passkey')).toBeDisabled();
+  await page.getByTestId('invite.agent.code.input').fill('ABCDE-FGHJK');
+  await expect(page.getByTestId('invite.create-passkey')).toBeDisabled();
+  expect(await authenticator.credentials()).toHaveLength(0);
+  await page.getByTestId('invite.agent.code.input').fill(await agent.agentCode());
+  await page.getByTestId('invite.create-passkey').click();
+  await page.getByTestId('invite.unlock').click();
+  const returned = page.getByTestId('connect.return-code');
+  await expect(returned).toHaveText(/^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+  await expect(page.getByTestId('connect.code')).toHaveCount(0);
+  expect((await agent.finishRemote((await returned.textContent())!)).status).toBe(200);
+  await expect(page.getByTestId('connect.outcome.connected')).toBeVisible();
+  const me = await agent.request('GET', '/v1/me');
+  expect((me.body as { orgs: unknown[] }).orgs).toHaveLength(1);
 });

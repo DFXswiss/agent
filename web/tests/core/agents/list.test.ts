@@ -6,7 +6,7 @@ import { loadAgents, revokeAgent, revokeAllAgents } from '../../../src/core/agen
 import { sealLabel } from '../../../src/core/crypto/agent';
 import { Identity } from '../../../src/core/crypto/keys';
 import { HubError } from '../../../src/core/net/signedFetch';
-import { agentName, mainOrchestrator } from '../../../src/core/store/slices/agents';
+import { agentName, mainOrchestrator, remoteOrchestrator } from '../../../src/core/store/slices/agents';
 import { setIdentity } from '../../../src/core/store/slices/me';
 import { AGENT, agentWorld, OTHER, USER } from './world';
 
@@ -49,6 +49,28 @@ describe('loadAgents', () => {
     expect(agentName(w.store.getState(), AGENT)).toBe('Claude Code');
     expect(agentName(w.store.getState(), OTHER)).toBeNull();
     expect(agentName(w.store.getState(), USER)).toBeNull();
+    expect(entries.map((entry) => entry.remote)).toEqual([false, false]);
+    expect(remoteOrchestrator(entries)).toBeNull();
+  });
+
+  it('marks agents paired from another computer; a row without the field is not remote (ADR-058)', async () => {
+    let agents: unknown[] = [];
+    const w = await agentWorld(() => ({ agents }));
+    const label = await sealLabel(w.identity.kemPublic(), AGENT, USER, { name: 'Claude Code', host: 'server' });
+    agents = [
+      row(AGENT, label, { remote: true }),
+      row(OTHER, label, { remote: false }),
+      row(USER, label, { remote: 1 }),
+    ];
+    await loadAgents(w.context);
+    const entries = w.store.getState().agents.entries!;
+    expect(entries.map((entry) => [entry.agentId, entry.remote])).toEqual([
+      [AGENT, true],
+      [OTHER, false],
+    ]);
+    expect(remoteOrchestrator(entries)?.agentId).toBe(AGENT);
+    expect(remoteOrchestrator(entries.slice(1))).toBeNull();
+    expect(remoteOrchestrator(null)).toBeNull();
   });
 
   it('records failures with their code and drops answers after a sign-out', async () => {

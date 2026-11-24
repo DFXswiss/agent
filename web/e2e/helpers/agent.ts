@@ -1,9 +1,23 @@
 // The user's AI agent of the Playwright suite (11-agent-access.md sections 4 and 5.1): fresh keys, the pairing at the
 // hub with its proof of possession, the `/connect` link, the claim with the handover secret of the loopback form, and
 // requests signed with `agent-request-v1` under `agent.<32 hex>` (answers are not response-checked: the test's own
-// side). The loopback listener is replaced by a route of the page (`catchHandover`).
+// side). The loopback listener is replaced by a route of the page (`catchHandover`). A pairing from another computer
+// (ADR-058, `pair(origin, { remote: true })`) works like the agent tool: the hub's nonce gives the agent code
+// (`agentCode`), the agent fetches the sealed handover (`GET /v1/agent/handover`), checks the return code the user
+// passes back and only then claims (`finishRemote`).
 import type { Page, Request } from '@playwright/test';
-import { claim, claimHash, fingerprint, sealIdentity, sealLabel } from '../../src/core/crypto/agent';
+import {
+  agentCode,
+  claim,
+  claimHash,
+  fingerprint,
+  openHandover,
+  parseCode,
+  RETURN_CODE_LENGTH,
+  returnCode,
+  sealIdentity,
+  sealLabel,
+} from '../../src/core/crypto/agent';
 import { ed25519Sign, Identity } from '../../src/core/crypto/keys';
 import { random } from '../../src/core/crypto/subtle';
 import { b64uDecode, b64uEncode } from '../../src/core/encoding/b64u';
@@ -22,10 +36,12 @@ export class TestAgent {
     readonly origin: string,
     readonly id: string,
     readonly keys: Identity,
+    /** The hub's nonce of a remote pairing (b64u), else null. */
+    readonly nonce: string | null = null,
   ) {}
 
-  /** Fresh keys and an open pairing at the hub. */
-  static async pair(origin: string): Promise<TestAgent> {
+  /** Fresh keys and an open pairing at the hub (`remote`: a pairing from another computer, ADR-058). */
+  static async pair(origin: string, options: { readonly remote?: boolean } = {}): Promise<TestAgent> {
     const keys = await Identity.generate();
     const id = uuid7();
     const pub = keys.public();
@@ -34,10 +50,36 @@ export class TestAgent {
     const response = await fetch(new URL('/v1/agent-pairings', origin), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pairing_id: id, pub, pop }),
+      body: JSON.stringify({ pairing_id: id, pub, pop, ...(options.remote && { remote: true }) }),
     });
     if (!response.ok) throw new Error(`pairing refused: ${await response.text()}`);
-    return new TestAgent(origin, id, keys);
+    const answer = (await response.json()) as { remote?: boolean; nonce?: string };
+    if (options.remote && (answer.remote !== true || typeof answer.nonce !== 'string')) {
+      throw new Error('the hub did not create a remote pairing');
+    }
+    return new TestAgent(origin, id, keys, answer.nonce ?? null);
+  }
+
+  /** The agent code of a remote pairing as the agent tool shows it (`XXXXX-XXXXX`). */
+  async agentCode(): Promise<string> {
+    const fp = await fingerprint(this.keys.kemPublic(), this.keys.sigPublic());
+    const code = await agentCode(this.id, fp, b64uDecode(this.nonce, 16), new URL(this.origin).origin);
+    return `${code.slice(0, 5)}-${code.slice(5)}`;
+  }
+
+  /**
+   * Finishes a remote pairing like `pair --wait --return-code`: fetches and opens the handover, refuses a return code
+   * that does not match (`pairing_failed`, nothing claimed), else claims; resolves with the claim's answer.
+   */
+  async finishRemote(typed: string): Promise<{ status: number; body: unknown }> {
+    const fetched = await this.request('GET', '/v1/agent/handover');
+    if (fetched.status !== 200) return fetched;
+    const { user_id: userId, handover_ct: sealed } = fetched.body as { user_id: string; handover_ct: string };
+    const handover = await openHandover(this.keys.kem, this.id, userId, sealed);
+    if (parseCode(typed, RETURN_CODE_LENGTH) !== (await returnCode(handover.secret, this.id, userId))) {
+      return { status: 0, body: 'pairing_failed' };
+    }
+    return this.claim(b64uEncode(handover.secret), userId);
   }
 
   /** The fragment of the `/connect` link (a wrong fingerprint on request). */
@@ -48,7 +90,7 @@ export class TestAgent {
     const params = new URLSearchParams({
       p: this.id,
       f: fp,
-      c: String(LOOPBACK_PORT),
+      ...(this.nonce === null ? { c: String(LOOPBACK_PORT) } : { m: 'remote' }),
       a: options.name ?? 'Claude Code',
       h: options.host ?? 'Test-Mac',
     });

@@ -7,7 +7,8 @@ account). `ref` = `<action>:<acting agent ID>:<target>` (`ACTIONS`; the target n
 revoked agent, the removed passkey, the organization, the credential kind, the bundle slot's passkey, the device of a
 request; empty where there is none). Nothing is written for the actions of a browser session, except
 `recovery_finished` (`recovery_notice`): an anonymous recovery that added a passkey (target), with an empty agent
-field - a stolen recovery code is as dangerous as a stolen agent key.
+field - a stolen recovery code is as dangerous as a stolen agent key - and `agent_paired_remote` (`remote_notice`):
+the browser session confirmed a pairing from another computer (target: the new agent; ADR-058 section 4.4).
 
 The rows are published after the commit by `agent_hub.notifications.rules.publish_rows` as the stream frame
 `notification`; only streams opened with `account=1` receive them, and `GET /v1/notifications` lists them only with
@@ -38,6 +39,7 @@ ACTIONS = frozenset(
         "bundle_replaced",
         "invite_created",
         "device_request",
+        "agent_paired_remote",
     }
 )
 # The target part of `ref` (`contracts/api/objects.json` `account_ref`): UUIDs, credential kinds, b64u IDs.
@@ -77,3 +79,8 @@ def account_change(
 def recovery_notice(connection: psycopg.Connection[Any], user: UUID, now: datetime, passkey: str) -> list[Notification]:
     """`recovery_finished` for the user: an anonymous recovery added the passkey `passkey` (no agent)."""
     return _insert(connection, user, "recovery_finished", now, agent=None, target=passkey)
+
+
+def remote_notice(connection: psycopg.Connection[Any], user: UUID, now: datetime, agent_id: UUID) -> list[Notification]:
+    """`agent_paired_remote` for the user: a browser session confirmed the remote pairing `agent_id` (no agent)."""
+    return _insert(connection, user, "agent_paired_remote", now, agent=None, target=str(agent_id))

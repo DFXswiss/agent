@@ -466,6 +466,10 @@
       "group": "read"
     },
     {
+      "action": "read.agent.handover",
+      "group": "read"
+    },
+    {
       "action": "read.monitoring.overview",
       "group": "read"
     },

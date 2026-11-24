@@ -10,6 +10,14 @@
     },
     "expires_at": {
       "$ref": "../common.json#/$defs/time"
+    },
+    "remote": {
+      "const": true,
+      "description": "present (true) only for a pairing from another computer (ADR-058)"
+    },
+    "nonce": {
+      "$ref": "../common.json#/$defs/b64u_16",
+      "description": "the hub's nonce of a remote pairing, input of the agent code (11-agent-access.md section 3); present exactly with remote"
     }
   },
   "required": [

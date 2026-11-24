@@ -49,6 +49,7 @@ import { errorCode } from '../../../shell/errors';
 import { unlockSignIn, uploadMissingSlot, withdrawRegistration } from '../../../prf-missing/device';
 import { PrfRequired } from '../../../prf-missing/PrfRequired';
 import { PrfMissing } from '../../../prf-missing/PrfMissing';
+import { useAgentCode } from '../../connect/AgentCode';
 import { AgentNotice, ProposedName } from '../AgentNotice';
 import { afterVerify, existingStep, failedStep, type OrgStep, settledPhase, verifyFailed } from './machine';
 
@@ -57,6 +58,8 @@ export interface OrgInviteProps {
   readonly lookup: Lookup;
   /** The pairing of the agent's invitation, or null. */
   readonly pairing?: PairingLink | null;
+  /** The agent code of a remote pairing the user must type before a passkey gesture (ADR-058), or null. */
+  readonly agentCode?: string | null;
   /** The display name the agent proposed, or null. */
   readonly proposedName?: string | null;
 }
@@ -67,7 +70,13 @@ const LINK = 'min-h-11 self-start underline disabled:opacity-60';
 
 type Step<S extends OrgStep['step']> = Extract<OrgStep, { step: S }>;
 
-export function OrgInvite({ code, lookup, pairing: linked = null, proposedName = null }: OrgInviteProps) {
+export function OrgInvite({
+  code,
+  lookup,
+  pairing: linked = null,
+  agentCode: expectedCode = null,
+  proposedName = null,
+}: OrgInviteProps) {
   const { app, credentials, origin } = useAppEnv();
   const { t, error, locale } = useI18n();
   const [step, setStep] = useState<OrgStep>({ step: 'org_verify' });
@@ -75,6 +84,9 @@ export function OrgInvite({ code, lookup, pairing: linked = null, proposedName =
   /** The agent's pairing; dropped when it expired before a sign-in (the invitation is then accepted without it). */
   const [pairing, setPairing] = useState(linked);
   const tag = pairing === null ? {} : { pairingId: pairing.pairingId };
+  const agentCode = useAgentCode(expectedCode);
+  /** A remote pairing's code must match before any passkey gesture (ADR-058 section 6). */
+  const codeOk = pairing === null || agentCode.matches;
   /** The notice of a failed sign-in; an expired pairing is dropped so that the next sign-in works without it. */
   const signInNotice = (caught: unknown, cancelled: string): string => {
     if (caught instanceof CeremonyCancelled) return cancelled;
@@ -173,7 +185,7 @@ export function OrgInvite({ code, lookup, pairing: linked = null, proposedName =
 
   const createPasskey = async (event: FormEvent, current: Step<'intro'>) => {
     event.preventDefault();
-    if (checkedName() === null) return;
+    if (!codeOk || checkedName() === null) return;
     setStep({ step: 'create_passkey', invitation: current.invitation });
     try {
       const registration = await register(app.anon, credentials, code);
@@ -404,7 +416,9 @@ export function OrgInvite({ code, lookup, pairing: linked = null, proposedName =
             {t('invite-org.intro.title', { org: orgName(step.invitation) })}
           </h2>
           {summary(step.invitation)}
-          {pairing !== null && <AgentNotice pairing={pairing} />}
+          {pairing !== null && (
+            <AgentNotice pairing={pairing} code={agentCode} disabled={step.step === 'create_passkey'} />
+          )}
           {notJoined(step.invitation)}
           <p className="font-medium" data-testid="invite.one-account">
             {t('invite-org.intro.one-account')}
@@ -432,7 +446,7 @@ export function OrgInvite({ code, lookup, pairing: linked = null, proposedName =
             <button
               type="submit"
               className={PRIMARY}
-              disabled={step.step === 'create_passkey'}
+              disabled={step.step === 'create_passkey' || !codeOk}
               data-testid="invite.create-passkey"
             >
               {step.step === 'create_passkey' ? t('invite.create.working') : t('invite-org.new')}
@@ -471,7 +485,7 @@ export function OrgInvite({ code, lookup, pairing: linked = null, proposedName =
             {t('invite-org.existing.title', { org: orgName(step.invitation) })}
           </h2>
           {summary(step.invitation)}
-          {pairing !== null && <AgentNotice pairing={pairing} />}
+          {pairing !== null && <AgentNotice pairing={pairing} code={agentCode} disabled={step.busy} />}
           {notJoined(step.invitation)}
           {step.mode === 'recovery' ? (
             <PrfMissing
@@ -489,7 +503,12 @@ export function OrgInvite({ code, lookup, pairing: linked = null, proposedName =
               )}
               {proposedName !== null && <ProposedName name={proposedName} />}
               {rename && nameField(step.busy, t('invite-org.existing.name'))}
-              <button type="submit" className={PRIMARY} disabled={step.busy} data-testid="invite.join">
+              <button
+                type="submit"
+                className={PRIMARY}
+                disabled={step.busy || !codeOk}
+                data-testid="invite.join"
+              >
                 {joinLabel(step)}
               </button>
               {!rename && proposedName === null && (

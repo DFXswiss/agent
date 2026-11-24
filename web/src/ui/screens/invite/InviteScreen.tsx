@@ -14,6 +14,8 @@
 // Without a code in this tab (reloaded after the code left the address) the screen says so and that nothing was
 // joined. A browser with a stored session is told before the intro that this link creates a second, separate
 // account; it goes to its account or, deliberately, creates the new one (KOR-36).
+// A pairing from another computer (`m=remote`, ADR-058 section 6) asks for the agent code before the passkey is
+// created: "Create passkey" stays disabled until it matches, so a wrong or missing code creates no account.
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { CeremonyCancelled } from '../../../core/account/ceremony';
@@ -31,6 +33,7 @@ import { withdrawRegistration } from '../../prf-missing/device';
 import { PrfRequired } from '../../prf-missing/PrfRequired';
 import { useAppEnv } from '../../shell/context';
 import { errorCode } from '../../shell/errors';
+import { useAgentCode } from '../connect/AgentCode';
 import { AgentNotice, ProposedName } from './AgentNotice';
 import { forgetFragment, takeFragment } from './fragment';
 import { afterLookup, failedLookup, type Step } from './machine';
@@ -53,6 +56,10 @@ export function InviteScreen() {
   const phase = useStore((state) => state.session.phase, app.store);
   /** A signed-in browser chose to create a further account anyway. */
   const [anyway, setAnyway] = useState(false);
+  /** The code the user must type for a remote pairing (from the hub's nonce), null otherwise. */
+  const [expectedCode, setExpectedCode] = useState<string | null>(null);
+  const agentCode = useAgentCode(expectedCode);
+  const codeOk = pairing === null || agentCode.matches;
 
   // the code is in this screen's state now; the remembered copy of the first read is not needed any more
   useEffect(forgetFragment, []);
@@ -70,7 +77,8 @@ export function InviteScreen() {
         const id = await codeToInviteId(code);
         setStep({ step: 'lookup' });
         const lookup = await lookupInvite(app.anon, id);
-        if (invite.pairing !== null) await lookupPairing(app.anon, invite.pairing);
+        const found = invite.pairing === null ? null : await lookupPairing(app.anon, invite.pairing, origin);
+        if (live) setExpectedCode(found?.agentCode ?? null);
         if (live) setStep(afterLookup(lookup));
       } catch (caught) {
         if (live) setStep(failedLookup(caught));
@@ -80,10 +88,11 @@ export function InviteScreen() {
     return () => {
       live = false;
     };
-  }, [app, code, invite, attempt]);
+  }, [app, code, invite, attempt, origin]);
 
   const createPasskey = async (event: FormEvent, current: Extract<Step, { step: 'intro' }>) => {
     event.preventDefault();
+    if (!codeOk) return;
     if (displayName(name) === null) {
       setNameInvalid(true);
       return;
@@ -193,7 +202,13 @@ export function InviteScreen() {
         </section>
       )}
       {step.step === 'org' && (
-        <OrgInvite code={code} lookup={step.lookup} pairing={pairing} proposedName={invite.displayName} />
+        <OrgInvite
+          code={code}
+          lookup={step.lookup}
+          pairing={pairing}
+          agentCode={expectedCode}
+          proposedName={invite.displayName}
+        />
       )}
       {step.step === 'intro' && phase === 'starting' && <p data-testid="invite.lookup">{t('invite.lookup')}</p>}
       {step.step === 'intro' && (phase === 'locked' || phase === 'unlocked') && !anyway && (
@@ -236,7 +251,9 @@ export function InviteScreen() {
               }),
             })}
           </p>
-          {pairing !== null && <AgentNotice pairing={pairing} />}
+          {pairing !== null && (
+            <AgentNotice pairing={pairing} code={agentCode} disabled={step.step === 'create_passkey'} />
+          )}
           {invite.displayName !== null ? (
             <ProposedName name={invite.displayName} />
           ) : (
@@ -271,7 +288,7 @@ export function InviteScreen() {
           <button
             type="submit"
             className={PRIMARY}
-            disabled={step.step === 'create_passkey'}
+            disabled={step.step === 'create_passkey' || !codeOk}
             data-testid="invite.create-passkey"
           >
             {step.step === 'create_passkey' ? t('invite.create.working') : t('invite.create-passkey')}

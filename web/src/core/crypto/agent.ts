@@ -9,6 +9,16 @@
 //   (`nonce || AES-GCM(k, plaintext, AAD = info)`), then HPKE-sealed to the agent's X25519 key with the same `info`.
 // - `sealLabel`/`openLabel`: `{"host","name"}` (body JSON) HPKE-sealed to the user's identity X25519 key; each text
 //   1–64 characters, no leading or trailing space, none of the Unicode categories Cc Cf Zl Zp Cs Co Cn.
+//
+// Pairing from another computer (ADR-058, 11-agent-access.md sections 3 and 5.4):
+// - `agentCode`: `crockford32(SHA-256(P || "agent-code\0" || canonical({"fp","mode":"remote","nonce","origin",
+//   "pairing_id"})))[:10]` with the hub's 16-byte nonce; the user types it, the page never shows it.
+// - `sealHandover`/`openHandover`: `canonical({"k","r"})` (platform root key of the build, `r`) HPKE-sealed to the
+//   agent's X25519 key with `info = P || "agent-handover\0" || ids`; the hub only relays it.
+// - `returnCode`: `crockford32(HKDF(r, P || "agent-return\0" || ids))[:8]`, shown by the page after the
+//   confirmation; the agent accepts the handover only when the user gives it this code.
+// - `parseCode`: the typed form of a code (lower case, spaces and dashes; `I`/`L` read as `1`, `O` as `0`);
+//   `formatCode` shows it in two groups.
 import { b64uDecode, b64uEncode } from '../encoding/b64u';
 import { concat, equalBytes } from '../encoding/bytes';
 import { bodyJson, canonical, parseJson } from '../encoding/json';
@@ -26,6 +36,13 @@ import { sha256 } from './subtle';
 export const FINGERPRINT_BYTES = 16;
 export const SECRET_BYTES = 32;
 export const LABEL_TEXT_MAX = 64;
+export const MODE_REMOTE = 'remote';
+export const NONCE_BYTES = 16;
+export const AGENT_CODE_LENGTH = 10;
+export const RETURN_CODE_LENGTH = 8;
+export const CROCKFORD32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const CODE_ALIASES: Readonly<Record<string, string>> = { I: '1', L: '1', O: '0' };
+const HANDOVER_KEYS = ['k', 'r'];
 const LABEL_KEYS = ['host', 'name'];
 // Controls, format characters (bidi overrides, zero-width), line/paragraph separators, surrogates, private use and
 // unassigned code points.
@@ -173,4 +190,103 @@ export async function openLabel(
   const label = checkLabel(parseJson(plaintext));
   if (!equalBytes(bodyJson(label), plaintext)) fail('header_invalid');
   return label;
+}
+
+/** Crockford base32 of `raw` (big-endian bits, 5 per character, the last one padded with zeros). */
+export function crockford32(raw: Uint8Array): string {
+  const bits = [...raw].map((byte) => byte.toString(2).padStart(8, '0')).join('');
+  let text = '';
+  for (let at = 0; at < bits.length; at += 5) text += CROCKFORD32[parseInt(bits.slice(at, at + 5).padEnd(5, '0'), 2)];
+  return text;
+}
+
+/** The SHA-256 input of the agent code. */
+export function codeInput(pairingId: string, fp: string, nonce: Uint8Array, origin: string): Uint8Array<ArrayBuffer> {
+  const fields = {
+    fp,
+    mode: MODE_REMOTE,
+    nonce: b64uEncode(requireRaw(nonce, NONCE_BYTES)),
+    origin,
+    pairing_id: pairingId,
+  };
+  return concat(L.label(L.LABEL_AGENT_CODE), canonical(fields));
+}
+
+/** The 10-character agent code of a remote pairing (the user types it on the page). */
+export async function agentCode(pairingId: string, fp: string, nonce: Uint8Array, origin: string): Promise<string> {
+  return crockford32(await sha256(codeInput(pairingId, fp, nonce, origin))).slice(0, AGENT_CODE_LENGTH);
+}
+
+/** The HKDF `info` of the return code. */
+export function returnInfo(agentId: string, userId: string): Uint8Array<ArrayBuffer> {
+  return concat(L.label(L.LABEL_AGENT_RETURN), ids(agentId, userId));
+}
+
+/** The 8-character return code the page shows after the confirmation. */
+export async function returnCode(secret: Raw, agentId: string, userId: string): Promise<string> {
+  return crockford32(await hkdf(secretOf(secret), returnInfo(agentId, userId))).slice(0, RETURN_CODE_LENGTH);
+}
+
+/** The canonical code of a typed text (module comment); exactly `length` characters, else `header_invalid`. */
+export function parseCode(text: unknown, length: number): string {
+  if (typeof text !== 'string') fail('header_invalid');
+  const code = [...text.toUpperCase().replaceAll(' ', '').replaceAll('-', '')]
+    .map((char) => CODE_ALIASES[char] ?? char)
+    .join('');
+  if (code.length !== length || [...code].some((char) => !CROCKFORD32.includes(char))) fail('header_invalid');
+  return code;
+}
+
+/** The typed code, or null when it is not a well-formed code of `length` characters. */
+export function tryParseCode(text: string, length: number): string | null {
+  try {
+    return parseCode(text, length);
+  } catch {
+    return null;
+  }
+}
+
+/** Two groups separated by a dash (`XXXXX-XXXXX`, `XXXX-XXXX`). */
+export function formatCode(code: string): string {
+  const half = Math.floor(code.length / 2);
+  return `${code.slice(0, half)}-${code.slice(half)}`;
+}
+
+/** The HPKE `info` of the handover sealed to the agent. */
+export function handoverInfo(agentId: string, userId: string): Uint8Array<ArrayBuffer> {
+  return concat(L.label(L.LABEL_AGENT_HANDOVER), ids(agentId, userId));
+}
+
+/** `canonical({"k","r"})`: the plaintext of `handover_ct`. */
+export function handoverPlaintext(secret: Raw, rootKey: string): Uint8Array<ArrayBuffer> {
+  const r = secretOf(secret).reveal((raw) => b64uEncode(raw));
+  return canonical({ k: b64uEncode(b64uDecode(rootKey, RAW_KEY_BYTES)), r });
+}
+
+/** `handover_ct`: `r` and the platform root key sealed to the agent (`ephemeral` only for test vectors). */
+export async function sealHandover(
+  agentKemPub: Uint8Array,
+  agentId: string,
+  userId: string,
+  secret: Raw,
+  rootKey: string,
+  ephemeral?: Uint8Array,
+): Promise<string> {
+  const plaintext = handoverPlaintext(secret, rootKey);
+  return b64uEncode(await hpke.seal(agentKemPub, handoverInfo(agentId, userId), plaintext, ephemeral));
+}
+
+/** The inverse of `sealHandover`: `r` and the platform root key; the plaintext must be exactly canonical. */
+export async function openHandover(
+  agentKem: KeyPair,
+  agentId: string,
+  userId: string,
+  sealed: string,
+): Promise<{ readonly secret: Uint8Array<ArrayBuffer>; readonly rootKey: string }> {
+  const plaintext = await hpke.open(agentKem, handoverInfo(agentId, userId), b64uDecode(sealed));
+  const value = requireKeys(parseJson(plaintext), HANDOVER_KEYS);
+  const secret = b64uDecode(value.r, SECRET_BYTES);
+  const rootKey = value.k as string;
+  if (!equalBytes(handoverPlaintext(secret, rootKey), plaintext)) fail('header_invalid');
+  return { secret, rootKey };
 }

@@ -33,5 +33,8 @@
   "live.announce": "Connection is live",
   "reconnecting.announce": "Connection lost, reconnecting",
   "connecting.announce": "Connecting",
-  "offline.announce": "You are offline"
+  "offline.announce": "You are offline",
+  "remote-agent": "Your main orchestrator runs on another computer ({host}), connected {time}.",
+  "remote-agent.unknown-host": "unknown computer",
+  "remote-agent.disconnect": "Disconnect"
 }

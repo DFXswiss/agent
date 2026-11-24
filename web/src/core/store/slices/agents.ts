@@ -22,6 +22,8 @@ export interface AgentEntry {
   readonly revokedAt: string | null;
   /** The ID of the main orchestrator this one replaced at its confirmation, or null. */
   readonly replaces: string | null;
+  /** Paired from another computer (ADR-058); false when the hub does not say. */
+  readonly remote: boolean;
 }
 
 export interface AgentsState {
@@ -61,4 +63,10 @@ export function agentName(state: StoreState, agentId: string): string | null {
 /** The user's main orchestrator: the newest confirmed or active entry other than `except` (a pairing), else null. */
 export function mainOrchestrator(entries: readonly AgentEntry[] | null, except?: string): AgentEntry | null {
   return entries?.find((entry) => LIVE_STATES.includes(entry.state) && entry.agentId !== except) ?? null;
+}
+
+/** The main orchestrator when it runs on another computer (the shell's banner, ADR-058 section 4.4), else null. */
+export function remoteOrchestrator(entries: readonly AgentEntry[] | null): AgentEntry | null {
+  const main = mainOrchestrator(entries);
+  return main?.remote === true ? main : null;
 }

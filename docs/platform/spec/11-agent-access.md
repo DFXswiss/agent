@@ -1,8 +1,9 @@
 # 11 Delegated agent access (KOR-24)
 
-Status: binding. Decided in ADR-056. Extends `02-data-model.md` (§2), `03-api.md` (§3, §4, §11), `04-crypto.md` (§3,
-§7, §9) and `06-web.md` (settings, invitation). The user's own AI agent pairs with the account through one passkey
-gesture and then sets the account up with the agent tool `agent-platform` (repository `agent`).
+Status: binding. Decided in ADR-056; the pairing from another computer (§5.4) in ADR-058 (KOR-42). Extends
+`02-data-model.md` (§2), `03-api.md` (§3, §4, §11), `04-crypto.md` (§3, §7, §9) and `06-web.md` (settings,
+invitation). The user's own AI agent pairs with the account through one passkey gesture and then sets the account
+up with the agent tool `agent-platform` (repository `agent`).
 
 ## 1. Terms
 
@@ -12,9 +13,12 @@ gesture and then sets the account up with the agent tool `agent-platform` (repos
 | Main orchestrator | ("Hauptorchestrator" in the interface) the one `confirmed` or `active` agent of a user (concept idea 34, ADR-056 §4a); a new pairing replaces it. |
 | Pairing | The agent's request to be connected; becomes the agent row once confirmed. Pairing ID = agent ID (UUIDv7, drawn by the agent). |
 | Label | `{"name","host"}` chosen by the agent (e.g. `Claude Code`, the computer's name); only sealed at the hub. |
-| Handover secret | `r`: 32 random bytes drawn by the confirming browser and handed to the agent **only** over the loopback. It yields the bundle key and the claim (§3). |
+| Handover secret | `r`: 32 random bytes drawn by the confirming browser and handed to the agent **only** over the loopback – or, for a remote pairing, sealed to the agent's key and relayed by the hub (§5.4). It yields the bundle key and the claim (§3). |
+| Remote pairing | A pairing of an agent on another computer than the confirming browser (server, container, SSH; ADR-058), chosen explicitly (`--remote`, `m=remote`, `remote` at the hub). |
+| Agent code | 10 characters (`XXXXX-XXXXX`) the agent tool shows for a remote pairing and the user types on the page (§3); not a secret. |
+| Return code | 8 characters (`XXXX-XXXX`) the page shows after confirming a remote pairing and the user gives to the agent; derived from `r`, checked by the tool before it claims (§3). |
 
-## 2. Data (hub schema, migration `0010_agent_access.sql`)
+## 2. Data (hub schema, migrations `0010_agent_access.sql`, `0011_agent_remote_pairing.sql`)
 
 `hub.agent`: `id uuid pk`, `user_id uuid null → principal` (null while `open`), `kem_pub bytea(32)`,
 `sig_pub bytea(32)` (unique among rows that are not revoked), `state text` ∈ {`open`,`confirmed`,`active`,`revoked`},
@@ -29,6 +33,11 @@ a pairing, §5). `hub.audit.agent_id uuid null` (§7). Unclaimed rows (`open`, `
 `expires_at` (job `agents.unclaimed_purge`); a user deleted as an orphan registration loses its agent rows. Limits:
 at most 3 unexpired `open` pairings per source and 10 000 in all (`429 rate_limited`), on top of the anonymous limit.
 Org exports carry the agent rows of the org's users.
+Migration `0011_agent_remote_pairing.sql` (ADR-058, additive): `remote boolean NOT NULL DEFAULT false`, `nonce bytea
+null` (16 bytes, set exactly for a remote row), `handover_ct bytea null` (only on a `confirmed` remote row: from the
+confirmation until the claim; cleared at the claim, the revocation and – by the job `agents.unclaimed_purge` – the
+claim deadline; exported as null). A remote pairing must be confirmed within 300 s of its creation (`expires_at` =
+created + 300 s); its claim deadline is the confirmation + 600 s.
 
 ## 3. Crypto (labels prefixed with `P`, `04-crypto.md` §1; reference `agent_hub/crypto/agent.py`)
 
@@ -42,6 +51,11 @@ Org exports carry the agent rows of the org's users.
 | Sealed identity | `info = P‖"agent-bundle\0"‖ids`; `inner = nonce12‖AES-GCM(k, identity bundle plaintext (§4.1), AAD = info)`; `bundle_ct = b64u(HPKE_seal(agent kem_pub, info, inner))` (base mode, suite of §1). Opening needs the agent's private key **and** `r` |
 | Sealed label | `label_ct = b64u(HPKE_seal(user identity kem_pub, P‖"agent-label\0"‖ids, body JSON {"host","name"}))`; each text 1–64 characters, no leading/trailing space, none of the Unicode categories Cc, Cf (bidi, zero-width), Zl, Zp, Cs, Co, Cn |
 | Agent key ID | `agent.<32 hex>` = agent ID without dashes; signatures Ed25519 with `sig` (`agent-request-v1`) |
+| Crockford base32 | `crockford32(bytes)`: the bit string big-endian, 5 bits per character of `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, the last one padded with zeros |
+| Agent code (remote) | `code = crockford32(SHA-256(P‖"agent-code\0"‖canonical({"fp","mode":"remote","nonce":b64u(nonce),"origin","pairing_id"})))[:10]`, shown `XXXXX-XXXXX`; `nonce` = the hub's 16 bytes of the pairing, `origin` = the hub's origin as in the link (`https://host[:port]`, no trailing slash) |
+| Handover (remote) | `handover_ct = b64u(HPKE_seal(agent kem_pub, P‖"agent-handover\0"‖ids, canonical({"k":<platform root key of the build, b64u>,"r":b64u(r)})))` (base mode); the plaintext must be exactly canonical |
+| Return code (remote) | `back = crockford32(HKDF(r, info = P‖"agent-return\0"‖ids))[:8]`, shown `XXXX-XXXX` |
+| Typed code | input of either code: upper-cased, spaces and dashes removed, `I`/`L` read as `1`, `O` as `0`; then exactly 10 (8) characters of the alphabet, else refused |
 
 Why `r` is inside the bundle encryption: the hub never sees `r`, so neither a hub that swapped the agent key nor a hub
 that put its own key into a phishing link can open `bundle_ct`, and a hub cannot hand the agent an identity of its own
@@ -52,22 +66,24 @@ implementations check them.
 
 | Endpoint | Auth / right | Request → Response |
 |---|---|---|
-| `POST /v1/agent-pairings` | anon | `{pairing_id,pub:{kem,sig},pop}` → `{pairing_id,expires_at}`; same ID with the same keys → the stored answer, other keys or keys of another pairing → `409 id_conflict`; bad proof → `401 signature_invalid`; limits of §2 → `429 rate_limited` |
-| `GET /v1/agent-pairings/{id}` | anon | → `{pairing_id,pub:{kem,sig},state:"open"|"confirmed",expires_at}` while open or confirmed and before the deadline; otherwise (unknown, claimed, revoked, expired) `404 pairing_unknown` |
+| `POST /v1/agent-pairings` | anon | `{pairing_id,pub:{kem,sig},pop,remote?}` → `{pairing_id,expires_at}`, for `remote: true` plus `remote: true, nonce` (b64u 16 B, drawn by the hub; deadline 300 s); without `remote` (or `false`) the answer is exactly as before; same ID with the same keys and mode → the stored answer, other keys, another mode or keys of another pairing → `409 id_conflict`; bad proof → `401 signature_invalid`; limits of §2 → `429 rate_limited` |
+| `GET /v1/agent-pairings/{id}` | anon | → `{pairing_id,pub:{kem,sig},state:"open"|"confirmed",expires_at}` (a remote pairing adds `remote: true, nonce`) while open or confirmed and before the deadline; otherwise (unknown, claimed, revoked, expired) `404 pairing_unknown` |
 | `POST /v1/passkeys/login/begin` | anon | `{pairing_id?}`: optional; a pairing that is not open before its deadline → `404 pairing_unknown`. The ceremony and the session it creates carry the pairing ID |
-| `POST /v1/me/agents` | browser session only (an agent gets `403 forbidden`, §6) | `{pairing_id,bundle_ct,label_ct,claim_hash}` → `{agent_id}`; the session must have been created by a ceremony tagged with this pairing at most 300 s ago (`403 pairing_gesture_required`); the pairing must be `open` before its deadline (`404 pairing_unknown`). In the same transaction the user's previous main orchestrator (`confirmed` or `active`) is revoked and recorded in `replaces` of the new row; its open live streams are closed. A repeat with identical values → the same answer (nothing replaced again), other values → `409 id_conflict` |
-| `GET /v1/me/agents` | user | → `{agents:[{agent_id,state:"confirmed"|"expired"|"active"|"revoked",label_ct,created_at,confirmed_at,claimed_at,last_used_at,revoked_at,replaces:<agent id>|null}]}` of the user, newest first (`expired` = confirmed, never claimed, past the deadline; `replaces` = the main orchestrator this one replaced at its confirmation); at most one row is `confirmed` or `active` |
+| `POST /v1/me/agents` | browser session only (an agent gets `403 forbidden`, §6) | `{pairing_id,bundle_ct,label_ct,claim_hash,handover_ct?}` → `{agent_id}`; `handover_ct` (§3) is required for a remote pairing (`400 handover_required`) and refused for a loopback pairing (`400 handover_unexpected`); a remote confirmation sets the claim deadline to confirmation + 600 s and notifies the user (`agent_paired_remote`, §8.4); the session must have been created by a ceremony tagged with this pairing at most 300 s ago (`403 pairing_gesture_required`); the pairing must be `open` before its deadline (`404 pairing_unknown`). In the same transaction the user's previous main orchestrator (`confirmed` or `active`) is revoked and recorded in `replaces` of the new row; its open live streams are closed. A repeat with identical values (including `handover_ct`) → the same answer (nothing replaced again, nobody notified again), other values → `409 id_conflict` |
+| `GET /v1/me/agents` | user | → `{agents:[{agent_id,state:"confirmed"|"expired"|"active"|"revoked",label_ct,created_at,confirmed_at,claimed_at,last_used_at,revoked_at,replaces:<agent id>|null,remote}]}` of the user, newest first (`expired` = confirmed, never claimed, past the deadline; `replaces` = the main orchestrator this one replaced at its confirmation); at most one row is `confirmed` or `active` |
 | `DELETE /v1/me/agents` | user | → `{revoked}`: every confirmed or active agent of the user revoked at once |
 | `DELETE /v1/me/agents/{id}` | user | → `{}`; state `revoked`, sealed identity deleted; unknown or foreign → `404 not_found`; already revoked → `{}` |
 | `POST /v1/agent/claim` | agent key, state `confirmed` (`agent:confirmed`) | `{claim}` (b64u 32 B, §3) → `{agent_id,user_id,bundle_ct,label_ct,created_at,claimed_at}`; wrong claim → `401 claim_invalid` (counted; the fifth wrong claim deletes the pairing); past the deadline → `404 pairing_unknown`; repeat when `active` with the right claim → the same answer |
 | `GET /v1/agent/me` | agent key, state `active` (`agent`) | → `{agent_id,user_id,bundle_ct,label_ct,created_at,claimed_at}` |
+| `GET /v1/agent/handover` | agent key, state `confirmed` (`agent:confirmed`) | → `{agent_id,user_id,handover_ct}` of a confirmed remote pairing before its claim deadline; a loopback row, a claimed, revoked or expired one → `404 pairing_unknown`; read resource `agent.handover` |
 | `GET /agents.md` | anon (not under `/v1/`) | the guide for AI agents of the web build (`docs/platform/agents.md`), `text/markdown` |
 
 Key resolver `agent.`: unknown, `open`, or `confirmed` past its deadline → `key_unknown`; `revoked` or user disabled
-→ `key_revoked` (response-signed, like devices); `confirmed` → only `POST /v1/agent/claim`; `active` → §6. New auth
+→ `key_revoked` (response-signed, like devices); `confirmed` → only `POST /v1/agent/claim` and `GET /v1/agent/handover`; `active` → §6. New auth
 class `agent` (routes `/v1/agent/*`), principal kind `agent` (acting for its user, audit actor `user`). Rate limit as a
 browser session (600/min per key). Error codes (new, `03-api.md` §11): `pairing_unknown` (404),
-`pairing_gesture_required` (403), `claim_invalid` (401); client-only `pairing_mismatch`.
+`pairing_gesture_required` (403), `claim_invalid` (401), `handover_required` (400), `handover_unexpected` (400);
+client-only `pairing_mismatch`.
 
 ## 5. Flows
 
@@ -128,6 +144,41 @@ has already read stays with it) → `DELETE /v1/me/agents/{id}`; "Disconnect all
 the agent tool deletes its local state and reports `agent_revoked` with the next step "pair again".
 A main orchestrator replaced by a new pairing (§4, `POST /v1/me/agents`) is revoked in the same way.
 
+### 5.4 Pairing from another computer (remote, ADR-058)
+For an agent that has no listener on the user's computer (server, container, SSH). Chosen explicitly only; the tool
+never falls back from loopback to remote.
+
+1. Agent (`pair --remote`, `register --remote`, §8.4): fresh keys, `POST /v1/agent-pairings {…, remote: true}`; the
+   answer must echo `remote: true` and a nonce, else the tool reports `hub_too_old` (an old hub refuses the field with
+   `400 request_invalid`). The tool computes the agent code (§3) and returns at once
+   `<origin>/connect#p=<id>&f=<fp>&m=remote&a=<name>&h=<host>` (exactly these five parameters) and the code; the agent
+   gives both to its user in its conversation. The pending pairing stays in `pending.json` (§8.1).
+2. Browser `/connect`: as §5.1 step 2, plus: the link's mode must agree with the hub's `remote` (both ways, else
+   "This link is not valid"); a remote pairing needs a nonce. The page shows the warning "This AI agent runs on
+   **another computer** (<host as the link states it>). Continue only if **you** just asked your own AI agent to
+   connect and it showed you this page and a code. Whoever controls this agent gets full access to your account.",
+   visually distinct from the loopback page (the replacement notice stays), and asks "Type the code your AI agent shows
+   you". It computes the code from the link's fingerprint and pairing ID, the hub's nonce and its own origin, never
+   shows it, and enables "Confirm with passkey" only when the typed code (normalised, §3) equals it.
+3. Gesture and confirmation as §5.1 step 3; the body carries `handover_ct` (§3, `k` = platform root key of the build).
+   No loopback form. The hub notifies every client of the user (`agent_paired_remote`) and gives 600 s to claim.
+4. The page shows the return code with "Give this code to your AI agent" and "Waiting for your agent", and then the
+   result from `GET /v1/me/agents` (the row turns `active`, or `expired`/`revoked`).
+5. Agent (`pair --wait --return-code <code>`): `GET /v1/agent/handover` with its key, opens `handover_ct`, compares the
+   user's code with the return code of `r` and only then claims (`POST /v1/agent/claim`), opens the identity, checks it
+   as §5.1 step 5 and the root key against `/v1/config`, stores its state and deletes the pending pairing. One
+   mismatch ends the pairing (`pairing_failed`): a hub that forged the handover (its own `r'`) does not know the code
+   the page derived from the browser's `r` and gets one attempt with 40 bits.
+6. New account (`/invite` with the remote parameters, §5.2): the page shows the warning and asks for the agent code
+   **before** the passkey is created (a wrong or missing code creates no account); the mode travels in the route
+   state to `/connect`, which confirms with the identity the registration unlocked, sends `handover_ct` and shows the
+   return code.
+
+Banner: while the user's main orchestrator (`confirmed` or `active`) is a remote one, every web client shows in the
+shell "Your main orchestrator runs on another computer (<host>), connected <time>" with "Disconnect"; it comes from
+the row (`remote` of `GET /v1/me/agents`), so no read state of a notification hides it. Both notification and banner
+are in-app only (no e-mail or push in this version). The settings list marks such rows "another computer".
+
 ## 6. Scope of an agent: everything its user can do (`agent_hub/agents/scope.py`)
 
 Decision of the owner (2026-11-23, ADR-056 §4): an agent connected with its own key may do everything a person
@@ -150,7 +201,8 @@ checked and audited by the hub); there is no side path around checks and audit (
 
 ## 7. Audit
 Actions (new): `agent.confirm` (actor user, target agent), `agent.claim` (actor user, `agent_id` set), `agent.revoke`
-(actor user); read resources `me.agents`, `agent.me`. Every row appended while a request of an agent principal is
+(actor user); read resources `me.agents`, `agent.me`, `agent.handover`. The details of `agent.confirm` and
+`agent.claim` of a remote pairing carry `remote: true` (ADR-058). Every row appended while a request of an agent principal is
 processed carries `agent_id` (audit and read log). The hashed row JSON contains `agent_id` only when it is set (old
 hashes stay valid). `GET /v1/orgs/{org}/audit` returns `agent_id` when set; the web client shows "by agent <name>"
 (name from the user's own sealed labels, else "by agent").
@@ -166,15 +218,22 @@ deletes both files. Every command prints exactly one JSON object on stdout: `{"o
 `{"ok":false,"error":"<code>","next":"<what to do>"}`; exit code 0 or 1; a top-level handler turns every unexpected
 failure into `{"ok":false,"error":"internal"}` without a traceback. No output, log or error ever contains a token,
 key, claim or the secret of an invitation, except the one field `invite_link` of `org invite`, which is marked
-`"secret_fields":["invite_link"]` and meant only for the invitee. Inputs that are secrets (an invitation link) are
-read from stdin or the environment, never from the command line.
+`"secret_fields":["invite_link"]` and meant only for the invitee (and of `register --remote`, meant only for the
+user). Inputs that are secrets (an invitation link) are read from stdin or the environment, never from the command
+line. A remote pairing (§5.4) that is not finished yet is kept as `pending.json` (`0600`: hub, pinned hub key,
+platform root key of `/v1/config`, pairing ID, nonce, mode, kind `pair`/`register`, deadline, label) with its private
+keys in the keychain item `agent-platform` / `<pairing id>` where available, else a `0600` key file; an existing
+paired state stays until the new pairing completes. Every terminal case of `pair --wait` (success, timeout, failure)
+deletes both.
 
 ### 8.2 Loopback listener
 Binds `127.0.0.1` on a random port only; accepts only `POST /agent-pairing` (form-encoded) with `Host: 127.0.0.1:<port>`, the own
 pairing ID (constant-time comparison) and a well-formed `r`; answers anything else `404` with an empty body and no
 CORS headers, without ending the wait; after one successful claim it stops. Timeout 10 min (`pairing_timeout`, next
-step: run the agent on the computer where the browser runs, or forward the port, e.g. `ssh -L`). There is no code
-fallback on purpose (it would re-open the phishing path).
+step: run the agent on the computer where the browser runs, forward the port, e.g. `ssh -L`, or pair with `--remote`,
+§5.4). There is no code
+fallback for the loopback pairing on purpose (it would re-open the phishing path); the remote pairing (§5.4) is a
+separate mode chosen explicitly, with its own countermeasures.
 
 ### 8.3 Verification
 The tool trusts only what it can verify: the identity (authenticated by `k`); its own self-wraps of `CK` (signed by
@@ -194,6 +253,9 @@ row names a command the tool lacks. Rows in stage c are not built yet. Until a c
 |---|---|
 | `pair --hub <url> [--name] [--host] [--no-browser]` | §5.1; prints the link it opened; waits for the claim (10 min); the user's approval replaces the previous main orchestrator, also the one running this command (the tool then holds only the new state) |
 | `register --display-name <name> [--name] [--host]` (invitation link on stdin or `AGENT_PLATFORM_INVITE`) | §5.2; waits like `pair`; never prints the link |
+| `pair --hub <url> --remote [--name] [--host] [--replace-pending]` | §5.4; refuses while a pending pairing exists (`pairing_pending`) unless `--replace-pending`; returns at once `{"state":"waiting","connect_link","code","expires_at"}`; never falls back from or to loopback (`hub_too_old` when the hub does not echo `remote` and a nonce) |
+| `register --remote --display-name <name> [--name] [--host] [--replace-pending]` | §5.4 step 6 with the invitation: returns `invite_link` (`<origin>/invite#<code>&p=…&f=…&m=remote&a=…&h=…&u=…`, listed in `secret_fields`), the code and the deadline |
+| `pair --wait [--return-code <code>] [--timeout <s>]` | the pending remote pairing (`no_pending_pairing`; a second `--wait` at the same time: `pairing_busy`). Without `--return-code`: polls every 2 s for at most `--timeout` (default 120, max 600) and returns `"state":"waiting"` or `"state":"confirmed"` (next: ask the user for the code the page shows). With `--return-code`: fetches and opens the handover, checks the code, only then claims, stores the state and returns like `pair`. Expired: `pairing_timeout`; a handover that does not open or a wrong code: `pairing_failed` |
 | `status` | hub, agent, user, organizations, credentials (kind, version, expiry, origin), devices |
 | `claude connect` | read the local Claude Code login (§8.5) and store it as `login_token` |
 | `claude sync` | store the local token again when it changed; never replaces a `setup_token` record (unless `--replace`); retries a `409 version_conflict` once on the new version |
@@ -212,7 +274,8 @@ row names a command the tool lacks. Rows in stage c are not built yet. Until a c
 Notification (hub, `agents/notify.py`): every account-changing action of an agent – passkey removed, recovery code
 replaced, identity-bundle slot replaced, agent revoked, role or access changed or member removed, credential
 written or deleted, admin or platform invitation created, device request sent – and every finished recovery creates
-a notification `agent.account_change` (`org_id` null, `ref` = `<action>:<acting agent>:<target>`) for the user; the
+a notification `agent.account_change` (`org_id` null, `ref` = `<action>:<acting agent>:<target>`) for the user, and so
+does the confirmation of a remote pairing by a browser session (`agent_paired_remote::<new agent>`, ADR-058); the
 list returns these rows only to clients that ask with `?account=1` (old web clients never see the new kind). Account
 audit: `GET /v1/me/audit` lists the user's account-level audit rows (agent pairing, claim, revocation, passkeys,
 recovery) with `agent_id`; the settings show it as "Security activity".
@@ -246,6 +309,14 @@ token as the lasting way.
 | Revoked or replaced agent | resolver refuses at once (`key_revoked`); sealed identity deleted at the hub; open live streams closed; the tool deletes its state | the agent held the user's identity: what it read stays with it, and its copy of the identity would open later wraps of a future database leak; identities do not rotate in this version (roadmap); a passkey it added through recovery stays until the user removes it |
 | Compromised computer of the agent | private key `0600`; revocation in the settings | equals an unlocked browser of the user: identity and the user's readable data |
 | Claude login token leak | read-only, never logged; encrypted under `CK` before it leaves the computer | the token is valid until it expires (hours) and has the scopes of the Claude Code login |
+| Third party sends the user a **remote** link of its own agent (with its code), ADR-058 | explicit mode, the warning of §5.4, the typed agent code, 300 s deadline, the return code the user must hand to *that* agent, notification on every client, banner while a remote orchestrator is active, the list with its computer name, one-click "Disconnect" | **higher than loopback:** a user persuaded to open the third party's link, type its code and send the return code back confirms the third party's agent – a full account access until revoked (device-code phishing class); accepted by rule E-04 and reading A3 of `KONZEPT.md` |
+| Same through an invitation link (new account) | as above; the code is asked before the passkey is created | no other client receives the notification then; the banner appears at the next sign-in |
+| Malicious hub forges the remote handover (own `r'`, own identity) | return code derived from the browser's `r`, checked by the tool before anything is claimed or stored | 40 bits, one attempt |
+| Malicious hub swaps the agent key or flips the mode | fingerprint from the link; the page compares `m` with `remote`; the hub requires/refuses `handover_ct` by mode | as above (malicious JavaScript of the hub) |
+| Phished agent hides the notification (marks it read) | banner from the agent row, not from a read state; audit | the agent can disconnect itself and the banner goes away – then it has no access any more |
+| Attacker grinds a pairing with the same agent code | the hub's nonce in the code input: one hub registration per attempt, rate-limited (§2) | – |
+| Someone reads the link, the agent code or `handover_ct` | none is a secret; `handover_ct` sealed to the agent's key, single use, cleared at claim, revocation and deadline | – |
+| Someone reads the return code | useful only to the holder of the agent's private key, within the claim deadline | – |
 
 ## 10. Tests
 Not built yet, so not tested yet: E2E-42
@@ -268,6 +339,16 @@ whole user journey: organization, invitation with role admin, workgroup, device,
 result, whiteboard entry, role change, its attempt to confirm a pairing refused, revoking itself); attack tests: a
 link opened on another computer (no listener), a reused pairing, a revoked agent, a foreign account's pairing, a
 hub-substituted bundle, an agent that tries to confirm a pairing (`403 forbidden`).
+
+Remote pairing (ADR-058, KOR-42): vectors of §3 (agent code, handover, return code, typed forms) in all three
+implementations; hub: creation and lookup with nonce and 300 s, `handover_required`/`handover_unexpected`, the 600 s
+claim deadline, `GET /v1/agent/handover` only for confirmed remote rows, `handover_ct` cleared at claim, revocation
+and deadline, notification and audit details, `remote` in the list, loopback answers unchanged, migration 0011 on the
+previous schema with data; web: link parsing with `m=remote`, mode mismatch both ways, code input (normalisation,
+wrong code keeps the button disabled), return code, waiting state, banner, invitation asks the code before the
+passkey; tool: `pair --remote`, every outcome of `--wait`, `hub_too_old`, pending state removed in every terminal
+case, `register --remote`, secret canaries, an end-to-end run against the hub fake whose "browser" seals the
+handover.
 
 ## 11. Orchestrator on platform hardware (design; not built in this package, follow-up package)
 
@@ -321,6 +402,12 @@ transaction with the writer role: `DELETE FROM hub.agent WHERE state = 'open'` a
 'revoked', bundle_ct = NULL, revoked_at = now() WHERE state IN ('confirmed', 'active')`. The old hub does not know agent
 keys anyway; the revocation makes sure that no agent comes back to life when the new hub runs again (users pair anew).
 Take the export of the window before the rollback and upgrade again as soon as possible.
+
+Migration `0011_agent_remote_pairing.sql` (ADR-058) is additive (new columns with defaults or null, checks that every
+existing row satisfies). Before rolling the hub back behind it, revoke the unclaimed remote rows (`UPDATE hub.agent
+SET state = 'revoked', bundle_ct = NULL, handover_ct = NULL, revoked_at = now() WHERE remote AND state =
+'confirmed'`; open remote pairings expire in 5 minutes); the old hub ignores the columns, and an old page refuses a
+remote link (it has no `c`).
 
 The web client is delivered by the hub itself (`agent_hub/static_routes.py`, `06-web.md` §10.1: the build is part of
 the hub release; `index.html` is revalidated on every load, assets are content-hashed and integrity-checked), so a new

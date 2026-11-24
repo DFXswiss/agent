@@ -144,6 +144,16 @@
     "body": "The virtual machine stopped responding.",
     "action": "Retry the task."
   },
+  "handover_required": {
+    "title": "Agent connection refused",
+    "body": "This page did not send what your agent on the other computer needs.",
+    "action": "Reload the page and confirm again."
+  },
+  "handover_unexpected": {
+    "title": "Agent connection refused",
+    "body": "This page treated the request as one from another computer, but it is not.",
+    "action": "Do not confirm. Ask your AI agent to connect again."
+  },
   "header_invalid": {
     "title": "Invalid header",
     "body": "A request or record header is malformed.",

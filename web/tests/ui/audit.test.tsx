@@ -261,6 +261,7 @@ describe('audit view', () => {
           lastUsedAt: null,
           revokedAt: null,
           replaces: null,
+          remote: false,
         },
       ]),
     );

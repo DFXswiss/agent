@@ -83,6 +83,7 @@ AUDIT_ACTIONS = frozenset(
         "platform.user_certify",
         "platform.user_decertify",
         "platform.user_invite",
+        "read.agent.handover",
         "read.agent.me",
         "read.device.credential",
         "read.device.logs",

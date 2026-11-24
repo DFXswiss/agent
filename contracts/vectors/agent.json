@@ -1,5 +1,5 @@
 {
-  "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056).",
+  "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-058).",
   "agent": {
     "id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
     "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
@@ -196,6 +196,106 @@
       "error": "header_invalid",
       "name": "label_extra_key",
       "op": "check_label"
+    },
+    {
+      "args": {
+        "fp": "CzOH3lkVGYJwp1q24gW2DQ",
+        "nonce": "w298sL-NFsg",
+        "origin": "https://agent.example",
+        "pairing_id": "01a1ee56-5e00-7242-9e24-f87629ad2977"
+      },
+      "error": "header_invalid",
+      "name": "code_nonce_short",
+      "op": "agent_code"
+    },
+    {
+      "args": {
+        "length": 10,
+        "text": "ABCDE-FGHJU"
+      },
+      "error": "header_invalid",
+      "name": "code_u",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "length": 10,
+        "text": "ABCD-EFGH"
+      },
+      "error": "header_invalid",
+      "name": "code_short",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "length": 8,
+        "text": "ABCDE-FGHJK"
+      },
+      "error": "header_invalid",
+      "name": "code_long",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "length": 8,
+        "text": "ABCD_EFGH"
+      },
+      "error": "header_invalid",
+      "name": "code_symbol",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "length": 8,
+        "text": 12345678
+      },
+      "error": "header_invalid",
+      "name": "code_not_text",
+      "op": "parse_code"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-79bc-ad68-1fafbfc5d917",
+        "agent_kem_sk": "b2YLiSvgj-w4fVFy83ekI6aRJ-UFZ22sqhppQtCY0lY",
+        "sealed": "3DfY9vjIgR0MzdY5AUDHQeTVCNa0rMJj2_is-nhF5DyLCTqwO-lGDXbUymzRYoRLooXEFptScW4_UF7jQFFfdK665oS-1hvzuzthnvbdulUj1zr-CooWWdr5R32QfqiT9-EvV9ECPh_nFDgS5iZ0iaXKh4U8-Zw-tEKt8xQ8Pqn2H3P28yb_Lp00LYGZd83gffwoT2o",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "decrypt_failed",
+      "name": "handover_other_agent",
+      "op": "open_handover"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "agent_kem_sk": "b2YLiSvgj-w4fVFy83ekI6aRJ-UFZ22sqhppQtCY0lY",
+        "sealed": "3DfY9vjIgR0MzdY5AUDHQeTVCNa0rMJj2_is-nhF5DyLCTqwO-lGDXbUymzRYoRLooXEFptScW4_UF7jQFFfdK665oS-1hvzuzthnvbdulUj1zr-CooWWdr5R32QfqiT9-EvV9ECPh_nFDgS5iZ0iaXKh4U8-Zw-tEKt8xQ8Pqn2H3P28yb_Lp00LYGZd83gffwoT2o",
+        "user_id": "01a1ee56-5e00-7476-87e0-4918c293c341"
+      },
+      "error": "decrypt_failed",
+      "name": "handover_other_user",
+      "op": "open_handover"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "agent_kem_sk": "bLITtKxqd65POjEt99JGl4yLMa8bFiAnIjsGo-r07VM",
+        "sealed": "3DfY9vjIgR0MzdY5AUDHQeTVCNa0rMJj2_is-nhF5DyLCTqwO-lGDXbUymzRYoRLooXEFptScW4_UF7jQFFfdK665oS-1hvzuzthnvbdulUj1zr-CooWWdr5R32QfqiT9-EvV9ECPh_nFDgS5iZ0iaXKh4U8-Zw-tEKt8xQ8Pqn2H3P28yb_Lp00LYGZd83gffwoT2o",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "decrypt_failed",
+      "name": "handover_other_key",
+      "op": "open_handover"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "agent_kem_sk": "b2YLiSvgj-w4fVFy83ekI6aRJ-UFZ22sqhppQtCY0lY",
+        "sealed": "LmqThCmLlaBOyjwHpN0e1uUnBamRSmWE4uHPTZxxCVwfHpuJ2dmTuMEcZt_qTvNzT3yQxOkaVOmYK1SfF9x7zvrBpOiic-B4-9X611lc_ItiXFUYNegg1tE4dJ9FkUoc7o2Dk3SV-xXKgg1iVdJpgCGxqy5HuO63Jpszub2LQVJ66Jaiq_6OMynO-0ag5tetM8FwwegCDss",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "header_invalid",
+      "name": "handover_not_canonical",
+      "op": "open_handover"
     }
   ],
   "label": {
@@ -210,6 +310,45 @@
   "pop": {
     "signature": "tpLKdGptfPjx3_AVQUNAL9JRwXyULO7GNAmf5sEF4Hz-KFxYY7mXKrWx7waE-lwi1U8ZDh2NGbk70vulOwxyAQ",
     "text": "YWdlbnQuZGZ4LnN3aXNzL3YxL2FnZW50LXBhaXIAeyJrZW0iOiJXZDJSeWYtU2NJdUtyNDdhMHBiSVNWaVVPQk9HOWlmei10Rm93UUZ1YjJRIiwicGFpcmluZ19pZCI6IjAxYTFlZTU2LTVlMDAtNzI0Mi05ZTI0LWY4NzYyOWFkMjk3NyIsInNpZyI6IlVTOTVfMUFNbjJIS1lGSWJYVEd3Y1Y0MDhDMTZ0eE1JdHJidnZGV25sYW8ifQ"
+  },
+  "remote": {
+    "agent_code": "GK08VH4MRF",
+    "agent_code_shown": "GK08V-H4MRF",
+    "code_input": "YWdlbnQuZGZ4LnN3aXNzL3YxL2FnZW50LWNvZGUAeyJmcCI6IkN6T0gzbGtWR1lKd3AxcTI0Z1cyRFEiLCJtb2RlIjoicmVtb3RlIiwibm9uY2UiOiJ5dzFDeVVXX3J6T2ctaFp6V2VvclZRIiwib3JpZ2luIjoiaHR0cHM6Ly9hZ2VudC5leGFtcGxlIiwicGFpcmluZ19pZCI6IjAxYTFlZTU2LTVlMDAtNzI0Mi05ZTI0LWY4NzYyOWFkMjk3NyJ9",
+    "handover": {
+      "ephemeral_sk": "xGqxoEJeHK3nWID81hRoTvL7X0ES5fCcfRzPK3IzZn0",
+      "info": "YWdlbnQuZGZ4LnN3aXNzL3YxL2FnZW50LWhhbmRvdmVyAHsiYWdlbnQiOiIwMWExZWU1Ni01ZTAwLTcyNDItOWUyNC1mODc2MjlhZDI5NzciLCJ1c2VyIjoiMDFhMWVlNTYtNWUwMC03N2JlLThjZjMtMWYyN2JiMGU5MmEyIn0",
+      "plaintext": "{\"k\":\"Z2uw3-iPx6FasOhozYsI_k6-CWy5UsqDNf0lH6IrQ_M\",\"r\":\"wLpnhNBEV-sy3_ux62CncasXk3ZeQbwHT-jEeIydODA\"}",
+      "root_key": "Z2uw3-iPx6FasOhozYsI_k6-CWy5UsqDNf0lH6IrQ_M",
+      "sealed": "3DfY9vjIgR0MzdY5AUDHQeTVCNa0rMJj2_is-nhF5DyLCTqwO-lGDXbUymzRYoRLooXEFptScW4_UF7jQFFfdK665oS-1hvzuzthnvbdulUj1zr-CooWWdr5R32QfqiT9-EvV9ECPh_nFDgS5iZ0iaXKh4U8-Zw-tEKt8xQ8Pqn2H3P28yb_Lp00LYGZd83gffwoT2o"
+    },
+    "nonce": "yw1CyUW_rzOg-hZzWeorVQ",
+    "origin": "https://agent.example",
+    "return_code": "669RH5EF",
+    "return_code_shown": "669R-H5EF",
+    "return_info": "YWdlbnQuZGZ4LnN3aXNzL3YxL2FnZW50LXJldHVybgB7ImFnZW50IjoiMDFhMWVlNTYtNWUwMC03MjQyLTllMjQtZjg3NjI5YWQyOTc3IiwidXNlciI6IjAxYTFlZTU2LTVlMDAtNzdiZS04Y2YzLTFmMjdiYjBlOTJhMiJ9",
+    "typed": [
+      {
+        "code": "GK08VH4MRF",
+        "length": 10,
+        "text": "gk08v-h4mrf"
+      },
+      {
+        "code": "GK08VH4MRF",
+        "length": 10,
+        "text": " GK0 8VH4-MRF "
+      },
+      {
+        "code": "669RH5EF",
+        "length": 8,
+        "text": "669R-H5EF"
+      },
+      {
+        "code": "00111ABCDE",
+        "length": 10,
+        "text": "o0 iL1-abcde"
+      }
+    ]
   },
   "secret": {
     "bundle_key": "wQZW0ERoLtWQxEpRpiJxu_R0veb9maFLUUxInxwr-4I",
