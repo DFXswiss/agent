@@ -544,6 +544,13 @@ describe('window', () => {
     expect(group()).toHaveAttribute('data-total', '119');
     expect(group()).toHaveAttribute('data-from', '25');
     expect(shown()[0]).toBe('t026');
+    // an entry above the window leaves: the window keeps its first entry
+    act(() => {
+      queueAttention(t.store, record('t001', { category: 'done', reason: 'closed', updated_at: at(9) }));
+      flushAttention(t.store);
+    });
+    expect(group()).toHaveAttribute('data-from', '24');
+    expect(shown()[0]).toBe('t026');
   });
 });
 

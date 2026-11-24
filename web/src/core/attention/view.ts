@@ -186,3 +186,6 @@ export const selectNoTask =
       const group = attentionGroup(state.attention, org, category);
       return group.status === 'ready' && group.ids.length === 0;
     });
+
+/** The text of a count badge: the number, `99+` above 99. */
+export const badgeText = (count: number): string => (count > 99 ? '99+' : String(count));

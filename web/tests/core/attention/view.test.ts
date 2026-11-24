@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   actionOf,
   approvalText,
+  badgeText,
   earlierFrom,
   groupWindow,
   laterFrom,
@@ -61,6 +62,12 @@ describe('reasons and actions', () => {
     expect(action('blocked', 'operation_refused')).toBeNull();
     expect(action('working', 'working')).toBeNull();
     expect(action('done', 'idle')).toBeNull();
+  });
+
+  it('shows a badge count up to 99', () => {
+    expect(badgeText(7)).toBe('7');
+    expect(badgeText(99)).toBe('99');
+    expect(badgeText(100)).toBe('99+');
   });
 
   it('start an approval with exactly "Approved." or "Declined.", then a blank line and the comment', () => {

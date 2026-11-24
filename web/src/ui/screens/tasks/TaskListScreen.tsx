@@ -14,24 +14,16 @@ import { StateFilter, TaskTable } from './TaskTable';
 export interface TaskListProps {
   readonly org: string;
   readonly wg: string;
-  /** Show at most this many rows and no paging nor filter (the home screen's recent tasks). */
-  readonly limit?: number;
 }
 
-/** The rows of a workgroup's list with the state filter and paging (also the home screen's "recent tasks"). */
-export function TaskList({ org, wg, limit }: TaskListProps) {
+/** The rows of a workgroup's list with the state filter and paging. */
+export function TaskList({ org, wg }: TaskListProps) {
   const { t } = useI18n();
   const [filter, setFilter] = useState<string | null>(null);
   return (
     <div className="flex flex-col gap-2">
-      {limit === undefined && <StateFilter value={filter} onChange={setFilter} />}
-      <TaskTable
-        org={org}
-        wgs={[wg]}
-        state={filter}
-        {...(limit !== undefined && { limit })}
-        empty={<p className="text-gray-600">{t('tasks.empty')}</p>}
-      />
+      <StateFilter value={filter} onChange={setFilter} />
+      <TaskTable org={org} wgs={[wg]} state={filter} empty={<p className="text-gray-600">{t('tasks.empty')}</p>} />
     </div>
   );
 }
