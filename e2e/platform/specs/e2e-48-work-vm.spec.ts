@@ -4,7 +4,7 @@
 // failing tests as root, fixes the code in its workspace, runs them green and opens a draft pull request through
 // the GitHub operations. A follow-up prompt of the same task uses the same VM: it starts a program as a service,
 // reads its page with the browser of the VM and shows the VM's status; a second VM for the task is refused with
-// `limit_exceeded`. The chat shows every run; closing the task tears the VM down (`session_ended`). The measured
+// `limit_exceeded`. The chat shows every run; closing the task tears the VM down (`task_closed`, KOR-43). The measured
 // times (assignment, cold start of a pool entry) go to the iteration's artefacts (`e2e-48/work-vm.json`). T1 only.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -152,7 +152,7 @@ test('@E2E-48 @needs-vm @needs-workvm the session gets a work VM, runs and fixes
       timeout: 180_000,
       intervals: [2_000],
     })
-    .toEqual([{ state: 'deleted', delete_reason: 'session_ended', size: 'standard' }]);
+    .toEqual([{ state: 'deleted', delete_reason: 'task_closed', size: 'standard' }]);
   await expect
     .poll(
       async () =>
@@ -164,7 +164,7 @@ test('@E2E-48 @needs-vm @needs-workvm the session gets a work VM, runs and fixes
     )
     .toEqual([
       ['created', null],
-      ['deleted', 'session_ended'],
+      ['deleted', 'task_closed'],
     ]);
 
   const dir = join(e2e.iterationDir, 'e2e-48');

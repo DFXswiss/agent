@@ -44,7 +44,7 @@ def rows(world: World) -> list[dict[str, Any]]:
 
 
 def test_step_is_registered() -> None:
-    assert [ReconcileStep(57, "workvm", reconcile.step)] == reconcile.STEPS
+    assert [ReconcileStep(45, "workvm", reconcile.step)] == reconcile.STEPS
 
 
 def test_closed_tasks_of_the_desired_state() -> None:

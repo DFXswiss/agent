@@ -1,0 +1,221 @@
+{
+  "name": "e2e-60-test-runs",
+  "description": "E2E-60 (KOR-43, ADR-078): the session uses its work VM once, then runs the tests through the operation test.run (each run in a fresh VM): the first run fails with a log over 1 MiB, the session fixes the code, the second run passes and the session opens a draft pull request. Every result is checked by the next step's expectation.",
+  "steps": [
+    {
+      "id": "checkout",
+      "expect": {
+        "user_text_contains": "E2E60-TESTS",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Checking out the repository first."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "octo-org/calc"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "work-vm",
+      "expect": {
+        "tool_result_contains": "\"dir\":\"repos/octo-org/calc\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__workvm_exec",
+            "input": {
+              "command": "python3 --version",
+              "sync": "none",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "tests-red",
+      "expect": {
+        "tool_result_contains": "\"exit_code\":0"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "test.run",
+              "params": {
+                "kind": "unit",
+                "command": "cd repos/octo-org/calc && seq 1 50000 | sed 's/^/kz60-log-v3b7n1m5 line /' && python3 test_calc.py"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fix",
+      "expect": {
+        "tool_result_contains": "\"state\":\"failed\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/octo-org/calc/calc.py",
+              "content": "def add(a, b):\n    return a + b  # kz60-file-x7c3v9b1\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "tests-green",
+      "expect": {
+        "tool_result_is_error": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "test.run",
+              "params": {
+                "kind": "unit",
+                "command": "cd repos/octo-org/calc && python3 test_calc.py"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "branch",
+      "expect": {
+        "tool_result_contains": "\"state\":\"passed\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_branch",
+              "params": {
+                "repo": "octo-org/calc",
+                "branch": "e2e60/fix",
+                "from": "main"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "commit",
+      "expect": {
+        "tool_result_contains": "\"branch\":\"e2e60/fix\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "octo-org/calc",
+                "branch": "e2e60/fix",
+                "message": "Fix the addition."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push",
+      "expect": {
+        "tool_result_contains": "\"files_changed\":1"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": {
+                "repo": "octo-org/calc",
+                "branch": "e2e60/fix",
+                "commit_sha": "${commit}"
+              }
+            }
+          }
+        ]
+      },
+      "capture": {
+        "commit": {
+          "regex": "\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"",
+          "source": "messages"
+        }
+      }
+    },
+    {
+      "id": "pull-request",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/octo-org/calc/tree/e2e60/fix\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_pull_request",
+              "params": {
+                "repo": "octo-org/calc",
+                "head": "e2e60/fix",
+                "base": "main",
+                "title": "Fix the addition kz60-title-n4m8b2v6",
+                "body": "test.run is green.",
+                "draft": true
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fixed",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/octo-org/calc/pull/1\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The test run failed, I fixed add(), the next run passed; draft pull request #1 is open kz60-answer-q2w6e8r4."
+          }
+        ]
+      }
+    }
+  ]
+}
