@@ -1516,8 +1516,8 @@ def build_rotation() -> Json:
 
 def build_wraps() -> Json:
     """W1-W3 against the final state of the main log, `cred` wraps and catch-up plans (sections 5.11, 6.3)."""
-    main, plat, edge = main_builder(), platform_builder(), edge_builder()
-    ctx = Context({"main": main.entries, "platform": plat.entries, "edge": edge.entries})
+    main, plat, edge, admit = main_builder(), platform_builder(), edge_builder(), admit_builder()
+    ctx = Context({"main": main.entries, "platform": plat.entries, "edge": edge.entries, "admit": admit.entries})
     full = len(main.entries)
 
     def edge_args(wrapper: str, scope: str, scope_id: str, epoch: int, recipient: str, **extra: object) -> Json:
@@ -1548,6 +1548,8 @@ def build_wraps() -> Json:
         ("W2_admin_by_inheritance_for_member", edge_args("carol", "wg", W1, 1, "bob")),
         ("W2_admin_by_inheritance_for_device", edge_args("carol", "wg", W1, 1, "dev2")),
         ("W2_for_admin_on_archived_workgroup", edge_args("alice", "wg", W2, 1, "carol")),
+        # Key model KM-10: the positive control of org_key_for_device_without_workgroup (dev2 serves W1).
+        ("W2_org_key_for_device_with_workgroup", edge_args("alice", "org", ORG, 1, "dev2")),
     ):
         ctx.run("check_wrap", case)
         valid.append({"name": name, "args": case})
@@ -1556,6 +1558,19 @@ def build_wraps() -> Json:
         ("cred_owner_for_device", {**args("alice", "cred", pid("alice"), 2, "device"), "current_epoch": 2}),
         ("cred_device_for_platform_device", {**args("device", "cred", pid("alice"), 1, "pdev"), "current_epoch": 2}),
         ("cred_owner_self", {**args("alice", "cred", pid("alice"), 2, "alice"), "current_epoch": 2}),
+        # Key model KM-15: the positive control of log.json cred_device_of_org_without_consent in the same log state
+        # (alice founded the org, so pdev on W1 is a reader of alice's credential key; bob's admission is not).
+        (
+            "cred_device_of_org_with_consent",
+            {
+                "log": _ref("admit", ADMIT_COUNT - 1),
+                "founder": sig_pk("alice"),
+                "platform": _platform_ref(PLATFORM_COUNT),
+                "wrap": make_wrap("alice", "cred", pid("alice"), 2, "pdev"),
+                "wrapped_by": pid("alice"),
+                "current_epoch": 2,
+            },
+        ),
     ):
         ctx.run("check_cred_wrap", case)
         cred_valid.append({"name": name, "args": case})
@@ -1620,7 +1635,7 @@ def build_wraps() -> Json:
             "wrap_unauthorized",
         ),
         # Key model (docs/platform/key-model.md): KM-10, a device without a workgroup is no reader of the org key
-        # (ADR-007); KM-06, only principals of the log receive wraps (an agent key is none, KOR-57 changes this).
+        # (ADR-007); KM-06, only principals of the log receive wraps (an ID outside the log, e.g. an agent's, is none).
         neg(
             "org_key_for_device_without_workgroup",
             "check_wrap",
@@ -1686,7 +1701,13 @@ def build_wraps() -> Json:
         "identities": _identities(),
         "ids": _ids(),
         "founder": sig_pk("alice"),
-        "logs": {"main": main.entries, "platform": plat.entries, "edge": edge.entries, "edge_rotated": rotated.entries},
+        "logs": {
+            "main": main.entries,
+            "platform": plat.entries,
+            "edge": edge.entries,
+            "edge_rotated": rotated.entries,
+            "admit": admit.entries,
+        },
         "scope_keys": {
             f"{scope}/{scope_id}/{epoch}": b64u_encode(scope_key(scope, scope_id, epoch))
             for scope, scope_id, epoch in (
