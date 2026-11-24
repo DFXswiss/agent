@@ -1,0 +1,7 @@
+{
+  "operation_id": "01930060-0000-7000-8000-000000000060",
+  "type": "human.question",
+  "params": {
+    "question": "Which region should we deploy to?"
+  }
+}

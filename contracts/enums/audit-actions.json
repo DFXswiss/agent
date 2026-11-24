@@ -446,6 +446,14 @@
       "group": "read"
     },
     {
+      "action": "read.org.attention",
+      "group": "read"
+    },
+    {
+      "action": "read.org.attention.summary",
+      "group": "read"
+    },
+    {
       "action": "read.org.audit",
       "group": "read"
     },

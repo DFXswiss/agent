@@ -286,6 +286,38 @@
       ],
       "additionalProperties": false
     },
+    "params_human_question": {
+      "type": "object",
+      "description": "human.question (KOR-39, ADR-064 section 3): a main session asks a person; the task waits in needs_decision/question until the next prompt answers it",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "the question to the person, 1-4000 characters (line breaks allowed); sealed in operation.params",
+          "minLength": 1,
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "additionalProperties": false
+    },
+    "params_human_approval": {
+      "type": "object",
+      "description": "human.approval (KOR-39, ADR-064 section 3): as human.question, the person approves or declines (needs_decision/approval)",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "the question to the person, 1-4000 characters (line breaks allowed); sealed in operation.params",
+          "minLength": 1,
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "additionalProperties": false
+    },
     "result_github_list_repositories": {
       "type": "object",
       "properties": {
@@ -631,6 +663,12 @@
     "result_task_set_title": {
       "$ref": "../common.json#/$defs/empty"
     },
+    "result_human_question": {
+      "$ref": "../common.json#/$defs/empty"
+    },
+    "result_human_approval": {
+      "$ref": "../common.json#/$defs/empty"
+    },
     "result": {
       "anyOf": [
         {
@@ -662,6 +700,12 @@
         },
         {
           "$ref": "#/$defs/result_task_set_title"
+        },
+        {
+          "$ref": "#/$defs/result_human_question"
+        },
+        {
+          "$ref": "#/$defs/result_human_approval"
         }
       ],
       "description": "result of any operation type"

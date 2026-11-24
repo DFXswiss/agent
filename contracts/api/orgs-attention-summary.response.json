@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/orgs-attention-summary.response.json",
+  "title": "GET /v1/orgs/{org}/attention/summary response",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/attention/summary (03-api.md section 4.6, KOR-39): counts over the readable workgroups; done_since counts done records with since at or after the parameter.",
+  "type": "object",
+  "properties": {
+    "needs_decision": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "needs_decision_mine": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "blocked": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "working": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "done_since": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "needs_decision",
+    "needs_decision_mine",
+    "blocked",
+    "working",
+    "done_since"
+  ],
+  "additionalProperties": false
+}

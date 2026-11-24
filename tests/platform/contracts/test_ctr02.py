@@ -549,6 +549,9 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
     "github.comment": ("repo number body", "comment_id url", "repo number body", 86400),
     "subagent.request": ("purpose prompt model_id", "session_id", "session prompt", 600),
     "task.set_title": ("title", "", "", None),
+    # KOR-39 (ADR-064 section 3)
+    "human.question": ("question", "", "", None),
+    "human.approval": ("question", "", "", None),
 }
 SPEC_REPO = "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
 # 03-api.md section 9: (type, field, longest valid value length).
@@ -560,6 +563,8 @@ SPEC_TEXT_LIMITS = [
     ("subagent.request", "purpose", 200),
     ("subagent.request", "prompt", 32768),
     ("task.set_title", "title", 120),
+    ("human.question", "question", 4000),
+    ("human.approval", "question", 4000),
 ]
 SPEC_PROTECTED_DEFAULT = ["main", "master", "develop", "release/*"]
 

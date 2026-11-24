@@ -209,6 +209,9 @@
       ],
       "additionalProperties": false
     },
+    "data_attention": {
+      "$ref": "../../api/objects.json#/$defs/attention_row"
+    },
     "frame_hello": {
       "type": "object",
       "properties": {
@@ -413,6 +416,23 @@
       ],
       "additionalProperties": false
     },
+    "frame_attention": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "attention"
+        },
+        "data": {
+          "$ref": "#/$defs/data_attention"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
     "frame": {
       "description": "one frame: event name and JSON data",
       "oneOf": [
@@ -451,6 +471,9 @@
         },
         {
           "$ref": "#/$defs/frame_resync"
+        },
+        {
+          "$ref": "#/$defs/frame_attention"
         }
       ]
     }

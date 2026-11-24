@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/orgs-attention-summary.request.json",
+  "title": "GET /v1/orgs/{org}/attention/summary request",
+  "description": "query parameters (03-api.md section 4.6, KOR-39)",
+  "type": "object",
+  "properties": {
+    "since": {
+      "$ref": "../common.json#/$defs/time",
+      "description": "lower bound of done_since; default the last 24 h"
+    }
+  },
+  "additionalProperties": false
+}

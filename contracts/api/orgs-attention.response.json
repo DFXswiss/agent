@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/orgs-attention.response.json",
+  "title": "GET /v1/orgs/{org}/attention response",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/attention (03-api.md section 4.6, KOR-39): the tasks of one attention category in the readable workgroups.",
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/attention_item"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "next_before": {
+      "$ref": "../common.json#/$defs/next_before"
+    }
+  },
+  "required": [
+    "items",
+    "next_before"
+  ],
+  "additionalProperties": false
+}

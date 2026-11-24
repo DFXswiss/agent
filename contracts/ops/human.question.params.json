@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/human.question.params.json",
+  "title": "operation human.question params",
+  "description": "Parameters of the operation type human.question (03-api.md section 9, KOR-39); additionalProperties false, integers without booleans.",
+  "$ref": "objects.json#/$defs/params_human_question"
+}

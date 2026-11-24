@@ -1,0 +1,12 @@
+{
+  "task_id": "01930003-0000-7000-8000-000000000003",
+  "category": "working",
+  "reason": "subagents",
+  "ref_kind": null,
+  "ref_id": null,
+  "since": "2026-11-21T12:00:00.000Z",
+  "seq": 3,
+  "subagents_total": 3,
+  "subagents_active": 2,
+  "updated_at": "2026-11-21T12:00:00.000Z"
+}

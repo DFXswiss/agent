@@ -405,6 +405,21 @@
         "closed"
       ]
     },
+    "attention_category": {
+      "type": "string",
+      "description": "category of a task's attention record (ADR-064, contracts/enums/attention.json)",
+      "enum": [
+        "needs_decision",
+        "blocked",
+        "working",
+        "done"
+      ]
+    },
+    "attention_reason": {
+      "type": "string",
+      "description": "reason code of an attention record: closed list per category in contracts/enums/attention.json; a later package adds reasons (additive), so clients show an unknown reason with its category's generic text",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
     "session_state": {
       "type": "string",
       "enum": [
@@ -2759,6 +2774,11 @@
       "type": "string",
       "pattern": "^([1-9][0-9]?|1[0-9]{2}|200)$",
       "description": "query parameter text"
+    },
+    "q_limit_attention": {
+      "type": "string",
+      "pattern": "^([1-9][0-9]?|100)$",
+      "description": "query parameter text (1-100)"
     },
     "q_before": {
       "type": "string",

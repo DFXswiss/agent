@@ -1,0 +1,8 @@
+{
+  "operation_id": "01930061-0000-7000-8000-000000000061",
+  "type": "human.approval",
+  "params": {
+    "question": "May I merge PR 7?"
+  },
+  "idempotency_key": "approval-1"
+}
