@@ -7,7 +7,7 @@ shapes, else the event is refused (`settings_invalid`). The latest event per wor
 (`scope_seq`); it is kept as received with the author's verified signing key (`runner.workgroup_settings`) and opened
 again only into memory (`load`).
 
-Without any verified event a workgroup has the defaults: no repository list, no protected branch (ADR-078 section 3,
+Without any verified event a workgroup has the defaults: no repository list, no protected branch (ADR-079 section 3,
 A17: GitHub's own branch protection applies; a workgroup may set its own list), pull requests as drafts.
 
 The repository list is an optional restriction (KOR-30, ADR-054): an empty list (no event, or an event with

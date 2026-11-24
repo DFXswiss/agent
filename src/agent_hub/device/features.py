@@ -18,7 +18,7 @@ session itself (the hub then takes `session.vm_id` from the session transitions 
 store a task or session choice or a default while an active device assigned to a workgroup of the org has not
 announced it (`agent_hub.github.identities.require_feature`, `409 peer_outdated`).
 
-`log.policy` (ADR-077): the runner verifies the platform-log entries `platform_policy` and `org_operator_subscriptions`
+`log.policy` (ADR-079): the runner verifies the platform-log entries `platform_policy` and `org_operator_subscriptions`
 and the platform role `operator` (the hub refuses to append them while an active platform device has not announced it,
 `agent_hub.platform.log`).
 """
@@ -38,7 +38,7 @@ LOG_ORG_ASSIGN = "log.org_assign"
 """The runner verifies `device_assign_org` / `device_unassign_org` (ADR-075 section 5)."""
 LOG_POLICY = "log.policy"
 """The runner verifies the platform log with `platform_policy`, `org_operator_subscriptions` and the role `operator`
-(ADR-077)."""
+(ADR-079)."""
 VM_CHOICE = "vm.choice"
 """The runner chooses the VM of each session and names it in `session_transition` (ADR-075 section 4)."""
 GITHUB_IDENTITIES = "github.identities"

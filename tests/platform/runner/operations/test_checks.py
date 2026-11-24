@@ -267,7 +267,7 @@ def test_protected_branches_are_refused(op_type: str, field: str, value: str) ->
 
 @pytest.mark.parametrize("op_type", ["github.create_branch", "github.commit", "github.push"])
 def test_without_settings_no_branch_is_protected(op_type: str) -> None:
-    """ADR-078 section 3, A17: the platform sets no default; GitHub's own branch protection applies."""
+    """ADR-079 section 3, A17: the platform sets no default; GitHub's own branch protection applies."""
     checked = checks.check(request(op_type, with_(op_type, branch="main"), settings=DEFAULTS))
     assert checked["branch"] == "main"
 

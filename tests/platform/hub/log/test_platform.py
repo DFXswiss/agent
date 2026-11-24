@@ -105,7 +105,7 @@ def test_recertified_device_does_not_revive_its_old_certification(main: LogBuild
 
 
 def test_switches_and_operator_subscriptions(plat: PlatformBuilder) -> None:
-    """ADR-078: the latest entry of a switch or an organization counts; without one a switch is off and an organization
+    """ADR-079: the latest entry of a switch or an organization counts; without one a switch is off and an organization
     is not granted; an organization without an `org_platform_access` of its own follows `open_platform_access`."""
     log = platform.verify_platform_log(plat.entries, ROOT)
     other = pid("org/other")

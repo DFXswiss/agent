@@ -1,4 +1,4 @@
-// The card that starts the missing model access (rule E-05, ADR-078 section 4): when the task's main session failed
+// The card that starts the missing model access (rule E-05, ADR-079 section 4): when the task's main session failed
 // with `model_access_unavailable`, its owner sees in the chat a card that leads to the connection of the Claude
 // subscription (settings, 06-web.md section 8.2). The hub continues the task by itself once a model credential is
 // stored; nobody repeats the instruction. Others see that the owner has been asked.

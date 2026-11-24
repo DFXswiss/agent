@@ -59,7 +59,7 @@ SESSION = LocalSession(
 
 
 PROTECTED = ("main", "master", "develop", "release/*")
-"""The workgroup's own protected branches (the platform sets no default since ADR-078; the attacks need a list)."""
+"""The workgroup's own protected branches (the platform sets no default since ADR-079; the attacks need a list)."""
 
 
 class RunnerStandIn:

@@ -69,7 +69,7 @@ describe('platform log state', () => {
   });
 });
 
-describe('platform switches and operator subscriptions (ADR-078)', () => {
+describe('platform switches and operator subscriptions (ADR-079)', () => {
   it('are off without an entry, follow the latest entry and fall back to the access switch', async () => {
     const plat = await platformWith([]);
     const [a, b, f, o] = await Promise.all(['org a', 'org b', 'org f', 'org o'].map((label) => idOf(label)));

@@ -1,6 +1,6 @@
 # KOR-49 decisions (no approval as a precondition)
 
-Design: [ADR-078](../adr/078-no-approval-as-precondition.md); register: [15-prerequisites.md](../spec/15-prerequisites.md);
+Design: [ADR-079](../adr/079-no-approval-as-precondition.md); register: [15-prerequisites.md](../spec/15-prerequisites.md);
 rules [E-05](../KONZEPT.md#e-05), [E-11](../KONZEPT.md#e-11), [E-19](../KONZEPT.md#e-19), interpretation
 [A17](../KONZEPT.md#a-17).
 
@@ -40,11 +40,11 @@ rules [E-05](../KONZEPT.md#e-05), [E-11](../KONZEPT.md#e-11), [E-19](../KONZEPT.
 11. **No protected-branch default anywhere.** Runner (`DEFAULT_PROTECTED = ()`), agent tool, web form and the contract
     (`contracts/ops/rules.json` `protected_branches.default = []`). GitHub's refusal of a protected branch keeps its own
     code (the GitHub area belongs to KOR-47 and is not touched).
-12. **Start credit stays per organization.** The billing logic is KOR-31's. ADR-078 records that the switches cost
+12. **Start credit stays per organization.** The billing logic is KOR-31's. ADR-079 records that the switches cost
     nothing with the default start credit of 0 and that F1 must bound a start credit above 0 (per founder or per
     invitation chain) before it is combined with the switches.
 13. **Findings of the independent review, kept as they are** (low): the operator pool falls back to
-    `OPERATOR_SUBSCRIPTION_ORGS` while the runner has no verified platform log (the behaviour before ADR-078 during the
+    `OPERATOR_SUBSCRIPTION_ORGS` while the runner has no verified platform log (the behaviour before ADR-079 during the
     move; once the variable is removed it denies); open invitations have no per-user quota (part of the owner's
     decision F1, with the start credit); an attempt after a model credential of the other kind than an explicit
     preference fails again and waits (the card stays); the `log.policy` gate also holds back a revocation of the role
@@ -55,7 +55,7 @@ rules [E-05](../KONZEPT.md#e-05), [E-11](../KONZEPT.md#e-11), [E-19](../KONZEPT.
 14. **A credential and a failure in the same moment.** Both transactions take an advisory lock of the owner
     (`model_retry.lock_owner`, before any task lock), so one of them always sees the other committed and the
     continuation is never lost.
-15. **E2E-60 shows the hub refusing a switch not signed by the root** (`log_signature`); that the runner refuses such
+15. **E2E-61 shows the hub refusing a switch not signed by the root** (`log_signature`); that the runner refuses such
     an entry too is proven by the shared negative vectors (`P4_policy_signed_by_hub`,
     `P4_operator_subscriptions_signed_by_hub`) that the runner's copy replays; a hub that serves a forged entry cannot
     be staged in T1 without a forged hub.

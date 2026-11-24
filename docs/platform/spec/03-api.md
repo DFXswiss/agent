@@ -108,14 +108,14 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `POST /v1/orgs/{org}/invites` | org:admin | `{entry` (log `invite` entry)`,package_ct}` → `{invite_id,seq}` (atomic with the log append) |
 | `GET /v1/orgs/{org}/invites` | org:admin | → open and recent invites (state `open|used|revoked|expired`, `registered`, `opened_at`: first answered lookup from the audit or null, KOR-36; `registered_user`: the account that registered with it or null, ADR-073) |
 | `POST /v1/orgs/{org}/invites/{id}/revoke` | org:admin | `{entry` (`invite_revoke`)`}` → `{seq}` |
-| `POST /v1/platform/invites` | platform:inviter (the role, or every user while the root-signed switch `open_platform_invites` is on, ADR-078) | `{invite_id,kind:"user",expires_at,pk_inv}` → `{}` (code never sent; `pk_inv` not an Ed25519 public key → `400 params_invalid`; the same ID with other values → `409 id_conflict`; ADR-043) |
+| `POST /v1/platform/invites` | platform:inviter (the role, or every user while the root-signed switch `open_platform_invites` is on, ADR-079) | `{invite_id,kind:"user",expires_at,pk_inv}` → `{}` (code never sent; `pk_inv` not an Ed25519 public key → `400 params_invalid`; the same ID with other values → `409 id_conflict`; ADR-043) |
 | `GET /v1/platform/invites` / `POST /v1/platform/invites/{id}/revoke` | platform:inviter | list / revoke (a user without the role, allowed by the switch: only its own invitations; another's is `404 not_found`) |
 
 ### 4.3 Organizations, membership log, wraps
 
 | Endpoint | Right | Request → Response |
 |---|---|---|
-| `POST /v1/orgs` | user | `{genesis` entry`,wraps[],events[]` (`org.profile`, `wg.profile`, `member.profile`)`,platform_invite_id?}` → `{org_id,default_wg}`. `genesis.private:true` REQUIRES `platform_invite_id` = an unused platform invitation whose `registered_user` is the caller (`platform_invite_required`); it is consumed in the same transaction and the org gets `platform_access=true` (one private org per platform invitation). Non-private orgs may be created by any user; they get `platform_access=false` until a root-signed `org_platform_access` entry (ADR-026), or `true` while the root-signed switch `open_platform_access` is on and no such entry excludes them (ADR-078). |
+| `POST /v1/orgs` | user | `{genesis` entry`,wraps[],events[]` (`org.profile`, `wg.profile`, `member.profile`)`,platform_invite_id?}` → `{org_id,default_wg}`. `genesis.private:true` REQUIRES `platform_invite_id` = an unused platform invitation whose `registered_user` is the caller (`platform_invite_required`); it is consumed in the same transaction and the org gets `platform_access=true` (one private org per platform invitation). Non-private orgs may be created by any user; they get `platform_access=false` until a root-signed `org_platform_access` entry (ADR-026), or `true` while the root-signed switch `open_platform_access` is on and no such entry excludes them (ADR-079). |
 | `GET /v1/orgs/{org}` | org:member | → `{org_id,private,default_wg,log_head,workgroups:[{wg_id,is_default,archived,my_access,devices:[device_id],epoch}],members:[{principal_id,kind,role,joined_seq}],rotation_pending}` |
 | `GET /v1/orgs/{org}/log` | org:member | `?after=` → `{entries:[{seq,entry}],head}` |
 | `POST /v1/orgs/{org}/log` | per entry type (`04-crypto.md` §4.7) | `{expected_seq,entries[],wraps[],events[]}` (`expected_seq` = the `seq` of the first entry in the batch = current head + 1) → `{head}`; atomic; hub runs L1–L8, W3, E1–E9, the rotation obligation (`rotation_required` if the batch does not contain exactly the rotate set R of `04-crypto.md` §4.7) and, for `device_assign`/`device_assign_org` with `platform_seq`, the platform-access rule (`platform_access_denied` unless `org.platform_access`); an added `device_assign_org` (or an added device in an org that uses one) only when every active device member of the org announced `log.org_assign` (`409 peer_outdated`, ADR-075 §5) |
@@ -126,7 +126,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `POST /v1/platform/log` | entry signed by the platform root (operator CLI `agent-hub platform …`; no session needed) | `{expected_seq,entries[]}` → `{head}`; types of `04-crypto.md` §4.8 incl. `device_decertify` (hub then refuses the device, sets `decertified`, marks affected scopes `rotation_pending`, sends `decertified` hint) |
 | `GET /v1/platform/enrollments` | root-signed request (§1) | → pending platform device enrollments with verified `inv_sig` (for `certify-pending`) |
 | `GET /v1/platform/users/{user}` **(ADR-060)** | root-signed request (§1) | → `{user_id,pub,account_code,created_at,platform_invite_id,registered_at,certified_seq}` of an active user (for `certify-user`), else `404 not_found` |
-| `GET /v1/platform/waiting` | root-signed request (§1) | → `{waiting:[{org_id,wg_id,reason,tasks,oldest_at,platform_access}]}`: workgroups whose tasks wait for the operator: a device it must provide (`platform_access_required`, or `no_device` without an assignable device) or credit (`credit_exhausted`, ADR-078), oldest first (operator CLI `agent-hub platform waiting`, ADR-075 §7) |
+| `GET /v1/platform/waiting` | root-signed request (§1) | → `{waiting:[{org_id,wg_id,reason,tasks,oldest_at,platform_access}]}`: workgroups whose tasks wait for the operator: a device it must provide (`platform_access_required`, or `no_device` without an assignable device) or credit (`credit_exhausted`, ADR-079), oldest first (operator CLI `agent-hub platform waiting`, ADR-075 §7) |
 
 ### 4.4 Events
 
@@ -307,7 +307,7 @@ level (org level: org members; wg/task level: wg readers) except the author; eac
 an SSE frame. Active sessions in scope (org level: all non-stopped sessions of the org; wg level: of the wg;
 task level: of the task) get a content-free ping through their device (`ping` hint, §6.2).
 
-Requests (ADR-078 §4, rule E-05): when a task's attention record enters `credit_empty`, or `device_missing` while the
+Requests (ADR-079 §4, rule E-05): when a task's attention record enters `credit_empty`, or `device_missing` while the
 task waits `platform_access_required`, every user with the platform role `operator` gets `operator.request` (account
 level, `org_id` null, `ref` = `<reason>:<org id>`; once per organization and occasion, not while an earlier request of
 the same reason is unread); while a task waits `no_device`, every admin of the organization except the task owner gets
@@ -579,7 +579,7 @@ General: `params` schema in `contracts/ops/<type>.json`; violations → `params_
 no leading `-` or `/`, no trailing `/` or `.lock`, no `@{`, ≤ 200 chars). Workgroup settings (`settings.workgroup`
 event): `repositories` allow-list (exact `owner/name`, lowercased; optional: empty, the default, allows every
 repository the acting user's GitHub connection reaches, ADR-054), `protected_branches` patterns (default
-`[]`: the platform protects no branch on its own, GitHub's branch protection of the repository applies, ADR-078 §3,
+`[]`: the platform protects no branch on its own, GitHub's branch protection of the repository applies, ADR-079 §3,
 interpretation A17), `pr_draft_default` (true). Repository-level checks: `repo` in the
 allow-list when the list is not empty (`repo_not_allowed`) and accessible with the GitHub connection of the acting
 user - the person whose instruction started the session's turn, never the task owner as such (HOT-14, ADR-070,

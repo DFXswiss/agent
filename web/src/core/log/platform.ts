@@ -15,7 +15,7 @@
 //    a user to its identity keys (ADR-060): the user has no valid certification and its ID was never certified as a
 //    device (and a device ID never as a user); `user_decertify` ends the user's valid certification;
 //    `platform_policy` sets a switch and `org_operator_subscriptions` an organization's use of the operator's
-//    subscriptions (ADR-078; the latest entry counts, any value is allowed).
+//    subscriptions (ADR-079; the latest entry counts, any value is allowed).
 // Identity anchors of users (ADR-060, `identityAnchored`): the entry `seq` is a `user_certify` of `(user, pub)` and
 // the identity proof is `""`, or a `user_invite` for which `user` is the ID derived from the invitation
 // (`invitedUserId`) and whose `pk_inv` verifies the identity proof of `(user, pub)`. At the hub (`current`) a
@@ -91,9 +91,9 @@ export interface PlatformStateFields {
   readonly users: ReadonlyMap<string, number>;
   /** `seq -> invite_id` of every `user_invite`. */
   readonly userInvites: ReadonlyMap<number, string>;
-  /** `name -> on` of the latest `platform_policy` of each switch (ADR-078 §2; a switch without one is off). */
+  /** `name -> on` of the latest `platform_policy` of each switch (ADR-079 §2; a switch without one is off). */
   readonly policies: ReadonlyMap<string, boolean>;
-  /** `org -> granted` of the latest `org_operator_subscriptions` of each organization (ADR-078 §2). */
+  /** `org -> granted` of the latest `org_operator_subscriptions` of each organization (ADR-079 §2). */
   readonly operatorSubscriptions: ReadonlyMap<string, boolean>;
 }
 
@@ -186,19 +186,19 @@ export class PlatformState implements PlatformStateFields {
   }
 
   /**
-   * ADR-026, ADR-078 §3: a private org has platform access; any other org by its latest `org_platform_access`, and
+   * ADR-026, ADR-079 §3: a private org has platform access; any other org by its latest `org_platform_access`, and
    * without one by the switch `open_platform_access`.
    */
   platformAccess(org: string, isPrivate: boolean): boolean {
     return isPrivate || (this.orgAccess.get(org) ?? this.policy('open_platform_access'));
   }
 
-  /** The switch `name` (ADR-078 §2): on only after a `platform_policy` turned it on. */
+  /** The switch `name` (ADR-079 §2): on only after a `platform_policy` turned it on. */
   policy(name: string): boolean {
     return this.policies.get(name) === true;
   }
 
-  /** ADR-078 §3: the latest `org_operator_subscriptions` of the org grants the operator's subscriptions. */
+  /** ADR-079 §3: the latest `org_operator_subscriptions` of the org grants the operator's subscriptions. */
   operatorSubscribed(org: string): boolean {
     return this.operatorSubscriptions.get(org) === true;
   }

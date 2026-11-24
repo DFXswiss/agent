@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/platform-waiting.response.json",
   "title": "GET /v1/platform/waiting response",
-  "description": "Body of a successful response to GET /v1/platform/waiting: workgroups whose tasks wait for the operator: a device it must provide, or credit (ADR-078) (03-api.md section 4.3, ADR-075 section 7).",
+  "description": "Body of a successful response to GET /v1/platform/waiting: workgroups whose tasks wait for the operator: a device it must provide, or credit (ADR-079) (03-api.md section 4.3, ADR-075 section 7).",
   "type": "object",
   "properties": {
     "waiting": {

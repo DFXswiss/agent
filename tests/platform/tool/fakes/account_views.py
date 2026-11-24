@@ -79,7 +79,7 @@ def add_notification(hub: HubFake, user: str, *, org: str | None = None, kind: s
 
 
 def grant_inviter(hub: HubFake, user: str, role: str = "inviter") -> None:
-    """A `role_grant` of a platform role (`inviter`, or `operator`, ADR-078) in the platform log."""
+    """A `role_grant` of a platform role (`inviter`, or `operator`, ADR-079) in the platform log."""
     platform_entry(hub, type="role_grant", subject=user, role=role)
 
 

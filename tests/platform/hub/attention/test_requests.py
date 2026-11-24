@@ -1,4 +1,4 @@
-"""U-HUB-attention (requests, KOR-49, ADR-078 section 4, rule E-05): a missing prerequisite asks the person who can
+"""U-HUB-attention (requests, KOR-49, ADR-079 section 4, rule E-05): a missing prerequisite asks the person who can
 start the step - `operator.request` to the users with the platform role `operator` (credit used up, platform access
 missing; account level, once per organization and occasion, not while an earlier request of the same reason is
 unread), `device.needed` to the admins of the organization except the task owner (once per workgroup while unread)."""

@@ -5,7 +5,7 @@
 | `GET /v1/notifications?before&limit&account` | `user`: the caller's own notifications |
 | `POST /v1/notifications/read` | `user`: `{ids:[…]}` (1-200) or `{all:true, account?}` → `{}` |
 
-Account notifications (`agent.account_change`, no org, KOR-24; `operator.request`, ADR-078) are listed only with
+Account notifications (`agent.account_change`, no org, KOR-24; `operator.request`, ADR-079) are listed only with
 `account=1` and marked read by `{all:true}` only with `account:true`, so a web client of before KOR-24 never sees them
 (decisions KOR-24); marking by ID works for every row. Marking read by an agent is audited (`notification.read
 {marked, scope}`).

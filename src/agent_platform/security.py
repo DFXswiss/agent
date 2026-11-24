@@ -14,9 +14,9 @@
   local state.
 - `platform invite|list|revoke`: platform user invitations of users with the platform role `inviter`, or of every
   user while the switch `open_platform_invites` is on (both read from the verified platform log, never from the hub's
-  word; ADR-078): the code is drawn here, only `invite_id`, `pk_inv` and the expiry go to the hub; the link is printed
+  word; ADR-079): the code is drawn here, only `invite_id`, `pk_inv` and the expiry go to the hub; the link is printed
   once. Without the role the hub lists and revokes only the user's own invitations.
-- `platform settings` (ADR-078): the switches, the organizations granted the operator's subscriptions and the caller's
+- `platform settings` (ADR-079): the switches, the organizations granted the operator's subscriptions and the caller's
   platform roles of the verified platform log.
 - `security`: what the security page shows: the hash of the delivered `build-manifest.json`, its version and commit,
   whether its root key fingerprint is the pinned platform root key's, and the pinned hub key.
@@ -174,7 +174,7 @@ def agents_revoke(account: Account, agent: str | None, every: bool) -> dict[str,
 
 
 def _inviter(account: Account) -> None:
-    """The role `inviter`, or anybody while the switch `open_platform_invites` is on (ADR-078), as the verified
+    """The role `inviter`, or anybody while the switch `open_platform_invites` is on (ADR-079), as the verified
     platform log says."""
     platform = account.platform()
     if not (platform.has_role(account.user_id, INVITER) or platform.policy(OPEN_INVITES)):
@@ -183,7 +183,7 @@ def _inviter(account: Account) -> None:
 
 def platform_settings(account: Account) -> dict[str, Any]:
     """The switches, the organizations granted the operator's subscriptions and the caller's platform roles of the
-    verified platform log (ADR-078); `may_invite` as `platform invite` decides."""
+    verified platform log (ADR-079); `may_invite` as `platform invite` decides."""
     platform = account.platform()
     roles = [role for role in PLATFORM_ROLES if platform.has_role(account.user_id, role)]
     return {

@@ -1,4 +1,4 @@
-"""The next attempt after the owner connected model access (ADR-078 section 4, rule E-05).
+"""The next attempt after the owner connected model access (ADR-079 section 4, rule E-05).
 
 A main session whose start finds no model access fails at once with `model_access_unavailable` (05-runner.md section
 10.1): the missing precondition is detected immediately. The task's chat shows its owner a card that starts the

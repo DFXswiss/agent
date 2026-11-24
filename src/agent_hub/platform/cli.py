@@ -23,10 +23,10 @@ Commands (entries they append):
 - `certify-pending [--device ID ...]`: one `device_certify` per verified pending enrollment (or the named devices);
 - `grant-org-access --org ID [--revoke]`: `org_platform_access` (ADR-026);
 - `grant-role inviter|operator --user ID`, `revoke-role inviter|operator --user ID`: `role_grant`, `role_revoke`
-  (`operator`: receives the requests of ADR-078 §4);
-- `set-policy NAME on|off` (ADR-078): `platform_policy` - `open_platform_access` (organizations without an
+  (`operator`: receives the requests of ADR-079 §4);
+- `set-policy NAME on|off` (ADR-079): `platform_policy` - `open_platform_access` (organizations without an
   `org_platform_access` of their own use platform devices), `open_platform_invites` (every user may invite);
-- `grant-operator-subscriptions --org ID [--revoke]` (ADR-078): `org_operator_subscriptions` (the organization's
+- `grant-operator-subscriptions --org ID [--revoke]` (ADR-079): `org_operator_subscriptions` (the organization's
   members use the operator's subscriptions; the runner reads it from the verified log, no restart);
 - `settings`: appends nothing; prints the switches, the organizations with an explicit platform access and the
   organizations granted the operator's subscriptions, from the log verified here;
@@ -39,7 +39,7 @@ Commands (entries they append):
   form: the operator names every account;
 - `decertify-user --user ID`: `user_decertify`;
 - `waiting`: appends nothing; lists the workgroups whose tasks wait for the operator (`GET /v1/platform/waiting`,
-  ADR-075 section 7): a device the operator must provide, or - ADR-078 - credit (`credit_exhausted`): organization,
+  ADR-075 section 7): a device the operator must provide, or - ADR-079 - credit (`credit_exhausted`): organization,
   workgroup, reason, number of tasks, oldest, and whether the organization has platform access.
 
 Output never contains the root key or a hub secret; the invitation code is printed because the operator hands it on.
@@ -458,7 +458,7 @@ def show_waiting(operator: Operator, out: TextIO) -> None:
 
 
 def show_settings(operator: Operator, out: TextIO) -> None:
-    """Print the switches and lists of the platform log verified with the operator's own key (ADR-078)."""
+    """Print the switches and lists of the platform log verified with the operator's own key (ADR-079)."""
     log, _pending = operator.snapshot()
     state = None if log is None else log.state
     for name in PLATFORM_POLICIES:
@@ -589,7 +589,7 @@ def register(subparsers: argparse._SubParsersAction[Any]) -> None:
         role.add_argument("--user", type=uuid_text, required=True)
     command("waiting", "list the organizations and workgroups whose tasks wait for the operator (device, credit)")
     command("settings", "print the switches and the operator-subscription list of the verified platform log")
-    policy = command("set-policy", "turn a switch of the platform log on or off (ADR-078)")
+    policy = command("set-policy", "turn a switch of the platform log on or off (ADR-079)")
     policy.add_argument("name", choices=list(PLATFORM_POLICIES))
     policy.add_argument("value", choices=["on", "off"])
     subscriptions = command(

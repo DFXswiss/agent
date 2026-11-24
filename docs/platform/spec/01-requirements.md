@@ -283,13 +283,13 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | E-02 | [E-02](../KONZEPT.md#e-02) | "Hundreds of agents" describes use, no number target; no artificial limit, clear message at capacity. | teils | KOR-35, KOR-45 ([A14](../KONZEPT.md#a-14)) |
 | E-03 | [E-03](../KONZEPT.md#e-03) | The user only creates a passkey; their AI agent sets up everything else, incl. subscription token transfer. | gebaut | [ADR-056](../adr/056-delegated-agent-access.md) |
 | E-04 | [E-04](../KONZEPT.md#e-04) | An agent without passkey can do everything a human with passkey can. | gebaut | [ADR-056](../adr/056-delegated-agent-access.md) |
-| E-05 | [E-05](../KONZEPT.md#e-05) | A missing prerequisite is triggered, not explained. | gebaut | [ADR-066](../adr/066-held-github-operations.md) (GitHub), [ADR-078](../adr/078-no-approval-as-precondition.md) (model access, credit, device, platform access; register `15-prerequisites.md`) |
+| E-05 | [E-05](../KONZEPT.md#e-05) | A missing prerequisite is triggered, not explained. | gebaut | [ADR-066](../adr/066-held-github-operations.md) (GitHub), [ADR-079](../adr/079-no-approval-as-precondition.md) (model access, credit, device, platform access; register `15-prerequisites.md`) |
 | E-06 | [E-06](../KONZEPT.md#e-06) | GitHub through the operator's account for approved users. | gebaut | [ADR-053](../adr/053-operator-github-account.md), [ADR-054](../adr/054-repository-list-optional.md), [ADR-065](../adr/065-github-existing-token.md) |
 | E-07 | [E-07](../KONZEPT.md#e-07) | Operator subscriptions for approved organizations. | gebaut | [ADR-052](../adr/052-operator-subscriptions.md) |
 | E-08 | [E-08](../KONZEPT.md#e-08) | Work VM on request in which everything is allowed. | gebaut | [ADR-059](../adr/059-work-vm-on-request.md) |
 | E-09 | [E-09](../KONZEPT.md#e-09) | Nothing is monitored inside the work VM. | gebaut | [ADR-059](../adr/059-work-vm-on-request.md) |
 | E-10 | [E-10](../KONZEPT.md#e-10) | Work VM egress never via the site address, fail-closed. | gebaut | [ADR-059](../adr/059-work-vm-on-request.md) |
-| E-11 | [E-11](../KONZEPT.md#e-11) | No unnecessary restrictions; nothing must be released one by one. | teils | [ADR-054](../adr/054-repository-list-optional.md), [ADR-059](../adr/059-work-vm-on-request.md), [ADR-078](../adr/078-no-approval-as-precondition.md) (register with test, root-signed switches built; flipped after the owner's decision) |
+| E-11 | [E-11](../KONZEPT.md#e-11) | No unnecessary restrictions; nothing must be released one by one. | teils | [ADR-054](../adr/054-repository-list-optional.md), [ADR-059](../adr/059-work-vm-on-request.md), [ADR-079](../adr/079-no-approval-as-precondition.md) (register with test, root-signed switches built; flipped after the owner's decision) |
 | E-12 | [E-12](../KONZEPT.md#e-12) | Registration only with a PRF-capable passkey. | gebaut | [ADR-055](../adr/055-registration-without-recovery-code-step.md) |
 | E-13 | [E-13](../KONZEPT.md#e-13) | No mandatory recovery-code step at registration. | gebaut | [ADR-055](../adr/055-registration-without-recovery-code-step.md) |
 | E-14 | [E-14](../KONZEPT.md#e-14) | Billing only from a balance the operator sets; no payment path. | gebaut | [ADR-062](../adr/062-prepaid-credit-and-usage-billing.md) |
@@ -297,7 +297,7 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | E-16 | [E-16](../KONZEPT.md#e-16) | Everything priced in USD. | gebaut | [ADR-062](../adr/062-prepaid-credit-and-usage-billing.md) |
 | E-17 | [E-17](../KONZEPT.md#e-17) | Every booking also stores its CHF equivalent from one central daily USD/CHF rate. | gebaut | [ADR-062](../adr/062-prepaid-credit-and-usage-billing.md) |
 | E-18 | [E-18](../KONZEPT.md#e-18) | Existing accounts are admitted to an organization directly. | gebaut | [ADR-060](../adr/060-direct-admission-of-existing-accounts.md) |
-| E-19 | [E-19](../KONZEPT.md#e-19) | No single-case fixes: exclude the class of fault. | teils | KOR-35 (first case), [ADR-078](../adr/078-no-approval-as-precondition.md) (register of prerequisites with a completeness test) |
+| E-19 | [E-19](../KONZEPT.md#e-19) | No single-case fixes: exclude the class of fault. | teils | KOR-35 (first case), [ADR-079](../adr/079-no-approval-as-precondition.md) (register of prerequisites with a completeness test) |
 | E-20 | [E-20](../KONZEPT.md#e-20) | Community area with a group chat of all users. | offen | KOR-26 |
 | E-21 | [E-21](../KONZEPT.md#e-21) | Task overview as a menu entry. | gebaut | KOR-32 |
 | E-22 | [E-22](../KONZEPT.md#e-22) | One repository (`DFXswiss/agent`). | gebaut | [ADR-061](../adr/061-one-repository.md) |
@@ -324,7 +324,7 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | R-P.9 | Public-repo hygiene: no internal host names, IPs or secrets in code, docs, fixtures or commits. | all | 00 | U-HUB-hygiene, U-RUN-hygiene (repository scan test) |
 | R-P.10 | Existing Claude subscription profiles are never modified, logged out, re-logged or refreshed; only the current access token may be read. | E2E | 07 §6 | LIVE-03 (asserts profile files unchanged) |
 | R-P.11 | Work on integration branches with draft PRs; no merge into `develop`, no force push. | all | 00 §6 | M3 acceptance (branch protection check) |
-| R-P.12 | Platform devices and the platform model budget only for entitled orgs (private orgs from a platform invitation, operator-granted `org_platform_access`, or – while the root-signed switch `open_platform_access` is on – every org without an explicit entry, ADR-078). | HUB, WEB | ADR-026, ADR-078, 03 §4.3 | E2E-01 (private org gets platform device), E2E-05 (non-private org refused with `platform_access_denied` until granted) |
+| R-P.12 | Platform devices and the platform model budget only for entitled orgs (private orgs from a platform invitation, operator-granted `org_platform_access`, or – while the root-signed switch `open_platform_access` is on – every org without an explicit entry, ADR-079). | HUB, WEB | ADR-026, ADR-079, 03 §4.3 | E2E-01 (private org gets platform device), E2E-05 (non-private org refused with `platform_access_denied` until granted) |
 | R-P.13 | Platform model budget per org and day (`PLATFORM_BUDGET_USD_PER_ORG_DAY`, `budget_exceeded`). | HUB, RUN | 03 §2, §9, 05 §10 | E2E-27 (budget step) |
 | R-P.14 | Usage billing with prepaid credit (concept ideas 45–47): DFX tokens and DFX VM runtime charged by a versioned price list, credit per organization set by the operator, no new paid start and paused sessions while the credit is used up, continuation after a credit; own resources free. | HUB, RUN, WEB | ADR-062, 12-billing.md | E2E-46 |
 

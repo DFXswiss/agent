@@ -353,7 +353,7 @@ def test_the_pool_of_a_daemon_is_built_once_from_its_configuration(tmp_path: Pat
     off = SimpleNamespace(config=SimpleNamespace())
     assert operator.pool_for(off) is None
     alone = SimpleNamespace(config=SimpleNamespace(operator_subscription_dir=directory, operator_subscription_orgs=()))
-    only_log = operator.pool_for(alone)  # ADR-078: the directory alone is a pool; the organizations come from the log
+    only_log = operator.pool_for(alone)  # ADR-079: the directory alone is a pool; the organizations come from the log
     assert only_log is not None
     assert only_log.orgs == frozenset()
     assert not only_log.allows(ORG)  # no identity: no verified platform log
@@ -374,7 +374,7 @@ def test_the_pool_of_a_daemon_is_built_once_from_its_configuration(tmp_path: Pat
 
 
 def test_the_verified_platform_log_decides_before_the_environment(tmp_path: Path) -> None:
-    """ADR-078 section 3: the latest `org_operator_subscriptions` of an organization in the verified platform log
+    """ADR-079 section 3: the latest `org_operator_subscriptions` of an organization in the verified platform log
     decides, also a revocation of a listed organization; without an entry the environment list applies."""
     pool = make(pool_dir(tmp_path))
     listed, granted, revoked = ORG, str(uuid.uuid4()), str(uuid.uuid4())

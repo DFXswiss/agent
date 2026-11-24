@@ -1,4 +1,4 @@
-// E2E-60 (ADR-078, 15-prerequisites.md, rules E-05 and E-11; KOR-49): no approval as a precondition. The operator
+// E2E-61 (ADR-079, 15-prerequisites.md, rules E-05 and E-11; KOR-49): no approval as a precondition. The operator
 // turns the root-signed switch `open_platform_access` with `agent-hub platform set-policy`: while it is off, a new team
 // organization's task waits `platform_access_required` and the user with the platform role `operator` gets one
 // `operator.request`; while it is on, the admin's `agent-platform task create` assigns the platform device itself and
@@ -56,7 +56,7 @@ import { random } from '../../../web/src/core/crypto/subtle';
 import { buildPlatformEntries } from '../../../web/src/core/log/entries';
 
 const scenario: unknown = JSON.parse(
-  readFileSync(new URL('../scenarios/e2e-60-no-approval.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../scenarios/e2e-61-no-approval.json', import.meta.url), 'utf8'),
 );
 const PRICES = JSON.parse(
   readFileSync(new URL('../../../docs/platform/billing/price-list-2026-11-24.json', import.meta.url), 'utf8'),
@@ -224,13 +224,13 @@ async function billingActive(orchestrator: Orchestrator): Promise<void> {
 
 test.describe.configure({ mode: 'serial' });
 
-test('@E2E-60 @needs-vm no approval as a precondition: switches, operator subscriptions, model access, branches and requests to the operator', async ({
+test('@E2E-61 @needs-vm no approval as a precondition: switches, operator subscriptions, model access, branches and requests to the operator', async ({
   page,
   e2e,
   orchestrator,
   authenticator,
 }) => {
-  test.skip(e2e.topology !== 't1', 'E2E-60 runs on T1');
+  test.skip(e2e.topology !== 't1', 'E2E-61 runs on T1');
   test.setTimeout(2_400_000);
   await orchestrator.loadScenario('model', scenario);
   await seedGitHub(orchestrator, worldOf(LOGIN, 'octo-org', [repository(HELLO)]));

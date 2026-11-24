@@ -4,7 +4,7 @@ section 7).
 A task waits for the operator when it is `scheduling` with the reason `platform_access_required` (its organization has
 no device of its own and no access to the operator's devices: the operator grants it, `agent-hub platform
 grant-org-access`), or with `no_device` while nobody in the organization could assign one (no certified, active
-platform device the workgroup could get and no device of the organization's own), or (ADR-078) with
+platform device the workgroup could get and no device of the organization's own), or (ADR-079) with
 `credit_exhausted` (the operator sets the balance, E-14). One row per workgroup and reason with the
 number of such tasks and the creation time of the oldest, oldest first. Metadata only.
 """

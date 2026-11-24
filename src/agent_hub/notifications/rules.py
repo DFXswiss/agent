@@ -20,7 +20,7 @@ A `notification` row is content-free: recipient, kind, org, workgroup, task, a r
   unreachable, all busy) notify an owner once per workgroup and reason while an earlier such notification is unread
   (`ref` = `<category>:<reason>:wg`). A `blocked` record of a failed task is covered by `task.failed` and notifies
   nothing; `created_at` = the hub time of the rule.
-- `operator.request` (`request_rule`, ADR-078 section 4, rule E-05): when a task's attention record enters an occasion
+- `operator.request` (`request_rule`, ADR-079 section 4, rule E-05): when a task's attention record enters an occasion
   of `credit_empty` (reason `credit_exhausted`) or of `device_missing` with the task waiting
   `platform_access_required`, every user with the platform role `operator` is asked: an account-level row (no org,
   `ref` = `<reason>:<org>`), once per organization and reason per occasion - not again after an earlier request of the
@@ -29,7 +29,7 @@ A `notification` row is content-free: recipient, kind, org, workgroup, task, a r
   organizations, not while an earlier request of the same reason is unread (the operator's list of waiting work,
   `GET /v1/platform/waiting`, names every organization). Without any operator nothing is written and the hub logs
   `operator_request_unanswered`.
-- `device.needed` (`request_rule`, ADR-078 section 4): when a task's record enters `device_missing` while it waits
+- `device.needed` (`request_rule`, ADR-079 section 4): when a task's record enters `device_missing` while it waits
   `no_device` (the organization may assign a device itself), every admin of the organization except the task owner
   (who has `task.attention`) is asked to assign a computer, once per workgroup while an earlier one is unread (`ref`
   = the workgroup).

@@ -98,11 +98,11 @@ or refuse anything for credit.
 - `agent-hub billing show [--org ID]` (balances, exhausted, price version).
 - Setting `AGENT_HUB_BILLING_START_CREDIT_USD` (decimal ≥ 0, default 0): balance of a new account.
 - Direct database path: see ADR-062 §5 and the runbook `docs/platform/runbooks/credit.md`.
-- Requests (ADR-078 §4, E-05): when a task's attention record enters `credit_empty`, every user with the platform role
+- Requests (ADR-079 §4, E-05): when a task's attention record enters `credit_empty`, every user with the platform role
   `operator` gets one `operator.request` (`ref` = `credit_exhausted:<org>`) per organization and occasion (not again
   before a later `credit.changed` of the organization; not while an earlier one of the same reason is unread);
   `agent-hub platform waiting` lists the organizations waiting for credit. A start credit above 0 together with the
-  switches of ADR-078 multiplies per new organization: the owner's decision F1 bounds it first.
+  switches of ADR-079 multiplies per new organization: the owner's decision F1 bounds it first.
 
 ## 9. Web
 - Header item: balance (`$12.34`), red with "Credit used up" when exhausted; hidden when billing is inactive.
@@ -111,7 +111,7 @@ or refuse anything for credit.
   hour), history of credits, consumption per day and per workgroup. No top-up control.
 - Task view: charges per session (tokens, runtime) and total.
 - Reason text `credit_exhausted` for tasks waiting and sessions suspended; the person sees that credit has been
-  requested from the operator (ADR-078).
+  requested from the operator (ADR-079).
 
 ## 10. Books: CHF equivalent (owner's decisions 18 and 19, ADR-062 §9)
 - `hub.fx_rate` [AO]: `n` PK, `day`, `chf_per_usd_e8` (CHF per USD × 10^8, > 0), `source`, `set_at`, `actor`

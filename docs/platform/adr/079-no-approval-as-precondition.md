@@ -1,4 +1,4 @@
-# ADR-078: No approval as a precondition – the register of prerequisites, root-signed switches and lists, and every missing prerequisite is started
+# ADR-079: No approval as a precondition – the register of prerequisites, root-signed switches and lists, and every missing prerequisite is started
 
 Status: Accepted (2026-11-24). Amends ADR-026 (platform access), ADR-052 (operator subscriptions), ADR-053 (protected
 branches no longer protect the operator's account on the platform side), ADR-075 §7 (operator's waiting list) and

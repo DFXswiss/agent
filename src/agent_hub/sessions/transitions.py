@@ -20,7 +20,7 @@ caller's audit rows (lock order of `agent_hub.sessions.taskstate`). It
    `agent_hub.sessions.retry` decides before step 4 whether the hub re-schedules, and then step 4 stores the refusal
    without deriving the task and the next attempt is created and placed, which derives it (KOR-14); a `failed`
    with `model_access_unavailable` gets the same attempt when a model credential of the owner arrived while the start
-   ran (`agent_hub.sessions.model_retry`, ADR-078; otherwise the owner's next credential write creates it).
+   ran (`agent_hub.sessions.model_retry`, ADR-079; otherwise the owner's next credential write creates it).
 
 The caller sends the effects with `Applied.effects.flush()` **after its commit**. `hub_transition` is the same step for
 changes the hub makes itself (closing a task, stopping a session without device).
@@ -223,7 +223,7 @@ def apply(
     if found is None:
         raise HubError("not_found")
     if state == FAILED and checked == model_retry.REASON:
-        model_retry.lock_owner(connection, found[1])  # before the task lock, as the credential write (ADR-078)
+        model_retry.lock_owner(connection, found[1])  # before the task lock, as the credential write (ADR-079)
     task = cast(TaskRow, lock_task(connection, found[0]))
     session = cast(SessionRow, lock_session(connection, session_id))
     if reported_by is not None and str(session.device_id) != str(reported_by):

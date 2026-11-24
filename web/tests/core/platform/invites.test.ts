@@ -51,7 +51,7 @@ describe('the inviter right', () => {
     expect(isInviter(state, 'u')).toBe(false);
     const granted = state.with({ roles: new Map([[pairKey('u', 'inviter'), 3]]) });
     expect(isInviter(granted, 'u')).toBe(true);
-    // ADR-078: while the switch `open_platform_invites` is on, every user invites; off again, only the role counts
+    // ADR-079: while the switch `open_platform_invites` is on, every user invites; off again, only the role counts
     const open = state.with({ policies: new Map([[OPEN_INVITES, true]]) });
     expect(isInviter(open, 'u')).toBe(true);
     expect(isInviter(open, null)).toBe(false);

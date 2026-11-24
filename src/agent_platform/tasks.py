@@ -21,7 +21,7 @@ tool does not resend on its own.
 ADR-075: `task create --device [--vm]` sends the chosen device and VM (`placement`; without one the workgroup's
 default or the automatic choice applies), and the task is created even when no device has room (it waits
 `scheduling` with a reason). Without a choice, an admin's task in a workgroup without an assigned device first
-assigns the first certified platform candidate (`ensure_device`, rule E-05, ADR-078; `assigned_device` in the answer),
+assigns the first certified platform candidate (`ensure_device`, rule E-05, ADR-079; `assigned_device` in the answer),
 as the web client does. `task show` prints the device and VM of the main session and, while the task waits, its
 reason (`waiting`, a code of the closed list of `diagnose`).
 """
@@ -120,7 +120,7 @@ def _placement(device: str | None, vm: str | None) -> dict[str, str] | None:
 
 
 def ensure_device(account: Account, org: str, wg: str) -> str | None:
-    """Rule E-05 (ADR-078 section 4): an admin's task in a workgroup without an assigned device first assigns the first
+    """Rule E-05 (ADR-079 section 4): an admin's task in a workgroup without an assigned device first assigns the first
     certified platform candidate, as the web client does before sending (`ensureDevice`); the device, or None when one
     is assigned already, the user is no admin or none can be assigned (the task then waits and the admins are asked)."""
     state = account.org_log(org).state

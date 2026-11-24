@@ -1,7 +1,7 @@
 // Tab "Chat" of a task (06-web.md section 5.2): the usage slot, the timeline (task events by time, system rows,
 // countdowns) and – for writers – the composer with the session controls; readers see "You have read access" and no
 // controls (section 1: controls the rights do not allow are not rendered). A main session that failed for want of
-// model access shows the card that starts the connection (`ModelAccessCard`, ADR-078).
+// model access shows the card that starts the connection (`ModelAccessCard`, ADR-079).
 import { useMemo } from 'react';
 import { loadChat } from '../../../core/chat/actions';
 import { selectTimeline } from '../../../core/chat/timeline';

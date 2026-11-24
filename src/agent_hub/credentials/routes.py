@@ -22,7 +22,7 @@ and foreign owners are `404 not_found` for reads and `403 forbidden` for device 
 
 A stored model credential (`claude_subscription`, `anthropic_api_key`), by the owner or by a device answering the
 owner's request, lets the owner's tasks that failed for want of model access continue (`agent_hub.sessions.model_retry`,
-ADR-078; the attempts are created in the same transaction and announced after the commit).
+ADR-079; the attempts are created in the same transaction and announced after the commit).
 """
 
 from __future__ import annotations
@@ -129,7 +129,7 @@ async def put_credential(context: Context, principal: CurrentPrincipal, kind: st
             now=now,
             root_key=context.config.platform_root_key,
         )
-        # E-05 (ADR-078): tasks that failed for want of model access continue by themselves
+        # E-05 (ADR-079): tasks that failed for want of model access continue by themselves
         model_retry.after_credential(connection, user, found_kind, now, effects)
         return change, account_change(connection, user, "credential_changed", now, target=found_kind)
 
@@ -238,7 +238,7 @@ async def put_device_credential(
             now=now,
             root_key=context.config.platform_root_key,
         )
-        # a subscription login on a device (ADR-011) stores the credential here: the same continuation (ADR-078)
+        # a subscription login on a device (ADR-011) stores the credential here: the same continuation (ADR-079)
         model_retry.after_credential(connection, owner_id, kind, now, effects)
         return change
 

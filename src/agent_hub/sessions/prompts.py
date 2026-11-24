@@ -14,7 +14,7 @@ The hub keeps no prompt table: everything is derived from rows it already has.
   twice - except for a session the device refused with `capacity_exhausted`: the hub's next attempt (a main session
   whose first transition `requested` carries that reason, `agent_hub.sessions.retry`) takes them over (KOR-14); the
   same holds for a session that failed `model_access_unavailable` and the attempt the hub creates once the owner
-  connected model access (`agent_hub.sessions.model_retry`, ADR-078).
+  connected model access (`agent_hub.sessions.model_retry`, ADR-079).
 - **Next session.** When the device itself ends the newest main session of an open task (`stopped`, not after a
   user's "Stop", audit `session.control`) after it delivered a prompt, while prompts are pending there, `carry_over`
   creates the next main session at once, placed by the scheduler, which delivers them. A session the user ended
@@ -55,7 +55,7 @@ CARRIED = frozenset({STOPPING, STOPPED})
 RETRY_REASON = "capacity_exhausted"
 """The reason of the first transition (`requested`) of the hub's attempt after a refusal for lack of capacity."""
 MODEL_RETRY_REASON = "model_access_unavailable"
-"""The reason of the first transition of the hub's attempt after the owner connected model access (ADR-078)."""
+"""The reason of the first transition of the hub's attempt after the owner connected model access (ADR-079)."""
 RETRY_REASONS = (RETRY_REASON, MODEL_RETRY_REASON)
 
 
@@ -102,7 +102,7 @@ class Main:
     state: str
     retry: bool = False
     """The hub's next attempt after a refusal for lack of capacity (`agent_hub.sessions.retry`) or after the owner
-    connected model access (`agent_hub.sessions.model_retry`, ADR-078)."""
+    connected model access (`agent_hub.sessions.model_retry`, ADR-079)."""
 
 
 def main_sessions(connection: Connection, task_ids: Sequence[UUID | str]) -> dict[str, list[Main]]:

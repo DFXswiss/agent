@@ -113,7 +113,7 @@ def test_without_the_role_everything_is_forbidden(plat: Platform, hub: HubHarnes
 
 
 def test_the_open_switch_lets_every_user_invite_with_their_own_list(plat: Platform, hub: HubHarness) -> None:
-    """ADR-078 section 3: with `open_platform_invites` on, a user without the role creates invitations and lists and
+    """ADR-079 section 3: with `open_platform_invites` on, a user without the role creates invitations and lists and
     revokes only its own; the role still sees and revokes every invitation; switched off, the user is refused again."""
     holder = inviter(plat, hub)
     plat.append("platform_policy", name="open_platform_invites", on=True)
