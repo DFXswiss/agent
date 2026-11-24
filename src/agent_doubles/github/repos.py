@@ -555,11 +555,8 @@ class World:
             self.tokens: dict[str, Token] = {}
             self.installations: dict[int, Installation] = {}
             self.repos: dict[str, Repo] = {}
-<<<<<<< HEAD
             self.organizations: dict[str, Organization] = {}
-=======
             self.signing_keys: dict[int, SigningKey] = {}
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
             self._tick = 0
             self._ids = 1000
 
@@ -725,16 +722,11 @@ class World:
     def seed(self, payload: Any) -> None:
         """Add seed data (see the module docstring); device flow, faults and expectations are read by the server."""
         data = _object(payload, "seed")
-<<<<<<< HEAD
         _check_keys(
             data,
             {"users", "installations", "repositories", "organizations", "device_flow", "faults", "expectations"},
             "seed",
         )
-        saved = (dict(self.users), dict(self.tokens), dict(self.installations), dict(self.repos), self._tick, self._ids)
-        organizations = dict(self.organizations)
-=======
-        _check_keys(data, {"users", "installations", "repositories", "device_flow", "faults", "expectations"}, "seed")
         saved = (
             dict(self.users),
             dict(self.tokens),
@@ -744,7 +736,7 @@ class World:
             self._tick,
             self._ids,
         )
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+        organizations = dict(self.organizations)
         try:
             for raw in _list(data.get("users", []), "users"):
                 self._seed_user(_object(raw, "user"))
@@ -756,12 +748,8 @@ class World:
                 self.set_organization(raw)
         except SeedError:
             # A refused seed leaves nothing behind (seeding only adds new objects, so restoring the tables suffices).
-<<<<<<< HEAD
-            self.users, self.tokens, self.installations, self.repos, self._tick, self._ids = saved
-            self.organizations = organizations
-=======
             self.users, self.tokens, self.installations, self.repos, self.signing_keys, self._tick, self._ids = saved
->>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
+            self.organizations = organizations
             raise
 
     def _seed_user(self, data: dict[str, Any]) -> None:

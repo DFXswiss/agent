@@ -22,12 +22,12 @@ Routes (`ROUTES`, the REST subset the runner uses, 05-runner.md §11.4 and §12.
 - SSH signing keys of the authenticated user: ``GET``/``POST /user/ssh_signing_keys``,
   ``GET``/``DELETE /user/ssh_signing_keys/{key_id}`` (``POST {title?, key}`` is ``201 {key, id, title,
   created_at}``; an invalid or already registered key ``422 Validation Failed``; another account's or an unknown key
-  ``404``). A classic token needs ``read:ssh_signing_key`` (or a higher one) to read, ``write:ssh_signing_key`` (or
-  ``admin:…``) to add, ``admin:ssh_signing_key`` to delete; without it the route is ``404`` with
-  ``X-Accepted-OAuth-Scopes``, as GitHub answers missing scopes on user routes. GitHub App user tokens are ``403
-  Resource not accessible by integration`` (the App of ADR-015 requests no "SSH signing keys" account permission),
-  fine-grained tokens ``403 Resource not accessible by personal access token`` (the double models no account
-  permissions of fine-grained tokens).
+  ``404``). A classic or OAuth App token needs ``read:ssh_signing_key`` (or a higher one) to read,
+  ``write:ssh_signing_key`` (or ``admin:…``) to add, ``admin:ssh_signing_key`` to delete; without it the route is
+  ``404`` with ``X-Accepted-OAuth-Scopes``, as GitHub answers missing scopes on user routes. GitHub App user tokens
+  are ``403 Resource not accessible by integration`` (the App of ADR-015 requests no "SSH signing keys" account
+  permission), fine-grained tokens ``403 Resource not accessible by personal access token`` (the double models no
+  account permissions of fine-grained tokens).
 - ``POST /credentials/revoke`` (``{"credentials": [token, ...]}``, KOR-40): unauthenticated like GitHub's (a request
   with ``Authorization`` is ``403`` and a failure); known tokens are forgotten, answered ``202 {}``. The journal
   keeps only the length of each token (`CREDENTIAL_FIELDS`, HOT-11), like the ``Authorization`` header.

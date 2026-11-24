@@ -98,6 +98,8 @@ def identity_seed(seed: Callable[[], Any], other_key: str) -> Any:
         {"token": "sign-read", "kind": "classic", "scopes": ["read:ssh_signing_key"]},
         {"token": "repo-only", "kind": "classic", "scopes": ["repo"]},
         {"token": "fine", "kind": "fine_grained"},
+        {"token": "oauth-write", "kind": "oauth", "scopes": ["repo", "write:ssh_signing_key"]},
+        {"token": "oauth-repo", "kind": "oauth", "scopes": ["repo"]},
     ]
     other["tokens"] += [{"token": "other-admin", "kind": "classic", "scopes": ["repo", "admin:ssh_signing_key"]}]
     other["ssh_signing_keys"] = [other_key]
@@ -478,6 +480,13 @@ def test_signing_key_rights(gh: Any, keys: dict[str, Ed25519PrivateKey]) -> None
     assert refused("POST", KEYS, "double-user-token", new) == app
     assert refused("DELETE", f"{KEYS}/{seeded}", "double-user-token") == app
     assert refused("POST", KEYS, "fine", new) == (403, "Resource not accessible by personal access token", None)
+    # an OAuth App token follows its scopes like a classic token (KOR-65)
+    assert refused("POST", KEYS, "oauth-repo", new) == (
+        404,
+        "Not Found",
+        "write:ssh_signing_key, admin:ssh_signing_key",
+    )
+    assert gh.api("POST", KEYS, new, token="oauth-write").status == 201
     assert gh.api("GET", KEYS, token="unknown").status == 401
     assert gh.get(KEYS, token="other-admin") != []
     assert gh.state()["failures"] == []
