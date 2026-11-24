@@ -18,7 +18,10 @@ from agent_runner.sessions.records import FINAL, LocalSession
 from agent_runner.workvm import service, session_state
 from agent_runner.workvm.manager import Deps, WorkVms
 
-SESSION = cast(LocalSession, SimpleNamespace(id="0192f3a4-0000-7000-8000-00000000000a"))
+SESSION = cast(
+    LocalSession,
+    SimpleNamespace(id="0192f3a4-0000-7000-8000-00000000000a", task_id="0192f3a4-0000-7000-8000-0000000000bb"),
+)
 STATES = ["created", "starting", "working", "waiting", "stopping", "stopped", "failed", None]
 
 
