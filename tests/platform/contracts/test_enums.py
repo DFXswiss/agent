@@ -126,6 +126,8 @@ DECIDED_AUDIT = (
     # 14-community.md section 4 and ADR-069 decision 5 (KOR-26)
     " community.key_create community.key_request community.key_wrap community.key_reject community.post"
     " community.delete community.mute community.unmute community.moderator_grant community.moderator_revoke"
+    # KOR-62: an agent becomes a main orchestrator without a pairing (an account of an agent alone, its recovery).
+    " agent.register"
 )
 # 12-billing.md sections 8 and 10 (contracts/changes/KOR-31.md): credit changes, USD/CHF rates and the export.
 KOR31_AUDIT = "credit.changed billing.fx_set billing.export"

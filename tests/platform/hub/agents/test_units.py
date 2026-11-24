@@ -67,13 +67,14 @@ def test_an_unknown_account_change_or_target_is_a_programming_error() -> None:
     assert notify.account_change(None, USER, "nothing", datetime.now(UTC)) == []  # type: ignore[arg-type]
 
 
-def test_only_a_browser_session_confirms_a_pairing() -> None:
-    """The pipeline never lets an agent reach `POST /v1/me/agents` (scope.EXCEPTIONS); the handler refuses it too."""
+def test_only_a_browser_session_or_an_agent_confirms_a_pairing() -> None:
+    """`POST /v1/me/agents` is for a browser session or an agent (KOR-62: `store.confirm` decides for the agent);
+    the handler refuses any other principal and one without a key ID before it touches the database."""
     body = routes.AgentConfirm.model_validate(
         {"pairing_id": str(AGENT), "bundle_ct": "A" * 64, "label_ct": "A" * 64, "claim_hash": "A" * 43}
     )
     keyless = Principal(kind="session", key_id=None, principal_id=USER, actor_kind="user")
-    for who in (principal("agent", agent_id=AGENT), keyless):
+    for who in (principal("device"), keyless):
         with pytest.raises(HubError) as refused:
             routes._confirm(None, who, body)  # type: ignore[arg-type]
         assert refused.value.code == "forbidden"

@@ -123,7 +123,7 @@ test('@E2E-51 @R-1.14 @needs-vm an agent alone registers, works, invites an agen
 
   // 4. The first agent moves to a new computer with its recovery code; the old computer is disconnected.
   await anonymousBudget(3 * COST.lookup);
-  const moved = await agentTool(orchestrator, 'bot-new', ['recover', '--hub', e2e.hubOrigin], 120_000, recoveryCode);
+  const moved = await agentTool(orchestrator, 'botnew', ['recover', '--hub', e2e.hubOrigin], 120_000, recoveryCode);
   expect(moved).toMatchObject({ ok: true, user_id: user, secret_fields: ['recovery_code'] });
   expect(moved.agent_id).not.toBe(made.agent_id);
   expect(moved.recovery_code).not.toBe(recoveryCode);
@@ -131,7 +131,7 @@ test('@E2E-51 @R-1.14 @needs-vm an agent alone registers, works, invites an agen
     ok: false,
     error: 'agent_revoked',
   });
-  const shown = await agentTool(orchestrator, 'bot-new', ['task', 'show', '--task', taskId]);
+  const shown = await agentTool(orchestrator, 'botnew', ['task', 'show', '--task', taskId]);
   expect(JSON.stringify(shown.events)).toContain('kz62-answer-p4l8m2');
   await expectNoPerson(orchestrator, user);
 

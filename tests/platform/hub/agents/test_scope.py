@@ -1,7 +1,8 @@
 """U-HUB-agents (route parity, 11-agent-access.md section 6, ADR-056 section 4): an active agent is admitted on every
 route a browser session of its user is admitted to - checked against every route the app registers, so a route added
-later is covered without a change here - except exactly the WebAuthn ceremonies and the
-confirmation of the main orchestrator (passkey approval, concept idea 34); a confirmed agent may only claim.
+later is covered without a change here - except exactly the WebAuthn ceremonies; the confirmation of the main
+orchestrator is admitted and decided by its handler (KOR-62: an agent of an account without a passkey confirms itself,
+one of an account with a passkey gets `403 forbidden`, concept idea 34); a confirmed agent may only claim.
 Through the real pipeline an agent gets the same answer as a browser session of a user in the same situation."""
 
 from __future__ import annotations
@@ -25,9 +26,7 @@ WEBAUTHN = {
     ("POST", "/v1/passkeys/register/finish"),
     ("POST", "/v1/me/recovery/begin"),
 }
-# the confirmation of the main orchestrator needs the user's passkey approval (concept idea 34)
-PASSKEY_APPROVAL = {("POST", "/v1/me/agents")}
-EXCEPTED = WEBAUTHN | PASSKEY_APPROVAL
+EXCEPTED = WEBAUTHN
 BROWSER_CLASSES = {"browser", "anon_or_browser", "anon"}
 NO_CONTRACT = {"contract": False}
 
@@ -64,12 +63,14 @@ def admitted(spec: RouteSpec, who: Principal, method: str, path: str | None) -> 
     return True
 
 
-def test_the_exceptions_are_the_webauthn_ceremonies_and_the_orchestrator_approval(hub: HubHarness) -> None:
+def test_the_exceptions_are_exactly_the_webauthn_ceremonies(hub: HubHarness) -> None:
     assert set(scope.EXCEPTIONS) == EXCEPTED
     registered = {(method, path): spec.auth for method, path, spec in routes(hub)}
     for key in EXCEPTED:
         assert registered[key] in BROWSER_CLASSES | {"browser"}, key
         assert scope.EXCEPTIONS[key]  # every exception names its reason
+    # KOR-62: the confirmation of a main orchestrator is no exception any more; its handler decides
+    assert ("POST", "/v1/me/agents") not in scope.EXCEPTIONS
 
 
 def test_every_route_a_browser_passes_admits_an_active_agent(hub: HubHarness) -> None:
