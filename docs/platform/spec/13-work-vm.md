@@ -453,8 +453,13 @@ Node with the image's Playwright; the runner runs it over Lima's SSH as `sudo /u
   context (headless, viewport 1280×800, profile `/var/lib/workvm-browser/profile`, downloads
   `/var/lib/workvm-browser/downloads`), dialogs accepted and reported, listening on `/run/workvm-browser.sock` (root,
   0600).
-- `call` – reads one JSON request `{tool, arguments}` on stdin, prints one JSON line (the answer of §13.4 without
-  `browser_id`/`seq`, plus `image` and `file`); at most 30 s.
+- `call` – reads one JSON request `{tool, arguments}` on stdin (`browser_navigate` never carries `query`: the runner
+  turns it into `url`; `path` arguments are not passed), prints one JSON line, at most 30 s: `{ok, error, notice, url,
+  title, tab, tabs: [{index, url, title, active}], snapshot, masked, image, file}` – `masked` true when the typed
+  target was a password field; `image` `{width, height, jpeg}` (standard base64 of the viewport JPEG after the action,
+  already at most 160 KiB: quality 60, 40, 25, then half the size) or null; `file` `{path, name, bytes}` (a regular
+  file below `/var/lib/workvm-browser/` the runner brings into the workspace: the download, or the PNG of
+  `browser_screenshot`) or null.
 - `stream FPS QUALITY WIDTH` – prints the screencast of the active tab (Chromium `Page.startScreencast`, a frame only
   when the page changed): per frame one header line `{"bytes":N,"width":W,"height":H}` and N JPEG bytes; ends with
   stdin.
