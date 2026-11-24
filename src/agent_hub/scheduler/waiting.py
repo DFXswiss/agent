@@ -4,7 +4,8 @@ section 7).
 A task waits for the operator when it is `scheduling` with the reason `platform_access_required` (its organization has
 no device of its own and no access to the operator's devices: the operator grants it, `agent-hub platform
 grant-org-access`), or with `no_device` while nobody in the organization could assign one (no certified, active
-platform device the workgroup could get and no device of the organization's own). One row per workgroup with the
+platform device the workgroup could get and no device of the organization's own), or (ADR-077) with
+`credit_exhausted` (the operator sets the balance, E-14). One row per workgroup and reason with the
 number of such tasks and the creation time of the oldest, oldest first. Metadata only.
 """
 
@@ -16,7 +17,7 @@ from typing import Any
 import psycopg
 
 from agent_hub.crypto.encoding import format_time
-from agent_hub.scheduler.core import NO_DEVICE, PLATFORM_ACCESS_REQUIRED
+from agent_hub.scheduler.core import CREDIT_EXHAUSTED, NO_DEVICE, PLATFORM_ACCESS_REQUIRED
 from agent_hub.workgroups.read import candidates
 
 Connection = psycopg.Connection[Any]
@@ -38,7 +39,7 @@ def waiting(connection: Connection, now: datetime, online_seconds: int) -> list[
         "SELECT t.org_id, t.wg_id, t.state_reason, count(*), min(t.created_at), o.platform_access FROM hub.task t"
         " JOIN hub.org o ON o.id = t.org_id WHERE t.state = 'scheduling' AND t.state_reason = ANY(%s)"
         " GROUP BY t.org_id, t.wg_id, t.state_reason, o.platform_access ORDER BY min(t.created_at), t.wg_id",
-        ([NO_DEVICE, PLATFORM_ACCESS_REQUIRED],),
+        ([NO_DEVICE, PLATFORM_ACCESS_REQUIRED, CREDIT_EXHAUSTED],),
     ).fetchall()
     found = []
     for org_id, wg_id, reason, count, oldest, access in rows:

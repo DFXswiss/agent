@@ -20,6 +20,19 @@ A `notification` row is content-free: recipient, kind, org, workgroup, task, a r
   unreachable, all busy) notify an owner once per workgroup and reason while an earlier such notification is unread
   (`ref` = `<category>:<reason>:wg`). A `blocked` record of a failed task is covered by `task.failed` and notifies
   nothing; `created_at` = the hub time of the rule.
+- `operator.request` (`request_rule`, ADR-077 section 4, rule E-05): when a task's attention record enters an occasion
+  of `credit_empty` (reason `credit_exhausted`) or of `device_missing` with the task waiting
+  `platform_access_required`, every user with the platform role `operator` is asked: an account-level row (no org,
+  `ref` = `<reason>:<org>`), once per organization and reason per occasion - not again after an earlier request of the
+  same organization and reason that is newer than the last answer (`credit.changed` of the org; an
+  `org_platform_access` of the org or a `platform_policy` in the platform log) - and, against a flood of
+  organizations, not while an earlier request of the same reason is unread (the operator's list of waiting work,
+  `GET /v1/platform/waiting`, names every organization). Without any operator nothing is written and the hub logs
+  `operator_request_unanswered`.
+- `device.needed` (`request_rule`, ADR-077 section 4): when a task's record enters `device_missing` while it waits
+  `no_device` (the organization may assign a device itself), every admin of the organization except the task owner
+  (who has `task.attention`) is asked to assign a computer, once per workgroup while an earlier one is unread (`ref`
+  = the workgroup).
 - `invite.accepted` (`invite_rule`): to the admin who created the org invitation (while still an admin of the org;
   never to the accepting subject itself), `ref` = the subject (user or device).
 - `rotation.required` is no longer created (KOR-34, ADR-058 section 3: owed rotations run silently in the admins'
@@ -33,6 +46,7 @@ so a repeated signal never notifies twice. Every created row goes to the recipie
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -50,6 +64,7 @@ from agent_hub.stream.publish import Audience, publish
 from agent_hub.whiteboards.projection import NOTIFY_ACTION, ORG, BoardEvent
 
 Connection = psycopg.Connection[Any]
+LOG = logging.getLogger("agent_hub.notifications")
 WHITEBOARD, TASK_IDLE, TASK_FAILED = "whiteboard.entry", "task.idle", "task.failed"
 TASK_ATTENTION = "task.attention"
 INVITE_ACCEPTED, ROTATION_REQUIRED = "invite.accepted", "rotation.required"
@@ -112,7 +127,7 @@ def _write(
     kind: str,
     at: datetime,
     *,
-    org_id: UUID,
+    org_id: UUID | None,
     wg_id: UUID | None = None,
     task_id: UUID | None = None,
     ref: str | None = None,
@@ -273,6 +288,72 @@ def attention_rule(connection: Connection, occasion: Occasion, now: datetime) ->
     return _write(
         connection, owner_id, TASK_ATTENTION, now, org_id=org_id, wg_id=wg_id, task_id=occasion.task_id, ref=ref
     )
+
+
+OPERATOR_REQUEST, DEVICE_NEEDED = "operator.request", "device.needed"
+CREDIT_EMPTY, DEVICE_MISSING = "credit_empty", "device_missing"
+CREDIT_EXHAUSTED, PLATFORM_ACCESS_REQUIRED, NO_DEVICE = "credit_exhausted", "platform_access_required", "no_device"
+_ANSWERED = {
+    CREDIT_EXHAUSTED: "SELECT max(at) FROM hub.audit WHERE action = 'credit.changed' AND org_id = %(org)s",
+    PLATFORM_ACCESS_REQUIRED: (
+        "SELECT max(received_at) FROM hub.platform_entry WHERE type = 'platform_policy'"
+        " OR type = 'org_platform_access' AND subject_id = %(org)s"
+    ),
+}
+
+
+def request_rule(connection: Connection, occasion: Occasion, now: datetime) -> list[Notification]:
+    """`operator.request` / `device.needed` for a task whose record entered an occasion (module docstring)."""
+    if occasion.reason not in (CREDIT_EMPTY, DEVICE_MISSING):
+        return []
+    task = connection.execute(
+        "SELECT org_id, wg_id, owner_id, state_reason FROM hub.task WHERE id = %s", (occasion.task_id,)
+    ).fetchone()
+    if task is None:
+        return []
+    org_id, wg_id, owner_id, waiting = task
+    if occasion.reason == CREDIT_EMPTY:
+        return _operator_request(connection, org_id, CREDIT_EXHAUSTED, now)
+    if waiting == PLATFORM_ACCESS_REQUIRED:
+        return _operator_request(connection, org_id, PLATFORM_ACCESS_REQUIRED, now)
+    if waiting != NO_DEVICE:
+        return []
+    admins = connection.execute(
+        "SELECT principal_id FROM hub.org_member WHERE org_id = %s AND kind = 'user' AND role = 'admin'"
+        " AND removed_seq IS NULL AND principal_id <> %s ORDER BY principal_id",
+        (org_id, owner_id),
+    ).fetchall()
+    written: list[Notification] = []
+    for (admin,) in admins:
+        unread = connection.execute(
+            "SELECT 1 FROM hub.notification WHERE recipient_id = %s AND kind = %s AND wg_id = %s AND read_at IS NULL",
+            (admin, DEVICE_NEEDED, wg_id),
+        ).fetchone()
+        if unread is None:
+            written += _write(connection, admin, DEVICE_NEEDED, now, org_id=org_id, wg_id=wg_id, ref=str(wg_id))
+    return written
+
+
+def _operator_request(connection: Connection, org_id: UUID, reason: str, now: datetime) -> list[Notification]:
+    operators = connection.execute(
+        "SELECT user_id FROM hub.platform_role WHERE role = 'operator' AND revoked_seq IS NULL ORDER BY user_id"
+    ).fetchall()
+    if not operators:
+        LOG.warning("operator_request_unanswered reason=%s org_id=%s", reason, org_id)
+        return []
+    answered = connection.execute(_ANSWERED[reason], {"org": org_id}).fetchone()
+    since = None if answered is None else answered[0]
+    ref = f"{reason}:{org_id}"
+    written: list[Notification] = []
+    for (operator,) in operators:
+        asked = connection.execute(
+            "SELECT 1 FROM hub.notification WHERE recipient_id = %(op)s AND kind = %(kind)s AND (ref = %(ref)s"
+            " AND (%(since)s::timestamptz IS NULL OR created_at > %(since)s) OR read_at IS NULL AND ref LIKE %(like)s)",
+            {"op": operator, "kind": OPERATOR_REQUEST, "ref": ref, "since": since, "like": f"{reason}:%"},
+        ).fetchone()
+        if asked is None:
+            written += _write(connection, operator, OPERATOR_REQUEST, now, org_id=None, ref=ref)
+    return written
 
 
 def invite_rule(

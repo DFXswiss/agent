@@ -176,6 +176,11 @@ _INVITE_USER: dict[str, Check] = {
 _INVITE_DEVICE: dict[str, Check] = {**_INVITE_COMMON, "wgs": _wgs(_one_of("device")), "expires": fields.time}
 
 # Platform log (contracts/common.json platform_body_*).
+PLATFORM_ROLES = ("inviter", "operator")
+"""Platform roles: `inviter` creates platform invitations (ADR-026), `operator` receives the requests of ADR-077 §4."""
+PLATFORM_POLICIES = ("open_platform_access", "open_platform_invites")
+"""Switches of `platform_policy` (ADR-077 §2): off until an entry turns them on."""
+_PLATFORM_ROLE = _one_of(*PLATFORM_ROLES)
 _PLATFORM_COMMON: dict[str, Check] = {
     "seq": _seq,
     "prev": _prev,
@@ -199,12 +204,14 @@ _PLATFORM_TYPES: dict[str, dict[str, Check]] = {
         "capacity": _capacity,
     },
     "device_decertify": {"device": fields.uuid},
-    "role_grant": {"subject": fields.uuid, "role": _one_of("inviter")},
-    "role_revoke": {"subject": fields.uuid, "role": _one_of("inviter")},
+    "role_grant": {"subject": fields.uuid, "role": _PLATFORM_ROLE},
+    "role_revoke": {"subject": fields.uuid, "role": _PLATFORM_ROLE},
     "user_invite": {"invite_id": _invite_id, "pk_inv": _key, "expires": fields.time},
     "org_platform_access": {"org": fields.uuid, "granted": _bool},
     "user_certify": {"user": fields.uuid, "pub": _pub},
     "user_decertify": {"user": fields.uuid},
+    "platform_policy": {"name": _one_of(*PLATFORM_POLICIES), "on": _bool},  # ADR-077
+    "org_operator_subscriptions": {"org": fields.uuid, "granted": _bool},  # ADR-077
 }
 
 LOG_TYPES = frozenset(_LOG_TYPES)

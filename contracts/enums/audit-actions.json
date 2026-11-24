@@ -426,7 +426,15 @@
       "group": "platform"
     },
     {
+      "action": "platform.org_operator_subscriptions",
+      "group": "platform"
+    },
+    {
       "action": "platform.org_platform_access",
+      "group": "platform"
+    },
+    {
+      "action": "platform.platform_policy",
       "group": "platform"
     },
     {

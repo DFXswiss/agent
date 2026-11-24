@@ -13,7 +13,9 @@
 //    enrollment text rebuilt from the entry (`log_accept`), and the device is not currently certified;
 //    `device_decertify` names a certified device; `role_grant`/`role_revoke` change the role; `user_certify` binds
 //    a user to its identity keys (ADR-060): the user has no valid certification and its ID was never certified as a
-//    device (and a device ID never as a user); `user_decertify` ends the user's valid certification.
+//    device (and a device ID never as a user); `user_decertify` ends the user's valid certification;
+//    `platform_policy` sets a switch and `org_operator_subscriptions` an organization's use of the operator's
+//    subscriptions (ADR-077; the latest entry counts, any value is allowed).
 // Identity anchors of users (ADR-060, `identityAnchored`): the entry `seq` is a `user_certify` of `(user, pub)` and
 // the identity proof is `""`, or a `user_invite` for which `user` is the ID derived from the invitation
 // (`invitedUserId`) and whose `pk_inv` verifies the identity proof of `(user, pub)`. At the hub (`current`) a
@@ -89,6 +91,10 @@ export interface PlatformStateFields {
   readonly users: ReadonlyMap<string, number>;
   /** `seq -> invite_id` of every `user_invite`. */
   readonly userInvites: ReadonlyMap<number, string>;
+  /** `name -> on` of the latest `platform_policy` of each switch (ADR-077 §2; a switch without one is off). */
+  readonly policies: ReadonlyMap<string, boolean>;
+  /** `org -> granted` of the latest `org_operator_subscriptions` of each organization (ADR-077 §2). */
+  readonly operatorSubscriptions: ReadonlyMap<string, boolean>;
 }
 
 /** The state after the platform-log entry `seq`. */
@@ -104,6 +110,8 @@ export class PlatformState implements PlatformStateFields {
   declare readonly userCertifications: ReadonlyMap<number, UserCertification>;
   declare readonly users: ReadonlyMap<string, number>;
   declare readonly userInvites: ReadonlyMap<number, string>;
+  declare readonly policies: ReadonlyMap<string, boolean>;
+  declare readonly operatorSubscriptions: ReadonlyMap<string, boolean>;
 
   constructor(fields: PlatformStateFields) {
     Object.assign(this, fields);
@@ -177,9 +185,22 @@ export class PlatformState implements PlatformStateFields {
     return this.roles.has(pairKey(user, role));
   }
 
-  /** ADR-026: a private org has platform access; any other org once the latest `org_platform_access` grants it. */
+  /**
+   * ADR-026, ADR-077 §3: a private org has platform access; any other org by its latest `org_platform_access`, and
+   * without one by the switch `open_platform_access`.
+   */
   platformAccess(org: string, isPrivate: boolean): boolean {
-    return isPrivate || this.orgAccess.get(org) === true;
+    return isPrivate || (this.orgAccess.get(org) ?? this.policy('open_platform_access'));
+  }
+
+  /** The switch `name` (ADR-077 §2): on only after a `platform_policy` turned it on. */
+  policy(name: string): boolean {
+    return this.policies.get(name) === true;
+  }
+
+  /** ADR-077 §3: the latest `org_operator_subscriptions` of the org grants the operator's subscriptions. */
+  operatorSubscribed(org: string): boolean {
+    return this.operatorSubscriptions.get(org) === true;
   }
 
   /** `(seq, hash)` of the last entry. */
@@ -202,6 +223,10 @@ export class PlatformState implements PlatformStateFields {
         return { user, role };
       }),
       org_access: Object.fromEntries([...this.orgAccess.entries()].sort(([a], [b]) => compareText(a, b))),
+      policies: Object.fromEntries([...this.policies.entries()].sort(([a], [b]) => compareText(a, b))),
+      operator_subscriptions: Object.fromEntries(
+        [...this.operatorSubscriptions.entries()].sort(([a], [b]) => compareText(a, b)),
+      ),
       users: [...this.users.entries()]
         .sort(([a], [b]) => compareText(a, b))
         .map(([user, seq]) => ({ user, certify_seq: seq, certified: this.userCertified(user) })),
@@ -290,6 +315,15 @@ function role(state: PlatformState, body: Body, seq: number): PlatformState {
   return state.with({ roles });
 }
 
+function policy(state: PlatformState, body: Body): PlatformState {
+  return state.with({ policies: new Map(state.policies).set(body.name as string, body.on as boolean) });
+}
+
+function operatorSubscriptions(state: PlatformState, body: Body): PlatformState {
+  const granted = new Map(state.operatorSubscriptions).set(body.org as string, body.granted as boolean);
+  return state.with({ operatorSubscriptions: granted });
+}
+
 function orgAccess(state: PlatformState, body: Body): PlatformState {
   return state.with({ orgAccess: new Map(state.orgAccess).set(body.org as string, body.granted as boolean) });
 }
@@ -324,6 +358,8 @@ const TRANSITIONS: Record<string, Transition> = {
   org_platform_access: orgAccess,
   user_certify: userCertify,
   user_decertify: userDecertify,
+  platform_policy: policy,
+  org_operator_subscriptions: operatorSubscriptions,
 };
 
 /** The state after one more entry, or a refusal (P1-P4 and the type rules). */
@@ -354,6 +390,8 @@ export async function applyPlatform(
       userCertifications: new Map(),
       users: new Map(),
       userInvites: new Map(),
+      policies: new Map(),
+      operatorSubscriptions: new Map(),
     });
   }
   return (await TRANSITIONS[body.type as string]!(state, body, seq)).with({ seq, head });

@@ -3,7 +3,8 @@
 - `event.appended` (events) of a `whiteboard.entry` with `notify` 1: the `notification` frames of the rows the storing
   transaction wrote and the `ping` hints to the devices of the pinged sessions;
 - `task.state` (sessions): `task.idle` / `task.failed` to the owner;
-- `task.attention` (attention, KOR-39): `task.attention` to the owner;
+- `task.attention` (attention, KOR-39): `task.attention` to the owner; `operator.request` to the operators and
+  `device.needed` to the admins (ADR-077);
 - `invite.accepted` (invites): `invite.accepted` to the inviting admin.
 
 Owed rotations (`log.appended`, `device.decertified`) no longer notify anybody: the admins' browsers run them silently
@@ -112,6 +113,7 @@ def on_task_attention(_name: str, ids: Mapping[str, Any]) -> None:
         task_state=str(ids["task_state"]),
     )
     _queue(_rows(lambda connection, now: rules.attention_rule(connection, occasion, now)))
+    _queue(_rows(lambda connection, now: rules.request_rule(connection, occasion, now)))
 
 
 def on_invite_accepted(_name: str, ids: Mapping[str, Any]) -> None:

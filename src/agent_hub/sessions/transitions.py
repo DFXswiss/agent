@@ -18,7 +18,9 @@ caller's audit rows (lock order of `agent_hub.sessions.taskstate`). It
 6. after a `stopped`: lets `agent_hub.sessions.prompts.carry_over` start the next main session for the prompts the
    ended one did not deliver (KOR-11); for a `failed` with `capacity_exhausted` (the device had no free VM slot):
    `agent_hub.sessions.retry` decides before step 4 whether the hub re-schedules, and then step 4 stores the refusal
-   without deriving the task and the next attempt is created and placed, which derives it (KOR-14).
+   without deriving the task and the next attempt is created and placed, which derives it (KOR-14); a `failed`
+   with `model_access_unavailable` gets the same attempt when a model credential of the owner arrived while the start
+   ran (`agent_hub.sessions.model_retry`, ADR-077; otherwise the owner's next credential write creates it).
 
 The caller sends the effects with `Applied.effects.flush()` **after its commit**. `hub_transition` is the same step for
 changes the hub makes itself (closing a task, stopping a session without device).
@@ -35,7 +37,7 @@ from uuid import UUID
 import psycopg
 
 from agent_hub.errors import HubError
-from agent_hub.sessions import prompts, retry, rows
+from agent_hub.sessions import model_retry, prompts, retry, rows
 from agent_hub.sessions.derive import (
     ALLOWED,
     FAILED,
@@ -231,6 +233,10 @@ def apply(
     applied = Applied(changed=True, state=state)
     refused = state == FAILED and checked == retry.REASON
     attempt = retry.planned(connection, task, session.id, received_at) if refused else None
+    attempt_reason = retry.REASON
+    if state == FAILED and checked == model_retry.REASON:
+        attempt = model_retry.planned(connection, task, session.id, received_at)
+        attempt_reason = model_retry.REASON
     record(
         connection,
         task,
@@ -245,7 +251,7 @@ def apply(
         derive=attempt is None,
     )
     if attempt is not None:
-        retry.start(connection, task, attempt, applied.effects)
+        retry.start(connection, task, attempt, applied.effects, attempt_reason)
     if state == STOPPED:
         prompts.carry_over(
             connection, cast(TaskRow, lock_task(connection, task.id)), session.id, received_at, applied.effects

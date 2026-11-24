@@ -416,7 +416,8 @@
     "platform_role": {
       "type": "string",
       "enum": [
-        "inviter"
+        "inviter",
+        "operator"
       ]
     },
     "task_state": {
@@ -2732,6 +2733,114 @@
       ],
       "additionalProperties": false
     },
+    "platform_body_platform_policy": {
+      "type": "object",
+      "description": "body of a platform_policy entry (ADR-077: a switch, the latest entry of a name counts)",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "platform_policy"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "name": {
+          "type": "string",
+          "enum": [
+            "open_platform_access",
+            "open_platform_invites"
+          ]
+        },
+        "on": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "name",
+        "on"
+      ],
+      "additionalProperties": false
+    },
+    "platform_body_org_operator_subscriptions": {
+      "type": "object",
+      "description": "body of a org_operator_subscriptions entry (ADR-077: the organization's members use the operator's subscriptions)",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "org_operator_subscriptions"
+        },
+        "by": {
+          "type": "string",
+          "const": "platform-root"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "granted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "org",
+        "granted"
+      ],
+      "additionalProperties": false
+    },
     "platform_entry_body": {
       "description": "platform-log entry body: common fields seq, prev, type, by, ts, v plus exactly the fields of its type (04-crypto.md section 4.8)",
       "anyOf": [
@@ -2764,6 +2873,12 @@
         },
         {
           "$ref": "#/$defs/platform_body_user_decertify"
+        },
+        {
+          "$ref": "#/$defs/platform_body_platform_policy"
+        },
+        {
+          "$ref": "#/$defs/platform_body_org_operator_subscriptions"
         }
       ]
     },

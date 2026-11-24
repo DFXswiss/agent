@@ -15,8 +15,9 @@ through a signed HTTP fetch by the hint handlers.
   hub admits accounts into an org only while every device of it announced `log.admit`; ADR-075: `log.org_assign`
   for assignments to the whole organization, `vm.choice` for the VM of each session named in its transitions;
   KOR-65: the GitHub ways the web may offer for this device; ADR-078: `github.identities`, the hub stores GitHub
-  identity choices and defaults only while every active device of the organization announced it). A header, not a
-  query parameter: an older hub refuses unknown query parameters but ignores unknown headers.
+  identity choices and defaults only while every active device of the organization announced it; ADR-077:
+  `log.policy` for the switches, the operator-subscription list and the role `operator` of the platform log). A
+  header, not a query parameter: an older hub refuses unknown query parameters but ignores unknown headers.
 - Reconnect backoff 1 s doubling to 30 s with ±20 % jitter, reset after a connection that stayed up 30 s
   (legacy `cmd_sync` rule). Redirects are never followed; no proxy is used.
 """
@@ -41,7 +42,7 @@ from agent_runner.sync.push import Pusher, SyncFatal
 
 WS_TARGET = "/v1/device/ws"
 FEATURES_HEADER = "Agent-Features"
-FEATURES = ("log.admit", "log.org_assign", "vm.choice", "github.ways", "github.identities")
+FEATURES = ("log.admit", "log.org_assign", "log.policy", "vm.choice", "github.ways", "github.identities")
 """What this runner understands: `log.admit` - membership logs with `admit` entries and platform logs with
 `user_certify`/`user_decertify` (the copied verifier of `agent_runner.crypto.log`); `github.ways` - it announces the
 ways of "Connect GitHub" it can run (`features`, KOR-65), so a device without them offers only an existing token."""

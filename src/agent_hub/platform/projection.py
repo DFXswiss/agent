@@ -11,7 +11,10 @@ rebuilt state agree:
   values its heartbeats report), the enrollment's `certified_at`, the device invitation's `used_at`/`used_by`;
 - `device_decertify`: device state `decertified` (the gate refuses the device with `key_revoked`, HUB-08);
 - `role_grant` / `role_revoke`: `platform_role` (`granted_seq`, `revoked_seq`);
-- `org_platform_access`: `org.platform_access` (a private org keeps `true`, ADR-026);
+- `org_platform_access`: `org.platform_access_grant` and `org.platform_access` (a private org keeps `true`, ADR-026);
+- `platform_policy` (ADR-077): `platform_policy`; the switch `open_platform_access` derives `org.platform_access` of
+  every org again (`private OR COALESCE(platform_access_grant, on)`: an explicit `org_platform_access` wins);
+- `org_operator_subscriptions`: nothing (the runner and the clients read it from the verified platform log, ADR-077);
 - `root`, `user_certify`, `user_decertify`: nothing (the certifications of users are read from the verified platform
   log, ADR-060).
 
@@ -106,10 +109,28 @@ def _role(connection: psycopg.Connection[Any], body: dict[str, object], seq: int
         )
 
 
+OPEN_ACCESS = "open_platform_access"
+
+
 def _org_access(connection: psycopg.Connection[Any], body: dict[str, object], seq: int, at: datetime) -> None:
     connection.execute(
-        "UPDATE hub.org SET platform_access = (private OR %s) WHERE id = %s", (body["granted"], body["org"])
+        "UPDATE hub.org SET platform_access_grant = %s, platform_access = (private OR %s) WHERE id = %s",
+        (body["granted"], body["granted"], body["org"]),
     )
+
+
+def _policy(connection: psycopg.Connection[Any], body: dict[str, object], seq: int, at: datetime) -> None:
+    connection.execute(
+        'INSERT INTO hub.platform_policy (name, "on", seq) VALUES (%s, %s, %s)'
+        ' ON CONFLICT (name) DO UPDATE SET "on" = EXCLUDED."on", seq = EXCLUDED.seq',
+        (body["name"], body["on"], seq),
+    )
+    if body["name"] == OPEN_ACCESS:
+        connection.execute(
+            "UPDATE hub.org SET platform_access = (private OR COALESCE(platform_access_grant, %s))"
+            " WHERE platform_access IS DISTINCT FROM (private OR COALESCE(platform_access_grant, %s))",
+            (body["on"], body["on"]),
+        )
 
 
 def _nothing(connection: psycopg.Connection[Any], body: dict[str, object], seq: int, at: datetime) -> None:
@@ -127,6 +148,8 @@ PROJECTORS: dict[str, Projector] = {
     "org_platform_access": _org_access,
     "user_certify": _nothing,
     "user_decertify": _nothing,
+    "platform_policy": _policy,
+    "org_operator_subscriptions": _nothing,
 }
 
 

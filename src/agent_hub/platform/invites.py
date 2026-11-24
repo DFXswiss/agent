@@ -11,6 +11,10 @@ again; another invitation with the same ID is `409 id_conflict`. Inviters list t
 first, the operator's ones with `created_by` null) and revoke open ones; a used invitation cannot be revoked
 (`invite_consumed`). The registration through a platform invitation (HUB-03) and its use by the private-org genesis
 (HUB-05) work on the same rows.
+
+ADR-077 §3: while the switch `open_platform_invites` of the platform log is on (projection `platform_policy`), every
+user may create platform invitations; such a user without the role lists and revokes only the invitations it created
+itself (the invitation stays mandatory: only who may invite changes).
 """
 
 from __future__ import annotations
@@ -31,7 +35,10 @@ from agent_hub.errors import HubError
 MAX_LISTED = 1000
 
 
-def is_inviter(connection: psycopg.Connection[Any], user: UUID) -> bool:
+OPEN_INVITES = "open_platform_invites"
+
+
+def holds_role(connection: psycopg.Connection[Any], user: UUID) -> bool:
     """The user holds the platform role `inviter` (granted and not revoked in the platform log)."""
     row = connection.execute(
         "SELECT 1 FROM hub.platform_role WHERE user_id = %s AND role = 'inviter' AND revoked_seq IS NULL", (user,)
@@ -39,10 +46,20 @@ def is_inviter(connection: psycopg.Connection[Any], user: UUID) -> bool:
     return row is not None
 
 
-def require_inviter(connection: psycopg.Connection[Any], user: UUID) -> None:
-    """`403 forbidden` unless the user is an inviter."""
-    if not is_inviter(connection, user):
+def invites_open(connection: psycopg.Connection[Any]) -> bool:
+    """The switch `open_platform_invites` is on (ADR-077)."""
+    row = connection.execute('SELECT "on" FROM hub.platform_policy WHERE name = %s', (OPEN_INVITES,)).fetchone()
+    return row is not None and bool(row[0])
+
+
+def require_inviter(connection: psycopg.Connection[Any], user: UUID) -> bool:
+    """`403 forbidden` unless the user may invite; True when it sees every invitation (the role), False when only its
+    own (the switch)."""
+    if holds_role(connection, user):
+        return True
+    if not invites_open(connection):
         raise HubError("forbidden")
+    return False
 
 
 def _audit(connection: psycopg.Connection[Any], action: str, user: UUID, invite_id: str, now: datetime) -> None:
@@ -112,12 +129,13 @@ def _time(value: datetime | None) -> str | None:
 
 
 def listing(connection: psycopg.Connection[Any], user: UUID, now: datetime) -> list[dict[str, object]]:
-    """The platform user invitations, newest first."""
-    require_inviter(connection, user)
+    """The platform user invitations, newest first (a user without the role: only its own)."""
+    every = require_inviter(connection, user)
     rows = connection.execute(
         "SELECT id, created_by, created_at, expires_at, registered_user, used_at, revoked_at FROM hub.invite"
-        " WHERE scope = 'platform' AND kind = 'user' ORDER BY created_at DESC, id DESC LIMIT %s",
-        (MAX_LISTED,),
+        " WHERE scope = 'platform' AND kind = 'user' AND (%s OR created_by = %s)"
+        " ORDER BY created_at DESC, id DESC LIMIT %s",
+        (every, user, MAX_LISTED),
     ).fetchall()
     return [
         {
@@ -136,11 +154,13 @@ def listing(connection: psycopg.Connection[Any], user: UUID, now: datetime) -> l
 
 
 def revoke(connection: psycopg.Connection[Any], user: UUID, invite_id: str, now: datetime) -> None:
-    """Revoke a platform user invitation (`404 not_found` for others; repeating is a no-op)."""
-    require_inviter(connection, user)
+    """Revoke a platform user invitation (`404 not_found` for others and, without the role, for another user's;
+    repeating is a no-op)."""
+    every = require_inviter(connection, user)
     row = connection.execute(
-        "SELECT used_at, revoked_at FROM hub.invite WHERE id = %s AND scope = 'platform' AND kind = 'user' FOR UPDATE",
-        (invite_id,),
+        "SELECT used_at, revoked_at FROM hub.invite WHERE id = %s AND scope = 'platform' AND kind = 'user'"
+        " AND (%s OR created_by = %s) FOR UPDATE",
+        (invite_id, every, user),
     ).fetchone()
     if row is None:
         raise HubError("not_found")

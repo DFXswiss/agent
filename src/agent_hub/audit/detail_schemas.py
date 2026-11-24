@@ -1136,7 +1136,15 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
     },
+    "platform.org_operator_subscriptions": {
+        "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "required": ["seq"],
+    },
     "platform.org_platform_access": {
+        "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "required": ["seq"],
+    },
+    "platform.platform_policy": {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
     },

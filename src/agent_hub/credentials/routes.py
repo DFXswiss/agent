@@ -19,6 +19,10 @@ device holds: these endpoints address user records only, ADR-078, so an older ru
 company record gets `404` and the notice is cleared). After a committed change the eligible devices get the hint
 `credentials {owner_id}` and, after a rotation, the recipients of the new wraps the `wraps` frame/hint. Unknown kinds
 and foreign owners are `404 not_found` for reads and `403 forbidden` for device writes.
+
+A stored model credential (`claude_subscription`, `anthropic_api_key`), by the owner or by a device answering the
+owner's request, lets the owner's tasks that failed for want of model access continue (`agent_hub.sessions.model_retry`,
+ADR-077; the attempts are created in the same transaction and announced after the commit).
 """
 
 from __future__ import annotations
@@ -40,6 +44,8 @@ from agent_hub.http.routing import EVENT_BATCH_BYTES, HubRouter
 from agent_hub.notifications.rules import Notification, publish_rows
 from agent_hub.orgs.routes import parse_id, user_id
 from agent_hub.requests.store import authorizes_write
+from agent_hub.sessions import model_retry
+from agent_hub.sessions.effects import Effects
 from agent_hub.stream.publish import Audience, AudienceKind, publish
 
 router = HubRouter()
@@ -110,6 +116,8 @@ async def get_credential(context: Context, principal: CurrentPrincipal, kind: st
 async def put_credential(context: Context, principal: CurrentPrincipal, kind: str, body: PutBody) -> dict[str, Any]:
     user, found_kind, now = user_id(principal), _kind(kind), context.clock()
 
+    effects = Effects()
+
     def work(connection: Any) -> tuple[records.Change, list[Notification]]:
         change = records.put_record(
             connection,
@@ -121,11 +129,14 @@ async def put_credential(context: Context, principal: CurrentPrincipal, kind: st
             now=now,
             root_key=context.config.platform_root_key,
         )
+        # E-05 (ADR-077): tasks that failed for want of model access continue by themselves
+        model_retry.after_credential(connection, user, found_kind, now, effects)
         return change, account_change(connection, user, "credential_changed", now, target=found_kind)
 
     change, account = await _in_transaction(context, work)
     notices.hint_devices(change.devices, user)
     publish_rows(account)
+    effects.flush()
     return {"version": change.version}
 
 
@@ -209,13 +220,15 @@ async def put_device_credential(
     if kind not in records.KINDS:
         raise HubError("forbidden")
 
+    effects = Effects()
+
     def work(connection: Any) -> records.Change:
         if not is_eligible(connection, device, owner_id) or not authorizes_write(
             connection, device, owner_id, request_id=UUID(body.request_id), kind=kind, now=now
         ):
             raise HubError("forbidden")
         author = records.Author(id=device, kind="device", sig_public=records.device_key(connection, device))
-        return records.put_record(
+        change = records.put_record(
             connection,
             owner=owner_id,
             kind=kind,
@@ -225,7 +238,11 @@ async def put_device_credential(
             now=now,
             root_key=context.config.platform_root_key,
         )
+        # a subscription login on a device (ADR-011) stores the credential here: the same continuation (ADR-077)
+        model_retry.after_credential(connection, owner_id, kind, now, effects)
+        return change
 
     change = await _in_transaction(context, work)
     notices.hint_devices(change.devices, owner_id)
+    effects.flush()
     return {"version": change.version}

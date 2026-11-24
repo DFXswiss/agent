@@ -29,7 +29,7 @@ from agent_hub.audit.invites import audit_invite_use
 from agent_hub.config import LIMITS
 from agent_hub.crypto.encoding import b64u_encode, canonical, parse_time
 from agent_hub.crypto.errors import CryptoError
-from agent_hub.device.features import outdated_devices
+from agent_hub.device.features import LOG_ADMIT, LOG_POLICY, outdated_devices
 from agent_hub.errors import ERROR_STATUSES, HubError
 from agent_hub.log.entries import Head, entry_hash
 from agent_hub.log.platform import PlatformState, VerifiedPlatformLog, append_platform, apply_platform
@@ -79,6 +79,11 @@ CACHE = _Cache()
 
 
 USER_TYPES = frozenset({"user_certify", "user_decertify"})
+ROLE_TYPES = frozenset({"role_grant", "role_revoke"})
+OPERATOR_ROLE = "operator"
+POLICY_TYPES = frozenset({"platform_policy", "org_operator_subscriptions"})
+"""ADR-077: entries an older runner does not know; like `USER_TYPES` they wait for the runners' feature `log.policy`
+(also a `role_grant` / `role_revoke` of the new role `operator`)."""
 MAX_DETAIL_DEVICES = 64
 
 
@@ -158,22 +163,28 @@ def _check_hub_rules(connection: psycopg.Connection[Any], body: dict[str, object
         device = connection.execute("SELECT kind FROM hub.device WHERE id = %s", (body["device"],)).fetchone()
         if (principal is not None and principal[0] != "device") or (device is not None and device[0] != "platform"):
             raise HubError("id_conflict", detail={"pointers": [pointer + "/body/device"]})
-    elif kind == "org_platform_access":
+    if kind in ("org_platform_access", "org_operator_subscriptions"):
         found = connection.execute("SELECT 1 FROM hub.org WHERE id = %s", (body["org"],)).fetchone()
         if found is None:
             raise HubError("not_found", detail={"pointers": [pointer + "/body/org"]})
-    elif kind in USER_TYPES:
-        # ADR-060: an older runner verifies the whole platform log and would stop at an unknown type (and so miss
-        # every later decertification); every active platform device must have announced `log.admit` first
-        active = [
-            str(row[0])
-            for row in connection.execute(
-                "SELECT id FROM hub.device WHERE kind = 'platform' AND state = 'active' ORDER BY id"
-            )
-        ]
-        outdated = outdated_devices(connection, active)
-        if outdated:
-            raise HubError("peer_outdated", detail={"devices": outdated[:MAX_DETAIL_DEVICES]})
+    if kind in USER_TYPES:
+        _require_feature(connection, LOG_ADMIT)
+    elif kind in POLICY_TYPES or (kind in ROLE_TYPES and body["role"] == OPERATOR_ROLE):
+        _require_feature(connection, LOG_POLICY)
+
+
+def _require_feature(connection: psycopg.Connection[Any], feature: str) -> None:
+    """ADR-060, ADR-077: an older runner verifies the whole platform log and would stop at an unknown type or value
+    (and so miss every later decertification); every active platform device must have announced `feature` first."""
+    active = [
+        str(row[0])
+        for row in connection.execute(
+            "SELECT id FROM hub.device WHERE kind = 'platform' AND state = 'active' ORDER BY id"
+        )
+    ]
+    outdated = outdated_devices(connection, active, feature)
+    if outdated:
+        raise HubError("peer_outdated", detail={"devices": outdated[:MAX_DETAIL_DEVICES]})
 
 
 def append(

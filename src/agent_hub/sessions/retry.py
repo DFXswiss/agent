@@ -102,12 +102,14 @@ def planned(connection: Connection, task: TaskRow, session_id: UUID, now: dateti
     return max(now, refused.pending[-1].received_at + prompts.TICK, created + prompts.TICK)
 
 
-def start(connection: Connection, task: TaskRow, created: datetime, effects: Effects) -> TaskRow:
+def start(connection: Connection, task: TaskRow, created: datetime, effects: Effects, reason: str = REASON) -> TaskRow:
     """Create and place the next attempt (after the refusal is stored, so the scheduler sees it); the derived task.
-    At the refusal limit the attempt waits and is held back (module docstring)."""
+    At the refusal limit the attempt waits and is held back (module docstring). `reason` is the reason of the
+    attempt's first transition: `capacity_exhausted`, or `model_access_unavailable` for the attempt after the owner
+    connected model access (`agent_hub.sessions.model_retry`, ADR-077), which is never held back."""
     limit = settings.capacity_refusals()
     # the attempt counts as the next one in the row: the refusals before it are the row of the refused session
-    held = refusals(_newest(connection, task.id, limit)) >= limit
+    held = reason == REASON and refusals(_newest(connection, task.id, limit)) >= limit
     session_id = UUID(uuid7(int(created.timestamp() * 1000)))
     if held:
         LOG.warning("capacity_refusal_limit task_id=%s session_id=%s", task.id, session_id)
@@ -122,7 +124,7 @@ def start(connection: Connection, task: TaskRow, created: datetime, effects: Eff
             owner=task.owner_id,
         )
     found = create_main_session(
-        connection, task, session_id, decision, created, actor=HUB, effects=effects, reason=REASON
+        connection, task, session_id, decision, created, actor=HUB, effects=effects, reason=reason
     )
     if held:
         connection.execute(

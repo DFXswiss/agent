@@ -271,6 +271,87 @@
         "entries": [
           {
             "body": {
+              "by": "platform-root",
+              "name": "open_platform_access",
+              "on": true,
+              "prev": "TQ8CZKZU4CkStxCwHM6YX-XC_Fp3egQzcdrOd8YjnXg",
+              "seq": 17,
+              "ts": "2026-11-21T12:17:00.000Z",
+              "type": "platform_policy",
+              "v": 1
+            },
+            "sig": "jEfNzs36y7LWWprzaZso4hidhnfON6uD5oOC9S986XN48q0gqGqogCV2wvDoOVOTTqffXpBB34CKkRcaPK2yCA"
+          }
+        ],
+        "log": {
+          "count": 17,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_signature",
+      "name": "P4_policy_signed_by_hub",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "granted": true,
+              "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+              "prev": "4dbOqT-_Ssi4e6lPQMPWLx-1DtKQ02KEP0wmNzF8zr4",
+              "seq": 18,
+              "ts": "2026-11-21T12:18:00.000Z",
+              "type": "org_operator_subscriptions",
+              "v": 1
+            },
+            "sig": "I-oQEpnr0lTuu1wOcJLlvGunnHxzCp0d5pBachN9TpBR5H-lLFuXt7Lh3TtBPQVjCpP-T-T1yhkDtGpombVODQ"
+          }
+        ],
+        "log": {
+          "count": 18,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_signature",
+      "name": "P4_operator_subscriptions_signed_by_hub",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "prev": "LCMYR_uIFISUO6Z7HDH1JO48Y55EMuYdGzFpMVLH01U",
+              "role": "operator",
+              "seq": 20,
+              "subject": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "ts": "2026-11-21T12:20:00.000Z",
+              "type": "role_grant",
+              "v": 1
+            },
+            "sig": "R8-qflAGpb8Ewsk_rj_tNtisTw3eshWH9pLIVhyEOhjWt_Q3IjTxX5zJsBPmjgS0u9aRsjWbtXXXV10Zfi3HDA"
+          }
+        ],
+        "log": {
+          "count": 20,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "operator_role_grant_twice",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
               "agent_version": "0.1.0",
               "arch": "arm64",
               "by": "platform-root",
@@ -1116,6 +1197,84 @@
           "v": 1
         },
         "sig": "Db8DJfkgYL5OcyLdFQ-qnIV3wz_V6pPUgPyrSjeNWfIdZF84WGeDyaKtivCD6ye6L1jarY_9Nl9g1qQdXDu9Bw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "name": "open_platform_access",
+          "on": true,
+          "prev": "TQ8CZKZU4CkStxCwHM6YX-XC_Fp3egQzcdrOd8YjnXg",
+          "seq": 17,
+          "ts": "2026-11-21T12:17:00.000Z",
+          "type": "platform_policy",
+          "v": 1
+        },
+        "sig": "-Cz-Et5HdeAD3SLhRNTH-BtGPMJ4p7RjQcDSAE25yKToJc9sk1mjOHf6--UZvOC2R--yVxBkyRU4BcaHWuevDg"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "granted": true,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "4dbOqT-_Ssi4e6lPQMPWLx-1DtKQ02KEP0wmNzF8zr4",
+          "seq": 18,
+          "ts": "2026-11-21T12:18:00.000Z",
+          "type": "org_operator_subscriptions",
+          "v": 1
+        },
+        "sig": "sEFJr_nO7Mjz8dcMJAn4oddD847TJ_DzTSzFxcdTj9yBmZ6mzDWYqpRZjQaa6mBU7Ms9t40xOVYgZJxFpiqtBw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "3VQsjId1chma6FB7OeE1mU1SoIz6n-as3CvtNZn8MzA",
+          "role": "operator",
+          "seq": 19,
+          "subject": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "ts": "2026-11-21T12:19:00.000Z",
+          "type": "role_grant",
+          "v": 1
+        },
+        "sig": "ofbzVWem8dU5Om8fDcRwJuITY6Jm12CVTWV4cxoXN7_2BQXTahsmBjoSrOtymUG6BvgOUJSSfKw3myrWlLnWAQ"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "name": "open_platform_invites",
+          "on": true,
+          "prev": "LCMYR_uIFISUO6Z7HDH1JO48Y55EMuYdGzFpMVLH01U",
+          "seq": 20,
+          "ts": "2026-11-21T12:20:00.000Z",
+          "type": "platform_policy",
+          "v": 1
+        },
+        "sig": "1EgiGTzwYY8I7C7tCCRBUUzNZ3RWJ6YVhSrNJIOa7L3NtqGl9TqOp5juTAfs2lFVvrQ68JuN76lCM51cqaxQBw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "granted": false,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "MI1zwiUNBKpQA_lAf2xq0kwlTOcGWMAPYiZm_5VmhGA",
+          "seq": 21,
+          "ts": "2026-11-21T12:21:00.000Z",
+          "type": "org_operator_subscriptions",
+          "v": 1
+        },
+        "sig": "HYIjmE-aj5idrzMjlpshLacD6aSnyixeJ0SXqXPNNwLHN5dVose_gpgnje_SPyTgu2Uq91yPyfju1HiUmvGXBQ"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "name": "open_platform_access",
+          "on": false,
+          "prev": "A_3BlJHWapPDBMa-IPRvVbUXu7VGlai-ddZHQjGbL78",
+          "seq": 22,
+          "ts": "2026-11-21T12:22:00.000Z",
+          "type": "platform_policy",
+          "v": 1
+        },
+        "sig": "H5iBCpz2WFh1JIWUV89ojKfg27Zl_-jd3nZs-3ZW0Ajmwuz6ddQJajNOXmI1l9o4hBKGNbmWwutedwlTaN__Dw"
       }
     ]
   },
@@ -1189,10 +1348,34 @@
       {
         "hash": "TQ8CZKZU4CkStxCwHM6YX-XC_Fp3egQzcdrOd8YjnXg",
         "seq": 16
+      },
+      {
+        "hash": "4dbOqT-_Ssi4e6lPQMPWLx-1DtKQ02KEP0wmNzF8zr4",
+        "seq": 17
+      },
+      {
+        "hash": "3VQsjId1chma6FB7OeE1mU1SoIz6n-as3CvtNZn8MzA",
+        "seq": 18
+      },
+      {
+        "hash": "LCMYR_uIFISUO6Z7HDH1JO48Y55EMuYdGzFpMVLH01U",
+        "seq": 19
+      },
+      {
+        "hash": "MI1zwiUNBKpQA_lAf2xq0kwlTOcGWMAPYiZm_5VmhGA",
+        "seq": 20
+      },
+      {
+        "hash": "A_3BlJHWapPDBMa-IPRvVbUXu7VGlai-ddZHQjGbL78",
+        "seq": 21
+      },
+      {
+        "hash": "GO5QpmEklUAwB4Qvu_sju5Njm-rmTg95OtKSycmTJlM",
+        "seq": 22
       }
     ],
     "log": {
-      "count": 17,
+      "count": 23,
       "name": "platform"
     },
     "platform_access": [
@@ -1213,6 +1396,30 @@
         "count": 11,
         "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
         "private": true
+      },
+      {
+        "access": false,
+        "count": 17,
+        "org": "01a1ee56-5e00-760a-81f9-fd7d800fcd81",
+        "private": false
+      },
+      {
+        "access": true,
+        "count": 18,
+        "org": "01a1ee56-5e00-760a-81f9-fd7d800fcd81",
+        "private": false
+      },
+      {
+        "access": false,
+        "count": 18,
+        "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "private": false
+      },
+      {
+        "access": false,
+        "count": 23,
+        "org": "01a1ee56-5e00-760a-81f9-fd7d800fcd81",
+        "private": false
       }
     ],
     "projections": [
@@ -1223,7 +1430,9 @@
           "seq": 0
         },
         "invites": [],
+        "operator_subscriptions": {},
         "org_access": {},
+        "policies": {},
         "roles": [],
         "users": []
       },
@@ -1241,7 +1450,9 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {},
+        "policies": {},
         "roles": [],
         "users": []
       },
@@ -1265,7 +1476,9 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {},
+        "policies": {},
         "roles": [],
         "users": []
       },
@@ -1295,7 +1508,9 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {},
+        "policies": {},
         "roles": [],
         "users": []
       },
@@ -1325,7 +1540,9 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {},
+        "policies": {},
         "roles": [
           {
             "role": "inviter",
@@ -1360,9 +1577,11 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
         },
+        "policies": {},
         "roles": [
           {
             "role": "inviter",
@@ -1403,9 +1622,11 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
         },
+        "policies": {},
         "roles": [
           {
             "role": "inviter",
@@ -1451,9 +1672,11 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
         },
+        "policies": {},
         "roles": [
           {
             "role": "inviter",
@@ -1499,9 +1722,11 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
         },
+        "policies": {},
         "roles": [
           {
             "role": "inviter",
@@ -1547,9 +1772,11 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
         },
+        "policies": {},
         "roles": [],
         "users": []
       },
@@ -1590,9 +1817,11 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
         },
+        "policies": {},
         "roles": [],
         "users": []
       },
@@ -1639,9 +1868,11 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
         },
+        "policies": {},
         "roles": [],
         "users": []
       },
@@ -1688,9 +1919,11 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
         },
+        "policies": {},
         "roles": [],
         "users": [
           {
@@ -1743,9 +1976,11 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
         },
+        "policies": {},
         "roles": [],
         "users": [
           {
@@ -1803,9 +2038,11 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
         },
+        "policies": {},
         "roles": [],
         "users": [
           {
@@ -1868,9 +2105,11 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
         },
+        "policies": {},
         "roles": [],
         "users": [
           {
@@ -1933,10 +2172,459 @@
             "seq": 1
           }
         ],
+        "operator_subscriptions": {},
         "org_access": {
           "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
         },
+        "policies": {},
         "roles": [],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "4dbOqT-_Ssi4e6lPQMPWLx-1DtKQ02KEP0wmNzF8zr4",
+          "seq": 17
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {},
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": true
+        },
+        "roles": [],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "3VQsjId1chma6FB7OeE1mU1SoIz6n-as3CvtNZn8MzA",
+          "seq": 18
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
+        },
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": true
+        },
+        "roles": [],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "LCMYR_uIFISUO6Z7HDH1JO48Y55EMuYdGzFpMVLH01U",
+          "seq": 19
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
+        },
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": true
+        },
+        "roles": [
+          {
+            "role": "operator",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          }
+        ],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "MI1zwiUNBKpQA_lAf2xq0kwlTOcGWMAPYiZm_5VmhGA",
+          "seq": 20
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": true
+        },
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": true,
+          "open_platform_invites": true
+        },
+        "roles": [
+          {
+            "role": "operator",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          }
+        ],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "A_3BlJHWapPDBMa-IPRvVbUXu7VGlai-ddZHQjGbL78",
+          "seq": 21
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": true,
+          "open_platform_invites": true
+        },
+        "roles": [
+          {
+            "role": "operator",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          }
+        ],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "GO5QpmEklUAwB4Qvu_sju5Njm-rmTg95OtKSycmTJlM",
+          "seq": 22
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": false,
+          "open_platform_invites": true
+        },
+        "roles": [
+          {
+            "role": "operator",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          }
+        ],
         "users": [
           {
             "certified": true,

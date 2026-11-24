@@ -14,7 +14,9 @@ Every entry is signed by the platform root (label `platform-log\\0`); the root p
    enrollment text rebuilt from the entry (`log_accept`), and the device is not currently certified;
    `device_decertify` names a certified device; `role_grant`/`role_revoke` change the role; `user_certify` binds a
    user to its identity keys (ADR-060): the user has no valid certification and its ID was never certified as a
-   device (and a device ID never as a user); `user_decertify` ends the user's valid certification.
+   device (and a device ID never as a user); `user_decertify` ends the user's valid certification;
+   `platform_policy` sets a switch and `org_operator_subscriptions` an organization's use of the operator's
+   subscriptions (ADR-077; the latest entry counts, any value is allowed).
 
 Identity anchors of users (ADR-060, `identity_anchored`): the entry `seq` is a `user_certify` of `(user, pub)` and
 the identity proof is `""`, or a `user_invite` for which `user` is the ID derived from the invitation
@@ -99,6 +101,10 @@ class PlatformState:
     """`user -> seq` of its latest `user_certify`."""
     user_invites: Mapping[int, str] = field(default_factory=dict)
     """`seq -> invite_id` of every `user_invite`."""
+    policies: Mapping[str, bool] = field(default_factory=dict)
+    """`name -> on` of the latest `platform_policy` of each switch (ADR-077 §2; a switch without one is off)."""
+    operator_subscriptions: Mapping[str, bool] = field(default_factory=dict)
+    """`org -> granted` of the latest `org_operator_subscriptions` of each organization (ADR-077 §2)."""
 
     def identity_anchored(
         self, seq: int, user: str, pub: Mapping[str, str], id_sig: object, *, current: bool = False
@@ -149,8 +155,17 @@ class PlatformState:
         return (user, role) in self.roles
 
     def platform_access(self, org: str, private: bool) -> bool:
-        """ADR-026: a private org has platform access; any other org once the latest `org_platform_access` grants it."""
-        return private or self.org_access.get(org, False)
+        """ADR-026, ADR-077 §3: a private org has platform access; any other org by its latest `org_platform_access`,
+        and without one by the switch `open_platform_access`."""
+        return private or self.org_access.get(org, self.policy("open_platform_access"))
+
+    def policy(self, name: str) -> bool:
+        """The switch `name` (ADR-077 §2): on only after a `platform_policy` turned it on."""
+        return self.policies.get(name, False)
+
+    def operator_subscribed(self, org: str) -> bool:
+        """ADR-077 §3: the latest `org_operator_subscriptions` of the org grants the operator's subscriptions."""
+        return self.operator_subscriptions.get(org, False)
 
     def head_value(self) -> Head:
         """`(seq, hash)` of the last entry."""
@@ -170,6 +185,8 @@ class PlatformState:
             ],
             "roles": [{"user": user, "role": role} for user, role in sorted(self.roles)],
             "org_access": dict(sorted(self.org_access.items())),
+            "policies": dict(sorted(self.policies.items())),
+            "operator_subscriptions": dict(sorted(self.operator_subscriptions.items())),
             "users": [
                 {"user": user, "certify_seq": seq, "certified": self.user_certified(user)}
                 for user, seq in sorted(self.users.items())
@@ -265,6 +282,15 @@ def _org_access(state: PlatformState, body: dict[str, object], _seq: int) -> Pla
     return replace(state, org_access={**state.org_access, cast(str, body["org"]): cast(bool, body["granted"])})
 
 
+def _policy(state: PlatformState, body: dict[str, object], _seq: int) -> PlatformState:
+    return replace(state, policies={**state.policies, cast(str, body["name"]): cast(bool, body["on"])})
+
+
+def _operator_subscriptions(state: PlatformState, body: dict[str, object], _seq: int) -> PlatformState:
+    org, granted = cast(str, body["org"]), cast(bool, body["granted"])
+    return replace(state, operator_subscriptions={**state.operator_subscriptions, org: granted})
+
+
 def _user_certify(state: PlatformState, body: dict[str, object], seq: int) -> PlatformState:
     user, pub = cast(str, body["user"]), cast(dict[str, str], body["pub"])
     if state.user_certified(user) or user in state.devices:
@@ -296,6 +322,8 @@ _TRANSITIONS: dict[str, Callable[[PlatformState, dict[str, object], int], Platfo
     "org_platform_access": _org_access,
     "user_certify": _user_certify,
     "user_decertify": _user_decertify,
+    "platform_policy": _policy,
+    "org_operator_subscriptions": _operator_subscriptions,
 }
 
 

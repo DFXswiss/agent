@@ -4313,6 +4313,84 @@
           "v": 1
         },
         "sig": "Db8DJfkgYL5OcyLdFQ-qnIV3wz_V6pPUgPyrSjeNWfIdZF84WGeDyaKtivCD6ye6L1jarY_9Nl9g1qQdXDu9Bw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "name": "open_platform_access",
+          "on": true,
+          "prev": "TQ8CZKZU4CkStxCwHM6YX-XC_Fp3egQzcdrOd8YjnXg",
+          "seq": 17,
+          "ts": "2026-11-21T12:17:00.000Z",
+          "type": "platform_policy",
+          "v": 1
+        },
+        "sig": "-Cz-Et5HdeAD3SLhRNTH-BtGPMJ4p7RjQcDSAE25yKToJc9sk1mjOHf6--UZvOC2R--yVxBkyRU4BcaHWuevDg"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "granted": true,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "4dbOqT-_Ssi4e6lPQMPWLx-1DtKQ02KEP0wmNzF8zr4",
+          "seq": 18,
+          "ts": "2026-11-21T12:18:00.000Z",
+          "type": "org_operator_subscriptions",
+          "v": 1
+        },
+        "sig": "sEFJr_nO7Mjz8dcMJAn4oddD847TJ_DzTSzFxcdTj9yBmZ6mzDWYqpRZjQaa6mBU7Ms9t40xOVYgZJxFpiqtBw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "3VQsjId1chma6FB7OeE1mU1SoIz6n-as3CvtNZn8MzA",
+          "role": "operator",
+          "seq": 19,
+          "subject": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "ts": "2026-11-21T12:19:00.000Z",
+          "type": "role_grant",
+          "v": 1
+        },
+        "sig": "ofbzVWem8dU5Om8fDcRwJuITY6Jm12CVTWV4cxoXN7_2BQXTahsmBjoSrOtymUG6BvgOUJSSfKw3myrWlLnWAQ"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "name": "open_platform_invites",
+          "on": true,
+          "prev": "LCMYR_uIFISUO6Z7HDH1JO48Y55EMuYdGzFpMVLH01U",
+          "seq": 20,
+          "ts": "2026-11-21T12:20:00.000Z",
+          "type": "platform_policy",
+          "v": 1
+        },
+        "sig": "1EgiGTzwYY8I7C7tCCRBUUzNZ3RWJ6YVhSrNJIOa7L3NtqGl9TqOp5juTAfs2lFVvrQ68JuN76lCM51cqaxQBw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "granted": false,
+          "org": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "prev": "MI1zwiUNBKpQA_lAf2xq0kwlTOcGWMAPYiZm_5VmhGA",
+          "seq": 21,
+          "ts": "2026-11-21T12:21:00.000Z",
+          "type": "org_operator_subscriptions",
+          "v": 1
+        },
+        "sig": "HYIjmE-aj5idrzMjlpshLacD6aSnyixeJ0SXqXPNNwLHN5dVose_gpgnje_SPyTgu2Uq91yPyfju1HiUmvGXBQ"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "name": "open_platform_access",
+          "on": false,
+          "prev": "A_3BlJHWapPDBMa-IPRvVbUXu7VGlai-ddZHQjGbL78",
+          "seq": 22,
+          "ts": "2026-11-21T12:22:00.000Z",
+          "type": "platform_policy",
+          "v": 1
+        },
+        "sig": "H5iBCpz2WFh1JIWUV89ojKfg27Zl_-jd3nZs-3ZW0Ajmwuz6ddQJajNOXmI1l9o4hBKGNbmWwutedwlTaN__Dw"
       }
     ],
     "rejoin": [

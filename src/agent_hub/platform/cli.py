@@ -22,7 +22,14 @@ Commands (entries they append):
 - `invite-device [--expires-hours H]`: `device_invite` with `pk_inv`; prints the code;
 - `certify-pending [--device ID ...]`: one `device_certify` per verified pending enrollment (or the named devices);
 - `grant-org-access --org ID [--revoke]`: `org_platform_access` (ADR-026);
-- `grant-role inviter --user ID`, `revoke-role inviter --user ID`: `role_grant`, `role_revoke`;
+- `grant-role inviter|operator --user ID`, `revoke-role inviter|operator --user ID`: `role_grant`, `role_revoke`
+  (`operator`: receives the requests of ADR-077 §4);
+- `set-policy NAME on|off` (ADR-077): `platform_policy` - `open_platform_access` (organizations without an
+  `org_platform_access` of their own use platform devices), `open_platform_invites` (every user may invite);
+- `grant-operator-subscriptions --org ID [--revoke]` (ADR-077): `org_operator_subscriptions` (the organization's
+  members use the operator's subscriptions; the runner reads it from the verified log, no restart);
+- `settings`: appends nothing; prints the switches, the organizations with an explicit platform access and the
+  organizations granted the operator's subscriptions, from the log verified here;
 - `decertify --device ID`: `device_decertify`;
 - `certify-user --user ID [--code XXXX-XXXX-XXXX] …` (ADR-060): one `user_certify` per named user with the identity
   keys the hub registered for it (`GET /v1/platform/users/{user}`). The command prints each user's account code and
@@ -31,9 +38,9 @@ Commands (entries they append):
   certification then does not rest on the hub's word. A user that is already certified is skipped. There is no "all"
   form: the operator names every account;
 - `decertify-user --user ID`: `user_decertify`;
-- `waiting`: appends nothing; lists the workgroups whose tasks wait for a device the operator must provide
-  (`GET /v1/platform/waiting`, ADR-075 section 7): organization, workgroup, reason, number of tasks, oldest, and
-  whether the organization has platform access.
+- `waiting`: appends nothing; lists the workgroups whose tasks wait for the operator (`GET /v1/platform/waiting`,
+  ADR-075 section 7): a device the operator must provide, or - ADR-077 - credit (`credit_exhausted`): organization,
+  workgroup, reason, number of tasks, oldest, and whether the organization has platform access.
 
 Output never contains the root key or a hub secret; the invitation code is printed because the operator hands it on.
 Exit codes: 0 done, 1 refused (by the hub or by a local check; the line names the code), 2 usage or key-file error.
@@ -74,7 +81,16 @@ from agent_hub.crypto.encoding import format_time as entry_time
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.crypto.ids import is_uuid7
 from agent_hub.crypto.keys import ed25519_private, ed25519_public_raw, ed25519_seed, ed25519_verify
-from agent_hub.log.entries import PLATFORM_ROOT, VERSION, Head, check_extends, entry_hash, sign_platform_entry
+from agent_hub.log.entries import (
+    PLATFORM_POLICIES,
+    PLATFORM_ROLES,
+    PLATFORM_ROOT,
+    VERSION,
+    Head,
+    check_extends,
+    entry_hash,
+    sign_platform_entry,
+)
 from agent_hub.log.platform import VerifiedPlatformLog, append_platform, verify_platform_log
 
 EXIT_OK = 0
@@ -441,6 +457,20 @@ def show_waiting(operator: Operator, out: TextIO) -> None:
         )
 
 
+def show_settings(operator: Operator, out: TextIO) -> None:
+    """Print the switches and lists of the platform log verified with the operator's own key (ADR-077)."""
+    log, _pending = operator.snapshot()
+    state = None if log is None else log.state
+    for name in PLATFORM_POLICIES:
+        print(f"policy {name} {'on' if state is not None and state.policy(name) else 'off'}", file=out)
+    access = {} if state is None else state.org_access
+    subscriptions = {} if state is None else state.operator_subscriptions
+    for org, granted in sorted(access.items()):
+        print(f"org {org} platform access {'granted' if granted else 'revoked'}", file=out)
+    for org, granted in sorted(subscriptions.items()):
+        print(f"org {org} operator subscriptions {'granted' if granted else 'revoked'}", file=out)
+
+
 def simple(operator: Operator, body: dict[str, Any], out: TextIO) -> None:
     """Append one entry and print its type and `seq`."""
     done = operator.append(lambda _log, _pending: [body])
@@ -491,6 +521,12 @@ def dispatch(args: argparse.Namespace, http: httpx.Client | None, clock: Clock, 
         simple(operator, {"type": "user_decertify", "user": args.user}, out)
     elif command == "waiting":
         show_waiting(operator, out)
+    elif command == "settings":
+        show_settings(operator, out)
+    elif command == "set-policy":
+        simple(operator, {"type": "platform_policy", "name": args.name, "on": args.value == "on"}, out)
+    elif command == "grant-operator-subscriptions":
+        simple(operator, {"type": "org_operator_subscriptions", "org": args.org, "granted": not args.revoke}, out)
     elif command in ("grant-role", "revoke-role"):
         kind = "role_grant" if command == "grant-role" else "role_revoke"
         simple(operator, {"type": kind, "subject": args.user, "role": args.role}, out)
@@ -549,9 +585,18 @@ def register(subparsers: argparse._SubParsersAction[Any]) -> None:
     access.add_argument("--revoke", action="store_true")
     for name in ("grant-role", "revoke-role"):
         role = command(name, f"{name.split('-')[0]} a platform role")
-        role.add_argument("role", choices=["inviter"])
+        role.add_argument("role", choices=list(PLATFORM_ROLES))
         role.add_argument("--user", type=uuid_text, required=True)
-    command("waiting", "list workgroups whose tasks wait for a device the operator must provide")
+    command("waiting", "list the organizations and workgroups whose tasks wait for the operator (device, credit)")
+    command("settings", "print the switches and the operator-subscription list of the verified platform log")
+    policy = command("set-policy", "turn a switch of the platform log on or off (ADR-077)")
+    policy.add_argument("name", choices=list(PLATFORM_POLICIES))
+    policy.add_argument("value", choices=["on", "off"])
+    subscriptions = command(
+        "grant-operator-subscriptions", "grant (or with --revoke take back) the operator's subscriptions to an org"
+    )
+    subscriptions.add_argument("--org", type=uuid_text, required=True)
+    subscriptions.add_argument("--revoke", action="store_true")
     decertify = command("decertify", "decertify a platform device")
     decertify.add_argument("--device", type=uuid_text, required=True)
     users = command("certify-user", "certify the identity keys of existing accounts (direct admission, ADR-060)")
