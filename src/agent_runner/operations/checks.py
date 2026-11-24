@@ -15,7 +15,7 @@ booleans; the guest's `local_check:"passed"` is only a hint) and adds the rules 
    not `github.list_repositories` and `github.request_connection`; without a list every repository passes, KOR-30);
 4. protected branches (`branch_protected`): the branch of `create_branch`, `commit`, `push` and the head of a pull
    request;
-5. the owner's GitHub connection (`github_not_connected`, every `github.*` type);
+5. the GitHub connection of the acting user (`github_not_connected`, every `github.*` type; `credentials.acting`);
 6. `github.push`: the commit was created by an earlier `github.commit` of this task (`not_found`);
 7. `subagent.request`: `model_id` is allowed for the parent session's access kind by the model catalog
    (`model_not_allowed`).
@@ -40,6 +40,7 @@ from agent_runner.operations.settings import WorkgroupSettings
 from agent_runner.sessions.records import LocalSession
 
 MAX_POINTERS = 32
+NOT_CONNECTED = "The person who gave this instruction has not connected GitHub."
 MAX_NUMBER = 2_147_483_647
 _MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$")
 LABEL_RE = re.compile(r"^[^,\x00-\x1f\x7f]{1,100}$")
@@ -226,7 +227,7 @@ class CheckRequest:
     settings: WorkgroupSettings
     catalog: Catalog
     connected: bool
-    """The task owner's GitHub credential is present on this device."""
+    """The acting user's GitHub credential is present on this device (`credentials.acting`)."""
     task_commits: frozenset[str]
     """Commit SHAs of the task's succeeded `github.commit` operations."""
 
@@ -301,7 +302,7 @@ def check(request: CheckRequest) -> dict[str, Any]:
     if field is not None and rules.protected(out[field], settings.protected_branches):
         raise CheckFailed("branch_protected", message="The branch is protected.")
     if github and not request.connected:
-        raise CheckFailed("github_not_connected", message="The task owner has not connected GitHub.")
+        raise CheckFailed("github_not_connected", message=NOT_CONNECTED)
     if op_type == "github.push" and out["commit_sha"] not in request.task_commits:
         raise CheckFailed("not_found", message="The commit was not created by a commit operation of this task.")
     if op_type == "subagent.request" and "model_id" in out:

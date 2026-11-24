@@ -351,7 +351,7 @@ def test_pending_work_lists_open_and_unanswered_operations(rig: Rig) -> None:
     run(rig, body)
 
 
-def test_task_commits_and_the_github_connection(rig: Rig) -> None:
+def test_task_commits(rig: Rig) -> None:
     async def body(env: Any) -> None:
         kit_ = await setup(env)
         sid = await kit_.session()
@@ -360,12 +360,6 @@ def test_task_commits_and_the_github_connection(rig: Rig) -> None:
             assert await records.task_commits(conn, TASK) == set()
             await records.update(conn, op_id, state="succeeded", result={"commit_sha": "f" * 40})
             assert await records.task_commits(conn, TASK) == {"f" * 40}
-            assert not await records.github_connected(conn, kit_.kit.session_env.device_id)
-        await kit_.connect()
-        async with env.pool.connection() as conn:
-            from ..sessions.kit import OWNER  # noqa: PLC0415
-
-            assert await records.github_connected(conn, OWNER)
 
     run(rig, body)
 

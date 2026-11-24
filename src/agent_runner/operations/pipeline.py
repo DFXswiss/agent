@@ -5,15 +5,20 @@
 (`journal.py`, state `received`) to its end, each in its own asyncio task, woken by `NOTIFY runner_operation` (task
 `operations`) and by a scan every `PERIOD_S`:
 
-1. **Checks** (`_check`): workgroup settings of the latest verified `settings.workgroup` event (defaults otherwise),
-   the owner's GitHub connection, the task's commits, then the formal checks (`checks.check`), the type enabled on
-   this device (an executor, and a pre-check for `extensions.NEEDS_PRECHECK`, else `unknown_type`) and the type's
-   pre-check (`extensions.PRECHECKS`; any error other than `CheckFailed` is `upstream_error`). The guest's
-   `local_check:"rejected"` skips them: its error is binding.
+1. **Checks** (`_check`): workgroup settings of the latest verified `settings.workgroup` event (defaults otherwise), the
+   acting user's GitHub connection (`credentials.acting`, HOT-14: the person whose instruction started the turn, stamped
+   at the receipt - never the task owner as such), the task's commits, then the formal checks (`checks.check`), the type
+   enabled on this device (an executor, and a pre-check for `extensions.NEEDS_PRECHECK`, else `unknown_type`) and the
+   type's pre-check (`extensions.PRECHECKS`; any error other than `CheckFailed` is `upstream_error`). The guest's
+   `local_check:"rejected"` skips them: its error is binding. An operation that needs a personal connection
+   (`acting.needs`) without an acting user (prompts of more than one person in the turn, or none known) is rejected at
+   once with `github_not_connected` and `acting.NO_ACTOR`: it never uses anybody's connection and is never held.
+
 1a. **Hold** (`_hold`, KOR-25, 05-runner.md section 12 step 3): a `github.*` operation whose checks fail only with
    `github_not_connected` is not registered but held (state `received`, `held_*` columns of migration 0012): `until`
    = the request plus `HOLD_S`, and one `session.status` event `{state:"waiting", waiting_for:"github_connection",
-   operation_id, operation_type, repo?, until}` (device-authored, workgroup scope of the session; only checked
+   operation_id, operation_type, repo?, for_user, until}` (`for_user`: the acting user, who is asked to connect;
+   device-authored, workgroup scope of the session; only checked
    values: a known type, a repository of valid form, device times). Every scan checks it again, and a stored `github`
    credential of anyone wakes the pipeline at once (`credentials.cache.subscribe_stored`); when the check no longer
    fails with that code the hold ends and the operation goes on (the session's MCP call answered `pending` after 20 s,
@@ -70,6 +75,7 @@ from typing import Any
 import psycopg
 
 from agent_runner import registry
+from agent_runner.credentials import acting
 from agent_runner.credentials import cache as credential_cache
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import uuid7
@@ -126,13 +132,15 @@ WAITING_EVERY_S = 60.0
 """At most one `waiting` event per session and reason within this time."""
 HOLD_CODES = {"github_not_connected": "github_connection"}
 """Check error code -> waiting reason of a held operation."""
-TIMEOUT_MESSAGES = {"github_connection": "The task owner did not connect GitHub within 15 minutes."}
+TIMEOUT_MESSAGES = {
+    "github_connection": "The person who gave this instruction did not connect GitHub within 15 minutes."
+}
 FULL_MESSAGES = {
-    "github_connection": "The task owner is already being asked to connect GitHub. Wait for the pending GitHub"
-    " operations of this session before you request more."
+    "github_connection": "The person who gave this instruction is already being asked to connect GitHub. Wait for"
+    " the pending GitHub operations of this session before you request more."
 }
 """The answer to an operation beyond `HOLD_MAX` (a fixed platform text)."""
-NOT_CONNECTED_MESSAGE = "The task owner has not connected GitHub."
+NOT_CONNECTED_MESSAGE = checks.NOT_CONNECTED
 SESSION_ENDED = frozenset({"stopping", "stopped", "failed"})
 """Session states in which a held operation is not run any more (a closed task stops its sessions)."""
 SESSION_ENDED_MESSAGE = "The session ended while the operation waited for the task owner."
@@ -312,8 +320,7 @@ class Pipeline:
         env = self.env
         async with store_session(env.db) as conn:
             current = await workgroup_settings.load(conn, env.storage_key, op.wg_id)
-            owner = session.owner_id
-            connected = owner is not None and await records.github_connected(conn, owner)
+            connected = await acting.cached_version(conn, op, "github") is not None
             commits = await records.task_commits(conn, op.task_id) if op.type == "github.push" else set()
         request = checks.CheckRequest(
             op_type=op.type,
@@ -350,9 +357,13 @@ class Pipeline:
             error = CheckFailed("not_found", message="The session is not known on this device.").error()
         if error is None:
             assert session is not None
-            version = await self._github_version(session)
+            version = await self._github_version(op)
             ended = op.held and session.state in SESSION_ENDED
-            if ended or (op.held and version is not None and version == op.held_credential):
+            if acting.needs(op.type) is not None and op.actor_id is None:
+                # nobody (or more than one person) instructed the turn: no personal connection, never held
+                self.line(f"no_acting_user operation_id={op.id}")
+                error = CheckFailed("github_not_connected", message=acting.NO_ACTOR).error()
+            elif ended or (op.held and version is not None and version == op.held_credential):
                 # an ended session's operation is released below; the same credential was refused before: no new
                 # request with it until another one arrives
                 error = CheckFailed("github_not_connected", message=NOT_CONNECTED_MESSAGE).error()
@@ -375,15 +386,19 @@ class Pipeline:
             return self.elapsed(op)
         return max(0.0, self.env.wall() - op.held_ended_at.timestamp())
 
-    async def _github_version(self, session: LocalSession) -> int | None:
+    async def _github_version(self, op: Operation) -> int | None:
         async with store_session(self.env.db) as conn:
-            return await records.github_version(conn, session.owner_id)
+            return await acting.cached_version(conn, op, "github")
 
     async def _hold(
         self, op: Operation, session: LocalSession, error: dict[str, Any] | None, version: int | None
     ) -> tuple[Operation, dict[str, Any] | None] | None:
         """Hold, keep holding (None) or release the operation after its checks (module docstring, step 1a)."""
-        reason = HOLD_CODES.get(str((error or {}).get("code"))) if op.type.startswith("github.") else None
+        reason = (
+            HOLD_CODES.get(str((error or {}).get("code")))
+            if acting.needs(op.type) is not None and op.actor_id is not None
+            else None
+        )
         now = self.now()
         if op.held and session.state in SESSION_ENDED:
             self.line(f"hold_session_ended operation_id={op.id} session_state={session.state}")
@@ -463,6 +478,8 @@ class Pipeline:
             }
             if op.held_repo is not None:
                 body["repo"] = op.held_repo
+            assert op.actor_id is not None
+            body["for_user"] = op.actor_id
             body["until"] = session_records.time_text(op.held_until.timestamp())
             await session_event(conn, self.env.outbox, session, kind="session.status", body=body, ts=self.env.at())
             await records.update(conn, op.id, held_notified_at=now)

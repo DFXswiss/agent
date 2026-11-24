@@ -1,17 +1,19 @@
 // Held operations in the task's chat (KOR-25, ADR-066, `contracts/events/objects.json` `body_session_status`, third
-// variant): the runner holds a `github.*` operation of a session instead of refusing it when the task owner has no
-// usable GitHub connection (`github_connection`, the only reason) and writes one `session.status` event
-// `{state:"waiting", waiting_for, operation_id, operation_type, repo?, until}`. A repository outside a workgroup's
+// variant): the runner holds a `github.*` operation of a session instead of refusing it when the person who gave the
+// instruction (the acting user, HOT-14, ADR-068) has no usable GitHub connection (`github_connection`, the only
+// reason) and writes one `session.status` event `{state:"waiting", waiting_for, operation_id, operation_type, repo?,
+// for_user?, until}`. `for_user` is that person: a personal connection is never used on behalf of another person, so
+// only this person is asked to connect (a body without it, from an older runner, is addressed to the task owner). A repository outside a workgroup's
 // optional repository list is refused as before (`repo_not_allowed`) – there is no approval card (no list means every
 // repository of the connection, ADR-054). The chat shows it as a card with the platform's own text only:
 //
 // - `parseWaiting`: the body exactly as the contract allows it (no further key, a known reason, a UUIDv7, a dotted
 //   type, `owner/name` of 03-api.md section 9, a time). Anything else is no card – the session cannot slip text or a
 //   foreign address into it; the chat shows a neutral row instead.
-// - `foldWaiting`: waiting items of the same reason are one card at the place of the newest of them, with every
+// - `foldWaiting`: waiting items of the same reason and addressee are one card at the place of the newest of them, with every
 //   operation it stands for, the operation type of the newest item, the repository of the newest item that named one
 //   and the latest `until` (a session cannot flood the chat with cards).
-// - `waitStatus`: `done` once the viewer is the owner and has a GitHub connection made at or after the newest waiting
+// - `waitStatus`: `done` once the viewer is the addressee and has a GitHub connection made at or after the newest waiting
 //   item (an older one is the connection the runner found unusable, expired or revoked, so the card offers to connect
 //   again) or every operation of the card is registered at the hub; `expired` after `until` or when every registered
 //   operation was refused; else `open`.
@@ -28,12 +30,15 @@ export type WaitReason = (typeof WAIT_REASONS)[number];
 /** `operation_type` of `contracts/common.json`. */
 const TYPE_RE = /^[a-z][a-z_]*(\.[a-z][a-z_]*)+$/;
 const REQUIRED = ['state', 'waiting_for', 'operation_id', 'operation_type', 'until'];
+const OPTIONAL = ['repo', 'for_user'];
 
 export interface Waiting {
   readonly reason: WaitReason;
   readonly operationId: string;
   readonly operationType: string;
   readonly repo: string | null;
+  /** The person asked to connect (the acting user); null: the task owner (an older runner). */
+  readonly forUser: string | null;
   /** Unix ms. */
   readonly until: number;
 }
@@ -42,13 +47,14 @@ export interface Waiting {
 export function parseWaiting(body: unknown): Waiting | null {
   if (!isRecord(body) || body.state !== 'waiting') return null;
   const keys = Object.keys(body);
-  if (!REQUIRED.every((key) => keys.includes(key)) || !keys.every((key) => REQUIRED.includes(key) || key === 'repo'))
+  if (!REQUIRED.every((key) => keys.includes(key)) || !keys.every((key) => REQUIRED.includes(key) || OPTIONAL.includes(key)))
     return null;
-  const { waiting_for: reason, operation_id: id, operation_type: type, repo } = body;
+  const { waiting_for: reason, operation_id: id, operation_type: type, repo, for_user: forUser } = body;
   if (!(WAIT_REASONS as readonly unknown[]).includes(reason)) return null;
   if (typeof id !== 'string' || !UUID7_RE.test(id)) return null;
   if (typeof type !== 'string' || type.length > 64 || !TYPE_RE.test(type)) return null;
   if (repo !== undefined && (typeof repo !== 'string' || !REPO_RE.test(repo))) return null;
+  if (forUser !== undefined && (typeof forUser !== 'string' || !UUID7_RE.test(forUser))) return null;
   let until: number;
   try {
     until = parseTime(body.until);
@@ -60,6 +66,7 @@ export function parseWaiting(body: unknown): Waiting | null {
     operationId: id,
     operationType: type,
     repo: (repo as string | undefined) ?? null,
+    forUser: (forUser as string | undefined) ?? null,
     until,
   };
 }
@@ -71,6 +78,8 @@ export interface WaitingCard {
   readonly repo: string | null;
   /** The operation type of the newest item. */
   readonly operationType: string;
+  /** The person asked to connect; null: the task owner. */
+  readonly forUser: string | null;
   /** Every operation the card stands for, oldest first. */
   readonly operations: readonly string[];
   /** The latest `until` (Unix ms). */
@@ -90,7 +99,7 @@ export function foldWaiting(items: readonly TimelineItem[]): TimelineItem[] {
   items.forEach((item, index) => {
     const waiting = isWaitingItem(item) ? parseWaiting(item.body) : null;
     if (waiting === null) return;
-    const key = waiting.reason;
+    const key = `${waiting.reason}:${waiting.forUser ?? ''}`;
     parsed.set(index, key);
     const known = cards.get(key)?.card;
     const operations = known?.operations ?? [];
@@ -99,6 +108,7 @@ export function foldWaiting(items: readonly TimelineItem[]): TimelineItem[] {
         reason: waiting.reason,
         repo: waiting.repo ?? known?.repo ?? null,
         operationType: waiting.operationType,
+        forUser: waiting.forUser,
         operations: operations.includes(waiting.operationId) ? operations : [...operations, waiting.operationId],
         until: Math.max(known?.until ?? 0, waiting.until),
         since: item.at,
@@ -119,7 +129,7 @@ export type WaitStatus = 'open' | 'done' | 'expired';
 
 export interface WaitContext {
   readonly now: number;
-  /** When the viewer's verified GitHub connection was made (Unix ms) if the viewer is the task owner, else null. */
+  /** When the viewer's verified GitHub connection was made (Unix ms) if the viewer is the card's addressee, else null. */
   readonly connectedAt: number | null;
   readonly rows: Readonly<Record<string, OperationRow>>;
 }

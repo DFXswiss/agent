@@ -19,8 +19,9 @@ took it.
 A **held** operation (KOR-25, migration 0015, 05-runner.md section 12 step 3) stays `received` with `held_reason`
 (`github_connection`), `held_repo` (the checked repository of its `session.status` `waiting` event, if any),
 `held_until` (the request plus 15 min), `held_notified_at` (when its `waiting` event was written), `held_ended_at`
-(when the hold ended: the owner connected, the session ended, or `held_until` passed) and `held_credential` (the
-version of the owner's cached `github` credential the last check refused; `github_version`). It is held while
+(when the hold ended: the acting user connected, the session ended, or `held_until` passed) and `held_credential`
+(the version of the acting user's cached `github` credential the last check refused; `credentials.acting`). `actor_id`
+is the acting user stamped at the receipt (migration 0016, HOT-14). It is held while
 `held_until` is set and `held_ended_at` is not (`held`). `held_count` and `last_waiting` serve the flood limits per
 session.
 """
@@ -73,7 +74,7 @@ _SELECT = (
     " duplicate_of::text AS duplicate_of, child_session_id::text AS child_session_id,"
     " result_event_id::text AS result_event_id, retryable, answer, answered_at, created_at,"
     " held_reason, held_repo, held_until, held_notified_at, held_ended_at, held_credential,"
-    " EXTRACT(EPOCH FROM (now() - created_at))::float8 AS age FROM runner.operation"
+    " actor_id::text AS actor_id, EXTRACT(EPOCH FROM (now() - created_at))::float8 AS age FROM runner.operation"
 )
 
 
@@ -111,6 +112,9 @@ class Operation:
     held_notified_at: datetime | None
     held_ended_at: datetime | None
     held_credential: int | None
+    actor_id: str | None
+    """The acting user stamped at the receipt (`credentials.acting`): whose personal connection the operation may use;
+    None: nobody's."""
     age: float
     """Seconds since the row was written (store clock)."""
 
@@ -139,12 +143,13 @@ async def insert(
     requested_at: str,
     idempotency_key: str | None,
     local_error: Mapping[str, Any] | None,
+    actor_id: str | None,
 ) -> bool:
     """Record a journaled request in `received`; False when the operation ID is known already (a re-read page)."""
     cur = await conn.execute(
         "INSERT INTO runner.operation (id, session_id, task_id, wg_id, org_id, vm_id, pending_id, type, state, params,"
-        " requested_at, idempotency_key, local_error) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'received', %s, %s, %s,"
-        " %s) ON CONFLICT (id) DO NOTHING",
+        " requested_at, idempotency_key, local_error, actor_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'received',"
+        " %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
         (
             operation_id,
             session_id,
@@ -158,6 +163,7 @@ async def insert(
             requested_at,
             idempotency_key,
             None if local_error is None else Jsonb(dict(local_error)),
+            actor_id,
         ),
     )
     return cur.rowcount == 1
@@ -222,23 +228,6 @@ async def task_commits(conn: AsyncConnection[Any], task_id: str) -> set[str]:
         (task_id,),
     )
     return {str(row[0]) for row in await cur.fetchall()}
-
-
-async def github_connected(conn: AsyncConnection[Any], owner_id: str) -> bool:
-    """Whether the owner's `github` credential is cached on this device (kept current by RUN-09, 05 section 2.6)."""
-    cur = await conn.execute(
-        "SELECT 1 FROM runner.credential_cache WHERE owner_id = %s AND kind = 'github'", (owner_id,)
-    )
-    return await cur.fetchone() is not None
-
-
-async def github_version(conn: AsyncConnection[Any], owner_id: str | None) -> int | None:
-    """The version of the owner's cached `github` credential (None without one or without an owner)."""
-    cur = await conn.execute(
-        "SELECT version FROM runner.credential_cache WHERE owner_id = %s AND kind = 'github'", (owner_id,)
-    )
-    row = await cur.fetchone()
-    return None if row is None else int(row[0])
 
 
 async def lock_session(conn: AsyncConnection[Any], session_id: str) -> None:

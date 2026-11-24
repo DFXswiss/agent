@@ -66,6 +66,7 @@
   "waiting.repo": "Repository",
   "waiting.other.connection": "Wartet darauf, dass {owner} GitHub verbindet.",
   "waiting.owner.unknown": "der Task-Besitzer",
+  "waiting.person.unknown": "die Person, die die Anweisung gab",
   "waiting.done.connection": "GitHub ist verbunden – die Aufgabe läuft weiter.",
   "waiting.expired.connection": "Abgelaufen: GitHub wurde nicht rechtzeitig verbunden.",
   "waiting.count": "{count} Operationen warten.",

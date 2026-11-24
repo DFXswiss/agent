@@ -1,11 +1,12 @@
 """The operator's GitHub account (KOR-27, ADR-053): a second way to connect beside the device flow of ADR-015.
 
-On a platform device the operator may place a GitHub token in `OPERATOR_GITHUB_TOKEN_FILE` and approve users in
-`OPERATOR_GITHUB_USERS` (`config._operator_github`; both or neither, refused on org devices). A `github.connect` of
-an approved user - the user of the verified request header, so nobody can trigger it for another user - stores this
-token as the user's `github` credential at once (`device_flow.connect`); every other user keeps the device flow. Like
-every `github` credential, the stored token can be opened by the user (browser) and by the devices holding the user's
-`CK`: approving a user hands the token to that user (ADR-053).
+On a platform device the operator may place the operator's own GitHub token in `OPERATOR_GITHUB_TOKEN_FILE` and name
+the operator's user in `OPERATOR_GITHUB_USERS` (`config._operator_github`; both or neither, refused on org devices,
+exactly one user: a personal connection is never shared, so more than one is `config_invalid`, HOT-14). A
+`github.connect` of that user - the user of the verified request header, so nobody can trigger it for another user -
+stores this token as the user's `github` credential at once (`device_flow.connect`); every other user keeps the device
+flow. Like every `github` credential, the stored token can be opened by the user (browser) and by the devices holding
+the user's `CK`, and operations use it only for that user's own instructions (`credentials.acting`, ADR-053).
 
 `read_token(path, state)` reads the file anew at each connect (the operator replaces it atomically). Only a regular
 file that is not a symlink, owned by the runner's account (effective uid) and without rights for group and others
@@ -65,7 +66,7 @@ def state_for(context: Any) -> OperatorGitHub:
 
 def approved(context: Any, user: str) -> bool:
     """Whether `user` (of a verified request) connects through the operator's token: only on a platform device (the
-    configuration refuses the settings on org devices; checked again here) and only for an approved user."""
+    configuration refuses the settings on org devices; checked again here) and only for the operator's user."""
     config = context.config
     return (
         context.identity.device.kind == "platform"

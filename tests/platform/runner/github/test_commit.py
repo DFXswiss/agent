@@ -359,7 +359,7 @@ def test_parent_answers_outside_the_git_format(store_dsn: str, tmp_path: Path) -
 def executor_ctx(r: R10, found: Any, data: dict[str, Any], op_id: str | None = None) -> OperationContext:
     return OperationContext(
         context=r.ok.env.context,
-        operation=SimpleNamespace(id=op_id or uuid7()),  # type: ignore[arg-type]
+        operation=SimpleNamespace(id=op_id or uuid7(), type="github.commit", actor_id=found.owner_id),  # type: ignore[arg-type]
         session=found,
         params={"repo": REPO, "branch": "work", "message": "M."},
         data=data,

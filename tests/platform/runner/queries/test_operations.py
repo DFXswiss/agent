@@ -42,6 +42,7 @@ async def _received(k: RKit, sid: str, op_type: str, *, error_code: str | None =
             requested_at="2026-11-21T12:00:01.000Z",
             idempotency_key=None,
             local_error=None,
+            actor_id=None,
         )
         if error_code is not None:
             await op_records.update(conn, op_id, state="failed", error_code=error_code)

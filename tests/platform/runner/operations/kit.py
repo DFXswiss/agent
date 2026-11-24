@@ -134,7 +134,10 @@ class OKit:
     async def vm(self) -> VmRow:
         return await self.kit.vms.ensure_vm(ORG, WG)
 
-    async def session(self, n: int = 1, *, depth: int = 0, model_access: str | None = "platform") -> str:
+    async def session(
+        self, n: int = 1, *, depth: int = 0, model_access: str | None = "platform", actor: str | None = OWNER
+    ) -> str:
+        """A working session of the task; `actor` is the acting user of its turn (the owner's prompt by default)."""
         row = await self.vm()
         sid = session_id(n)
         async with self.env.pool.connection() as conn, conn.transaction():
@@ -151,6 +154,9 @@ class OKit:
             )
             await session_records.update(
                 conn, sid, state="working", vm_id=row.id, model_access=model_access, model_id=MODEL
+            )
+            await conn.execute(
+                "UPDATE runner.session SET turn_actor = %s, turn_open = true WHERE id = %s", (actor, sid)
             )
         return sid
 

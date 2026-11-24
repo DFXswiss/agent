@@ -33,7 +33,7 @@ Executor = Callable[[OperationContext], Awaitable[dict[str, Any]]]
 def context_for(env: Env, params: dict[str, Any], **kw: Any) -> OperationContext:
     return OperationContext(
         context=env.context,
-        operation=SimpleNamespace(id=uuid7()),  # type: ignore[arg-type]
+        operation=SimpleNamespace(id=uuid7(), type="github.test", actor_id=kw.get("owner", ALICE)),  # type: ignore[arg-type]
         session=SimpleNamespace(owner_id=kw.get("owner", ALICE)),  # type: ignore[arg-type]
         params=params,
         data=kw.get("data", {}),
@@ -472,7 +472,7 @@ def precheck_request(env: Env, op_type: str, params: dict[str, Any], owner: str 
     )
     return PrecheckRequest(
         context=env.context,
-        operation=SimpleNamespace(id=uuid7(), type=op_type),  # type: ignore[arg-type]
+        operation=SimpleNamespace(id=uuid7(), type=op_type, actor_id=owner),  # type: ignore[arg-type]
         session=SimpleNamespace(owner_id=owner),  # type: ignore[arg-type]
         settings=settings,
         params=params,

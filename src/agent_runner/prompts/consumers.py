@@ -39,7 +39,12 @@ async def keep_prompt(context: Any, conn: AsyncConnection[Any], event: VerifiedE
     assert isinstance(lh, int)
     author = log.states[lh].principals[event.author]
     stored = await queue.keep(
-        conn, header=event.header, scope_seq=event.scope_seq, author_sig=author.sig, sealed=event.sealed
+        conn,
+        header=event.header,
+        scope_seq=event.scope_seq,
+        author_sig=author.sig,
+        sealed=event.sealed,
+        author_id=event.author,
     )
     found = deliver.existing(context)
     if stored and found is not None:

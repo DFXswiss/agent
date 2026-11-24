@@ -1,11 +1,12 @@
 // The waiting card in a task's chat (06-web.md section 5.2, KOR-25, ADR-066): a `session.status` event of the state
-// `waiting` (folded per reason by `core/github/waiting.ts`) asks the task owner to connect GitHub so that a held
-// operation goes on. The owner connects right in the card (device flow or an existing token, the same `GithubConnect`
+// `waiting` (folded per reason and addressee by `core/github/waiting.ts`) asks the person who gave the instruction
+// (`for_user`, HOT-14; the task owner for a body without it) to connect GitHub so that a held operation goes on – a
+// personal connection is never used on behalf of another person. That person connects right in the card (device flow or an existing token, the same `GithubConnect`
 // as the settings section; it stacks on a phone). A stored connection older than the waiting item is the one the
 // runner could not use, so the card says "connect again". There is no approval card: a repository outside a
 // workgroup's optional list is refused as before (ADR-054).
 //
-// Everybody else sees "waiting for <owner>" and no control. The card shows only the platform's own texts, the
+// Everybody else – the task owner too – sees "waiting for <name>" and no control. The card shows only the platform's own texts, the
 // operation type (its catalog label, a known type or the dotted type the contract's pattern checked) and the repository
 // name the contract's pattern checked – never text of the session. It turns into a short "done" row once GitHub is
 // connected or every operation of the card is registered, into "expired" after `until`.
@@ -33,7 +34,8 @@ function TaskCard({ item, card, task }: { readonly item: TimelineItem; readonly 
   useTitles(tasks);
   const owner = useOwner(task);
   const directory = useDirectory(task.org_id, state !== null);
-  const isOwner = owner !== null && owner === userId;
+  const addressee = card.forUser ?? owner;
+  const isOwner = addressee !== null && addressee === userId;
   const github = useStore((store) => store.github, app.store);
   const rows = useStore((store) => store.operations.rows, app.store);
   const now = useNow(true, 1000);
@@ -58,7 +60,9 @@ function TaskCard({ item, card, task }: { readonly item: TimelineItem; readonly 
         {t(`github.waiting.${status}.connection`)} <EventTime at={item.at} />
       </p>
     );
-  const ownerName = (owner === null ? undefined : directory.members.get(owner)) ?? t('github.waiting.owner.unknown');
+  const ownerName =
+    (addressee === null ? undefined : directory.members.get(addressee)) ??
+    t(card.forUser === null ? 'github.waiting.owner.unknown' : 'github.waiting.person.unknown');
   const stale = github.status === 'unverifiable' || connectedAt !== null;
   return (
     <section

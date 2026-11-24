@@ -1,22 +1,22 @@
 """Pre-checks of the GitHub operation types (03-api.md section 9 "Repository-level checks", 05-runner.md section 12
 step 3; RUN-07's registry hook `<area>/op_prechecks.py:PRECHECKS`, ADR-041).
 
-They run after the formal checks (which already refused a task owner without a cached `github` credential) and before
-the dedupe tag and the registration:
+They run after the formal checks (which already refused an acting user without a cached `github` credential;
+`credentials.acting`) and before the dedupe tag and the registration:
 
-- `connection(request)` (every `github.*` type): the task owner's credential opens on this device and holds a token
+- `connection(request)` (every `github.*` type): the acting user's credential opens on this device and holds a token
   (`github_not_connected` otherwise). `github.list_repositories` uses only this; its pre-check data carries the
   workgroup's allow-list for the executor (`allowed`) and whether it restricts at all (`restricted`; false without a
   list: then every repository is allowed, KOR-30).
-- `verified_connection(request)` (`github.request_connection`, KOR-25): additionally `GET /user` with the owner's
+- `verified_connection(request)` (`github.request_connection`, KOR-25): additionally `GET /user` with the acting user's
   token, so a revoked token is not answered with its login: `401` -> `github_not_connected` (the runner holds the
-  operation and the owner is asked to connect again), any other failure -> `upstream_error`.
-- `repo_access(request)` (every type with `repo`): additionally `GET /repos/{repo}` with the owner's token: `404` ->
-  `repo_not_accessible` (the repository is allowed by the settings, or no list is set, but not reachable with the
-  owner's token: GitHub App installations, or the account's own access for the operator's token of ADR-053),
-  `401` -> `github_not_connected`; any other failure -> `upstream_error` (a pre-check is not retried: the session
-  may request the operation again; a `403` for an organisation that requires SSO authorisation of the token says
-  so, `ops.SSO_REQUIRED`).
+  operation and the acting user is asked to connect again), any other failure -> `upstream_error`.
+- `repo_access(request)` (every type with `repo`): additionally `GET /repos/{repo}` with the acting user's token: `404`
+  -> `repo_not_accessible` (the repository is allowed by the settings, or no list is set, but not reachable with the
+  acting user's token: GitHub App installations, or the account's own access for the operator's token of ADR-053), `401`
+  -> `github_not_connected`; any other failure -> `upstream_error` (a pre-check is not retried: the session may request
+  the operation again; a `403` for an organisation that requires SSO authorisation of the token says so,
+  `ops.SSO_REQUIRED`).
 
 RUN-10 registers its own pre-checks for `github.checkout`, `github.commit` and `github.push` (the registry allows one
 per type) and calls `repo_access` first, so every `github.*` type gets the same connection and access checks.
@@ -29,11 +29,12 @@ from agent_runner.github.client import GitHubError
 from agent_runner.operations.extensions import CheckFailed, PrecheckRequest, PrecheckResult
 
 ACCESS_FAILED = "The repository could not be checked at GitHub."
+NOT_ACCESSIBLE = "The repository is not accessible with the GitHub connection of the person who gave this instruction."
 
 
 async def connection(request: PrecheckRequest) -> PrecheckResult:
     try:
-        async with ops.owner_client(request.context, request.session.owner_id):
+        async with ops.actor_client(request.context, request.operation):
             pass
     except ops.NotConnected:
         raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
@@ -44,7 +45,7 @@ async def connection(request: PrecheckRequest) -> PrecheckResult:
 
 async def verified_connection(request: PrecheckRequest) -> PrecheckResult:
     try:
-        async with ops.owner_client(request.context, request.session.owner_id) as client:
+        async with ops.actor_client(request.context, request.operation) as client:
             await client.request("GET", "/user")
     except ops.NotConnected:
         raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
@@ -64,15 +65,13 @@ async def list_repositories(request: PrecheckRequest) -> PrecheckResult:
 async def repo_access(request: PrecheckRequest) -> PrecheckResult:
     repo = str(request.params["repo"])
     try:
-        async with ops.owner_client(request.context, request.session.owner_id) as client:
+        async with ops.actor_client(request.context, request.operation) as client:
             await client.request("GET", f"/repos/{repo}")
     except ops.NotConnected:
         raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
     except GitHubError as error:
         if error.kind == "not_found":
-            raise CheckFailed(
-                "repo_not_accessible", message="The repository is not accessible with the owner's GitHub connection."
-            ) from None
+            raise CheckFailed("repo_not_accessible", message=NOT_ACCESSIBLE) from None
         if error.kind == "unauthorized":
             raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
         raise CheckFailed("upstream_error", message=ops.SSO_REQUIRED if error.sso else ACCESS_FAILED) from None

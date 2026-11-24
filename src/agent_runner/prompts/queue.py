@@ -3,7 +3,8 @@
 `delivered_prompt_event_ids`).
 
 - `runner.prompt_event`: every prompt event the inbox verified (E1-E5, author `wg:write` at `lh`), kept exactly as
-  received with the author's verified signing key. The text is opened only into memory (`verify.open_text`).
+  received with the author's verified signing key and user ID (`author_id`: the acting user of the turn the prompt
+  starts, `credentials.acting`). The text is opened only into memory (`verify.open_text`).
 - `runner.prompt_delivery`: one row per prompt event the hub routed to a session of this device (`event_id`,
   `session_id`, `task_id`, `scope_seq`, `channel`, `attempts`), with the delivery state:
 
@@ -78,12 +79,22 @@ async def keep(
     scope_seq: int,
     author_sig: str,
     sealed: Mapping[str, object],
+    author_id: str,
 ) -> bool:
     """Store a verified prompt event; False when it is known (by ID or by its place in the scope)."""
     cur = await conn.execute(
-        "INSERT INTO runner.prompt_event (event_id, org_id, wg_id, task_id, scope_seq, author_sig, sealed)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
-        (header["id"], header["org"], header["scope_id"], header["task"], scope_seq, author_sig, Jsonb(dict(sealed))),
+        "INSERT INTO runner.prompt_event (event_id, org_id, wg_id, task_id, scope_seq, author_sig, sealed, author_id)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+        (
+            header["id"],
+            header["org"],
+            header["scope_id"],
+            header["task"],
+            scope_seq,
+            author_sig,
+            Jsonb(dict(sealed)),
+            author_id,
+        ),
     )
     if cur.rowcount != 1:
         return False

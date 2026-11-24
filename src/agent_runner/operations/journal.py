@@ -4,7 +4,8 @@
 The guest journals every `request_operation` call as `operation.request {pending_id, operation_id, type, params,
 idempotency_key?, requested_at, local_check?, local_error?}`. The handler runs inside the journal page's transaction
 (`sessions.consume`): for a session that runs on this VM it records the operation in state `received`
-(`records.insert`, idempotent on the operation ID, so a re-read page records nothing twice) and sends `NOTIFY
+(`records.insert`, idempotent on the operation ID, so a re-read page records nothing twice) with the acting user of
+the session's turn at this point of the journal (`credentials.acting.stamp`, HOT-14) and sends `NOTIFY
 runner_operation`, which reaches the pipeline's listener after the commit. Everything else - checks, registration,
 execution, the answer - happens in the pipeline, never in the journal transaction.
 
@@ -21,6 +22,7 @@ from typing import Any
 
 from psycopg import AsyncConnection
 
+from agent_runner.credentials import acting
 from agent_runner.guestlink.client import JournalRecord
 from agent_runner.operations import records
 from agent_runner.operations.extensions import known_code
@@ -122,6 +124,7 @@ async def operation_request(journal: Any, conn: AsyncConnection[Any], record: Jo
         wg_id=session.wg_id,
         org_id=session.org_id,
         vm_id=journal.vm.id,
+        actor_id=await acting.stamp(conn, session),
         **fields,
     )
     if stored:

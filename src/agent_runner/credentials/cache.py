@@ -71,7 +71,7 @@ Sleep = Callable[[float], Awaitable[None]]
 class CredentialUnavailable(Exception):
     """A credential cannot be used: `missing` (no record), `key_missing` (no `CK` of the record's epoch on this
     device), `invalid` (the record does not open or its body is not an object), `refused` (the hub refused a write:
-    `code`) or `unenrolled`."""
+    `code`), `unenrolled` or `no_actor` (an operation without an acting user, `acting.opened`)."""
 
     def __init__(self, reason: str, code: str | None = None) -> None:
         super().__init__(reason)

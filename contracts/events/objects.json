@@ -599,7 +599,7 @@
         },
         {
           "type": "object",
-          "description": "an operation of the session waits for the task owner; the runner checks it again when the owner connects GitHub or the workgroup settings change and rejects it at until. Only platform-checked values, never text of the session",
+          "description": "an operation of the session waits for the person who gave the instruction (for_user; absent from runners before HOT-14: the task owner); the runner checks it again when that person connects GitHub or the workgroup settings change and rejects it at until. Only platform-checked values, never text of the session",
           "properties": {
             "state": {
               "type": "string",
@@ -610,7 +610,7 @@
               "enum": [
                 "github_connection"
               ],
-              "description": "github_connection: the task owner has no usable GitHub connection"
+              "description": "github_connection: the person who gave the instruction has no usable GitHub connection"
             },
             "operation_id": {
               "$ref": "../common.json#/$defs/uuid"
@@ -620,6 +620,10 @@
             },
             "repo": {
               "$ref": "../ops/objects.json#/$defs/repo"
+            },
+            "for_user": {
+              "$ref": "../common.json#/$defs/uuid",
+              "description": "the acting user: the person whose instruction requested the operation and whose own GitHub connection it will use (HOT-14); only this person is asked to connect"
             },
             "until": {
               "$ref": "../common.json#/$defs/time"

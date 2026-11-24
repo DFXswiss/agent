@@ -27,6 +27,8 @@ SUPPORTED_PLATFORM = "darwin"
 DEFAULT_HOME_RELATIVE = ".local/share/agent-runner"
 DEFAULT_HOME = "~/" + DEFAULT_HOME_RELATIVE
 DEFAULT_LOGIN_ARGV = ("claude", "setup-token")
+OPERATOR_GITHUB_ONE_USER = "OPERATOR_GITHUB_USERS:one_user_only"
+"""The error name of an `OPERATOR_GITHUB_USERS` with more than one user (`doctor` and the daemon refuse it)."""
 DeviceKind = Literal["org", "platform"]
 
 # Every name of section 1.3 plus VM_PREFIX (ADR-027 section 7). A variable with the prefix that is not listed is
@@ -499,6 +501,8 @@ def _operator_github(
     raw: Callable[[str], str], require: frozenset[str], device_kind: DeviceKind | None
 ) -> tuple[Path | None, frozenset[str]]:
     """`OPERATOR_GITHUB_TOKEN_FILE` and `OPERATOR_GITHUB_USERS` (KOR-27): both or neither, platform devices only.
+    The token is the operator's own GitHub connection, so the list names exactly one user - the operator; more are
+    `config_invalid` `OPERATOR_GITHUB_USERS:one_user_only` (a personal connection is never shared, HOT-14, ADR-053).
 
     Only the path is checked here: the file is replaced atomically while the daemon runs, so its type, owner, mode
     and content are checked at each read (`github.operator.read_token`)."""
@@ -517,6 +521,8 @@ def _operator_github(
         raise RunnerError("config_invalid", "OPERATOR_GITHUB_USERS")
     if users and path is None:
         raise RunnerError("config_invalid", "OPERATOR_GITHUB_TOKEN_FILE")
+    if len(users) > 1:
+        raise RunnerError("config_invalid", OPERATOR_GITHUB_ONE_USER)
     return path, users
 
 

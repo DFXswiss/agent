@@ -66,6 +66,7 @@
   "waiting.repo": "Repository",
   "waiting.other.connection": "Waiting for {owner} to connect GitHub.",
   "waiting.owner.unknown": "the task owner",
+  "waiting.person.unknown": "the person who gave the instruction",
   "waiting.done.connection": "GitHub is connected – the task goes on.",
   "waiting.expired.connection": "Expired: GitHub was not connected in time.",
   "waiting.count": "{count} operations wait.",

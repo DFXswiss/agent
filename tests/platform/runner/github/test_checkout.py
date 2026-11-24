@@ -259,7 +259,7 @@ def test_a_session_without_a_vm_is_not_found(store_dsn: str, start_github: Any, 
         assert found is not None
         ctx = OperationContext(
             context=r.ok.env.context,
-            operation=SimpleNamespace(id=uuid7()),  # type: ignore[arg-type]
+            operation=SimpleNamespace(id=uuid7(), type="github.checkout", actor_id=found.owner_id),  # type: ignore[arg-type]
             session=replace(found, vm_id=None),
             params={"repo": REPO},
             data={"commit_sha": head(github)},
