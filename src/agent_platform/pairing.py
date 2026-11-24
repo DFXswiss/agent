@@ -29,6 +29,11 @@ printed and never a program argument (which other local users could read in the 
 redirect file (`0600`, in the state directory, removed when the wait ends) whose only content forwards to the link.
 The hub address comes from the invitation link; it must be `https` (plain `http` only for a loopback hub, as in
 tests), and the result names it.
+
+`Pairing` also serves the pairing from another computer (`remote`, ADR-058; the commands are in
+`agent_platform.remote`): it registers with `remote: true`, requires the answer to echo `remote: true` and a nonce
+(else `hub_too_old`, so it never proceeds with a loopback pairing it did not ask for), builds the link without a port
+(`m=remote`) and the agent code, and completes with a handover the tool fetched from the hub (`complete`).
 """
 
 from __future__ import annotations
@@ -128,7 +133,7 @@ class _WrongSecret(Exception):
 class Pairing:
     """One pairing: keys, the hub's pinned key and the claim."""
 
-    def __init__(self, home: Home, hub: str, name: str, host: str) -> None:
+    def __init__(self, home: Home, hub: str, name: str, host: str, *, remote: bool = False) -> None:
         try:
             self.origin = hub_origin(hub).base_url
         except ValueError:
@@ -137,9 +142,11 @@ class Pairing:
             agent_crypto.check_label({"name": name, "host": host})
         except CryptoError:
             raise PlatformError("invalid_argument") from None
-        self.home, self.name, self.host = home, name, host
+        self.home, self.name, self.host, self.remote = home, name, host, remote
         self.agent: Identity = agent_crypto.new_agent()
         self.pairing_id = uuid7()
+        self.nonce = b""
+        self.expires_at = ""
         self.result: dict[str, Any] | None = None
         self.failure: PlatformError | None = None
 
@@ -154,17 +161,78 @@ class Pairing:
         except CryptoError:
             raise PlatformError("hub_refused", reason="response_invalid") from None
         self.config_root = config.get("platform_root_key")
-        body = {
+        body: dict[str, Any] = {
             "pairing_id": self.pairing_id,
             "pub": {"kem": self.agent.public()["kem"], "sig": self.agent.public()["sig"]},
             "pop": agent_crypto.sign_pop(self.agent, self.pairing_id),
         }
-        answer = anon_request(self.origin, "POST", "/v1/agent-pairings", body)
+        if self.remote:
+            body["remote"] = True
+        try:
+            answer = anon_request(self.origin, "POST", "/v1/agent-pairings", body)
+        except PlatformError as error:
+            if self.remote and error.fields.get("hub_error") == "request_invalid":
+                raise PlatformError("hub_too_old") from None
+            raise
         if answer.get("pairing_id") != self.pairing_id:
             raise PlatformError("hub_refused", reason="response_invalid")
+        self.expires_at = str(answer.get("expires_at"))
+        if self.remote:
+            try:
+                if answer.get("remote") is not True:
+                    raise CryptoError("header_invalid")
+                self.nonce = b64u_decode(answer.get("nonce"), agent_crypto.NONCE_BYTES)
+            except CryptoError:
+                raise PlatformError("hub_too_old") from None
+
+    @classmethod
+    def restore(cls, home: Home, pending: Mapping[str, Any], agent: Identity) -> Pairing:
+        """The pending remote pairing of `pending.json` with its private keys (`state_damaged` when unsound)."""
+        try:
+            label = pending["label"]
+            pairing = cls(home, str(pending["hub"]), str(label["name"]), str(label["host"]), remote=True)
+            pairing.nonce = b64u_decode(pending["nonce"], agent_crypto.NONCE_BYTES)
+            pairing.hub_key = {"id": str(pending["hub_key"]["id"]), "public_key": str(pending["hub_key"]["public_key"])}
+            b64u_decode(pairing.hub_key["public_key"], 32)
+            if not is_uuid7(pending["pairing_id"]):
+                raise CryptoError("header_invalid")
+        except (KeyError, TypeError, CryptoError, PlatformError):
+            raise PlatformError("state_damaged") from None
+        pairing.pairing_id = str(pending["pairing_id"])
+        pairing.agent = agent
+        pairing.config_root = pending.get("platform_root_key")
+        pairing.expires_at = str(pending.get("expires_at"))
+        return pairing
+
+    def fingerprint(self) -> str:
+        return agent_crypto.fingerprint(self.agent.kem_public(), self.agent.sig_public())
+
+    def remote_fragment(self) -> str:
+        """`p=<id>&f=<fp>&m=remote&a=<name>&h=<host>`: the five parameters of a remote pairing link."""
+        name, host = quote(self.name, safe=""), quote(self.host, safe="")
+        return f"p={self.pairing_id}&f={self.fingerprint()}&m=remote&a={name}&h={host}"
+
+    def agent_code(self) -> str:
+        """The agent code the user types on the page, shown as `XXXXX-XXXXX`."""
+        code = agent_crypto.agent_code(self.pairing_id, self.fingerprint(), self.nonce, self.origin)
+        return agent_crypto.format_code(code)
+
+    def client(self) -> AgentClient:
+        return AgentClient(self.origin, self.pairing_id, self.agent, b64u_decode(self.hub_key["public_key"], 32))
+
+    def complete(self, client: AgentClient, handover: Handover) -> dict[str, Any]:
+        """Claim with a verified handover of a remote pairing and store the state (`pairing_failed` when the claim is
+        refused or the identity does not match)."""
+        try:
+            user_id, first = self._verified_claim(client, handover)
+        except _WrongSecret:
+            raise PlatformError("pairing_failed", reason="claim_invalid") from None
+        self._store(user_id, first, handover)
+        assert self.result is not None
+        return self.result
 
     def fragment(self, port: int) -> str:
-        fp = agent_crypto.fingerprint(self.agent.kem_public(), self.agent.sig_public())
+        fp = self.fingerprint()
         return f"p={self.pairing_id}&f={fp}&c={port}&a={quote(self.name, safe='')}&h={quote(self.host, safe='')}"
 
     def link(self, port: int) -> str:
@@ -172,7 +240,7 @@ class Pairing:
 
     def claim(self, handover: Handover) -> bool:
         """True when the claim succeeded (state stored or `failure` set); False for a wrong `r`."""
-        client = AgentClient(self.origin, self.pairing_id, self.agent, b64u_decode(self.hub_key["public_key"], 32))
+        client = self.client()
         try:
             return self._claim(client, handover)
         finally:

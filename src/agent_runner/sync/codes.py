@@ -26,6 +26,8 @@ HUB_ERROR_CODES = frozenset(
         "epoch_stale",
         "event_conflict",
         "forbidden",
+        "handover_required",
+        "handover_unexpected",
         "header_invalid",
         "hpke_short",
         "id_conflict",

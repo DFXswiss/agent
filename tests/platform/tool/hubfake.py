@@ -54,6 +54,7 @@ from .fakes import INSTALLERS
 
 HUB_KEY_ID = "hub-test"
 ANONYMOUS = ("/v1/config", "/v1/agent-pairings", "/v1/agent/claim", "/v1/invites/lookup")
+CONFIRMED_ROUTES = (("POST", "/v1/agent/claim"), ("GET", "/v1/agent/handover"))
 Json = dict[str, Any]
 Hook = Callable[[Json | None, "Request"], tuple[int, Any] | None]
 
@@ -86,6 +87,9 @@ class AgentRow:
     claim_hash: bytes | None = None
     misses: int = 0
     expires: float = 0.0
+    remote: bool = False
+    nonce: bytes | None = None
+    handover_ct: str | None = None
 
 
 @dataclass
@@ -128,6 +132,7 @@ class HubFake:
         self.platform_entries: list[Json] = []
         self.platform_devices: dict[str, Identity] = {}
         self.sign_answers = True
+        self.old_hub = False  # refuses `remote` like a hub of before KOR-42
         self.routes: list[tuple[str, str, Callable[..., tuple[int, Any]]]] = []
         self.lock = threading.RLock()
         body = {"seq": 0, "prev": "", "type": "root", "by": "platform-root", "ts": now_ms_text(), "v": 1}
@@ -371,6 +376,15 @@ class HubFake:
         row.user = user.id
         row.state = "confirmed"
 
+    def confirm_remote(self, pairing_id: str, user: User, secret: bytes | None = None, root: str | None = None) -> str:
+        """The browser of a remote pairing (ADR-058): confirm, seal the handover to the agent; the return code."""
+        secret = secrets.token_bytes(32) if secret is None else secret
+        self.confirm(pairing_id, user, secret)
+        row = self.agents[pairing_id]
+        row.handover_ct = agent_crypto.seal_handover(row.kem, pairing_id, user.id, secret, root or self.root_text)
+        row.expires = time.time() + 600
+        return agent_crypto.format_code(agent_crypto.return_code(secret, pairing_id, user.id))
+
     def override(self, name: str, handler: Callable[..., tuple[int, Any]]) -> None:
         """Replace a route handler (`r_*`) of this instance, e.g. with a forging wrapper of the original."""
         setattr(self, name, handler)
@@ -429,7 +443,7 @@ class HubFake:
                 agent = found
                 row = self.agents[found]
                 user = row.user
-                if row.state == "confirmed" and (method, parts.path) != ("POST", "/v1/agent/claim"):
+                if row.state == "confirmed" and (method, parts.path) not in CONFIRMED_ROUTES:
                     return 403, {"error": "forbidden"}, signed
             body = json.loads(raw) if raw else None
             request = Request(method, parts.path, query, user, agent, raw)
@@ -478,6 +492,8 @@ class HubFake:
         table: list[tuple[str, str, Callable[..., tuple[int, Any]]]] = [
             ("GET", r"/v1/config", self.r_config),
             ("POST", r"/v1/agent-pairings", self.r_pairing_create),
+            ("GET", r"/v1/agent-pairings/(?P<pairing>[0-9a-f-]+)", self.r_pairing_get),
+            ("GET", r"/v1/agent/handover", self.r_handover),
             ("POST", r"/v1/agent/claim", self.r_claim),
             ("GET", r"/v1/agent/me", self.r_agent_me),
             ("GET", r"/v1/me", self.r_me),
@@ -531,9 +547,37 @@ class HubFake:
             agent_crypto.verify_pop(body["pairing_id"], kem, sig, body["pop"])
         except CryptoError:
             return 401, {"error": "signature_invalid"}
-        row = AgentRow(body["pairing_id"], kem, sig, expires=time.time() + 600)
+        remote = body.get("remote") is True
+        if "remote" in body and self.old_hub:
+            return 400, {"error": "request_invalid"}
+        seconds = 300 if remote else 600
+        row = AgentRow(body["pairing_id"], kem, sig, expires=time.time() + seconds, remote=remote)
+        answer: Json = {"pairing_id": row.id, "expires_at": now_ms_text(timedelta(seconds=seconds))}
+        if remote:
+            row.nonce = secrets.token_bytes(16)
+            answer.update(remote=True, nonce=b64u_encode(row.nonce))
         self.agents[row.id] = row
-        return 200, {"pairing_id": row.id, "expires_at": now_ms_text(timedelta(seconds=600))}
+        return 200, answer
+
+    def r_pairing_get(self, request: Request, body: Any, pairing: str) -> tuple[int, Any]:
+        row = self.agents.get(pairing)
+        if row is None or row.state not in ("open", "confirmed") or row.expires <= time.time():
+            return 404, {"error": "pairing_unknown"}
+        answer: Json = {
+            "pairing_id": row.id,
+            "pub": {"kem": b64u_encode(row.kem), "sig": b64u_encode(row.sig)},
+            "state": row.state,
+            "expires_at": format_time(datetime.fromtimestamp(row.expires, UTC)),
+        }
+        if row.remote and row.nonce is not None:
+            answer.update(remote=True, nonce=b64u_encode(row.nonce))
+        return 200, answer
+
+    def r_handover(self, request: Request, body: Any) -> tuple[int, Any]:
+        row = self.agents[cast(str, request.agent)]
+        if row.state != "confirmed" or row.handover_ct is None or row.expires <= time.time():
+            return 404, {"error": "pairing_unknown"}
+        return 200, {"agent_id": row.id, "user_id": row.user, "handover_ct": row.handover_ct}
 
     def _agent_me(self, row: AgentRow) -> Json:
         return {
@@ -552,6 +596,7 @@ class HubFake:
             row.misses += 1
             return 401, {"error": "claim_invalid"}
         row.state = "active"
+        row.handover_ct = None
         return 200, self._agent_me(row)
 
     def r_agent_me(self, request: Request, body: Any) -> tuple[int, Any]:

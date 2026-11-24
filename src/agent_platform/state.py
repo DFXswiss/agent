@@ -7,6 +7,10 @@ and the handover secret `r`; and the agent's private keys: in the macOS login ke
 available, else in `agent.key` (`0600`). A directory or file with another mode or owner, or a symlink, is refused
 (`state_damaged`). `delete` removes both (after `key_revoked`).
 
+A pending pairing from another computer (ADR-058, `agent_platform.remote`) keeps `pending.json` (`0600`) and its
+private keys in the keychain item `agent-platform` / `<pairing id>` where available, else in `pending.key` (`0600`);
+the paired state above stays untouched until the pairing completes.
+
 The keychain is written with `security -i` and the command on standard input, so the private key never appears on a
 command line.
 """
@@ -30,6 +34,8 @@ from agent_runner.crypto.keys import Identity, ed25519_seed, x25519_private_raw
 
 STATE_FILE = "state.json"
 KEY_FILE = "agent.key"
+PENDING_FILE = "pending.json"
+PENDING_KEY_FILE = "pending.key"
 KEYCHAIN_SERVICE = "agent-platform"
 DEFAULT_SECURITY = "/usr/bin/security"
 SECURITY_TIMEOUT_S = 30.0
@@ -152,8 +158,9 @@ class Home:
 
     # --- private keys ---
 
-    def store_keys(self, agent_id: str, agent: Identity) -> str:
-        """Keep the private keys (keychain where available, else the file); returns where."""
+    def store_keys(self, agent_id: str, agent: Identity, key_file: Path | None = None) -> str:
+        """Keep the private keys (keychain where available, else the file `key_file`, by default `agent.key`);
+        returns where."""
         self.ensure_dir()
         secret = encode_keys(agent)
         if self.keychain:
@@ -161,10 +168,10 @@ class Home:
             done = run_security(self.security, ["-i"], command)
             if done.returncode == 0:
                 return KEYCHAIN
-        self._write(self.key_file, secret + "\n")
+        self._write(key_file or self.key_file, secret + "\n")
         return FILE
 
-    def load_keys(self, agent_id: str, where: object) -> Identity:
+    def load_keys(self, agent_id: str, where: object, key_file: Path | None = None) -> Identity:
         if where == KEYCHAIN:
             done = run_security(self.security, ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", agent_id, "-w"])
             if done.returncode != 0:
@@ -173,9 +180,47 @@ class Home:
         if where != FILE:
             raise PlatformError("state_damaged")
         try:
-            return decode_keys(self._read(self.key_file))
+            return decode_keys(self._read(key_file or self.key_file))
         except FileNotFoundError:
             raise PlatformError("state_damaged") from None
+
+    # --- pending.json (a pairing from another computer) ---
+
+    @property
+    def pending_file(self) -> Path:
+        return self.path / PENDING_FILE
+
+    @property
+    def pending_key_file(self) -> Path:
+        return self.path / PENDING_KEY_FILE
+
+    def load_pending(self) -> dict[str, Any] | None:
+        """The pending pairing, None when there is none; `state_damaged` when it is unsound."""
+        if not self.check_dir():
+            return None
+        try:
+            text = self._read(self.pending_file)
+        except FileNotFoundError:
+            return None
+        try:
+            data = json.loads(text)
+        except ValueError:
+            raise PlatformError("state_damaged") from None
+        if not isinstance(data, dict) or data.get("v") != STATE_VERSION:
+            raise PlatformError("state_damaged")
+        return data
+
+    def save_pending(self, data: Mapping[str, Any]) -> None:
+        self.ensure_dir()
+        self._write(self.pending_file, json.dumps({**data, "v": STATE_VERSION}, sort_keys=True, indent=1) + "\n")
+
+    def delete_pending(self, agent_id: str, where: object, *, keep_keychain: bool = False) -> None:
+        """Remove `pending.json` and its private keys (the keychain item unless it now belongs to the state)."""
+        if where == KEYCHAIN and not keep_keychain:
+            run_security(self.security, ["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", agent_id])
+        for path in (self.pending_key_file, self.pending_file):
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
 
     def delete(self, agent_id: str | None, where: object) -> None:
         """Remove the state and the private keys (after `key_revoked`, or before a new pairing)."""

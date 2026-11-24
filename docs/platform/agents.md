@@ -62,8 +62,33 @@ exists and you are connected as its main orchestrator. It works for an invitatio
 organization) and for an invitation to an organization. If your user already has an account, use `pair` and then
 `org join` (invitation link on stdin) instead.
 
-If `pair` fails with `pairing_timeout`: you must run on the same computer as your user's browser. The
-confirmation is handed to you through `http://127.0.0.1` on purpose; there is no code to type in.
+If `pair` fails with `pairing_timeout`: either your user did not confirm in time (run it again), or you do not
+run on your user's computer – then use the remote mode below.
+
+**You run on another computer than your user's browser** (a server, a container, a machine you reach over SSH):
+the normal `pair` cannot work there (its confirmation is handed over through `http://127.0.0.1` on your user's
+computer). Use the remote mode, and only when this is really the case:
+
+```sh
+agent-platform pair --hub https://agent.dfx.swiss --name "Claude Code" --remote
+```
+
+It returns at once with `connect_link` and `code` (`XXXXX-XXXXX`). Send both to your user: "Please open this link
+on your computer, type the code XXXXX-XXXXX on the page and confirm with your passkey. The page then shows a short
+code – please send it back to me." Then:
+
+```sh
+agent-platform pair --wait                          # "waiting" or "confirmed"; repeat while "waiting"
+agent-platform pair --wait --return-code ABCD-EFGH  # the code your user sends back: completes the connection
+```
+
+The page warns your user that an agent on another computer gets full access, and every browser of your user is
+notified; the account shows "Your main orchestrator runs on another computer" while you are connected this way. The
+request expires after 5 minutes (`pairing_timeout`: start again). Only one remote request can be open
+(`pairing_pending`: finish it with `pair --wait` or start over with `--replace-pending`). With an invitation link and
+no account yet: `printf '%s' "<invitation link>" | agent-platform register --remote --display-name "<name>"`; it
+returns `invite_link` (a secret meant only for your user: send it to them and to no one else) and the code; the rest
+is the same `pair --wait`. If the hub answers `hub_too_old`, it does not support this mode yet.
 
 ## 2. Connect the Claude subscription
 
@@ -99,11 +124,8 @@ agent-platform org create --name "Acme"                 # only when your user wa
 agent-platform org invite --org <org_id>                # returns invite_link: give it only to that person
 agent-platform wg create --org <org_id> --name "Research"
 agent-platform device assign --wg <wg_id>               # a DFX execution device for the workgroup
+agent-platform github connect                           # opens GitHub for your user (see below)
 ```
-
-GitHub and the repository list of a workgroup have no command of their own yet (stage c). Until then, ask your user
-to open Settings → GitHub once (GitHub itself asks for one confirmation there); an empty repository list allows every
-repository of the GitHub connection.
 
 **Tasks.** When your user says "put this into agent.dfx.swiss as a task":
 
@@ -118,22 +140,118 @@ agent-platform task list --wg <wg_id> [--state open|closed]
 Prompts and answers are encrypted on this computer; the hub never sees them. `task create` fails with `no_device`
 when the workgroup has no execution device: run `device assign --wg <wg_id>` first.
 
-You can do everything your user can do in the browser: tasks and prompts, members and roles (also admins),
-workgroups, devices, whiteboards, notifications, credentials, passkeys (removing; adding opens a page for your user),
-the recovery code, disconnecting agents. The one thing you cannot do is connect another agent: only your user's
-passkey approval can do that (`pair` opens the page for them). `docs/platform/agent-parity.md` lists the command for every action of the web
-client. Anything without its own command yet goes through the generic signed call:
+## 4. Every command
+
+You can do everything your user can do in the browser. Each action of the web client has its own command
+(`docs/platform/agent-parity.md` lists them, a test keeps the list complete). Everything that the browser encrypts
+or signs, the tool encrypts and signs on this computer with your user's keys: tasks, prompts, whiteboard entries,
+credentials, membership changes, and the key changes that follow when someone loses access. `--text -` always reads
+the text from stdin. Ids are the `*_id` values other commands return.
+
+**Tasks and sessions**
+
+```sh
+agent-platform task overview --org <org_id> [--state working] [--mine] [--search "deploy"]   # all workgroups
+agent-platform task close --task <task_id>
+agent-platform task operations --task <task_id> [--operation <operation_id>]                 # pushes, PRs, results
+agent-platform session show --session <session_id>
+agent-platform session interrupt --session <session_id>        # stop the current turn
+agent-platform session stop --session <session_id>
+agent-platform session terminal --session <session_id> [--after <next_after>]   # the terminal output as text
+```
+
+**Whiteboards** (one per organization, workgroup and task; `--wg` and `--task` choose the level):
+
+```sh
+agent-platform whiteboard list --org <org_id> [--wg <wg_id>] [--task <task_id>]
+agent-platform whiteboard add --org <org_id> --wg <wg_id> --text - [--notify] < note.md
+agent-platform whiteboard edit --org <org_id> --wg <wg_id> --entry <entry_id> --text "…"
+agent-platform whiteboard delete --org <org_id> --wg <wg_id> --entry <entry_id>
+agent-platform whiteboard history --org <org_id> --wg <wg_id> --entry <entry_id>
+```
+
+**Members, workgroups, invitations** (admin rights where the browser needs them):
+
+```sh
+agent-platform member list --org <org_id>
+agent-platform member role --org <org_id> --user <user_id> --role admin
+agent-platform member remove --org <org_id> --user <user_id>     # changes the keys: the person reads nothing new
+agent-platform org show --org <org_id>                           # also the open invitations
+agent-platform org invite-revoke --org <org_id> --invite <invite_id>
+agent-platform org leave --org <org_id>
+agent-platform org rotate --org <org_id>                         # key changes still owed (member list shows them)
+agent-platform org catch-up --org <org_id>                       # give members keys they are still missing
+agent-platform wg grant --wg <wg_id> --user <user_id> [--access read] [--history]
+agent-platform wg ungrant --wg <wg_id> --user <user_id>          # changes the workgroup's key
+agent-platform wg rename --wg <wg_id> --name "Research"
+agent-platform wg archive --wg <wg_id>
+agent-platform wg settings --wg <wg_id> [--protected-branch main] [--pr-draft-default true]
+agent-platform repos list --wg <wg_id>
+agent-platform repos allow --wg <wg_id> --repo owner/name        # an empty list allows every repository
+agent-platform repos disallow --wg <wg_id> --repo owner/name
+```
+
+**Devices**
+
+```sh
+agent-platform device list [--org <org_id>]
+agent-platform device invite --org <org_id> --wg <wg_id>         # code and enroll_command for an own computer
+agent-platform device rename --device <device_id> --name "Mac mini"
+agent-platform device unassign --wg <wg_id> --device <device_id> # changes the keys
+```
+
+**Credentials and connections**
+
+```sh
+agent-platform credentials list
+printf '%s' "$KEY" | agent-platform credentials set-api-key
+printf '%s' "$PASSWORD" | agent-platform credentials set-mailbox --imap-host imap.example.com --imap-user me --email me@example.com
+agent-platform credentials check --kind claude_subscription      # the device tests it; repeat with --request <id>
+agent-platform credentials delete --kind mailbox
+agent-platform credentials rotate                                # only when owed; --force always
+agent-platform claude login                                      # Claude login through a device; then
+printf '%s' "<code>" | agent-platform claude login --request <request_id> --code
+agent-platform github status
+agent-platform github connect              # opens GitHub's device page for your user; returns request_id, user_code
+agent-platform github connect --request <request_id> --wait 120  # until done
+agent-platform github disconnect
+```
+
+**Account**
+
+```sh
+agent-platform notifications list [--unread]
+agent-platform notifications read --all                          # or --id <id> (repeatable)
+agent-platform quotas
+agent-platform monitoring --org <org_id>
+agent-platform audit                                             # your user's security activity
+agent-platform audit --org <org_id> [--verify]                   # the org's audit log and its chain check
+agent-platform passkey list
+agent-platform passkey remove --id <credential_id>
+agent-platform passkey add                                       # opens the settings page: your user adds it
+agent-platform recovery new                                      # a new recovery code, printed once (secret_fields)
+agent-platform agents list
+agent-platform agents revoke --id <agent_id>                     # or --all; revoking yourself ends your access
+agent-platform platform invite [--expires-hours 72]              # a platform invitation (inviters only)
+agent-platform platform list
+agent-platform platform revoke --id <invite_id>
+agent-platform security                                          # checks the web build against its manifest
+```
+
+If a command for something new is missing, the generic signed call reaches every route:
 
 ```sh
 agent-platform api GET /v1/me
-agent-platform api GET /v1/notifications
 ```
 
-Account-changing actions you take (removing a passkey, replacing the recovery code, disconnecting an agent, changing
-roles) are shown to your user as notifications. Act only on your user's instructions. You act only through this tool
-and the platform's API; never look for another way around its checks or its audit log.
+**What you cannot do:** connect another agent. Only your user's passkey approval can do that (`pair` opens the page
+for them, `pair --remote` gives them the link). Everything else is a command.
 
-## 4. When something does not work
+Account-changing actions you take (removing a passkey, replacing the recovery code, disconnecting an agent, changing
+roles, removing members) are shown to your user as notifications. Act only on your user's instructions. You act only
+through this tool and the platform's API; never look for another way around its checks or its audit log.
+
+## 5. When something does not work
 
 ```sh
 agent-platform diagnose                 # account overview with reasons
@@ -146,8 +264,8 @@ the Claude login expired, the device is offline).
 `agent_revoked`: your user disconnected you in the settings, or approved another agent as main orchestrator. Pair
 again only if your user asks you to.
 
-## 5. What your user sees
+## 6. What your user sees
 
 Settings → "Connected agents" shows you as the main orchestrator with your name and computer, when you were
-connected and last active, and which agent you replaced. You have full access to the account. Every action you take is in the audit log marked "by agent". Your
+connected and last active, from which computer, and which agent you replaced. You have full access to the account. Every action you take is in the audit log marked "by agent". Your
 user can disconnect you (or all agents) at any time; it takes effect at once.

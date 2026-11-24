@@ -139,3 +139,39 @@ def test_negative_refuses_a_wrong_expectation() -> None:
         agent_vectors.negative("x", "check_label", args, "header_invalid")
     with pytest.raises(RuntimeError, match="header_invalid instead of decrypt_failed"):
         agent_vectors.negative("x", "check_label", {"label": {}}, "decrypt_failed")
+
+
+def test_remote_agent_code_and_typed_forms() -> None:
+    remote = DATA["remote"]
+    agent_id, nonce = DATA["agent"]["id"], b64u_decode(remote["nonce"])
+    fp = DATA["fingerprint"]
+    text = agent.code_input(agent_id, fp, nonce, remote["origin"])
+    assert b64u_encode(text) == remote["code_input"]
+    fields = {"fp": fp, "mode": "remote", "nonce": remote["nonce"], "origin": remote["origin"], "pairing_id": agent_id}
+    assert text == P + b"agent-code\x00" + json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
+    assert agent.agent_code(agent_id, fp, nonce, remote["origin"]) == remote["agent_code"]
+    assert agent.crockford32(hashlib.sha256(text).digest())[:10] == remote["agent_code"]
+    assert agent.format_code(remote["agent_code"]) == remote["agent_code_shown"]
+    for case in remote["typed"]:
+        assert agent.parse_code(case["text"], case["length"]) == case["code"]
+
+
+def test_remote_handover_opens_and_the_return_code_matches() -> None:
+    remote, bot = DATA["remote"], _agent()
+    agent_id, user_id = DATA["agent"]["id"], DATA["user"]["id"]
+    secret = b64u_decode(DATA["secret"]["secret"])
+    case = remote["handover"]
+    info = agent.handover_info(agent_id, user_id)
+    assert b64u_encode(info) == case["info"]
+    assert SUITE.decrypt(b64u_decode(case["sealed"]), bot.kem, info).decode() == case["plaintext"]
+    assert agent.open_handover(bot.kem, agent_id, user_id, case["sealed"]) == (secret, case["root_key"])
+    eph = keys.x25519_private(b64u_decode(case["ephemeral_sk"]))
+    resealed = agent.seal_handover(bot.kem_public(), agent_id, user_id, secret, case["root_key"], ephemeral=eph)
+    assert resealed == case["sealed"]
+    back = remote["return_code"]
+    assert b64u_encode(agent.return_info(agent_id, user_id)) == remote["return_info"]
+    assert agent.crockford32(hkdf(secret, b64u_decode(remote["return_info"])))[:8] == back
+    assert agent.return_code(secret, agent_id, user_id) == back
+    assert agent.return_code_matches(secret, agent_id, user_id, remote["return_code_shown"].lower())
+    assert not agent.return_code_matches(secret, agent_id, user_id, "0000-0000")
+    assert not agent.return_code_matches(secret, agent_id, user_id, "UUUU-UUUU")

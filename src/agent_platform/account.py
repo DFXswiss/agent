@@ -79,6 +79,7 @@ class Account:
     _wraps: list[dict[str, Any]] | None = None
     _platform: VerifiedPlatformLog | None = None
     _logs: dict[str, VerifiedLog] = field(default_factory=dict)
+    _learned: KeyRing = field(default_factory=dict)
 
     @classmethod
     def open(cls, home: Home, platform_root: str | None = None) -> Account:
@@ -151,6 +152,10 @@ class Account:
 
     def platform(self) -> PlatformState:
         """The platform log verified against the platform root key (P1-P4)."""
+        return self.platform_log().state
+
+    def platform_log(self) -> VerifiedPlatformLog:
+        """The verified platform log with its entries (`device_decertify` times)."""
         if self._platform is None:
             if not self.platform_root:
                 raise PlatformError("invalid_argument", reason="platform_root_key_missing")
@@ -162,7 +167,7 @@ class Account:
             if head != verified.state.head_value().to_json():
                 raise unverified("log_chain")
             self._platform = verified
-        return self._platform.state
+        return self._platform
 
     def org_log(self, org: str) -> VerifiedLog:
         """The org's membership log, verified (module docstring)."""
@@ -209,6 +214,14 @@ class Account:
 
     # --- keys ---
 
+    def learn(self, keys: Mapping[tuple[str, str, int], bytes]) -> None:
+        """Keep scope keys this run created (a batch's new epochs of scopes the user reads, like the browser does)."""
+        self._learned.update(keys)
+
+    def refresh_wraps(self) -> None:
+        """Read the wraps again on next use (after the user's own `CK` changed)."""
+        self._wraps = None
+
     def wraps(self) -> list[dict[str, Any]]:
         if self._wraps is None:
             answer = self.call("GET", "/v1/wraps")
@@ -222,7 +235,11 @@ class Account:
         """The org and workgroup keys of `org` from wraps that pass W1/W2 against the verified log."""
         log = self.org_log(org)
         state = log.state
-        ring: KeyRing = {}
+        ring: KeyRing = {
+            slot: key
+            for slot, key in self._learned.items()
+            if (slot[0] == ORG and slot[1] == org) or (slot[0] == WG and slot[1] in state.workgroups)
+        }
         for item in self.wraps():
             scope, scope_id = item.get("scope"), item.get("scope_id")
             if not ((scope == ORG and scope_id == org) or (scope == WG and scope_id in state.workgroups)):

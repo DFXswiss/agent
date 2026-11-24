@@ -18,7 +18,7 @@ from collections.abc import Mapping, Sequence
 from importlib import resources
 from typing import Any, TextIO
 
-from agent_platform import __version__, claude, diagnose, orgs, registry, tasks
+from agent_platform import __version__, claude, diagnose, orgs, registry, remote, tasks
 from agent_platform.account import Account
 from agent_platform.commands import Context, Help, Parser, Tree, text_argument, with_account
 from agent_platform.credentials import put_record, read_record
@@ -36,16 +36,25 @@ def cmd_register(args: argparse.Namespace, context: Context) -> dict[str, Any]:
     link = context.environ.get("AGENT_PLATFORM_INVITE", "") or context.read_stdin()
     if not link.strip():
         raise PlatformError("invalid_argument")
-    result = register(
-        context.home, context.environ, invite=link, display_name=args.display_name, name=args.name, host=args.host
-    )
+    if args.remote:
+        result = remote.start_register(
+            context.home,
+            invite=link,
+            display_name=args.display_name,
+            name=args.name,
+            host=args.host,
+            replace=args.replace_pending,
+        )
+    elif args.replace_pending:
+        raise PlatformError("invalid_argument")
+    else:
+        result = register(
+            context.home, context.environ, invite=link, display_name=args.display_name, name=args.name, host=args.host
+        )
     return {**result, "display_name": args.display_name.strip()}
 
 
-def cmd_pair(args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    result = pair(
-        context.home, context.environ, hub=args.hub, name=args.name, host=args.host, browser=not args.no_browser
-    )
+def _with_display_name(result: dict[str, Any], context: Context) -> dict[str, Any]:
     account = Account.open(context.home)
     try:
         result["display_name"] = account.display_name()
@@ -54,6 +63,29 @@ def cmd_pair(args: argparse.Namespace, context: Context) -> dict[str, Any]:
     finally:
         account.close()
     return result
+
+
+def cmd_pair(args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    if args.wait:
+        if args.hub is not None or args.remote or args.replace_pending:
+            raise PlatformError("invalid_argument")
+        result = remote.wait(context.home, return_code=args.return_code, timeout=args.timeout)
+        connected = result["state"] == "connected" and result["kind"] == "pair"
+        return _with_display_name(result, context) if connected else result
+    if args.hub is None or args.return_code is not None or args.timeout != remote.WAIT_DEFAULT_S:
+        raise PlatformError("invalid_argument")
+    if args.remote:
+        if args.no_browser:
+            raise PlatformError("invalid_argument")
+        return remote.start_pair(
+            context.home, hub=args.hub, name=args.name, host=args.host, replace=args.replace_pending
+        )
+    if args.replace_pending:
+        raise PlatformError("invalid_argument")
+    result = pair(
+        context.home, context.environ, hub=args.hub, name=args.name, host=args.host, browser=not args.no_browser
+    )
+    return _with_display_name(result, context)
 
 
 def cmd_status(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -219,16 +251,23 @@ def cmd_diagnose(account: Account, args: argparse.Namespace, context: Context) -
 
 def _account_commands(tree: Tree) -> None:
     sub = tree.add(tree.commands, "pair", cmd_pair, "connect this agent to the user's account", common=False)
-    sub.add_argument("--hub", required=True)
+    sub.add_argument("--hub")
     sub.add_argument("--name", default="Claude Code")
     sub.add_argument("--host", default=(socket.gethostname().split(".")[0] or "computer")[:64])
     sub.add_argument("--no-browser", action="store_true")
+    sub.add_argument("--remote", action="store_true", help="the agent runs on another computer than the browser")
+    sub.add_argument("--replace-pending", action="store_true", help="delete a pending remote pairing first")
+    sub.add_argument("--wait", action="store_true", help="finish the pending remote pairing")
+    sub.add_argument("--return-code", help="with --wait: the code the page showed the user")
+    sub.add_argument("--timeout", type=int, default=remote.WAIT_DEFAULT_S, help="with --wait: seconds (0-600)")
     sub = tree.add(
         tree.commands, "register", cmd_register, "a new account through an invitation (link on stdin)", common=False
     )
     sub.add_argument("--display-name", required=True)
     sub.add_argument("--name", default="Claude Code")
     sub.add_argument("--host", default=(socket.gethostname().split(".")[0] or "computer")[:64])
+    sub.add_argument("--remote", action="store_true", help="the agent runs on another computer than the browser")
+    sub.add_argument("--replace-pending", action="store_true", help="delete a pending remote pairing first")
     tree.add(tree.commands, "status", with_account(cmd_status), "the account as the agent sees it")
     sub = tree.add(tree.commands, "api", with_account(cmd_api), "a signed request to any route")
     sub.add_argument("method")

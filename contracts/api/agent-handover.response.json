@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/agent-handover.response.json",
+  "title": "GET /v1/agent/handover response",
+  "description": "Body of a successful response to GET /v1/agent/handover (11-agent-access.md section 4, ADR-058): the handover of a confirmed remote pairing, sealed to the agent.",
+  "type": "object",
+  "properties": {
+    "agent_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "handover_ct": {
+      "$ref": "../common.json#/$defs/bundle_ct"
+    }
+  },
+  "required": [
+    "agent_id",
+    "user_id",
+    "handover_ct"
+  ],
+  "additionalProperties": false
+}

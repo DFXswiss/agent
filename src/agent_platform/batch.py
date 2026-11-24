@@ -1,15 +1,17 @@
 """Building membership-log batches like the web client (`web/src/core/log/rotation.ts` `buildBatch`, 04-crypto.md
 sections 4.7 and 5.10, 03-api.md section 4.3).
 
-`build_batch` signs the requested entries as the user, draws fresh keys for every epoch the batch creates (`genesis`,
-`wg_create`), wraps them for every reader and wraps the current epochs the user holds for every principal the batch
-newly entitles (grant, device assignment, accept; with `history` also the older epochs of a granted workgroup); then
-it runs the hub's own check (`check_batch`) on its result before anything is sent. Workgroups named in
-`by_catch_up` may lack a key the user does not hold (an `admit` of an admin that is no member there, ADR-060).
-The checking code is the copy of
-the reference (`agent_runner.crypto.log`). The commands of this stage never take access away, so no batch owes a
-rotation (R is empty); a change that needed one would be refused by `check_batch` (`rotation_required`) before it is
-sent.
+`build_batch` signs the requested entries as the user and computes the rotation obligation R over them (the union of
+`required_set(before, after, subject)` per entry; a member that removes itself owes nothing, its R becomes the
+log's `pending`, which `rotation.rotate_pending` serves). It appends one `rotate` per element of R after the requested
+entries, draws a fresh key for every epoch the batch creates (`genesis`, `wg_create`, `rotate`), wraps those keys for
+every reader after the batch (decertified platform devices excluded) and wraps the current epochs the user holds for
+every principal the batch newly entitles (grant, device assignment, accept; with `history` also the older epochs of a
+granted workgroup); then it runs the hub's own check (`check_batch`) on its result before anything is sent. The
+checking code is the copy of the reference (`agent_runner.crypto.log`). The caller keeps the new keys of the scopes
+the user still reads (`Account.learn`), so events of the same batch and later ones use the new epochs. Workgroups
+named in `by_catch_up` may lack a key the user does not hold (an `admit` of an admin that is no member there,
+ADR-060): those wraps are left to the holders' catch-up.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from agent_runner.crypto.keys import Identity
 from agent_runner.crypto.log.batch import check_batch
 from agent_runner.crypto.log.entries import VERSION, Head, entry_hash, sign_log_entry
 from agent_runner.crypto.log.platform import PlatformState
+from agent_runner.crypto.log.rotation import entry_subject, required_set
 from agent_runner.crypto.log.state import ORG, WG, OrgState, Scope
 from agent_runner.crypto.log.verify import VerifiedLog, append_entries
 from agent_runner.crypto.log.wraps import WrapSlot
@@ -37,13 +40,14 @@ KeyRing = Mapping[tuple[str, str, int], bytes]
 
 @dataclass(frozen=True)
 class Built:
-    """The request body (`expected_seq`, `entries`, `wraps`), the created keys and the log after the batch."""
+    """The request body (`expected_seq`, `entries`, `wraps`), the created keys, R and the log after the batch."""
 
     expected_seq: int
     entries: list[dict[str, object]]
     wraps: list[dict[str, object]]
     new_keys: dict[tuple[str, str, int], bytes]
     log: VerifiedLog
+    required: tuple[Scope, ...] = ()
 
     def body(self, events: Sequence[object] = ()) -> dict[str, object]:
         return {"expected_seq": self.expected_seq, "entries": self.entries, "wraps": self.wraps, "events": list(events)}
@@ -77,7 +81,22 @@ def _created(body: Mapping[str, object]) -> list[Scope]:
         return [(ORG, cast(str, body["org"])), (WG, cast(str, body["default_wg"]))]
     if kind == "wg_create":
         return [(WG, cast(str, body["wg"]))]
+    if kind == "rotate":
+        return [(cast(str, body["scope"]), cast(str, body["scope_id"]))]
     return []
+
+
+def _required(log: VerifiedLog, requested: Sequence[Mapping[str, object]]) -> list[Scope]:
+    """R over the requested entries of `log` (the log after them); a self-remove owes no rotation."""
+    first = len(log.entries) - len(requested)
+    found: set[Scope] = set()
+    for index, entry in enumerate(requested):
+        seq = first + index
+        body = cast(dict[str, object], entry["body"])
+        if seq == 0 or (body["type"] == "remove" and entry_subject(body) == body["by"]):
+            continue
+        found |= required_set(log.states[seq - 1], log.states[seq], entry_subject(body))
+    return sorted(found)
 
 
 def _kem(state: OrgState, recipient: str) -> bytes:
@@ -101,8 +120,16 @@ def build_batch(
     """The batch of the module docstring; refusals are `CryptoError`s with the hub's codes."""
     founder = identity.public()["sig"]
     head = None if log is None else log.head
-    entries = sign_entries(org, head, author, identity.sig, fields, ts=ts, invite=invite)
-    after = append_entries(log, entries, founder=founder, platform=platform)
+    requested = sign_entries(org, head, author, identity.sig, fields, ts=ts, invite=invite)
+    trial = append_entries(log, requested, founder=founder, platform=platform)
+    required = _required(trial, requested)
+    rotations = [
+        {"type": "rotate", "scope": scope, "scope_id": scope_id, "epoch": trial.state.epoch(scope, scope_id) + 1}
+        for scope, scope_id in required
+    ]
+    rotate_entries = sign_entries(org, trial.head, author, identity.sig, rotations, ts=ts) if rotations else []
+    after = append_entries(trial, rotate_entries, founder=founder, platform=platform) if rotate_entries else trial
+    entries = [*requested, *rotate_entries]
     state = after.state
     skip = frozenset() if platform is None else platform.excluded(state)
     created = sorted({scope for entry in entries for scope in _created(cast(dict[str, object], entry["body"]))})
@@ -135,7 +162,7 @@ def build_batch(
             fail("epoch_stale")
         wraps.append(make_wrap(identity, slot, _kem(state, slot.recipient), key))
     check_batch(log, entries, wraps, wrapped_by=author, founder=founder, platform=platform, excluded=skip)
-    return Built(0 if head is None else head.seq + 1, entries, wraps, new_keys, after)
+    return Built(0 if head is None else head.seq + 1, entries, wraps, new_keys, after, tuple(required))
 
 
 def make_wrap(identity: Identity, slot: WrapSlot, recipient_kem: bytes, key: bytes) -> dict[str, object]:

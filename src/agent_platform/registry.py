@@ -9,4 +9,28 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-MODULES: tuple[Callable[[Any], None], ...] = ()
+from agent_platform import (
+    credkey,
+    creds,
+    devices,
+    inbox,
+    keywraps,
+    membership,
+    security,
+    sessions,
+    wgsettings,
+    whiteboards,
+)
+
+MODULES: tuple[Callable[[Any], None], ...] = (
+    membership.register,
+    devices.register,
+    credkey.register,
+    whiteboards.register,
+    sessions.register,
+    wgsettings.register,
+    inbox.register,
+    security.register,
+    creds.register,
+    keywraps.register,
+)
