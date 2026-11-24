@@ -20,12 +20,13 @@ from agent_runner.workvm.manager import NOT_ENABLED
 
 SESSION = cast(LocalSession, SimpleNamespace(id="0192f3a4-0000-7000-8000-00000000000a"))
 CONTEXT = SimpleNamespace(name="daemon")
+ACTOR = "0192f3a4-0000-7000-8000-0000000000a1"
 
 
 def operation_context(params: Mapping[str, Any]) -> OperationContext:
     return OperationContext(
         context=CONTEXT,
-        operation=cast(Operation, SimpleNamespace(type="workvm.request")),
+        operation=cast(Operation, SimpleNamespace(type="workvm.request", actor_id=ACTOR)),
         session=SESSION,
         params=params,
         data={},
@@ -37,9 +38,13 @@ def operation_context(params: Mapping[str, Any]) -> OperationContext:
 class FakeWorkVms:
     def __init__(self) -> None:
         self.calls: list[tuple[str, LocalSession, dict[str, Any]]] = []
+        self.triggered: list[str | None] = []
 
-    async def request(self, session: LocalSession, params: Mapping[str, Any]) -> dict[str, Any]:
+    async def request(
+        self, session: LocalSession, params: Mapping[str, Any], *, triggered_by: str | None = None
+    ) -> dict[str, Any]:
         self.calls.append(("request", session, dict(params)))
+        self.triggered.append(triggered_by)
         return {"workvm_id": "wvm-0a1b2c3d"}
 
     async def release(self, session: LocalSession, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -79,6 +84,8 @@ def test_with_work_vms_the_manager_decides(monkeypatch: pytest.MonkeyPatch) -> N
     assert asyncio.run(executors.request_workvm(operation_context({"size": "large"}))) == {"workvm_id": "wvm-0a1b2c3d"}
     assert asyncio.run(executors.release_workvm(operation_context({"scope": "session"}))) == {"released": True}
     assert workvms.calls == [("request", SESSION, {"size": "large"}), ("release", SESSION, {"scope": "session"})]
+    # the VM keeps the operation's acting user as the person who triggered it (ADR-083 section 2)
+    assert workvms.triggered == [ACTOR]
 
 
 def test_a_test_run_goes_to_the_test_runs_or_fails_without_work_vms(monkeypatch: pytest.MonkeyPatch) -> None:

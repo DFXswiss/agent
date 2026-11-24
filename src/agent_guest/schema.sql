@@ -9,6 +9,8 @@
 -- refused before forwarding are journaled too (03-api.md section 8).
 -- journal kind workvm.call and pending kind workvm (contracts/changes/KOR-29.md, 13-work-vm.md section 3): the calls of
 -- the work VM tools, answered by the runner like a platform.query.
+-- prompt_registry.speaker (ADR-083 section 1, contracts/changes/KOR-46.md): the sender line the runner registered with
+-- the prompt; the hook decision returns it for exactly the row it accepted.
 
 CREATE TABLE journal (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,6 +40,7 @@ CREATE TABLE prompt_registry (
     prompt_id TEXT NOT NULL,
     registered_at TEXT NOT NULL,
     used_at TEXT,
+    speaker TEXT,
     PRIMARY KEY (session_id, prompt_id)
 );
 CREATE INDEX prompt_registry_hash ON prompt_registry (session_id, sha256, used_at);

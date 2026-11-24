@@ -1,6 +1,7 @@
 """`get_task_messages {task_id, after?, limit? <= 200}` (03-api.md section 8.1, ADR-024): the chat of a task of the
 session's workgroup - prompts and outputs in the hub's scope order (`seq`), decrypted from the kept verified events
-(`projection.messages`), from `after` (exclusive), with `next_after` while more follow. Workgroup level; a task that
+(`projection.messages`), from `after` (exclusive), with `next_after` while more follow. Prompts this device withdrew
+are left out (ADR-083 section 3). Workgroup level; a task that
 is neither known from a kept event nor from the hub in this workgroup is `not_found`.
 """
 

@@ -11,7 +11,13 @@ measured from `runner.billing_meter.measured_through` to now and the interval is
   charged.
 - other VMs come from the extension point `<area>/billing_vms.py:VMS`, a callable `VMS(context, conn)` returning
   `MeteredVm`s (the temporary work VMs of KOR-29: `vm_kind` `work`, their size and the requesting session, which
-  bears the whole interval).
+  bears the whole interval, with the person whose turn requested it, `workvm.triggered_by`).
+
+Towards a hub whose device state has the section `prompt_queue` (ADR-083 section 2) every item carries
+`triggered_by`: the person whose instruction the runtime follows from - for a session VM the session's acting user at
+the tick (`credentials.acting.stamp`: the turn's acting user of a main session, the acting user of the
+`subagent.request` of a child), for another VM the person its source names (`MeteredVm.triggered_by`); null when
+unknown.
 
 One `runtime` item per session and interval (at most `MAX_ITEM_MS`; a longer gap is sent in pieces) and the new
 `measured_through` are written in one transaction: a crash measures nothing twice and loses nothing. A VM seen for
@@ -33,7 +39,9 @@ from psycopg import AsyncConnection
 
 from agent_runner import registry
 from agent_runner.billing import state
+from agent_runner.credentials import acting
 from agent_runner.model.gateways import running_service
+from agent_runner.prompts import hub_queue
 from agent_runner.sessions.records import time_text
 
 TICK_S = 5.0
@@ -44,12 +52,20 @@ SESSION_SIZE = "session"
 
 @dataclass(frozen=True)
 class MeteredVm:
-    """A running VM and who bears its runtime."""
+    """A running VM and who bears its runtime; `triggered_by` names, per session of `sessions`, the person whose
+    instruction it follows from (empty: unknown for all)."""
 
     vm_id: str
     vm_kind: str
     size: str
     sessions: tuple[str, ...]
+    triggered_by: tuple[str | None, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Holder:
+    id: str
+    depth: int
 
 
 VmSource = Callable[[Any, AsyncConnection[Any]], Awaitable[Sequence[MeteredVm]]]
@@ -74,15 +90,23 @@ def pieces(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
 
 
 async def session_vms(_context: Any, conn: AsyncConnection[Any]) -> list[MeteredVm]:
-    """The running workgroup VMs with the sessions that hold them."""
+    """The running workgroup VMs with the sessions that hold them and their acting users at this moment."""
     cursor = await conn.execute(
-        "SELECT v.id, array_remove(array_agg(s.id::text ORDER BY s.id), NULL) FROM runner.vm v"
+        "SELECT v.id, s.id::text, s.depth FROM runner.vm v"
         " LEFT JOIN runner.session s ON s.vm_id = v.id AND s.state = ANY(%s)"
-        " WHERE v.state = 'running' GROUP BY v.id ORDER BY v.id",
+        " WHERE v.state = 'running' ORDER BY v.id, s.id",
         (sorted(HOLDING),),
     )
-    rows = await cursor.fetchall()
-    return [MeteredVm(str(vm), SESSION_SIZE, SESSION_SIZE, tuple(sessions)) for vm, sessions in rows]
+    held: dict[str, list[_Holder]] = {}
+    for vm, session_id, depth in await cursor.fetchall():
+        holders = held.setdefault(str(vm), [])
+        if session_id is not None:
+            holders.append(_Holder(str(session_id), int(depth)))
+    found = []
+    for vm, holders in held.items():
+        stamps = tuple([await acting.stamp(conn, holder) for holder in holders])
+        found.append(MeteredVm(vm, SESSION_SIZE, SESSION_SIZE, tuple(holder.id for holder in holders), stamps))
+    return found
 
 
 def sources() -> list[VmSource]:
@@ -91,8 +115,11 @@ def sources() -> list[VmSource]:
     return found
 
 
-async def measure(context: Any, conn: AsyncConnection[Any], outbox: Any, now: datetime) -> int:
-    """One pass in the caller's transaction (module docstring); the number of `runtime` items written."""
+async def measure(
+    context: Any, conn: AsyncConnection[Any], outbox: Any, now: datetime, *, triggered: bool = False
+) -> int:
+    """One pass in the caller's transaction (module docstring); the number of `runtime` items written (with
+    `triggered_by` when `triggered`)."""
     vms: list[MeteredVm] = []
     for source in sources():
         vms.extend(await source(context, conn))
@@ -115,22 +142,22 @@ async def measure(context: Any, conn: AsyncConnection[Any], outbox: Any, now: da
             continue
         for begin, end in pieces(start, now):
             total = int((end - begin) / timedelta(milliseconds=1))
-            for session_id, share in zip(vm.sessions, split(total, len(vm.sessions)), strict=True):
+            stamps = vm.triggered_by or (None,) * len(vm.sessions)
+            for session_id, share, stamp in zip(vm.sessions, split(total, len(vm.sessions)), stamps, strict=True):
                 if share <= 0:
                     continue
-                await outbox.enqueue(
-                    conn,
-                    "runtime",
-                    {
-                        "session_id": session_id,
-                        "vm_id": vm.vm_id,
-                        "vm_kind": vm.vm_kind,
-                        "size": vm.size,
-                        "from": time_text(begin.timestamp()),
-                        "to": time_text(end.timestamp()),
-                        "runtime_ms": share,
-                    },
-                )
+                item: dict[str, Any] = {
+                    "session_id": session_id,
+                    "vm_id": vm.vm_id,
+                    "vm_kind": vm.vm_kind,
+                    "size": vm.size,
+                    "from": time_text(begin.timestamp()),
+                    "to": time_text(end.timestamp()),
+                    "runtime_ms": share,
+                }
+                if triggered:
+                    item["triggered_by"] = stamp
+                await outbox.enqueue(conn, "runtime", item)
                 written += 1
     return written
 
@@ -157,7 +184,7 @@ async def tick(context: Any, service: Any) -> int:
         return 0
     now = whole_ms(env.wall())
     async with env.transaction() as conn:
-        return await measure(context, conn, env.outbox, now)
+        return await measure(context, conn, env.outbox, now, triggered=hub_queue.api(env.desired))
 
 
 def _line(context: Any, text: str) -> None:

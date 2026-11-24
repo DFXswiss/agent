@@ -4,8 +4,8 @@ Discovered with `registry.discover` (areas in sorted order), so RUN-05 and later
 this area:
 
 - `<area>/session_prompt.py:FIRST_PROMPT`: `first_prompt(context, session) -> InitialPrompt | None`, the verified
-  first prompt of a new main session (RUN-05); at most one provider. Without one, a session starts without an
-  initial prompt and waits in `prompt_delivering` for the prompt delivery.
+  first prompt of a new main session with its sender line (RUN-05, ADR-083); at most one provider. Without one, a
+  session starts without an initial prompt and waits in `prompt_delivering` for the prompt delivery.
 - `<area>/session_state.py:OBSERVERS`: sequence of `StateObserver(name, handle)`; `handle(journal, conn, session,
   body)` sees every guest `session.state` record of a known session after its transition was written, in the same
   transaction (RUN-05: `prompt_accepted`/`prompt_refused` -> `prompt_delivery`).
@@ -32,10 +32,19 @@ _NAME_RE = re.compile(r"[a-z][a-z0-9._-]{0,63}")
 
 @dataclass(frozen=True)
 class InitialPrompt:
-    """The prompt event's ID and its verified, decrypted text."""
+    """The prompt event's ID, its verified, decrypted text and the sender line of its verified author (ADR-083
+    section 1, `prompts.speaker`; None: none is known)."""
 
     prompt_id: str
     text: str
+    speaker: str | None = None
+
+    def body(self) -> dict[str, str]:
+        """`initial_prompt` of `POST /v1/sessions`."""
+        found = {"prompt_id": self.prompt_id, "text": self.text}
+        if self.speaker is not None:
+            found["speaker"] = self.speaker
+        return found
 
 
 FirstPrompt = Callable[[Any, LocalSession], Awaitable[InitialPrompt | None]]

@@ -43,7 +43,10 @@ def test_delivered_prompts_go_after_a_day_and_what_is_still_needed_stays(store_d
     with psycopg.connect(store_dsn, autocommit=True) as conn:
         refused_first = _prompt(conn, TASK_A, 1, "refused", 2 * DAY)
         first = _prompt(conn, TASK_A, 2, "accepted", 2 * DAY)  # earliest prompt that counts: stays
-        old = [_prompt(conn, TASK_A, seq, state, 2 * DAY) for seq, state in ((3, "accepted"), (4, "failed"))]
+        old = [
+            _prompt(conn, TASK_A, seq, state, 2 * DAY)
+            for seq, state in ((3, "accepted"), (4, "failed"), (12, "withdrawn"))
+        ]
         recent = _prompt(conn, TASK_A, 5, "accepted", 3600)
         typed = _prompt(conn, TASK_A, 6, "typed", 2 * DAY)
         unrouted = _prompt(conn, TASK_A, 7, None, 2 * DAY)
@@ -64,7 +67,7 @@ def test_delivered_prompts_go_after_a_day_and_what_is_still_needed_stays(store_d
         finally:
             await pool.close()
 
-    assert asyncio.run(prune()) == (1, 3, True)
+    assert asyncio.run(prune()) == (1, 4, True)
     with psycopg.connect(store_dsn, autocommit=True) as conn:
         conn.execute("UPDATE runner.prompt_delivery SET state = 'refused' WHERE event_id = %s", (open_c,))
     assert asyncio.run(prune())[:2] == (1, 0)
@@ -74,4 +77,4 @@ def test_delivered_prompts_go_after_a_day_and_what_is_still_needed_stays(store_d
     assert kept == {first, recent, typed, unrouted, other_first, accepted_c}
     assert {refused_first, *old, other_old, open_c}.isdisjoint(kept)
     # every delivery row stays: a final prompt is never delivered again when the hub routes it once more
-    assert deliveries == (10,)
+    assert deliveries == (11,)

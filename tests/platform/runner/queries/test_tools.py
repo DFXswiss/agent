@@ -335,6 +335,26 @@ def test_get_task_messages_orders_prompts_and_outputs_and_pages(rig: Rig) -> Non
     run(rig, body)
 
 
+def test_get_task_messages_leaves_out_prompts_this_device_withdrew(rig: Rig) -> None:
+    async def body(k: RKit) -> None:
+        k.hub.tasks = [task_row(TASK)]
+        sid = await k.session(1)
+        k.events.prompt(TASK, "First.")  # 1
+        withdrawn = k.events.prompt(TASK, "Never mind.")  # 2
+        k.events.prompt(TASK, "Second.")  # 3
+        await k.pull()
+        async with k.env.pool.connection() as conn:
+            await conn.execute("INSERT INTO runner.prompt_withdrawal (event_id) VALUES (%s)", (withdrawn,))
+        result = await k.ok(sid, "get_task_messages", {"task_id": TASK})
+        assert [m["text"] for m in result["messages"]] == ["First.", "Second."]
+        page = await k.ok(sid, "get_task_messages", {"task_id": TASK, "limit": 1})
+        assert ([m["seq"] for m in page["messages"]], page["next_after"]) == ([1], 1)
+        rest = await k.ok(sid, "get_task_messages", {"task_id": TASK, "after": 1, "limit": 1})
+        assert ([m["seq"] for m in rest["messages"]], rest["next_after"]) == ([3], None)
+
+    run(rig, body)
+
+
 def test_get_task_messages_of_a_task_known_only_to_the_hub_is_empty(rig: Rig) -> None:
     async def body(k: RKit) -> None:
         sid = await k.session(1)

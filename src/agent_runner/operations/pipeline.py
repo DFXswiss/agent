@@ -44,7 +44,9 @@
    later scan). The state lives in the store, so a restarted daemon goes on with it.
 2. **Registration** (`register.build`, `register.Registrar`): the encrypted `operation.params` event, the dedupe
    tag with the current workgroup epoch (an idempotency key reused for other content is `params_invalid`, KOR-28),
-   `local_check` and the error code, stored before the first attempt; posted
+   `local_check` and the error code, and - towards a hub that announces `prompt_queue` (ADR-083 section 2,
+   `prompts.hub_queue.api`) - `triggered_by`, the acting user stamped at the receipt (`actor_id`), stored before the
+   first attempt; posted
    with backoff while the hub is unreachable. While the device holds no workgroup key the registration waits for it.
    No decision 10 min after the request reached the runner (after the end of the hold for a held operation):
    `expired` with `hub_unreachable` (the session gets
@@ -113,6 +115,7 @@ from agent_runner.operations.extensions import (
 )
 from agent_runner.operations.records import Operation
 from agent_runner.orgs.db import session as store_session
+from agent_runner.prompts import hub_queue
 from agent_runner.sessions import records as session_records
 from agent_runner.sessions.env import SessionEnv
 from agent_runner.sessions.events import session_event
@@ -586,6 +589,8 @@ class Pipeline:
                         extra=checked.get("dedupe", {}),
                         attribution=checked.get("data", {}),
                     )
+                    if hub_queue.api(self.env.desired):
+                        built.body["triggered_by"] = op.actor_id
                     if built.size_exceeded and error is None:
                         error = {"code": "size_exceeded", "message": "The parameters are too large."}
                     if built.key_conflict and error is None:

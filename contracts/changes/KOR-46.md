@@ -6,7 +6,7 @@ visible and a waiting prompt can be withdrawn by its author.
 
 ## Guest and hooks
 
-Producer: the runner (registration) and the guest's hook endpoint (addon `hook_addons/attribution.py`); consumers:
+Producer: the runner (registration) and the guest's hook endpoint (part of the `UserPromptSubmit` decision, `prompt.check`); consumers:
 the guest and Claude Code. The hub never sees these messages.
 
 - `guest/session-prompts.request.json`: optional `speaker` (`guest/objects.json#/$defs/speaker_line`, one line

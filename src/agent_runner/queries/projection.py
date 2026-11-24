@@ -7,7 +7,8 @@ clear header fields the reads select by. Plaintext exists only in memory while a
 opens a stored event with the scope key of its epoch from the store (and checks the author signature again).
 
 - `messages`: the chat items of one task of one workgroup scope - `prompt` and `session.output` in the hub's scope
-  order (`seq` = `scope_seq`), from `after`, at most `limit`, within the answer budget.
+  order (`seq` = `scope_seq`), from `after`, at most `limit`, within the answer budget; a prompt this device withdrew
+  (`runner.prompt_withdrawal`, ADR-083 section 3) is left out.
 - `entries`: the whiteboard of one level (org scope; workgroup scope without task; workgroup scope of one task),
   replayed like the hub projection (`agent_hub.whiteboards.projection`): a `whiteboard.entry` creates the entry
   (its `ref`; the first one wins, also across levels by the hub receive time),
@@ -179,7 +180,8 @@ async def messages(
     """`(items, next_after)` of the chat of a task (module docstring); `next_after` None when nothing follows."""
     rows = await _rows(
         conn,
-        "scope_id = %s AND task_id = %s AND kind = ANY(%s) AND scope_seq > %s ORDER BY scope_seq LIMIT %s",
+        "scope_id = %s AND task_id = %s AND kind = ANY(%s) AND scope_seq > %s AND NOT EXISTS (SELECT 1 FROM"
+        " runner.prompt_withdrawal w WHERE w.event_id = runner.read_event.event_id) ORDER BY scope_seq LIMIT %s",
         (wg_id, task_id, list(MESSAGE_KINDS), after, limit + 1),
     )
     items: list[dict[str, Any]] = []

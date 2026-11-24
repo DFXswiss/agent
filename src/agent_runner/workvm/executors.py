@@ -2,7 +2,8 @@
 ADR-041; docs/platform/spec/13-work-vm.md sections 2 and 12, ADR-080).
 
 They run after the hub accepted the operation (the request is audited there). Without work VMs on this device the
-operation fails `workvm_unavailable`.
+operation fails `workvm_unavailable`. A new VM keeps the operation's acting user as the person who triggered it
+(ADR-083 section 2).
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ async def request_workvm(ctx: OperationContext) -> dict[str, Any]:
     workvms = workvms_for(ctx.context)
     if workvms is None:
         raise OperationFailed("workvm_unavailable", message=NOT_ENABLED)
-    return await workvms.request(ctx.session, ctx.params)
+    return await workvms.request(ctx.session, ctx.params, triggered_by=ctx.operation.actor_id)
 
 
 async def release_workvm(ctx: OperationContext) -> dict[str, Any]:

@@ -22,7 +22,7 @@ from agent_guest.apisock import token_sha256
 from agent_guest.control import ControlContext
 from agent_guest.control_routes import hooks as control_hooks
 from agent_guest.driver import ClaudeCodeDriver
-from agent_guest.prompts import prompt_sha256
+from agent_guest.prompts import PromptRegistry, prompt_sha256
 from agent_guest.sandbox import unit
 from agent_guest.state import Session
 from tests.platform.guest.conftest import FakeClock
@@ -418,6 +418,18 @@ def test_a_long_initial_prompt_is_registered_and_deferred_like_every_other(
     assert manager.deferred_prompt(SESSION) is None
     with context.journal.transaction() as db:
         assert db.execute("SELECT sha256 FROM prompt_registry").fetchone()[0] == prompt_sha256(text)
+
+
+def test_the_initial_prompt_is_registered_with_its_sender_line(
+    manager: sessions.SessionManager, context: ControlContext
+) -> None:
+    speaker = 'agent.dfx.swiss instruction from: "Alice" (member 01a1ee56-6000-7003-8f1b-340691d99f20).'
+    manager.create(request(initial_prompt={"prompt_id": PROMPT_ID, "text": "Fix it.", "speaker": speaker}))
+    manager.start(SESSION)
+    with context.journal.transaction() as db:
+        assert db.execute("SELECT prompt_id, speaker FROM prompt_registry").fetchall() == [(PROMPT_ID, speaker)]
+    # the hook decision of exactly that prompt returns the line (ADR-083 section 1)
+    assert PromptRegistry(context.journal, context.state).decide(SESSION, "Fix it.") == (True, speaker)
 
 
 def test_a_prompt_the_registry_refuses_is_not_delivered(

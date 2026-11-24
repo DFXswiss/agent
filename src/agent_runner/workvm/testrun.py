@@ -235,7 +235,7 @@ class TestRuns:
         session, params = ctx.session, ctx.params
         size = str(params.get("size", "standard"))
         begun = self.clock()
-        vm = await self.workvms.obtain(session, scope=RUN_SCOPE, size=size)
+        vm = await self.workvms.obtain(session, scope=RUN_SCOPE, size=size, triggered_by=ctx.operation.actor_id)
         ready_ms = int((self.clock() - begun) * 1000)
         run = Run(
             run_id=active.run_id,

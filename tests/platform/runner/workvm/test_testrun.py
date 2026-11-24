@@ -30,6 +30,7 @@ from .kit import ORG, SESSION, TASK, World, session
 
 OP = "0193000a-0000-7000-8000-0000000000f1"
 OP_B = "0193000a-0000-7000-8000-0000000000f2"
+ACTOR = "0193000a-0000-7000-8000-0000000000f3"
 
 
 @pytest.fixture
@@ -58,7 +59,7 @@ class Clock:
 
 
 def ctx(params: dict[str, Any], operation: str = OP, local: Any = None) -> OperationContext:
-    op: Any = SimpleNamespace(id=operation)
+    op: Any = SimpleNamespace(id=operation, actor_id=ACTOR)
     return OperationContext(
         context=None, operation=op, session=local or session(), params=params, data={}, attempt=1, env="env"
     )
@@ -96,7 +97,12 @@ def run_rows(world: World) -> list[dict[str, Any]]:
 
 def vm_rows(world: World) -> list[dict[str, Any]]:
     with psycopg.connect(world.dsn, autocommit=True, row_factory=dict_row) as conn:
-        return list(conn.execute("SELECT id, scope, state, delete_reason, session_id::text AS s FROM runner.workvm"))
+        return list(
+            conn.execute(
+                "SELECT id, scope, state, delete_reason, session_id::text AS s, triggered_by::text AS t"
+                " FROM runner.workvm"
+            )
+        )
 
 
 def events(world: World) -> list[dict[str, Any]]:
@@ -125,6 +131,7 @@ def test_a_failing_run_gets_a_fresh_vm_keeps_its_log_and_the_vm_goes(world: Worl
     assert result["run_id"].startswith("tr-")
     (vm,) = vm_rows(world)
     assert (vm["scope"], vm["state"], vm["delete_reason"], vm["s"]) == ("run", "deleted", "run_ended", SESSION)
+    assert vm["t"] == ACTOR  # the run VM keeps the person whose instruction requested the run (ADR-083 section 2)
     assert world.instances == {}
     (row,) = run_rows(world)
     assert (row["state"], row["result"], row["workvm_id"]) == ("failed", result, vm["id"])

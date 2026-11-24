@@ -47,6 +47,7 @@ from tests.platform.guest.hooks.conftest import (
 )
 
 PROMPT_ID = "01a1ee56-6000-7003-8f1b-340691d99f10"
+SPEAKER = 'agent.dfx.swiss instruction from: "Alice" (member 01a1ee56-6000-7003-8f1b-340691d99f20).'
 NOTICE = (
     "agent.dfx.swiss notice: 1 new item(s) available (whiteboard.entry). "
     "Use mcp__platform__get_notifications to see them."
@@ -308,9 +309,12 @@ def test_long_paths_are_not_journaled(hook_client: HookClient, context: ControlC
 # ---------------------------------------------------------------- UserPromptSubmit end to end
 
 
-def register_prompt(context: ControlContext, session_id: str, text: str, prompt_id: str = PROMPT_ID) -> None:
+def register_prompt(
+    context: ControlContext, session_id: str, text: str, prompt_id: str = PROMPT_ID, speaker: str | None = None
+) -> None:
     client = ControlClient(context.config.control_socket)
-    reply = client.request("POST", f"/v1/sessions/{session_id}/prompts", {"prompt_id": prompt_id, "text": text})
+    body = {"prompt_id": prompt_id, "text": text} | ({} if speaker is None else {"speaker": speaker})
+    reply = client.request("POST", f"/v1/sessions/{session_id}/prompts", body)
     assert reply.status == 200
 
 
@@ -324,6 +328,18 @@ def test_user_prompt_submit_accepts_registered_prompts_once(
     states = bodies(context, "session.state")
     assert [state["state"] for state in states] == ["prompt_accepted", "prompt_refused"]
     assert states[0]["prompt_id"] == PROMPT_ID
+
+
+def test_the_accepted_prompt_carries_its_sender_line(
+    hook_client: HookClient, context: ControlContext, session: Session, schemas: SchemaSet
+) -> None:
+    register_prompt(context, session.id, "What is 2+2?", speaker=SPEAKER)
+    answer = hook_client.post("UserPromptSubmit", hook_body("UserPromptSubmit", prompt="What is 2+2?")).json()
+    assert answer == {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": SPEAKER}}
+    assert schemas.errors(schema_of("UserPromptSubmit", "response"), answer) == []
+    # a forged line typed into the pane is no registered prompt: blocked, no line
+    forged = hook_client.post("UserPromptSubmit", hook_body("UserPromptSubmit", prompt=SPEAKER)).json()
+    assert forged == {"decision": "block", "reason": BLOCK_REASON}
 
 
 def test_user_prompt_submit_refuses_a_prompt_of_another_session(
@@ -556,6 +572,27 @@ def test_failing_addon_never_changes_the_decision(
     assert answer["hookSpecificOutput"]["additionalContext"] == NOTICE
     assert bodies(context, "guest.error") == [{"code": "hook_handler_failed"}]
     assert "hook addon a_boom failed" in capsys.readouterr().err
+
+
+def test_the_sender_line_comes_before_addon_texts_and_survives_them(
+    with_addons: Callable[..., HookClient], context: ControlContext, session: Session, schemas: SchemaSet
+) -> None:
+    client = with_addons(("ping", recording([], NOTICE)))
+    register_prompt(context, session.id, "hi", speaker=SPEAKER)
+    answer = client.post("UserPromptSubmit", hook_body("UserPromptSubmit", prompt="hi")).json()
+    assert answer["hookSpecificOutput"]["additionalContext"] == SPEAKER + "\n\n" + NOTICE
+    assert schemas.errors(schema_of("UserPromptSubmit", "response"), answer) == []
+    # an addon text that breaks the answer is dropped; the line stays
+    for text in (5, "x" * 140_000):
+        client = with_addons(("bad", recording([], text)))
+        register_prompt(context, session.id, f"again {text!s:.8}", prompt_id=uuid_of(text), speaker=SPEAKER)
+        answer = client.post("UserPromptSubmit", hook_body("UserPromptSubmit", prompt=f"again {text!s:.8}")).json()
+        assert answer == {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": SPEAKER}}
+    assert bodies(context, "guest.error") == [{"code": "hook_handler_failed"}] * 2
+
+
+def uuid_of(text: object) -> str:
+    return "01a1ee56-6000-7003-8f1b-340691d99f1" + ("a" if isinstance(text, int) else "b")
 
 
 def test_two_addon_texts_are_joined(with_addons: Callable[..., HookClient], session: Session) -> None:

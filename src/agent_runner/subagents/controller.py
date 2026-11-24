@@ -6,7 +6,9 @@
   operation and named the child (`child_session_id`). The child is started through the session start of RUN-04
   (`SessionService.schedule_start`) with `depth = parent.depth + 1`, the parent as `parent_session_id`, the parent's
   task, owner, VM and model access (or the requested, checked `model_id`). The request amender (`amend`,
-  `session_request.py`) gives it the initial prompt `"Purpose: <purpose>\\n\\n<prompt>"` (prompt ID = operation ID),
+  `session_request.py`) gives it the initial prompt `"Purpose: <purpose>\\n\\n<prompt>"` (prompt ID = operation ID)
+  with the child's sender line (ADR-083 section 1, `prompts.speaker.for_child`: written by the parent session, which
+  works on an instruction of the acting user of the `subagent.request`, `operation.actor_id`),
   the subagent limits (`RuntimeMaxSec` 30 min) and the harness line of 05 section 13; a session with `depth` > 0 that
   this controller did not ask for is never started (the amender refuses it, the start fails). The operation's result
   is `{session_id}` once the start ran; a child whose start failed is `failed` like any session.
@@ -60,10 +62,12 @@ from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.operations.extensions import OperationContext, OperationFailed
 from agent_runner.orgs.db import session as store_session
 from agent_runner.pings.send import stable_ping_id
+from agent_runner.prompts import speaker
 from agent_runner.sessions import records
 from agent_runner.sessions.desired import Desired
 from agent_runner.sessions.env import SessionEnv
 from agent_runner.sessions.events import fail, session_event
+from agent_runner.sessions.extensions import InitialPrompt
 from agent_runner.sessions.records import FINAL, LocalSession, time_text
 from agent_runner.sessions.stop import stop_guest, stop_session
 from agent_runner.subagents import results, store
@@ -117,6 +121,8 @@ class ChildSpec:
     vm_id: str | None
     purpose: str
     prompt: str
+    actor_id: str | None = None
+    """The acting user of the `subagent.request` (ADR-070): the person the child's sender line names."""
 
 
 class Subagents:
@@ -190,6 +196,7 @@ class Subagents:
             vm_id=parent.vm_id,
             purpose=str(ctx.params["purpose"]),
             prompt=str(ctx.params["prompt"]),
+            actor_id=op.actor_id,
         )
         try:
             if not self.service.schedule_start(desired):
@@ -207,7 +214,17 @@ class Subagents:
         spec = self.specs.get(session.id)
         if spec is None or spec.parent_id != session.parent_id or spec.vm_id != session.vm_id:
             raise RunnerError("subagent_not_requested")
-        request["initial_prompt"] = {"prompt_id": spec.operation_id, "text": initial_prompt(spec.purpose, spec.prompt)}
+        text = initial_prompt(spec.purpose, spec.prompt)
+        async with store_session(self.env.db) as conn:
+            line = await speaker.for_child(
+                conn,
+                self.env.storage_key,
+                org_id=session.org_id,
+                parent_id=spec.parent_id,
+                actor_id=spec.actor_id,
+                text=text,
+            )
+        request["initial_prompt"] = InitialPrompt(prompt_id=spec.operation_id, text=text, speaker=line).body()
         request["limits"] = CHILD_LIMITS.body()
         harness = request["harness"]
         line = harness_line(spec.parent_id, spec.task_id)

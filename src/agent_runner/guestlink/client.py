@@ -10,7 +10,7 @@ Transport: the Unix socket `<lima instance dir>/sock/agent-guest.sock` that Lima
 | `assign(vm_id, org_id, wg_id)` | `POST /v1/assign` |
 | `create_session(request)` | `POST /v1/sessions` (request of the session start, RUN-04; `restore`: longer timeout) |
 | `put_credential(session_id, credential)` | `PUT /v1/sessions/{id}/credential` |
-| `register_prompt(session_id, prompt_id, text)` | `POST /v1/sessions/{id}/prompts` |
+| `register_prompt(session_id, prompt_id, text, speaker?)` | `POST /v1/sessions/{id}/prompts` (sender line, ADR-083) |
 | `control(session_id, action)` | `POST /v1/sessions/{id}/control` |
 | `import_files(session_id, dir, data, replace=)` | `POST /v1/sessions/{id}/files/import` (tar body) |
 | `export_files(session_id, dir, write, paths=)` | `POST /v1/sessions/{id}/files/export` (tar chunks to `write`) |
@@ -226,9 +226,14 @@ class GuestClient:
         path = f"/v1/sessions/{_segment(session_id, 'credential')}/credential"
         await self._json("credential", "PUT", path, json=dict(credential))
 
-    async def register_prompt(self, session_id: str, prompt_id: str, text: str) -> dict[str, Any]:
+    async def register_prompt(
+        self, session_id: str, prompt_id: str, text: str, speaker: str | None = None
+    ) -> dict[str, Any]:
         path = f"/v1/sessions/{_segment(session_id, 'prompts')}/prompts"
-        return await self._json("prompts", "POST", path, json={"prompt_id": prompt_id, "text": text})
+        body = {"prompt_id": prompt_id, "text": text}
+        if speaker is not None:
+            body["speaker"] = speaker
+        return await self._json("prompts", "POST", path, json=body)
 
     async def control(self, session_id: str, action: str) -> None:
         if action not in CONTROL_ACTIONS:

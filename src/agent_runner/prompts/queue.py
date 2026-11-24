@@ -16,14 +16,22 @@
     the agent with it as initial prompt (channel `start`, seen as `agent_starting`);
   * `accepted`: the UserPromptSubmit hook accepted it (`prompt_accepted`), or the hub lists it as delivered;
   * `refused`: never deliverable (misrouted, stale, unreadable, refused by the guest's registration);
-  * `failed`: the guest could not deliver it into the TUI (`prompt_refused` `delivery_failed`).
+  * `failed`: the guest could not deliver it into the TUI (`prompt_refused` `delivery_failed`);
+  * `withdrawn`: its author took it back while it was still `pending` (ADR-083 section 3, `withdraw`).
 
-  `accepted`, `refused` and `failed` are final: such a prompt is never delivered again, also not when the hub routes it
-  once more. A row of an open state whose session ended (`stopped`, `failed`, or unknown locally) is moved to the
-  session the hub routes it to next (a new main session of the task, 03-api.md section 4.6.3); the guest registry of
-  the ended session can no longer accept it.
+  `accepted`, `refused`, `failed` and `withdrawn` are final: such a prompt is never delivered again, also not when the
+  hub routes it once more. `via_agent` keeps the hub's report that the prompt came through its author's agent (the
+  qualifier of the sender line, `speaker.py`); once set it stays. A row of an open state whose session ended
+  (`stopped`, `failed`, or unknown locally) is moved to the session the hub routes it to next (a new main session of
+  the task, 03-api.md section 4.6.3); the guest registry of the ended session can no longer accept it.
 - `adopt_delivered`: the hub's `delivered_prompt_event_ids` (after a store wipe the only memory of what was delivered)
   make those rows `accepted` - inserted when unknown - so they are never delivered again.
+- `withdraw` (ADR-083 section 3, `prompt_queue.withdrawn` of the device state): a row still `pending` becomes
+  `withdrawn`; a prompt without a row yet is remembered in `runner.prompt_withdrawal`, and its routing records the row
+  `withdrawn` at once; a row `registered` or later may already be at the guest and is delivered. Each withdrawal is
+  recorded once (`prompt_withdrawal`, also for the ones with a row) and reported once by the caller. A withdrawn prompt
+  is final everywhere: it never holds back a later prompt (`earlier_unrouted`), never makes one stale
+  (`handed_after`), and a session that starts after it is not a restarted one (`earlier_of_task`).
 """
 
 from __future__ import annotations
@@ -37,7 +45,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 OPEN = ("pending", "registered", "typed")
-FINAL = frozenset({"accepted", "refused", "failed"})
+FINAL = frozenset({"accepted", "refused", "failed", "withdrawn"})
 STATES = frozenset({*OPEN, *FINAL})
 ENDED_SESSION = ("stopped", "failed")
 
@@ -64,12 +72,14 @@ class Delivery:
     attempts: int
     age: float
     """Seconds since the last change of the row (store clock)."""
+    via_agent: bool = False
 
 
 _DELIVERY_COLUMNS = (
     "event_id::text AS event_id, session_id::text AS session_id, task_id::text AS task_id, scope_seq, state,"
-    " channel, attempts, EXTRACT(EPOCH FROM (now() - updated_at))::float8 AS age"
+    " channel, attempts, EXTRACT(EPOCH FROM (now() - updated_at))::float8 AS age, via_agent"
 )
+_WITHDRAWN = "EXISTS (SELECT 1 FROM runner.prompt_withdrawal w WHERE w.event_id = e.event_id)"
 
 
 async def keep(
@@ -146,24 +156,24 @@ async def event_at(conn: AsyncConnection[Any], wg_id: str, scope_seq: int) -> St
 
 
 async def earlier_of_task(conn: AsyncConnection[Any], task_id: str, scope_seq: int) -> bool:
-    """Whether the task has a stored prompt before `scope_seq` that was not refused or failed (a session that does not
-    start with the task's first prompt is a restarted session)."""
+    """Whether the task has a stored prompt before `scope_seq` that was not refused, failed or withdrawn (a session that
+    does not start with the task's first prompt is a restarted session)."""
     cur = await conn.execute(
         "SELECT 1 FROM runner.prompt_event e WHERE e.task_id = %s AND e.scope_seq < %s AND NOT EXISTS"
-        " (SELECT 1 FROM runner.prompt_delivery d WHERE d.event_id = e.event_id AND d.state IN ('refused', 'failed'))"
-        " LIMIT 1",
+        " (SELECT 1 FROM runner.prompt_delivery d WHERE d.event_id = e.event_id"
+        " AND d.state IN ('refused', 'failed', 'withdrawn')) AND NOT " + _WITHDRAWN + " LIMIT 1",
         (task_id, scope_seq),
     )
     return await cur.fetchone() is not None
 
 
 async def earlier_unrouted(conn: AsyncConnection[Any], task_id: str, scope_seq: int) -> bool:
-    """Whether the task has a stored prompt before `scope_seq` that has no delivery row yet and comes after every
-    prompt of the task that was handed over (it may still be routed: its hint was lost)."""
+    """Whether the task has a stored prompt before `scope_seq` that has no delivery row yet, was not withdrawn and comes
+    after every prompt of the task that was handed over (it may still be routed: its hint was lost)."""
     cur = await conn.execute(
         "SELECT 1 FROM runner.prompt_event e WHERE e.task_id = %s AND e.scope_seq < %s"
         " AND NOT EXISTS (SELECT 1 FROM runner.prompt_delivery d WHERE d.event_id = e.event_id)"
-        " AND NOT EXISTS (SELECT 1 FROM runner.prompt_delivery h WHERE h.task_id = e.task_id"
+        " AND NOT " + _WITHDRAWN + " AND NOT EXISTS (SELECT 1 FROM runner.prompt_delivery h WHERE h.task_id = e.task_id"
         " AND h.scope_seq > e.scope_seq AND h.state IN ('registered', 'typed', 'accepted')) LIMIT 1",
         (task_id, scope_seq),
     )
@@ -210,16 +220,25 @@ async def handed_after(conn: AsyncConnection[Any], task_id: str, scope_seq: int)
 
 async def route(conn: AsyncConnection[Any], prompt: StoredPrompt, session_id: str) -> str:
     """Record that the hub routes `prompt` to `session_id`: the row's state afterwards (`pending` for a new row or one
-    moved from an ended session, else the existing state)."""
+    moved from an ended session, `withdrawn` for a new row of a prompt withdrawn before, else the existing state)."""
     await conn.execute(
         "INSERT INTO runner.prompt_delivery (event_id, session_id, task_id, scope_seq, state)"
-        " VALUES (%s, %s, %s, %s, 'pending') ON CONFLICT (event_id) DO UPDATE SET"
+        " VALUES (%s, %s, %s, %s, CASE WHEN EXISTS (SELECT 1 FROM runner.prompt_withdrawal w WHERE w.event_id = %s)"
+        " THEN 'withdrawn' ELSE 'pending' END) ON CONFLICT (event_id) DO UPDATE SET"
         " session_id = EXCLUDED.session_id, task_id = EXCLUDED.task_id, scope_seq = EXCLUDED.scope_seq,"
         " state = 'pending', channel = 'prompt', attempts = 0, updated_at = now()"
         " WHERE runner.prompt_delivery.state = ANY(%s) AND runner.prompt_delivery.session_id <> EXCLUDED.session_id"
         " AND NOT EXISTS (SELECT 1 FROM runner.session s WHERE s.id = runner.prompt_delivery.session_id"
         " AND s.state <> ALL(%s))",
-        (prompt.event_id, session_id, prompt.task_id, prompt.scope_seq, list(OPEN), list(ENDED_SESSION)),
+        (
+            prompt.event_id,
+            session_id,
+            prompt.task_id,
+            prompt.scope_seq,
+            prompt.event_id,
+            list(OPEN),
+            list(ENDED_SESSION),
+        ),
     )
     found = await delivery(conn, prompt.event_id)
     assert found is not None
@@ -288,3 +307,26 @@ async def typed_start(conn: AsyncConnection[Any], session_id: str) -> int:
         (session_id,),
     )
     return cur.rowcount
+
+
+async def mark_via_agent(conn: AsyncConnection[Any], event_ids: Iterable[str]) -> int:
+    """The hub reports these prompts came through their author's agent: `via_agent` (kept once set)."""
+    cur = await conn.execute(
+        "UPDATE runner.prompt_delivery SET via_agent = true WHERE event_id = ANY(%s::uuid[]) AND NOT via_agent",
+        (sorted(event_ids),),
+    )
+    return cur.rowcount
+
+
+async def withdraw(conn: AsyncConnection[Any], event_id: str) -> Delivery | bool:
+    """Carry out the withdrawal of one prompt (module docstring): the row that became `withdrawn`, True for a prompt
+    without a row (remembered for its routing), False when nothing changed (recorded before, or the prompt was handed
+    to the guest or ended)."""
+    known = await conn.execute("SELECT 1 FROM runner.prompt_withdrawal WHERE event_id = %s", (event_id,))
+    if await known.fetchone() is not None:
+        return False
+    row = await delivery(conn, event_id, lock=True)
+    if row is not None and not await set_state(conn, event_id, "withdrawn", expected=("pending",)):
+        return False
+    await conn.execute("INSERT INTO runner.prompt_withdrawal (event_id) VALUES (%s)", (event_id,))
+    return True if row is None else row

@@ -2024,7 +2024,7 @@
     },
     "speaker_context": {
       "type": "string",
-      "description": "additionalContext of an accepted UserPromptSubmit that carries the sender line (ADR-083 section 1, addon attribution, the first addon); a session notice and/or a ping notice may follow after a blank line",
+      "description": "additionalContext of an accepted UserPromptSubmit that carries the sender line (ADR-083 section 1; part of the decision, before any addon text); a session notice and/or a ping notice may follow after a blank line",
       "minLength": 1,
       "maxLength": 135168,
       "pattern": "^agent\\.dfx\\.swiss instruction from: [^\\n\\r]+(\\n\\n(.|\\n)+)?$"

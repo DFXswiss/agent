@@ -27,7 +27,7 @@ COLUMNS = (
     "id, lima_name, slot, scope, task_id::text AS task_id, session_id::text AS session_id,"
     " requested_by::text AS requested_by, implicit, org_id::text AS org_id,"
     " wg_id::text AS wg_id, owner_id::text AS owner_id, size, cpus, memory_mib, disk_gib, image, state, created_at,"
-    " last_used_at, stopped_at"
+    " last_used_at, stopped_at, triggered_by::text AS triggered_by"
 )
 LIVE_STATES = ("starting", "running", "stopping", "stopped", "deleting")
 MEMORY_STATES = ("starting", "running", "stopping", "deleting")
@@ -56,6 +56,8 @@ class WorkVm:
     created_at: datetime
     last_used_at: datetime
     stopped_at: datetime | None
+    triggered_by: str | None = None
+    """The person whose turn requested the VM (ADR-083 section 2, migration 0026); None when unknown."""
 
 
 async def _rows(db: Any, query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
@@ -137,6 +139,7 @@ def _values(vm: WorkVm) -> tuple[Any, ...]:
         vm.created_at,
         vm.last_used_at,
         vm.stopped_at,
+        vm.triggered_by,
     )
 
 
@@ -147,7 +150,7 @@ async def insert(db: Any, vm: WorkVm) -> WorkVm:
             db,
             "INSERT INTO runner.workvm (id, lima_name, slot, scope, task_id, session_id, requested_by, implicit,"
             " org_id, wg_id, owner_id, size, cpus, memory_mib, disk_gib, image, state, created_at, last_used_at,"
-            f" stopped_at) VALUES ({', '.join(['%s'] * 20)}) RETURNING {COLUMNS}",
+            f" stopped_at, triggered_by) VALUES ({', '.join(['%s'] * 21)}) RETURNING {COLUMNS}",
             _values(vm),
         )
     except psycopg.errors.UniqueViolation:
@@ -279,7 +282,7 @@ async def _assign(db: Any, image: str, memory_mib: int, build: Callable[[str, in
         await cursor.execute(
             "INSERT INTO runner.workvm (id, lima_name, slot, scope, task_id, session_id, requested_by, implicit,"
             " org_id, wg_id, owner_id, size, cpus, memory_mib, disk_gib, image, state, created_at, last_used_at,"
-            f" stopped_at) VALUES ({', '.join(['%s'] * 20)}) RETURNING {COLUMNS}",
+            f" stopped_at, triggered_by) VALUES ({', '.join(['%s'] * 21)}) RETURNING {COLUMNS}",
             _values(vm),
         )
         row = await cursor.fetchone()

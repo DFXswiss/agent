@@ -12,17 +12,19 @@ submission of the same prompt and a prompt of another session are blocked.
 * ``prompt_sha256(text)`` - hex SHA-256 of the UTF-8 bytes of ``normalise(text)``; registration and check use it
 * ``PromptRegistry(journal, state)`` (control process, owner of ``prompt_registry``):
 
-  - ``register(session_id, prompt_id, text)`` - stores the hash for an active session (``not_found`` /
-    ``state_conflict``). Repeating the same ``prompt_id`` with the same text is accepted (runner retry); the same
+  - ``register(session_id, prompt_id, text, speaker=None)`` - stores the hash for an active session (``not_found`` /
+    ``state_conflict``) with the sender line the runner composed (``speaker``, ADR-083 section 1; checked by the
+    request schema). Repeating the same ``prompt_id`` with the same text is accepted (runner retry); the same
     ``prompt_id`` with another text is ``id_conflict``, an already accepted ``prompt_id`` ``state_conflict``. Rows are
     keyed by ``prompt_id`` and never replaced, so the same text may be registered under several IDs (a repeated
     prompt); each registration is accepted once, the oldest unused one first.
-  - ``check(session_id, prompt)`` - in one transaction: an unused row with the hash -> mark it used, journal
-    ``session.hook`` (allow) and ``session.state prompt_accepted {prompt_id}``, set the session state ``working``;
+  - ``decide(session_id, prompt)`` -> ``(accepted, speaker)`` - in one transaction: an unused row with the hash ->
+    mark it used, journal ``session.hook`` (allow) and ``session.state prompt_accepted {prompt_id}``, set the session
+    state ``working``, and return the sender line of exactly that row (``None`` when it has none);
     otherwise (also ``prompt`` ``None`` for an unreadable hook body) journal ``session.hook`` (block) and
     ``session.state prompt_refused {prompt_id, reason: "unregistered"}`` with a fresh UUIDv7 as ``prompt_id`` (the
     refused text has no platform ID). The runner turns ``prompt_refused`` into the audit row
-    ``session.prompt_refused``.
+    ``session.prompt_refused``. ``check`` is the decision alone.
 """
 
 from __future__ import annotations
@@ -68,7 +70,7 @@ class PromptRegistry:
             raise StateError("state_conflict")
         return session
 
-    def register(self, session_id: str, prompt_id: str, text: str) -> None:
+    def register(self, session_id: str, prompt_id: str, text: str, speaker: str | None = None) -> None:
         digest = prompt_sha256(text)
         with self.journal.transaction() as db:
             self._active(session_id)
@@ -83,12 +85,15 @@ class PromptRegistry:
                     raise StateError("state_conflict")
                 return
             db.execute(
-                "INSERT INTO prompt_registry (session_id, sha256, prompt_id, registered_at, used_at)"
-                " VALUES (?, ?, ?, ?, NULL)",
-                (session_id, digest, prompt_id, iso_ms(self.journal.clock.now())),
+                "INSERT INTO prompt_registry (session_id, sha256, prompt_id, registered_at, used_at, speaker)"
+                " VALUES (?, ?, ?, ?, NULL, ?)",
+                (session_id, digest, prompt_id, iso_ms(self.journal.clock.now()), speaker),
             )
 
     def check(self, session_id: str, prompt: str | None) -> bool:
+        return self.decide(session_id, prompt)[0]
+
+    def decide(self, session_id: str, prompt: str | None) -> tuple[bool, str | None]:
         now = self.journal.clock.now()
         at = iso_ms(now)
         with self.journal.transaction() as db:
@@ -96,7 +101,8 @@ class PromptRegistry:
             row = None
             if prompt is not None:
                 row = db.execute(
-                    "SELECT prompt_id FROM prompt_registry WHERE session_id = ? AND sha256 = ? AND used_at IS NULL"
+                    "SELECT prompt_id, speaker FROM prompt_registry WHERE session_id = ? AND sha256 = ?"
+                    " AND used_at IS NULL"
                     " ORDER BY registered_at, rowid LIMIT 1",
                     (session_id, prompt_sha256(prompt)),
                 ).fetchone()
@@ -113,7 +119,7 @@ class PromptRegistry:
                     {"state": "prompt_refused", "prompt_id": uuid7(now), "reason": "unregistered", "at": at},
                     session_id,
                 )
-                return False
+                return False, None
             db.execute(
                 "UPDATE prompt_registry SET used_at = ? WHERE session_id = ? AND prompt_id = ?",
                 (at, session_id, row[0]),
@@ -123,4 +129,4 @@ class PromptRegistry:
                 db, "session.state", {"state": "prompt_accepted", "prompt_id": row[0], "at": at}, session_id
             )
             self.state.save_session(replace(session, state="working"), db)
-            return True
+            return True, row[1]

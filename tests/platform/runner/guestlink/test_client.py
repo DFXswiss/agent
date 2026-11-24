@@ -144,6 +144,7 @@ def test_session_endpoints_send_the_documented_requests() -> None:
             await client.put_credential(SESSION, {"auth_header": "x-api-key"})
             await client.register_prompt(SESSION, "p1", "text")
             await client.control(SESSION, "suspend")
+            await client.register_prompt(SESSION, "p2", "more", "agent.dfx.swiss instruction from: x")
             await client.ping(SESSION, {"ping_id": "q", "kind": "whiteboard.entry"})
             await client.answer_pending("pend-1", {"status": "error", "error": {}})
             assert await client.metrics() == {}
@@ -154,6 +155,7 @@ def test_session_endpoints_send_the_documented_requests() -> None:
         ("PUT", f"/v1/sessions/{SESSION}/credential"),
         ("POST", f"/v1/sessions/{SESSION}/prompts"),
         ("POST", f"/v1/sessions/{SESSION}/control"),
+        ("POST", f"/v1/sessions/{SESSION}/prompts"),
         ("POST", f"/v1/sessions/{SESSION}/pings"),
         ("POST", "/v1/pending/pend-1/answer"),
         ("GET", "/v1/metrics"),
@@ -161,6 +163,9 @@ def test_session_endpoints_send_the_documented_requests() -> None:
     assert all(r.headers["Authorization"] == "Bearer tok" for r in seen)
     assert json.loads(seen[2].content) == {"prompt_id": "p1", "text": "text"}
     assert json.loads(seen[3].content) == {"action": "suspend"}
+    # the sender line goes with the registration only when there is one (ADR-083 section 1)
+    speaker = "agent.dfx.swiss instruction from: x"
+    assert json.loads(seen[4].content) == {"prompt_id": "p2", "text": "more", "speaker": speaker}
 
 
 def test_files_import_and_export() -> None:

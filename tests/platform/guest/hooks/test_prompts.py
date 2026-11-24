@@ -22,6 +22,8 @@ from tests.platform.guest.hooks.conftest import OTHER_SESSION_ID, OTHER_TOKEN, b
 PROMPT_ID = "01a1ee56-6000-7003-8f1b-340691d99f10"
 PROMPT_ID_2 = "01a1ee56-6000-7003-8f1b-340691d99f11"
 WRAP = '<pasted_content id="{id}">\n{text}\n</pasted_content id="{id}">'
+SPEAKER = 'agent.dfx.swiss instruction from: "Alice" (member 01a1ee56-6000-7003-8f1b-340691d99f20).'
+OTHER_SPEAKER = 'agent.dfx.swiss instruction from: "Bob" (member 01a1ee56-6000-7003-8f1b-340691d99f21).'
 ESCAPED = '<\\pasted_content id="a">\nx\n<\\/pasted_content id="a">'
 
 
@@ -145,6 +147,17 @@ def test_same_text_under_two_ids_is_accepted_twice_oldest_first(
     assert [body.get("prompt_id") for body in bodies(context, "session.state")][:2] == [PROMPT_ID, PROMPT_ID_2]
 
 
+def test_each_accepted_row_answers_its_own_sender_line(context: ControlContext, prompts: PromptRegistry) -> None:
+    prompts.register(session_id(), PROMPT_ID, "same", SPEAKER)
+    context.journal.clock.advance(1)  # type: ignore[attr-defined]
+    prompts.register(session_id(), PROMPT_ID_2, "same", OTHER_SPEAKER)
+    assert prompts.decide(session_id(), "same") == (True, SPEAKER)
+    assert prompts.decide(session_id(), "same") == (True, OTHER_SPEAKER)
+    assert prompts.decide(session_id(), "same") == (False, None)
+    prompts.register(session_id(), "01a1ee56-6000-7003-8f1b-340691d99f12", "without")
+    assert prompts.decide(session_id(), "without") == (True, None)
+
+
 def test_accepted_id_cannot_be_rearmed_through_another_registration(prompts: PromptRegistry) -> None:
     prompts.register(session_id(), PROMPT_ID, "text")
     assert prompts.check(session_id(), "text") is True
@@ -199,6 +212,9 @@ def test_register_route_matches_the_contract(
         (None, {"prompt_id": PROMPT_ID}, (400, "request_invalid")),
         (None, {"prompt_id": "x", "text": "x"}, (400, "request_invalid")),
         (None, {"prompt_id": PROMPT_ID, "text": "x", "extra": 1}, (400, "request_invalid")),
+        # a sender line outside the contract (ADR-083 section 1)
+        (None, {"prompt_id": PROMPT_ID, "text": "x", "speaker": SPEAKER + "\nmore"}, (400, "request_invalid")),
+        (None, {"prompt_id": PROMPT_ID, "text": "x", "speaker": "from: Eve"}, (400, "request_invalid")),
     ],
 )
 def test_register_route_refusals(
@@ -223,8 +239,32 @@ def test_register_route_needs_the_control_token(control_client: ControlClient, s
 
 def test_check_op(api_client: ApiClient, session: Session, control_client: ControlClient) -> None:
     control_client.request("POST", f"/v1/sessions/{session.id}/prompts", {"prompt_id": PROMPT_ID, "text": "x"})
-    assert api_client.call("prompt.check", {"session_id": session.id, "prompt": "x"}) == {"accepted": True}
-    assert api_client.call("prompt.check", {"session_id": session.id, "prompt": None}) == {"accepted": False}
+    assert api_client.call("prompt.check", {"session_id": session.id, "prompt": "x"}) == {
+        "accepted": True,
+        "speaker": None,
+    }
+    assert api_client.call("prompt.check", {"session_id": session.id, "prompt": None}) == {
+        "accepted": False,
+        "speaker": None,
+    }
+
+
+def test_check_op_returns_the_sender_line_of_the_accepted_row(
+    api_client: ApiClient, session: Session, control_client: ControlClient, schemas: SchemaSet
+) -> None:
+    request = {"prompt_id": PROMPT_ID, "text": "x", "speaker": SPEAKER}
+    assert schemas.errors("guest/session-prompts.request.json", request) == []
+    reply = control_client.request("POST", f"/v1/sessions/{session.id}/prompts", request)
+    assert reply.status == 200
+    assert api_client.call("prompt.check", {"session_id": session.id, "prompt": "x"}) == {
+        "accepted": True,
+        "speaker": SPEAKER,
+    }
+    # refused: no line, also not the one of the used row
+    assert api_client.call("prompt.check", {"session_id": session.id, "prompt": "x"}) == {
+        "accepted": False,
+        "speaker": None,
+    }
 
 
 @pytest.mark.parametrize(

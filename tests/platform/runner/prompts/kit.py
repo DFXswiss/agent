@@ -56,8 +56,8 @@ class PromptGuest(FakeGuest):
     prompt_errors: list[BaseException] = field(default_factory=list)
     """Raised by the next `register_prompt` calls, one each."""
 
-    async def register_prompt(self, sid: str, prompt_id: str, text: str) -> dict[str, Any]:
-        self._call("register_prompt", (sid, prompt_id, text))
+    async def register_prompt(self, sid: str, prompt_id: str, text: str, speaker: str | None = None) -> dict[str, Any]:
+        self._call("register_prompt", (sid, prompt_id, text, speaker))
         if self.prompt_errors:
             raise self.prompt_errors.pop(0)
         return {"state": "registered"}
@@ -68,6 +68,10 @@ class PromptGuest(FakeGuest):
 
     def texts(self) -> list[str]:
         return [value[2] for name, value in self.calls if name == "register_prompt"]
+
+    def speakers(self) -> list[str | None]:
+        """The sender lines of every `POST .../prompts`, in order (None: sent without one)."""
+        return [value[3] for name, value in self.calls if name == "register_prompt"]
 
 
 @dataclass

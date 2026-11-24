@@ -9,8 +9,9 @@
    (`vm_new_allowed`)); the session row names its VM from then on and every later transition carries it;
 2. `vm_ready`: guest health assigned to this workgroup; the journal task starts reading the VM;
 3. model access and its credential (`model.access`: the owner's subscription or API key, or the platform key);
-4. `sandbox_ready`: `POST /v1/sessions` (harness context, model, initial prompt, limits; then changed by the request
-   amenders of `sessions.extensions`), then
+4. `sandbox_ready`: `POST /v1/sessions` (harness context, model, initial prompt with its sender line, limits; then
+   changed by the request amenders of `sessions.extensions`; an older guest that refuses the sender line with
+   `400 request_invalid` gets the same request once more without it, logged `speaker_unsupported`, ADR-083), then
    `PUT .../credential` (the transition follows both);
 5. `agent_starting`: the guest registers the prompt hash and starts the agent once the credential is there.
 
@@ -51,7 +52,7 @@ from typing import Any
 
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.client import GuestClient
-from agent_runner.guestlink.errors import GuestError, GuestUnreachable
+from agent_runner.guestlink.errors import GuestError, GuestRefused, GuestUnreachable
 from agent_runner.model import access, selection
 from agent_runner.sessions import harness, profiles, records
 from agent_runner.sessions.desired import Desired
@@ -73,6 +74,17 @@ REFRESH_TIMEOUT_S = 0.5
 UNEXPECTED = "agent_start_failed"
 MEASURED = ("vm", "vm_ready", "model", "sandbox", "agent_starting", "tools_ready", "prompt_delivering", "working")
 JOURNAL_MEASURED = frozenset({"tools_ready", "prompt_delivering", "working"})
+
+
+def without_speaker(request: Mapping[str, Any], refused: GuestRefused) -> dict[str, Any] | None:
+    """The request again without the sender line of its initial prompt when an older guest refused the field
+    (`400 request_invalid`, ADR-083 section 1: the runner sends only a line that passed the contract); else None."""
+    prompt = request.get("initial_prompt")
+    if not isinstance(prompt, Mapping) or "speaker" not in prompt:
+        return None
+    if refused.status != 400 or refused.error != "request_invalid":
+        return None
+    return {**request, "initial_prompt": {key: value for key, value in prompt.items() if key != "speaker"}}
 
 
 class Ended(Exception):
@@ -358,14 +370,21 @@ class Starter:
             "limits": harness.MAIN_LIMITS.body(),
         }
         if prompt is not None:
-            request["initial_prompt"] = {"prompt_id": prompt.prompt_id, "text": prompt.text}
+            request["initial_prompt"] = prompt.body()
         for amender in env.amenders:
             await amender.amend(env.context, session, request)
         return request
 
     async def _create(self, guest: GuestClient, request: Mapping[str, Any]) -> None:
         try:
-            answer = await guest.create_session(request)
+            try:
+                answer = await guest.create_session(request)
+            except GuestRefused as refused:
+                older = without_speaker(request, refused)
+                if older is None:
+                    raise
+                self.env.log(f"runner.prompts speaker_unsupported session_id={request['session_id']} channel=start")
+                answer = await guest.create_session(older)
         except GuestUnreachable:
             raise StartFailed("guest_unreachable") from None
         except GuestError:

@@ -1,9 +1,9 @@
 """Retention of the verified prompt events (KOR-03, AUD-01 B-19; RUN-05 decision 25).
 
 `runner.prompt_event` keeps every prompt of the device's workgroups as received (ciphertext and signature). A prompt
-whose delivery is final (`accepted`, `refused`, `failed`) and that did not change for `RETAIN_S` is not needed any
-more: its delivery row stays (it alone guarantees that the prompt is never delivered again, also when the hub routes
-it once more), only the stored event goes. Kept regardless:
+whose delivery is final (`accepted`, `refused`, `failed`, `withdrawn`) and that did not change for `RETAIN_S` is not
+needed any more: its delivery row stays (it alone guarantees that the prompt is never delivered again, also when the
+hub routes it once more), only the stored event goes. Kept regardless:
 
 - prompts without a delivery row or with an open one (they may still be routed or delivered);
 - per task the earliest accepted prompt: it tells a new main session of the task that it continues earlier work
@@ -28,7 +28,7 @@ async def prune(conn: AsyncConnection[Any], *, retain_s: float = RETAIN_S, batch
     cur = await conn.execute(
         "DELETE FROM runner.prompt_event WHERE event_id IN (SELECT e.event_id FROM runner.prompt_event e"
         " JOIN runner.prompt_delivery d ON d.event_id = e.event_id"
-        " WHERE d.state IN ('accepted', 'refused', 'failed')"
+        " WHERE d.state IN ('accepted', 'refused', 'failed', 'withdrawn')"
         " AND d.updated_at < now() - make_interval(secs => %s)"
         " AND e.received_at < now() - make_interval(secs => %s)"
         " AND e.scope_seq <> COALESCE((SELECT min(f.scope_seq) FROM runner.prompt_event f"

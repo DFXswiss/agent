@@ -7,7 +7,9 @@
   FIFO for a free slot and RAM (at most `WORKVM_QUEUE_SECONDS`, then `timeout`, retryable), and a new VM is cloned from
   the slot's base of the ready work image and started (`.cpus`, `.memory`, `.disk`, `.ssh.localPort` = the slot's
   pinned port, `.dns` = Cloudflare's public resolvers, reached through the tunnel). It is ready when the job helper
-  answers.
+  answers. A new VM keeps the person whose turn requested it (`triggered_by`, ADR-083 section 2): the operation's
+  acting user, or for a VM obtained implicitly by a tool call the session's acting user at that moment
+  (`credentials.acting.stamp`).
 - **release** (`workvm.release` executor) and `delete`: `limactl delete -f`, row `deleted`.
 - **calls** of the five tools (`journal.py`): the VM is always resolved from the session of the journal that carried
   the call (its own session VM, else the task VM), never from arguments; a stopped VM is started on the way.
@@ -43,6 +45,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+from agent_runner.credentials import acting
 from agent_runner.errors import RunnerError
 from agent_runner.operations.extensions import OperationFailed
 from agent_runner.sessions.records import LocalSession
@@ -241,7 +244,12 @@ class WorkVms:
     # -- request / release -------------------------------------------------------------------------------------
 
     async def request(
-        self, session: LocalSession, params: Mapping[str, Any], *, implicit: bool = False
+        self,
+        session: LocalSession,
+        params: Mapping[str, Any],
+        *,
+        implicit: bool = False,
+        triggered_by: str | None = None,
     ) -> dict[str, Any]:
         size = str(params.get("size", "standard"))
         # a subagent always gets its own VM: the VM's /workspace mirrors one workspace (decisions #19 M7)
@@ -255,7 +263,7 @@ class WorkVms:
         if existing is not None:
             vm = await self.ensure_running(existing)
             return self._result(vm, created=False, started=started)
-        vm = await self.obtain(session, scope=scope, size=size, implicit=implicit)
+        vm = await self.obtain(session, scope=scope, size=size, implicit=implicit, triggered_by=triggered_by)
         return self._result(vm, created=True, started=started)
 
     def _check_credit(self, session: LocalSession) -> None:
@@ -280,13 +288,22 @@ class WorkVms:
         return image
 
     async def obtain(
-        self, session: LocalSession, *, scope: str, size: str, implicit: bool = False, workvm_id: str | None = None
+        self,
+        session: LocalSession,
+        *,
+        scope: str,
+        size: str,
+        implicit: bool = False,
+        workvm_id: str | None = None,
+        triggered_by: str | None = None,
     ) -> WorkVm:
         """A new running VM of the scope (formal checks, warm pool, else the FIFO queue and a cold clone)."""
         image = await self.check_new(session, scope=scope, size=size)
 
         async def from_pool() -> WorkVm | None:
-            return await self._from_pool(session, scope, size, image, implicit=implicit, workvm_id=workvm_id)
+            return await self._from_pool(
+                session, scope, size, image, implicit=implicit, workvm_id=workvm_id, triggered_by=triggered_by
+            )
 
         if not self.queue:
             pooled = await from_pool()
@@ -303,6 +320,7 @@ class WorkVms:
                 lima_name=self.deps.lima_for(slot).name(_lima_suffix()),
                 implicit=implicit,
                 workvm_id=workvm_id,
+                triggered_by=triggered_by,
             )
 
         vm = await self._wait_for_capacity(SIZES[size][1], SIZES[size][2], build, from_pool)
@@ -377,6 +395,7 @@ class WorkVms:
         slot: int,
         lima_name: str,
         implicit: bool,
+        triggered_by: str | None = None,
         state: str = "starting",
         workvm_id: str | None = None,
     ) -> WorkVm:
@@ -403,6 +422,7 @@ class WorkVms:
             created_at=now,
             last_used_at=now,
             stopped_at=None,
+            triggered_by=triggered_by,
         )
 
     async def _insert(self, row: WorkVm) -> WorkVm:
@@ -446,7 +466,15 @@ class WorkVms:
     # -- warm pool (spec 11 section 7) -------------------------------------------------------------------------
 
     async def _from_pool(
-        self, session: LocalSession, scope: str, size: str, image: str, *, implicit: bool, workvm_id: str | None = None
+        self,
+        session: LocalSession,
+        scope: str,
+        size: str,
+        image: str,
+        *,
+        implicit: bool,
+        workvm_id: str | None = None,
+        triggered_by: str | None = None,
     ) -> WorkVm | None:
         """Assign a ready pool entry (a row update) when the size is the pool's; None: none fits or it is unhealthy
         (then the request continues on the cold path)."""
@@ -462,6 +490,7 @@ class WorkVms:
                 slot=slot,
                 lima_name=lima_name,
                 implicit=implicit,
+                triggered_by=triggered_by,
                 state="running",
                 workvm_id=workvm_id,
             )
@@ -1023,15 +1052,20 @@ class WorkVms:
 
     async def _implicit(self, session: LocalSession) -> WorkVm | None:
         """A standard VM for a tool call without one; the `workvm.state` `starting` event comes first, so the panel
-        shows the countdown as for `workvm.request` (ADR-080 section 5)."""
+        shows the countdown as for `workvm.request` (ADR-080 section 5). It keeps the session's acting user at this
+        moment as the person who triggered it (ADR-083 section 2)."""
         scope = "session" if session.parent_id is not None else "task"
         workvm_id = new_workvm_id()
+        async with self.deps.db.connection() as conn:
+            stamp = await acting.stamp(conn, session)
         try:
             await self.check_new(session, scope=scope, size="standard")
             starting = self._starting(session, scope, workvm_id)
             await self._emit_state(starting, "starting")
             try:
-                await self.obtain(session, scope=scope, size="standard", implicit=True, workvm_id=workvm_id)
+                await self.obtain(
+                    session, scope=scope, size="standard", implicit=True, workvm_id=workvm_id, triggered_by=stamp
+                )
             except OperationFailed:
                 await self._emit_state(starting, "deleted", reason="failed")  # the countdown ends
                 raise

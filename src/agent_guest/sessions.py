@@ -15,8 +15,8 @@
 
 The agent starts (``SessionManager.start``, 05 section 6.1 step 5) once the runner provisioned the model credential:
 ``PUT /v1/sessions/{id}/credential`` (GST-04) calls ``credential_provisioned(context, id)``; a start before the
-credential exists would make the first model request fail. The start registers the initial prompt with GST-03's
-``PromptRegistry``, journals
+credential exists would make the first model request fail. The start registers the initial prompt (with its sender
+line, ADR-083) with GST-03's ``PromptRegistry``, journals
 ``session.state agent_starting`` and opens the tmux session ``s-<id>`` (160x48) whose pane runs ``systemd-run --pty``
 with the unit properties of ``sandbox/unit.py`` around the Landlock launcher and the command line of ``driver.py``.
 The initial prompt never goes on the command line (HOT-09: Claude Code would start the turn while its MCP servers still
@@ -298,6 +298,8 @@ class _Start:
     resume: str | None
     prompt: tuple[str, str] | None
     harness_version: str
+    speaker: str | None = None
+    """The sender line of the initial prompt (ADR-083 section 1), stored with its registration."""
 
 
 @dataclass
@@ -422,6 +424,7 @@ class SessionManager:
             resume=resume,
             prompt=None if prompt is None else (prompt["prompt_id"], prompt["text"]),
             harness_version=rules.version,
+            speaker=None if prompt is None else prompt.get("speaker"),
         )
         try:
             self._command(data["session_id"], start)
@@ -715,13 +718,16 @@ class SessionManager:
         return True
 
     def _register_prompt(self, session_id: str, start: _Start) -> None:
-        """Register the initial prompt through the prompt registry of GST-03 (05 §6.1 step 5, §4.6 no. 7); a prompt
-        the registry refuses (its ``prompt_id`` was accepted before, or names another text) is not delivered."""
+        """Register the initial prompt through the prompt registry of GST-03 (05 §6.1 step 5, §4.6 no. 7) with its
+        sender line (ADR-083 section 1); a prompt the registry refuses (its ``prompt_id`` was accepted before, or
+        names another text) is not delivered."""
         if start.prompt is None:
             return
         prompt_id, text = start.prompt
         try:
-            PromptRegistry(self.context.journal, self.context.state).register(session_id, prompt_id, text)
+            PromptRegistry(self.context.journal, self.context.state).register(
+                session_id, prompt_id, text, start.speaker
+            )
         except StateError:
             start.prompt = None
             return

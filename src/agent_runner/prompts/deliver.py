@@ -14,6 +14,16 @@
   earlier stored prompt of its task that is not routed yet (a lost hint), so it is not overtaken. A routed prompt
   older than one the task already handed to a guest is stale and refused (`prompt_stale`); a prompt of a final row
   is never delivered again; a write never reopens a final row (the journal may end a row at any time).
+- **Queue of the hub** (ADR-083 section 3, `prompt_queue` of the device state, `hub_queue.py`): `via_agent` (also
+  from the `prompt` hint) is kept with the routed rows in the routing's transaction (`queue.mark_via_agent`); every
+  event of `withdrawn` is withdrawn (`withdraw`): a row still `pending` becomes `withdrawn`, a prompt without a row
+  is remembered so that its routing ends `withdrawn` at once, a row `registered` or later is delivered. Each
+  withdrawal is reported once as outbox audit `session.prompt_withdrawn` (target the event), in the one ordered
+  outbox before the acceptance of any later prompt.
+- **Sender line** (ADR-083 section 1, `speaker.py`): every prompt handed to a guest carries the line of its verified
+  author (`speaker`, also the first prompt of a start). An older guest refuses the unknown field with
+  `400 request_invalid` (the line passed the contract, so nothing else can be meant): the same registration is sent
+  once more without it and logged `speaker_unsupported`.
 - **Hand-over by session state**:
   * `idle`, `prompt_delivering` (a start without initial prompt): write-ahead `registered`, decrypt into memory,
     `POST /v1/sessions/{id}/prompts` (hash registered first, the guest then types it), `typed`;
@@ -53,10 +63,11 @@ from psycopg import AsyncConnection
 
 from agent_runner.billing import pause
 from agent_runner.errors import RunnerError
+from agent_runner.guestlink.client import GuestClient
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.inbox.pull import load_cursors
 from agent_runner.orgs import audit
-from agent_runner.prompts import queue
+from agent_runner.prompts import hub_queue, queue, speaker
 from agent_runner.prompts.resume import RESUMED, Resumer, vm_running
 from agent_runner.prompts.verify import STALE, PromptRefused, check_route, open_text
 from agent_runner.reconcile import wire
@@ -215,12 +226,14 @@ class Deliverer:
             return "refused"
         return await queue.route(conn, prompt, routing.session_id)
 
-    async def _route_all(self, routings: list[Routing]) -> list[Routing]:
+    async def _route_all(self, routings: list[Routing], via_agent: frozenset[str]) -> list[Routing]:
         missing = []
         async with self.env.transaction() as conn:
             for routing in routings:
                 if await self.route_one(conn, routing) == "missing":
                     missing.append(routing)
+            if via_agent:
+                await queue.mark_via_agent(conn, via_agent)
         return missing
 
     async def refresh(self) -> None:
@@ -236,40 +249,70 @@ class Deliverer:
                 if cursors[routing.scope_id] >= routing.scope_seq:
                     await self.reject(conn, UNVERIFIED, routing.event_id, routing.session_id)
 
-    async def route(self, routings: list[Routing]) -> None:
-        missing = await self._route_all(routings)
+    async def route(self, routings: list[Routing], via_agent: frozenset[str] = frozenset()) -> None:
+        missing = await self._route_all(routings, via_agent)
         if missing:
             await self.refresh()
-            missing = await self._route_all(missing)
+            missing = await self._route_all(missing, via_agent)
         if missing:
             await self._unverified(missing)
 
     async def apply_desired(self, desired: Mapping[str, Any]) -> None:
-        """Reconcile step 60: the delivered list, then the routings of `pending_prompts`; wakes the delivery."""
+        """Reconcile step 60: the delivered list, then the routings of `pending_prompts` (with `via_agent`), then the
+        withdrawals of `prompt_queue`; wakes the delivery."""
         delivered = parse_delivered(desired)
         routings = parse_pending(desired)
+        via_agent, withdrawn = hub_queue.parse(desired)
         async with self.env.transaction() as conn:
             adopted = await queue.adopt_delivered(conn, delivered)
         if adopted:
             self.line(f"delivered_adopted count={adopted}")
-        await self.route(routings)
+        await self.route(routings, via_agent)
+        if withdrawn:
+            await self.withdraw(withdrawn)
         self.wake()
 
-    async def hinted(self, session_id: str, scope_id: str, scope_seq: int) -> None:
-        """The `prompt` hint: pull, then route the event at `(scope_id, scope_seq)` to the session."""
+    async def withdraw(self, event_ids: frozenset[str]) -> None:
+        """Withdraw the prompts of `prompt_queue.withdrawn` (module docstring); each one reported once."""
+        async with self.env.transaction() as conn:
+            for event_id in sorted(event_ids):
+                done = await queue.withdraw(conn, event_id)
+                if done is False:
+                    continue
+                if isinstance(done, queue.Delivery):
+                    task_id, session_id = done.task_id, done.session_id
+                else:
+                    stored = await queue.event(conn, event_id)
+                    task_id, session_id = (None if stored is None else stored.task_id), None
+                item: dict[str, Any] = {
+                    "action": "session.prompt_withdrawn",
+                    "result": "ok",
+                    **_known(task_id=task_id, session_id=session_id),
+                    "target_kind": "event",
+                    "target_id": event_id,
+                    "detail": {},
+                }
+                await self.env.outbox.enqueue(conn, "audit", item)
+                self.line(f"withdrawn event_id={event_id} routed={int(session_id is not None)}")
+
+    async def hinted(self, session_id: str, scope_id: str, scope_seq: int, *, via_agent: bool = False) -> None:
+        """The `prompt` hint: pull, then route the event at `(scope_id, scope_seq)` to the session (`via_agent`: the
+        hub received it from its author's agent)."""
         await self.refresh()
         async with self.env.transaction() as conn:
             prompt = await queue.event_at(conn, scope_id, scope_seq)
         if prompt is None:
             self.line(f"hint_event_missing scope={scope_id} seq={scope_seq}")
             return
-        await self.route([Routing(prompt.task_id, session_id, scope_id, scope_seq, prompt.event_id)])
+        routing = Routing(prompt.task_id, session_id, scope_id, scope_seq, prompt.event_id)
+        await self.route([routing], frozenset({prompt.event_id}) if via_agent else frozenset())
         self.wake()
 
     # -- first prompt of a start ---------------------------------------------------------------------------------
 
     async def first_prompt(self, session: LocalSession) -> InitialPrompt | None:
-        """The head prompt routed to a new main session, handed over with the start (channel `start`)."""
+        """The head prompt routed to a new main session with its sender line, handed over with the start (channel
+        `start`)."""
         if session.depth != 0:
             return None
         desired = self.env.desired
@@ -277,10 +320,10 @@ class Deliverer:
             with contextlib.suppress(ValueError):
                 await self.apply_desired(
                     {
+                        **desired,
                         "pending_prompts": [
                             routing.__dict__ for routing in parse_pending(desired) if routing.session_id == session.id
                         ],
-                        "delivered_prompt_event_ids": desired.get("delivered_prompt_event_ids", {}),
                     }
                 )
         async with self.lock(session.id):
@@ -294,11 +337,16 @@ class Deliverer:
                         text = await self._checked_text(conn, session, head)
                     except PromptRefused:
                         continue
-                    await queue.set_state(
+                    if not await queue.set_state(
                         conn, head.event_id, "registered", expected=("pending",), channel="start", attempt=True
+                    ):
+                        # withdrawn meanwhile (a concurrent reconcile): never handed over
+                        continue
+                    line = await speaker.for_prompt(
+                        conn, self.env.storage_key, head.event_id, text, via_agent=head.via_agent
                     )
                 self.line(f"first_prompt session_id={session.id} event_id={head.event_id}")
-                return InitialPrompt(prompt_id=head.event_id, text=text)
+                return InitialPrompt(prompt_id=head.event_id, text=text, speaker=line)
 
     async def _checked_text(self, conn: AsyncConnection[Any], session: LocalSession, head: queue.Delivery) -> str:
         """Stale check and the opened text of a pending head; a refusal is recorded (`refused`, audit)."""
@@ -402,6 +450,7 @@ class Deliverer:
             handed = await queue.set_state(
                 conn, head.event_id, "registered", expected=queue.OPEN, channel="prompt", attempt=True
             )
+            line = await speaker.for_prompt(conn, env.storage_key, head.event_id, text, via_agent=head.via_agent)
         if not handed:
             return
         row = await vm_running(env, session)
@@ -411,7 +460,7 @@ class Deliverer:
             return
         try:
             async with await env.client(row) as guest:
-                await guest.register_prompt(session.id, head.event_id, text)
+                await self._register(guest, session, head, text, line)
         except GuestRefused as exc:
             await self._guest_refused(session, head, exc.error)
             return
@@ -424,6 +473,19 @@ class Deliverer:
             await records.update(conn, session.id, last_prompt_at=datetime.fromtimestamp(env.wall(), UTC))
         self._settled(session.id)
         self.line(f"sent session_id={session.id} event_id={head.event_id}")
+
+    async def _register(
+        self, guest: GuestClient, session: LocalSession, head: queue.Delivery, text: str, line: str | None
+    ) -> None:
+        """`POST /v1/sessions/{id}/prompts` with the sender line; once more without it for an older guest (module
+        docstring)."""
+        try:
+            await guest.register_prompt(session.id, head.event_id, text, line)
+        except GuestRefused as refused:
+            if line is None or refused.status != 400 or refused.error != "request_invalid":
+                raise
+            self.line(f"speaker_unsupported session_id={session.id} event_id={head.event_id} channel=prompt")
+            await guest.register_prompt(session.id, head.event_id, text)
 
     async def _guest_refused(self, session: LocalSession, head: queue.Delivery, error: str | None) -> None:
         """The guest refused the registration: `state_conflict` (accepted before, or its session ended - the journal
@@ -544,6 +606,11 @@ class Deliverer:
             except Exception as exc:
                 self.line(f"round_failed error={type(exc).__name__}")
             await self.wait(PERIOD_S, stopping, sleep)
+
+
+def _known(**fields: str | None) -> dict[str, str]:
+    """The fields of an audit item that are known (`task_id`, `session_id` are optional there)."""
+    return {name: value for name, value in fields.items() if value is not None}
 
 
 def existing(context: Any) -> Deliverer | None:

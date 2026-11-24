@@ -78,7 +78,18 @@ TABLES = {
         "turn_open",
     ],
     # 0003 (RUN-05) adds task_id, scope_seq, channel and attempts
-    "prompt_delivery": ["event_id", "session_id", "state", "updated_at", "task_id", "scope_seq", "channel", "attempts"],
+    # 0026 (KOR-46, ADR-083) adds via_agent
+    "prompt_delivery": [
+        "event_id",
+        "session_id",
+        "state",
+        "updated_at",
+        "task_id",
+        "scope_seq",
+        "channel",
+        "attempts",
+        "via_agent",
+    ],
     "operation": [
         "id",
         "session_id",
@@ -145,6 +156,8 @@ TABLES = {
         "stopped_at",
         "deleted_at",
         "delete_reason",
+        # 0026 (KOR-46, ADR-083): the person whose turn requested the work VM
+        "triggered_by",
     ],
     "workvm_mirror": ["workvm_id", "session_id", "root", "manifest", "updated_at"],
     "workvm_image": ["name", "state", "built_at"],
@@ -286,6 +299,8 @@ TABLES = {
     "github_identity_cache": ["id", "owner_id", "owner_kind", "is_primary", "version", "record"],
     "github_selection": ["session_id", "task_id", "github_identity", "task_github_identity"],
     "github_default": ["scope", "scope_id", "identity_id"],
+    # 0026 (KOR-46, ADR-083): withdrawals this device carried out and reported
+    "prompt_withdrawal": ["event_id", "withdrawn_at"],
     "schema_version": ["version", "name", "checksum", "applied_at"],
 }
 OUTBOX_KINDS = [

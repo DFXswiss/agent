@@ -18,7 +18,10 @@ Every request:
      ``AskUserQuestion`` the op also carries the ``question`` built from the tool input (rule 1a: the control process
      requests ``human.question`` for a main session)
    - ``UserPromptSubmit``: ``prompt.check`` (registry, journal, ``prompt_accepted`` / ``prompt_refused``) -> ``{}`` or
-     the block
+     the block; an accepted prompt whose registration carries a sender line (ADR-083 section 1) answers it as
+     ``hookSpecificOutput.additionalContext`` - part of the decision, not an addon: it comes first, addon texts
+     follow after a blank line (``mcp/objects.json#/$defs/speaker_context``), and an addon text that would break the
+     answer is dropped without touching the line
    - every other event: journal ``session.hook {event, tool?, decision: "none"}`` and answer ``{}``;
      ``SubagentStart`` also ``guest.error subagent_hook_seen``; ``PostToolUse`` for ``Write``/``Edit`` also
      ``session.tool`` (``hook.post_tool_use``) and the file hint ``file_changed(session, path)``. ``Stop`` and
@@ -279,7 +282,10 @@ def _user_prompt_submit(
     prompt = body["prompt"] if body is not None else None
     answer = context.control.call("prompt.check", {"session_id": session_id, "prompt": prompt})
     if answer["accepted"]:
-        return {}, "allow"
+        speaker = answer.get("speaker")
+        if not isinstance(speaker, str):
+            return {}, "allow"
+        return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": speaker}}, "allow"
     STATS.count("blocks")
     return {"decision": "block", "reason": BLOCK_REASON}, "block"
 
@@ -373,7 +379,8 @@ def _decorate(
     if not texts:
         return answer
     output = dict(answer.get("hookSpecificOutput", {"hookEventName": call.event}))
-    output["additionalContext"] = "\n\n".join(texts)
+    decided = output.get("additionalContext")
+    output["additionalContext"] = "\n\n".join([decided, *texts] if isinstance(decided, str) else texts)
     decorated = {**answer, "hookSpecificOutput": output}
     if context.schemas.errors(f"mcp/hooks/{call.event}.response.json", decorated):
         _failure(context, call.session_id)

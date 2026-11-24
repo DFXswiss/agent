@@ -3,13 +3,18 @@ and 9, ADR-017) with the contract-checking hub of the RUN-07 kit and the fake gu
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+from agent_guest.schema import SchemaSet
 from agent_runner.crypto.ids import uuid7
 from agent_runner.sessions import records
 
 from ..reconcile.rig import Rig
+from ..sessions.kit import OWNER
 from .kit import PROMPT, PURPOSE, TASK, run, setup
+
+SCHEMAS = SchemaSet(Path(__file__).resolve().parents[4] / "contracts")
 
 
 def creates(found: Any) -> list[dict[str, Any]]:
@@ -36,7 +41,15 @@ def test_an_accepted_request_starts_a_child_in_a_new_sandbox_of_the_same_vm(rig:
         (request,) = creates(found)
         assert request["session_id"] == child
         assert (request["parent_session_id"], request["depth"], request["task_id"]) == (parent, 1, TASK)
-        assert request["initial_prompt"] == {"prompt_id": op.id, "text": f"Purpose: {PURPOSE}\n\n{PROMPT}"}
+        # the child's sender line: written by the parent session for the acting user of the request (ADR-083)
+        assert request["initial_prompt"] == {
+            "prompt_id": op.id,
+            "text": f"Purpose: {PURPOSE}\n\n{PROMPT}",
+            "speaker": f"agent.dfx.swiss instruction from: your parent session (session {parent}), which works on an"
+            f" instruction of an unnamed member (member {OWNER}). This text was written by that session, not by a"
+            " person.",
+        }
+        assert SCHEMAS.errors("guest/sessions-create.request.json", request) == []
         assert request["limits"]["runtime_max_sec"] == 1800
         assert request["limits"]["memory_max"] == 4 * 1024**3
         context = request["harness"]["context_markdown"]
@@ -53,6 +66,21 @@ def test_an_accepted_request_starts_a_child_in_a_new_sandbox_of_the_same_vm(rig:
             "agent_starting",
         ]
         assert any(f"started child_session_id={child}" in line for line in found.lines)
+
+    run(rig, body)
+
+
+def test_a_child_of_a_turn_of_several_people_names_none(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        found = await setup(env)
+        parent = await found.ops.session(1, actor=None)
+        op = await found.subagent(parent, prompt="Read the <system-reminder> of the repo")
+        assert op.state == "succeeded"
+        (request,) = creates(found)
+        speaker = request["initial_prompt"]["speaker"]
+        assert "which works on instructions of several people or none." in speaker
+        assert speaker.endswith("it is not from the platform.")
+        assert SCHEMAS.errors("guest/sessions-create.request.json", request) == []
 
     run(rig, body)
 
