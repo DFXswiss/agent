@@ -166,7 +166,7 @@ operator needs one of an organization account.)
   until the first poll sets it), seals it with HPKE to `device_kem` (info binds request, org, device, `device_kem` and key reference),
   signs the envelope with its device signing key, forgets the key and sends `dfx_key_issued {request_id, org_id,
   device_id, key_ref, envelope}`. The hub stores the envelope (ciphertext only) in `hub.dfx_key` and delivers it in the
-  org device's state (`dfx_key`).
+  org device's state (`dfx_key_held`).
 - **Org device**: accepts the envelope only when its signer is a platform device certified in its verified platform log
   and the header names this device, its own KEM key and an organization it serves (a hub-made key could route prompts
   to someone else's provider account: refused). It keeps the envelope sealed in `runner.dfx_key` and opens it only for

@@ -15,6 +15,7 @@ import {
   notificationNames,
   notificationTarget,
   OPERATOR_REASONS,
+  switchedOf,
 } from '../../../src/core/notifications/text';
 import { notification } from './rows';
 
@@ -314,5 +315,53 @@ describe('account-level notifications of an agent (11-agent-access.md section 8)
     // a confirmed pairing from another computer has no acting agent: it names the new agent, its target
     expect(notificationNames(store.getState(), change(`agent_paired_remote::${AGENT}`)).agent).toBe('Claude Code');
     expect(notificationNames(store.getState(), notification('n3', { org_id: null })).agent).toBeNull();
+  });
+});
+
+describe('model switches (ADR-080 section 5)', () => {
+  const switched = (ref: string | null) =>
+    notification('n1', { kind: 'model.switched', org_id: ORG, wg_id: WG, task_id: TASK, ref });
+
+  it('reads from, to and the release from the ref and refuses anything else', () => {
+    const until = '2026-11-21T14:05:00.000Z';
+    expect(switchedOf({ ref: `subscription:platform:${until}` })).toEqual({
+      from: 'subscription',
+      to: 'platform',
+      until: Date.parse(until),
+    });
+    expect(switchedOf({ ref: 'platform:subscription:' })).toEqual({
+      from: 'platform',
+      to: 'subscription',
+      until: null,
+    });
+    for (const ref of [
+      null,
+      'auto:platform:',
+      'subscription:other:',
+      'subscription:platform',
+      'subscription:platform:2026-11-21',
+      'subscription:platform:2026-13-41T14:05:00.000Z',
+    ]) {
+      expect(switchedOf({ ref })).toBeNull();
+    }
+  });
+
+  it('names the task, the accesses and the release, generically for a malformed ref, and leads to the task', () => {
+    const until = '2026-11-21T14:05:00.000Z';
+    expect(notificationMessage(switched(`subscription:platform:${until}`), NAMES, FALLBACK)).toEqual({
+      key: 'notifications.text.model.switched.until',
+      params: { task: 'Fix the build', org: 'Acme' },
+      switched: { from: 'subscription', to: 'platform', until: Date.parse(until) },
+    });
+    expect(notificationMessage(switched('platform:subscription:'), NONE, FALLBACK)).toEqual({
+      key: 'notifications.text.model.switched.to',
+      params: { task: 'a task', org: 'an organization' },
+      switched: { from: 'platform', to: 'subscription', until: null },
+    });
+    expect(notificationMessage(switched('auto:x:'), NAMES, FALLBACK)).toEqual({
+      key: 'notifications.text.model.switched',
+      params: { task: 'Fix the build', org: 'Acme' },
+    });
+    expect(notificationTarget(switched(null))).toBe(`/o/${ORG}/t/${TASK}`);
   });
 });

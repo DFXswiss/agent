@@ -39,5 +39,8 @@
   "text.operator.credit_exhausted": "Organization {org} has used up its credit and requests more",
   "text.operator.platform_access_required": "Organization {org} waits for access to the platform's computers",
   "text.operator.unknown": "Organization {org} needs you",
-  "text.device.needed": "Workgroup “{wg}” in “{org}” needs a computer – assign one"
+  "text.device.needed": "Workgroup “{wg}” in “{org}” needs a computer – assign one",
+  "text.model.switched": "Task “{task}”: model switched",
+  "text.model.switched.to": "Task “{task}”: model switched: {from} → {to}",
+  "text.model.switched.until": "Task “{task}”: model switched: {from} → {to} because {from} is used up until {time}"
 }

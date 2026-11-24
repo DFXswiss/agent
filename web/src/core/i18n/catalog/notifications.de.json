@@ -39,5 +39,8 @@
   "text.operator.credit_exhausted": "Organisation {org} hat ihr Guthaben aufgebraucht und beantragt neues",
   "text.operator.platform_access_required": "Organisation {org} wartet auf Zugang zu den Rechnern der Plattform",
   "text.operator.unknown": "Organisation {org} braucht dich",
-  "text.device.needed": "Workgroup „{wg}“ in „{org}“ braucht einen Rechner – weise einen zu"
+  "text.device.needed": "Workgroup „{wg}“ in „{org}“ braucht einen Rechner – weise einen zu",
+  "text.model.switched": "Task „{task}“: Modell gewechselt",
+  "text.model.switched.to": "Task „{task}“: Modell gewechselt: {from} → {to}",
+  "text.model.switched.until": "Task „{task}“: Modell gewechselt: {from} → {to}, weil {from} bis {time} erschöpft ist"
 }

@@ -744,6 +744,37 @@ describe('badge and notifications', () => {
     ]);
   });
 
+  it('renders a model switch with its accesses and release (ADR-080)', async () => {
+    const t = await taskWorld();
+    const until = '2026-11-21T14:05:00.000Z';
+    const row = {
+      notification_id: 'n2',
+      kind: 'model.switched',
+      org_id: t.org,
+      wg_id: t.wg,
+      task_id: 'q',
+      ref: `subscription:platform:${until}`,
+      created_at: at(0),
+      read_at: null,
+    };
+    render(
+      wrap(
+        t,
+        <MemoryRouter>
+          <NotificationText row={row} />
+          <NotificationText row={{ ...row, ref: 'platform:api_key:' }} />
+          <NotificationText row={{ ...row, ref: 'broken' }} />
+        </MemoryRouter>,
+      ),
+    );
+    const time = formatClock(Date.parse(until), { locale: 'en', timeZone: localTimeZone(), now: Date.now() });
+    expect(screen.getAllByTestId('notifications.text').map((node) => node.textContent)).toEqual([
+      `Task “…”: model switched: Claude subscription → DFX access over OpenRouter because Claude subscription is used up until ${time}`,
+      'Task “…”: model switched: DFX access over OpenRouter → API key',
+      'Task “…”: model switched',
+    ]);
+  });
+
   it('formats durations in the largest whole unit', () => {
     expect(durationLabel('en', 5_000)).toBe('5 sec');
     expect(durationLabel('en', -1)).toBe('0 sec');

@@ -17,6 +17,9 @@
 // | `agent.account_change` | "Agent A removed a passkey" (replaced the recovery code, disconnected an agent, …;
 //   `ref` = `<action>:<acting agent id>:<target>`, no org; `agent_paired_remote` (ADR-067): a pairing from another
 //   computer was confirmed, named by the new agent, the target) | the settings |
+// | `model.switched` | "Task Y: model switched from A to B because A is used up until 14:05" (`ref` =
+//   `<from access>:<to access>:<until or empty>`, ADR-080 section 5; a malformed ref: "Task Y: model switched") |
+//   the task |
 //
 // The level of a whiteboard notification follows from the row: a task → task level, else a workgroup → workgroup
 // level, else the org level. Names that are not (yet) decrypted are replaced by neutral fallbacks, never by IDs of
@@ -68,6 +71,30 @@ export interface Message {
   readonly params: Readonly<Record<string, string>>;
   /** Message key of a further text the UI translates into the parameter `reason` (`task.attention`). */
   readonly reason?: string;
+  /** The access kinds of a `model.switched` the UI names as `from` and `to`, and the release it formats as `time`. */
+  readonly switched?: ModelSwitched;
+}
+
+/** The access kinds a session runs on (`model_access` of the contracts). */
+export const SWITCH_ACCESSES = ['subscription', 'api_key', 'platform'];
+
+export interface ModelSwitched {
+  readonly from: string;
+  readonly to: string;
+  /** Unix ms of the release of the used-up access, null without one. */
+  readonly until: number | null;
+}
+
+const UNTIL_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/** From, to and release of a `model.switched` row (`ref` = `<from>:<to>:<until or empty>`); null when malformed. */
+export function switchedOf(row: Pick<NotificationRow, 'ref'>): ModelSwitched | null {
+  const [from = '', to = '', ...rest] = (row.ref ?? '').split(':');
+  const text = rest.join(':');
+  if (!SWITCH_ACCESSES.includes(from) || !SWITCH_ACCESSES.includes(to) || rest.length === 0) return null;
+  if (text === '') return { from, to, until: null };
+  const until = UNTIL_RE.test(text) ? Date.parse(text) : NaN;
+  return Number.isFinite(until) ? { from, to, until } : null;
 }
 
 /** The reasons of an `operator.request` (ADR-079 section 4). */
@@ -126,6 +153,13 @@ export function notificationMessage(row: NotificationRow, names: Names, fallback
     }
     case 'device.needed':
       return { key: 'notifications.text.device.needed', params: { wg, org } };
+    case 'model.switched': {
+      const switched = switchedOf(row);
+      if (switched === null) return { key: 'notifications.text.model.switched', params: { task, org } };
+      const key =
+        switched.until === null ? 'notifications.text.model.switched.to' : 'notifications.text.model.switched.until';
+      return { key, params: { task, org }, switched };
+    }
     default:
       return { key: 'notifications.text.unknown', params: { org } };
   }
@@ -142,6 +176,7 @@ export function notificationTarget(row: NotificationRow): string {
       return boardPath(orgBoard(row.org_id));
     case 'task.idle':
     case 'task.failed':
+    case 'model.switched':
       return row.task_id === null ? org : `${org}/t/${encodeURIComponent(row.task_id)}`;
     case 'invite.accepted':
     case 'rotation.required':

@@ -1,9 +1,12 @@
 // The sentence of a notification for the center and the toasts: kind + decrypted names (`core/notifications/text.ts`),
-// neutral fallbacks while a name is not read yet; the names are pulled once per row set.
+// neutral fallbacks while a name is not read yet; the names are pulled once per row set. A model switch names its
+// access kinds and the release time in the user's zone (ADR-080 section 5).
 import { useEffect } from 'react';
+import { formatClock, localTimeZone } from '../../../core/i18n';
 import { pullNames } from '../../../core/notifications/actions';
 import { notificationMessage, notificationNames } from '../../../core/notifications/text';
 import type { NotificationRow } from '../../../core/store/slices/notifications';
+import { useNow } from '../../countdown/useNow';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
@@ -18,7 +21,8 @@ export function useNames(rows: readonly NotificationRow[]): void {
 
 export function NotificationText({ row }: { readonly row: NotificationRow }) {
   const { app } = useAppEnv();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const now = useNow(false);
   const names = useStore((state) => notificationNames(state, row), app.store);
   const fallback = {
     org: t('notifications.unnamed.org'),
@@ -28,6 +32,18 @@ export function NotificationText({ row }: { readonly row: NotificationRow }) {
     agent: t('notifications.unnamed.agent'),
   };
   const message = notificationMessage(row, names, fallback);
-  const params = message.reason === undefined ? message.params : { ...message.params, reason: t(message.reason) };
+  let params: Record<string, string> =
+    message.reason === undefined ? message.params : { ...message.params, reason: t(message.reason) };
+  const switched = message.switched;
+  if (switched !== undefined) {
+    params = {
+      ...params,
+      from: t(`model.switch.access.${switched.from}`),
+      to: t(`model.switch.access.${switched.to}`),
+      ...(switched.until !== null && {
+        time: formatClock(switched.until, { locale, timeZone: localTimeZone(), now }),
+      }),
+    };
+  }
   return <span data-testid="notifications.text">{t(message.key, params)}</span>;
 }
