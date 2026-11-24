@@ -14,73 +14,19 @@ import json
 import os
 import socket
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from importlib import resources
-from typing import Any, NoReturn, TextIO
+from typing import Any, TextIO
 
-from agent_platform import __version__, claude, diagnose, orgs, tasks
+from agent_platform import __version__, claude, diagnose, orgs, registry, tasks
 from agent_platform.account import Account
+from agent_platform.commands import Context, Help, Parser, Tree, text_argument, with_account
 from agent_platform.credentials import put_record, read_record
 from agent_platform.errors import PlatformError
 from agent_platform.pairing import pair, register
-from agent_platform.state import Home
-from agent_runner.crypto.encoding import b64u_decode
-from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.identity import account_code, format_account_code
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
-MAX_STDIN = 1024 * 1024
-
-
-class _Help(Exception):
-    def __init__(self, text: str) -> None:
-        self.text = text
-        super().__init__("help")
-
-
-class Parser(argparse.ArgumentParser):
-    """Argument errors and help become exceptions (printed as one JSON object)."""
-
-    def error(self, message: str) -> NoReturn:
-        raise PlatformError("invalid_argument")
-
-    def print_help(self, file: Any = None) -> None:
-        raise _Help(self.format_help())
-
-
-Handler = Callable[[argparse.Namespace, "Context"], dict[str, Any]]
-
-
-class Context:
-    """What a command needs besides its arguments."""
-
-    def __init__(self, environ: Mapping[str, str], stdin: TextIO) -> None:
-        self.environ = environ
-        self.stdin = stdin
-        self.home = Home.from_env(environ)
-
-    def read_stdin(self) -> str:
-        return self.stdin.read(MAX_STDIN)
-
-    def account(self, args: argparse.Namespace) -> Account:
-        root = getattr(args, "platform_root_key", None)
-        if root is not None:
-            try:
-                b64u_decode(root, 32)
-            except CryptoError:
-                raise PlatformError("invalid_argument") from None
-        return Account.open(self.home, root)
-
-
-def with_account(work: Callable[[Account, argparse.Namespace, Context], dict[str, Any]]) -> Handler:
-    def handler(args: argparse.Namespace, context: Context) -> dict[str, Any]:
-        account = context.account(args)
-        try:
-            return work(account, args, context)
-        finally:
-            account.close()
-
-    return handler
 
 
 # --- commands ---
@@ -244,20 +190,16 @@ def cmd_device_assign(account: Account, args: argparse.Namespace, context: Conte
     return orgs.device_assign(account, args.wg)
 
 
-def _text(args: argparse.Namespace, context: Context) -> str:
-    return context.read_stdin() if args.text == "-" else str(args.text)
-
-
 def cmd_task_list(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
     return tasks.task_list(account, args.wg, args.state)
 
 
 def cmd_task_create(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return tasks.task_create(account, args.wg, _text(args, context))
+    return tasks.task_create(account, args.wg, text_argument(args, context))
 
 
 def cmd_task_prompt(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return tasks.task_prompt(account, args.task, _text(args, context))
+    return tasks.task_prompt(account, args.task, text_argument(args, context))
 
 
 def cmd_task_show(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -273,29 +215,6 @@ def cmd_diagnose(account: Account, args: argparse.Namespace, context: Context) -
 
 
 # --- parser ---
-
-
-def _root_option() -> Parser:
-    common = Parser(add_help=False)
-    common.add_argument("--platform-root-key", help="platform root key (b64u) instead of the one from the pairing")
-    return common
-
-
-class Tree:
-    """Adds commands to the parser tree; every command gets the common options unless told otherwise."""
-
-    def __init__(self, commands: Any) -> None:
-        self.commands = commands
-        self.common = _root_option()
-
-    def add(self, group: Any, name: str, handler: Handler, help_text: str, common: bool = True) -> Parser:
-        sub: Parser = group.add_parser(name, help=help_text, parents=[self.common] if common else [])
-        sub.set_defaults(handler=handler)
-        return sub
-
-    def group(self, name: str, help_text: str, parent: Any = None) -> Any:
-        sub: Parser = (parent or self.commands).add_parser(name, help=help_text)
-        return sub.add_subparsers(dest=f"{name}_command", parser_class=Parser, required=True)
 
 
 def _account_commands(tree: Tree) -> None:
@@ -409,6 +328,8 @@ def build_parser() -> Parser:
     _claude_commands(tree)
     _org_commands(tree)
     _task_commands(tree)
+    for module in registry.MODULES:
+        module(tree)
     return parser
 
 
@@ -424,7 +345,7 @@ def execute(argv: Sequence[str], environ: Mapping[str, str], stdin: TextIO) -> d
     parser = build_parser()
     try:
         args = parser.parse_args(list(argv))
-    except _Help as shown:
+    except Help as shown:
         return {"ok": True, "help": shown.text}
     if args.version:
         return {"ok": True, "version": __version__}

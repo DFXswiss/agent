@@ -14,6 +14,7 @@ returning `(status, body)` or None to go on), to simulate refusals, faults and a
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import re
 import secrets
@@ -49,7 +50,10 @@ from agent_runner.crypto.log.wraps import CRED, WrapSlot, check_cred_wrap
 from agent_runner.crypto.wrap import unwrap_key
 from agent_runner.sync.http import format_time as request_time
 
+from .fakes import INSTALLERS
+
 HUB_KEY_ID = "hub-test"
+ANONYMOUS = ("/v1/config", "/v1/agent-pairings", "/v1/agent/claim", "/v1/invites/lookup")
 Json = dict[str, Any]
 Hook = Callable[[Json | None, "Request"], tuple[int, Any] | None]
 
@@ -124,6 +128,7 @@ class HubFake:
         self.platform_entries: list[Json] = []
         self.platform_devices: dict[str, Identity] = {}
         self.sign_answers = True
+        self.routes: list[tuple[str, str, Callable[..., tuple[int, Any]]]] = []
         self.lock = threading.RLock()
         body = {"seq": 0, "prev": "", "type": "root", "by": "platform-root", "ts": now_ms_text(), "v": 1}
         self._platform_append({**body, "pub": self.root_text})
@@ -141,6 +146,8 @@ class HubFake:
         return f"http://127.0.0.1:{self.port}"
 
     def start(self) -> HubFake:
+        for name in INSTALLERS:
+            importlib.import_module(f".fakes.{name}", __package__).install(self)
         self.thread.start()
         return self
 
@@ -496,16 +503,19 @@ class HubFake:
             ("POST", r"/v1/tasks", self.r_task_create),
             ("POST", r"/v1/tasks/(?P<task>[0-9a-f-]+)/prompts", self.r_task_prompt),
             ("GET", r"/v1/workgroups/(?P<wg>[0-9a-f-]+)/tasks", self.r_wg_tasks),
+            *self.routes,
         ]
         for route_method, pattern, handler in table:
             match = re.fullmatch(pattern, path)
             if match is not None and route_method == method:
-                needs_user = path.startswith(("/v1/me", "/v1/wraps", "/v1/orgs", "/v1/scopes", "/v1/workgroups"))
-                needs_user = needs_user or path.startswith(("/v1/platform", "/v1/tasks", "/v1/agent/me", "/v1/users"))
-                if needs_user and request.user is None:
+                if not path.startswith(ANONYMOUS) and request.user is None:
                     return 401, {"error": "unauthorized"}
                 return handler(request, body, **match.groupdict())
         return 404, {"error": "not_found"}
+
+    def add_route(self, method: str, pattern: str, handler: Callable[..., tuple[int, Any]]) -> None:
+        """A further route (`fakes/*.py`); a signed request is needed on the paths of `route`'s list, as there."""
+        self.routes.append((method, pattern, handler))
 
     def r_config(self, request: Request, body: Any) -> tuple[int, Any]:
         public = b64u_encode(ed25519_public_raw(self.hub_key))
