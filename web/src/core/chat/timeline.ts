@@ -2,8 +2,9 @@
 // task, ordered by `(ts, scope_seq)` (chat is ascending, section 12.4), plus system rows from the session rows:
 //
 // - every verified event of the task except `task.meta` (the title) and `session.hook` other than `deny`; the UI
-//   renders the kinds it has a chat-item renderer for (`prompt`, `session.*`, `operation.*`, `workvm.*`); of the
-//   `workvm.run` items of one job only the latest is kept (the final one replaces the running one, `workvm.ts`);
+//   renders the kinds it has a chat-item renderer for (`prompt`, `session.*`, `operation.*`, `workvm.*`,
+//   `test.run`); of the `workvm.run` items of one job and the `test.run` items of one run only the latest is kept
+//   (the final one replaces the running one, `workvm.ts`);
 // - unverifiable events whose (unchecked) header names the task, as neutral rows with the code – never as content,
 //   never dropped; pending and locked events appear once the reader settled them;
 // - `session.status` system rows for the session transitions `suspended`, `stopped` and `failed` and a row when the

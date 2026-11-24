@@ -881,10 +881,11 @@ class WorkVms:
                 current = await records.get(self.deps.db, vm.id)
                 if current is None or current.state != "deleting":
                     continue
-                if await self._remove(current, reason=await records.delete_reason(self.deps.db, vm.id) or "failed"):
+                reason = await records.delete_reason(self.deps.db, vm.id) or "failed"
+                if await self._remove(current, reason=reason):
                     swept += 1
                     if current.scope != RUN_SCOPE:
-                        await self._emit_state(current, "deleted", reason="failed")
+                        await self._emit_state(current, "deleted", reason=reason)
         known = {vm.lima_name for vm in await records.live(self.deps.db)}
         known |= {entry.lima_name for entry in await records.pool(self.deps.db)}
         async with self.slot_lock:

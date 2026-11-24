@@ -568,7 +568,8 @@ def test_calls_without_a_vm(world: World) -> None:
 def test_exec_obtains_a_vm_implicitly(world: World) -> None:
     result = world.run(lambda vms: vms.call(None, session(), "workvm_exec", {"command": "true", "sync": "none"}))
     assert result["state"] == "running"
-    [created] = [body for _, kind, body in world.events if kind == "workvm.state"]
+    starting, created = [body for _, kind, body in world.events if kind == "workvm.state"]
+    assert (starting["state"], starting["workvm_id"], starting["implicit"]) == ("starting", created["workvm_id"], True)
     assert created["implicit"] is True
     assert created["state"] == "created"
     assert created["reason"] is None

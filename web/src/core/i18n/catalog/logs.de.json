@@ -1,0 +1,15 @@
+{
+  "title": "Log",
+  "close": "Log schließen",
+  "loading": "Log wird geladen…",
+  "failed": "Das Log konnte nicht gelesen werden: {reason}",
+  "part": "Teil {index} von {count}",
+  "first": "Anfang",
+  "previous": "Vorheriger Teil",
+  "next": "Nächster Teil",
+  "last": "Zum Ende",
+  "download": "Herunterladen",
+  "downloading": "Wird heruntergeladen…",
+  "download-failed": "Herunterladen fehlgeschlagen: {reason}",
+  "truncated": "Gekürzt: nur die letzten {kept} MiB von {total} MiB sind gespeichert."
+}

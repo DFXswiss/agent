@@ -1,14 +1,15 @@
 // The operation card (06-web.md sections 5.2 and 5.4), shared by the chat items `operation.params` /
 // `operation.result` and the Operations tab: type, live state badge (from the `operation` frames), a short subject
 // from the decrypted parameters, the result links and values (PR URL, commit SHA, comment URL, branch, subagent
-// session, issue, login), "Renamed by session" for `task.set_title`, the error code, and "Duplicate of …" linking the
-// original. Listed issues and pull requests show number (linked), title, state and labels; a read issue shows its text
+// session, issue, login), "Renamed by session" for `task.set_title`, a test run's summary with "Open log"
+// (`test.run`, ADR-078), the error code, and "Duplicate of …" linking the original. Listed issues and pull requests show number (linked), title, state and labels; a read issue shows its text
 // and its page of comments. Text from GitHub is untrusted: it is only rendered as React text (never as HTML or
 // Markdown), links are https only (`httpsUrl`). Unverifiable parameters or results are shown as such with their code,
 // never as content.
 import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { LINK_REL } from '../../../core/chat/links';
+import { runFailed, type TestRunResult } from '../../../core/chat/testrun';
 import { ensureOperations, loadOperation } from '../../../core/operations/load';
 import {
   type Fact,
@@ -20,6 +21,8 @@ import {
   selectOperation,
 } from '../../../core/operations/view';
 import { useStore } from '../../hooks/useStore';
+import { OpenLog } from '../../logs/LogView';
+import { useSummaryText } from '../test.run';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 
@@ -42,6 +45,9 @@ export const KNOWN_TYPES: ReadonlySet<string> = new Set([
   'task.set_title',
   'human.question',
   'human.approval',
+  'workvm.request',
+  'workvm.release',
+  'test.run',
 ]);
 
 export const STATE_BADGE: Readonly<Record<string, string>> = {
@@ -240,13 +246,32 @@ function IssueView({ issue }: { readonly issue: IssueContent }) {
   );
 }
 
+/** "Tests: 3 failed" (or the state without a summary) and the button of the run's log. */
+function TestRunLine({ run, wg, task }: { readonly run: TestRunResult; readonly wg: string; readonly task: string }) {
+  const { t } = useI18n();
+  const summary = useSummaryText()(run.summary);
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-2 text-sm"
+      data-testid="operation.test-run"
+      data-state={run.state}
+      data-failed={runFailed(run)}
+    >
+      <span data-testid="operation.test-run.summary">{summary ?? t(`testrun.state.${run.state}`)}</span>
+      {run.log !== null && <OpenLog source={{ wg, task, ref: run.run_id, log: run.log }} label={t('testrun.log')} />}
+    </div>
+  );
+}
+
 export function CardBody({
   view,
   org,
+  wg,
   task,
 }: {
   readonly view: OperationView;
   readonly org: string;
+  readonly wg: string;
   readonly task: string;
 }) {
   const { t, error } = useI18n();
@@ -283,6 +308,7 @@ export function CardBody({
           ))}
         </ul>
       )}
+      {view.testRun !== null && <TestRunLine run={view.testRun} wg={wg} task={task} />}
       {view.listing !== null && <ListingView listing={view.listing} />}
       {view.issue !== null && <IssueView issue={view.issue} />}
       {view.duplicateOf !== null && (
@@ -340,7 +366,7 @@ export function OperationCard({
   }, [app, task, operation, round]);
   return (
     <div className="flex flex-col gap-1 rounded border border-gray-200 p-3">
-      <CardBody view={view} org={org} task={task} />
+      <CardBody view={view} org={org} wg={wg} task={task} />
       <Link
         className="min-h-11 self-start py-2 text-sm text-blue-800 underline"
         to={operationLink(org, task, operation)}

@@ -1,23 +1,32 @@
-// Chat item `workvm.state` (13-work-vm.md sections 8 and 10, ADR-059 decision 10): a work VM was created or deleted
-// (with the reason), its size and resources and, once deleted, its runtime in h/min/s. A body that does not follow
-// the contract is a neutral row with a code, never content.
+// Chat item `workvm.state` (13-work-vm.md sections 8 and 10, ADR-059 decision 10, ADR-078 sections 4 and 5): a work
+// VM is starting (implicit start), was created, stopped (paused session) or deleted (with the reason), its size and
+// resources and, once stopped or deleted, its runtime in h/min/s. A body that does not follow the contract is a
+// neutral row with a code, never content.
 import type { TimelineItem } from '../../core/chat/timeline';
-import { formatRuntime, parseWorkvmState } from '../../core/chat/workvm';
+import { formatRuntime, parseWorkvmState, type WorkvmState } from '../../core/chat/workvm';
 import type { ChatItem, ChatItemProps } from '../registries/chat-items';
 import { useI18n } from '../i18n';
 import { EventTime } from '../task-tabs/chat/EventTime';
 import { Invalid } from './workvm.run';
 
+/** "Work VM created", "Work VM stopped (session paused)", "Work VM deleted (idle)", … */
+export function useStateTitle(): (vm: WorkvmState) => string {
+  const { t } = useI18n();
+  return (vm) => {
+    if (vm.state === 'created' || vm.state === 'starting') return t(`workvm.state.${vm.state}`);
+    if (vm.reason === null) return t(`workvm.state.${vm.state}.plain`);
+    return t(`workvm.state.${vm.state}`, { reason: t(`workvm.state.reason.${vm.reason}`) });
+  };
+}
+
 function State({ item }: ChatItemProps) {
   const { at, body } = item as TimelineItem;
   const { t, locale } = useI18n();
+  const stateTitle = useStateTitle();
   const vm = parseWorkvmState(body);
   if (vm === null) return <Invalid />;
   const gib = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
-  let title: string;
-  if (vm.state === 'created') title = t('workvm.state.created');
-  else if (vm.reason === null) title = t('workvm.state.deleted.plain');
-  else title = t('workvm.state.deleted', { reason: t(`workvm.state.reason.${vm.reason}`) });
+  const title = stateTitle(vm);
   return (
     <p
       className="flex flex-wrap items-center justify-center gap-x-2 text-center text-xs text-gray-600"
@@ -36,7 +45,7 @@ function State({ item }: ChatItemProps) {
           disk: vm.disk_gib,
         })}
       </span>
-      {vm.state === 'deleted' && (
+      {(vm.state === 'deleted' || vm.state === 'stopped') && (
         <span data-testid="chat.workvm.state.runtime">
           {t('workvm.state.runtime', { runtime: formatRuntime(vm.runtime_ms) })}
         </span>

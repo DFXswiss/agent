@@ -13,7 +13,10 @@
 // `github.list_issues` / `github.list_pull_requests` (`listing`) and the issue of `github.get_issue` with one page of
 // comments (`issue`) are read entry by entry: an entry without a number or title is left out. Text from GitHub is
 // untrusted and only ever rendered as text; URLs pass `httpsUrl` (`safeUrl` and https only, as the contracts allow).
+// A `test.run` (ADR-078) has its kind and the start of its command as subject, run ID and exit code as facts, and
+// its checked result (`testRun`: state, summary, log) for the card's "Tests: 3 failed – open log".
 import { safeUrl } from '../chat/links';
+import { parseTestRunResult, TEST_RUN_TYPE, type TestRunResult } from '../chat/testrun';
 import { isRecord } from '../registry';
 import type { EventEntry } from '../store/slices/events';
 import type { OperationRow } from '../store/slices/operations';
@@ -102,6 +105,8 @@ export interface OperationView {
   readonly listing: Listing | null;
   /** The issue of a succeeded `github.get_issue`. */
   readonly issue: IssueContent | null;
+  /** The result of a succeeded `test.run` that follows the contract (state, summary, log). */
+  readonly testRun: TestRunResult | null;
 }
 
 const raw = (entry: EventEntry): Readonly<Record<string, unknown>> =>
@@ -185,12 +190,24 @@ function readResult(body: Record<string, unknown>): ResultBody | null {
   };
 }
 
+/** At most this many characters of a test command are the subject. */
+export const SUBJECT_CHARS = 200;
+
+/** `unit: npm test` of a `test.run`: kind and the start of the command. */
+function testSubject(params: Readonly<Record<string, unknown>>): string | null {
+  const command = text(params.command);
+  if (command === null) return null;
+  const short = [...command].length > SUBJECT_CHARS ? `${[...command].slice(0, SUBJECT_CHARS).join('')}…` : command;
+  return `${text(params.kind) ?? 'custom'}: ${short}`;
+}
+
 /** A short description of the parameters (module comment). */
 export function subjectOf(type: string, params: Readonly<Record<string, unknown>>): string | null {
   if (type === 'subagent.request') return text(params.purpose);
   if (type === 'task.set_title') return text(params.title);
   if (type === 'workvm.request') return text(params.size) ?? 'standard';
   if (type === 'workvm.release') return text(params.scope) ?? 'task';
+  if (type === TEST_RUN_TYPE) return testSubject(params);
   if (type === 'human.question' || type === 'human.approval') return text(params.question);
   const repo = text(params.repo);
   if (repo === null) return null;
@@ -312,6 +329,8 @@ export function factsOf(type: string, result: Readonly<Record<string, unknown>>,
     case 'workvm.request':
     case 'workvm.release':
       return link('workvm', result.workvm_id, null);
+    case TEST_RUN_TYPE:
+      return [...link('run', result.run_id, null), ...link('exit_code', result.exit_code, null)];
     default:
       return [];
   }
@@ -345,6 +364,7 @@ export function operationView(
     facts: succeeded === null ? [] : factsOf(type, succeeded, params),
     listing: succeeded === null ? null : listingOf(type, succeeded),
     issue: succeeded === null ? null : issueOf(type, succeeded),
+    testRun: succeeded === null || type !== TEST_RUN_TYPE ? null : parseTestRunResult(succeeded),
   };
 }
 

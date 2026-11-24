@@ -1,14 +1,17 @@
 // Chat item `workvm.run` (13-work-vm.md sections 8 and 10): a job of the session's work VM – kind, command, a state
-// badge, exit code and duration; the output tail in a collapsed monospace block ("show all" opens it). The timeline
-// keeps only the latest event of a job, so a running item is replaced by its final one (`core/chat/workvm.ts`).
-// A body that does not follow the contract is a neutral row with a code, never content.
+// badge, exit code and duration; the output tail in a collapsed monospace block ("show all" opens it) and, when the
+// output was longer than the event keeps, "Open full log" (the encrypted log object, `ui/logs`). The timeline keeps
+// only the latest event of a job, so a running item is replaced by its final one (`core/chat/workvm.ts`). A body
+// that does not follow the contract is a neutral row with a code, never content.
+import type { ReactNode } from 'react';
 import { formatNumber } from '../../core/i18n';
 import type { TimelineItem } from '../../core/chat/timeline';
-import { outputTruncated, parseWorkvmRun, type RunState } from '../../core/chat/workvm';
+import { outputTruncated, parseWorkvmRun, type RunState, type WorkvmRun } from '../../core/chat/workvm';
 import type { ChatItem, ChatItemProps } from '../registries/chat-items';
 import { useSeconds } from '../countdown/parts';
 import { useI18n } from '../i18n';
 import { EventTime } from '../task-tabs/chat/EventTime';
+import { EventLog } from '../logs/LogView';
 
 const BADGE: Record<RunState, string> = {
   running: 'bg-blue-100 text-blue-900',
@@ -28,12 +31,10 @@ export function Invalid() {
   );
 }
 
-function Run({ item }: ChatItemProps) {
-  const { at, body } = item as TimelineItem;
+/** A job with its state and output; `log` is the button of its full log (or null). */
+export function RunView({ run, at, log }: { readonly run: WorkvmRun; readonly at: number; readonly log: ReactNode }) {
   const { t, locale } = useI18n();
   const seconds = useSeconds();
-  const run = parseWorkvmRun(body);
-  if (run === null) return <Invalid />;
   const failed = run.state !== 'running' && (run.state !== 'exited' || run.exit_code !== 0);
   return (
     <div
@@ -88,8 +89,20 @@ function Run({ item }: ChatItemProps) {
           </pre>
         </details>
       )}
+      {log}
     </div>
   );
+}
+
+function Run({ item }: ChatItemProps) {
+  const { at, body, seq } = item as TimelineItem;
+  const { t } = useI18n();
+  const run = parseWorkvmRun(body);
+  if (run === null) return <Invalid />;
+  const ref = run.log ?? null;
+  const log =
+    ref === null ? null : <EventLog seq={seq} body={body} runId={run.job_id} log={ref} label={t('workvm.run.log')} />;
+  return <RunView run={run} at={at} log={log} />;
 }
 
 export const chatItem: ChatItem = { kind: 'workvm.run', Component: Run };

@@ -26,12 +26,36 @@ class RecordingWorkVms(WorkVms):
     def __init__(self, gate: asyncio.Event | None = None) -> None:
         super().__init__(cast(Deps, SimpleNamespace()))
         self.ended: list[LocalSession] = []
+        self.paused: list[tuple[LocalSession, str, bool]] = []
         self.gate = gate
+
+    async def pause(self, session: LocalSession, *, reason: str, when_idle: bool = False) -> list[str]:
+        self.paused.append((session, reason, when_idle))
+        return []
 
     async def session_ended(self, session: LocalSession) -> None:
         if self.gate is not None:
             await self.gate.wait()
         self.ended.append(session)
+
+
+class RecordingRuns:
+    def __init__(self) -> None:
+        self.cancelled: list[dict[str, Any]] = []
+
+    def cancel(self, **found: Any) -> list[str]:
+        self.cancelled.append(found)
+        return []
+
+
+RUNS = RecordingRuns()
+
+
+@pytest.fixture(autouse=True)
+def runs(monkeypatch: pytest.MonkeyPatch) -> RecordingRuns:
+    RUNS.cancelled.clear()
+    monkeypatch.setattr(session_state, "runs_of", lambda context, workvms: RUNS)
+    return RUNS
 
 
 def journal(context: Any) -> Any:
@@ -65,6 +89,16 @@ def test_only_a_final_state_ends_the_session_work_vms(state: str | None) -> None
     service.install(context, RecordingWorkVms())
     ended = observe(context, {"state": state} if state is not None else {})
     assert ended == ([SESSION] if state in FINAL else [])
+    assert RUNS.cancelled == ([{"reason": "session_ended", "session_id": SESSION.id}] if state in FINAL else [])
+    assert set() == session_state.PENDING
+
+
+def test_a_suspended_session_pauses_its_idle_work_vms() -> None:
+    context = SimpleNamespace()
+    workvms = RecordingWorkVms()
+    service.install(context, workvms)
+    assert observe(context, {"state": "suspended", "reason": "idle"}) == []
+    assert workvms.paused == [(SESSION, "session_paused", True)]
     assert set() == session_state.PENDING
 
 

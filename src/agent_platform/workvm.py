@@ -2,8 +2,8 @@
 `web/src/core/chat/workvm.ts`, `ui/screens/session/WorkvmPanel.tsx` and `WorkvmRuntime.tsx`).
 
 - `parse_run` / `parse_state`: a decrypted `workvm.run` / `workvm.state` body checked against
-  `contracts/events/objects.json` (every field required, no other field); anything else is None and counted as
-  `invalid` (the web shows a neutral row instead);
+  `contracts/events/objects.json` (every field required except the optional `log` of a run, no other field);
+  anything else is None and counted as `invalid` (the web shows a neutral row instead);
 - `latest_runs`: of the `workvm.run` events of one job only the latest is kept (the final one replaces the running
   one), as in the chat timeline;
 - `workvm_runtime`: per work VM the `runtime_ms` of its `deleted` event, else `now - started_at` while it runs;
@@ -82,6 +82,26 @@ def _time(value: object) -> bool:
 
 _COUNT = _integer(0, MAX_SAFE_INTEGER)
 _WORKVM_ID = _pattern(r"wvm-[0-9a-f]{8}")
+_UUID = _pattern(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _log_ref(value: object) -> bool:
+    """`log_ref` of `contracts/ops/objects.json`: null or `{object_id, bytes, stored_bytes, truncated}` (the kept
+    bytes never more than the full output)."""
+    if value is None:
+        return True
+    shape: Mapping[str, Check] = {
+        "object_id": _UUID,
+        "bytes": _COUNT,
+        "stored_bytes": _COUNT,
+        "truncated": _one_of(True, False),
+    }
+    return _matches(value, shape) and int(cast(dict[str, Any], value)["stored_bytes"]) <= int(
+        cast(dict[str, Any], value)["bytes"]
+    )
+
+
+LOG_REF: Check = _log_ref
 
 RUN_SHAPE: Mapping[str, Check] = {
     "workvm_id": _WORKVM_ID,
@@ -118,8 +138,9 @@ def _matches(body: object, shape: Mapping[str, Check]) -> bool:
 
 
 def parse_run(body: object) -> dict[str, Any] | None:
-    """A `workvm.run` body, or None when it does not follow the contract."""
-    return cast(dict[str, Any], body) if _matches(body, RUN_SHAPE) else None
+    """A `workvm.run` body, or None when it does not follow the contract (`log` is optional)."""
+    shape = {**RUN_SHAPE, "log": LOG_REF} if isinstance(body, dict) and "log" in body else RUN_SHAPE
+    return cast(dict[str, Any], body) if _matches(body, shape) else None
 
 
 def parse_state(body: object) -> dict[str, Any] | None:

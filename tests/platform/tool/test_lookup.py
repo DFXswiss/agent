@@ -127,7 +127,7 @@ def test_search_explains_a_named_error_code() -> None:
 def test_a_mistyped_command_gets_the_usage_and_close_names(tool: Tool) -> None:
     result = tool.run("tsk", "list")[1]
     assert result["error"] == "invalid_argument"
-    assert result["did_you_mean"] == ["task"]
+    assert result["did_you_mean"] == ["task", "test"]
     assert result["usage"].startswith("agent-platform [-h] [--version]")
     assert tool.run("task", "craete")[1]["did_you_mean"] == ["create"]
     wrong = tool.run("task", "create", "--txt", "x")[1]

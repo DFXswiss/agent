@@ -31,11 +31,29 @@ class FakeWorkVms:
         self.calls.append("idle_pass")
         return []
 
+    async def sweep(self) -> int:
+        self.calls.append("sweep")
+        return 0
+
     async def pool_pass(self) -> int:
         self.calls.append("pool_pass")
         if self.calls.count("pool_pass") == self.passes:
             self.stopping.set()
         return 0
+
+
+class FakeRuns:
+    def __init__(self, workvms: FakeWorkVms) -> None:
+        self.workvms = workvms
+
+    async def reconcile(self) -> int:
+        self.workvms.calls.append("runs")
+        return 0
+
+
+@pytest.fixture(autouse=True)
+def runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tasks, "runs_of", lambda context, workvms: FakeRuns(workvms))
 
 
 def test_task_is_registered() -> None:
@@ -59,7 +77,7 @@ def test_reconcile_then_idle_passes_until_stopping(monkeypatch: pytest.MonkeyPat
         await asyncio.wait_for(tasks.run_workvm(context), 5)
         return workvms.calls
 
-    assert asyncio.run(run()) == ["reconcile", *["guard_pass", "idle_pass", "pool_pass"] * 3]
+    assert asyncio.run(run()) == ["runs", "reconcile", *["guard_pass", "idle_pass", "sweep", "pool_pass"] * 3]
 
 
 def test_a_stop_during_the_wait_ends_the_task_without_another_pass(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -76,7 +94,7 @@ def test_a_stop_during_the_wait_ends_the_task_without_another_pass(monkeypatch: 
         await asyncio.wait_for(task, 5)
         return workvms.calls
 
-    assert asyncio.run(run()) == ["reconcile", "guard_pass", "idle_pass", "pool_pass"]
+    assert asyncio.run(run()) == ["runs", "reconcile", "guard_pass", "idle_pass", "sweep", "pool_pass"]
 
 
 def test_a_stopped_daemon_reconciles_only(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -88,7 +106,7 @@ def test_a_stopped_daemon_reconciles_only(monkeypatch: pytest.MonkeyPatch) -> No
         await tasks.run_workvm(SimpleNamespace(stopping=stopping))
         return workvms.calls
 
-    assert asyncio.run(run()) == ["reconcile"]
+    assert asyncio.run(run()) == ["runs", "reconcile"]
 
 
 def test_an_assigned_pool_entry_refills_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -105,4 +123,4 @@ def test_an_assigned_pool_entry_refills_at_once(monkeypatch: pytest.MonkeyPatch)
         await asyncio.wait_for(task, 5)
         return workvms.calls
 
-    assert asyncio.run(run()) == ["reconcile", *["guard_pass", "idle_pass", "pool_pass"] * 2]
+    assert asyncio.run(run()) == ["runs", "reconcile", *["guard_pass", "idle_pass", "sweep", "pool_pass"] * 2]

@@ -81,5 +81,8 @@
   "detail.retryable": "Can be retried",
   "detail.loading": "Loading the details…",
   "detail.failed": "The details could not be loaded: {reason}",
-  "detail.close": "Close"
+  "detail.close": "Close",
+  "type.test.run": "Run tests",
+  "fact.run": "Run",
+  "fact.exit_code": "Exit code"
 }

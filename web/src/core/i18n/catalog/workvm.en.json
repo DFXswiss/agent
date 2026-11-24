@@ -35,5 +35,12 @@
   "panel.overdue": "Delayed: starting for {seconds} s.",
   "panel.none": "This session has no work VM. It requests one as soon as it needs to run something.",
   "panel.release": "The session releases its work VM when it is done; it is torn down at the latest after the idle time or when the session ends. Logs and results stay with the runs.",
-  "panel.runs": "Runs ({count})"
+  "panel.runs": "Runs ({count})",
+  "state.starting": "Work VM starting",
+  "state.stopped": "Work VM stopped ({reason})",
+  "state.stopped.plain": "Work VM stopped",
+  "state.reason.session_paused": "session paused",
+  "state.reason.credit_exhausted": "credit used up",
+  "panel.phase.stopped": "stopped – starts again on next use",
+  "run.log": "Open full log"
 }

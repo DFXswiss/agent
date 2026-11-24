@@ -1,0 +1,15 @@
+{
+  "title": "Log",
+  "close": "Close log",
+  "loading": "Loading log…",
+  "failed": "The log could not be read: {reason}",
+  "part": "Part {index} of {count}",
+  "first": "Start",
+  "previous": "Previous part",
+  "next": "Next part",
+  "last": "Jump to end",
+  "download": "Download",
+  "downloading": "Downloading…",
+  "download-failed": "Download failed: {reason}",
+  "truncated": "Truncated: only the last {kept} MiB of {total} MiB are kept."
+}

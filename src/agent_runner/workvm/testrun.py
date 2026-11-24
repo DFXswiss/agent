@@ -174,7 +174,6 @@ class TestRuns:
     workvms: WorkVms
     store: Store
     capture: Capture
-    env_for: Callable[[OperationContext], Any] = field(default=lambda ctx: ctx.context)
     poll_seconds: float = POLL_SECONDS
     clock: Callable[[], float] = time.monotonic
     active: dict[str, Active] = field(default_factory=dict)
@@ -188,7 +187,7 @@ class TestRuns:
         with tempfile.TemporaryDirectory(dir=self.workvms.deps.scratch) as scratch:
             exported = Path(scratch) / "export.tar"
             try:
-                await export_workspace(self.env_for(ctx), session, exported)
+                await export_workspace(ctx.env, session, exported)
             except CallFailed as failed:
                 raise OperationFailed("upstream_error", retryable=True, message=failed.message) from None
             manifest = sync.read_export(exported).manifest

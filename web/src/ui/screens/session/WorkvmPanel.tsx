@@ -1,10 +1,14 @@
-// The work VM panel of a session (13-work-vm.md section 10, KONZEPT ideas 27, 28 and 46): the state of the session's
-// work VM – none, starting (countdown to the 10 s target while its `workvm.request` operation is open), running or
-// deleted with the reason –, its size, the runtime of this VM (ticking every second while it runs), and the runs of
-// the session (command, state, exit code, duration, stored output: the `workvm.run` chat item) in a collapsed list.
+// The work VM panel of a session (13-work-vm.md section 10, KONZEPT ideas 27, 28 and 46, ADR-078): the state of the
+// session's work VM – none, starting (countdown to the 10 s target while its `workvm.request` operation is open or
+// an implicit start wrote `starting`), running, stopped (paused session; it starts again on the next use) or deleted
+// with the reason –, its size, the runtime of this VM (ticking every second while it runs), the runs of the session
+// (command, state, exit code, duration, stored output and full log: the `workvm.run` chat item) and its test runs
+// (latest per run, the newest `PANEL_TESTS`: state, summary and log, the `test.run` chat item), each in a collapsed
+// list.
 // The panel has no "release" button: only the session can request operations (decision UI-1 of KOR-29); the VM is
 // torn down when the session releases it, after the idle time or when the session ends.
 import { useEffect, useMemo } from 'react';
+import { selectTestRuns } from '../../../core/chat/testrun';
 import {
   formatRuntime,
   selectWorkvmRequests,
@@ -17,13 +21,18 @@ import {
 } from '../../../core/chat/workvm';
 import { parseTime } from '../../../core/encoding/time';
 import { ensureOperations } from '../../../core/operations/load';
-import { FINAL_STATES } from '../../../core/store/slices/operations';
-import { chatItem as runItem } from '../../chat-items/workvm.run';
+import { TestRunView } from '../../chat-items/test.run';
+import { RunView } from '../../chat-items/workvm.run';
+import { useStateTitle } from '../../chat-items/workvm.state';
+import { OpenLog } from '../../logs/LogView';
 import { Digits, Ring, useSeconds } from '../../countdown/parts';
 import { TICK_MS, useNow } from '../../countdown/useNow';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
+
+/** At most this many test runs (the newest) are listed (a long session must not grow the panel without bound). */
+export const PANEL_TESTS = 50;
 
 function Facts({ vm, now }: { readonly vm: WorkvmState; readonly now: number }) {
   const { t, locale } = useI18n();
@@ -65,16 +74,21 @@ export function WorkvmPanel({
     useMemo(() => selectWorkvmRuns(wg, task, session), [wg, task, session]),
     app.store,
   );
+  const tests = useStore(
+    useMemo(() => selectTestRuns(wg, task, session), [wg, task, session]),
+    app.store,
+  );
   const requests = useStore(
     useMemo(() => selectWorkvmRequests(session), [session]),
     app.store,
   );
+  const stateTitle = useStateTitle();
   useEffect(() => {
     ensureOperations(app.tasks, task).catch(() => undefined);
   }, [app, task]);
-  const opening = requests.some((row) => !FINAL_STATES.has(row.state));
-  const live = states.some((state) => state.state === 'created');
-  const now = useNow(opening || live, opening && !live ? TICK_MS : 1000);
+  // the phase does not depend on the time: tick fast while starting, every second while running
+  const phase = workvmPanel(states, requests, 0).phase;
+  const now = useNow(phase === 'starting' || phase === 'running', phase === 'starting' ? TICK_MS : 1000);
   const panel = workvmPanel(states, requests, now);
   return (
     <section
@@ -86,11 +100,7 @@ export function WorkvmPanel({
       <h2 id="workvm-panel-title" className="flex flex-wrap items-center gap-2 text-base font-semibold">
         {t('workvm.panel.title')}
         <span className="text-sm font-normal text-gray-700" data-testid="workvm.panel.state">
-          {panel.phase === 'deleted'
-            ? panel.vm!.reason === null
-              ? t('workvm.state.deleted.plain')
-              : t('workvm.state.deleted', { reason: t(`workvm.state.reason.${panel.vm!.reason}`) })
-            : t(`workvm.panel.phase.${panel.phase}`)}
+          {panel.phase === 'deleted' ? stateTitle(panel.vm!) : t(`workvm.panel.phase.${panel.phase}`)}
         </span>
       </h2>
       {panel.phase === 'starting' && (
@@ -105,7 +115,9 @@ export function WorkvmPanel({
           </p>
         </div>
       )}
-      {(panel.phase === 'running' || panel.phase === 'deleted') && <Facts vm={panel.vm!} now={now} />}
+      {(panel.phase === 'running' || panel.phase === 'stopped' || panel.phase === 'deleted') && (
+        <Facts vm={panel.vm!} now={now} />
+      )}
       <p className="text-xs text-gray-600" data-testid="workvm.panel.note">
         {t(panel.phase === 'none' ? 'workvm.panel.none' : 'workvm.panel.release')}
       </p>
@@ -117,16 +129,36 @@ export function WorkvmPanel({
           <ul className="flex flex-col gap-2">
             {runs.map((run) => (
               <li key={run.job_id}>
-                <runItem.Component
-                  item={{
-                    key: run.job_id,
-                    kind: runItem.kind,
-                    at: parseTime(run.started_at),
-                    seq: 0,
-                    sessionId: session,
-                    author: null,
-                    body: run,
-                  }}
+                <RunView
+                  run={run}
+                  at={parseTime(run.started_at)}
+                  log={
+                    (run.log ?? null) === null ? null : (
+                      <OpenLog source={{ wg, task, ref: run.job_id, log: run.log! }} label={t('workvm.run.log')} />
+                    )
+                  }
+                />
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {tests.length > 0 && (
+        <details data-testid="workvm.panel.tests">
+          <summary className="flex min-h-11 cursor-pointer items-center text-sm text-blue-800">
+            {t('testrun.panel.runs', { count: tests.length })}
+          </summary>
+          <ul className="flex flex-col gap-2">
+            {tests.slice(0, PANEL_TESTS).map((run) => (
+              <li key={run.run_id}>
+                <TestRunView
+                  run={run}
+                  at={parseTime(run.started_at)}
+                  log={
+                    run.log === null ? null : (
+                      <OpenLog source={{ wg, task, ref: run.run_id, log: run.log }} label={t('testrun.log')} />
+                    )
+                  }
                 />
               </li>
             ))}

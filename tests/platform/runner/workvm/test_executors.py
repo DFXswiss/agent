@@ -51,6 +51,7 @@ def test_registered_executors() -> None:
     assert {
         "workvm.request": executors.request_workvm,
         "workvm.release": executors.release_workvm,
+        "test.run": executors.run_tests,
     } == executors.EXECUTORS
 
 
@@ -78,3 +79,17 @@ def test_with_work_vms_the_manager_decides(monkeypatch: pytest.MonkeyPatch) -> N
     assert asyncio.run(executors.request_workvm(operation_context({"size": "large"}))) == {"workvm_id": "wvm-0a1b2c3d"}
     assert asyncio.run(executors.release_workvm(operation_context({"scope": "session"}))) == {"released": True}
     assert workvms.calls == [("request", SESSION, {"size": "large"}), ("release", SESSION, {"scope": "session"})]
+
+
+def test_a_test_run_goes_to_the_test_runs_or_fails_without_work_vms(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeRuns:
+        async def execute(self, ctx: OperationContext) -> dict[str, Any]:
+            return {"run_id": "tr-000000000001", "params": dict(ctx.params)}
+
+    monkeypatch.setattr(executors, "testruns_for", lambda context: None)
+    with pytest.raises(OperationFailed) as caught:
+        asyncio.run(executors.run_tests(operation_context({"kind": "unit", "command": "x"})))
+    assert caught.value.code == "workvm_unavailable"
+    monkeypatch.setattr(executors, "testruns_for", lambda context: FakeRuns() if context is CONTEXT else None)
+    result = asyncio.run(executors.run_tests(operation_context({"kind": "unit", "command": "x"})))
+    assert result == {"run_id": "tr-000000000001", "params": {"kind": "unit", "command": "x"}}

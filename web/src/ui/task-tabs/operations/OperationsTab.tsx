@@ -131,7 +131,7 @@ function Detail({
       testId="operations.detail"
       onClose={onClose}
     >
-      <CardBody view={view} org={org} task={row.task_id} />
+      <CardBody view={view} org={org} wg={row.wg_id} task={row.task_id} />
       {failed !== null && (
         <p role="alert" className="text-sm text-red-800" data-testid="operations.detail.failed">
           {t('operations.detail.failed', { reason: error(failed).title })}
@@ -207,7 +207,7 @@ function Item({ org, row }: { readonly org: string; readonly row: OperationRow }
       <time className="text-xs text-gray-500" dateTime={row.created_at}>
         {time(row.created_at)}
       </time>
-      <CardBody view={view} org={org} task={row.task_id} />
+      <CardBody view={view} org={org} wg={row.wg_id} task={row.task_id} />
       <Attribution org={org} row={row} />
       <Link
         className="min-h-11 self-start py-2 text-sm text-blue-800 underline"

@@ -81,5 +81,8 @@
   "detail.retryable": "Kann wiederholt werden",
   "detail.loading": "Details werden geladen …",
   "detail.failed": "Die Details konnten nicht geladen werden: {reason}",
-  "detail.close": "Schließen"
+  "detail.close": "Schließen",
+  "type.test.run": "Tests ausführen",
+  "fact.run": "Lauf",
+  "fact.exit_code": "Exit-Code"
 }

@@ -298,6 +298,10 @@ class World:
     )
     sleeps: list[float] = field(default_factory=list)
     on_sleep: Callable[[World], None] | None = None
+    exhausted: set[str] = field(default_factory=set)
+    """Organizations whose credit is used up (`Deps.exhausted`)."""
+    capture: Any = None
+    """`Deps.capture` (None: long job output is not kept as a log)."""
     helper: FakeHelper = field(init=False)
 
     def __post_init__(self) -> None:
@@ -365,4 +369,6 @@ class World:
             log=self.logs.append,
             sleep=sleep,
             scratch=self.tmp,
+            exhausted=lambda org_id: org_id in world.exhausted,
+            capture=world.capture,
         )

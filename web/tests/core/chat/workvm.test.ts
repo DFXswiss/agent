@@ -1,6 +1,7 @@
-// The work VM events (13-work-vm.md sections 8 and 10): the body checks of `workvm.run` and `workvm.state` against the
-// contract, the latest item per job, the truncated output, the runtime sum of a session and a task, its h/min/s text
-// and the memoized selector of the valid `workvm.state` bodies.
+// The work VM events (13-work-vm.md sections 8 and 10, ADR-078): the body checks of `workvm.run` (with its optional
+// `log`) and `workvm.state` (also `starting` and `stopped`) against the contract, the latest item per job and per test
+// run, the truncated output, the runtime sum of a session and a task (a stopped VM ends its running time), its h/min/s
+// text, the memoized selectors and the panel phases (also an implicit start and a stopped VM).
 import { describe, expect, it } from 'vitest';
 import {
   formatRuntime,
@@ -62,6 +63,23 @@ describe('parseWorkvmRun', () => {
     expect(parseWorkvmRun(run({ command: '😀'.repeat(4096) }))).not.toBeNull();
   });
 
+  it('accepts the optional log, also null', () => {
+    const log = { object_id: OBJECT, bytes: 300_000, stored_bytes: 300_000, truncated: false };
+    expect(parseWorkvmRun({ ...run(), log })).not.toBeNull();
+    expect(parseWorkvmRun({ ...run(), log: null })).not.toBeNull();
+  });
+
+  it.each([
+    ['not an object', 'x'],
+    ['a missing field', { object_id: OBJECT, bytes: 1, stored_bytes: 1 }],
+    ['an extra field', { object_id: OBJECT, bytes: 1, stored_bytes: 1, truncated: false, more: 1 }],
+    ['a bad object id', { object_id: 'x', bytes: 1, stored_bytes: 1, truncated: false }],
+    ['negative bytes', { object_id: OBJECT, bytes: -1, stored_bytes: 1, truncated: false }],
+    ['a non-boolean truncated', { object_id: OBJECT, bytes: 1, stored_bytes: 1, truncated: 'no' }],
+  ])('refuses a log that is %s', (_, log) => {
+    expect(parseWorkvmRun({ ...run(), log })).toBeNull();
+  });
+
   it.each([
     ['not an object', null],
     ['an array', []],
@@ -87,8 +105,12 @@ describe('parseWorkvmRun', () => {
 });
 
 describe('parseWorkvmState', () => {
-  it('accepts created and deleted bodies', () => {
+  it('accepts created, starting, stopped and deleted bodies', () => {
     expect(parseWorkvmState(vmState())).toEqual(vmState());
+    expect(parseWorkvmState(vmState({ state: 'starting', implicit: true }))).not.toBeNull();
+    const stopped = vmState({ state: 'stopped', reason: 'session_paused', runtime_ms: 5 });
+    expect(parseWorkvmState(stopped)).toBe(stopped);
+    expect(parseWorkvmState(vmState({ state: 'deleted', reason: 'credit_exhausted' }))).not.toBeNull();
     const deleted = vmState({
       state: 'deleted',
       reason: 'idle',
@@ -103,7 +125,7 @@ describe('parseWorkvmState', () => {
 
   it.each([
     ['not an object', 'x'],
-    ['an unknown state', vmState({ state: 'stopped' })],
+    ['an unknown state', vmState({ state: 'paused' })],
     ['an unknown scope', vmState({ scope: 'org' })],
     ['an unknown size', vmState({ size: 'huge' })],
     ['too many cpus', vmState({ cpus: 65 })],
@@ -137,6 +159,17 @@ describe('latestRuns', () => {
     expect(latestRuns(items).map((item) => item.id)).toEqual([2, 3, 4, 5, 6]);
     expect(latestRuns([])).toEqual([]);
   });
+
+  it('keeps the latest item of a test run, and keeps jobs and runs apart', () => {
+    const test = (state: string) => ({ ...testRunBody(), state });
+    const items = [
+      { kind: 'test.run', body: test('running'), id: 1 },
+      { kind: 'workvm.run', body: run(), id: 2 },
+      { kind: 'test.run', body: { broken: true }, id: 3 },
+      { kind: 'test.run', body: test('failed'), id: 4 },
+    ];
+    expect(latestRuns(items).map((item) => item.id)).toEqual([2, 3, 4]);
+  });
 });
 
 describe('workvmRuntime', () => {
@@ -156,6 +189,19 @@ describe('workvmRuntime', () => {
       vmState({ workvm_id: 'wvm-00000003', started_at: '2026-11-21T12:59:00.000Z' }),
     ];
     expect(workvmRuntime(states, now)).toEqual({ ms: 160_000, vms: 3, running: true });
+  });
+
+  it('ends the running time of a stopped VM with its runtime, and counts it again once it is created again', () => {
+    const stopped = vmState({ state: 'stopped', reason: 'session_paused', runtime_ms: 70_000 });
+    expect(workvmRuntime([vmState(), stopped], now)).toEqual({ ms: 70_000, vms: 1, running: false });
+    const again = vmState({ started_at: '2026-11-21T12:59:00.000Z' });
+    expect(workvmRuntime([vmState(), stopped, vmState({ state: 'starting' }), again], now)).toEqual({
+      ms: 60_000,
+      vms: 1,
+      running: true,
+    });
+    // a VM that is only starting has no runtime yet
+    expect(workvmRuntime([vmState({ state: 'starting' })], now)).toEqual({ ms: 0, vms: 0, running: false });
   });
 
   it('never counts negative time of a VM that started after now', () => {
@@ -179,6 +225,26 @@ describe('formatRuntime', () => {
   ])('formats %d ms as %s', (ms, text) => {
     expect(formatRuntime(ms)).toBe(text);
   });
+});
+
+const OBJECT = '0190f000-0000-7000-8000-00000000f001';
+const testRunBody = () => ({
+  run_id: 'tr-0123456789ab',
+  operation_id: '0190f000-0000-7000-8000-00000000c009',
+  kind: 'unit',
+  command: 'npm test',
+  cwd: '/workspace',
+  size: 'standard',
+  state: 'passed',
+  exit_code: 0,
+  started_at: '2026-11-21T12:00:00.000Z',
+  ended_at: '2026-11-21T12:01:00.000Z',
+  duration_ms: 60_000,
+  ready_ms: 4_000,
+  summary: null,
+  log: null,
+  tail: '',
+  reason: null,
 });
 
 const WG = 'wg';
@@ -351,6 +417,30 @@ describe('workvmPanel', () => {
     const bDeleted = { ...b, state: 'deleted', reason: 'released', runtime_ms: 7 } as WorkvmState;
     expect(workvmPanel([b, bDeleted, a, aDeleted], [], T0)).toMatchObject({ phase: 'deleted', vm: bDeleted });
     expect(workvmPanel([b, bDeleted], [request()], T0)).toMatchObject({ phase: 'starting', vm: bDeleted });
+  });
+
+  it('counts down from an implicit start until the VM is created or deleted', () => {
+    const starting = vmState({ state: 'starting', implicit: true, started_at: '2026-11-21T12:00:01.000Z' });
+    expect(workvmPanel([starting], [], T0 + 4_000)).toEqual({
+      phase: 'starting',
+      vm: starting,
+      elapsedMs: 3_000,
+      remainingMs: START_TARGET_MS - 3_000,
+      overdue: false,
+    });
+    // the older of an open request and an implicit start counts
+    expect(workvmPanel([starting], [request()], T0 + 4_000).elapsedMs).toBe(4_000);
+    const created = vmState({ implicit: true, started_at: '2026-11-21T12:00:01.000Z' });
+    expect(workvmPanel([starting, created], [], T0 + 4_000)).toMatchObject({ phase: 'running', vm: created });
+    const failed = { ...starting, state: 'deleted', reason: 'failed' } as WorkvmState;
+    expect(workvmPanel([starting, failed], [], T0 + 4_000)).toMatchObject({ phase: 'deleted', vm: failed });
+  });
+
+  it('shows a stopped VM as stopped, and starting again once the resumed session starts it', () => {
+    const stopped = vmState({ state: 'stopped', reason: 'session_paused', runtime_ms: 9 });
+    expect(workvmPanel([vmState(), stopped], [], T0)).toMatchObject({ phase: 'stopped', vm: stopped });
+    const again = vmState({ state: 'starting', started_at: '2026-11-21T12:10:00.000Z' });
+    expect(workvmPanel([vmState(), stopped, again], [], T0 + 600_000)).toMatchObject({ phase: 'starting' });
   });
 
   it('keeps a deleted VM deleted when its created event arrives after the deleted one', () => {

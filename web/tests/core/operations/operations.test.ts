@@ -17,6 +17,7 @@ import {
   purposeOf,
   selectOperation,
   subjectOf,
+  SUBJECT_CHARS,
 } from '../../../src/core/operations/view';
 import { HubError } from '../../../src/core/net/signedFetch';
 import type { EventEntry } from '../../../src/core/store/slices/events';
@@ -274,6 +275,28 @@ describe('rounds and sign-out', () => {
 });
 
 describe('operationView', () => {
+  it('reads the checked result of a succeeded test run, and nothing of other types or a bad result', async () => {
+    const t = await taskWorld();
+    const testResult = {
+      run_id: 'tr-0123456789ab',
+      state: 'failed',
+      exit_code: 1,
+      duration_ms: 1000,
+      ready_ms: 500,
+      summary: { passed: 2, failed: 1, skipped: null, errors: null },
+      log: null,
+      tail: '',
+      reason: null,
+    };
+    const p = event(t, 'operation.params', params('test.run', { kind: 'unit', command: 'npm test' }));
+    const r = event(t, 'operation.result', succeeded(testResult));
+    expect(operationView([p, r], OP, row(t, { state: 'succeeded', type: 'test.run' })).testRun).toEqual(testResult);
+    const bad = event(t, 'operation.result', succeeded({ ...testResult, state: 'green' }));
+    expect(operationView([p, bad], OP, row(t, { type: 'test.run' })).testRun).toBeNull();
+    expect(operationView([r], OP, row(t, { type: 'github.commit' })).testRun).toBeNull();
+    expect(operationView([p], OP, row(t, { type: 'test.run' })).testRun).toBeNull();
+  });
+
   it('joins the row with the verified params and result', async () => {
     const t = await taskWorld();
     const p = event(
@@ -448,6 +471,12 @@ describe('subjectOf and factsOf', () => {
     expect(subjectOf('workvm.request', { size: 'large' })).toBe('large');
     expect(subjectOf('workvm.release', {})).toBe('task');
     expect(subjectOf('workvm.release', { scope: 'session' })).toBe('session');
+    expect(subjectOf('test.run', { kind: 'unit', command: 'npm test' })).toBe('unit: npm test');
+    expect(subjectOf('test.run', { command: 'make check' })).toBe('custom: make check');
+    expect(subjectOf('test.run', { kind: 'lint' })).toBeNull();
+    expect(subjectOf('test.run', { kind: 'lint', command: `${'ä'.repeat(SUBJECT_CHARS)}tail` })).toBe(
+      `lint: ${'ä'.repeat(SUBJECT_CHARS)}…`,
+    );
     expect(subjectOf('github.get_issue', { repo: 'a/b', number: 3 })).toBe('a/b#3');
     expect(subjectOf('github.list_issues', { repo: 'a/b', state: 'all' })).toBe('a/b');
     expect(subjectOf('github.create_issue', { repo: 'a/b', title: 'Bug' })).toBe('a/b: Bug');
@@ -487,6 +516,11 @@ describe('subjectOf and factsOf', () => {
       { label: 'workvm', text: 'wvm-0123abcd' },
     ]);
     expect(factsOf('workvm.release', { released: false }, none)).toEqual([]);
+    expect(factsOf('test.run', { run_id: 'tr-0123456789ab', exit_code: 1 }, none)).toEqual([
+      { label: 'run', text: 'tr-0123456789ab' },
+      { label: 'exit_code', text: '1' },
+    ]);
+    expect(factsOf('test.run', { run_id: 'tr-0123456789ab', exit_code: null }, none)).toHaveLength(1);
     expect(factsOf('custom.type', {}, none)).toEqual([]);
   });
 

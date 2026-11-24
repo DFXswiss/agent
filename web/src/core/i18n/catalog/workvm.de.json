@@ -35,5 +35,12 @@
   "panel.overdue": "Verzögert: startet seit {seconds} s.",
   "panel.none": "Diese Session hat keine Arbeits-VM. Sie fordert eine an, sobald sie etwas ausführen muss.",
   "panel.release": "Die Session gibt ihre Arbeits-VM zurück, wenn sie fertig ist; spätestens nach der Leerlaufzeit oder mit dem Ende der Session wird sie abgebaut. Logs und Ergebnisse bleiben bei den Läufen.",
-  "panel.runs": "Läufe ({count})"
+  "panel.runs": "Läufe ({count})",
+  "state.starting": "Arbeits-VM wird gestartet",
+  "state.stopped": "Arbeits-VM angehalten ({reason})",
+  "state.stopped.plain": "Arbeits-VM angehalten",
+  "state.reason.session_paused": "Session pausiert",
+  "state.reason.credit_exhausted": "Guthaben aufgebraucht",
+  "panel.phase.stopped": "angehalten – startet bei der nächsten Nutzung wieder",
+  "run.log": "Vollständiges Log öffnen"
 }

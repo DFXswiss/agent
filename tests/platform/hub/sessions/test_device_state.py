@@ -247,3 +247,14 @@ def test_a_refused_prompt_is_consumed(world: World, fleet: Fleet) -> None:
     answer = state(fleet, desk.scene.device)
     assert answer["pending_prompts"] == []
     assert answer["delivered_prompt_event_ids"] == {session: ids}
+
+
+def test_a_session_of_a_closed_task_says_so(world: World, fleet: Fleet) -> None:
+    """ADR-078 section 5: the runner deletes the work VMs of a closed task at once; absent means open."""
+    desk = org_desk(world)
+    task, session = desk.started()
+    _other, open_session = desk.started()
+    desk.execute("UPDATE hub.task SET state = 'closed', closed_at = %s WHERE id = %s", desk.hub.clock(), task)
+    found = {item["session_id"]: item for item in state(fleet, desk.scene.device)["sessions"]}
+    assert found[session]["task_closed"] is True
+    assert "task_closed" not in found[open_session]

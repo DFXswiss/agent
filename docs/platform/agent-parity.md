@@ -122,6 +122,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | session-view | screens/session | `session show --session` | done |
 | session-workvm | screens/session (work VM panel and runtime, KOR-29) | `session workvm --session` | done |
 | task-workvm-items | screens/task (work VM runs and states in the chat) | `task show`, `task follow` | done |
+| test-runs | screens/session, screens/task (test runs: list, show, log; ADR-078, KOR-43) | `test list --session\|--task`, `test show --session\|--task`, `test log --session\|--task --offset --limit --output` | done |
 | task-waiting | screens/task (held operations: the waiting card that asks the person who gave the instruction to connect GitHub, ADR-066, or to take the one step that gives the connection access to the repository, ADR-077) | `task show`, `task follow`, `github connect` | done |
 | task-guest-errors | screens/task (errors the guest reported, `session.error`, ADR-064) | `task show`, `task follow` | done |
 | task-runtime | screens/task (runtime of the task and its sessions, reachability of the session's device, KOR-40) | `task show`, `session show --session` | done |
@@ -241,6 +242,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/tasks/{task}` | task-view, task-runtime |
 | `GET /v1/tasks/{task}/charges` | task-charges |
 | `POST /v1/tasks/{task}/close` | task-close |
+| `GET /v1/tasks/{task}/logs/{object}` | test-runs |
+| `GET /v1/tasks/{task}/logs/{object}/chunks/{index}` | test-runs |
 | `GET /v1/tasks/{task}/operations` | operations, session-workvm, task-waiting |
 | `PUT /v1/tasks/{task}/placement` | task-create, task-view |
 | `POST /v1/tasks/{task}/prompts` | task-prompt |
