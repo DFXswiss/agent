@@ -49,7 +49,7 @@ The community tables (`community_*`, migration 0014) are specified in `14-commun
 
 | Table | Columns | Notes |
 |---|---|---|
-| `org` | `id` PK, `private` bool, `platform_access` bool [P] (true for private orgs created from a platform invitation; else from `org_platform_access` platform-log entries, ADR-026), `default_wg` uuid, `created_by`, `created_at`, `log_head_seq` int, `log_head_hash` text, `rotation_pending` jsonb (list of `{scope,scope_id}`) | |
+| `org` | `id` PK, `private` bool, `platform_access` bool [P] (true for private orgs created from a platform invitation; else from the latest `org_platform_access` platform-log entry, ADR-026, and without one from the switch `open_platform_access`, ADR-077), `platform_access_grant` bool NULL [P] (the latest `org_platform_access` of the org; migration 0022), `default_wg` uuid, `created_by`, `created_at`, `log_head_seq` int, `log_head_hash` text, `rotation_pending` jsonb (list of `{scope,scope_id}`) | |
 | `membership_entry` [AO] | (`org_id`,`seq`) PK, `entry_text` text (canonical JSON of the entry), `entry_hash` text UNIQUE, `type`, `by_id`, `subject_id` NULL, `received_at` | appended under `SELECT … FOR UPDATE` of `org` row |
 | `platform_entry` [AO] | `seq` PK, `entry_text`, `entry_hash` UNIQUE, `type`, `subject_id` NULL, `received_at` | |
 | `org_member` [P] | (`org_id`,`principal_id`) PK, `kind`, `role` CHECK in (`admin`,`member`,`device`), `joined_seq`, `removed_seq` NULL, `consented` bool default true | `consented` false for a user that entered by `admit` (ADR-060): the org's devices are not eligible for its `CK` |
@@ -58,7 +58,8 @@ The community tables (`community_*`, migration 0014) are specified in `14-commun
 | `wg_device` [P] | (`wg_id`,`device_id`) PK, `assigned_seq`, `unassigned_seq` NULL | effective assignments: explicit and through the organization (ADR-075) |
 | `org_device` [P] **(new, ADR-075)** | (`org_id`,`device_id`) PK, `assigned_seq`, `unassigned_seq` NULL | assignments to the whole organization |
 | `wg_placement` **(new, ADR-075)** | `wg_id` PK, `device_id`, `vm_id` NULL, `set_by`, `set_at` | the workgroup's default device and VM for new tasks |
-| `platform_role` [P] | (`user_id`,`role`) PK, `granted_seq`, `revoked_seq` NULL | role `inviter` |
+| `platform_role` [P] | (`user_id`,`role`) PK, `granted_seq`, `revoked_seq` NULL | role `inviter` or `operator` (ADR-077) |
+| `platform_policy` [P] | `name` PK (`open_platform_access`, `open_platform_invites`), `on` bool, `seq` | the switches of the platform log (ADR-077, migration 0022); a switch without a row is off |
 | `scope_epoch` | (`scope`,`scope_id`,`epoch`) PK, `created_at`, `created_seq` NULL | scope ∈ `org`,`wg`,`cred`; current = max epoch |
 | `key_wrap` | (`scope`,`scope_id`,`epoch`,`recipient_id`) PK, `wrap` bytea, `wrapped_by`, `sig` bytea, `created_at` | insert-only by convention; `org`/`wg` wraps are deleted when the recipient is removed from the org, `cred` wraps are kept (the browser rotates `CK` away from holders it does not entitle, `06-web.md` §11 job 5, KOR-04) |
 
@@ -115,7 +116,7 @@ main session failed and no retry is pending; `closed` only by user action.
 |---|---|---|
 | `whiteboard_entry` [P] | `id` PK (= `ref`), `org_id`, `level` CHECK in (`org`,`workgroup`,`task`), `wg_id` NULL, `task_id` NULL, `author_id`, `created_event_id`, `latest_event_id`, `created_at`, `updated_at`, `deleted` bool, `notify` bool | projection of whiteboard events (history = the events) |
 | `session_ping` | `id` PK, `session_id`, `kind` CHECK in (`whiteboard.entry`,`subagent.finished`,`operation.finished`), `level` NULL, `ref`, `created_at`, `delivered_at` NULL | durable content-free pings; undelivered rows are returned in `GET /v1/device/state`; set delivered by the outbox audit item `ping.delivered`; the hub writes only `whiteboard.entry` rows (runner pings live in the runner's `ping` table, KOR-07) |
-| `notification` | `id` PK, `recipient_id`, `kind` CHECK in (`whiteboard.entry`,`task.idle`,`task.failed`,`task.attention`,`invite.accepted`,`rotation.required`,`agent.account_change`,`org.admitted`), `org_id`, `wg_id` NULL, `task_id` NULL, `ref` NULL, `created_at`, `read_at` NULL | content-free |
+| `notification` | `id` PK, `recipient_id`, `kind` CHECK in (`whiteboard.entry`,`task.idle`,`task.failed`,`task.attention`,`invite.accepted`,`rotation.required`,`agent.account_change`,`org.admitted`,`operator.request`,`device.needed`), `org_id` (NULL only for `agent.account_change` and `operator.request`, ADR-077), `wg_id` NULL, `task_id` NULL, `ref` NULL, `created_at`, `read_at` NULL | content-free |
 
 ### 2.7 Credentials and device requests
 
