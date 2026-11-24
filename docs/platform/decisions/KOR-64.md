@@ -44,3 +44,13 @@ personal message that is shown where the approval happens. E-25 applies: only wh
    message of a pairing has no agent-side view; the parity table says so.
 6. **No hub change**: neither way passes through hub logic; no migration, no API contract change. Contract changes:
    the package schema, its fixture and the shared vectors (`contracts/changes/KOR-64.md`).
+
+## Review
+7. Independent review: no high or medium findings. Fixed (low): the `register --remote` row of
+   `11-agent-access.md` §8.4 and the `/invite` route row of `06-web.md` §2.4 name the message; the form field has no
+   `maxLength` (it counted UTF-16 units, the rule counts characters – the check is `isMessageText`); `04-crypto.md`
+   §4.6 says that clients add `message` to user invitations only instead of stating an unchecked rule. Kept (low):
+   a blank `--message` is `invalid_argument` in the tool (an explicit option with nothing in it is a mistake), while
+   the web form treats an empty field as no message (the field is optional); an invalid message shows the generic
+   `params_invalid` of the form (E-25); the shared component stays next to `AgentCode` under `screens/connect`, as
+   the invitation screens already import from there.
