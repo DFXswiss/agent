@@ -31,7 +31,7 @@ function Sender({ org, prompt }: { readonly org: string; readonly prompt: Queued
 
 export function PromptQueue({ task, writer }: { readonly task: TaskRow; readonly writer: boolean }) {
   const { app } = useAppEnv();
-  const { t, error } = useI18n();
+  const { t, error, locale } = useI18n();
   const queue = useStore((state) => state.queue.byTask[task.task_id] ?? null, app.store);
   const me = useStore((state) => state.me.userId, app.store);
   const [busy, setBusy] = useState<string | null>(null);
@@ -54,7 +54,7 @@ export function PromptQueue({ task, writer }: { readonly task: TaskRow; readonly
       data-count={count}
     >
       <h3 id="chat-queue-heading" className="text-sm font-semibold" data-testid="chat.queue.heading">
-        {count === 1 ? t('queue.heading.one') : t('queue.heading.other', { count })}
+        {t(`queue.heading.${new Intl.PluralRules(locale).select(count)}`, { count })}
       </h3>
       <ol className="flex flex-col gap-2 text-sm">
         {queue.prompts.map((prompt) => (
