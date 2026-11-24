@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any
+from uuid import UUID
 
 from agent_hub.billing import binding
 from agent_hub.crypto.encoding import format_time, parse_time
+from agent_hub.notifications import rules
 from agent_hub.stream.publish import MemoryPublisher
 from tests.platform.hub.events.support import Json
 from tests.platform.hub.models.support import Keys
@@ -134,7 +136,7 @@ def test_the_consent_needs_the_write_right(keys: Keys) -> None:
     assert keys.rows("SELECT model_consent FROM hub.task WHERE id = %s", task) == [(False,)]
 
 
-def test_a_model_switch_is_audited_for_the_session(keys: Keys) -> None:
+def test_a_model_switch_is_audited_for_the_session(keys: Keys, published: MemoryPublisher) -> None:
     task, session = keys.bill.meter.session("subscription")
     detail = {
         "from_access": "subscription",
@@ -159,3 +161,37 @@ def test_a_model_switch_is_audited_for_the_session(keys: Keys) -> None:
     )
     rows = keys.rows("SELECT task_id::text, detail FROM hub.audit WHERE action = 'session.model_switched'")
     assert rows == [(task, detail)]
+    # the task's owner is notified (code and metadata only, ADR-020)
+    writer, wg = keys.bill.scene.writer, keys.bill.meter.desk.wg
+    notices = keys.rows(
+        "SELECT recipient_id::text, org_id::text, wg_id::text, task_id::text, ref FROM hub.notification"
+        " WHERE kind = 'model.switched'"
+    )
+    assert notices == [(writer.id, keys.org, wg, task, f"subscription:platform:{detail['until']}")]
+    frames = [entry for entry in published.items() if entry.frame == "notification"]
+    assert [(str(entry.audience.id), entry.data["ref"]) for entry in frames] == [(writer.id, notices[0][4])]
+    listed = writer.browser.get("/v1/notifications").json()
+    assert [item["kind"] for item in listed["notifications"]] == ["model.switched"]
+    # a release without a time
+    released = {**detail, "from_access": "platform", "to_access": "subscription", "cause": "released", "until": None}
+    assert keys.status("audit", {**body, "detail": released}, keys.device) == ("ok", None)
+    refs = keys.rows("SELECT ref FROM hub.notification WHERE kind = 'model.switched' ORDER BY created_at")
+    assert refs[-1] == ("platform:subscription:",)
+    # an owner who no longer reads the workgroup is not notified; a row without a session names no task
+    keys.execute(
+        "UPDATE hub.wg_access SET revoked_seq = granted_seq + 100 WHERE wg_id = %s AND user_id = %s", wg, writer.id
+    )
+    assert keys.status("audit", body, keys.device) == ("ok", None)
+    without = {key: value for key, value in body.items() if key != "session_id"}
+    assert keys.status("audit", {**without, "task_id": task}, keys.device) == ("ok", None)
+    assert keys.rows("SELECT count(*) FROM hub.notification WHERE kind = 'model.switched'") == [(2,)]
+    # other runner audit rows notify nobody
+    alert = {**body, "action": "runner.alert", "detail": {"alert": "disk_low", "value": None}}
+    assert keys.status("audit", alert, keys.device) == ("ok", None)
+    assert keys.rows("SELECT count(*) FROM hub.notification WHERE kind = 'model.switched'") == [(2,)]
+
+
+def test_a_switch_of_an_unknown_task_notifies_nobody(keys: Keys) -> None:
+    detail = {"from_access": "subscription", "to_access": "platform", "until": None}
+    with keys.hub.pool.connection() as connection:
+        assert rules.switch_rule(connection, UUID(new_id()), detail, keys.hub.clock()) == []

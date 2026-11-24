@@ -92,6 +92,14 @@ ALTER TABLE hub.charge ADD CONSTRAINT charge_scope_check CHECK (
 ALTER TABLE hub.charge DROP CONSTRAINT charge_device_id_origin_seq_key;
 ALTER TABLE hub.charge ADD CONSTRAINT charge_device_id_origin_seq_part_key UNIQUE (device_id, origin_seq, part);
 
+-- `model.switched`: the task's owner learns that a session changed its model access (ADR-080 section 5); replaced
+-- NOT VALID like in 0010, 0013, 0021 and 0023.
+ALTER TABLE hub.notification DROP CONSTRAINT notification_kind_check;
+ALTER TABLE hub.notification ADD CONSTRAINT notification_kind_check CHECK (kind IN (
+  'whiteboard.entry', 'task.idle', 'task.failed', 'task.attention', 'invite.accepted', 'rotation.required',
+  'agent.account_change', 'org.admitted', 'operator.request', 'device.needed', 'model.switched'))
+  NOT VALID;
+
 ALTER TABLE hub.outbox_receipt DROP CONSTRAINT outbox_receipt_item_kind_check;
 ALTER TABLE hub.outbox_receipt ADD CONSTRAINT outbox_receipt_item_kind_check CHECK (item_kind IN (
   'event', 'session_transition', 'vm_state', 'operation_transition', 'usage', 'quota', 'metrics', 'audit', 'wrap',

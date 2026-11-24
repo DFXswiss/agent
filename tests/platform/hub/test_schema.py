@@ -940,6 +940,7 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
                 "org.admitted",
                 "operator.request",
                 "device.needed",
+                "model.switched",
             ],
         ),
         ("device_request", "kind", ["github.connect", "claude.login", "credential.check", "mailbox.check"]),

@@ -7,6 +7,8 @@ handlers claimed with `BASE_KINDS`, ADR-037).
 - `dfx_key_state` (platform devices only): `issuer: true` enters the device in `hub.dfx_issuer`, `false` removes it
   (`agent_hub.models.dfx.issuer` elects among them).
 - `dfx_key_issued`, `dfx_key_usage` (platform devices only): `agent_hub.models.dfx.issued` and `usage_booked`.
+- `audit` (an extension after the outbox area's handler): a stored `session.model_switched` notifies the task's
+  owner (`agent_hub.notifications.rules.switch_rule`, published after the commit).
 - `usage` (an extension after the usage and billing handlers): the provider cost of a request an **org device** made
   on DFX access (`access_origin: platform`) is the weight of its session in the next booking of the device's key
   (`agent_hub.models.dfx.record_cost`; only while the device holds a live key of the session's org). Platform devices
@@ -22,8 +24,9 @@ from uuid import UUID
 from psycopg.types.json import Jsonb
 
 from agent_hub.models import dfx
+from agent_hub.notifications import rules
 from agent_hub.outbox.base import Handler, ItemContext, moment
-from agent_hub.outbox.bodies import DfxKeyStateBody, OperatorQuotaBody, UsageBody
+from agent_hub.outbox.bodies import AuditBody, DfxKeyStateBody, OperatorQuotaBody, UsageBody
 
 UPSERT_SNAPSHOT = (
     "INSERT INTO hub.operator_quota (device_id, at, snapshot, received_at) VALUES (%s, %s, %s, %s)"
@@ -63,12 +66,23 @@ def key_cost(item: ItemContext, body: UsageBody) -> None:
     dfx.record_cost(item.connection, org, item.device, UUID(body.session_id), body.delta.cost_micro_usd)
 
 
+def switch_notice(item: ItemContext, body: AuditBody) -> None:
+    """Notify the owner of the task of a model switch (module docstring)."""
+    if body.action != "session.model_switched" or body.session_id is None:
+        return
+    row = item.connection.execute("SELECT task_id FROM hub.session WHERE id = %s", (body.session_id,)).fetchone()
+    task = cast(tuple[UUID], row)[0]  # the base handler checked that the session runs on this device
+    rows = rules.switch_rule(item.connection, task, body.detail, item.now)
+    item.after.append(lambda: rules.publish_rows(rows))
+
+
 HANDLERS: Mapping[str, Handler] = {
     "operator_quota": operator_quota,
     "dfx_key_state": dfx_key_state,
     "dfx_key_issued": dfx.issued,
     "dfx_key_usage": dfx.usage_booked,
     "usage": key_cost,
+    "audit": switch_notice,
 }
 BASE_KINDS = frozenset({"operator_quota", "dfx_key_state", "dfx_key_issued", "dfx_key_usage"})
 """This area's handlers are the base handlers of these kinds (`agent_hub.outbox.chains`, ADR-037)."""

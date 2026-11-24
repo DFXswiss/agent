@@ -67,3 +67,11 @@ Hub first. An older hub refuses the new item kinds, the `limited` field, the wai
 (`request_invalid`); the runner therefore sends them only when the device state carries `model_fallback.api >= 1`. An
 older runner ignores the new device-state fields and never sends the new items. An older web shows an unknown
 attention reason with its category's generic text and ignores `fallback` and `wait_until`.
+
+## Notification kind `model.switched`
+
+`api/objects.json` `notification_row.kind` gains `model.switched` (ADR-080 section 5, ADR-020): when the hub stores
+the outbox audit `session.model_switched`, the task's owner (while they read the task's workgroup) gets a
+content-free notification with `org_id`, `wg_id`, `task_id` of the session's task and `ref` =
+`<from_access>:<to_access>:<until or empty>` (a new alternative of `ref`). Texts are the web's (code + metadata
+only). An older web shows an unknown kind with its generic text.

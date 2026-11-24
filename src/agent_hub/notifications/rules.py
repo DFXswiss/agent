@@ -35,6 +35,9 @@ A `notification` row is content-free: recipient, kind, org, workgroup, task, a r
   = the workgroup).
 - `invite.accepted` (`invite_rule`): to the admin who created the org invitation (while still an admin of the org;
   never to the accepting subject itself), `ref` = the subject (user or device).
+- `model.switched` (`switch_rule`, KOR-50, ADR-080 section 5): to the task owner (while the owner reads the task's
+  workgroup) when the hub stores a runner's audit row `session.model_switched`, `ref` =
+  `<from_access>:<to_access>:<until or empty>`; `created_at` = the receive time.
 - `rotation.required` is no longer created (KOR-34, ADR-058 section 3: owed rotations run silently in the admins'
   browsers, 06-web.md section 11 job 4); the kind stays valid so that existing rows still list and render.
 
@@ -68,6 +71,7 @@ LOG = logging.getLogger("agent_hub.notifications")
 WHITEBOARD, TASK_IDLE, TASK_FAILED = "whiteboard.entry", "task.idle", "task.failed"
 TASK_ATTENTION = "task.attention"
 INVITE_ACCEPTED, ROTATION_REQUIRED = "invite.accepted", "rotation.required"
+MODEL_SWITCHED = "model.switched"
 IDLE_AFTER = timedelta(seconds=10)
 COLUMNS = "id, recipient_id, kind, org_id, wg_id, task_id, ref, created_at, read_at"
 
@@ -376,6 +380,15 @@ def invite_rule(
     if duplicate is not None:
         return []
     return _write(connection, found[0], INVITE_ACCEPTED, now, org_id=org_id, ref=str(subject_id))
+
+
+def switch_rule(connection: Connection, task_id: UUID, detail: dict[str, Any], now: datetime) -> list[Notification]:
+    """`model.switched` to the task owner (module docstring)."""
+    task = connection.execute("SELECT org_id, wg_id, owner_id FROM hub.task WHERE id = %s", (task_id,)).fetchone()
+    if task is None or not _wg_reader(connection, task[1], task[2]):
+        return []
+    ref = f"{detail['from_access']}:{detail['to_access']}:{detail['until'] or ''}"
+    return _write(connection, task[2], MODEL_SWITCHED, now, org_id=task[0], wg_id=task[1], task_id=task_id, ref=ref)
 
 
 def publish_rows(rows: Iterable[Notification]) -> None:
