@@ -1462,6 +1462,302 @@
       "owner": "CTR-03"
     },
     {
+      "method": "GET",
+      "path": "/v1/community",
+      "name": "community-get",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/community-get.request.json",
+      "response": "api/community-get.response.json",
+      "read_resource": "community",
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/join",
+      "name": "community-join",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/community-join.request.json",
+      "response": "api/community-join.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/epochs",
+      "name": "community-epochs-create",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/community-epochs-create.request.json",
+      "response": "api/community-epochs-create.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/community/request",
+      "name": "community-request-put",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/community-request-put.request.json",
+      "response": "api/community-request-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/community/requests",
+      "name": "community-requests-list",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/community-requests-list.request.json",
+      "response": "api/community-requests-list.response.json",
+      "read_resource": "community.requests",
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/requests/wraps",
+      "name": "community-requests-wraps",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/community-requests-wraps.request.json",
+      "response": "api/community-requests-wraps.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/request/reject",
+      "name": "community-request-reject",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/community-request-reject.request.json",
+      "response": "api/community-request-reject.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/wraps",
+      "name": "community-wraps-post",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/community-wraps-post.request.json",
+      "response": "api/community-wraps-post.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/community/messages",
+      "name": "community-messages-list",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/community-messages-list.request.json",
+      "response": "api/community-messages-list.response.json",
+      "read_resource": "community.messages",
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/messages",
+      "name": "community-messages-post",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/community-messages-post.request.json",
+      "response": "api/community-messages-post.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/community/messages/{id}",
+      "name": "community-messages-delete",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "owner",
+        "community:moderator"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/community-messages-delete.request.json",
+      "response": "api/community-messages-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/community/read",
+      "name": "community-read-put",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/community-read-put.request.json",
+      "response": "api/community-read-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/community/mutes",
+      "name": "community-mutes-list",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "community:moderator"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/community-mutes-list.request.json",
+      "response": "api/community-mutes-list.response.json",
+      "read_resource": "community.mutes",
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/community/mutes/{user}",
+      "name": "community-mutes-put",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "community:moderator"
+      ],
+      "path_params": {
+        "user": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/community-mutes-put.request.json",
+      "response": "api/community-mutes-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/community/mutes/{user}",
+      "name": "community-mutes-delete",
+      "section": "12.4",
+      "auth": "browser",
+      "rights": [
+        "community:moderator"
+      ],
+      "path_params": {
+        "user": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/community-mutes-delete.request.json",
+      "response": "api/community-mutes-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/community/moderators",
+      "name": "community-moderators-list",
+      "section": "12.4",
+      "auth": "root",
+      "rights": [
+        "root"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/community-moderators-list.request.json",
+      "response": "api/community-moderators-list.response.json",
+      "read_resource": "community.moderators",
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community/moderators",
+      "name": "community-moderators-post",
+      "section": "12.4",
+      "auth": "root",
+      "rights": [
+        "root"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/community-moderators-post.request.json",
+      "response": "api/community-moderators-post.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-26"
+    },
+    {
       "method": "POST",
       "path": "/v1/agent-pairings",
       "name": "agent-pairings-create",

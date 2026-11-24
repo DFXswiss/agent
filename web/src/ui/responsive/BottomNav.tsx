@@ -1,15 +1,15 @@
 // Bottom navigation below `md` (06-web.md section 12.1): Home, Tasks, Notifications, Monitoring and More, reachable
 // with the thumb. Tasks opens the task overview of the active org (all readable workgroups, KOR-32).
 // More opens a sheet with every other navigation entry (discovered, ADR-027 section 4), the settings and the security
-// page. Shown only with an active org (signed in).
+// page; an entry's badge shows there and as a dot on More. Shown only with an active org (signed in).
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink } from 'react-router-dom';
 import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
-import { type NavEntry, navEntries } from '../nav';
+import { type NavEntry, navEntries, useNavState } from '../nav';
 import { useAppEnv } from '../shell/context';
-import { navTarget } from '../shell/Nav';
+import { NavBadge, navTarget } from '../shell/Nav';
 import { Sheet } from './Sheet';
 
 /** Entries of the bar itself; the rest of the discovered entries go to "More". */
@@ -20,9 +20,11 @@ const ITEM =
   'aria-[current=page]:text-blue-800';
 
 function More({ entries, org, onClose }: { entries: readonly NavEntry[]; org: string; onClose: () => void }) {
+  const { app } = useAppEnv();
   const { t } = useI18n();
+  const { visible, badges } = useNavState(entries, app.store);
   const links = [
-    ...entries
+    ...visible
       .filter((entry) => !BAR_IDS.includes(entry.id))
       .map((entry) => ({ id: entry.id, to: navTarget(entry, org)!, label: t(entry.labelKey) })),
     { id: 'settings', to: '/settings', label: t('shell.settings') },
@@ -40,6 +42,7 @@ function More({ entries, org, onClose }: { entries: readonly NavEntry[]; org: st
               data-testid={`shell.more.${link.id}`}
             >
               {link.label}
+              <NavBadge count={badges.get(link.id) ?? 0} testId={`shell.more.${link.id}.badge`} />
             </NavLink>
           </li>
         ))}
@@ -61,7 +64,9 @@ export function BottomNav({ entries = navEntries() }: { readonly entries?: reado
   const { t } = useI18n();
   const org = useStore((state) => state.session.activeOrg, app.store);
   const [more, setMore] = useState(false);
+  const { visible, badges } = useNavState(entries, app.store);
   if (org === null) return null;
+  const dot = visible.some((entry) => !BAR_IDS.includes(entry.id) && badges.get(entry.id)! > 0);
   const base = `/o/${encodeURIComponent(org)}`;
   const items = [
     { id: 'home', to: base, label: t('home.nav'), end: true },
@@ -86,13 +91,23 @@ export function BottomNav({ entries = navEntries() }: { readonly entries?: reado
         <li className="flex-1">
           <button
             type="button"
-            className={`${ITEM} w-full`}
+            className={`${ITEM} relative w-full`}
             aria-haspopup="dialog"
             aria-expanded={more}
             onClick={() => setMore(true)}
             data-testid="shell.bottom.more"
           >
             {t('shell.more')}
+            {dot && (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="absolute right-1/4 top-2 h-2 w-2 rounded-full bg-red-700"
+                  data-testid="shell.bottom.more.dot"
+                />
+                <span className="sr-only">{t('shell.more.unread')}</span>
+              </>
+            )}
           </button>
         </li>
       </ul>

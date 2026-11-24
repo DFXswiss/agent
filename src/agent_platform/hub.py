@@ -41,8 +41,10 @@ def segment(value: str) -> str:
     return quote(value, safe="")
 
 
-def refused(code: str, status: int) -> PlatformError:
-    return PlatformError("hub_refused", hub_error=code, status=status)
+def refused(code: str, status: int, retry_after: int | None = None) -> PlatformError:
+    """A verified refusal; `retry_after` the seconds of the hub's `Retry-After` (a `429 rate_limited`)."""
+    extra = {} if retry_after is None else {"retry_after": retry_after}
+    return PlatformError("hub_refused", hub_error=code, status=status, **extra)
 
 
 def anon_request(origin: str, method: str, path: str, body: object | None = None) -> dict[str, Any]:
@@ -98,7 +100,7 @@ class AgentClient:
                 raise PlatformError("agent_revoked") from None
             if refusal.code == "key_unknown":
                 raise PlatformError("not_paired", hub_error="key_unknown") from None
-            raise refused(refusal.code, refusal.status) from None
+            raise refused(refusal.code, refusal.status, refusal.retry_after) from None
         except HubTransportError as error:
             if error.reason == "hub_unreachable":
                 raise PlatformError("hub_unreachable") from None

@@ -111,7 +111,12 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | audit | screens/audit | `audit --org --verify --action --actor --wg --task --session --before` | done |
 | platform-invites | screens/platform-invites | `platform invite\|list\|revoke` | done |
 | security | screens/security | `security` | done |
-| community | – (not in the web client yet) | package KOR-26 delivers (community area with a group chat of all users) | pending |
+| community-read | screens/community (messages, key, unread count) | `community status`, `community messages --before --after --limit --mark-read` | done |
+| community-post | screens/community | `community post --text --name` | done |
+| community-delete | screens/community (own message; moderators any message) | `community delete --id` | done |
+| community-moderate | screens/community (mute, unmute, muted users) | `community mutes`, `community mute\|unmute --user` | done |
+| community-key | screens/community (key request, serving requests of others; background job) | `community key --wait`, `community serve` | done |
+| account-user-id | settings/account | `status` | done |
 | situation-view | – (not in the web client yet) | package KOR-39 delivers (situation view) | pending |
 | credit-balance | shell (header item "Credit": the balance, "Credit used up") | `billing --org` | done |
 | diagnose | – (agent only) | `diagnose` | done |
@@ -149,6 +154,21 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `PUT /v1/me/settings` | settings-language, settings-model |
 | `GET /v1/monitoring/overview` | monitoring |
 | `GET /v1/monitoring/series` | monitoring |
+| `GET /v1/community` | community-read |
+| `POST /v1/community/join` | community-read |
+| `GET /v1/community/messages` | community-read |
+| `PUT /v1/community/read` | community-read |
+| `POST /v1/community/messages` | community-post |
+| `DELETE /v1/community/messages/{}` | community-delete |
+| `GET /v1/community/mutes` | community-moderate |
+| `PUT /v1/community/mutes/{}` | community-moderate |
+| `DELETE /v1/community/mutes/{}` | community-moderate |
+| `POST /v1/community/epochs` | community-key |
+| `PUT /v1/community/request` | community-key |
+| `GET /v1/community/requests` | community-key |
+| `POST /v1/community/requests/wraps` | community-key |
+| `POST /v1/community/request/reject` | community-key |
+| `POST /v1/community/wraps` | community-key |
 | `GET /v1/notifications` | notifications-list |
 | `POST /v1/notifications/read` | notifications-read |
 | `GET /v1/operations/{operation}` | operations |

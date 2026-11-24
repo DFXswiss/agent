@@ -42,6 +42,7 @@ RIGHTS = frozenset(
         "task:read",
         "task:write",
         "platform:inviter",
+        "community:moderator",
         "device:any",
         "device",
         "device:wg",

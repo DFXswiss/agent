@@ -33,5 +33,7 @@
   "javascript.title": "Trust in the delivered code",
   "javascript.body": "Encryption in a web browser depends on the JavaScript the server delivers. A strict content security policy, integrity hashes on the scripts of the start page and a reproducible build limit this risk, but a compromised server could still deliver changed code, also for parts that load later (terminal, charts, formatted text). This page cannot detect that by itself; only an independent comparison of the build hash with the published one can.",
   "devices.title": "Execution devices",
-  "devices.body": "The devices that run your tasks decrypt the content of the workgroups assigned to them: they process prompts, files and answers in plaintext. Assign only devices you trust; removing a device from a workgroup rotates the workgroup's keys."
+  "devices.body": "The devices that run your tasks decrypt the content of the workgroups assigned to them: they process prompts, files and answers in plaintext. Assign only devices you trust; removing a device from a workgroup rotates the workgroup's keys.",
+  "community.title": "Community",
+  "community.body": "Community messages are readable by every user of the platform; they are not confidential like tasks, whiteboards and credentials. Encryption keeps their text and the sender names out of the server's database and backups, but a manipulated server could read messages and even write messages in another user's name. Do not share anything confidential there."
 }

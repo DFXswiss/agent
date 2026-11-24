@@ -89,6 +89,7 @@ export function SecurityScreen() {
       <Explained id="hidden" items={HIDDEN} />
       <Explained id="javascript" />
       <Explained id="devices" />
+      <Explained id="community" />
     </main>
   );
 }

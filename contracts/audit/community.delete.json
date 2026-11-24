@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/community.delete.json",
+  "title": "audit detail community.delete",
+  "description": "detail of audit rows with action community.delete: community message deleted by its author or a moderator (target community_message). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "as": {
+      "type": "string",
+      "enum": [
+        "author",
+        "moderator"
+      ]
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "as",
+    "seq"
+  ],
+  "additionalProperties": false
+}

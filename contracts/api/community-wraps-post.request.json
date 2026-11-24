@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-wraps-post.request.json",
+  "title": "POST /v1/community/wraps request",
+  "description": "Body of POST /v1/community/wraps (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "epoch": {
+      "$ref": "../common.json#/$defs/epoch"
+    },
+    "wrap": {
+      "$ref": "../common.json#/$defs/community_wrap_text"
+    },
+    "sig": {
+      "$ref": "../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "epoch",
+    "wrap",
+    "sig"
+  ],
+  "additionalProperties": false
+}

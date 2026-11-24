@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-messages-list.response.json",
+  "title": "GET /v1/community/messages response",
+  "description": "Body of a successful response to GET /v1/community/messages (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "messages": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "objects.json#/$defs/community_message_row"
+      }
+    },
+    "authors": {
+      "type": "object",
+      "description": "identity signing keys and moderator flag of the authors on the page, by user ID",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "sig_pub": {
+            "$ref": "../common.json#/$defs/b64u_32"
+          },
+          "moderator": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sig_pub",
+          "moderator"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "next_before": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/q_seq"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "messages",
+    "authors",
+    "next_before"
+  ],
+  "additionalProperties": false
+}

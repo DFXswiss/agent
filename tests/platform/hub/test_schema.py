@@ -543,6 +543,45 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("hash", T),
         ("agent_id", U),  # KOR-24, migration 0010
     ],
+    # the community (KOR-26, ADR-069, 14-community.md section 2, migration 0018)
+    "community_epoch": [("epoch", INT), ("key_check", B), ("created_by", U), ("created_at", TS)],
+    "community_wrap": [("epoch", INT), ("user_id", U), ("wrap", B), ("sig", B), ("created_at", TS)],
+    "community_request": [
+        ("user_id", U),
+        ("id", U),
+        ("kem_pub", B),
+        ("sig", B),
+        ("created_at", TS),
+        ("offered_at", TS),
+        ("epoch", INT),
+        ("wrap", B),
+        ("wrapped_by", U),
+        ("wrap_sig", B),
+        ("wrapped_at", TS),
+    ],
+    "community_reject": [("wrapper_id", U), ("user_id", U), ("rejected_at", TS)],
+    "community_member": [
+        ("user_id", U),
+        ("joined_at", TS),
+        ("last_read_seq", BI),
+        ("muted_at", TS),
+        ("muted_by", U),
+    ],
+    "community_moderator": [("user_id", U), ("granted_at", TS)],
+    "community_message": [
+        ("seq", BI),
+        ("id", U),
+        ("author_id", U),
+        ("epoch", INT),
+        ("created_at", TS),
+        ("ct_bytes", INT),
+        ("header", J),
+        ("ct", B),
+        ("sig", B),
+        ("deleted_at", TS),
+        ("deleted_as", T),
+        ("deleted_by", U),
+    ],
     "audit_checkpoint": [
         ("hub_key_id", T),
         ("seq", BI),
@@ -592,6 +631,8 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "charge_daily": ("org_id", "day", "wg_id", "device_id", "kind"),
     "outbox_receipt": ("device_id", "origin_seq"),
     "audit_checkpoint": ("hub_key_id", "seq"),
+    "community_wrap": ("epoch", "user_id"),
+    "community_reject": ("wrapper_id", "user_id"),
 }
 
 # Words that would name confidential plaintext (00-overview.md section 3) in a column; 04-crypto.md section 7 lists

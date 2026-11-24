@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-get.response.json",
+  "title": "GET /v1/community response",
+  "description": "Body of a successful response to GET /v1/community (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "epoch": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "epoch": {
+              "$ref": "../common.json#/$defs/epoch"
+            },
+            "key_check": {
+              "$ref": "../common.json#/$defs/b64u_32"
+            }
+          },
+          "required": [
+            "epoch",
+            "key_check"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "wrap": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "epoch": {
+              "$ref": "../common.json#/$defs/epoch"
+            },
+            "wrap": {
+              "$ref": "../common.json#/$defs/community_wrap_text"
+            },
+            "sig": {
+              "$ref": "../common.json#/$defs/b64u_64"
+            }
+          },
+          "required": [
+            "epoch",
+            "wrap",
+            "sig"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "request": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "wrapped": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "epoch": {
+                      "$ref": "../common.json#/$defs/epoch"
+                    },
+                    "wrap": {
+                      "$ref": "../common.json#/$defs/community_wrap_text"
+                    },
+                    "sig": {
+                      "$ref": "../common.json#/$defs/b64u_64"
+                    },
+                    "wrapped_by": {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    "wrapper_sig": {
+                      "$ref": "../common.json#/$defs/b64u_32"
+                    }
+                  },
+                  "required": [
+                    "epoch",
+                    "wrap",
+                    "sig",
+                    "wrapped_by",
+                    "wrapper_sig"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "wrapped"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "member": {
+      "type": "object",
+      "properties": {
+        "joined": {
+          "type": "boolean"
+        },
+        "muted": {
+          "type": "boolean"
+        },
+        "posted": {
+          "type": "boolean"
+        },
+        "last_read_seq": {
+          "$ref": "../common.json#/$defs/seq"
+        }
+      },
+      "required": [
+        "joined",
+        "muted",
+        "posted",
+        "last_read_seq"
+      ],
+      "additionalProperties": false
+    },
+    "moderator": {
+      "type": "boolean"
+    },
+    "unread": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "head_seq": {
+      "$ref": "../common.json#/$defs/seq"
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "text_chars": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "name_chars": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "burst": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "refill_seconds": {
+          "$ref": "../common.json#/$defs/positive"
+        }
+      },
+      "required": [
+        "text_chars",
+        "name_chars",
+        "burst",
+        "refill_seconds"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "epoch",
+    "wrap",
+    "request",
+    "member",
+    "moderator",
+    "unread",
+    "head_seq",
+    "limits"
+  ],
+  "additionalProperties": false
+}

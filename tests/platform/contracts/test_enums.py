@@ -38,10 +38,14 @@ SPEC_ERRORS: dict[int, str] = {
     # 11-agent-access.md section 4 (KOR-24)
     " claim_invalid",
     403: "forbidden last_admin last_passkey device_not_assigned platform_invite_required platform_access_denied"
-    " pairing_gesture_required",
+    " pairing_gesture_required"
+    # 14-community.md section 4.1 (KOR-26)
+    " community_muted",
     404: "not_found invite_unknown pairing_unknown identity_unproven",
     409: "id_conflict event_conflict seq_conflict version_conflict origin_seq_gap origin_seq_conflict no_device"
-    " already_assigned rotation_required no_device_available invite_registered peer_outdated",
+    " already_assigned rotation_required no_device_available invite_registered peer_outdated"
+    # 14-community.md section 4.1 (KOR-26)
+    " community_not_member community_epoch_exists community_no_key",
     410: "invite_expired",
     429: "rate_limited",
     503: "unavailable",
@@ -119,6 +123,9 @@ DECIDED_AUDIT = (
     # rows of the formerly unaudited writes.
     " request.refused request.write audit.repeat read.stream.terminal event.append_batch settings.put"
     " auth.passkey_bundle wrap.put agent.pairing"
+    # 14-community.md section 4 and ADR-069 decision 5 (KOR-26)
+    " community.key_create community.key_request community.key_wrap community.key_reject community.post"
+    " community.delete community.mute community.unmute community.moderator_grant community.moderator_revoke"
 )
 # 12-billing.md sections 8 and 10 (contracts/changes/KOR-31.md): credit changes, USD/CHF rates and the export.
 KOR31_AUDIT = "credit.changed billing.fx_set billing.export"

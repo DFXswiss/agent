@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-epochs-create.response.json",
+  "title": "POST /v1/community/epochs response",
+  "description": "Body of a successful response to POST /v1/community/epochs (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "epoch": {
+      "$ref": "../common.json#/$defs/epoch"
+    }
+  },
+  "required": [
+    "epoch"
+  ],
+  "additionalProperties": false
+}

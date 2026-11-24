@@ -3,8 +3,9 @@
 // `md` the bottom navigation (`ui/responsive/BottomNav.tsx`) replaces it; from `md` it is a row under the header; from
 // `lg` a left sidebar with the entries first (Home and Tasks on top, KOR-32) and the workgroups of the active org
 // below them. An entry is marked as the current page only on its own path (Home is not current on every org page).
+// Entries may hide themselves or show a badge (`NavEntry.hidden`/`badge`, e.g. the community's unread count).
 import { NavLink } from 'react-router-dom';
-import { type NavEntry, navEntries } from '../nav';
+import { badgeText, type NavEntry, navEntries, useNavState } from '../nav';
 import { SidebarWorkgroups } from '../responsive/Workgroups';
 import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
@@ -20,7 +21,8 @@ export function Nav({ entries = navEntries() }: { readonly entries?: readonly Na
   const { app } = useAppEnv();
   const { t } = useI18n();
   const org = useStore((state) => state.session.activeOrg, app.store);
-  const links = entries.flatMap((entry) => {
+  const { visible, badges } = useNavState(entries, app.store);
+  const links = visible.flatMap((entry) => {
     const to = navTarget(entry, org);
     return to === null ? [] : [{ id: entry.id, to, label: t(entry.labelKey) }];
   });
@@ -41,11 +43,23 @@ export function Nav({ entries = navEntries() }: { readonly entries?: readonly Na
               data-testid={`shell.nav.${link.id}`}
             >
               {link.label}
+              <NavBadge count={badges.get(link.id)!} testId={`shell.nav.${link.id}.badge`} />
             </NavLink>
           </li>
         ))}
       </ul>
       <div className="hidden lg:mt-4 lg:block">{org !== null && <SidebarWorkgroups org={org} />}</div>
     </nav>
+  );
+}
+
+/** The badge of a navigation entry (nothing at 0). */
+export function NavBadge({ count, testId }: { readonly count: number; readonly testId: string }) {
+  const text = badgeText(count);
+  if (text === null) return null;
+  return (
+    <span className="ml-2 min-w-5 rounded-full bg-red-700 px-1.5 text-center text-xs text-white" data-testid={testId}>
+      {text}
+    </span>
   );
 }

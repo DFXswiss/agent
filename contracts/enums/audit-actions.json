@@ -286,6 +286,46 @@
       "group": "whiteboard"
     },
     {
+      "action": "community.key_create",
+      "group": "community"
+    },
+    {
+      "action": "community.key_request",
+      "group": "community"
+    },
+    {
+      "action": "community.key_wrap",
+      "group": "community"
+    },
+    {
+      "action": "community.key_reject",
+      "group": "community"
+    },
+    {
+      "action": "community.post",
+      "group": "community"
+    },
+    {
+      "action": "community.delete",
+      "group": "community"
+    },
+    {
+      "action": "community.mute",
+      "group": "community"
+    },
+    {
+      "action": "community.unmute",
+      "group": "community"
+    },
+    {
+      "action": "community.moderator_grant",
+      "group": "community"
+    },
+    {
+      "action": "community.moderator_revoke",
+      "group": "community"
+    },
+    {
       "action": "ping.delivered",
       "group": "runner"
     },
@@ -527,6 +567,26 @@
     },
     {
       "action": "read.platform.log",
+      "group": "read"
+    },
+    {
+      "action": "read.community",
+      "group": "read"
+    },
+    {
+      "action": "read.community.messages",
+      "group": "read"
+    },
+    {
+      "action": "read.community.moderators",
+      "group": "read"
+    },
+    {
+      "action": "read.community.mutes",
+      "group": "read"
+    },
+    {
+      "action": "read.community.requests",
       "group": "read"
     },
     {

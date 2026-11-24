@@ -11,6 +11,7 @@ from typing import Any
 
 from agent_platform import (
     billing,
+    community,
     credkey,
     creds,
     devices,
@@ -37,4 +38,5 @@ MODULES: tuple[Callable[[Any], None], ...] = (
     keywraps.register,
     workvm.register,
     billing.register,
+    community.register,
 )

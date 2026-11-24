@@ -15,7 +15,7 @@ import { requestText, sha256Hex } from '../../src/core/net/responseCheck';
 const ROOT = 'platform-root';
 const rootKey = async () => ed25519KeyPair(await sha256(utf8('agent.dfx.swiss test platform root key')));
 
-async function rootRequest(origin: string, method: string, target: string, body?: unknown): Promise<Response> {
+export async function rootRequest(origin: string, method: string, target: string, body?: unknown): Promise<Response> {
   const key = await rootKey();
   const content = body === undefined ? new Uint8Array(0) : utf8(JSON.stringify(body));
   const time = formatSeconds(Math.floor(Date.now() / 1000));
@@ -56,4 +56,10 @@ export async function platformInvite(origin: string, hours = 72): Promise<{ code
     { type: 'user_invite', invite_id: id, pk_inv: pkInv, expires: formatTime(Date.now() + hours * 3600_000) },
   ]);
   return { code: formatCode(raw), inviteId: id };
+}
+
+/** Grants (or revokes) the community moderator role, as `agent-hub community moderator grant --user ID` does. */
+export async function setModerator(origin: string, user: string, granted = true): Promise<void> {
+  const response = await rootRequest(origin, 'POST', '/v1/community/moderators', { user, granted });
+  if (!response.ok) throw new Error(`moderator change refused: ${response.status} ${await response.text()}`);
 }

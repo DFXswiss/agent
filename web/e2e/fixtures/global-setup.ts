@@ -1,12 +1,15 @@
 // Before the Playwright suite: fresh browser coverage cache, the build into src/agent_hub/static/ (the build under
-// test is the one the hub serves), the probe page build, the real hub and the probe server.
+// test is the one the hub serves), the probe page build, the real hub and the probe server, and the community keeper
+// (`helpers/community.ts`: the first community member, which hands the key to every new user of the suite).
 import { CoverageReport } from 'monocart-coverage-reports';
 import { build } from 'vite';
 import { buildWeb } from '../../scripts/build.mjs';
 import { e2eCoverage } from './coverage-options.ts';
 import { compiledRootKey } from '../../build/manifest.ts';
+import { startKeeper } from '../helpers/community.ts';
 import {
   DIRECTOR_PORT,
+  ORIGIN,
   hubPython,
   PORT,
   PROBE_DIR,
@@ -39,7 +42,12 @@ export default async function globalSetup() {
       probeDir: PROBE_DIR,
       rootKey,
     });
+    const keeper = await startKeeper(ORIGIN).catch(async (error: unknown) => {
+      await probe.close();
+      throw error;
+    });
     return async () => {
+      await keeper.stop();
       await probe.close();
       await hub.stop();
     };

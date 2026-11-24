@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-messages-delete.response.json",
+  "title": "DELETE /v1/community/messages/{id} response",
+  "description": "Body of a successful response to DELETE /v1/community/messages/{id} (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "deleted": {
+      "type": "string",
+      "enum": [
+        "author",
+        "moderator"
+      ]
+    }
+  },
+  "required": [
+    "deleted"
+  ],
+  "additionalProperties": false
+}

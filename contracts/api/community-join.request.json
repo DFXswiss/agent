@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-join.request.json",
+  "title": "POST /v1/community/join request",
+  "description": "Body of POST /v1/community/join (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

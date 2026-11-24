@@ -48,12 +48,12 @@ def probe(argv: list[str], state: Path, run: Runs | None = None) -> tuple[int, A
 
 def test_entry_describes_files_directories_links_and_others(tmp_path: Path) -> None:
     (tmp_path / "f").write_text("abc")
+    (tmp_path / "f").chmod(0o644)  # independent of the umask of the test device
     (tmp_path / "d").mkdir(mode=0o750)
     (tmp_path / "l").symlink_to("f")
     os.mkfifo(tmp_path / "p")
     info = os.lstat(tmp_path / "f")
-    assert guest_probe.entry(str(tmp_path / "f")) == ["f", 0o644 & ~0o022 | (info.st_mode & 0o777), UID, GID, 3,
-                                                        info.st_mtime_ns, info.st_ino]  # fmt: skip
+    assert guest_probe.entry(str(tmp_path / "f")) == ["f", 0o644, UID, GID, 3, info.st_mtime_ns, info.st_ino]
     assert guest_probe.entry(str(tmp_path / "d")) == ["d", os.lstat(tmp_path / "d").st_mode & 0o777, UID, GID]
     link, other = guest_probe.entry(str(tmp_path / "l")), guest_probe.entry(str(tmp_path / "p"))
     assert link is not None

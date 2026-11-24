@@ -1,0 +1,8 @@
+{
+  "title": "Account",
+  "user-id": "Your user ID",
+  "user-id.help": "The operator needs this ID, for example to make you a community moderator. It is not secret.",
+  "copy": "Copy",
+  "copied": "Copied.",
+  "copy-failed": "Copying did not work – select the ID and copy it by hand."
+}

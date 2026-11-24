@@ -155,6 +155,22 @@ describe('error mapping', () => {
     ]);
   });
 
+  it('reads the Retry-After seconds of a 429 (signed or not)', async () => {
+    const answers: Answer[] = [
+      { status: 429, body: { error: 'rate_limited' }, sign: (headers) => headers.set('retry-after', '4') },
+      { status: 429, body: { error: 'rate_limited' }, sign: false },
+    ];
+    let index = 0;
+    const { client } = await setup(() => answers[index++]!);
+    expect((await failure(() => client.request('POST', '/v1/x', { body: {} }))).retryAfter).toBe(4);
+    expect((await failure(() => client.request('POST', '/v1/x', { body: {} }))).retryAfter).toBeNull();
+    const headers = (value: string) => new Headers({ 'retry-after': value });
+    expect(errorOf(429, null, headers('12')).retryAfter).toBe(12);
+    expect(errorOf(429, null, headers('Wed, 21 Oct 2026 07:28:00 GMT')).retryAfter).toBeNull();
+    expect(errorOf(503, null, headers('12')).retryAfter).toBeNull();
+    expect(errorOf(429, null).retryAfter).toBeNull();
+  });
+
   it('maps statuses without a known code', () => {
     const code = (status: number, body: unknown = null) => errorOf(status, body).code;
     expect([401, 403, 404, 409, 413, 429, 500, 503, 0, 400, 418].map((s) => code(s))).toEqual([

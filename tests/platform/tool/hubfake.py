@@ -56,7 +56,7 @@ HUB_KEY_ID = "hub-test"
 ANONYMOUS = ("/v1/config", "/v1/agent-pairings", "/v1/agent/claim", "/v1/invites/lookup")
 CONFIRMED_ROUTES = (("POST", "/v1/agent/claim"), ("GET", "/v1/agent/handover"))
 Json = dict[str, Any]
-Hook = Callable[[Json | None, "Request"], tuple[int, Any] | None]
+Hook = Callable[[Json | None, "Request"], tuple[Any, ...] | None]
 
 
 def now_ms_text(offset: timedelta = timedelta()) -> str:
@@ -408,10 +408,12 @@ class HubFake:
             def _serve(self) -> None:
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length) if length else b""
-                status, body, signed = hub.handle(self.command, self.path, dict(self.headers.items()), raw)
+                status, body, signed, *extra = hub.handle(self.command, self.path, dict(self.headers.items()), raw)
                 data = json.dumps(body, separators=(",", ":")).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
+                for name, value in (extra[0] if extra else {}).items():
+                    self.send_header(name, value)
                 self.send_header("Content-Length", str(len(data)))
                 if signed is not None and hub.sign_answers:
                     key_id, nonce, agent_time = signed
@@ -427,7 +429,9 @@ class HubFake:
 
         return Handler
 
-    def handle(self, method: str, target: str, headers: dict[str, str], raw: bytes) -> tuple[int, Any, Any]:
+    def handle(self, method: str, target: str, headers: dict[str, str], raw: bytes) -> tuple[Any, ...]:
+        """`(status, body, signed)`, and as a fourth element the extra answer headers of a hook that returned
+        `(status, body, headers)` (e.g. `Retry-After`)."""
         with self.lock:
             self.bodies.append(raw)
             parts = urlsplit(target)
@@ -452,7 +456,7 @@ class HubFake:
             if hook is not None:
                 answer = hook(body, request)
                 if answer is not None:
-                    return answer[0], answer[1], signed
+                    return answer[0], answer[1], signed, *answer[2:]
             try:
                 status, result = self.route(request, body)
             except CryptoError as error:

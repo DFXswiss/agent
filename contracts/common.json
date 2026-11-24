@@ -198,6 +198,10 @@
         "rotation_required",
         "no_device_available",
         "invite_registered",
+        "community_muted",
+        "community_not_member",
+        "community_epoch_exists",
+        "community_no_key",
         "invite_expired",
         "rate_limited",
         "unavailable",
@@ -3027,6 +3031,81 @@
           "type": "null"
         }
       ]
+    },
+    "community_header": {
+      "type": "object",
+      "description": "community message header, exact key set (14-community.md section 3)",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "alg": {
+          "type": "string",
+          "const": "A256GCM-HKDF"
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "author": {
+          "$ref": "#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "salt": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "nonce": {
+          "$ref": "#/$defs/b64u_12"
+        }
+      },
+      "required": [
+        "v",
+        "alg",
+        "id",
+        "author",
+        "epoch",
+        "ts",
+        "salt",
+        "nonce"
+      ],
+      "additionalProperties": false
+    },
+    "community_message": {
+      "type": "object",
+      "description": "sealed community message (14-community.md section 3)",
+      "properties": {
+        "header": {
+          "$ref": "#/$defs/community_header"
+        },
+        "ct": {
+          "type": "string",
+          "description": "AES-256-GCM ciphertext of the body, at most 16 KiB decoded (14-community.md section 3)",
+          "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+          "minLength": 22,
+          "maxLength": 21846
+        },
+        "sig": {
+          "$ref": "#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "header",
+        "ct",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "community_wrap_text": {
+      "type": "string",
+      "description": "b64u of an HPKE wrap of the community key (enc 32 B, key 32 B, tag 16 B)",
+      "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+      "minLength": 1,
+      "maxLength": 128
     }
   }
 }

@@ -1,0 +1,16 @@
+{
+  "message": {
+    "header": {
+      "v": 1,
+      "alg": "A256GCM-HKDF",
+      "id": "0193a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a2b",
+      "author": "0193a1b2-c3d4-7e5f-9a6b-7c8d9e0f1a2c",
+      "epoch": 1,
+      "ts": "2026-11-23T12:00:00.000Z",
+      "salt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "nonce": "AAAAAAAAAAAAAAAA"
+    },
+    "ct": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  }
+}

@@ -56,6 +56,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `wg:read`, `wg:write` | access to the workgroup (default workgroup: every member has write) |
 | `task:read`, `task:write` | `wg:read` / `wg:write` on the task's workgroup |
 | `platform:inviter` | platform role from the platform log |
+| `community:moderator` | community moderator, granted by the operator at the hub (`14-community.md` §4.4, ADR-069) |
 | `device:any` | valid device signature, device `active` or `pending_certification` (only `GET /v1/device/state`) |
 | `device` | valid device signature, device `active` |
 | `device:wg` | device assigned to the workgroup |
@@ -249,6 +250,10 @@ a response with header `final:true` arrives (success or error – the outcome is
 Usage billing and prepaid credit (KOR-31) are specified in `12-billing.md`: the endpoints `GET /v1/orgs/{org}/billing`
 (org:member), `GET /v1/workgroups/{wg}/charges` (wg:read) and `GET /v1/tasks/{task}/charges` (task:read) (section
 6), the `billing` object of `GET /v1/device/state` (section 5) and the outbox item `runtime` (section 4).
+### 4.12 Community
+
+The endpoints of the community (`/v1/community…`), its error codes and the audience `all` with the frame `community` are
+specified in `14-community.md` §4 and §5 (KOR-26, ADR-069).
 
 ## 5. Browser live channel
 

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-request-put.response.json",
+  "title": "PUT /v1/community/request response",
+  "description": "Body of a successful response to PUT /v1/community/request (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "additionalProperties": false
+}

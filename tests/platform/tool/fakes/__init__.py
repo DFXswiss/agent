@@ -13,4 +13,5 @@ INSTALLERS: tuple[str, ...] = (
     "relay",
     "admission",
     "billing",
+    "community",
 )

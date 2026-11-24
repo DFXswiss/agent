@@ -28,6 +28,7 @@ AREAS: dict[ModuleType, list[str]] = {
         "auth",
         "backup",
         "billing",
+        "community",
         "config_api",
         "credentials",
         "crypto",

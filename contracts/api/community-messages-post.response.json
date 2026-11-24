@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-messages-post.response.json",
+  "title": "POST /v1/community/messages response",
+  "description": "Body of a successful response to POST /v1/community/messages (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "seq": {
+      "$ref": "../common.json#/$defs/positive"
+    },
+    "replayed": {
+      "type": "boolean",
+      "const": true
+    }
+  },
+  "required": [
+    "seq"
+  ],
+  "additionalProperties": false
+}

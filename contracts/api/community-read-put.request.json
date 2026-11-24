@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-read-put.request.json",
+  "title": "PUT /v1/community/read request",
+  "description": "Body of PUT /v1/community/read (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "seq": {
+      "$ref": "../common.json#/$defs/seq"
+    }
+  },
+  "required": [
+    "seq"
+  ],
+  "additionalProperties": false
+}

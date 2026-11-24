@@ -279,6 +279,7 @@ commands and options as `agent-platform <group> --help` lists them):
 | `session show|stop|interrupt|terminal|workvm --session` | a session with transitions, usage, VM and children, its runtime and whether the hub reaches its device, its control, the terminal output as text, and its work VM (KOR-29, ADR-059: state, size, runtime of the session and the task, runs) |
 | `whiteboard list|history|add|edit|delete` | whiteboard entries of an organization, workgroup or task, sealed on this computer |
 | `billing --org` | the organization's credit (KOR-31, ADR-062, `GET /v1/orgs/{org}/billing`): balance, `exhausted`, `billing_active`, the customer prices of the price list in force, the credit history and the consumption per day and per workgroup; read only, there is no top-up |
+| `community status|key|serve|messages|post|delete|mutes|mute|unmute` | the Community (KOR-26, `14-community.md`, ADR-069): join and state; the key flow of `14-community.md` §4.2 on this computer (create epoch 1, open the self-wrap, or a key request whose one-off X25519 key stays in `state.json` until a holder's wrap is opened, checked and replaced by the self-wrap; a wrong wrap is rejected; `key --wait`); serving open requests of others; messages verified under the authors' pinned identity keys and opened with the key (what fails a check carries no content), the read position; posting (name and text cleaned and checked like the web client; a post refused with `429` names `retry_after` and is sent byte for byte again); deleting own messages; muting as a moderator |
 | `notifications list|read`, `quotas`, `monitoring`, `audit` | the user's notifications, subscription quotas (with `unreadable_since` when the subscription refuses the read), monitoring of devices, VMs, sessions and work VMs, account and org audit (with the chain check) |
 | `passkey list|remove|add`, `recovery new`, `agents list|revoke`, `platform invite|list|revoke`, `security` | the account's security: passkeys (`add` opens the settings page), a new recovery code, the agents, platform invitations (inviters), the web build check |
 | `guide` | prints the guide for AI agents shipped with the tool |
@@ -307,7 +308,7 @@ Codes (closed list in `agent_platform/errors.py`): `not_paired`, `agent_revoked`
 `pairing_timeout`, `pairing_failed`, `claude_login_missing`, `claude_login_expired`, `claude_cli_missing`,
 `setup_token_failed`, `no_org`, `no_device`, `not_admin`, `invalid_argument`, `state_damaged`, `internal`, `no_write_access`, `not_inviter`,
 `device_request_failed`, `hub_too_old`, `pairing_pending`, `no_pending_pairing`, `pairing_busy`, `last_admin`, `not_found`, `credentials_blocked`,
-`rotation_pending`.
+`rotation_pending`, `community_key_missing`.
 
 ### 8.5 Reading the local Claude Code login
 Read-only, never a login, logout or refresh, never a write to the profile or the keychain. macOS: the generic password

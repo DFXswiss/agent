@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-moderators-list.response.json",
+  "title": "GET /v1/community/moderators response",
+  "description": "Body of a successful response to GET /v1/community/moderators (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "moderators": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "granted_at": {
+            "$ref": "../common.json#/$defs/time"
+          }
+        },
+        "required": [
+          "user",
+          "granted_at"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "moderators"
+  ],
+  "additionalProperties": false
+}

@@ -56,6 +56,10 @@ NEXT: dict[str, str] = {
         "A credential record cannot be opened (see `kinds`); replace or delete it, then run "
         "`agent-platform credentials rotate` again."
     ),
+    "community_key_missing": (
+        "The community key is not here yet (see `key`): run `agent-platform community key --wait 120`; another user's "
+        "client hands it over as soon as one is online. `failed` means the stored key does not open; tell your user."
+    ),
     "invalid_argument": "Check the command line (`agent-platform <command> --help`).",
     "state_damaged": ("The state directory has a wrong mode, owner or a symlink; fix it or remove it and pair again."),
     "internal": "An unexpected error happened; run the command again.",

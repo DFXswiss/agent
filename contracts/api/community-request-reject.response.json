@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-request-reject.response.json",
+  "title": "POST /v1/community/request/reject response",
+  "description": "Body of a successful response to POST /v1/community/request/reject (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "rejected": {
+      "type": "boolean",
+      "const": true
+    }
+  },
+  "required": [
+    "rejected"
+  ],
+  "additionalProperties": false
+}

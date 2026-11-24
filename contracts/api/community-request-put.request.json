@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-request-put.request.json",
+  "title": "PUT /v1/community/request request",
+  "description": "Body of PUT /v1/community/request (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "kem_pub": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    },
+    "sig": {
+      "$ref": "../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "id",
+    "kem_pub",
+    "sig"
+  ],
+  "additionalProperties": false
+}

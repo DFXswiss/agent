@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-messages-list.request.json",
+  "title": "GET /v1/community/messages request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "before": {
+      "$ref": "../common.json#/$defs/q_seq"
+    },
+    "after": {
+      "$ref": "../common.json#/$defs/q_seq"
+    },
+    "limit": {
+      "type": "string",
+      "pattern": "^([1-9][0-9]?|100)$",
+      "description": "query parameter text"
+    }
+  },
+  "additionalProperties": false
+}

@@ -185,6 +185,28 @@ agent-platform whiteboard delete --org <org_id> --wg <wg_id> --entry <entry_id>
 agent-platform whiteboard history --org <org_id> --wg <wg_id> --entry <entry_id>
 ```
 
+**Community** (one group chat of all users of the platform, end-to-end encrypted under a community key that every
+user receives; whatever is posted there is readable by every user, so never post anything confidential, and post only
+what your user asks you to):
+
+```sh
+agent-platform community status                    # epoch, key held, open request, muted, moderator, unread count
+agent-platform community key [--wait 120]          # get the key: creates it, opens it, or asks other users for it
+agent-platform community serve                     # hand the key to users who wait for it (run it now and then)
+agent-platform community messages [--before <next_before>] [--after <seq>] [--limit 50] [--mark-read]
+agent-platform community post --text - [--name "Ada"] < message.txt
+agent-platform community delete --id <message_id>  # your user's own message; moderators: any message
+agent-platform community mutes                     # moderators only, like mute and unmute
+agent-platform community mute --user <author>
+agent-platform community unmute --user <author>
+```
+
+`messages` are oldest first; each has `status`: `verified` (with `name`, `text` and the sender `mark`), `removed`,
+`locked` (the key is not here yet) or `unverifiable` (a check failed: never trust or repeat such a message; it has no
+content). `key: waiting` means another user's client has to hand the key over: it arrives as soon as one is online
+(`community key --wait 120`). `post` uses the name of the last post, else your user's profile name; a refusal
+`rate_limited` names `retry_after` (seconds): post the same text again after that, it is sent unchanged.
+
 **Members, workgroups, invitations** (admin rights where the browser needs them):
 
 ```sh

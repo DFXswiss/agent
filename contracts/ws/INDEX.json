@@ -51,6 +51,10 @@
           "data": "ws/sse/metrics.json"
         },
         {
+          "type": "community",
+          "data": "ws/sse/community.json"
+        },
+        {
           "type": "resync",
           "data": "ws/sse/resync.json"
         }

@@ -119,6 +119,10 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "rotation_required",
                         "no_device_available",
                         "invite_registered",
+                        "community_muted",
+                        "community_not_member",
+                        "community_epoch_exists",
+                        "community_no_key",
                         "invite_expired",
                         "rate_limited",
                         "unavailable",
@@ -187,6 +191,41 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["day", "chf_per_usd_e8", "source", "kind"],
     },
+    "community.delete": {
+        "properties": {
+            "as": [{"type": "string", "enum": ["author", "moderator"]}],
+            "seq": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+        },
+        "required": ["as", "seq"],
+    },
+    "community.key_create": {
+        "properties": {"epoch": [{"type": "integer", "minimum": 1, "maximum": 2147483647}]},
+        "required": ["epoch"],
+    },
+    "community.key_reject": {
+        "properties": {
+            "request": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ]
+        },
+        "required": ["request"],
+    },
+    "community.key_request": {"properties": {}, "required": []},
+    "community.key_wrap": {
+        "properties": {"epoch": [{"type": "integer", "minimum": 1, "maximum": 2147483647}]},
+        "required": ["epoch"],
+    },
+    "community.moderator_grant": {"properties": {}, "required": []},
+    "community.moderator_revoke": {"properties": {}, "required": []},
+    "community.mute": {"properties": {}, "required": []},
+    "community.post": {
+        "properties": {
+            "seq": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+            "ct_bytes": [{"type": "integer", "minimum": 0, "maximum": 16384}],
+        },
+        "required": ["seq", "ct_bytes"],
+    },
+    "community.unmute": {"properties": {}, "required": []},
     "credential.delete": {
         "properties": {
             "kind": [{"type": "string", "enum": ["github", "anthropic_api_key", "claude_subscription", "mailbox"]}],
@@ -898,6 +937,10 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "rotation_required",
                         "no_device_available",
                         "invite_registered",
+                        "community_muted",
+                        "community_not_member",
+                        "community_epoch_exists",
+                        "community_no_key",
                         "invite_expired",
                         "rate_limited",
                         "unavailable",
@@ -986,6 +1029,11 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "read.agent.handover": {"properties": {}, "required": []},
     "read.agent.me": {"properties": {}, "required": []},
+    "read.community": {"properties": {}, "required": []},
+    "read.community.messages": {"properties": {}, "required": []},
+    "read.community.moderators": {"properties": {}, "required": []},
+    "read.community.mutes": {"properties": {}, "required": []},
+    "read.community.requests": {"properties": {}, "required": []},
     "read.device.credential": {"properties": {}, "required": []},
     "read.device.logs": {"properties": {}, "required": []},
     "read.device.platform_log": {"properties": {}, "required": []},

@@ -98,9 +98,11 @@ describe('security page', () => {
     );
     expect(screen.getByTestId('security.hub-key').textContent).toBe(CONFIG.hub_key.id);
     expect(screen.queryByTestId('security.root-key.mismatch')).toBeNull();
-    for (const part of ['sees', 'hidden', 'javascript', 'devices']) {
+    for (const part of ['sees', 'hidden', 'javascript', 'devices', 'community']) {
       expect(screen.getByTestId(`security.${part}`)).toBeTruthy();
     }
+    // community messages are named as not confidential (14-community.md section 6)
+    expect(screen.getByTestId('security.community')).toHaveTextContent('not confidential');
   });
 
   it('flags a manifest that names another root key', async () => {

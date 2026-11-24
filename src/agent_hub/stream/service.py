@@ -159,6 +159,8 @@ class StreamService:
     # --- delivery (event-loop thread) ---
 
     def _browsers(self, audience: Audience) -> list[BrowserStream]:
+        if audience.kind == "all":
+            return [stream for streams in self.by_user.values() for stream in streams]
         table = self.by_org if audience.kind == "org" else self.by_user
         return list(table.get(audience.id, ()))
 

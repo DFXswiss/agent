@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/community-requests-list.response.json",
+  "title": "GET /v1/community/requests response",
+  "description": "Body of a successful response to GET /v1/community/requests (14-community.md section 4.1).",
+  "type": "object",
+  "properties": {
+    "requests": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "kem_pub": {
+            "$ref": "../common.json#/$defs/b64u_32"
+          }
+        },
+        "required": [
+          "id",
+          "kem_pub"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "requests"
+  ],
+  "additionalProperties": false
+}
