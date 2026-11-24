@@ -13,7 +13,8 @@ Routes (`ROUTES`, the REST subset the runner uses, 05-runner.md §11.4 and §12.
   with ``has_issues: false`` answers the issue routes ``410 Issues are disabled for this repo`` (comments too, unless
   the number is a pull request).
 - ``POST /credentials/revoke`` (``{"credentials": [token, ...]}``, KOR-40): unauthenticated like GitHub's (a request
-  with ``Authorization`` is ``403`` and a failure); known tokens are forgotten, answered ``202 {}``.
+  with ``Authorization`` is ``403`` and a failure); known tokens are forgotten, answered ``202 {}``. The journal
+  keeps only the length of each token (`CREDENTIAL_FIELDS`, HOT-11), like the ``Authorization`` header.
 
 API requests must carry ``Accept: application/vnd.github+json``, ``X-GitHub-Api-Version: 2022-11-28`` and
 ``Authorization: Bearer <token>`` (``token <token>`` is accepted too, as by GitHub). A missing or different header is
@@ -56,7 +57,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Self
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
 
-from agent_doubles.common.journal import Entry, Journal, decode_body, redact_headers
+from agent_doubles.common.journal import Entry, Journal, decode_body, redact_fields, redact_headers
 from agent_doubles.common.server import BodyError, DoubleHandler, DoubleServer
 from agent_doubles.common.state import state_document
 from agent_doubles.github import render
@@ -87,6 +88,8 @@ from agent_doubles.github.repos import (
 )
 
 DOUBLE_NAME = "github"
+# Body fields GitHub's API defines as credentials; the journal keeps only their length (HOT-11).
+CREDENTIAL_FIELDS = frozenset({"credentials", "access_token", "refresh_token", "client_secret"})
 ACCEPT = "application/vnd.github+json"
 API_VERSION = "2022-11-28"
 RATE_LIMIT = 5000
@@ -598,8 +601,9 @@ class _Handler(DoubleHandler):
         if parts.path.startswith("/_double/"):
             self._control(parts.path, raw, problem)
             return
+        body = redact_fields(decode_body(raw), CREDENTIAL_FIELDS)
         entry = self.double.journal.open(
-            self.command, parts.path, parts.query, redact_headers(self.headers.items()), decode_body(raw)
+            self.command, parts.path, parts.query, redact_headers(self.headers.items()), body
         )
         self.double.count_request()
         try:

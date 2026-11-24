@@ -14,7 +14,14 @@ import pytest
 
 from agent_doubles.common import cli
 from agent_doubles.common.client import DoubleClient, Response
-from agent_doubles.common.journal import BODY_TEXT_LIMIT, Journal, decode_body, redact_headers, redact_value
+from agent_doubles.common.journal import (
+    BODY_TEXT_LIMIT,
+    Journal,
+    decode_body,
+    redact_fields,
+    redact_headers,
+    redact_value,
+)
 from agent_doubles.common.server import MAX_BODY, BodyError, DoubleHandler, DoubleServer, validate_host
 from agent_doubles.common.state import state_document
 
@@ -42,6 +49,19 @@ def test_redaction_hides_credentials() -> None:
         "proxy-authorization": "<redacted 20 chars>",
     }
     assert redact_value("Accept", "x") == "x"
+
+
+def test_redact_fields_keeps_only_the_length_of_credential_fields() -> None:
+    names = frozenset({"credentials", "client_secret", "access_token"})
+    body = {"credentials": ["abc", "defgh"], "client_secret": "xyz1", "access_token": None, "note": "kept"}
+    assert redact_fields(body, names) == {
+        "credentials": ["<redacted 3 chars>", "<redacted 5 chars>"],
+        "client_secret": "<redacted 4 chars>",
+        "access_token": "<redacted>",
+        "note": "kept",
+    }
+    assert redact_fields("access_token=abc", names) == "access_token=abc"
+    assert redact_fields(None, names) is None
 
 
 def test_decode_body_forms() -> None:

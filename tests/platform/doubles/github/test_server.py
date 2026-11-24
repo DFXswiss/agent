@@ -851,6 +851,23 @@ def test_revocation_refuses_credentials_and_malformed_bodies(github: Any) -> Non
     assert github.api("GET", "/user").status == 200
 
 
+def test_revocation_keeps_the_revoked_tokens_out_of_the_journal(start_github: Any, tmp_path: Any) -> None:
+    """HOT-11: the body of `POST /credentials/revoke` is a credential by GitHub's definition; the journal (memory, file
+    and `GET /_double/journal`) keeps its shape only, so a run's artefacts never hold the token."""
+    path = tmp_path / "github-journal.jsonl"
+    github = start_github(journal_path=path)
+    shaped = "gh" + "u_" + "k" * 36  # GitHub-shaped at run time only (hygiene: no token shapes in the sources)
+    body = {"credentials": ["double-user-token", shaped]}
+    assert github.api("POST", "/credentials/revoke", body, token=None).status == 202
+    [record] = [entry for entry in github.client.journal() if entry.get("route") == "POST /credentials/revoke"]
+    assert record["body"] == {"credentials": ["<redacted 17 chars>", "<redacted 40 chars>"]}
+    assert record["revoked"] == 1
+    text = path.read_text(encoding="utf-8")
+    assert "double-user-token" not in text
+    assert shaped not in text
+    assert '"<redacted 40 chars>"' in text
+
+
 # --- issues ------------------------------------------------------------------------------------------
 
 

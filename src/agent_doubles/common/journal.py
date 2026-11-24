@@ -9,7 +9,9 @@ journal file) is::
 
 - ``headers``: lower-case names; the values of credential headers are reduced to the scheme and the length, so a
   journal never contains a credential.
-- ``body``: the decoded JSON value, else at most `BODY_TEXT_LIMIT` characters of text, else null.
+- ``body``: the decoded JSON value, else at most `BODY_TEXT_LIMIT` characters of text, else null. A double whose
+  upstream API carries credentials in the body (GitHub's ``POST /credentials/revoke``) passes it through
+  `redact_fields` first, so the body never holds a credential either (HOT-11).
 - ``seq`` grows by one per request for the life of the process; `Journal.clear` drops the records in memory but
   never restarts the numbering, so the file stays unambiguous.
 
@@ -47,6 +49,21 @@ def redact_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
         shown = redact_value(key, value)
         out[key] = f"{out[key]}, {shown}" if key in out else shown
     return out
+
+
+def _hidden(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_hidden(item) for item in value]
+    if isinstance(value, str):
+        return f"<redacted {len(value)} chars>"
+    return "<redacted>"
+
+
+def redact_fields(body: Any, names: frozenset[str]) -> Any:
+    """`body` with the values of its top-level fields `names` reduced to their length (lists item by item)."""
+    if not isinstance(body, dict):
+        return body
+    return {key: _hidden(value) if key in names else value for key, value in body.items()}
 
 
 def decode_body(raw: bytes) -> Any:
