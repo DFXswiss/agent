@@ -23,6 +23,8 @@ export const KNOWN_TYPES: ReadonlySet<string> = new Set([
   'github.comment',
   'subagent.request',
   'task.set_title',
+  'human.question',
+  'human.approval',
 ]);
 
 export const STATE_BADGE: Readonly<Record<string, string>> = {

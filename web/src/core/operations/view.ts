@@ -4,7 +4,8 @@
 //
 // Events count only when the reader verified them and their body names the same operation (`operation_id`); an event
 // that fails is reported with its code, never as content. Without a row (not loaded yet) the state comes from the
-// verified result (`status`), else `received`. Result facts are the links and values of 03-api.md section 9: the PR
+// verified result (`status`), else `received`. The subject of `human.question` / `human.approval` is the question
+// (KOR-39). Result facts are the links and values of 03-api.md section 9: the PR
 // (number, URL), the commit SHA, the pushed branch (SHA, URL), the comment URL, the created branch, the checkout
 // commit, the subagent session, the new task title (`task.set_title`: "renamed by session") and the number of listed
 // repositories. URLs pass `safeUrl` (http(s) only; the contracts allow https only).
@@ -121,6 +122,7 @@ function readResult(body: Record<string, unknown>): ResultBody | null {
 export function subjectOf(type: string, params: Readonly<Record<string, unknown>>): string | null {
   if (type === 'subagent.request') return text(params.purpose);
   if (type === 'task.set_title') return text(params.title);
+  if (type === 'human.question' || type === 'human.approval') return text(params.question);
   const repo = text(params.repo);
   if (repo === null) return null;
   if (typeof params.number === 'number') return `${repo}#${params.number}`;

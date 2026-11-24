@@ -1,10 +1,12 @@
 // One row of a task list (06-web.md sections 5.1, 12.4): the decrypted title (or the neutral "unverifiable" label
 // with its code), the workgroup in lists of several workgroups (KOR-32), the state badge, the owner's display name (the signed author of the task's first user-written
 // `task.meta`; the hub's `owner_id` is ignored, KOR-04) and the last activity as absolute local time with a
-// relative label as secondary text.
+// relative label as secondary text. The situation view (KOR-39) extends the row: its entry passes `children` (the
+// attention line, the actions, the agent tree), then the row is not one link but the same columns followed by them.
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { parseTime } from '../../../core/encoding/time';
-import { formatEventTime } from '../../../core/i18n';
+import { formatEventTime, localTimeZone } from '../../../core/i18n';
 import type { TaskRow } from '../../../core/store/slices/tasks';
 import type { Directory } from '../../../core/tasks/directory';
 import { useI18n } from '../../i18n';
@@ -31,12 +33,26 @@ export function relativeLabel(locale: string, ms: number): string {
   return format.format(-Math.floor(past / 1000), 'second');
 }
 
+/** "5 min" style duration (the largest whole unit, seconds below one minute). */
+export function durationLabel(locale: string, ms: number): string {
+  const past = Math.max(0, ms);
+  const unit = UNITS.find(([, size]) => past >= size);
+  const [name, size] = unit ?? ['second', 1000];
+  return new Intl.NumberFormat(locale, { style: 'unit', unit: name, unitDisplay: 'short' }).format(
+    Math.floor(past / size),
+  );
+}
+
+const ROW = 'flex min-h-11 flex-col gap-1 px-2 py-2 sm:flex-row sm:items-center sm:gap-3';
+
 export function TaskItem({
   org,
   row,
   directory,
   now,
   workgroup,
+  testId = 'tasks.row',
+  children,
 }: {
   org: string;
   row: TaskRow;
@@ -44,47 +60,60 @@ export function TaskItem({
   now: number;
   /** The name of the row's workgroup, shown in lists of several workgroups. */
   workgroup?: string;
+  /** The test ID of the row (the situation view's entries are `attention.item`). */
+  testId?: string;
+  /** Content below the columns (the situation view); the row is then not a link. */
+  children?: ReactNode;
 }) {
   const { t, locale } = useI18n();
   const title = useTitle(row);
   const owner = useOwner(row);
   const activity = parseTime(row.last_activity_at);
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return (
-    <li className="border-b border-gray-100" data-testid="tasks.row" data-task={row.task_id}>
-      <Link
-        className="flex min-h-11 flex-col gap-1 px-2 py-2 sm:flex-row sm:items-center sm:gap-3"
-        to={`/o/${encodeURIComponent(org)}/t/${encodeURIComponent(row.task_id)}`}
-      >
-        <span className="flex-1 font-medium" data-testid="tasks.row.title" data-status={title.status}>
-          {title.status === 'verified' && title.text}
-          {title.status === 'missing' && <span className="text-gray-500">{t('tasks.title.loading')}</span>}
-          {title.status === 'unverifiable' && (
-            <span className="text-gray-500">{t('tasks.title.unverifiable', { code: title.code })}</span>
-          )}
-        </span>
-        {workgroup !== undefined && (
-          <span className="text-sm text-gray-700" data-testid="tasks.row.wg" data-wg={row.wg_id}>
-            {workgroup}
-          </span>
+  const timeZone = localTimeZone();
+  const columns = (
+    <>
+      <span className="flex-1 font-medium" data-testid="tasks.row.title" data-status={title.status}>
+        {title.status === 'verified' && title.text}
+        {title.status === 'missing' && <span className="text-gray-500">{t('tasks.title.loading')}</span>}
+        {title.status === 'unverifiable' && (
+          <span className="text-gray-500">{t('tasks.title.unverifiable', { code: title.code })}</span>
         )}
-        <span
-          className={`self-start rounded px-2 text-xs ${BADGE[row.state] ?? 'bg-gray-100 text-gray-800'}`}
-          data-testid="tasks.row.state"
-          data-state={row.state}
-        >
-          {t(`tasks.state.${row.state}`)}
+      </span>
+      {workgroup !== undefined && (
+        <span className="text-sm text-gray-700" data-testid="tasks.row.wg" data-wg={row.wg_id}>
+          {workgroup}
         </span>
-        <span className="text-sm text-gray-700" data-testid="tasks.row.owner">
-          {(owner === null ? undefined : directory.members.get(owner)) ?? t('tasks.owner.unknown')}
-        </span>
-        <span className="text-xs text-gray-600">
-          <time dateTime={row.last_activity_at} data-testid="tasks.row.activity">
-            {formatEventTime(activity, { locale, timeZone, now })}
-          </time>{' '}
-          <span>({relativeLabel(locale, now - activity)})</span>
-        </span>
-      </Link>
+      )}
+      <span
+        className={`self-start rounded px-2 text-xs ${BADGE[row.state] ?? 'bg-gray-100 text-gray-800'}`}
+        data-testid="tasks.row.state"
+        data-state={row.state}
+      >
+        {t(`tasks.state.${row.state}`)}
+      </span>
+      <span className="text-sm text-gray-700" data-testid="tasks.row.owner">
+        {(owner === null ? undefined : directory.members.get(owner)) ?? t('tasks.owner.unknown')}
+      </span>
+      <span className="text-xs text-gray-600">
+        <time dateTime={row.last_activity_at} data-testid="tasks.row.activity">
+          {formatEventTime(activity, { locale, timeZone, now })}
+        </time>{' '}
+        <span>({relativeLabel(locale, now - activity)})</span>
+      </span>
+    </>
+  );
+  return (
+    <li className="border-b border-gray-100" data-testid={testId} data-task={row.task_id}>
+      {children === undefined ? (
+        <Link className={ROW} to={`/o/${encodeURIComponent(org)}/t/${encodeURIComponent(row.task_id)}`}>
+          {columns}
+        </Link>
+      ) : (
+        <>
+          <div className={ROW}>{columns}</div>
+          {children}
+        </>
+      )}
     </li>
   );
 }

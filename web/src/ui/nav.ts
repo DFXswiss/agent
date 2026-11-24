@@ -1,5 +1,6 @@
 // Navigation entries discovered at `src/ui/screens/<area>/nav.ts` (each exports `nav: NavEntry[]`, ADR-027
 // section 4), sorted by `order`, then `id`.
+import type { ComponentType } from 'react';
 import { collect, hasShape, ordered, type ModuleMap, type Ordered } from '../core/registry';
 
 export interface NavEntry extends Ordered {
@@ -7,13 +8,19 @@ export interface NavEntry extends Ordered {
   readonly to: string;
   /** Message key `<area>.<key>` of the label. */
   readonly labelKey: string;
+  /** A badge next to the label (shown with an active org), e.g. Home's count of decisions (KOR-39). */
+  readonly Badge?: ComponentType<{ readonly org: string }>;
 }
 
 const navModules: ModuleMap = import.meta.glob('./screens/*/nav.ts', { eager: true });
 
 const isNavList = (value: unknown): value is NavEntry[] =>
   Array.isArray(value) &&
-  value.every((entry) => hasShape(entry, { id: 'string', order: 'number', to: 'string', labelKey: 'string' }));
+  value.every(
+    (entry) =>
+      hasShape(entry, { id: 'string', order: 'number', to: 'string', labelKey: 'string' }) &&
+      (entry.Badge === undefined || hasShape(entry, { Badge: 'component' })),
+  );
 
 export function navEntries(modules: ModuleMap = navModules): NavEntry[] {
   return ordered(collect(modules, 'nav', isNavList).flatMap((entry) => entry.value));

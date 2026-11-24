@@ -30,6 +30,8 @@ export interface PullQuery {
   readonly kinds: readonly string[];
   /** Only the events of this task. */
   readonly task?: string;
+  /** Only the events with this `ref` (an operation's events, KOR-39). */
+  readonly ref?: string;
 }
 
 interface EventsPage {
@@ -61,6 +63,7 @@ export function pullTarget(scopeId: string, query: PullQuery, after: number | nu
   params.set('limit', String(PAGE_LIMIT));
   params.set('kinds', query.kinds.join(','));
   if (query.task !== undefined) params.set('task', query.task);
+  if (query.ref !== undefined) params.set('ref', query.ref);
   return `/v1/scopes/${encodeURIComponent(scopeId)}/events?${params.toString()}`;
 }
 
@@ -90,7 +93,7 @@ export function pullOnce(context: TasksContext, org: string, scopeId: string, qu
   const store = context.store;
   const pulls = shared.get(store) ?? new Map<string, Promise<number>>();
   shared.set(store, pulls);
-  const key = `${store.generation} ${org} ${scopeId} ${query.kinds.join(',')} ${query.task ?? ''}`;
+  const key = `${store.generation} ${org} ${scopeId} ${query.kinds.join(',')} ${query.task ?? ''} ${query.ref ?? ''}`;
   const known = pulls.get(key);
   if (known !== undefined) return known;
   const pull = pullEvents(context, org, scopeId, query).catch((error: unknown) => {

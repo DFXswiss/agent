@@ -22,7 +22,7 @@ export function Nav({ entries = navEntries() }: { readonly entries?: readonly Na
   const org = useStore((state) => state.session.activeOrg, app.store);
   const links = entries.flatMap((entry) => {
     const to = navTarget(entry, org);
-    return to === null ? [] : [{ id: entry.id, to, label: t(entry.labelKey) }];
+    return to === null ? [] : [{ id: entry.id, to, label: t(entry.labelKey), Badge: entry.Badge }];
   });
   if (links.length === 0) return null;
   return (
@@ -41,6 +41,7 @@ export function Nav({ entries = navEntries() }: { readonly entries?: readonly Na
               data-testid={`shell.nav.${link.id}`}
             >
               {link.label}
+              {link.Badge !== undefined && org !== null && <link.Badge org={org} />}
             </NavLink>
           </li>
         ))}
