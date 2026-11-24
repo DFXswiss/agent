@@ -127,7 +127,9 @@ test('@E2E-60 @needs-vm @needs-workvm tests run red then green in fresh VMs, the
   const events = (await taskBodies(page, orchestrator, onboarded, task, 'test.run')).filter(
     (body) => body.state !== 'running',
   );
-  expect(events.map((body) => [body.run_id, body.state])).toEqual(results.map((result) => [result.run_id, result.state]));
+  expect(events.map((body) => [body.run_id, body.state])).toEqual(
+    results.map((result) => [result.run_id, result.state]),
+  );
 
   // Both run VMs went right after their runs; the work VM still runs.
   await expect
@@ -141,7 +143,10 @@ test('@E2E-60 @needs-vm @needs-workvm tests run red then green in fresh VMs, the
       { scope: 'run', state: 'deleted', delete_reason: 'run_ended' },
       { scope: 'run', state: 'deleted', delete_reason: 'run_ended' },
     ]);
-  const runs = await runnerStore<{ state: string }>(orchestrator, 'SELECT state FROM runner.test_run ORDER BY started_at');
+  const runs = await runnerStore<{ state: string }>(
+    orchestrator,
+    'SELECT state FROM runner.test_run ORDER BY started_at',
+  );
   expect(runs.map((row) => row.state)).toEqual(['failed', 'passed']);
 
   // The implicit start of the work VM announced itself (the panel's countdown), then it was created.
