@@ -206,7 +206,12 @@ def test_hub_router_verbs_and_websocket() -> None:
 
     specs = [route_spec(route) for route in router.routes]
     assert all(spec is not None for spec in specs)
-    assert [getattr(route, "methods", None) for route in router.routes][:4] == [{"GET"}, {"POST"}, {"PUT"}, {"DELETE"}]
+    assert [getattr(route, "methods", None) for route in router.routes][:4] == [
+        {"GET", "HEAD"},
+        {"POST"},
+        {"PUT"},
+        {"DELETE"},
+    ]
     websocket = specs[-1]
     assert websocket is not None
     assert websocket.streaming

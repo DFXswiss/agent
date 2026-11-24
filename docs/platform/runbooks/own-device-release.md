@@ -63,7 +63,9 @@ download for people stays closed.
 
 Copy `<out>/DFX-Agent-Runner-<version>.pkg`, `latest.json` and `latest.json.sig` into `<AGENT_HUB_DOWNLOADS_DIR>/runner/`
 of the hub (package first, the feed last, so no device sees a feed whose package is missing). Check:
-`curl -fsS https://<hub>/downloads/runner/latest.json`. Re-sign the feed (a new build of the same commit, or a feed-only
+`curl -fsS https://<hub>/downloads/runner/latest.json` and `curl -fsSI https://<hub>/downloads/runner/<package>`
+(`HEAD`: `200` with the package's `Content-Length` and `Cache-Control: public, max-age=31536000, immutable`, nothing
+downloaded). Re-sign the feed (a new build of the same commit, or a feed-only
 build) before its `expires` (at most 120 days): an expired feed stops all updates and shows `feed_expired`.
 
 ## 5. What devices do

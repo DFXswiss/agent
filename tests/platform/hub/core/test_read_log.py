@@ -532,7 +532,8 @@ def test_registered_api_routes_match_the_index(hub_config: HubConfig) -> None:
                 assert getattr(route, "include_in_schema", True) is False, path
                 outside += 1
                 continue
-            for method in getattr(route, "methods", None) or {"GET"}:
+            # HEAD answers as the GET of the route (HOT-19) and has no row of its own
+            for method in (getattr(route, "methods", None) or {"GET"}) - {"HEAD"}:
                 row = rows.get((method, path))
                 assert row is not None, f"{method} {path} is not in contracts/api/INDEX.json"
                 assert spec is not None

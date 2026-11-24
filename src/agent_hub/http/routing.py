@@ -9,6 +9,10 @@ before the route runs: it enforces the authentication class, the body limit, the
 signs every non-streaming response to a signed request. A route without a declaration cannot be registered with the
 app (`agent_hub.app` refuses it).
 
+Every `GET` route also answers `HEAD` (RFC 9110 section 9.3.2): the router registers both methods, and the pipeline
+treats a `HEAD` like its `GET` (declaration, rights, rate limit, read log) and sends the same status and headers
+without a body.
+
 The app factory adds the routes of every discovered router to the app as they are (no `include_router`, which would
 wrap them); the declaration is an attribute of the route object. The app never publishes an OpenAPI document.
 """
@@ -143,7 +147,7 @@ class HubRouter(APIRouter):
             max_body=max_body,
             streaming=streaming,
         )
-        decorator = self.api_route(path, methods=[method], **kwargs)
+        decorator = self.api_route(path, methods=[method, "HEAD"] if method == "GET" else [method], **kwargs)
 
         def register(endpoint: Callable[..., Any]) -> Callable[..., Any]:
             result = decorator(endpoint)

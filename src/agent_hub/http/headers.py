@@ -29,8 +29,11 @@ _NAMES = frozenset(name for name, _ in SECURITY_HEADERS)
 API_PREFIX = "/v1/"
 
 
-def json_response_messages(status: int, body: bytes, extra: list[tuple[bytes, bytes]]) -> list[Message]:
-    """The two ASGI messages of a complete JSON response."""
+def json_response_messages(
+    status: int, body: bytes, extra: list[tuple[bytes, bytes]], *, head: bool = False
+) -> list[Message]:
+    """The two ASGI messages of a complete JSON response; the answer to a `HEAD` keeps the `Content-Length` of `body`
+    and sends none of it."""
     headers = [
         (b"content-type", b"application/json"),
         (b"content-length", str(len(body)).encode("ascii")),
@@ -38,7 +41,7 @@ def json_response_messages(status: int, body: bytes, extra: list[tuple[bytes, by
     ]
     return [
         {"type": "http.response.start", "status": status, "headers": headers},
-        {"type": "http.response.body", "body": body},
+        {"type": "http.response.body", "body": b"" if head else body},
     ]
 
 
@@ -71,6 +74,7 @@ class SecurityHeaders:
             LOG.error("request %s %s failed before a response", scope.get("method"), scope["path"], exc_info=True)
             if started:
                 return
-            body = b"" if scope.get("method") == "HEAD" else error_bytes(INTERNAL_ERROR)
-            for message in json_response_messages(503, body, []):
+            for message in json_response_messages(
+                503, error_bytes(INTERNAL_ERROR), [], head=scope.get("method") == "HEAD"
+            ):
                 await send_with_headers(message)

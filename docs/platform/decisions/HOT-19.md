@@ -47,3 +47,24 @@ Gate: `test_byte_code_does_not_depend_on_what_the_compiling_process_compiled_bef
 that use a rare word as a name and one file that shares a `frozenset` of that word between two functions, twice and
 alone, the second time under another locale. With the former `compileall -j 0` it failed five times out of five on a
 test device; with the correction it passes. A file that does not compile is named in the build log (`pyc_failed`).
+
+## Part 3: the hub answered every HEAD with 404
+
+Cause: routes are registered by `HubRouter` with exactly their method; Starlette adds `HEAD` only to its own `Route`,
+not to FastAPI's `APIRoute`, so `match_route` found no route for a `HEAD` and the pipeline answered `404 not_found`.
+
+Decision (one place each, not per route):
+
+- `HubRouter.hub_route` registers `HEAD` with every `GET` route. A `HEAD` therefore passes the whole pipeline as its
+  `GET`: authentication class, rights, rate limits, query check and read log (`read.<resource>`). An agent is admitted
+  to `HEAD` exactly where it is admitted to the `GET` (`agents.scope.agent_allowed`).
+- The pipeline sends the response start of the route, an empty body, and ends the route (`HeadAnswered`): a
+  `FileResponse` sends only its start for `HEAD` anyway, so the package file is not read, and the browser live
+  channel is not followed. A held (signed) answer is released with an empty body; error answers keep the
+  `Content-Length` of their JSON body (`json_response_messages(..., head=True)`). The response signature of a `HEAD`
+  covers the bytes sent (none), so a client can verify it.
+- The contract index (`contracts/api/INDEX.json`) keeps one row per `GET`; `HEAD` has no row of its own. Tests that
+  enumerate the methods of the routes (`core/test_read_log.py`, `core/test_registry.py`, `agents/test_scope.py`)
+  skip `HEAD` or expect it next to `GET`; `test_head.py` checks it for every route as discovered.
+- A route whose answer changes with every call (`GET /v1/me/audit` lists the read it just recorded) cannot have equal
+  lengths in two calls; the test compares its status and other headers and pins this list.

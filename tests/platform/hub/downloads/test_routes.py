@@ -62,6 +62,29 @@ def test_latest_json_is_served_unchanged_and_revalidated(hub_with_downloads: Hub
     assert response.headers["content-security-policy"].startswith("default-src 'none'")
 
 
+def test_head_of_the_package_answers_its_headers_without_reading_it(
+    hub_with_downloads: HubHarness, downloads_dir: Path
+) -> None:
+    got = hub_with_downloads.anon.get(f"/downloads/runner/{PACKAGE_NAME}")
+    (downloads_dir / "runner" / PACKAGE_NAME).chmod(0)  # a read would fail now
+    try:
+        head = hub_with_downloads.anon.request("HEAD", f"/downloads/runner/{PACKAGE_NAME}")
+    finally:
+        (downloads_dir / "runner" / PACKAGE_NAME).chmod(0o644)
+    assert head.status_code == 200
+    assert head.content == b""
+    assert dict(head.headers) == dict(got.headers)
+    assert head.headers["content-length"] == str(len(PACKAGE))
+
+
+def test_head_of_the_feed_and_of_a_missing_file_answer_like_get(hub_with_downloads: HubHarness) -> None:
+    for name in ("latest.json", "latest.json.sig", "DFX-Agent-Runner-2020.01.01.0000.pkg", "notes.txt"):
+        got = hub_with_downloads.anon.get(f"/downloads/runner/{name}")
+        head = hub_with_downloads.anon.request("HEAD", f"/downloads/runner/{name}")
+        assert (head.status_code, dict(head.headers)) == (got.status_code, dict(got.headers)), name
+        assert head.content == b"", name
+
+
 def test_signature_is_ascii_text_and_revalidated(hub_with_downloads: HubHarness) -> None:
     response = hub_with_downloads.anon.get("/downloads/runner/latest.json.sig")
     assert response.status_code == 200

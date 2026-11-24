@@ -41,7 +41,8 @@ def routes(hub: HubHarness) -> list[tuple[str, str, RouteSpec]]:
         if isinstance(route, APIWebSocketRoute):
             found.append(("GET", route.path, spec))
         elif isinstance(route, APIRoute):
-            found.extend((method, route.path, spec) for method in sorted(route.methods or ()))
+            # HEAD is decided as the GET of the route (HOT-19); test_head.py checks it
+            found.extend((method, route.path, spec) for method in sorted((route.methods or set()) - {"HEAD"}))
     return found
 
 

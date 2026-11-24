@@ -41,7 +41,8 @@ EXCEPTIONS: Mapping[tuple[str, str], str] = {
 
 def agent_allowed(method: str, path: str, auth: str, state: object) -> bool:
     """Whether an agent in `state` may call the route `method path` (path template as declared) of the
-    authentication class `auth`."""
+    authentication class `auth`. A `HEAD` is decided as the `GET` of the same route."""
+    method = "GET" if method == "HEAD" else method
     if (method, path) in CONFIRMED_ROUTES:
         return state in (CONFIRMED, ACTIVE)
     if state != ACTIVE or (method, path) in EXCEPTIONS:

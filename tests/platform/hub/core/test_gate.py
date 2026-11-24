@@ -191,9 +191,19 @@ def test_unknown_route_of_a_signed_request_is_signed(gate: HubHarness) -> None:
 
 
 def test_head_of_a_signed_request(gate: HubHarness) -> None:
+    got = gate.root.get("/v1/test/root")
     response = gate.root.request("HEAD", "/v1/test/root")
+    assert response.status_code == got.status_code == 200
+    assert response.content == b""
+    assert response.headers["content-length"] == got.headers["content-length"] != "0"
+    assert response.extensions["hub_signature"] is True
+
+
+def test_head_of_a_signed_request_without_a_route(gate: HubHarness) -> None:
+    response = gate.root.request("HEAD", "/v1/test/nowhere")
     assert response.status_code == 404
     assert response.content == b""
+    assert response.headers["content-length"] == str(len(b'{"error":"not_found"}'))
     assert response.extensions["hub_signature"] is True
 
 

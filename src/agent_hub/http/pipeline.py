@@ -24,6 +24,10 @@ For an HTTP request it
    was known (wrong key kind, an undeclared query parameter) is settled the same way; one refused before (signature,
    limits, body) or answered `429` is not (ADR-063 section 1).
 
+A `HEAD` request passes the steps of its `GET` (the router registers `HEAD` with every `GET` route). Its answer is
+the status and headers of the `GET` without a body: the route stops after its response start (a file is not read, a
+stream not followed), and a held response is released with an empty body.
+
 A WebSocket upgrade passes steps 1, 2, 4 and 5 and is closed with code 1008 when it fails; streams are never
 response-signed.
 """
@@ -73,6 +77,10 @@ def acting_agent(principal: Principal) -> UUID | None:
     """The agent ID of an agent principal (written into every audit row of its request, ADR-056), else None."""
     agent = principal.attributes.get("agent_id") if principal.kind == "agent" else None
     return agent if isinstance(agent, UUID) else None
+
+
+class HeadAnswered(Exception):
+    """A `HEAD` request was answered with the response start of its route; the route is stopped."""
 
 
 class ClientGone(Exception):
@@ -206,6 +214,24 @@ def source_address(scope: Scope) -> str:
     return str(scope.get(SOURCE_KEY) or peer_address(scope))
 
 
+def contains(error: BaseException, kind: type[BaseException]) -> bool:
+    """Whether `error` is a `kind`, was raised from or while handling one, or groups one (Starlette re-raises an
+    exception of a route as another one or inside an exception group)."""
+    seen: set[int] = set()
+    pending: list[BaseException] = [error]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, kind):
+            return True
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
+        pending.extend(item for item in (current.__cause__, current.__context__) if item is not None)
+    return False
+
+
 class HubPipeline:
     """ASGI middleware implementing the pipeline; `hub` is the FastAPI app whose routes and context it uses."""
 
@@ -332,12 +358,14 @@ class HubPipeline:
 
     async def _send_error(self, context: HubContext, scope: Scope, send: Send, error: HubError) -> None:
         status = error.status
-        body = b"" if scope.get("method") == "HEAD" else error_bytes(error.code, error.detail)
+        head = scope.get("method") == "HEAD"
+        body = error_bytes(error.code, error.detail)
         extra = [(name.lower().encode("ascii"), value.encode("ascii")) for name, value in error.headers.items()]
         signed = scope.get(SIGNED_KEY)
         if isinstance(signed, SignedHeaders):
-            extra += response_headers(context.signer, signed, status, body, epoch_seconds(context.clock))
-        for message in json_response_messages(status, body, extra):
+            sent = b"" if head else body  # the signature covers the bytes that are sent
+            extra += response_headers(context.signer, signed, status, sent, epoch_seconds(context.clock))
+        for message in json_response_messages(status, body, extra, head=head):
             await send(message)
 
     async def _run(
@@ -358,6 +386,7 @@ class HubPipeline:
         held: Message | None = None
         chunks: list[bytes] = []
         write = noted is not None
+        head = scope.get("method") == "HEAD"
 
         async def release(start: Message) -> None:
             nonlocal started
@@ -393,21 +422,43 @@ class HubPipeline:
                 await release(start)
                 return
             await send(message)
+            if head and message["type"] == "http.response.start":
+                await send({"type": "http.response.body", "body": b""})
+                raise HeadAnswered
 
         try:
             await self.app(scope, receive, send_held)
         except Exception as exc:
-            if isinstance(exc, ReadNotRecorded):
-                LOG.error("request %s %s: the read could not be recorded", scope.get("method"), scope["path"])
-            else:
-                LOG.error("request %s %s: the route failed", scope.get("method"), scope["path"], exc_info=True)
-            if not started:
-                error = HubError(INTERNAL_ERROR)
-                status = error.status
-                if noted is not None:
-                    await self._settle(context, scope, match, noted, status=status, code=error.code)
-                await self._send_error(context, scope, send, error)
+            if not (head and started and contains(exc, HeadAnswered)):
+                status = await self._failed(
+                    context, scope, send, exc, status=status if started else None, match=match, noted=noted
+                )
         return status
+
+    async def _failed(
+        self,
+        context: HubContext,
+        scope: Scope,
+        send: Send,
+        exc: Exception,
+        *,
+        status: int | None,
+        match: RouteMatch,
+        noted: Recording | None,
+    ) -> int:
+        """Log a failed route and answer `503 unavailable` unless its answer already started (`status` is then the
+        status it started with); the status sent."""
+        if isinstance(exc, ReadNotRecorded):
+            LOG.error("request %s %s: the read could not be recorded", scope.get("method"), scope["path"])
+        else:
+            LOG.error("request %s %s: the route failed", scope.get("method"), scope["path"], exc_info=True)
+        if status is not None:
+            return status
+        error = HubError(INTERNAL_ERROR)
+        if noted is not None:
+            await self._settle(context, scope, match, noted, status=error.status, code=error.code)
+        await self._send_error(context, scope, send, error)
+        return error.status
 
     async def _admit_read(self, context: HubContext, scope: Scope, spec: RouteSpec, status: int) -> None:
         """Record the read before its answer leaves the hub (`ReadNotRecorded` when that fails)."""
