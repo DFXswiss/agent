@@ -7,9 +7,10 @@ variable fails the test) and are deleted at the end, also on failure.
 
 The runner's own account plays the only slot (self command, no root; the separation of the slot accounts and the host
 filter are tested elsewhere). The template is `images/workvm.yaml` with its pinned Ubuntu image and every Lima setting
-of production, only smaller (2 CPUs, 2 GiB, 10 GiB disk); the provisioning script is a stand-in that installs the three
-commands of the smoke step and a marker file, so the test needs no internet beyond the (cached) image and checks what
-production builds on: the Lima instance directory of the current Lima version.
+of production, only smaller (2 CPUs, 2 GiB, 10 GiB disk); the clone takes the clone settings of production
+(`WorkVms._sets`: 50 GiB disk, pinned SSH port, resolvers) with small CPUs and memory. The provisioning script is a
+stand-in that installs the three commands of the smoke step and a marker file, so the test needs no internet beyond
+the (cached) image and checks what production builds on: the Lima instance directory of the current Lima version.
 """
 
 from __future__ import annotations
@@ -19,16 +20,19 @@ import hashlib
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from agent_runner.vm.lima import Lima
 from agent_runner.workvm import image, service, shell
+from agent_runner.workvm.manager import POOL_SIZE, SIZES, Deps, Settings, WorkVms
 from agent_runner.workvm.shell import SlotCommand, VmShell
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -42,7 +46,7 @@ chmod 0755 /usr/local/bin/node /usr/local/sbin/workvm-job
 echo built > {MARKER}
 """
 SMALL = {r"^cpus: \d+$": "cpus: 2", r"^memory: \S+$": "memory: 2GiB", r"^disk: \S+$": "disk: 10GiB"}
-GROWN_GIB = 12
+GROWN_GIB = SIZES[POOL_SIZE][2]
 
 pytestmark = pytest.mark.timeout(1200)
 
@@ -83,9 +87,36 @@ def lima() -> Iterator[Lima]:
 
 
 def remove_test_instances(lima: Lima) -> None:
+    """The instances of this test only: build and final image, the base and the VM (the prefix is the package's)."""
+    kinds = ("wimg-build-", "wimg-hot", "wbase-", "wvm-hot")
     for instance in lima.list():
-        if any(instance.name.startswith(lima.name(kind)) for kind in ("wimg-", "wbase-", "wvm-hot")):
+        if any(instance.name.startswith(lima.prefix + kind) for kind in kinds):
             lima.delete(instance.name)
+
+
+def free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def clone_sets(slot: int) -> list[str]:
+    """The `limactl clone --set` expressions of production (`WorkVms._sets`, pool size `standard`: 4 CPUs, 8 GiB,
+    50 GiB disk, pinned SSH port, resolvers), then CPUs and memory made small again (a later `--set` wins)."""
+    settings = Settings(
+        slots=1,
+        max_size=POOL_SIZE,
+        idle_seconds=60,
+        queue_seconds=60,
+        max_per_task=1,
+        max_per_org=1,
+        max_per_owner=1,
+        ssh_port_base=free_port() - slot,
+        test_mode=True,
+    )
+    unused: Any = None
+    deps = Deps(unused, settings, unused, unused, unused, unused, unused, unused, unused)
+    return [*WorkVms(deps)._sets(POOL_SIZE, slot), ".cpus=2", '.memory="2GiB"']
 
 
 def test_work_image_export_to_a_running_slot_vm(lima: Lima, tmp_path: Path) -> None:
@@ -124,8 +155,10 @@ def test_work_image_export_to_a_running_slot_vm(lima: Lima, tmp_path: Path) -> N
     assert built.export.stat().st_blocks * 512 < built.export.stat().st_size  # copied sparsely
 
     # the slot: its base from the exported disk (no download), a clone of it grown and started
-    bases = service.Bases(SlotCommand(()), lima.prefix, template, exports)
+    lines: list[str] = []
+    bases = service.Bases(SlotCommand(()), lima.prefix, template, exports, lines.append)
     base = asyncio.run(bases(0, built.name))
+    assert lines == []
     assert base == lima.name("wbase-" + hashlib.sha256(built.name.encode()).hexdigest()[:8])
     found = lima.get(base)
     assert found is not None
@@ -133,7 +166,7 @@ def test_work_image_export_to_a_running_slot_vm(lima: Lima, tmp_path: Path) -> N
     assert (exports / f"{built.name}.yaml").is_file()
 
     vm = lima.name(f"wvm-{suffix}")
-    lima.clone(base, vm, sets=[".cpus=2", '.memory="2GiB"', f'.disk="{GROWN_GIB}GiB"', '.dns=["1.1.1.1"]'])
+    lima.clone(base, vm, sets=clone_sets(0))
     lima.start(vm)
     run = VmShell(SlotCommand(()), 0, vm)
     result = asyncio.run(
@@ -149,4 +182,4 @@ def test_work_image_export_to_a_running_slot_vm(lima: Lima, tmp_path: Path) -> N
     assert lima.get(vm) is None
     assert lima.delete(base) is True
     assert lima.delete(built.name) is True
-    assert [i.name for i in lima.list() if i.name.startswith(lima.name("wimg-")) and suffix in i.name] == []
+    assert {i.name for i in lima.list()} & {built.name, base, vm} == set()

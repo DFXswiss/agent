@@ -37,13 +37,23 @@ directory:
 3. **`Bases` takes the directory of the exported disks** (`images`, default `IMAGES_DIR`). `None` means self mode and
    replaces the earlier check on the slot accounts. The two are equivalent in production. With the directory as a
    parameter, the real test can let the test account play the slot without root.
-4. **The real test runs in the gates, not under `-m vm`.** `tests/platform/runner/workvm/test_real_lima.py` follows
-   `test_lima_accepts_the_template`: it runs wherever real `limactl` 2.3.0 or later is installed on macOS, which
-   covers the test devices in `platform-test`, and it is skipped with a reason elsewhere (CI runners, Linux). A
-   missing `AGENT_RUNNER_VM_PREFIX` fails the test. The `vm` marker of the session suites would keep it out of
-   `make platform-ci`, and the package asks for the opposite: a new Lima version has to show up in the gate.
-5. **The test uses a small work template and a stand-in provisioning script.** The template is `images/workvm.yaml`
-   with its pinned image and every Lima setting, at 2 CPUs, 2 GiB and 10 GiB. The provisioning script installs the
-   three commands of the smoke step and a marker file. Under test are the Lima path (build, export, base, clone, grow,
-   start, command, stop, delete) and not the 40 s package installation, which production has already passed. The run
-   takes about 35 s and needs no internet beyond the cached image.
+4. **The real test runs in the gates and does not carry the `vm` marker.**
+   `tests/platform/runner/workvm/test_real_lima.py` follows `test_lima_accepts_the_template`. It runs wherever real
+   `limactl` 2.3.0 or later is installed on macOS, which covers the test devices in `platform-test`. Elsewhere it is
+   skipped with a reason (CI runners, Linux). A missing `AGENT_RUNNER_VM_PREFIX` fails the test. The suites marked
+   `vm` deselect themselves through their `conftest.py` unless the run asks for `-m vm`, so they never run in
+   `make platform-ci`. This package needs the opposite: a new Lima version has to show up in the gate. The test starts
+   one small VM (2 CPUs, 2 GiB) for under a minute, inside the gate's own slot. It deletes only its own instances (by
+   their name kinds under the package prefix).
+5. **A small template, the production clone settings and a stand-in provisioning script.**
+   - The image comes from `images/workvm.yaml` with its pinned image and every Lima setting, at 2 CPUs, 2 GiB and
+     10 GiB.
+   - The clone takes the expressions of `WorkVms._sets` for the pool size: 50 GiB disk, pinned SSH port, resolvers.
+     It only adds a later `--set` with small CPUs and memory, so the clone also proves that the disk grows from
+     10 GiB to 50 GiB.
+   - The provisioning script installs the three commands of the smoke step and a marker file.
+   - Under test is the Lima path: build, export, base, clone, grow, start, command, stop, delete. The 40 s package
+     installation is left out; production has already passed it.
+   - The run takes 35–50 s and needs no internet beyond the cached image.
+6. **`metrics/vm.py` stays as it is.** It names `disk` for the allocated size of workgroup VMs. That module belongs to
+   another package, does not touch work VMs, and is already correct for Lima 2.x.
