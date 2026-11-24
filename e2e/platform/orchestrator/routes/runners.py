@@ -1,5 +1,7 @@
 """Runner instances: `GET /runners`, `POST /runners/{name}/stop`, `POST /runners/{name}/start` (same home, so a
-restart keeps identity and store)."""
+restart keeps identity and store). The start may carry `{"github": {"oauth_client_id"?, "app_slug"?}}` (KOR-65): the
+GitHub ways of the restarted runner (`AGENT_RUNNER_GITHUB_OAUTH_CLIENT_ID`, `AGENT_RUNNER_GITHUB_APP_SLUG`); a missing
+or null member removes the setting, so `{"github": {}}` restores the run's default."""
 
 from __future__ import annotations
 
@@ -26,10 +28,33 @@ def post_stop(ctx: Context, params: dict[str, str], _body: Any) -> tuple[int, An
     return 200, {"name": runner.name, "exit": runner.stop(), "state": runner.state()}
 
 
-def post_start(ctx: Context, params: dict[str, str], _body: Any) -> tuple[int, Any]:
+GITHUB_SETTINGS = {
+    "oauth_client_id": "AGENT_RUNNER_GITHUB_OAUTH_CLIENT_ID",
+    "app_slug": "AGENT_RUNNER_GITHUB_APP_SLUG",
+}
+
+
+def _github(runner: Runner, body: Any) -> None:
+    github = body.get("github") if isinstance(body, dict) else None
+    if github is None:
+        return
+    if not isinstance(github, dict) or set(github) - set(GITHUB_SETTINGS):
+        raise RouteError(400, "invalid", 'github must be {"oauth_client_id"?, "app_slug"?}')
+    for key, name in GITHUB_SETTINGS.items():
+        value = github.get(key)
+        if value is None:
+            runner.env.pop(name, None)
+        elif isinstance(value, str) and value:
+            runner.env[name] = value
+        else:
+            raise RouteError(400, "invalid", f"github.{key} must be a non-empty string or null")
+
+
+def post_start(ctx: Context, params: dict[str, str], body: Any) -> tuple[int, Any]:
     runner = _runner(ctx, params)
     if runner.state() != "stopped":
         raise RouteError(400, "invalid", f"runner {runner.name} is running")
+    _github(runner, body)
     runner.start()
     return 200, {"name": runner.name, "state": runner.state()}
 

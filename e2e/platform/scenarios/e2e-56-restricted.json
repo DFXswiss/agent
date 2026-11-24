@@ -1,0 +1,103 @@
+{
+  "name": "e2e-56-restricted",
+  "description": "E2E-56 (KOR-65): an organisation that restricts OAuth Apps. The session requests the issue list at once; the runner holds it with the next step 'request the approval'; once an owner approved the OAuth App at GitHub the runner checks again and the operation goes on; the session waits with get_operation and answers - without a new prompt.",
+  "steps": [
+    {
+      "id": "list",
+      "expect": {
+        "user_text_contains": "E2E56-STRICT",
+        "has_tool_result": false,
+        "tools_include": [
+          "mcp__platform__request_operation",
+          "mcp__platform__get_operation"
+        ]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_issues",
+              "params": {
+                "repo": "kz56-strict-org/app",
+                "per_page": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "wait",
+      "expect": {
+        "tool_result_contains": "\"operation_id\":\""
+      },
+      "capture": {
+        "op": {
+          "regex": "\"operation_id\":\"([0-9a-f-]{36})\"",
+          "source": "messages"
+        }
+      },
+      "delay_ms": 10000,
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op}",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": {
+        "tool_result_contains": "kz56-strict-e5t2"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The restricted organisation answered after the approval kz56-answer-strict-k4m8."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Repositories"
+          }
+        ]
+      }
+    }
+  ]
+}

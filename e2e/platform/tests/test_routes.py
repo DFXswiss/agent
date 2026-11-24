@@ -113,6 +113,21 @@ def test_runners(ctx: Context) -> None:
     assert call(ctx, "POST", "/runners/runner-9/stop")[0] == 404
 
 
+def test_a_runner_restarts_with_its_github_ways(ctx: Context) -> None:
+    runner = ctx.runners["runner-1"]
+    call(ctx, "POST", "/runners/runner-1/stop")
+    for bad in ({"github": []}, {"github": {"other": "x"}}, {"github": {"app_slug": ""}}, {"github": {"app_slug": 5}}):
+        assert call(ctx, "POST", "/runners/runner-1/start", bad)[0] == 400
+    ways = {"oauth_client_id": "Ov23double00000000", "app_slug": "agent-dfx-swiss"}
+    assert call(ctx, "POST", "/runners/runner-1/start", {"github": ways})[0] == 200
+    assert runner.env["AGENT_RUNNER_GITHUB_OAUTH_CLIENT_ID"] == "Ov23double00000000"
+    assert runner.env["AGENT_RUNNER_GITHUB_APP_SLUG"] == "agent-dfx-swiss"
+    call(ctx, "POST", "/runners/runner-1/stop")
+    assert call(ctx, "POST", "/runners/runner-1/start", {"github": {}})[0] == 200
+    assert "AGENT_RUNNER_GITHUB_OAUTH_CLIENT_ID" not in runner.env
+    assert "AGENT_RUNNER_GITHUB_APP_SLUG" not in runner.env
+
+
 def test_operator_hub_db_and_faults(ctx: Context) -> None:
     node = ctx.hub_node
     assert isinstance(node, StubNode)

@@ -73,7 +73,10 @@ export class Orchestrator {
   restore = (link: string) => this.call<{ cut: boolean }>('POST', `/links/${link}/restore`);
   runners = () => this.call<Record<string, string>>('GET', '/runners');
   stopRunner = (name: string) => this.call<{ state: string }>('POST', `/runners/${name}/stop`);
-  startRunner = (name: string) => this.call<{ state: string }>('POST', `/runners/${name}/start`);
+  /** Starts a stopped runner; `github` sets its GitHub ways (KOR-65: OAuth App client ID, GitHub App URL name; a
+   *  missing member removes the setting). */
+  startRunner = (name: string, github?: { oauth_client_id?: string; app_slug?: string }) =>
+    this.call<{ state: string }>('POST', `/runners/${name}/start`, github === undefined ? undefined : { github });
   operator = (args: string[]) =>
     this.call<{ rc: number; stdout: string; stderr: string }>('POST', '/operator', { args });
   hubQuery = <T = Record<string, unknown>>(sql: string) =>

@@ -1,0 +1,124 @@
+{
+  "name": "e2e-56-every-repository",
+  "description": "E2E-56 (KOR-65, rule E-29): with one sign-in through the OAuth App the session reads the newest issue of a repository in the user's own account, of the user's fork, of an organisation with the GitHub App and of a third party's organisation without an installation; every result arrives at once and the session answers.",
+  "steps": [
+    {
+      "id": "own",
+      "expect": {
+        "user_text_contains": "E2E56-EVERY",
+        "has_tool_result": false,
+        "tools_include": [
+          "mcp__platform__request_operation"
+        ]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_issues",
+              "params": {
+                "repo": "kz56-octo/tool",
+                "per_page": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fork",
+      "expect": {
+        "tool_result_contains": "kz56-own-a1q7"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_issues",
+              "params": {
+                "repo": "kz56-octo/app-fork",
+                "per_page": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "org",
+      "expect": {
+        "tool_result_contains": "kz56-fork-b2w8"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_issues",
+              "params": {
+                "repo": "kz56-app-org/service",
+                "per_page": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "third",
+      "expect": {
+        "tool_result_contains": "kz56-org-c3e9"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_issues",
+              "params": {
+                "repo": "kz56-third-org/app",
+                "per_page": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": {
+        "tool_result_contains": "kz56-third-d4r1"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "All four repositories answered kz56-answer-every-x7p2."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Repositories"
+          }
+        ]
+      }
+    }
+  ]
+}

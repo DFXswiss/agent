@@ -1,0 +1,103 @@
+{
+  "name": "e2e-56-fork-app",
+  "description": "E2E-56 (KOR-65): the fork case with the GitHub App only. The App is not installed on the user's account, so the fork is not reachable; the runner holds the operation with the next step 'create a token'; the user stores a token right in the card and the operation goes on without a new prompt.",
+  "steps": [
+    {
+      "id": "list",
+      "expect": {
+        "user_text_contains": "E2E56-FORK",
+        "has_tool_result": false,
+        "tools_include": [
+          "mcp__platform__request_operation",
+          "mcp__platform__get_operation"
+        ]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_issues",
+              "params": {
+                "repo": "kz56-octo/app-fork",
+                "per_page": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "wait",
+      "expect": {
+        "tool_result_contains": "\"operation_id\":\""
+      },
+      "capture": {
+        "op": {
+          "regex": "\"operation_id\":\"([0-9a-f-]{36})\"",
+          "source": "messages"
+        }
+      },
+      "delay_ms": 10000,
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op}",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": {
+        "tool_result_contains": "kz56-fork-b2w8"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The fork answered with the token kz56-answer-fork-h9v3."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Repositories"
+          }
+        ]
+      }
+    }
+  ]
+}
