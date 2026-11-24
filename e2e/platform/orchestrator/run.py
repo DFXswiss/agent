@@ -171,6 +171,14 @@ def needs_workvm(suite: Path, only: tuple[str, ...]) -> bool:
     return needs_tag(suite, only, "@needs-workvm")
 
 
+def download_area(ctx: Context) -> str:
+    """The hub's download area (ADR-074 section 7) on the hub device, with its `runner/` directory: E2E-56 publishes a
+    test release there (routes/own_device.py)."""
+    downloads = f"{ctx.scratch}/downloads"
+    ctx.hub_node.run(["mkdir", "-p", f"{downloads}/runner"])
+    return downloads
+
+
 def grep_args(config: RunConfig) -> list[str]:
     args = ["--project", config.project]
     if config.only:
@@ -370,6 +378,7 @@ class Run:
             signing_key=self.secrets.new(),
             root_key=self.root_key,
             bind=bind,
+            downloads=download_area(ctx),
         )
         hub = Hub(hub_node, self.tools.hub_python, env, bind, config.port("hub"))
         say(f"hub migrate: {hub.migrate(owner_url)}")

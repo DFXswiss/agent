@@ -36,6 +36,7 @@ PLATFORM_ROOT_KEY = "AGENT_HUB_PLATFORM_ROOT_KEY"
 HOST = "AGENT_HUB_HOST"
 PORT = "AGENT_HUB_PORT"
 STATIC_DIR = "AGENT_HUB_STATIC_DIR"
+DOWNLOADS_DIR = "AGENT_HUB_DOWNLOADS_DIR"
 DEVICE_ONLINE_SECONDS = "AGENT_HUB_DEVICE_ONLINE_SECONDS"
 PLATFORM_BUDGET = "AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY"
 START_CREDIT = "AGENT_HUB_BILLING_START_CREDIT_USD"
@@ -58,6 +59,7 @@ KNOWN_VARIABLES = frozenset(
         HOST,
         PORT,
         STATIC_DIR,
+        DOWNLOADS_DIR,
         DEVICE_ONLINE_SECONDS,
         PLATFORM_BUDGET,
         START_CREDIT,
@@ -175,6 +177,8 @@ class HubConfig:
     """`AGENT_HUB_CONTEXT_KEEP`: complete checkpoints kept per task; older ones are deleted on a commit."""
     context_org_bytes: int = DEFAULT_CONTEXT_ORG_BYTES
     """`AGENT_HUB_CONTEXT_ORG_BYTES`: the sealed checkpoint bytes of all tasks of one organisation."""
+    downloads_dir: Path | None = None
+    """`AGENT_HUB_DOWNLOADS_DIR`: the download area of an own device (ADR-074 section 7); None = no downloads."""
 
     def signer(self) -> HubSigner:
         """The hub's response and checkpoint signer (reused `agent_core.signing.HubSigner`)."""
@@ -297,6 +301,16 @@ def _static_dir(environ: Mapping[str, str]) -> Path:
     path = DEFAULT_STATIC_DIR if value is None else Path(value)
     if not path.is_dir():
         raise ConfigError(f"{STATIC_DIR} is not a directory")
+    return path.resolve()
+
+
+def _downloads_dir(environ: Mapping[str, str]) -> Path | None:
+    value = _value(environ, DOWNLOADS_DIR)
+    if value is None:
+        return None
+    path = Path(value)
+    if not path.is_absolute() or not path.is_dir():
+        raise ConfigError(f"{DOWNLOADS_DIR} must be the absolute path of an existing directory")
     return path.resolve()
 
 
@@ -462,4 +476,5 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
         context_org_bytes=_bounded_int(
             environ, CONTEXT_ORG_BYTES, DEFAULT_CONTEXT_ORG_BYTES, _BYTES_RE, MAX_CONTEXT_BYTES
         ),
+        downloads_dir=_downloads_dir(environ),
     )

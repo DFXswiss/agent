@@ -87,6 +87,7 @@ STATE_TARGET = "/v1/device/state"
 OPERATOR_KEYS = ("sync_fatal", "platform_stopped")
 ORG_STOPPED = "org_stopped_"
 REVOKED = "device_revoked"
+REMOVED = "device_removed"
 LOGIN_CLI = "login_cli"
 OPERATOR_SUBSCRIPTIONS = "operator_subscriptions"
 LOGIN_VERSION_TIMEOUT_S = 10.0

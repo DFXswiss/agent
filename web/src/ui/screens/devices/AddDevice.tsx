@@ -1,13 +1,15 @@
 // "Add org device" (06-web.md section 7.3, 04-crypto.md sections 5.7, 5.8): the admin chooses the workgroups of the
 // device (only workgroups whose current key the admin holds; the default workgroup preselected) and the expiry (24 h
 // default, 1 h – 30 d), and gets the code once with the command `agent-runner enroll --hub <origin> --code <code>`
-// (copy buttons, confidentiality warning). The result follows the verified log: once the device's `accept` arrives (the
+// (copy buttons, confidentiality warning) and, when the hub offers a notarised runner package, its download for a Mac
+// (ADR-074: the package asks for the code). The result follows the verified log: once the device's `accept` arrives (the
 // live channel's `log` frame refreshes the log) it says the device has enrolled, and the device appears in the list.
 // Open device invitations (checked against the verified log) can be revoked.
 import { useEffect, useState } from 'react';
 import type { OrgState } from '../../../core/log/state';
 import { actionErrorCode, keyRing } from '../../../core/org/batch';
 import { enrollCommand } from '../../../core/org/devices';
+import { loadMacDownload, type MacDownload } from '../../../core/org/download';
 import {
   type CreatedInvite,
   createInvite,
@@ -110,12 +112,27 @@ function AddForm(props: {
   );
 }
 
+function useMacDownload(): MacDownload | null {
+  const [download, setDownload] = useState<MacDownload | null>(null);
+  useEffect(() => {
+    let live = true;
+    void loadMacDownload(globalThis.fetch.bind(globalThis), Date.now()).then((found) => {
+      if (live) setDownload(found);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return download;
+}
+
 function AddResult(props: { readonly created: CreatedInvite; readonly state: OrgState; readonly onDone: () => void }) {
   const { created, state } = props;
   const { t } = useI18n();
   const { origin } = useAppEnv();
   const time = useTime();
   const command = enrollCommand(origin, created.code);
+  const download = useMacDownload();
   const enrolled = (state.invites.get(created.inviteId)?.acceptedSeq ?? null) !== null;
   return (
     <section
@@ -135,6 +152,14 @@ function AddResult(props: { readonly created: CreatedInvite; readonly state: Org
         copiedLabel={t('devices.copied')}
         testId="devices.add.copy-code"
       />
+      {download !== null && (
+        <p data-testid="devices.add.mac">
+          <a href={download.href} download className={PRIMARY} data-testid="devices.add.mac-download">
+            {t('devices.add.mac-download')}
+          </a>{' '}
+          {t('devices.add.mac-hint')}
+        </p>
+      )}
       <p>{t('devices.add.command')}</p>
       <pre className="overflow-x-auto rounded bg-gray-900 p-3 text-sm text-white" data-testid="devices.add.command">
         {command}

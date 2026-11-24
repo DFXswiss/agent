@@ -10,3 +10,6 @@ run) and the rows that need real devices and a person (open until checked by han
 
 Procedure for the real-device rows, valid for every release: [prf-devices.md](prf-devices.md) (one person, one
 device, at most 10 minutes per row; KOR-54).
+
+Own devices (KOR-59, ADR-074): [own-device.md](own-device.md) – the installation probe in a fresh macOS guest and the
+steps on a real Mac (dialog, task on the device, removal, download way).

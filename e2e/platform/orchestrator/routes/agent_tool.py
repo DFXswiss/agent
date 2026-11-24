@@ -88,6 +88,11 @@ def _env(ctx: Context, root: Path) -> dict[str, str]:
         "CLAUDE_CONFIG_DIR": str(root / "claude"),
         "PYTHONPATH": str(Path(ctx.agent_src) / "src"),
     }
+    # E2E-56 (own_device.py): the stand-in of the administrator step of `device add|remove` on this computer.
+    own = root / "own-device.json"
+    if own.exists():
+        extra = json.loads(own.read_text())
+        env.update({key: str(value) for key, value in extra.items() if key.startswith("AGENT_PLATFORM_DEVICE_")})
     return env
 
 

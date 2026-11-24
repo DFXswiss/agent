@@ -308,6 +308,47 @@ describe('admin controls', () => {
     writeText.mockRejectedValueOnce(new Error('denied'));
   });
 
+  it('offers the notarised runner package for a Mac next to the code (ADR-074)', async () => {
+    const feed = {
+      version: '2026.11.24.0800',
+      package: 'DFX-Agent-Runner-2026.11.24.0800.pkg',
+      notarized: true,
+      expires: '2999-01-01T00:00:00Z',
+    };
+    let release: (value: Response) => void = () => undefined;
+    const slow = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    const fetcher = vi
+      .fn()
+      .mockImplementationOnce(async () => slow)
+      .mockImplementation(async () => new Response(JSON.stringify(feed), { status: 200 }));
+    vi.stubGlobal('fetch', fetcher);
+    try {
+      const { w } = await deviceWorld();
+      mount(w, at, `/o/${w.org}/devices`);
+      // the first result closes before the feed arrives: nothing is set after it is gone
+      fireEvent.click(screen.getByTestId('devices.add.open'));
+      fireEvent.click(screen.getByTestId('devices.add.submit'));
+      await screen.findByTestId('devices.add.code');
+      fireEvent.click(screen.getByTestId('devices.add.done'));
+      await act(async () => {
+        release(new Response(JSON.stringify(feed), { status: 200 }));
+        await slow;
+      });
+      fireEvent.click(screen.getByTestId('devices.add.open'));
+      fireEvent.click(screen.getByTestId('devices.add.submit'));
+      const link = await screen.findByTestId('devices.add.mac-download');
+      expect(link).toHaveAttribute('href', '/downloads/runner/DFX-Agent-Runner-2026.11.24.0800.pkg');
+      expect(link).toHaveAttribute('download');
+      expect(link).toHaveTextContent('Download for Mac');
+      expect(screen.getByTestId('devices.add.mac')).toHaveTextContent('it asks for this code');
+      expect(fetcher).toHaveBeenCalledWith('/downloads/runner/latest.json', { cache: 'no-cache', credentials: 'omit' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('revokes open device invitations and shows failures of create, list and revoke', async () => {
     const { w } = await deviceWorld();
     mount(w, at, `/o/${w.org}/devices`);

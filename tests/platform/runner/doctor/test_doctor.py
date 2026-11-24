@@ -606,7 +606,14 @@ def test_status_of_a_device_without_store_and_identity(case: Case) -> None:
     out = captured.stdout.getvalue()
     assert lines(out, "runner.status.identity") == [{"enrolled": "no"}]
     assert lines(out, "runner.status.hub") == [
-        {"last_connect": "never", "sync": "ok", "revoked": "no", "stopped_orgs": "0", "platform_log": "ok"}
+        {
+            "last_connect": "never",
+            "sync": "ok",
+            "revoked": "no",
+            "removed": "no",
+            "stopped_orgs": "0",
+            "platform_log": "ok",
+        }
     ]
     assert lines(out, "runner.status.outbox") == [
         {

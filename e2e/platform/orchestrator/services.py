@@ -216,11 +216,20 @@ class Hub:
 
 
 def hub_env(
-    environ: Mapping[str, str], config: RunConfig, *, writer_url: str, signing_key: str, root_key: str, bind: str
+    environ: Mapping[str, str],
+    config: RunConfig,
+    *,
+    writer_url: str,
+    signing_key: str,
+    root_key: str,
+    bind: str,
+    downloads: str = "",
 ) -> dict[str, str]:
+    extra = {"AGENT_HUB_DOWNLOADS_DIR": downloads} if downloads else {}
     return clean_env(
         environ,
         {
+            **extra,
             "AGENT_HUB_PUBLIC_URL": config.public_origin,
             "AGENT_HUB_DATABASE": writer_url,
             "AGENT_HUB_SIGNING_KEY": signing_key,

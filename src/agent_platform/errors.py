@@ -78,6 +78,24 @@ NEXT: dict[str, str] = {
     "invalid_argument": "Check the command line (`agent-platform <command> --help`).",
     "state_damaged": ("The state directory has a wrong mode, owner or a symlink; fix it or remove it and pair again."),
     "internal": "An unexpected error happened; run the command again.",
+    "mac_unsupported": (
+        "This Mac cannot be an execution device (see `reason`); when `opened` is true the settings that fix it are "
+        "open: tell the user in one sentence what to do there, then run the command again."
+    ),
+    "release_unavailable": (
+        "The hub offers no runner package this tool trusts (see `reason`); update this tool (`pip install --upgrade`) "
+        "and run the command again, or ask the operator of the platform to publish a release."
+    ),
+    "admin_cancelled": (
+        "The macOS dialog was cancelled. Tell the user in one sentence that it installs the DFX execution service on "
+        "this Mac, then run the command again."
+    ),
+    "install_failed": "The installation did not finish (see `reason`); run the command again.",
+    "device_installed": (
+        "This Mac is already an execution device (`device_id`); assign it with `device assign` or remove it with "
+        "`device remove --this-computer` first."
+    ),
+    "not_installed": "This Mac is not an execution device; nothing to remove.",
 }
 CODES = frozenset(NEXT)
 # A different next step for one reason of a code (the texts are fixed here as well).

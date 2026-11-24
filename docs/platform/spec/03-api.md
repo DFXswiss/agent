@@ -40,8 +40,16 @@ in the hub process), `SIGNING_KEY` (Ed25519 seed hex), `HUB_KEY_ID`, `PLATFORM_R
 `CONTEXT_ORG_BYTES` (200 GiB of checkpoints per organisation; all three ADR-072 §6, 1 to 2^53−1 bytes). `HUB_KEY_ID` MUST match `[a-z0-9-]{1,64}` (required by the reused `HubSigner`). Tests: `AGENT_HUB_TEST_POSTGRES`.
 `TRUSTED_PROXIES` (comma-separated addresses or networks; empty = none) and `FORWARDED_HEADER` (`x-forwarded-for`
 default, or `forwarded`; refused without trusted proxies): behind a trusted reverse proxy the source address of the
-per-source limits is the rightmost untrusted address of that one header (KOR-06). Any other `AGENT_HUB_*` name is
-refused (`AGENT_HUB_TEST_*` belongs to the test suites).
+per-source limits is the rightmost untrusted address of that one header (KOR-06). `DOWNLOADS_DIR` (absolute path of an
+existing directory; no default, unset = no downloads): the download area of an own device (ADR-074 §7, below). Any
+other `AGENT_HUB_*` name is refused (`AGENT_HUB_TEST_*` belongs to the test suites).
+
+**Runner downloads (ADR-074 §7).** `GET /downloads/runner/{name}` (anon, outside `/v1/` like `/agents.md` and
+`/build-manifest.json`, not in `contracts/api/INDEX.json`) serves the files of `<DOWNLOADS_DIR>/runner/` unchanged; the
+hub never signs or changes them. `latest.json` (`application/json`) and `latest.json.sig`
+(`text/plain; charset=us-ascii`) with `Cache-Control: no-cache`; `DFX-Agent-Runner-<YYYY.MM.DD.HHMM>.pkg`
+(`application/octet-stream`) with `public, max-age=31536000, immutable`. Any other name, a missing file, a symbolic
+link, a path resolving outside `runner/` or an unset `DOWNLOADS_DIR` → `404 not_found`.
 
 **One hub process per database.** Rate limits, the recovery limit, the live streams (SSE/WebSocket fan-out),
 reminders and the `metrics` frames are held per process; several processes on one database would split the limits

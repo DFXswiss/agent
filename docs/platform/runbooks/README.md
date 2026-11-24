@@ -18,4 +18,5 @@ device, runner device, second device. The cutover to production is a separate pl
 | [operator-github.md](operator-github.md) | The operator's GitHub token on a platform device: setup, atomic replacement, approving and withdrawing users |
 | [agent-account-takeover.md](agent-account-takeover.md) | Account taken over through a stolen agent key: disconnect all, security activity, operator-assisted recovery (ADR-056) |
 | [credit.md](credit.md) | Billing: rollout without stopping anyone, setting credit (command and database), the daily USD/CHF rate, the export for the books, operations check (ADR-062) |
+| [own-device-release.md](own-device-release.md) | Release key, build, signing and notarisation, publishing the runner package of own devices, update behaviour on the devices (ADR-074) |
 | [work-vms.md](work-vms.md) | Work VMs on a runner device: rehearsal on a test device, installation (`install --plan`), operation, faults (hook, order, egress), removal (ADR-059) |

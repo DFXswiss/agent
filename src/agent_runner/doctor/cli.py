@@ -131,6 +131,7 @@ def cmd_status(_args: argparse.Namespace, ctx: Any) -> int:
             "last_connect": state.get(WS_LAST_CONNECT, "never"),
             "sync": state.get("sync_fatal", "ok"),
             "revoked": state.get(checks.REVOKED, "no"),
+            "removed": state.get(checks.REMOVED, "no"),
             "stopped_orgs": sum(1 for key in state if key.startswith(checks.ORG_STOPPED)),
             "platform_log": state.get(PLATFORM_STOPPED, "ok"),
         },

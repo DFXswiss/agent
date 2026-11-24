@@ -24,7 +24,8 @@ Deployment behind the production name is part of the cutover plan ([CUTOVER.md](
 `PUBLIC_URL` (origin; its host is the WebAuthn RP ID – changing it invalidates every passkey), `DATABASE` (writer
 DSN), `SIGNING_KEY` (Ed25519 seed hex), `HUB_KEY_ID` (`[a-z0-9-]{1,64}`), `PLATFORM_ROOT_KEY`, `HOST`, `PORT` (8788),
 `STATIC_DIR`, `DEVICE_ONLINE_SECONDS` (30), `PLATFORM_BUDGET_USD_PER_ORG_DAY` (empty = unlimited), `MODEL_CATALOG`,
-`TRUSTED_PROXIES`, `FORWARDED_HEADER` (§4).
+`TRUSTED_PROXIES`, `FORWARDED_HEADER` (§4), `DOWNLOADS_DIR` (optional; the runner downloads of an own device,
+ADR-074 §7).
 `OWNER_DATABASE` is for `migrate` and `restore` only and refused in the hub process. Any other `AGENT_HUB_*` name is refused; the
 error names the variable and the rule, never the value.
 

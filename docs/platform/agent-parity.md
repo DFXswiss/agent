@@ -92,6 +92,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | devices-unassign | screens/devices | `device unassign` | done |
 | devices-invite | screens/devices | `device invite` | done |
 | devices-profile | screens/devices | `device rename` | done |
+| devices-own-mac | screens/devices (this computer becomes an execution device: the signed runner package with one macOS dialog; the screen offers the same package as a download, ADR-074) | `device add --this-computer --org --wg` | done |
+| devices-own-mac-remove | screens/devices (unpair; the Mac then removes its installation by itself, ADR-074) | `device remove --this-computer` | done |
 | tasks-list | screens/tasks | `task list` | done |
 | tasks-overview | screens/tasks (overview of an org) | `task overview --org --state --mine --search` | done |
 | task-create | screens/home, screens/tasks | `task create` | done |
@@ -184,10 +186,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/orgs/{org}/catch-up` | key-catch-up |
 | `GET /v1/orgs/{org}/devices` | devices-list, task-runtime |
 | `GET /v1/orgs/{org}/invites` | members-list, members-invite-revoke, members-invite-states |
-| `POST /v1/orgs/{org}/invites` | members-invite, devices-invite |
+| `POST /v1/orgs/{org}/invites` | members-invite, devices-invite, devices-own-mac |
 | `POST /v1/orgs/{org}/invites/{invite}/revoke` | members-invite-revoke |
 | `GET /v1/orgs/{org}/log` | org-list, members-list |
-| `POST /v1/orgs/{org}/log` | org-join, members-role, members-remove, members-leave, key-rotation, workgroups-create, workgroups-grant, workgroups-ungrant, workgroups-archive, devices-assign, devices-unassign |
+| `POST /v1/orgs/{org}/log` | org-join, members-role, members-remove, members-leave, key-rotation, workgroups-create, workgroups-grant, workgroups-ungrant, workgroups-archive, devices-assign, devices-unassign, devices-own-mac-remove |
 | `POST /v1/passkeys/login/begin` | login-unlock |
 | `POST /v1/passkeys/login/finish` | login-unlock |
 | `POST /v1/passkeys/register/begin` | register, passkey-add |
@@ -261,3 +263,5 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | next:claude_missing | `claude connect`, `credentials set-api-key` | outside |
 | next:claude_expired | `claude sync`, `credentials set-api-key` | outside |
 | next:claude_unreadable | `claude connect` | outside |
+| next:mac_unsupported | `device assign` (a DFX execution device needs no Mac; fixing the Mac itself – macOS update, free space – is the Mac's, not the platform's) | outside |
+| next:admin_cancelled | `device assign` (a DFX execution device; the administrator dialog of an own Mac belongs to macOS, ADR-074) | outside |

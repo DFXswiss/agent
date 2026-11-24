@@ -33,6 +33,8 @@
   "add.expires": "Valid until {time}",
   "add.waiting": "Waiting for the device to enroll…",
   "add.enrolled": "The device has enrolled.",
+  "add.mac-download": "Download for Mac",
+  "add.mac-hint": "Open the package on the Mac; it asks for this code. Or let your AI agent connect the Mac.",
   "add.done": "Done",
   "invites.title": "Open device invitations",
   "invites.empty": "No open device invitations.",

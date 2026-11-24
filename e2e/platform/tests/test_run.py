@@ -79,6 +79,10 @@ def test_t1_run_is_green_and_leaves_nothing(
     assert not (world.artifacts.parent / "artifacts-scratch" / "iter-1").exists()
     logged = world.logged()
     assert any(line.startswith("python -m agent_hub audit verify") for line in logged)
+    # The hub serves the run's download area (E2E-56 publishes a test release there); it exists before the hub starts.
+    scratch = world.artifacts.parent / "artifacts-scratch"
+    downloads = [line for line in logged if line.startswith("hub downloads=")]
+    assert downloads == [f"hub downloads={scratch}/iter-{n}/downloads runner-area=True" for n in (1, 2)]
     assert any("node BUILD_COMMIT= KEY=4es19ejjw83HvBQaTcmCqzLKLe7OQffXqDUsvsMeYkE" in line for line in logged)
     playwright = next(line for line in logged if line.startswith("playwright "))
     assert "--project desktop --grep-invert @live" in playwright
@@ -325,6 +329,15 @@ def test_helpers(tmp_path: Path) -> None:
     assert run._quote("a'b") == "'a'\"'\"'b'"
     assert run._is_ip("192.0.2.1")
     assert not run._is_ip("localhost")
+
+
+def test_hub_env_names_the_download_area_only_when_given(world: World) -> None:
+    config = config_of(world)
+    keys = {"writer_url": "postgresql://w", "signing_key": "s", "root_key": "r", "bind": "127.0.0.1"}
+    plain = services.hub_env(world.environ, config, **keys)
+    assert "AGENT_HUB_DOWNLOADS_DIR" not in plain
+    given = services.hub_env(world.environ, config, **keys, downloads="/scratch/downloads")
+    assert given == {**plain, "AGENT_HUB_DOWNLOADS_DIR": "/scratch/downloads"}
 
 
 def test_grep_arguments(world: World) -> None:

@@ -18,6 +18,7 @@ import pytest
 from agent_runner.assignments import reconcile as assignment_step
 from agent_runner.assignments import tasks as revocation
 from agent_runner.assignments import teardown
+from agent_runner.crypto.log.state import Principal
 from agent_runner.orgs.book import OrgBook, book_for
 from agent_runner.reconcile.engine import Engine, Run
 from agent_runner.reconcile.reconcile import STEPS as BASE_STEPS
@@ -88,6 +89,10 @@ class Case:
 
     async def vm_states(self) -> list[tuple[str, str]]:
         return [(str(a), str(b)) for a, b in await self.env.rows("SELECT id, state FROM runner.vm ORDER BY id")]
+
+    async def removed(self) -> list[str]:
+        rows = await self.env.rows("SELECT value FROM runner.sync_state WHERE key = %s", teardown.REMOVED)
+        return [str(row[0]) for row in rows]
 
     async def keys(self) -> list[tuple[str, str, int]]:
         rows = await self.env.rows("SELECT scope, scope_id::text, epoch FROM runner.scope_key ORDER BY 1, 2, 3")
@@ -177,12 +182,19 @@ def test_removal_of_the_device_deletes_the_keys_at_once(rig: Rig, tmp_path: Path
             await c.add_vm(DEFAULT)
             await c.add_session(DEFAULT)
             await c.run()
+            assert await c.removed() == []
             c.spec.log.add("remove", "alice", subject=pid(DEVICE))
             run = await c.run()
             assert run.halted is None, c.env.log()
             assert await c.vm_states() == [("vm-00000001", "deleted")]
             assert await c.keys() == []
             assert "reason=removed" in c.env.log()
+            # the verified removal is persisted for the maintenance daemon of an own device, once
+            assert await c.removed() == [ORG]
+            assert c.env.log().count(f"runner.assignments device_removed orgs={ORG}\n") == 1
+            assert (await c.run()).halted is None
+            assert await c.removed() == [ORG]
+            assert c.env.log().count("runner.assignments device_removed") == 1
 
     asyncio.run(body())
 
@@ -492,3 +504,47 @@ def test_org_device_books_act_only_for_their_own_membership(rig: Rig, tmp_path: 
             assert await c.vm_states() == []
 
     asyncio.run(body())
+
+
+# --- removal of an own device (ADR-074 section 5) -------------------------------------------------------------------
+
+
+def principal(device: str, removed_seq: int | None) -> Principal:
+    return Principal(id=device, kind="device", role="device", kem="", sig="", joined_seq=1, removed_seq=removed_seq)
+
+
+def removal_book(**orgs: dict[str, int | None]) -> OrgBook:
+    """A book whose org logs name devices: `org=dict(device=removed_seq)`."""
+    book = OrgBook(device_id=pid("me"), kem_public="", sig_public="", root="")
+    logs: dict[str, Any] = {}
+    for org, devices in orgs.items():
+        principals = {pid(name): principal(pid(name), seq) for name, seq in devices.items()}
+        logs[org] = SimpleNamespace(state=SimpleNamespace(principals=principals))
+    book.logs = logs
+    return book
+
+
+def test_a_device_removed_in_every_org_that_names_it_is_removed() -> None:
+    book = removal_book(b={"me": 7, "other": None}, a={"me": 3}, c={"other": None})
+    assert teardown.removed_everywhere(book) == "a,b"
+
+
+def test_a_device_still_active_somewhere_is_not_removed() -> None:
+    assert teardown.removed_everywhere(removal_book(a={"me": 3}, b={"me": None})) is None
+    assert teardown.removed_everywhere(removal_book(a={"me": None})) is None
+
+
+def test_a_device_no_log_names_is_not_removed() -> None:
+    assert teardown.removed_everywhere(removal_book()) is None
+    assert teardown.removed_everywhere(removal_book(a={"other": 3})) is None
+
+
+def test_stopped_copies_decide_nothing() -> None:
+    book = removal_book(a={"me": 3}, b={"me": None})
+    book.stopped["b"] = "log_fork"
+    assert teardown.removed_everywhere(book) == "a"
+    book.stopped["a"] = "log_rollback"
+    assert teardown.removed_everywhere(book) is None
+    book = removal_book(a={"me": 3})
+    book.platform_stopped = "log_fork"
+    assert teardown.removed_everywhere(book) is None

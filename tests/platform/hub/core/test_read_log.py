@@ -24,7 +24,7 @@ from agent_hub.config import HubConfig
 from agent_hub.errors import HubError
 from agent_hub.http import readlog
 from agent_hub.http.readlog import ReadLog, ReadNotStored, _Window, query_key, read_key, read_row
-from agent_hub.http.routing import HubRouter, route_spec
+from agent_hub.http.routing import API_PREFIX, HubRouter, route_spec
 from tests.platform.contracts.harness import CONTRACTS
 from tests.platform.hub.conftest import FIXED_NOW, FixedClock, HubHarness, start_hub, uuid7
 
@@ -516,14 +516,22 @@ def test_every_registered_get_route_declares_its_resource(hub_config: HubConfig)
 
 def test_registered_api_routes_match_the_index(hub_config: HubConfig) -> None:
     """Every discovered `/v1/` route has the authentication class, rights, read resource and streaming flag of its
-    row in contracts/api/INDEX.json (later packages are checked by this test as they add routes)."""
+    row in contracts/api/INDEX.json (later packages are checked by this test as they add routes). A discovered route
+    outside `/v1/` (the runner downloads, ADR-074 section 7) is anonymous and outside the API schema."""
     index = json.loads((CONTRACTS / "api" / "INDEX.json").read_text(encoding="utf-8"))
     rows = {(row["method"], row["path"]): row for row in index["endpoints"]}
     found = 0
+    outside = 0
     for _area, area_router in discovered_routers():
         for route in area_router.routes:
             spec = route_spec(route)
             path = str(getattr(route, "path", ""))
+            if not path.startswith(API_PREFIX):
+                assert spec is not None, path
+                assert spec.auth == "anon", path
+                assert getattr(route, "include_in_schema", True) is False, path
+                outside += 1
+                continue
             for method in getattr(route, "methods", None) or {"GET"}:
                 row = rows.get((method, path))
                 assert row is not None, f"{method} {path} is not in contracts/api/INDEX.json"
@@ -534,3 +542,4 @@ def test_registered_api_routes_match_the_index(hub_config: HubConfig) -> None:
                 assert spec.streaming == row["streaming"], path
                 found += 1
     assert found >= 2
+    assert outside >= 1

@@ -88,6 +88,8 @@ if module == "agent_hub" and ARGS[2:] == ["serve"]:
         sys.exit(3)
     if switch("HUB_LEAK"):
         print("signing key " + os.environ["AGENT_HUB_SIGNING_KEY"], flush=True)
+    downloads = os.environ.get("AGENT_HUB_DOWNLOADS_DIR", "")
+    note(f"hub downloads={downloads} runner-area={Path(downloads, 'runner').is_dir()}")
     health = int(switch("HUB_HEALTH", "200"))
     healthy_calls = int(switch("HUB_HEALTHY_CALLS", "1000000"))
     calls = [0]

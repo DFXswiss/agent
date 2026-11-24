@@ -25,6 +25,9 @@ Rules:
   still running for such a session is awaited first.
 - Revocation is persisted in `sync_state` (`device_revoked` = `key_revoked` | `decertified`), so `status` and
   `doctor` show it and a restarted daemon repeats the (idempotent) teardown.
+- A verified `remove` of this device in every org whose log it holds is persisted as `device_removed` (the org IDs):
+  the only signal on which the maintenance daemon of an own device removes the installation (ADR-074 section 5); a
+  `key_revoked` answer of the hub alone never does.
 """
 
 from __future__ import annotations
@@ -45,6 +48,7 @@ from agent_runner.vm.tasks import manager_for
 
 UNASSIGNED = "unassigned"
 REVOKED = "device_revoked"
+REMOVED = "device_removed"
 KEY_REVOKED = "key_revoked"
 DECERTIFIED = "decertified"
 SCOPES = (ORG, WG)
@@ -167,9 +171,35 @@ async def end_workgroup(context: Any, removal: Removal) -> None:
     )
 
 
+def removed_everywhere(book: OrgBook) -> str | None:
+    """The org IDs (comma-separated) when every verified, acting log that names this device shows it removed."""
+    if book.platform_stopped is not None:
+        return None
+    named = {
+        org: log.state.principals[book.device_id]
+        for org, log in book.logs.items()
+        if org not in book.stopped and book.device_id in log.state.principals
+    }
+    if not named or any(principal.active for principal in named.values()):
+        return None
+    return ",".join(sorted(named))
+
+
+async def mark_removed(context: Any, book: OrgBook) -> None:
+    orgs = removed_everywhere(book)
+    if orgs is None:
+        return
+    async with session(context.pool) as conn, conn.transaction():
+        if await outbox.get_state(conn, REMOVED) is not None:
+            return
+        await outbox.set_state(conn, REMOVED, orgs)
+    _line(context, f"device_removed orgs={orgs}")
+
+
 async def apply_assignments(context: Any, book: OrgBook) -> list[Removal]:
     """Reconcile step 4: end the workgroups the verified logs took away, then delete stale keys."""
     pool = context.pool
+    await mark_removed(context, book)
     found = removals(book, await footprint(pool))
     for removal in found:
         await end_workgroup(context, removal)

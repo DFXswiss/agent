@@ -23,9 +23,9 @@ def test_expand_cells() -> None:
     assert t.expand("M3 acceptance (branch protection check)") == ["GATE-BRANCH-PROTECTION"]
 
 
-def test_the_document_has_155_requirements_and_the_matrix_mirrors_it() -> None:
+def test_the_document_has_156_requirements_and_the_matrix_mirrors_it() -> None:
     document = t.parse_requirements((CORE / t.REQUIREMENTS_DOC).read_text())
-    assert len(document) == 155
+    assert len(document) == 156
     matrix = t.load(SUITE / "traceability.json")
     assert {req: list(tests) for req, (_, tests) in matrix.requirements.items()} == document
     report = t.check_suite(SUITE, milestone=0)

@@ -1,0 +1,20 @@
+{
+ "v": 1,
+ "python": {
+  "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261123/cpython-3.12.16%2B20261123-aarch64-apple-darwin-install_only.tar.gz",
+  "sha256": "4068a8a2355083e29f84138c1c6ce70654e5833424bbe79e63289031a11fd8b2"
+ },
+ "lima": {
+  "url": "https://github.com/lima-vm/lima/releases/download/v2.3.0/lima-2.3.0-Darwin-arm64.tar.gz",
+  "sha256": "b7af444bd8f91d3c307477e562f2cf3bd7595d62b9429185e4fa841563578cfc"
+ },
+ "postgresql": {
+  "url": "https://repo1.maven.org/maven2/io/zonky/test/postgres/embedded-postgres-binaries-darwin-arm64v8/17.12.0/embedded-postgres-binaries-darwin-arm64v8-17.12.0.jar",
+  "sha256": "31fcf0b329fa909e050c1bc615bdb0fd6180add1043c2612f5acd5a086449c0b"
+ },
+ "claude_code": {
+  "version": "2.1.330",
+  "url": "https://registry.npmjs.org/@anthropic-ai/claude-code-darwin-arm64/-/claude-code-darwin-arm64-2.1.330.tgz",
+  "sha256": "b8c91d706567b670e4f2b6112199c5db3125ca237ac214e6143e7094bd0cb33b"
+ }
+}

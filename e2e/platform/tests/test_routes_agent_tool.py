@@ -32,6 +32,10 @@ case "$1" in
     while [ ! -f "$HOME/go" ]; do sleep 0.01; done
     exit 3
     ;;
+  device)
+    printf '{"admin":"%s","root":"%s","keys":"%s","other":"%s"}\n' \
+      "$AGENT_PLATFORM_DEVICE_ADMIN" "$AGENT_PLATFORM_DEVICE_ROOT" "$AGENT_PLATFORM_DEVICE_KEYS" "$OTHER"
+    ;;
   keychain)
     "$AGENT_PLATFORM_SECURITY" find-generic-password -s "Claude Code-credentials" -w || exit $?
     ;;
@@ -224,6 +228,24 @@ def test_copy_home_refuses_bad_bodies(ctx: Context, tmp_path: Path, body: Any, s
     (tmp_path / "agent-tool" / "ada" / "state").mkdir(parents=True)
     answer = call(ctx, "POST", "/agent-tool/copy-home", body)
     assert (answer[0], answer[1]["error"]) == (status, error)
+
+
+def test_an_own_device_file_gives_the_computer_the_device_seam(ctx: Context, tmp_path: Path) -> None:
+    # without own-device.json (E2E-56, own_device.py) the tool runs without a seam
+    assert finished(ctx, start(ctx, {"args": ["device"], "home": "mac"}))["result"] == {
+        "admin": "",
+        "root": "",
+        "keys": "",
+        "other": "",
+    }
+    extra = {"AGENT_PLATFORM_DEVICE_ADMIN": "/seam", "AGENT_PLATFORM_DEVICE_ROOT": 7, "OTHER": "ignored"}
+    (tmp_path / "agent-tool" / "mac" / "own-device.json").write_text(json.dumps(extra))
+    assert finished(ctx, start(ctx, {"args": ["device"], "home": "mac"}))["result"] == {
+        "admin": "/seam",
+        "root": "7",
+        "keys": "",
+        "other": "",
+    }
 
 
 def test_an_unknown_run_is_not_found(ctx: Context) -> None:

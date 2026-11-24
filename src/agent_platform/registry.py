@@ -19,6 +19,7 @@ from agent_platform import (
     inbox,
     keywraps,
     membership,
+    ownmac,
     security,
     sessions,
     wgsettings,
@@ -41,4 +42,5 @@ MODULES: tuple[Callable[[Any], None], ...] = (
     billing.register,
     community.register,
     alone.register,
+    ownmac.register,
 )

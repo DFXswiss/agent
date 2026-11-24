@@ -5,7 +5,7 @@
 
 Status: binding. Components RUN (`agent`: `src/agent_runner/`), GST (`src/agent_guest/`) and SBX (`images/`,
 `src/agent_guest/sandbox/`). Contracts referenced: `03-api.md` §6–§9, data `02-data-model.md` §4–§5, crypto
-`04-crypto.md`. Decisions: ADR-008, -009, -010, -011, -012, -013, -015, -016, -017, -020, -021, -022, -024, -025.
+`04-crypto.md`. Decisions: ADR-008, -009, -010, -011, -012, -013, -015, -016, -017, -020, -021, -022, -024, -025, -068.
 Measured basis: Spike A (VM start), Spike B (sandbox), Spike C (model access). Where a spike prototype and this
 document differ, this document wins; §4.6 lists the spike defects that MUST NOT be carried over.
 
@@ -33,7 +33,7 @@ document differ, this document wins; §4.6 lists the spike defects that MUST NOT
 
 | Command | Purpose |
 |---|---|
-| `agent-runner enroll --hub URL --code CODE [--platform]` | §2.1 |
+| `agent-runner enroll --hub URL (--code CODE \| --code-file PATH) [--platform]` | §2.1; `--code-file` reads the code from a file (at most 4 KiB), so it never appears in an argv (§16) |
 | `agent-runner run` | foreground daemon (development, tests, launchd target) |
 | `agent-runner status [--json]` | identity, hub connection, outbox backlog, VMs, sessions, pool, capacity |
 | `agent-runner doctor` | checks: Lima ≥ 2.3, vz available, golden ready, Landlock ABI in golden (from build record), PostgreSQL, login command on the host (`login_cli`: `LOGIN_ARGV[0]` resolved like §11.2; for the default command its `--version`, with a time limit and the login's allow-list env, equals the golden's Claude Code pin, else warn `version_mismatch`; missing or not executable: fail `login_cli_missing`; details in `runbooks/runner-installation.md` §4), hub reachability and pinned key, textfile dir writable, the operator's subscriptions (`operator_subscriptions`: ok `off`/`usable` with the count of usable token files, warn `files_ignored`/`none_usable`/`dir_unusable`; no file name or organization; ADR-052), clock skew < 5 s against hub time, the operator's GitHub token file (`operator_github`: ok `off`/`usable`, warn with the reason; §11.4) |
@@ -973,3 +973,31 @@ and MUST pass: model-double E2E (`07-testing.md`), the attack suite ATK (scripte
 poisoned settings, OS probe) on a golden built with the new version, and a check that no new routes/headers are
 unknown to the model double (double fails on unknown routes). Then `agent-runner image build`; running VMs move
 per §3.5.
+
+## 16. Own device: installation without a terminal (ADR-074, KOR-59)
+
+An own Mac becomes an org device through one signed, versioned package (`agent_runner/install/`):
+
+| Part | Module | What it does |
+|---|---|---|
+| Build | `install/build.py`, `scripts/macos-package/` | From one commit and the lock (`lock.json`, `requirements.lock`, every input pinned by SHA-256): relocatable CPython 3.12 with the runner's dependencies (`pip --require-hashes`) and `agent_runner`/`agent_cli`, Lima, PostgreSQL, the golden's sources, the launchers; modes and times normalised, byte code with unchecked hashes; optional code signing (hardened runtime, entitlements) **before** the manifest; `release.json` + signature; `pkgbuild`; `latest.json` + signature with an expiry (≤ 120 days). Two unsigned builds of one commit give the same `release.json` (a signed build is compared on its unsigned stage). |
+| Release | `install/release.py` | Canonical JSON, Ed25519 signatures of the release key; only keys of `install/release_keys.py` (public data) are accepted; version `YYYY.MM.DD.HHMM` of the commit time. |
+| Checks | `install/preflight.py` | macOS ≥ 14, Apple silicon, `kern.hv_support`, memory ≥ 16 GiB, free space ≥ 50 GiB; memory reserve of an own device: a quarter of the memory (4–32 GiB). |
+| Owner | `install/owner.py` | The runner runs as the Mac's owner (UID ≥ 501): the agent way names the owner of the request file, Installer.app the user at the screen, an update keeps the recorded one. No account is created (macOS 27 refuses to delete one again, ADR-074 §3). |
+| Root helper | `install/root.py` | `postinstall` (check the payload against its manifest, `current`, keep one previous version, Claude Code for the host, maintenance daemon, runner home created by the owner, enrollment from the spool with the code on `enroll --code-file -`'s standard input, runner daemon, `state.json`), `uninstall` (runner's `uninstall` as the owner, its home and the parents the installation created, plists, receipt, payload; prints `leftovers`), `leftovers`, `maintain`. |
+| Daemons | `install/daemons.py` | `swiss.dfx.agent-runner` (the owner, settings below) and `swiss.dfx.agent-runner.maintenance` (root, every 15 min), both through `libexec/dfx-agent-runner` (`python -I -B -m …`). |
+| Updates | `install/update.py` | Feed read at most hourly, verified with the installed version's keys; installed when no session works, inside 02:00–05:00 or after 7 days of waiting; store kept as an APFS clone; kept only when the runner reports a new hub connection within 10 min, else the way back; two failures mark a version bad. |
+| Agent way | `install/admin.py`, `agent_platform/ownmac.py` | One `osascript … with administrator privileges` with a constant root script (package copied, digest checked on the copy, request and owner moved into the spool, `installer`). |
+
+Settings of an own device's runner (plist `EnvironmentVariables`): `HOME=~/.local/share/dfx-agent-runner`, the
+manifest's `HUB_URL` and `PLATFORM_ROOT_KEY`, `POOL_SIZE=0`, `MEMORY_RESERVE_MIB` as above, `GOLDEN_TEMPLATE` of the
+payload, `LOGIN_AUTOMATION=off`, `VM_PREFIX=dfx-` (`TEST_MODE=1` only for a test build whose hub is loopback HTTP).
+
+A verified `remove` of the device in every org whose log it holds is persisted as `device_removed` (§2.2 step 4,
+`assignments/teardown.py`; `status` prints `removed`); the maintenance daemon then removes the installation by itself.
+A `key_revoked` refusal of the hub alone never does.
+
+Paths: payload `/Library/Application Support/DFXAgentRunner/` (`versions/<v>/`, `current`, `host/`, `spool/` 0700,
+`downloads/` 0700, `log/`, `state.json` 0644, `maintenance.json` 0600), plists in `/Library/LaunchDaemons/`, receipt
+`swiss.dfx.agent-runner`. Release operation: `runbooks/own-device-release.md`.
+

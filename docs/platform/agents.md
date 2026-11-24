@@ -205,6 +205,25 @@ agent-platform task list --wg <wg_id> [--state open|closed]
 Prompts and answers are encrypted on this computer; the hub never sees them. `task create` fails with `no_device`
 when the workgroup has no execution device: run `device assign --wg <wg_id>` first.
 
+**Your user's own Mac as an execution device** (optional; DFX devices are the default). When your user wants this
+Mac to run their tasks, connect it – your user never needs a terminal for it (ADR-074):
+
+```sh
+agent-platform device add --this-computer [--org <org_id>] [--wg <wg_id> ...]   # default: the default workgroup
+agent-platform device remove --this-computer                                   # unpair and remove everything
+```
+
+`device add` checks the Mac, downloads the signed runner package of the platform, verifies it and asks macOS for one
+administrator dialog. Before you run it, tell your user in one sentence what the dialog means (the command returns
+the sentence as `dialog`): "macOS asks once for your password: this installs the DFX execution service on this Mac."
+Then tell your user the `notice` of the result in your own words: whoever administers the Mac can read the content of
+the tasks it runs for the organization, also of workgroups your user is not a member of. When the Mac cannot be a
+device (`mac_unsupported`), the command opens what fixes it (Software Update, storage settings) where it can; say in
+one sentence what to do there. The runner runs as your user's account, updates itself at night when no task runs and
+goes back to the previous version when an update fails. `device remove` prints what it removed and what is left
+(`leftovers`, which must be empty). Without you, your user can download the installer on the devices page and unpair
+there; the Mac then removes the installation by itself.
+
 ## 4. Every command
 
 You can do everything your user can do in the browser. Each action of the web client has its own command

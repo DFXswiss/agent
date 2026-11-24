@@ -33,6 +33,8 @@
   "add.expires": "Gültig bis {time}",
   "add.waiting": "Warten, bis sich das Gerät anmeldet…",
   "add.enrolled": "Das Gerät hat sich angemeldet.",
+  "add.mac-download": "Download für Mac",
+  "add.mac-hint": "Öffnen Sie das Paket auf dem Mac; es fragt nach diesem Code. Oder lassen Sie Ihren KI-Agenten den Mac anbinden.",
   "add.done": "Fertig",
   "invites.title": "Offene Geräteeinladungen",
   "invites.empty": "Keine offenen Geräteeinladungen.",
