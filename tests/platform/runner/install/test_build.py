@@ -7,8 +7,10 @@ of one commit produce the same `release.json`."""
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import io
 import json
+import marshal
 import os
 import stat
 import sys
@@ -144,6 +146,31 @@ class Bench:
         return str(self.stage / "python/bin/python3")
 
 
+def compile_argv(python: str) -> list[str]:
+    """The start of the command that compiles one file of the interpreter library."""
+    return [python, "-I", "-S", "-B", "-X", "pycache_prefix=/dev/null", "-c", build.COMPILE_ONE]
+
+
+def calls_besides_compiling(bench: Bench) -> list[list[str]]:
+    """The calls of a build except those compiling the library, after checking that every Python file of the staged
+    library was compiled by its own call, to its cache and installed path."""
+    stage = bench.stage
+    compiling = compile_argv(bench.python)
+    compiles = bench.run.called(*compiling)
+    sources = build.python_sources(stage / LIBRARY)
+    assert stage / SITE / "agent_runner/__init__.py" in sources
+    assert sorted(compiles) == sorted(
+        [
+            *compiling,
+            str(source),
+            str(source.parent / "__pycache__" / f"{source.stem}.cpython-312.pyc"),
+            f"{FINAL}/{LIBRARY}/{source.relative_to(stage / LIBRARY)}",
+        ]
+        for source in sources
+    )
+    return [call for call in bench.run.calls if call not in compiles]
+
+
 def pip_install(stage: Path) -> None:
     """What `pip install` writes: a package, its RECORD and two console scripts (one naming the build directory)."""
     site = stage / SITE
@@ -188,15 +215,15 @@ def make_bench(tmp_path: Path, keys: Keys, name: str = "a", **change: Any) -> Be
         Path(argv[-1]).write_bytes(release.canonical(release.tree_entries(Path(argv[2]))))
 
     def compiled(argv: list[str]) -> None:
-        cache = stage / SITE / "agent_runner/__pycache__"
-        cache.mkdir(exist_ok=True)
-        (cache / "__init__.cpython-312.pyc").write_bytes(b"unchecked-hash pyc")
+        target = Path(argv[-2])
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(b"unchecked-hash pyc")
 
     run.answer(["git", "-C", str(checkout), "show"], stdout=f"{COMMIT} {SECONDS}\n")
     run.answer(["git", "-C", str(checkout), "rev-parse"], stdout=COMMIT + "\n")
     run.on(["git", "-C", str(checkout), "archive"], archive)
     run.on([bench.python, "-I", "-B", "-m", "pip"], lambda argv: pip_install(stage))
-    run.on([bench.python, "-I", "-B", "-m", "compileall"], compiled)
+    run.on(compile_argv(bench.python), compiled)
     run.on(["pkgbuild"], package)
     return bench
 
@@ -229,7 +256,7 @@ def test_a_build_from_a_checkout(tmp_path: Path, keys: Keys) -> None:
     source = work / "source"
     stage = bench.stage
     scripts = work / "scripts"
-    assert bench.run.calls == [
+    assert calls_besides_compiling(bench) == [
         ["git", "-C", str(bench.checkout), "rev-parse", "v1^{commit}"],
         ["git", "-C", str(bench.checkout), "show", "-s", "--format=%H %ct", "v1"],
         ["git", "-C", str(bench.checkout), "archive", "-o", str(work / "source.tar"), "v1"],
@@ -246,24 +273,6 @@ def test_a_build_from_a_checkout(tmp_path: Path, keys: Keys) -> None:
             "--only-binary=:all:",
             "-r",
             str(source / "scripts/macos-package/requirements.lock"),
-        ],
-        [
-            bench.python,
-            "-I",
-            "-B",
-            "-m",
-            "compileall",
-            "-q",
-            "-f",
-            "-j",
-            "0",
-            "--invalidation-mode",
-            "unchecked-hash",
-            "-s",
-            str(stage / LIBRARY),
-            "-p",
-            FINAL + "/" + LIBRARY,
-            str(stage / LIBRARY),
         ],
         [
             "pkgbuild",
@@ -585,13 +594,79 @@ def test_an_interpreter_archive_without_python3_is_refused(tmp_path: Path, keys:
     assert bench.run.called(bench.python) == []
 
 
-@pytest.mark.parametrize(("program", "step"), [("pip", "pip"), ("compileall", "pyc")])
-def test_a_failed_python_step_is_refused(tmp_path: Path, keys: Keys, program: str, step: str) -> None:
+@pytest.mark.parametrize(("program", "step"), [(("-B", "-m", "pip"), "pip"), (("-S", "-B", "-X"), "pyc")])
+def test_a_failed_python_step_is_refused(tmp_path: Path, keys: Keys, program: tuple[str, ...], step: str) -> None:
     bench = make_bench(tmp_path, keys)
-    bench.run.answer([bench.python, "-I", "-B", "-m", program], rc=1)
+    bench.run.answer([bench.python, "-I", *program], rc=1)
     with refused("build_failed", step):
         build.build(bench.options, bench.tools)
     assert bench.run.called("pkgbuild") == []
+
+
+# --- byte code independent of the compiling process (HOT-19, E-19) -------------------------------------------------
+
+USES_THE_NAME = "def use(quincunx):\n    return quincunx\n"
+SHARES_A_SET = (
+    'def first(value):\n    return value in {"quincunx", "zeugma"}\n\n\n'
+    'def second(value):\n    return value in {"quincunx", "zeugma"} or value == 2\n'
+)
+
+
+def compiled_library(tmp_path: Path, name: str, files: dict[str, str]) -> dict[str, bytes]:
+    """`compile_python` with the real interpreter on a library of `files`; every resulting `.pyc` by path."""
+    tree = tmp_path / name / "stage"
+    (tree / "python/bin").mkdir(parents=True)
+    python = tree / "python/bin/python3"
+    python.write_text(f'#!/bin/sh\nexec "{Path(sys.executable).resolve()}" "$@"\n', encoding="utf-8")
+    python.chmod(0o755)
+    for path, text in files.items():
+        (tree / LIBRARY / path).parent.mkdir(parents=True, exist_ok=True)
+        (tree / LIBRARY / path).write_text(text, encoding="utf-8")
+    build.compile_python(build.Tools(), tree, VERSION)
+    return {str(path.relative_to(tree)): path.read_bytes() for path in sorted(tree.rglob("*.pyc"))}
+
+
+def test_byte_code_does_not_depend_on_what_the_compiling_process_compiled_before(tmp_path: Path) -> None:
+    """Two builds of one commit differed in one `.pyc` (HOT-19): the parser interns every identifier for the life of
+    the process, and a code object rebuilds a constant `frozenset` whose strings are already interned, so whether
+    `marshal` shares it (`FLAG_REF`) depended on the files the same worker of `compileall -j 0` had compiled before.
+    Here 150 files use `quincunx` as a name (a word no module of the interpreter uses) and one file holds
+    `{"quincunx", "zeugma"}` in two functions with different constants: with many workers that file lands in one
+    that has seen the name, alone it does not. Every file must come out the same as when compiled alone, and two
+    compilations of the same library must be the same in every byte."""
+    library = {f"site-packages/a{index:03}.py": USES_THE_NAME for index in range(150)}
+    library["site-packages/zz.py"] = SHARES_A_SET
+    alone = compiled_library(tmp_path, "alone", {"site-packages/zz.py": SHARES_A_SET})
+    first, second = (compiled_library(tmp_path, name, library) for name in ("first", "second"))
+    assert len(first) == 151
+    assert first == second
+    pyc = f"{LIBRARY}/site-packages/__pycache__/zz.cpython-312.pyc"
+    assert first[pyc] == alone[pyc]
+    # a hash-based pyc that is never checked against its source, naming the installed path
+    data = first[pyc]
+    assert data[:4] == importlib.util.MAGIC_NUMBER
+    assert int.from_bytes(data[4:8], "little") == 1
+    assert data[8:16] == importlib.util.source_hash(SHARES_A_SET.encode())
+    code = marshal.loads(data[16:])
+    assert code.co_filename == f"{FINAL}/{LIBRARY}/site-packages/zz.py"
+    namespace: dict[str, Any] = {}
+    exec(code, namespace)
+    assert namespace["first"]("zeugma")
+    assert not namespace["second"]("other")
+
+
+def test_a_library_file_that_does_not_compile_is_refused(tmp_path: Path) -> None:
+    with refused("build_failed", "pyc"):
+        compiled_library(tmp_path, "broken", {"good.py": "x = 1\n", "bad.py": "def (:\n"})
+
+
+def test_python_sources_are_found_in_a_fixed_order_without_caches_or_linked_directories(tmp_path: Path) -> None:
+    library = tmp_path / "lib"
+    for path in ("b.py", "a.py", "notes.txt", "z/__init__.py", "m/x.py", "__pycache__/c.py"):
+        (library / path).parent.mkdir(parents=True, exist_ok=True)
+        (library / path).write_text("", encoding="utf-8")
+    (library / "linked").symlink_to(library / "m")
+    assert build.python_sources(library) == [library / name for name in ("a.py", "b.py", "m/x.py", "z/__init__.py")]
 
 
 def test_normalise_sets_modes_and_the_commit_time(tmp_path: Path) -> None:

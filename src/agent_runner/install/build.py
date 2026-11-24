@@ -15,7 +15,8 @@ Everything comes from one commit (`git archive`) and its lock (`scripts/macos-pa
    `contracts/`) and the launchers in `libexec/`;
 4. modes and times are normalised (0755 for executables and directories, 0644 for the rest, the commit time
    everywhere) and the interpreter's whole library is compiled with unchecked hashes (no time stamps; the launcher
-   runs `python -I -B`, so nothing is ever written into the payload), so two builds of one commit stage the same tree;
+   runs `python -I -B`, so nothing is ever written into the payload), each file in a fresh interpreter that reads no
+   byte code (`compile_python`), so two builds of one commit stage the same tree;
 5. with `--sign-identity` every Mach-O file is signed with the hardened runtime and a time stamp (entitlements from
    `scripts/macos-package/entitlements/`), **before** the manifest is written;
 6. `release.json` (every file's SHA-256 and the pinned Claude Code download) is written and signed with the release
@@ -43,6 +44,7 @@ import sys
 import tarfile
 import zipfile
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -67,6 +69,21 @@ MIN_MACOS = "14.0"
 KEYS_LINE = re.compile(r"^KEYS: tuple\[str, \.\.\.\] = (\(.*\))$", re.MULTILINE)
 SKIP = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store")
 MAX_INPUT = 1024**3
+PYC_TAG = "cpython-312"
+# Where the compiling interpreter would look for byte code: nothing can ever exist below /dev/null, so it reads none.
+NO_PYCACHE = "/dev/null"
+# Compiles one file (argv: source, target, installed path) exactly as `py_compile` does with unchecked hashes, using
+# only built-in and frozen modules.
+COMPILE_ONE = """import _imp, os, sys
+from importlib import _bootstrap_external as bootstrap
+source, target, installed = sys.argv[1:]
+with open(source, "rb") as handle:
+    data = handle.read()
+code = compile(data, installed, "exec", dont_inherit=True)
+os.makedirs(os.path.dirname(target), exist_ok=True)
+pyc = bootstrap._code_to_hash_pyc(code, _imp.source_hash(bootstrap._RAW_MAGIC_NUMBER, data), False)
+bootstrap._write_atomic(target, pyc, 0o644)
+"""
 MACHO = (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xfe\xed\xfa\xcf", b"\xbe\xba\xfe\xca")
 LAUNCHER = """#!/bin/sh
 # Runs a module of the payload's interpreter, isolated from the caller's Python settings (ADR-074 section 3).
@@ -252,15 +269,41 @@ def stage(tools: Tools, options: Options, source: Path, lock: dict[str, Any], ta
         (libexec / name).chmod(0o755)
 
 
+def python_sources(library: Path) -> list[Path]:
+    """Every `.py` file below `library` in a fixed order, as `compileall` finds them (no `__pycache__`, no linked
+    directories)."""
+    found: list[Path] = []
+    for directory, dirnames, filenames in os.walk(library):
+        dirnames[:] = sorted(name for name in dirnames if name != "__pycache__")
+        found += [Path(directory) / name for name in sorted(filenames) if name.endswith(".py")]
+    return found
+
+
 def compile_python(tools: Tools, tree: Path, version: str) -> None:
     """Byte code of the whole interpreter library with unchecked hashes (no time stamps, so it stays valid after
-    `normalise` and is the same in every build) and the installed path as its source path; existing time-stamped
-    files of the interpreter's own archive are replaced (`-f`)."""
+    `normalise`) and the installed path as its source path; existing files of the interpreter's own archive are
+    replaced.
+
+    Every file is compiled by its own fresh interpreter (`-I -S -B`, byte code looked up below `NO_PYCACHE`, so it
+    reads none and only runs built-in, frozen and source modules of this tree). Byte code depends on the state of the
+    compiling process: the parser interns every identifier for the life of the process, and a code object rebuilds
+    a constant `frozenset` when one of its strings equals an already interned one, which decides whether `marshal`
+    shares it (`FLAG_REF`). With one process for many files (`compileall -j`) that state is whatever the process
+    compiled before; here it is the same for every build, whatever the cores, order, directory or time."""
     library = tree / LIBRARY
     final = Layout().version_dir(version) / LIBRARY
-    argv = [str(tree / "python/bin/python3"), "-I", "-B", "-m", "compileall", "-q", "-f", "-j", "0"]
-    argv += ["--invalidation-mode", "unchecked-hash", "-s", str(library), "-p", str(final), str(library)]
-    _must(tools, argv, "pyc")
+    python = str(tree / "python/bin/python3")
+
+    def one(source: Path) -> bool:
+        target = source.parent / "__pycache__" / f"{source.stem}.{PYC_TAG}.pyc"
+        installed = final / source.relative_to(library)
+        argv = [python, "-I", "-S", "-B", "-X", f"pycache_prefix={NO_PYCACHE}", "-c", COMPILE_ONE]
+        return tools.run([*argv, str(source), str(target), str(installed)]).returncode == 0
+
+    with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
+        compiled = list(pool.map(one, python_sources(library)))
+    if not all(compiled):
+        raise RunnerError("build_failed", "pyc")
 
 
 def normalise(tree: Path, seconds: int) -> None:
