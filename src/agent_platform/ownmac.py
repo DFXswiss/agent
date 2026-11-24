@@ -270,7 +270,7 @@ def _remove(account: Account, args: argparse.Namespace, context: Context) -> dic
 
 
 ADD_LOOKUP = {
-    "example": "agent-platform device add --this-computer [--org <org_id>] [--wg <wg_id>]",
+    "example": "agent-platform device add --this-computer [--org <org_id>] [--wg <wg_id> ...]",
     "words": "eigener mac rechner computer gerät anbinden installieren own mac computer device connect install",
 }
 REMOVE_LOOKUP = {

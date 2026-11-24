@@ -682,8 +682,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „agent.dfx.swiss soll nicht nur von Menschen benutzt werden können sondern auch von ki agents. was
   müssen wir tun damit die bedienung durch ki agents einfach und effizient ist?“
 - **Bezug:** ergänzt [E-04](#e-04) und [Idee 34](#k-idee-34).
-- **Umsetzung:** offen – KOR-63 (kurzer Einstieg und Nachschlagen statt einer langen Anleitung; Anschluss für
-  KI-Programme ohne Befehlszeile).
+- **Umsetzung:** gebaut – `agent-platform guide` (kurzer Einstieg), `search`, `guide --topic`, `--limit`/`--fields`
+  und der lokale MCP-Server `mcp` mit `install-connector` (KOR-63, [Entscheidungen](decisions/KOR-63.md)),
+  Anleitung [agents.md](agents.md).
 
 <a id="e-27"></a>
 
@@ -838,7 +839,6 @@ Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-11](#e-11) übrige Freigaben | Freigabe von Team-Organisationen für DFX-Geräte, Freigabe der Betreiber-Abos je Organization, Plattform-Einladung nur mit eigener Rolle und die festen Betreiber-Listen sind noch Voraussetzungen | KOR-49 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
-| [E-26](#e-26) Bedienung durch KI-Agenten | Eine lange Anleitung, kein Nachschlagen, kein Anschluss für KI-Programme ohne Befehlszeile | KOR-63 |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |

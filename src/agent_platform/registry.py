@@ -13,6 +13,7 @@ from agent_platform import (
     alone,
     billing,
     community,
+    connector,
     credkey,
     creds,
     devices,
@@ -43,4 +44,5 @@ MODULES: tuple[Callable[[Any], None], ...] = (
     community.register,
     alone.register,
     ownmac.register,
+    connector.register,
 )

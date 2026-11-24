@@ -384,6 +384,41 @@ def _delete(account: Account, args: argparse.Namespace, context: Context) -> dic
     return board_delete(account, _location(account, args), args.entry)
 
 
+# Per command: example, search words, next step, trim.
+DOCS: dict[str, tuple[str, str, str, str | None]] = {
+    "list": (
+        "agent-platform whiteboard list --org <org_id> [--wg <wg_id>] [--task <task_id>]",
+        "pinnwand notizen tafel einträge board notes entries",
+        "",
+        "first",
+    ),
+    "history": (
+        "agent-platform whiteboard history --org <org_id> --wg <wg_id> --entry <entry_id>",
+        "versionen verlauf änderungen notiz versions changes past",
+        "",
+        "first",
+    ),
+    "add": (
+        "agent-platform whiteboard add --org <org_id> --wg <wg_id> --text - [--notify] < note.md",
+        "notiz schreiben eintrag hinterlassen pinnwand note write post",
+        "agent-platform whiteboard list --org <org_id> --wg <wg_id>",
+        None,
+    ),
+    "edit": (
+        'agent-platform whiteboard edit --org <org_id> --wg <wg_id> --entry <entry_id> --text "…"',
+        "bearbeiten ändern notiz korrigieren change update modify",
+        "",
+        None,
+    ),
+    "delete": (
+        "agent-platform whiteboard delete --org <org_id> --wg <wg_id> --entry <entry_id>",
+        "eintrag löschen wegwischen entfernen notiz remove erase",
+        "",
+        None,
+    ),
+}
+
+
 def register(tree: Tree) -> None:
     group = tree.group("whiteboard", "whiteboards of an organization, workgroup or task")
     for name, work, text in (
@@ -393,7 +428,9 @@ def register(tree: Tree) -> None:
         ("edit", _edit, "replace the text of an entry"),
         ("delete", _delete, "delete an entry"),
     ):
-        sub = tree.command(group, name, work, text, writes=name in ("add", "edit", "delete"))
+        example, words, then, trim = DOCS[name]
+        writes = name in ("add", "edit", "delete")
+        sub = tree.command(group, name, work, text, writes=writes, example=example, words=words, then=then, trim=trim)
         sub.add_argument("--org", required=True)
         sub.add_argument("--wg", help="the workgroup board")
         sub.add_argument("--task", help="the task board")

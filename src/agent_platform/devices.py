@@ -238,16 +238,48 @@ def _invite(account: Account, args: argparse.Namespace, context: Context) -> dic
 
 def register(tree: Tree) -> None:
     group = tree.group("device", "execution devices")
-    sub = tree.command(group, "list", _list, "devices of the organizations (verified log, labels, presence)")
+    sub = tree.command(
+        group,
+        "list",
+        _list,
+        "devices of the organizations (verified log, labels, presence)",
+        example="agent-platform device list [--org <org_id>]",
+        words="geräte rechner computer online anwesenheit devices machines presence",
+        trim="first",
+    )
     sub.add_argument("--org")
-    sub = tree.command(group, "unassign", _unassign, "take a device off a workgroup (rotates the keys)", writes=True)
+    sub = tree.command(
+        group,
+        "unassign",
+        _unassign,
+        "take a device off a workgroup (rotates the keys)",
+        writes=True,
+        example="agent-platform device unassign --wg <wg_id> --device <device_id>",
+        words="abziehen gerät entziehen trennen arbeitsgruppe detach remove machine",
+    )
     sub.add_argument("--wg", required=True)
     sub.add_argument("--device", required=True)
-    sub = tree.command(group, "rename", _rename, "set a device's label (device.profile)", writes=True)
+    sub = tree.command(
+        group,
+        "rename",
+        _rename,
+        "set a device's label (device.profile)",
+        writes=True,
+        example='agent-platform device rename --device <device_id> --name "Mac mini"',
+        words="beschriften umbenennen gerät name bezeichnung label",
+    )
     sub.add_argument("--device", required=True)
     sub.add_argument("--name", required=True)
     sub.add_argument("--org", help="the organization (default: the only one the device belongs to)")
-    sub = tree.command(group, "invite", _invite, "invite an org device (prints the enrollment code once)", writes=True)
+    sub = tree.command(
+        group,
+        "invite",
+        _invite,
+        "invite an org device (prints the enrollment code once)",
+        writes=True,
+        example="agent-platform device invite --org <org_id> --wg <wg_id>",
+        words="einbinden eigener rechner gerät einrichten hinzufügen enroll own computer add machine code",
+    )
     sub.add_argument("--org", required=True)
     sub.add_argument("--wg", action="append", default=[], help="workgroup to assign, repeatable")
     sub.add_argument("--expires-hours", type=int, default=DEVICE_EXPIRY_HOURS)

@@ -286,21 +286,96 @@ def _security(account: Account, args: Any, context: Context) -> dict[str, Any]:
 
 def register(tree: Tree) -> None:
     group = tree.group("passkey", "the user's passkeys")
-    tree.command(group, "list", _passkey_list, "passkeys and whether a recovery code exists")
-    sub = tree.command(group, "remove", _passkey_remove, "remove a passkey (not the last one)")
+    tree.command(
+        group,
+        "list",
+        _passkey_list,
+        "passkeys and whether a recovery code exists",
+        example="agent-platform passkey list",
+        words="anmeldeschlüssel sicherheitsschlüssel wiederherstellung security key",
+        trim="first",
+    )
+    sub = tree.command(
+        group,
+        "remove",
+        _passkey_remove,
+        "remove a passkey (not the last one)",
+        example="agent-platform passkey remove --id <credential_id>",
+        words="passkey entfernen anmeldeschlüssel löschen delete security key",
+    )
     sub.add_argument("--id", required=True, help="credential_id of `passkey list`")
-    tree.command(group, "add", _passkey_add, "open the settings page to add a passkey in the browser")
+    tree.command(
+        group,
+        "add",
+        _passkey_add,
+        "open the settings page to add a passkey in the browser",
+        example="agent-platform passkey add",
+        words="passkey hinzufügen anmeldeschlüssel neu register new security key",
+        then="agent-platform passkey list",
+    )
     group = tree.group("recovery", "the recovery code")
-    tree.command(group, "new", _recovery_new, "a new recovery code (printed once; the old one stops working)")
+    tree.command(
+        group,
+        "new",
+        _recovery_new,
+        "a new recovery code (printed once; the old one stops working)",
+        example="agent-platform recovery new",
+        words="notfallcode wiederherstellungscode wiederherstellung backup emergency",
+    )
     group = tree.group("agents", "the user's connected AI agents")
-    tree.command(group, "list", _agents_list, "agents with their names")
-    sub = tree.command(group, "revoke", _agents_revoke, "disconnect an agent, or all")
+    tree.command(
+        group,
+        "list",
+        _agents_list,
+        "agents with their names",
+        example="agent-platform agents list",
+        words="agenten verbundene ki assistenten connected ai assistants",
+        trim="first",
+    )
+    sub = tree.command(
+        group,
+        "revoke",
+        _agents_revoke,
+        "disconnect an agent, or all",
+        example="agent-platform agents revoke --id <agent_id>",
+        words="abkoppeln agenten trennen abmelden ki disconnect logout ai",
+    )
     sub.add_argument("--id")
     sub.add_argument("--all", action="store_true")
     group = tree.group("platform", "platform invitations (platform role inviter)")
-    sub = tree.command(group, "invite", _platform_invite, "a platform invitation (prints invite_link once)")
+    sub = tree.command(
+        group,
+        "invite",
+        _platform_invite,
+        "a platform invitation (prints invite_link once)",
+        example="agent-platform platform invite [--expires-hours 72]",
+        words="neukunden einladen plattformeinladung registrierung signup new user",
+        then="agent-platform platform list",
+    )
     sub.add_argument("--expires-hours", type=int, default=INVITE_HOURS)
-    tree.command(group, "list", _platform_list, "platform invitations, newest first")
-    sub = tree.command(group, "revoke", _platform_revoke, "revoke an open platform invitation")
+    tree.command(
+        group,
+        "list",
+        _platform_list,
+        "platform invitations, newest first",
+        example="agent-platform platform list",
+        words="plattformeinladungen anzeigen offene einladungen invitations open",
+        trim="first",
+    )
+    sub = tree.command(
+        group,
+        "revoke",
+        _platform_revoke,
+        "revoke an open platform invitation",
+        example="agent-platform platform revoke --id <invite_id>",
+        words="plattformeinladung widerrufen zurückziehen cancel invitation withdraw",
+    )
     sub.add_argument("--id", required=True)
-    tree.command(tree.commands, "security", _security, "build hash, root key fingerprint and hub key")
+    tree.command(
+        tree.commands,
+        "security",
+        _security,
+        "build hash, root key fingerprint and hub key",
+        example="agent-platform security",
+        words="echtheit prüfen sicherheit prüfsumme fingerabdruck manifest fingerprint integrity verify",
+    )

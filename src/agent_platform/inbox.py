@@ -292,21 +292,60 @@ def _audit(account: Account, args: Any, context: Context) -> dict[str, Any]:
 
 def register(tree: Tree) -> None:
     group = tree.group("notifications", "the user's notifications")
-    sub = tree.command(group, "list", _notifications_list, "notifications newest first")
+    sub = tree.command(
+        group,
+        "list",
+        _notifications_list,
+        "notifications newest first",
+        example="agent-platform notifications list [--unread]",
+        words="benachrichtigungen mitteilungen lesen anzeigen ungelesen nachrichten inbox messages unread alerts",
+        then="agent-platform notifications read --all",
+        trim="first",
+    )
     sub.add_argument("--unread", action="store_true", help="only unread ones")
     sub.add_argument("--before", help="next_before of the previous page")
-    sub = tree.command(group, "read", _notifications_read, "mark notifications read")
+    sub = tree.command(
+        group,
+        "read",
+        _notifications_read,
+        "mark notifications read",
+        example="agent-platform notifications read --all",
+        words="gelesen markieren erledigt benachrichtigungen mark seen dismiss",
+    )
     sub.add_argument("--id", action="append", default=[], help="notification ID, repeatable")
     sub.add_argument("--all", action="store_true", help="every notification")
-    tree.command(tree.commands, "quotas", _quotas, "the subscription quotas of the user")
+    tree.command(
+        tree.commands,
+        "quotas",
+        _quotas,
+        "the subscription quotas of the user",
+        example="agent-platform quotas",
+        words="kontingent limit nutzung abo verbrauch usage limits subscription",
+    )
     text = "devices, VMs, sessions and work VMs of an org, or a series"
-    sub = tree.command(tree.commands, "monitoring", _monitoring, text)
+    sub = tree.command(
+        tree.commands,
+        "monitoring",
+        _monitoring,
+        text,
+        example="agent-platform monitoring --org <org_id>",
+        words="auslastung überwachung metriken zustand speicher metrics load health",
+        trim="first",
+    )
     sub.add_argument("--org", required=True)
     sub.add_argument("--entity-kind", choices=list(ENTITY_KINDS))
     sub.add_argument("--entity-id")
     sub.add_argument("--metric", choices=list(METRICS))
     sub.add_argument("--range", choices=list(RANGES), default="1h")
-    sub = tree.command(tree.commands, "audit", _audit, "the account audit, or an org's audit (--org)")
+    sub = tree.command(
+        tree.commands,
+        "audit",
+        _audit,
+        "the account audit, or an org's audit (--org)",
+        example="agent-platform audit",
+        words="protokoll prüfpfad aktivitäten sicherheit log activity trail",
+        trim="first",
+    )
     sub.add_argument("--org")
     sub.add_argument("--verify", action="store_true", help="verify the org's audit chain (org admins)")
     sub.add_argument("--action", help="an action or a group (`operation` matches `operation.*`)")

@@ -15,7 +15,6 @@ import os
 import socket
 import sys
 from collections.abc import Mapping, Sequence
-from importlib import resources
 from typing import Any, TextIO
 
 from agent_platform import (
@@ -23,6 +22,7 @@ from agent_platform import (
     alone,
     claude,
     diagnose,
+    lookup,
     membership,
     names,
     orgs,
@@ -32,13 +32,38 @@ from agent_platform import (
     upkeep,
 )
 from agent_platform.account import Account
-from agent_platform.commands import Context, Handler, Help, Parser, Tree, Work, text_argument, with_account
+from agent_platform.commands import (
+    Context,
+    Handler,
+    Help,
+    Parser,
+    Tree,
+    Work,
+    text_argument,
+    trimmed,
+    with_account,
+)
 from agent_platform.credentials import put_record, read_record
 from agent_platform.errors import PlatformError
 from agent_platform.pairing import pair, register
 from agent_runner.crypto.identity import account_code, format_account_code
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+# `claude connect` and `claude sync`: summary, example, search words, next step.
+CLAUDE_DOCS = {
+    "connect": (
+        "store this computer's Claude subscription login for the user's tasks",
+        "agent-platform claude connect",
+        "abo abonnement anmeldung hinterlegen speichern subscription login store",
+        "agent-platform claude service install",
+    ),
+    "sync": (
+        "store the local Claude login again if it changed",
+        "agent-platform claude sync",
+        "abgleichen aktualisieren erneuern abo refresh update resync subscription",
+        "",
+    ),
+}
 
 
 # --- commands ---
@@ -186,7 +211,11 @@ def cmd_api(account: Account, args: argparse.Namespace, context: Context) -> dic
 
 
 def cmd_guide(args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return {"guide": resources.files("agent_platform").joinpath("guide.md").read_text(encoding="utf-8")}
+    return lookup.guide(args.topic)
+
+
+def cmd_search(args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return lookup.search(build_parser(), " ".join(args.query))
 
 
 def cmd_claude_connect(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -336,7 +365,19 @@ MESSAGE_HELP = "a personal message shown where the request is approved (one line
 
 
 def _account_commands(tree: Tree) -> None:
-    sub = tree.add(tree.commands, "pair", cmd_pair, "connect this agent to the user's account", common=False)
+    sub = tree.add(
+        tree.commands,
+        "pair",
+        cmd_pair,
+        "connect this agent to the user's account (--remote: from another computer, e.g. over SSH)",
+        common=False,
+        example='agent-platform pair --hub https://agent.dfx.swiss --name "Claude Code"',
+        words=(
+            "koppeln verbinden anmelden konto login connect link account remote ssh server anderer computer fern "
+            "another"
+        ),
+        then="agent-platform status",
+    )
     sub.add_argument("--hub")
     sub.add_argument("--name", default="Claude Code")
     sub.add_argument("--host", default=(socket.gethostname().split(".")[0] or "computer")[:64])
@@ -348,7 +389,15 @@ def _account_commands(tree: Tree) -> None:
     sub.add_argument("--timeout", type=int, default=remote.WAIT_DEFAULT_S, help="with --wait: seconds (0-600)")
     sub.add_argument("--message", help=MESSAGE_HELP)
     sub = tree.add(
-        tree.commands, "register", cmd_register, "a new account through an invitation (link on stdin)", common=False
+        tree.commands,
+        "register",
+        cmd_register,
+        "a new account through an invitation (link on stdin)",
+        common=False,
+        example='printf \'%s\' "<invitation link>" | agent-platform register --display-name "<your user\'s name>" '
+        '--name "Claude Code"',
+        words="registrieren konto einladungslink allein ohne mensch eigenes signup sign up new account invitation own alone",
+        then="agent-platform status",
     )
     sub.add_argument("--display-name", required=True)
     sub.add_argument("--name", default="Claude Code")
@@ -358,37 +407,135 @@ def _account_commands(tree: Tree) -> None:
     sub.add_argument("--message", help=MESSAGE_HELP)
     sub.add_argument("--own-account", action="store_true", help="an account of this agent alone: no user, no passkey")
     sub.add_argument("--platform-root-key", help="with --own-account: platform root key (b64u) instead of the hub's")
-    tree.add(tree.commands, "status", writing(cmd_status), "the account as the agent sees it")
-    sub = tree.add(tree.commands, "api", with_account(cmd_api), "a signed request to any route")
+    tree.add(
+        tree.commands,
+        "status",
+        writing(cmd_status),
+        "the account as the agent sees it",
+        example="agent-platform status",
+        words="zustand konto überblick account overview whoami state",
+        then="agent-platform org list",
+    )
+    sub = tree.add(
+        tree.commands,
+        "api",
+        with_account(cmd_api),
+        "a signed request to any route",
+        example="agent-platform api GET /v1/me",
+        words="schnittstelle anfrage route request endpoint http raw call",
+    )
     sub.add_argument("method")
     sub.add_argument("path")
     sub.add_argument("--body", help="JSON body, or - to read it from stdin")
-    tree.add(tree.commands, "guide", cmd_guide, "the guide for AI agents", common=False)
+    sub = tree.add(
+        tree.commands,
+        "guide",
+        cmd_guide,
+        "the short start for AI agents, or one topic of the full guide",
+        common=False,
+        example="agent-platform guide --topic connect",
+        words="anleitung hilfe einstieg handbuch thema help manual topic start docs documentation",
+        then="agent-platform search <word>",
+    )
+    sub.add_argument("--topic", help="a topic of the full guide (see topics), or all")
+    sub = tree.add(
+        tree.commands,
+        "search",
+        cmd_search,
+        "find the command for a task: purpose, call, example and next step of the best matches",
+        common=False,
+        example='agent-platform search "invite a person"',
+        words="suchen finden nachschlagen befehl wie find lookup command how which",
+    )
+    sub.add_argument("query", nargs="+", help="words in English or German")
     settings = tree.group("settings", "user settings")
-    sub = tree.add(settings, "set", with_account(cmd_settings_set), "PUT /v1/me/settings")
+    sub = tree.add(
+        settings,
+        "set",
+        with_account(cmd_settings_set),
+        "PUT /v1/me/settings",
+        example="agent-platform settings set --model-access subscription",
+        words="einstellungen modell sprache abo preferences model language locale configure",
+    )
     sub.add_argument("--model-access", choices=["auto", "subscription", "api_key", "platform"])
     sub.add_argument("--model", help="model ID ('' clears it)")
     sub.add_argument("--locale", choices=["de", "en"])
     credentials = tree.group("credentials", "credential records")
-    tree.add(credentials, "set-api-key", writing(cmd_set_api_key), "store an Anthropic API key (stdin)")
-    sub = tree.add(tree.commands, "diagnose", with_account(cmd_diagnose), "why a task does not start")
+    tree.add(
+        credentials,
+        "set-api-key",
+        writing(cmd_set_api_key),
+        "store an Anthropic API key (stdin)",
+        example="printf '%s' \"$KEY\" | agent-platform credentials set-api-key",
+        words="anthropic-schlüssel schlüssel hinterlegen speichern store",
+    )
+    sub = tree.add(
+        tree.commands,
+        "diagnose",
+        with_account(cmd_diagnose),
+        "why a task does not start",
+        example="agent-platform diagnose --task <task_id>",
+        words="fehlersuche warum startet nicht problem hängt debug why stuck troubleshoot",
+    )
     sub.add_argument("--task")
 
 
 def _task_commands(tree: Tree) -> None:
     group = tree.group("task", "tasks (sealed and opened on this computer)")
-    sub = tree.add(group, "list", with_account(cmd_task_list), "tasks of a workgroup with their titles")
+    sub = tree.add(
+        group,
+        "list",
+        with_account(cmd_task_list),
+        "tasks of a workgroup with their titles",
+        example="agent-platform task list --wg <wg_id> [--state open|closed]",
+        words="aufgabenliste aufgaben liste arbeitsgruppe titel tasks all",
+        then="agent-platform task show --task <task_id>",
+        trim="first",
+    )
     sub.add_argument("--wg", required=True)
     sub.add_argument("--state", choices=list(tasks.STATES))
-    sub = tree.add(group, "create", writing(cmd_task_create), "a new task with its first prompt")
-    sub.add_argument("--wg", required=True)
+    sub = tree.add(
+        group,
+        "create",
+        writing(cmd_task_create),
+        "a new task with its first prompt",
+        example="agent-platform task create --wg <wg_id> --text -  < prompt.txt",
+        words="beauftragen aufgabe auftrag starten anlegen neu start job new order",
+        then="agent-platform task follow --task <task_id>",
+    )
+    sub.add_argument("--wg", required=True, help="the workgroup ID (`wg list --org <org_id>`, `status`)")
     sub.add_argument("--text", required=True, help="the prompt, or - to read it from stdin")
-    sub = tree.add(group, "prompt", writing(cmd_task_prompt), "a further prompt to a task")
+    sub = tree.add(
+        group,
+        "prompt",
+        writing(cmd_task_prompt),
+        "a further prompt to a task",
+        example='agent-platform task prompt --task <task_id> --text "…"',
+        words="nachfragen anweisung nachricht antworten schreiben message reply send follow-up",
+        then="agent-platform task follow --task <task_id>",
+    )
     sub.add_argument("--task", required=True)
     sub.add_argument("--text", required=True, help="the prompt, or - to read it from stdin")
-    sub = tree.add(group, "show", with_account(cmd_task_show), "a task and its chat, opened and verified")
+    sub = tree.add(
+        group,
+        "show",
+        with_account(cmd_task_show),
+        "a task and its chat, opened and verified",
+        example="agent-platform task show --task <task_id>",
+        words="gespräch chat verlauf ergebnis antwort ansehen lesen conversation result answer output read view",
+        trim="last",
+    )
     sub.add_argument("--task", required=True)
-    sub = tree.add(group, "follow", with_account(cmd_task_follow), "new chat events after a position (waits)")
+    sub = tree.add(
+        group,
+        "follow",
+        with_account(cmd_task_follow),
+        "new chat events after a position (waits)",
+        example="agent-platform task follow --task <task_id> [--after <next_after>] [--wait 60]",
+        words="mitverfolgen neue antworten warten live beobachten watch wait stream updates",
+        then="agent-platform task follow --task <task_id> --after <next_after>",
+        trim="first",
+    )
     sub.add_argument("--task", required=True)
     sub.add_argument("--after", type=int, default=0, help="next_after of the previous call (0: from the start)")
     sub.add_argument("--wait", type=int, default=60, help="seconds to wait for the first new event (0-600)")
@@ -397,36 +544,106 @@ def _task_commands(tree: Tree) -> None:
 def _claude_commands(tree: Tree) -> None:
     group = tree.group("claude", "the Claude subscription")
     for name, handler in (("connect", cmd_claude_connect), ("sync", cmd_claude_sync)):
-        sub = tree.add(group, name, writing(handler), f"claude {name}")
+        summary, example, words, then = CLAUDE_DOCS[name]
+        sub = tree.add(group, name, writing(handler), summary, example=example, words=words, then=then)
         sub.add_argument("--replace", action="store_true", help="also replace a setup-token record")
-    sub = tree.add(group, "watch", cmd_claude_watch, "sync in a loop")
+    sub = tree.add(
+        group,
+        "watch",
+        cmd_claude_watch,
+        "sync in a loop",
+        example="agent-platform claude watch [--interval 300]",
+        words="schleife dauernd überwachen abo loop repeat periodic subscription",
+    )
     sub.add_argument("--interval", type=int, default=claude.WATCH_INTERVAL_S)
     sub.add_argument("--iterations", type=int, help=argparse.SUPPRESS)
     service = tree.group("service", "the background sync service", group)
-    sub = tree.add(service, "install", cmd_service_install, "install the user-level service")
+    sub = tree.add(
+        service,
+        "install",
+        cmd_service_install,
+        "install the user-level service",
+        example="agent-platform claude service install",
+        words="hintergrunddienst dienst automatisch einrichten hintergrund background daemon launchd systemd autostart",
+    )
     sub.add_argument("--interval", type=int, default=claude.WATCH_INTERVAL_S)
     sub.add_argument("--no-load", action="store_true")
-    sub = tree.add(service, "remove", cmd_service_remove, "remove the user-level service", common=False)
+    sub = tree.add(
+        service,
+        "remove",
+        cmd_service_remove,
+        "remove the user-level service",
+        common=False,
+        example="agent-platform claude service remove",
+        words="deinstallieren hintergrunddienst dienst entfernen uninstall background daemon stop",
+    )
     sub.add_argument("--no-load", action="store_true")
-    tree.add(group, "setup-token", writing(cmd_setup_token), "run `claude setup-token` and store the token")
+    tree.add(
+        group,
+        "setup-token",
+        writing(cmd_setup_token),
+        "run `claude setup-token` and store the token",
+        example="agent-platform claude setup-token",
+        words="langzeittoken abo hinterlegen jahr long lived subscription year",
+    )
 
 
 def _org_commands(tree: Tree) -> None:
     group = tree.group("org", "organizations")
-    tree.add(group, "list", with_account(cmd_org_list), "organizations of the user")
-    sub = tree.add(group, "create", writing(cmd_org_create), "create a team organization")
+    tree.add(
+        group,
+        "list",
+        with_account(cmd_org_list),
+        "organizations of the user",
+        example="agent-platform org list",
+        words="organisationen firmen teams meine organizations companies mine",
+        then="agent-platform org show --org <org_id>",
+        trim="first",
+    )
+    sub = tree.add(
+        group,
+        "create",
+        writing(cmd_org_create),
+        "create a team organization",
+        example='agent-platform org create --name "Acme"',
+        words="gründen organisation firma anlegen neu found company new",
+        then='agent-platform wg create --org <org_id> --name "Research"',
+    )
     sub.add_argument("--name", required=True)
     sub.add_argument("--display-name")
-    sub = tree.add(group, "show", with_account(cmd_org_show), "members, workgroups, invitations and their state")
+    sub = tree.add(
+        group,
+        "show",
+        with_account(cmd_org_show),
+        "members, workgroups, invitations and their state",
+        example="agent-platform org show --org <org_id>",
+        words="einladungen mitglieder arbeitsgruppen details status organisation members invitations",
+        trim="first",
+    )
     sub.add_argument("--org", required=True)
-    sub = tree.add(group, "invite", writing(cmd_org_invite), "invite a user (prints invite_link once)")
+    sub = tree.add(
+        group,
+        "invite",
+        writing(cmd_org_invite),
+        "invite a user (prints invite_link once)",
+        example="agent-platform org invite --org <org_id>",
+        words="einladen einladung person kollege hinzufügen add colleague link",
+        then="agent-platform org show --org <org_id>",
+    )
     sub.add_argument("--org", required=True)
     sub.add_argument("--role", choices=["admin", "member"], default="member")
     sub.add_argument("--wg", action="append", default=[], help="<wg_id>[:read|write], repeatable")
     sub.add_argument("--expires-hours", type=int, default=72)
     sub.add_argument("--message", help=MESSAGE_HELP)
     sub.add_argument("--name", help="the invited person's name, shown in the invitation list (ADR-073)")
-    sub = tree.add(group, "admit", writing(cmd_org_admit), "admit an existing account directly (no step on its side)")
+    sub = tree.add(
+        group,
+        "admit",
+        writing(cmd_org_admit),
+        "admit an existing account directly (no step on its side)",
+        example='agent-platform org admit --org <org_id> --user <account_code> --name "<name>" [--role admin]',
+        words="aufnehmen direkt hinzufügen kontocode person add directly account code",
+    )
     sub.add_argument("--org", required=True)
     sub.add_argument("--user", required=True, help="user ID or account code (XXXX-XXXX-XXXX)")
     sub.add_argument("--role", choices=["admin", "member"], default="member")
@@ -437,29 +654,77 @@ def _org_commands(tree: Tree) -> None:
         "member-name",
         writing(cmd_org_member_name),
         "give or change the provisional name of a member or an invitation (admins)",
+        example="agent-platform org member-name --org <org_id> --user <user_id|account code|invite_id>",
+        words="umbenennen vorläufiger name mitglied rename member provisional name",
     )
     sub.add_argument("--org", required=True)
     sub.add_argument("--user", required=True, help="user ID, account code (XXXX-XXXX-XXXX) or invitation ID")
     sub.add_argument("--name", required=True)
     sub = tree.add(
-        group, "invitees", with_account(cmd_org_invitees), "accounts registered through your platform invitations"
+        group,
+        "invitees",
+        with_account(cmd_org_invitees),
+        "accounts registered through your platform invitations",
+        example="agent-platform org invitees [--org <org_id>]",
+        words="eingeladene registriert angemeldet wer invited registered signed up who",
+        then="agent-platform org admit --org <org_id> --user <account_code>",
+        trim="first",
     )
     sub.add_argument("--org", help="only those that can be admitted to this organization")
-    sub = tree.add(group, "join", writing(cmd_org_join), "accept an org invitation (link on stdin)")
+    sub = tree.add(
+        group,
+        "join",
+        writing(cmd_org_join),
+        "accept an org invitation (link on stdin)",
+        example="printf '%s' \"<invitation link>\" | agent-platform org join",
+        words="beitreten annehmen einladung akzeptieren organisation accept invitation enter",
+    )
     sub.add_argument("--display-name")
     group = tree.group("wg", "workgroups")
-    sub = tree.add(group, "list", with_account(cmd_wg_list), "workgroups of an organization")
+    sub = tree.add(
+        group,
+        "list",
+        with_account(cmd_wg_list),
+        "workgroups of an organization",
+        example="agent-platform wg list --org <org_id>",
+        words="arbeitsgruppen gruppen arbeitsgruppe id zugriff projekte workgroups workgroup groups access projects",
+        then="agent-platform task list --wg <wg_id>",
+        trim="first",
+    )
     sub.add_argument("--org", required=True)
-    sub = tree.add(group, "create", writing(cmd_wg_create), "create a workgroup")
+    sub = tree.add(
+        group,
+        "create",
+        writing(cmd_wg_create),
+        "create a workgroup",
+        example='agent-platform wg create --org <org_id> --name "Research"',
+        words="projektgruppe arbeitsgruppe gruppe anlegen neu projekt group new project",
+        then="agent-platform device assign --wg <wg_id>",
+    )
     sub.add_argument("--org", required=True)
     sub.add_argument("--name", required=True)
-    sub = tree.add(group, "grant", writing(cmd_wg_grant), "give a member access to a workgroup")
+    sub = tree.add(
+        group,
+        "grant",
+        writing(cmd_wg_grant),
+        "give a member access to a workgroup",
+        example="agent-platform wg grant --wg <wg_id> --user <user_id> [--access read] [--history]",
+        words="freigeben zugriff berechtigung mitglied gewähren arbeitsgruppe permission share give",
+    )
     sub.add_argument("--wg", required=True)
     sub.add_argument("--user", required=True)
     sub.add_argument("--access", choices=["read", "write"], default="write")
     sub.add_argument("--history", action="store_true")
     group = tree.group("device", "execution devices")
-    sub = tree.add(group, "assign", writing(cmd_device_assign), "assign a platform device to a workgroup")
+    sub = tree.add(
+        group,
+        "assign",
+        writing(cmd_device_assign),
+        "assign a platform device to a workgroup",
+        example="agent-platform device assign --wg <wg_id>",
+        words="zuweisen gerät rechner ausführung arbeitsgruppe computer execution machine attach",
+        then="agent-platform task create --wg <wg_id> --text -",
+    )
     sub.add_argument("--wg", required=True)
 
 
@@ -495,7 +760,10 @@ def execute(argv: Sequence[str], environ: Mapping[str, str], stdin: TextIO) -> d
     handler = getattr(args, "handler", None)
     if handler is None:
         return {"ok": True, "help": parser.format_help()}
-    return {"ok": True, **handler(args, Context(environ, stdin))}
+    result = handler(args, Context(environ, stdin))
+    if args.trim is not None:
+        result = trimmed(result, args.limit, args.fields, args.trim)
+    return {"ok": True, **result}
 
 
 def run(

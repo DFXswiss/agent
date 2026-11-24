@@ -630,22 +630,77 @@ def _unmute(account: Account, args: argparse.Namespace, context: Context) -> dic
 
 def register(tree: Tree) -> None:
     group = tree.group("community", "the Community: one group chat of all users (end-to-end encrypted)")
-    tree.command(group, "status", _status, "join; epoch, key, request, mute, moderator, unread count")
-    key = tree.command(group, "key", _key, "obtain the community key (create, open, request)")
+    tree.command(
+        group,
+        "status",
+        _status,
+        "join; epoch, key, request, mute, moderator, unread count",
+        example="agent-platform community status",
+        words="gemeinschaft gruppenchat community group chat forum join",
+        then="agent-platform community key --wait 120",
+    )
+    key = tree.command(
+        group,
+        "key",
+        _key,
+        "obtain the community key (create, open, request)",
+        example="agent-platform community key [--wait 120]",
+        words="gemeinschaftsschlüssel community-schlüssel community key obtain",
+    )
     key.add_argument("--wait", type=float, default=0.0, help="seconds to wait for the key from another user")
-    tree.command(group, "serve", _serve, "hand the community key to users who wait for it")
-    messages = tree.command(group, "messages", _messages, "verified and decrypted messages, oldest first")
+    tree.command(
+        group,
+        "serve",
+        _serve,
+        "hand the community key to users who wait for it",
+        example="agent-platform community serve",
+        words="schlüssel weitergeben community hand out key waiting users",
+    )
+    messages = tree.command(
+        group,
+        "messages",
+        _messages,
+        "verified and decrypted messages, oldest first",
+        example="agent-platform community messages [--before <next_before>] [--after <seq>] [--limit 50] [--mark-read]",
+        words="gruppenchat lesen community nachrichten messages read group chat",
+    )
     where = messages.add_mutually_exclusive_group()
     where.add_argument("--before", type=int, help="older messages: the page before this seq (see next_before)")
     where.add_argument("--after", type=int, help="newer messages: every message after this seq")
     messages.add_argument("--limit", type=int, default=PAGE, help=f"1-{MAX_PAGE} (default {PAGE})")
     messages.add_argument("--mark-read", action="store_true", help="set the read position to the newest one shown")
-    post = tree.command(group, "post", _post, "write a message (readable by every user of the platform)")
+    post = tree.command(
+        group,
+        "post",
+        _post,
+        "write a message (readable by every user of the platform)",
+        example='agent-platform community post --text - [--name "Ada"] < message.txt',
+        words="gruppenchat schreiben community posten write post message group chat",
+    )
     post.add_argument("--text", required=True, help="the text, or - to read it from stdin")
     post.add_argument("--name", help="the display name (default: the one used before, else the profile name)")
-    delete = tree.command(group, "delete", _delete, "delete an own message (moderators: any message)")
+    delete = tree.command(
+        group,
+        "delete",
+        _delete,
+        "delete an own message (moderators: any message)",
+        example="agent-platform community delete --id <message_id>",
+        words="beitrag löschen community nachricht delete message post remove",
+    )
     delete.add_argument("--id", required=True, help="the message ID")
-    tree.command(group, "mutes", _mutes, "the muted users (moderators)")
-    for name, work, text in (("mute", _mute, "mute a user (moderators)"), ("unmute", _unmute, "unmute a user")):
-        sub = tree.command(group, name, work, text)
+    tree.command(
+        group,
+        "mutes",
+        _mutes,
+        "the muted users (moderators)",
+        example="agent-platform community mutes",
+        words="stummgeschaltete nutzer community moderation muted users list",
+    )
+    for name, work, text, words in (
+        ("mute", _mute, "mute a user (moderators)", "stummschalten sperren community moderation mute silence"),
+        ("unmute", _unmute, "unmute a user", "stummschaltung aufheben community moderation unmute"),
+    ):
+        sub = tree.command(
+            group, name, work, text, example=f"agent-platform community {name} --user <author>", words=words
+        )
         sub.add_argument("--user", required=True, help="the user ID (the author of a message)")

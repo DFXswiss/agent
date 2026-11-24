@@ -339,7 +339,14 @@ commands and options as `agent-platform <group> --help` lists them):
 | `notifications list|read`, `quotas`, `monitoring`, `audit` | the user's notifications, subscription quotas (with `unreadable_since` when the subscription refuses the read), monitoring of devices, VMs, sessions and work VMs, account and org audit (with the chain check) |
 | `agents confirm --link <connect link> --code <agent code>` | §5.5 step 5: the main orchestrator of an account without a passkey confirms a remote pairing; returns `agent_id`, `replaced` (itself) and `return_code` for the new agent, then deletes its own state; `pairing_failed` (`pairing_mismatch`, `agent_code_mismatch`), `not_own_account` |
 | `passkey list|remove|add`, `recovery new`, `agents list|revoke`, `platform invite|list|revoke`, `security` | the account's security: passkeys (`add` opens the settings page), a new recovery code, the agents, platform invitations (inviters), the web build check |
-| `guide` | prints the guide for AI agents shipped with the tool |
+| `guide [--topic T]` | prints the short start for AI agents shipped with the tool (KOR-63, E-26), or the sections of the full guide whose heading matches `T` (`all`: the whole guide); `topics` lists them |
+| `search <words>` | at most five commands for the words (English or German), best first: purpose, usage, example, usual next step, all from the command tree (`commands.Doc`, KOR-63); no hit gives the command groups and the guide's topics |
+| `mcp`, `install-connector` | a local MCP server over stdio with the tools `search` and `run` (one command of the tool, in process: same keys, rights and audit marking; no code, no shell) for chat programs without a command line, and its entry in the chat program's configuration (KOR-63) |
+
+Commands whose output grows with the data take `--limit N` and `--fields a,b` (`commands.trimmed`, KOR-63): the
+result's lists keep at most N items (the last ones for `task show` and `session terminal`, whose text keeps its
+last N lines), their objects only the named keys; a cut list is named under `limited`, and `next_after` of
+`task follow` moves behind the last event returned. Without the options the output is unchanged.
 
 The browser's background jobs (06-web.md §11 jobs 3-5) run around the commands (`agent_platform/upkeep.py`): before
 every command that writes into an org or stores a credential, the owed pending rotations of every org of the user that

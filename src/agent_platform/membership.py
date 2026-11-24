@@ -432,28 +432,89 @@ def _wg_archive(account: Account, args: argparse.Namespace, context: Context) ->
 
 def register(tree: Tree) -> None:
     group = tree.group("member", "members of an organization")
-    sub = tree.command(group, "list", _member_list, "members with role and workgroup access (verified log)")
+    sub = tree.command(
+        group,
+        "list",
+        _member_list,
+        "members with role and workgroup access (verified log)",
+        example="agent-platform member list --org <org_id>",
+        words="mitglieder rolle zugriff personen leute members people access",
+        trim="first",
+    )
     sub.add_argument("--org", required=True)
-    sub = tree.command(group, "role", _member_role, "make a member admin or member", writes=True)
+    sub = tree.command(
+        group,
+        "role",
+        _member_role,
+        "make a member admin or member",
+        writes=True,
+        example="agent-platform member role --org <org_id> --user <user_id> --role admin",
+        words="befördern rolle rechte administrator promote demote rights",
+    )
     sub.add_argument("--org", required=True)
     sub.add_argument("--user", required=True)
     sub.add_argument("--role", required=True, choices=[ADMIN, MEMBER])
-    sub = tree.command(group, "remove", _member_remove, "remove a member (rotates the keys it could read)", writes=True)
+    sub = tree.command(
+        group,
+        "remove",
+        _member_remove,
+        "remove a member (rotates the keys it could read)",
+        writes=True,
+        example="agent-platform member remove --org <org_id> --user <user_id>",
+        words="rauswerfen mitglied entfernen person kick person",
+    )
     sub.add_argument("--org", required=True)
     sub.add_argument("--user", required=True)
     group = tree.group("org", "organizations")
-    sub = tree.command(group, "leave", _org_leave, "leave an organization", writes=True)
+    sub = tree.command(
+        group,
+        "leave",
+        _org_leave,
+        "leave an organization",
+        writes=True,
+        example="agent-platform org leave --org <org_id>",
+        words="verlassen austreten organisation quit exit",
+    )
     sub.add_argument("--org", required=True)
-    sub = tree.command(group, "invite-revoke", _invite_revoke, "revoke an open invitation", writes=True)
+    sub = tree.command(
+        group,
+        "invite-revoke",
+        _invite_revoke,
+        "revoke an open invitation",
+        writes=True,
+        example="agent-platform org invite-revoke --org <org_id> --invite=<invite_id>",
+        words="zurückziehen einladung widerrufen cancel invitation withdraw",
+    )
     sub.add_argument("--org", required=True)
     sub.add_argument("--invite", required=True, help="invite_id (see `org show`)")
-    sub = tree.command(group, "rotate", _org_rotate, "the owed key rotations of an organization")
+    sub = tree.command(
+        group,
+        "rotate",
+        _org_rotate,
+        "the owed key rotations of an organization",
+        example="agent-platform org rotate --org <org_id>",
+        words="schlüsselwechsel fällig offen schlüssel key rotation owed pending",
+    )
     sub.add_argument("--org", required=True)
     group = tree.group("wg", "workgroups")
     sub = tree.command(
-        group, "ungrant", _wg_ungrant, "take a member's workgroup access away (rotates the key)", writes=True
+        group,
+        "ungrant",
+        _wg_ungrant,
+        "take a member's workgroup access away (rotates the key)",
+        writes=True,
+        example="agent-platform wg ungrant --wg <wg_id> --user <user_id>",
+        words="entziehen zugriff wegnehmen arbeitsgruppe mitglied revoke access take away",
     )
     sub.add_argument("--wg", required=True)
     sub.add_argument("--user", required=True)
-    sub = tree.command(group, "archive", _wg_archive, "archive a workgroup (read-only)", writes=True)
+    sub = tree.command(
+        group,
+        "archive",
+        _wg_archive,
+        "archive a workgroup (read-only)",
+        writes=True,
+        example="agent-platform wg archive --wg <wg_id>",
+        words="archivieren stilllegen arbeitsgruppe schreibschutz readonly freeze close",
+    )
     sub.add_argument("--wg", required=True)

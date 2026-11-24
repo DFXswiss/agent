@@ -280,5 +280,12 @@ def _workvm(account: Account, args: Any, context: Context) -> dict[str, Any]:
 
 def register(tree: Tree) -> None:
     group = tree.group("session", "sessions of tasks")
-    sub = tree.command(group, "workvm", _workvm, "the session's work VM: state, size, runtime and runs")
+    sub = tree.command(
+        group,
+        "workvm",
+        _workvm,
+        "the session's work VM: state, size, runtime and runs",
+        example="agent-platform session workvm --session <session_id>",
+        words="arbeitsmaschine laufzeit grösse sitzung virtual machine runtime size runs",
+    )
     sub.add_argument("--session", required=True)

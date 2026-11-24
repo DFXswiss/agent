@@ -9,9 +9,9 @@ from __future__ import annotations
 
 NEXT: dict[str, str] = {
     "not_paired": (
-        "Run `agent-platform pair --hub <url>` on the computer where the user's browser runs. Without a user: "
-        "`agent-platform register --own-account` with an invitation, or `agent-platform recover --hub <url>` with "
-        "the recovery code of an account of your own."
+        "Run `agent-platform pair --hub <url>` on the computer where the user's browser runs (add `--remote` when "
+        "this agent runs on another computer). Without a user: `agent-platform register --own-account` with an "
+        "invitation, or `agent-platform recover --hub <url>` with the recovery code of an account of your own."
     ),
     "agent_revoked": (
         "The user disconnected this agent or approved another agent as main orchestrator. Pair again only if the "
@@ -47,7 +47,10 @@ NEXT: dict[str, str] = {
         "(`agent-platform credentials set-api-key`)."
     ),
     "no_org": "Create an organization (`agent-platform org create`) or name an existing one.",
-    "no_device": "No execution device is available for this workgroup; try again later.",
+    "no_device": (
+        "No execution device is available for this workgroup: assign one with `agent-platform device assign`, or "
+        "try again later."
+    ),
     "not_admin": "Only an admin of the organization can do this; ask an admin.",
     "no_write_access": "The user has no write access to this workgroup; ask an admin of the organization for it.",
     "not_inviter": "Only a user with the platform role `inviter` can do this.",

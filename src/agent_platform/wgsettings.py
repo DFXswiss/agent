@@ -178,19 +178,58 @@ def _rename(account: Account, args: Any, context: Context) -> dict[str, Any]:
     return wg_rename(account, args.wg, args.name)
 
 
+# `repos allow` and `repos disallow`: example and search words.
+REPO_DOCS = {
+    "allow": (
+        "agent-platform repos allow --wg <wg_id> --repo owner/name",
+        "erlauben freigeben hinzufügen repository permit add",
+    ),
+    "disallow": (
+        "agent-platform repos disallow --wg <wg_id> --repo owner/name",
+        "verbieten sperren entfernen repository block deny remove",
+    ),
+}
+
+
 def register(tree: Tree) -> None:
     group = tree.group("repos", "the repository allow-list of a workgroup (empty: every repository)")
-    sub = tree.command(group, "list", _list, "the allowed repositories")
+    sub = tree.command(
+        group,
+        "list",
+        _list,
+        "the allowed repositories",
+        example="agent-platform repos list --wg <wg_id>",
+        words="erlaubte repositories freigabeliste allowed allowlist",
+        then="agent-platform repos allow --wg <wg_id> --repo owner/name",
+        trim="first",
+    )
     sub.add_argument("--wg", required=True)
     for name, allow, text in (("allow", True, "add repositories"), ("disallow", False, "remove repositories")):
-        sub = tree.command(group, name, _change(allow), text, writes=True)
+        example, words = REPO_DOCS[name]
+        sub = tree.command(group, name, _change(allow), text, writes=True, example=example, words=words)
         sub.add_argument("--wg", required=True)
         sub.add_argument("--repo", action="append", default=[], help="owner/name, repeatable")
     group = tree.group("wg", "workgroups")
-    sub = tree.command(group, "settings", _settings, "show or set the workgroup settings", writes=True)
+    sub = tree.command(
+        group,
+        "settings",
+        _settings,
+        "show or set the workgroup settings",
+        writes=True,
+        example="agent-platform wg settings --wg <wg_id> [--protected-branch main] [--pr-draft-default true]",
+        words="geschützt zweig entwurf einstellungen arbeitsgruppe protected branch draft configure",
+    )
     sub.add_argument("--wg", required=True)
     sub.add_argument("--protected-branch", action="append", help="branch or pattern, repeatable (replaces the list)")
     sub.add_argument("--pr-draft-default", choices=["true", "false"])
-    sub = tree.command(group, "rename", _rename, "rename a workgroup (admins)", writes=True)
+    sub = tree.command(
+        group,
+        "rename",
+        _rename,
+        "rename a workgroup (admins)",
+        writes=True,
+        example='agent-platform wg rename --wg <wg_id> --name "Research"',
+        words="umbenennen arbeitsgruppe name",
+    )
     sub.add_argument("--wg", required=True)
     sub.add_argument("--name", required=True)

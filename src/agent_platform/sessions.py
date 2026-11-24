@@ -319,25 +319,80 @@ def _control(action: str) -> Any:
     return work
 
 
+# `session stop` and `session interrupt`: example and search words.
+CONTROL_DOCS = {
+    "stop": (
+        "agent-platform session stop --session <session_id>",
+        "anhalten stoppen beenden sitzung laufende kill end terminate stop running",
+    ),
+    "interrupt": (
+        "agent-platform session interrupt --session <session_id>",
+        "unterbrechen abbrechen sitzung turn cancel pause",
+    ),
+}
+
+
 def register(tree: Tree) -> None:
     group = tree.group("task", "tasks (sealed and opened on this computer)")
-    sub = tree.command(group, "close", _close, "close a task (its live sessions stop)")
+    sub = tree.command(
+        group,
+        "close",
+        _close,
+        "close a task (its live sessions stop)",
+        example="agent-platform task close --task <task_id>",
+        words="schliessen abschliessen abbrechen erledigt aufgabe beenden finish done end cancel stop task",
+    )
     sub.add_argument("--task", required=True)
-    sub = tree.command(group, "operations", _operations, "the task's operations with their verified events")
+    sub = tree.command(
+        group,
+        "operations",
+        _operations,
+        "the task's operations with their verified events",
+        example="agent-platform task operations --task <task_id> [--operation <operation_id>]",
+        words="vorgänge ergebnisse pullrequests aufgabe pushes pr push results",
+        trim="first",
+    )
     sub.add_argument("--task", required=True)
     sub.add_argument("--operation", help="one operation with its transitions")
     sub.add_argument("--before", help="next_before of the previous page")
-    sub = tree.command(group, "overview", _overview, "tasks of every readable workgroup of an org")
+    sub = tree.command(
+        group,
+        "overview",
+        _overview,
+        "tasks of every readable workgroup of an org",
+        example='agent-platform task overview --org <org_id> [--state working] [--mine] [--search "deploy"]',
+        words="gesamtübersicht alle aufgaben organisation suchen all tasks dashboard",
+        then="agent-platform task show --task <task_id>",
+        trim="first",
+    )
     sub.add_argument("--org", required=True)
     sub.add_argument("--state", choices=list(TASK_STATES))
     sub.add_argument("--mine", action="store_true", help="only tasks the user created")
     sub.add_argument("--search", default="", help="part of the title")
     group = tree.group("session", "sessions of tasks")
-    sub = tree.command(group, "show", _show, "a session with transitions, usage, VM and children")
+    sub = tree.command(
+        group,
+        "show",
+        _show,
+        "a session with transitions, usage, VM and children",
+        example="agent-platform session show --session <session_id>",
+        words="sitzung details übergänge nutzung detail usage transitions",
+        then="agent-platform session terminal --session <session_id>",
+    )
     sub.add_argument("--session", required=True)
     for action, text in (("stop", "end a session"), ("interrupt", "interrupt the session's current turn")):
-        sub = tree.command(group, action, _control(action), text)
+        sub = tree.command(
+            group, action, _control(action), text, example=CONTROL_DOCS[action][0], words=CONTROL_DOCS[action][1]
+        )
         sub.add_argument("--session", required=True)
-    sub = tree.command(group, "terminal", _terminal, "the session's terminal output as text")
+    sub = tree.command(
+        group,
+        "terminal",
+        _terminal,
+        "the session's terminal output as text",
+        example="agent-platform session terminal --session <session_id> [--after <next_after>]",
+        words="konsole ausgabe bildschirm sitzung output console screen log",
+        trim="last",
+    )
     sub.add_argument("--session", required=True)
     sub.add_argument("--after", type=int, default=0, help="next_after of the previous call (0: from the start)")

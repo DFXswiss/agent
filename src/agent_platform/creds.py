@@ -272,29 +272,91 @@ def _flow_options(sub: Any) -> None:
 
 def register(tree: Tree) -> None:
     group = tree.group("credentials", "credential records")
-    tree.command(group, "list", _list, "the user's credentials (summaries only, never a secret)")
+    tree.command(
+        group,
+        "list",
+        _list,
+        "the user's credentials (summaries only, never a secret)",
+        example="agent-platform credentials list",
+        words="zugangsdaten anmeldedaten gespeichert übersicht secrets stored logins",
+        trim="first",
+    )
     sub = tree.command(
-        group, "set-mailbox", _mailbox_command, "store the login mailbox (password on stdin)", writes=True
+        group,
+        "set-mailbox",
+        _mailbox_command,
+        "store the login mailbox (password on stdin)",
+        writes=True,
+        example="printf '%s' \"$PASSWORD\" | agent-platform credentials set-mailbox --imap-host imap.example.com "
+        "--imap-user me --email me@example.com",
+        words="postfach email mail imap passwort hinterlegen mailbox password inbox",
     )
     sub.add_argument("--imap-host", required=True)
     sub.add_argument("--imap-port", type=int, default=993)
     sub.add_argument("--imap-user", required=True)
     sub.add_argument("--email", required=True)
-    sub = tree.command(group, "delete", _delete, "delete a credential", writes=True)
+    sub = tree.command(
+        group,
+        "delete",
+        _delete,
+        "delete a credential",
+        writes=True,
+        example="agent-platform credentials delete --kind mailbox",
+        words="zugangsdaten löschen entfernen vergessen remove erase forget",
+    )
     sub.add_argument("--kind", required=True, choices=list(KINDS))
-    sub = tree.command(group, "check", _check, "let a device check a stored credential")
+    sub = tree.command(
+        group,
+        "check",
+        _check,
+        "let a device check a stored credential",
+        example="agent-platform credentials check --kind claude_subscription",
+        words="prüfen testen funktioniert gültig zugangsdaten verify test valid works",
+        then="agent-platform credentials check --request <request_id>",
+    )
     sub.add_argument("--kind", choices=list(CHECK_KINDS))
     _flow_options(sub)
     group = tree.group("github", "the GitHub connection")
-    tree.command(group, "status", _github_status, "connected GitHub login, if any")
+    tree.command(
+        group,
+        "status",
+        _github_status,
+        "connected GitHub login, if any",
+        example="agent-platform github status",
+        words="verbunden githubkonto konto login connected account",
+    )
     sub = tree.command(
-        group, "connect", _github_connect, "connect GitHub through a device (opens the browser)", writes=True
+        group,
+        "connect",
+        _github_connect,
+        "connect GitHub through a device (opens the browser)",
+        writes=True,
+        example="agent-platform github connect",
+        words="verbinden anmelden repository zugriff token link login repo access",
+        then="agent-platform github connect --request <request_id> --wait 120",
     )
     sub.add_argument("--token", help="- : store an existing GitHub token read from stdin (checked by the device)")
     _flow_options(sub)
-    tree.command(group, "disconnect", _github_disconnect, "remove the GitHub connection", writes=True)
+    tree.command(
+        group,
+        "disconnect",
+        _github_disconnect,
+        "remove the GitHub connection",
+        writes=True,
+        example="agent-platform github disconnect",
+        words="trennen abmelden entfernen unlink logout remove",
+    )
     group = tree.group("claude", "the Claude subscription")
-    sub = tree.command(group, "login", _claude_login, "log a device in to the Claude subscription (relay)", writes=True)
+    sub = tree.command(
+        group,
+        "login",
+        _claude_login,
+        "log a device in to the Claude subscription (relay)",
+        writes=True,
+        example="agent-platform claude login",
+        words="einloggen anmelden gerät abo device subscription sign in",
+        then="agent-platform claude login --request <request_id> --code",
+    )
     sub.add_argument("--mode", choices=["manual", "automatic"], default="manual")
     sub.add_argument("--code", action="store_true", help="send the authorization code from stdin (with --request)")
     _flow_options(sub)

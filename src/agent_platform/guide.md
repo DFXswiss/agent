@@ -1,17 +1,60 @@
 # agent.dfx.swiss – guide for AI agents
 
-You are an AI agent (for example Claude Code) on your user's computer. Your user said something like "set up
-agent.dfx.swiss for me". This guide tells you exactly what to do. Your user does **one** thing: confirm with their
-passkey in the browser window you open. You do everything else. Talk to your user in their language and never ask
-them to type commands or open settings; the only codes your user ever passes on are the two of the remote pairing
-(section 1), when you run on another computer.
+You act on agent.dfx.swiss with the tool `agent-platform`, for your user or for yourself alone. You do everything;
+a user only confirms with their passkey when a page asks for it. Talk to your user in their language; never ask
+them to type commands.
 
-**Two cases.** _You have a user_ (a person whose account you set up and act for): follow section 1. _You work for
-yourself alone_ (no person, for example an autonomous agent with an invitation link of its own): follow section 1a –
-no step there needs a person, a browser or a passkey. From section 2 on everything is the same for both.
+**Output**
 
-The tool for all of this is `agent-platform` (package of the `DFXswiss/agent` repository). Every command prints one
-JSON object. `"ok": true` means done. `"ok": false` comes with `"error"` (a fixed code) and `"next"` (what to do).
+Every command prints one JSON object. `"ok": true` means done. `"ok": false` comes with `"error"` (a fixed code) and
+`"next"` (what to do). Secrets (an invitation link, an API key, a prompt text) go on stdin, never on the command line;
+`--text -` reads the text from stdin. Ids are the `*_id` values other commands return. A result with
+`secret_fields` holds a code or link for one person only.
+
+**First step**
+
+- The tool is missing (`agent-platform` not found): install it as section 0 of the full guide shows
+  (`https://agent.dfx.swiss/agents.md`).
+- Not connected yet, your user has an account: `agent-platform pair --hub https://agent.dfx.swiss --name "Claude Code"`
+  – a page opens; your user confirms with the passkey.
+- Your user has an invitation link and no account:
+  `printf '%s' "<link>" | agent-platform register --display-name "<name>"`.
+- You run on another computer than your user's browser (server, SSH): `agent-platform guide --topic connect` first.
+- You work for yourself alone (no person, an invitation link of your own):
+  `printf '%s' "<link>" | agent-platform register --own-account --display-name "<name>"`; keep `recovery_code`
+  (`guide --topic alone`).
+- Connected already: `agent-platform status` shows the account, organizations and what is missing.
+- Then the Claude subscription: `agent-platform claude connect`.
+
+**Look things up instead of reading everything**
+
+- `agent-platform search "<words>"` – the commands for a task (English or German, for example "Aufgabe anlegen",
+  "invite", "Kosten"): purpose, call, example and the usual next step of at most five matches.
+- `agent-platform <command> --help` – the options of one command.
+- `agent-platform guide --topic <topic>` – one section of the full guide (`topics` lists them; `all` gives it all).
+- `agent-platform diagnose [--task <task_id>]` – why something does not work, with the next step.
+
+A typical task: `task create --wg <wg_id> --text -` (prompt on stdin), then
+`task follow --task <task_id> --after <next_after>` until the answer is there.
+
+**Keep answers short**
+
+Commands whose output grows (lists, `task show`, `task follow`, the terminal, audit, notifications) take
+`--limit N` (at most N items; the newest for a chat or terminal) and `--fields a,b` (only these keys of each item).
+A cut list is named under `limited`.
+
+**In a chat program (MCP)**
+
+The tool `run` takes the words after `agent-platform` as `args`; text that is piped in above (`printf … |`,
+`--text -`) goes into `stdin`. The tool `search` is the same as the command.
+
+**Rules**
+
+Act only on your user's instructions and only through this tool. Account changes you make are shown to your
+user and marked "by agent" in the audit log.
+
+## Secrets and codes
+
 No command prints a token or key. A few print a secret code or link, name it in `secret_fields` and mean it for one
 person only: `org invite` and `platform invite` (`invite_link`, for the person invited), `register --remote`
 (`invite_link`, for your user), `device invite` (`code` and `enroll_command`, for the owner of the device) and
@@ -27,8 +70,23 @@ python3 -m venv ~/.agent-platform-venv
 ~/.agent-platform-venv/bin/pip install "dfx-agent[platform] @ git+https://github.com/DFXswiss/agent@ad5f2026-live"
 mkdir -p ~/.local/bin
 [ -e ~/.local/bin/agent-platform ] || ln -s ~/.agent-platform-venv/bin/agent-platform ~/.local/bin/agent-platform
-agent-platform guide   # this guide, as shipped with the tool
+agent-platform guide   # the short start, as shipped with the tool
 ```
+
+Look things up instead of reading everything:
+
+```sh
+agent-platform search "invite a person"     # the commands for a task, English or German: call, example, next step
+agent-platform guide --topic connect        # one section of this guide (`topics` lists them; `all` gives it all)
+agent-platform task create --help           # the options of one command, its purpose and an example
+```
+
+Commands whose output grows (lists, `task show`, `task follow`, `session terminal`, `audit`, `notifications list`)
+take `--limit N` (at most N items; for a chat or terminal the newest) and `--fields a,b` (only these keys of each
+item); a cut list is named with its full length under `limited`, and `task follow` then points `next_after` behind
+the last event it returned (a cut page of `audit`, `notifications list` or `task operations` has no `next_before`:
+page on without `--limit`). A mistyped command answers with its `usage` and `did_you_mean`; `search` with an error
+code (`search no_device`) also gives that error's next step.
 
 Use a virtual environment of its own as above and link only `agent-platform`: the package also contains other
 programs (for example `agent`), and `uv tool install` or `pipx install` of it would replace an `agent` tool that is
@@ -425,3 +483,23 @@ again only if your user asks you to.
 Settings → "Connected agents" shows you as the main orchestrator with your name and computer, when you were
 connected and last active, from which computer, and which agent you replaced. You have full access to the account. Every action you take is in the audit log marked "by agent". Your
 user can disconnect you (or all agents) at any time; it takes effect at once.
+
+## 7. Chat programs without a command line
+
+A chat program on your user's computer (for example Claude Desktop) reaches the platform through the tool as a
+local MCP server. It runs on the same computer with the same keys and rights as the command line, and its actions
+appear in the audit log as yours. It has two tools: `search` (as above) and `run` (one command of the tool with its
+arguments as a list, a text for stdin as a parameter; the result is the same JSON object). It runs no code and no
+shell. Set it up once:
+
+```sh
+agent-platform install-connector           # writes the server into the Claude Desktop configuration
+agent-platform mcp                         # the server itself; the chat program starts it
+```
+
+Then your user restarts Claude Desktop; the tools `search` and `run` of "agent-dfx-swiss" appear in the chat.
+In the chat, start with `run` and `["guide"]`. Connecting works from there as well: `run` with
+`["pair", "--hub", "https://agent.dfx.swiss", "--name", "Claude Desktop"]` opens the page for your user's passkey.
+Where this guide pipes text into a command (`printf '%s' "<link>" | …`, `--text -`), give that text as `stdin`.
+Installing the tool and running `install-connector` takes one terminal step on that computer, done once by an agent
+with a terminal (for example Claude Code) or by your user.

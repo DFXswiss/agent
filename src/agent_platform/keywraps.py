@@ -91,5 +91,12 @@ def _catch_up(account: Account, args: Any, context: Context) -> dict[str, Any]:
 
 def register(tree: Tree) -> None:
     group = tree.group("org", "organizations")
-    sub = tree.command(group, "catch-up", _catch_up, "wrap the org's keys for members and devices still without them")
+    sub = tree.command(
+        group,
+        "catch-up",
+        _catch_up,
+        "wrap the org's keys for members and devices still without them",
+        example="agent-platform org catch-up --org <org_id>",
+        words="nachholen schlüssel fehlende verteilen mitglieder missing keys distribute",
+    )
     sub.add_argument("--org", required=True)

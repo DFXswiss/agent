@@ -146,9 +146,28 @@ def _charges(account: Account, args: Any, context: Context) -> dict[str, Any]:
 
 
 def register(tree: Tree) -> None:
-    text = "an org's credit balance, prices, credit history and consumption"
-    sub = tree.command(tree.commands, "billing", _billing, text)
+    text = "an org's credit balance, prices, credit history and consumption (amounts in micro-USD)"
+    sub = tree.command(
+        tree.commands,
+        "billing",
+        _billing,
+        text,
+        example="agent-platform billing --org <org_id>",
+        words=(
+            "abrechnung guthaben rechnung kosten monat monatlich preise verbrauch credit balance invoice prices usage "
+            "cost month monthly micro-usd"
+        ),
+        trim="first",
+    )
     sub.add_argument("--org", required=True)
     group = tree.group("task", "tasks (sealed and opened on this computer)")
-    sub = tree.command(group, "charges", _charges, "the task's charges per session and the total")
+    sub = tree.command(
+        group,
+        "charges",
+        _charges,
+        "the task's charges per session and the total",
+        example="agent-platform task charges --task <task_id>",
+        words="kosten aufgabenkosten tokens laufzeit preis cost price spend usage",
+        trim="first",
+    )
     sub.add_argument("--task", required=True)

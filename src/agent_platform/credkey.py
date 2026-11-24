@@ -424,5 +424,12 @@ def _rotate(account: Account, args: argparse.Namespace, context: Context) -> dic
 
 def register(tree: Tree) -> None:
     group = tree.group("credentials", "credential records")
-    sub = tree.command(group, "rotate", _rotate, "rotate the credential key when a device lost access (or --force)")
+    sub = tree.command(
+        group,
+        "rotate",
+        _rotate,
+        "rotate the credential key when a device lost access (or --force)",
+        example="agent-platform credentials rotate",
+        words="zugangsschlüssel schlüssel erneuern verloren gerät key rotation lost renew",
+    )
     sub.add_argument("--force", action="store_true", help="rotate even when no loss is known")

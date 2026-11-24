@@ -42,7 +42,9 @@ def test_guide_is_a_byte_copy() -> None:
 
 
 def test_guide_version_help(tool: Tool) -> None:
-    assert tool.run("guide")[1]["guide"] == (REPO_ROOT / "docs" / "platform" / "agents.md").read_text()
+    assert (
+        tool.run("guide", "--topic", "all")[1]["guide"] == (REPO_ROOT / "docs" / "platform" / "agents.md").read_text()
+    )
     assert tool.run("--version")[1] == {"ok": True, "version": __version__}
     assert "usage: agent-platform" in tool.run()[1]["help"]
     assert "usage: agent-platform org invite" in tool.run("org", "invite", "--help")[1]["help"]
@@ -54,7 +56,7 @@ def test_unexpected_failure_is_internal_without_traceback(tool: Tool, monkeypatc
     def boom(*args: object) -> object:
         raise RuntimeError("secret detail")
 
-    monkeypatch.setattr("agent_platform.cli.resources.files", boom)
+    monkeypatch.setattr("agent_platform.lookup.resources.files", boom)
     code, document = tool.run("guide")
     assert (code, document) == (1, {"ok": False, "error": "internal", "next": errors.NEXT["internal"]})
 

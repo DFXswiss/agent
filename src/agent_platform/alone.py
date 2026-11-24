@@ -438,6 +438,9 @@ def register(tree: Tree) -> None:
         _recover,
         "take an account without a passkey to this computer with its recovery code (stdin)",
         common=False,
+        example='agent-platform recover --hub https://agent.dfx.swiss --name "Claude Code" < recovery-code.txt',
+        words="wiederherstellen umziehen wiederherstellungscode recovery code restore move computer",
+        then="agent-platform status",
     )
     sub.add_argument("--hub", required=True)
     sub.add_argument("--name", default="Claude Code")
@@ -445,7 +448,12 @@ def register(tree: Tree) -> None:
     sub.add_argument("--platform-root-key", help="platform root key (b64u) instead of the hub's")
     group = tree.group("agents", "the user's connected AI agents")
     sub = tree.command(
-        group, "confirm", _confirm, "make the agent of a remote pairing link the main orchestrator (no passkey)"
+        group,
+        "confirm",
+        _confirm,
+        "make the agent of a remote pairing link the main orchestrator (no passkey)",
+        example='agent-platform agents confirm --link "<connect_link>" --code XXXXX-XXXXX',
+        words="nachfolger bestätigen agent ersetzen confirm successor replace agent",
     )
     sub.add_argument("--link", required=True, help="the link of `pair --remote` of the new agent")
     sub.add_argument("--code", required=True, help="the agent code of the new agent")
