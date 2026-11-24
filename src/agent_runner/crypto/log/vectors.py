@@ -352,6 +352,32 @@ def main_builder() -> LogBuilder:
     return log
 
 
+def orgwide_builder() -> LogBuilder:
+    """A log with assignments to the whole organization (ADR-075): an org device assigned to the org next to its
+    explicit assignment, a workgroup created afterwards, the org assignment ended (the explicit one stays), a platform
+    device assigned to the org and then removed."""
+    log = LogBuilder()
+    log.genesis()  # 0
+    log.add("wg_create", "alice", wg=W1, epoch=1)  # 1
+    log.invite_device("alice", "device", [W1])  # 2
+    log.accept("device", "device")  # 3 (explicitly assigned to W1)
+    log.add("device_assign_org", "alice", device=pid("device"))  # 4 (now every workgroup)
+    log.add("wg_create", "alice", wg=W2, epoch=1)  # 5 (the org device reads it as well)
+    log.add("device_unassign_org", "alice", device=pid("device"))  # 6 (W1 stays)
+    log.add("rotate", "alice", scope="wg", scope_id=W0, epoch=2)  # 7
+    log.add("rotate", "alice", scope="wg", scope_id=W2, epoch=2)  # 8
+    log.add("device_assign_org", "alice", device=pid("pdev"), platform_seq=PDEV_SEQ)  # 9
+    log.add("remove", "alice", subject=pid("pdev"))  # 10
+    log.add("rotate", "alice", scope="org", scope_id=ORG, epoch=2)  # 11
+    log.add("rotate", "alice", scope="wg", scope_id=W0, epoch=3)  # 12
+    log.add("rotate", "alice", scope="wg", scope_id=W1, epoch=2)  # 13
+    log.add("rotate", "alice", scope="wg", scope_id=W2, epoch=3)  # 14
+    return log
+
+
+ORGWIDE_COUNT = 15
+
+
 def scope_key(scope: str, scope_id: str, epoch: int) -> bytes:
     """The fixed key of a scope epoch."""
     return fixed(f"log/key/{scope}/{scope_id}/{epoch}")
@@ -546,8 +572,15 @@ def build_log() -> Json:
     plat = platform_builder()
     recert = recertified_builder()
     admit = admit_builder()
+    orgwide = orgwide_builder()
     ctx = Context(
-        {"main": main.entries, "platform": plat.entries, "platform_recertified": recert.entries, "admit": admit.entries}
+        {
+            "main": main.entries,
+            "platform": plat.entries,
+            "platform_recertified": recert.entries,
+            "admit": admit.entries,
+            "orgwide": orgwide.entries,
+        }
     )
     founder = sig_pk("alice")
     admitted = verify.verify_log(
@@ -689,6 +722,66 @@ def build_log() -> Json:
             "L5_unassign_not_assigned",
             "verify_log",
             broken(6, lambda b: b.add("device_unassign", "alice", device=pid("device"), wg=W0)),
+            "log_rights",
+        ),
+        neg(
+            "L5_assign_org_twice",
+            "verify_log",
+            broken(
+                6,
+                lambda b: (
+                    b.add("device_assign_org", "alice", device=pid("device")),
+                    b.add("device_assign_org", "alice", device=pid("device")),
+                ),
+            ),
+            "log_rights",
+        ),
+        neg(
+            "L5_assign_org_unknown_device",
+            "verify_log",
+            broken(4, lambda b: b.add("device_assign_org", "alice", device=pid("device"))),
+            "log_rights",
+        ),
+        neg(
+            "L5_assign_org_by_member",
+            "verify_log",
+            broken(6, lambda b: b.add("device_assign_org", "bob", device=pid("device"))),
+            "log_rights",
+        ),
+        neg(
+            "L5_unassign_org_not_assigned",
+            "verify_log",
+            broken(6, lambda b: b.add("device_unassign_org", "alice", device=pid("device"))),
+            "log_rights",
+        ),
+        neg(
+            "L5_assign_wg_while_org_assigned",
+            "verify_log",
+            broken(
+                6,
+                lambda b: (
+                    b.add("device_assign_org", "alice", device=pid("device")),
+                    b.add("device_assign", "alice", device=pid("device"), wg=W0),
+                ),
+            ),
+            "log_rights",
+        ),
+        neg(
+            "L5_unassign_wg_of_org_device",
+            "verify_log",
+            broken(
+                6,
+                lambda b: (
+                    b.add("device_assign_org", "alice", device=pid("device")),
+                    b.add("device_unassign", "alice", device=pid("device"), wg=W0),
+                ),
+            ),
+            "log_rights",
+        ),
+        neg(
+            "L5_assign_org_platform_seq_not_certify",
+            "verify_log",
+            broken(13, lambda b: b.add("device_assign_org", "alice", device=pid("pdev"), platform_seq=1)),
             "log_rights",
         ),
         neg(
@@ -846,6 +939,16 @@ def build_log() -> Json:
             "log_rights",
         ),
         neg(
+            "assign_org_without_platform_access",
+            "append_log",
+            {
+                **_main_args(13),
+                "append": [at(13).add("device_assign_org", "alice", device=pid("pdev"), platform_seq=PDEV_SEQ)],
+                "now": ts(30),
+            },
+            "log_rights",
+        ),
+        neg(
             "assign_revoked_certification_of_recertified_device",
             "append_log",
             {
@@ -894,6 +997,7 @@ def build_log() -> Json:
             "platform": plat.entries,
             "platform_recertified": recert.entries,
             "admit": admit.entries,
+            "orgwide": orgwide.entries,
         },
         "excluded": [
             {"platform": _platform_ref(), "log": _ref("main", 27), "excluded": []},
@@ -922,6 +1026,7 @@ def build_log() -> Json:
             {"head": {"seq": 26, "hash": entry_hash(main.entries[26])}, "log": _ref("main", 27)},
         ],
         "lh": {"log": _ref("main", 27), "needs_refresh": [{"lh": 26, "refresh": False}, {"lh": 27, "refresh": True}]},
+        "orgwide": _orgwide_valid(orgwide, plat),
         "invalid": invalid,
     }
 
@@ -1062,6 +1167,22 @@ def _admit_negatives(ctx: Context, admit: LogBuilder) -> list[Json]:
             "wrap_unauthorized",
         ),
     ]
+
+
+def _orgwide_valid(orgwide: LogBuilder, plat: PlatformBuilder) -> Json:
+    """States of the log with assignments to the whole organization (ADR-075): projections and, per state, the
+    workgroups each device is assigned to."""
+    verified = verify.verify_log(
+        orgwide.entries, sig_pk("alice"), platform=platform.verify_platform_log(plat.entries, sig_pk("root")).state
+    )
+    devices = [pid("device"), pid("pdev")]
+    return {
+        "log": _ref("orgwide", ORGWIDE_COUNT),
+        "platform": _platform_ref(),
+        "heads": [{"seq": s.seq, "hash": s.head} for s in verified.states],
+        "projections": [s.projection() for s in verified.states],
+        "device_wgs": [{device: s.device_wgs(device) for device in devices} for s in verified.states],
+    }
 
 
 # --- platform-log.json ---
@@ -1301,7 +1422,13 @@ def _r_case(name: str, log_name: str, prefix: LogBuilder, count: int) -> Json:
 def build_rotation() -> Json:
     """The rotate set R for every entry type and the edge cases, and batches with and without the exact R."""
     main, plat, edge, rejoin = main_builder(), platform_builder(), edge_builder(), _rejoin_builder()
-    logs = {"main": main.entries, "platform": plat.entries, "edge": edge.entries, "rejoin": rejoin.entries}
+    logs = {
+        "main": main.entries,
+        "platform": plat.entries,
+        "edge": edge.entries,
+        "rejoin": rejoin.entries,
+        "orgwide": orgwide_builder().entries,
+    }
     ctx = Context(logs)
     plat_state = platform.verify_platform_log(plat.entries, sig_pk("root")).state
     cases = []
@@ -1348,10 +1475,13 @@ def build_rotation() -> Json:
             ),
         ),
         edge_case("device_assigned", lambda b: b.add("device_assign", "alice", device=pid("device"), wg=W0)),
+        edge_case("device_assigned_to_org", lambda b: b.add("device_assign_org", "alice", device=pid("device"))),
         edge_case("rejoined_member_removed", lambda b: b.add("remove", "alice", subject=pid("bob")), "rejoin"),
     ]
     rejoin_accept = _r_case("rejoin_accept", "rejoin", rejoin, EDGE_COUNT + 2)
     cases.append(rejoin_accept)
+    orgwide_prefix = LogBuilder(ORG, orgwide_builder().entries[:7])
+    cases.append(_r_case("org_device_unassigned_keeps_explicit", "orgwide", orgwide_prefix, 6))
 
     now = ts(60)
     base = {"log": _ref("edge", EDGE_COUNT), "founder": sig_pk("alice"), "wrapped_by": pid("alice"), "now": now}
@@ -1370,6 +1500,9 @@ def build_rotation() -> Json:
 
     def ungrant_bob(b: LogBuilder) -> object:
         return b.add("ungrant", "alice", subject=pid("bob"), wg=W1)
+
+    def assign_device_to_org(b: LogBuilder) -> object:
+        return b.add("device_assign_org", "alice", device=pid("device"))
 
     full_wraps = (
         [make_wrap("alice", "org", ORG, 2, r) for r in ("alice", "carol", "dev2")]
@@ -1407,6 +1540,26 @@ def build_rotation() -> Json:
         ),
         ("admin_demoted_with_rotation", batch(demote_carol, rot("wg", W1, 2), rot("wg", W2, 2)), demotion_wraps),
         ("admin_demotes_itself", batch(lambda b: b.add("role", "carol", subject=pid("carol"), role="member")), []),
+        (
+            "org_device_in_new_workgroup",
+            batch(assign_device_to_org, lambda b: b.add("wg_create", "alice", wg=w3, epoch=1)),
+            [make_wrap("alice", "wg", w3, 1, r) for r in ("alice", "carol", "device")],
+        ),
+        (
+            "org_unassign_with_exact_r",
+            batch(
+                assign_device_to_org,
+                lambda b: b.add("device_unassign_org", "alice", device=pid("device")),
+                rot("org", ORG, 2),
+                rot("wg", W0, 2),
+                rot("wg", W1, 2),
+                rot("wg", W2, 2),
+            ),
+            [make_wrap("alice", "org", ORG, 2, r) for r in ("alice", "bob", "carol", "dev2")]
+            + [make_wrap("alice", "wg", W0, 2, r) for r in ("alice", "bob", "carol")]
+            + [make_wrap("alice", "wg", W1, 2, r) for r in ("alice", "bob", "carol", "dev2")]
+            + [make_wrap("alice", "wg", W2, 2, r) for r in ("alice", "bob", "carol")],
+        ),
     ):
         args = {**base, "append": append, "wraps": batch_wraps}
         if name == "admin_demotes_itself":
@@ -1482,6 +1635,16 @@ def build_rotation() -> Json:
             "rotation_required",
         ),
         neg(
+            "wg_create_without_wrap_for_org_device",
+            "check_batch",
+            {
+                **base,
+                "append": batch(assign_device_to_org, lambda b: b.add("wg_create", "alice", wg=w3, epoch=1)),
+                "wraps": [make_wrap("alice", "wg", w3, 1, r) for r in ("alice", "carol")],
+            },
+            "rotation_required",
+        ),
+        neg(
             "admin_demoted_without_rotation",
             "check_batch",
             {**base, "append": batch(demote_carol), "wraps": []},
@@ -1496,6 +1659,18 @@ def build_rotation() -> Json:
                 "wraps": [*demotion_wraps, make_wrap("alice", "wg", W1, 2, "carol")],
             },
             "wrap_unauthorized",
+        ),
+        neg(
+            "org_unassign_without_rotation",
+            "check_batch",
+            {
+                **base,
+                "append": batch(
+                    assign_device_to_org, lambda b: b.add("device_unassign_org", "alice", device=pid("device"))
+                ),
+                "wraps": [],
+            },
+            "rotation_required",
         ),
     ]
     return {

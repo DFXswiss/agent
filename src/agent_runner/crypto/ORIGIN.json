@@ -142,7 +142,7 @@
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/entries.py",
-      "sha256": "3b807e58473aa8f6659ed7fc2dca1266e7f2d069acfe0307f407876511236500",
+      "sha256": "ed07460385d205a26bc29e4120f11c5ed310c290579e340ec6eaa399692962f2",
       "source": "src/agent_hub/log/entries.py"
     },
     {
@@ -166,7 +166,7 @@
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/state.py",
-      "sha256": "eed33aa38d85873632815cb4c73cd846a31b8bd580a677718a81a469a037311d",
+      "sha256": "49f7ce51f5fcb0742068eede7f7e1a79b9cf6b6ddcf639136dfd6959c34ac910",
       "source": "src/agent_hub/log/state.py"
     },
     {
@@ -177,13 +177,13 @@
         }
       ],
       "copy": "src/agent_runner/crypto/log/vectors.py",
-      "sha256": "8cf3b1da11f8e8d22c4a28c052116af3f00c59688f54de1ac7bb70cc727d8b49",
+      "sha256": "4fd93e928040218637015c5f0d0d86cc3544148ad64db904a2eece9cc4849bcc",
       "source": "src/agent_hub/log/vectors.py"
     },
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/verify.py",
-      "sha256": "e1b7bc965ee527a22f7b7e49ba47dc1c98e6ed743e543abb186411a3475c3ef9",
+      "sha256": "60c12b2c268b279a6379ea59ce0f0c39d305290c2888913d61852d23ab3c35f4",
       "source": "src/agent_hub/log/verify.py"
     },
     {
@@ -265,8 +265,8 @@
     },
     {
       "copy": "tests/platform/runner/crypto/log/test_entries.py",
-      "copy_sha256": "bb2b589756087cbf117823cfdb5d9ac46d3bc6bdc1a40062349530b67f282160",
-      "sha256": "c5a81cfc4d52eb56232bdc848c3921a2c0fef44aad525e595ec73034220fc4fe",
+      "copy_sha256": "f3ff18d9752552b535d6cac0fd4519edaf01c8f2850710dbfdc3ca55ad264a1d",
+      "sha256": "272f080da1ec9eeae3e9ec85c6a4e4311a3a270f157bc0b3ad9dbf373d1cccd9",
       "source": "tests/platform/hub/log/test_entries.py"
     },
     {
@@ -289,8 +289,8 @@
     },
     {
       "copy": "tests/platform/runner/crypto/log/test_vectors_log.py",
-      "copy_sha256": "3b91de67ac24daf914fa6b6b0a47ee8e03eb8f96fdca6e6075d20b4ad3fb12e3",
-      "sha256": "ef233f834e31b6ef17c87c015a60c2538acd43f92ad5483db3e6d659d8ace56e",
+      "copy_sha256": "918c52effdfdfd44c58305e6d6ba75e439ee9d2e501ce229b3fe11f912d6bb19",
+      "sha256": "f2acef67a0902e5c64aa7cb707000c7f1a43a817d04c5501b3012571d9633abf",
       "source": "tests/platform/hub/log/test_vectors_log.py"
     },
     {

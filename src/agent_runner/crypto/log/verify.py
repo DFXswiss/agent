@@ -273,16 +273,21 @@ def _platform_device(state: OrgState, body: Body, seq: int, ctx: _Context) -> Pr
     return Principal(device, DEVICE, DEVICE, cert.kem, cert.sig, seq, platform_seq=cert.seq)
 
 
+def _assignable(state: OrgState, body: Body, seq: int, ctx: _Context) -> Principal:
+    """The device of a `device_assign`/`device_assign_org`: a certified platform device (with `platform_seq`) or an
+    active org device."""
+    if "platform_seq" in body:
+        return _platform_device(state, body, seq, ctx)
+    found = state.member(cast(str, body["device"]))
+    if found is None or found.kind != DEVICE or found.platform_seq is not None:
+        fail("log_rights")
+    return found
+
+
 def _device_assign(state: OrgState, body: Body, seq: int, ctx: _Context) -> OrgState:
     device, wg = cast(str, body["device"]), cast(str, body["wg"])
-    _rights(state.writable(wg) and (device, wg) not in state.assignments)
-    if "platform_seq" in body:
-        principal = _platform_device(state, body, seq, ctx)
-    else:
-        found = state.member(device)
-        if found is None or found.kind != DEVICE or found.platform_seq is not None:
-            fail("log_rights")
-        principal = found
+    _rights(state.writable(wg) and (device, wg) not in state.assignments and device not in state.org_assignments)
+    principal = _assignable(state, body, seq, ctx)
     return replace(
         state,
         principals={**state.principals, device: principal},
@@ -292,10 +297,27 @@ def _device_assign(state: OrgState, body: Body, seq: int, ctx: _Context) -> OrgS
 
 def _device_unassign(state: OrgState, body: Body) -> OrgState:
     key = (cast(str, body["device"]), cast(str, body["wg"]))
-    _rights(state.assigned(*key))
+    _rights(state.member(key[0]) is not None and key in state.assignments)
     assignments = dict(state.assignments)
     del assignments[key]
     return replace(state, assignments=assignments)
+
+
+def _device_assign_org(state: OrgState, body: Body, seq: int, ctx: _Context) -> OrgState:
+    device = cast(str, body["device"])
+    _rights(device not in state.org_assignments)
+    principal = _assignable(state, body, seq, ctx)
+    return replace(
+        state,
+        principals={**state.principals, device: principal},
+        org_assignments={**state.org_assignments, device: seq},
+    )
+
+
+def _device_unassign_org(state: OrgState, body: Body) -> OrgState:
+    device = cast(str, body["device"])
+    _rights(state.org_assigned(device))
+    return replace(state, org_assignments={key: value for key, value in state.org_assignments.items() if key != device})
 
 
 def _remove(state: OrgState, body: Body, seq: int) -> OrgState:
@@ -310,6 +332,7 @@ def _remove(state: OrgState, body: Body, seq: int) -> OrgState:
         principals={**state.principals, subject: replace(found, removed_seq=seq)},
         access={key: value for key, value in state.access.items() if key[0] != subject},
         assignments={key: value for key, value in state.assignments.items() if key[0] != subject},
+        org_assignments={key: value for key, value in state.org_assignments.items() if key != subject},
     )
     if subject == by:
         # leaving: the leaver cannot rotate (L8), so the rotation is owed by the remaining holders
@@ -347,6 +370,8 @@ _ADMIN_ONLY: dict[str, Transition] = {
     "device_assign": _device_assign,
     "device_unassign": lambda state, body, _s, _c: _device_unassign(state, body),
     "admit": _admit,
+    "device_assign_org": _device_assign_org,
+    "device_unassign_org": lambda state, body, _s, _c: _device_unassign_org(state, body),
 }
 _OTHERS: dict[str, Transition] = {
     "remove": lambda state, body, seq, _c: _remove(state, body, seq),

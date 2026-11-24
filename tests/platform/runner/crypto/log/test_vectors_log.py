@@ -130,6 +130,28 @@ def test_con02_log_valid_chain_and_projections() -> None:
         assert verify.needs_refresh(log, case["lh"]) is case["refresh"]
 
 
+def test_orgwide_log_assigns_every_workgroup() -> None:
+    """ADR-075: a device assigned to the organization reads every workgroup, also a later one; ending the
+    organization assignment keeps its explicit assignment; `remove` ends both."""
+    data = load("log")
+    ctx = context(data)
+    orgwide = data["orgwide"]
+    log = ctx.log({**orgwide, "founder": data["founder"]})
+    assert [{"seq": s.seq, "hash": s.head} for s in log.states] == orgwide["heads"]
+    assert [s.projection() for s in log.states] == orgwide["projections"]
+    assert [
+        {device: s.device_wgs(device) for device in expected}
+        for s, expected in zip(log.states, orgwide["device_wgs"], strict=True)
+    ] == orgwide["device_wgs"]
+    types = {cast(dict[str, Any], entry["body"])["type"] for entry in log.entries}
+    assert {"device_assign_org", "device_unassign_org"} <= types
+    after_create = log.states[5]
+    device = str(cast(dict[str, Any], log.entries[4]["body"])["device"])
+    assert after_create.org_assigned(device)
+    assert after_create.can_read(device, "wg", after_create.default_wg)
+    assert not log.states[6].org_assigned(device)
+
+
 def test_con02_platform_log_valid() -> None:
     data = load("platform-log")
     log = platform.verify_platform_log(data["logs"]["platform"], data["root"])
