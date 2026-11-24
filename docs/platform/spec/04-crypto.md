@@ -140,6 +140,7 @@ Event kinds, scopes and allowed authors (hub and readers enforce; bodies in `03-
 | `wg.profile` (`wg` = target) | org | user | org admin |
 | `member.profile` (`ref` = author) | org | user | org member, `ref == author` |
 | `device.profile` (`ref` = device) | org | user | org admin |
+| `member.name` (`ref` = a user of the org or a user invitation of its log at `lh`; an admin-given name, ADR-067) | org | user | org admin |
 | `whiteboard.entry` / `whiteboard.edit` / `whiteboard.delete` (org level, `ref` = entry) | org | user | org admin |
 | `whiteboard.entry` / `.edit` / `.delete` (wg level: `task=""`; task level: `task` set) | wg | user | wg write |
 | `settings.workgroup` | wg | user | wg write |

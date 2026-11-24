@@ -1,6 +1,7 @@
 # ADR-060: Admins admit existing accounts directly (`admit`), with the identity proven through the platform log
 
-Status: Accepted (2026-11-23)
+Status: Accepted (2026-11-23); amended by ADR-067 (an admitted person's own display name is written when it opens
+the org; admins give a provisional name when admitting)
 
 ## Context
 An org membership came into being only through an `invite` entry that the invitee accepts with its own signature

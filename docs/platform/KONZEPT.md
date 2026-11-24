@@ -580,7 +580,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** ergänzt [§1 Punkt 1](#k-1-b1) und [§8 Punkt 1](#k-8-b1): Die Einladung bleibt der einzige Weg auf die
   Plattform, aber nicht der einzige Weg in eine weitere Organization.
 - **Umsetzung:** gebaut – [ADR-060](adr/060-direct-admission-of-existing-accounts.md) (KOR-37, direkte Aufnahme);
-  Einladung mit einem Klick gebaut (KOR-36).
+  Einladung mit einem Klick gebaut (KOR-36); Namen der Aufgenommenen ohne ihr Zutun –
+  [ADR-067](adr/067-names-for-every-member.md) (HOT-12).
 
 <a id="e-19"></a>
 

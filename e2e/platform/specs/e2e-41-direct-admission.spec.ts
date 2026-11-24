@@ -6,7 +6,10 @@
 // `org.admitted` notification; he reads what Ada wrote in the workgroup and his prompt runs on the platform device
 // (the runner verified a log with `admit`). A non-admin cannot admit (no button; the hub refuses a signed entry). Bob
 // leaves; Ada's browser sends the owed rotation. Ada's agent tool (`agent-platform org admit`) admits Carol by user ID.
-// Runs on T1.
+// Names (ADR-067, HOT-12): Ada gives Bob a name when admitting him and sees it at once (marked as provisional), Bob's
+// client writes his own name when he opens the org without any action of his, and it replaces the provisional one;
+// the agent admits Carol with a name and changes it with `org member-name`; no member line shows an ID fragment and
+// the hub never sees a name. Runs on T1.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures/test.ts';
 import { closingChecks, memberLog, navigate, person, personOf, refusal, visit } from '../fixtures/identity.ts';
@@ -40,7 +43,27 @@ const CANARIES = [
   'kz40-prompt-b-p6l8k0',
   'kz40-answer-a3c5e7',
   'kz40-answer-b4d6f8',
+  'kz40-name-bob-h7j9k1',
+  'kz40-name-carol-m2n4b6',
+  'kz40-name-carol2-v8c0x2',
+  'kz40-name-dora-s3d5f7',
 ];
+const DORA = 'Dora kz40-name-dora-s3d5f7';
+const BOB_GIVEN = 'Bob kz40-name-bob-h7j9k1';
+const CAROL_GIVEN = 'Carol kz40-name-carol-m2n4b6';
+const CAROL_CHANGED = 'Carol kz40-name-carol2-v8c0x2';
+
+/** The member list never shows an ID or a fragment of one as a name (ADR-067). */
+async function namesWithoutIds(page: Page, ids: readonly string[]): Promise<void> {
+  for (const text of await page.getByTestId('members.item.name').allTextContents()) {
+    expect(text).not.toMatch(/…[0-9a-f]{4,}/);
+    expect(text).not.toMatch(/^[0-9a-f-]{6,}$/);
+    for (const id of ids) {
+      expect(text).not.toContain(id.slice(-6));
+      expect(text).not.toContain(id.slice(0, 8));
+    }
+  }
+}
 
 async function accountCode(page: Page): Promise<string> {
   const back = new URL(page.url()).pathname;
@@ -124,9 +147,17 @@ test('@E2E-41 @R-1.13 @needs-vm an admin admits an existing account directly and
   await expect(page.getByTestId('members.admit.found')).toContainText(bobCode, { timeout: 30_000 });
   await expect(page.getByTestId('members.admit.role')).toHaveValue('member');
   await page.getByTestId(`members.admit.wg.${wg}`).selectOption('write');
+  await page.getByTestId('members.admit.name').fill(BOB_GIVEN);
   await page.getByTestId('members.admit.submit').click();
   await expect(page.getByTestId('members.admit.done')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('members.admit.error')).toHaveCount(0);
+  await expect(page.getByTestId('members.admit.done')).toContainText(BOB_GIVEN);
+  // every member sees the name at once, marked as given by the admin
+  const bobEntry = page.locator(`[data-testid="members.item"][data-member="${bob.user.userId}"]`);
+  await expect(bobEntry.getByTestId('members.item.name')).toHaveText(BOB_GIVEN, { timeout: 30_000 });
+  await expect(bobEntry.getByTestId('members.item.name')).toHaveAttribute('data-source', 'admin');
+  await expect(bobEntry.getByTestId('members.item.given')).toBeVisible();
+  await namesWithoutIds(page, [ada.user.userId, bob.user.userId]);
 
   const after = await ada.user.log(org);
   const added = after.entries.slice(before.entries.length);
@@ -168,6 +199,19 @@ test('@E2E-41 @R-1.13 @needs-vm an admin admits an existing account directly and
   await bob.page.keyboard.press('Escape');
   await navigate(bob.page, `/o/${org}/w/${wg}/whiteboard`);
   await expect(bob.page.getByTestId('whiteboard.item').filter({ hasText: BOARD })).toBeVisible({ timeout: 30_000 });
+  // opening the org wrote Bob's own name there, without any action of his; it replaces the provisional one for Ada
+  await expect
+    .poll(
+      async () => {
+        await visit(page, `/o/${org}/members`);
+        return bobEntry.getByTestId('members.item.name').getAttribute('data-source', { timeout: 30_000 });
+      },
+      { timeout: 90_000, intervals: [3000] },
+    )
+    .toBe('own');
+  await expect(bobEntry.getByTestId('members.item.name')).toHaveText('Bob Admitted');
+  await expect(bobEntry.getByTestId('members.item.given')).toHaveCount(0);
+  await namesWithoutIds(page, [ada.user.userId, bob.user.userId]);
   await navigate(bob.page, `/o/${org}`);
   const select = bob.page.getByTestId('home.wg');
   await expect(select.locator('option', { hasText: WG_NAME })).toHaveCount(1, { timeout: 30_000 });
@@ -228,8 +272,39 @@ test('@E2E-41 @R-1.13 @needs-vm an admin admits an existing account directly and
 
   // 8. The agent path: Ada's paired agent admits Carol by user ID (`agent-platform org admit`); Carol sees the org.
   await pairAgent(orchestrator, page, e2e.hubOrigin, 'ada');
-  const admitted = await agentTool(orchestrator, 'ada', ['org', 'admit', '--org', org, '--user', carol.user.userId]);
-  expect(admitted).toMatchObject({ org_id: org, user_id: carol.user.userId, role: 'member' });
+  const admitted = await agentTool(orchestrator, 'ada', [
+    'org',
+    'admit',
+    '--org',
+    org,
+    '--user',
+    carol.user.userId,
+    '--name',
+    CAROL_GIVEN,
+  ]);
+  expect(admitted).toMatchObject({ org_id: org, user_id: carol.user.userId, role: 'member', name_saved: true });
+  // the agent changes the provisional name; the browser shows the newest one
+  const renamed = await agentTool(orchestrator, 'ada', [
+    'org',
+    'member-name',
+    '--org',
+    org,
+    '--user',
+    carol.user.userId,
+    '--name',
+    CAROL_CHANGED,
+  ]);
+  expect(renamed).toMatchObject({ subject: carol.user.userId, name: CAROL_CHANGED });
+  const shown = (await agentTool(orchestrator, 'ada', ['org', 'show', '--org', org])) as {
+    members: { principal_id: string; name: string | null; name_source: string }[];
+  };
+  expect(shown.members.find((m) => m.principal_id === carol.user.userId)).toMatchObject({
+    name: CAROL_CHANGED,
+    name_source: 'admin',
+  });
+  await visit(page, `/o/${org}/members`);
+  const carolEntry = page.locator(`[data-testid="members.item"][data-member="${carol.user.userId}"]`);
+  await expect(carolEntry.getByTestId('members.item.name')).toHaveText(CAROL_CHANGED, { timeout: 30_000 });
   const viaAgent = (await ada.user.log(org)).entries.at(-1)!.body;
   expect(viaAgent).toMatchObject({ type: 'admit', subject: carol.user.userId, pub: carol.user.identity.public() });
   expect(await orgsOf(carol.user)).toEqual([org, carol.onboarded.org].sort());
@@ -240,6 +315,19 @@ test('@E2E-41 @R-1.13 @needs-vm an admin admits an existing account directly and
   await carol.page.getByTestId('org-switcher.current').click();
   await expect(carol.page.locator(`[data-testid="org-switcher.item"][data-org="${uuid(org)}"]`)).toBeVisible();
   await carol.context.close();
+
+  await visit(page, `/o/${org}/members`);
+  // an invitation says for whom it is (the name is sealed like the member names)
+  await page.getByTestId('members.invite.open').click();
+  await page.getByTestId('members.invite.name').fill(DORA);
+  await page.getByTestId('members.invite.submit').click();
+  await page.getByTestId('members.invite.done').click({ timeout: 30_000 });
+  const doraInvite = page.getByTestId('members.invites.item').filter({ hasText: DORA });
+  await expect(doraInvite.getByTestId('members.invites.for')).toHaveText(`Invitation for ${DORA}`, {
+    timeout: 30_000,
+  });
+  await doraInvite.getByTestId('members.invites.revoke').click();
+  await expect(page.getByTestId('members.invites.item').filter({ hasText: DORA })).toHaveCount(0, { timeout: 30_000 });
 
   // 7. Bob leaves; the org is gone for him; Ada's browser sends the rotation his leaving owes.
   await visit(page, `/o/${org}/members`);

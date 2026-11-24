@@ -408,7 +408,14 @@ the same readable views of issue and pull request lists and of a read issue as t
 
 ### 7.1 Members and rights (`/o/:org/members`)
 
-- List: members (display name from `member.profile`, role, workgroups with access), devices are on §7.3. An access a
+- List: members (name: the member's own `member.profile`, else the provisional name an admin gave – marked with who
+  gave it –, else "Name not known yet" with what happens next and, for admins, "Enter name"; the ID only behind "Show
+  ID", never as the main line; ADR-067), role, workgroups with access; devices are on §7.3. Admins enter or change the
+  provisional name of a member without an own name (`member.name`). Admitting an existing account and inviting a user
+  ask for the person's name; the invitations list says for whom each invitation is ("Invitation for <name>"), and an
+  invitation whose account was meanwhile admitted directly is shown as settled with "Close invitation" (the admission
+  closes it by itself). Opening an org whose log has no own `member.profile` of the user writes the user's own name
+  from another org, without a dialog. An access a
   member has only because it is an admin (ADR-058) is shown as "reads as admin" and has no ungrant control.
 - Admin actions:
   - **Invite user:** role (member default, admin), workgroups with read/write (default workgroup always write),
