@@ -1,6 +1,6 @@
 # KOR-62 – contract changes
 
-ADR-027 section 3 (additive). Account of an AI agent alone (rule E-27, ADR-070, `11-agent-access.md` §5.5).
+ADR-027 section 3 (additive). Account of an AI agent alone (rule E-27, ADR-071, `11-agent-access.md` §5.5).
 
 ## `api/agent-accounts-create.request.json`, `api/agent-accounts-create.response.json` (new)
 

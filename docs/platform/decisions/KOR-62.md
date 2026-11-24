@@ -1,6 +1,6 @@
 # KOR-62 decisions – an account of an AI agent alone (rule E-27)
 
-Architecture in ADR-070; small decisions here.
+Architecture in ADR-071; small decisions here.
 
 1. **One endpoint, one transaction.** `POST /v1/agent-accounts` takes everything at once (no begin/finish pair): the
    three signatures over one canonical text bind all parts, so a challenge adds nothing; an identical repeat returns
@@ -14,7 +14,7 @@ Architecture in ADR-070; small decisions here.
    hash exactly as a confirming browser; the hub stores the row `active` with `confirmed_at` = `claimed_at` = now and
    `expires_at` = now + 600 s (the column needs a value after `created_at`; it is only read for unclaimed rows). The
    tool's state is then identical to a paired agent's, so every command works unchanged. No migration.
-4. **A real recovery code at registration** (ADR-070 §2), printed once in `secret_fields` of `register --own-account`.
+4. **A real recovery code at registration** (ADR-071 §2), printed once in `secret_fields` of `register --own-account`.
    The unset slot of KOR-22 would leave an account of an agent alone without any way back after a lost key or a hub
    restore (agent rows are exported revoked).
 5. **"Account without a passkey"** is the hub's test: no `hub.passkey` row with `removed_at IS NULL`
@@ -50,7 +50,7 @@ Architecture in ADR-070; small decisions here.
     both random and known to exactly one hub, so a proof cannot be replayed at another hub; the origin is not added
     to the text. A dedicated error code with the list of accepted methods comes with the second method.
 14. **Review findings (fresh context) not taken over, with reasons.** (a) Root key from `/v1/config`: no other source
-    exists without a browser; same trust as the web build (ADR-070, consequences). (b) `recover` replaces the code at
+    exists without a browser; same trust as the web build (ADR-071, consequences). (b) `recover` replaces the code at
     once: a recovery MUST make a new code (`04-crypto.md` §5.5), as for a person. (c) `agents confirm` deletes its
     state before printing: it is replaced at the hub at that moment anyway; a lost output is recovered with the code.
     (d) A loopback pairing confirmed by an agent writes no notification (only possible for an account without a
@@ -60,5 +60,5 @@ Architecture in ADR-070; small decisions here.
     spec/ADR wording on `last_passkey`, restore note, guide example without the code on the command line.
 15. **Numbers.** After the rebase onto `develop`, ADR-068 and E2E-51/E2E-52 were taken by HOT-09 and KOR-60; the
     renumber tool refused (`ADR-068` was taken on the package's new base, references ambiguous), so this package's
-    own lines and files were renumbered to ADR-070 and E2E-53 (only lines added by this package; the references of
+    own lines and files were renumbered to ADR-071 and E2E-54 (only lines added by this package; the references of
     HOT-09 to its ADR-068 are untouched).

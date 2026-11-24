@@ -1,7 +1,7 @@
 # 11 Delegated agent access (KOR-24)
 
 Status: binding. Decided in ADR-056; the pairing from another computer (§5.4) in ADR-067 (KOR-42); the account of an
-agent alone (§5.5, rule E-27) in ADR-070 (KOR-62). Extends
+agent alone (§5.5, rule E-27) in ADR-071 (KOR-62). Extends
 `02-data-model.md` (§2), `03-api.md` (§3, §4, §11), `04-crypto.md` (§3, §7, §9) and `06-web.md` (settings,
 invitation). The user's own AI agent pairs with the account through one passkey gesture and then sets the account
 up with the agent tool `agent-platform` (repository `agent`).
@@ -19,7 +19,7 @@ up with the agent tool `agent-platform` (repository `agent`).
 | Remote pairing | A pairing of an agent on another computer than the confirming browser (server, container, SSH; ADR-067), chosen explicitly (`--remote`, `m=remote`, `remote` at the hub). |
 | Agent code | 10 characters (`XXXXX-XXXXX`) the agent tool shows for a remote pairing and the user types on the page (§3); not a secret. |
 | Return code | 8 characters (`XXXX-XXXX`) the page shows after confirming a remote pairing and the user gives to the agent; derived from `r`, checked by the tool before it claims (§3). |
-| Account of an agent alone | (rule E-27, ADR-070) an account that an agent created through an invitation without a person (§5.5): no passkey, the agent holds the identity like after a pairing. "Account without a passkey" is the state the hub checks (no active `hub.passkey` row); an account of a person never reaches it (its last passkey cannot be removed, `last_passkey`). |
+| Account of an agent alone | (rule E-27, ADR-071) an account that an agent created through an invitation without a person (§5.5): no passkey, the agent holds the identity like after a pairing. "Account without a passkey" is the state the hub checks (no active `hub.passkey` row); an account of a person never reaches it (its last passkey cannot be removed, `last_passkey`). |
 | Proof method | the named way an agent proves possession of its keys at a registration or recovery without WebAuthn (`method`, today only `agent-signature-v1`: Ed25519 signatures over the texts of §3) |
 
 ## 2. Data (hub schema, migrations `0010_agent_access.sql`, `0017_agent_remote_pairing.sql`)
@@ -148,7 +148,7 @@ client-only `pairing_mismatch`.
    `pairing_gesture_required`) and hands over (§5.1 step 4). The user creates the passkey and does nothing else.
 5. Agent: §5.1 step 5; `register` returns like `pair`, plus the invitation's `scope` and the display name.
 
-### 5.5 Account of an agent alone (rule E-27, ADR-070)
+### 5.5 Account of an agent alone (rule E-27, ADR-071)
 No person, no passkey, no browser in any step. The invitation and the limits of a registration apply as for a person.
 
 1. Agent (`register --own-account`, §8.4): reads the invitation link from stdin or `AGENT_PLATFORM_INVITE`, checks it
@@ -399,7 +399,7 @@ token as the lasting way.
 | Attacker grinds a pairing with the same agent code | the hub's nonce in the code input: one hub registration per attempt, rate-limited (§2) | – |
 | Someone reads the link, the agent code or `handover_ct` | none is a secret; `handover_ct` sealed to the agent's key, single use, cleared at claim, revocation and deadline | – |
 | Someone reads the return code | useful only to the holder of the agent's private key, within the claim deadline | – |
-| Someone registers an account of an agent alone (KOR-62, ADR-070) | only with an invitation: `inv_sig` of `sk_inv` over the account text; the invitation is bound once; the limits of a registration apply | the holder of an invitation code gets an account – exactly as with a passkey registration (the code is the authorisation, rule E-27) |
+| Someone registers an account of an agent alone (KOR-62, ADR-071) | only with an invitation: `inv_sig` of `sk_inv` over the account text; the invitation is bound once; the limits of a registration apply | the holder of an invitation code gets an account – exactly as with a passkey registration (the code is the authorisation, rule E-27) |
 | Hub or database writer swaps keys of an agent account | the hub never sees the identity's private key; `id_sig` and `agent_sig` bind identity, agent and invitation, and the tool keeps its own state (§8.3) | as for every account: malicious hub withholding data; a hub can register an account of its own choosing only with an invitation code it never sees |
 | Stolen recovery code of an account without a passkey | `recovery/begin` limits (5 per hour per source, 20 per day per code); the move revokes the current agent (its next request: `key_revoked`), the user is notified (`recovery_finished`), audit `agent.register` | full takeover of that account, as a stolen recovery code of a person (§9 row "stolen agent key"); keep the code like a private key |
 | Stolen agent key of an account without a passkey | revocation by a recovery with the code (the stolen key is revoked); `agents list`, audit | the thief can replace the main orchestrator itself (`agents confirm`) and the recovery code (`recovery new`); the holder of the code can take it back only until the thief replaced the code. Same class as the row "stolen agent key" for persons, without a person to notice |
@@ -440,13 +440,13 @@ passkey; tool: `pair --remote`, every outcome of `--wait`, `hub_too_old`, pendin
 case, `register --remote`, secret canaries, an end-to-end run against the hub fake whose "browser" seals the
 handover; E2E-50 against the real hub and web client.
 
-Account of an agent alone (KOR-62, ADR-070): vectors of §3 (account and recover texts, their signatures, unknown
+Account of an agent alone (KOR-62, ADR-071): vectors of §3 (account and recover texts, their signatures, unknown
 methods) in all three implementations; hub: `POST /v1/agent-accounts` with a platform and an org invitation, every
 refusal, the identical repeat, the orphan job, `recovery/finish` with `agent` (replacement, passkey account refused
 with the ceremony kept, wrong signatures, rollback on a taken key), `POST /v1/me/agents` by the agent of an account
 without and with a passkey; tool: `register --own-account`, `recover`, `agents confirm` against the real hub (the whole
 journey: register, private org, team org, a second agent through an org invitation, a person joining, the move, the
-hand-over) and their refusals; the table "Without a person" (`test_without_person.py`); E2E-53 ("agent alone": no
+hand-over) and their refusals; the table "Without a person" (`test_without_person.py`); E2E-54 ("agent alone": no
 browser step, no passkey, plus the person's web view of the agent's membership and vice versa).
 
 ## 11. Orchestrator on platform hardware (design; not built in this package, follow-up package)
