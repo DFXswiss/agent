@@ -43,3 +43,41 @@ cryptography packages. Concept references: [§5 point 5](../KONZEPT.md#k-5-b5), 
     `agent_runner.crypto.vectors` as generator; they now name the generator in `agent_hub` and the checked runner copy.
 11. **Requirements rows:** R-14.1, K-30 (the admin read right is built since ADR-058; the row said "missing") and K-16
     point to the key model and its gaps.
+
+## After the review (two reviewers with fresh context: cryptography and accuracy; completeness against the concept)
+
+12. **Copies of the identity at rest are part of the model:** the remembered browser (IndexedDB, non-extractable key)
+    and the agent tool's state (sealed identity plus handover secret next to the agent key) are listed in §1, §2, §5
+    and §6, with KM-38. A leaked identity has no remedy today; the rekey of the user's identity is a **required** part
+    of KOR-57 (it was "optional" in KOR-57's text), because rotating scopes does not shut out a copy of the identity
+    the new epochs are wrapped to.
+13. **Revocation table completed:** unassignment from one of several workgroups, the non-atomic `CK` rotation,
+    `org_platform_access` withdrawn, `user_decertify`, `wg_archive`, invitation revoked after a lookup (decision D2),
+    leaked identity, platform root and hub response key.
+14. **Statements corrected:** KM-04 (keys also arrive in the invitation package), KM-09 (only team orgs are
+    root-anchored; private orgs are KM-31), `device_assign` and the assigning user's `CK` (only with explicit access in
+    a consented org), KM-32 (write → read rotates nothing: R is about losing read), §7 (malicious JavaScript and the
+    ADR-060 certification risk named), the agent's keys (its X25519 key opens the sealed identity).
+15. **KM-21 gets no grace vector of its own:** the clause "only from authors entitled to the new epoch" in E6 cannot be
+    reached on its own, because E5 at receipt refuses a removed or excluded author first (`hub_E5_at_receipt`,
+    `E5_decertified_device`). The rule is stated that way.
+16. **Reading across workgroups (§8) follows KOR-45's own boundary:** way A (keys by assignment) is the default and
+    needs no change of the verifiers; way B (a read release per task, which KOR-45's text also names) is a new
+    entitlement and therefore Spur-K work – decision D3. Content read from another workgroup is copied into the
+    reading workgroup's scope like a human copy (idea 30); the default states and logs it, the stricter mode is a
+    voluntary setting (E-11), not the default (the first draft had it the other way round, which would have made almost
+    nothing readable).
+17. **Support:** a release goes to "DFX support" as a team (idea 29); entitlement = valid support role ∧ release, wraps
+    per person by catch-up, so a new support person needs no re-wrap by the user and a leaving one rotates only what it
+    could read.
+18. **Company credentials:** devices-only readers, as KOR-47 states; the operator account for other organizations'
+    tasks needs the root-signed list of KOR-49 as entitlement.
+19. **Status "decision needed"** in the concordance for idea 35 (the assigned device necessarily holds keys); three
+    decisions for the orchestrator (D1–D3) in key model §11.
+20. **The check is stricter:** test evidence names the test (`path::name`, the name must occur in the file); the
+    key-bearing points of §1, §3, §5, §8, §13 and §16 need rows; a "carried" row may not cite an unbuilt rule; a gap row
+    must cite a rule with that gap; "–" is a target only for status "none". New negative vectors have positive controls
+    in the same log state (`W2_org_key_for_device_with_workgroup`, `cred_device_of_org_with_consent`).
+21. **PRF procedure:** names both "Add passkey" buttons and the confirmation step, warns against "Remember this
+    browser" during the check, and fills only the PRF and Login columns of the release table; Registration, Recovery,
+    Terminal and Countdown stay open instead of being copied from emulated runs.
