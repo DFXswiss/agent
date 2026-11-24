@@ -2,7 +2,9 @@
 // desktop and on the phones (`MOBILE_DEVICE_SPECS`): an agent's question waits under "Needs your decision" and is
 // answered from the view; an approval with a comment; a refused action, a missing GitHub connection and a failed
 // session under their groups with their next step; the agent tree of a running task; a member never sees a task of a
-// workgroup they cannot read, not even in a counter. The hub derives every category; the browser only shows it.
+// workgroup they cannot read, not even in a counter. The hub derives every category; the browser only shows it. The
+// `task.attention` notification is not produced here (the device double applies transitions without the hub's
+// notification signals); its text and target are covered in `tests/ui/attention.test.tsx`.
 import { expect, type Page } from '@playwright/test';
 import { test } from '../fixtures/test.ts';
 import { addAuthenticator } from '../helpers/authenticator.ts';
@@ -49,7 +51,7 @@ const entryIn = (page: Page, category: string, title: string) =>
 
 test('a question waits under "Needs your decision" and is answered from the view', async ({ page, baseURL }) => {
   test.setTimeout(120_000);
-  const user = await freshUser(page, baseURL!);
+  await freshUser(page, baseURL!);
   await expect(page.getByTestId('composer.chips')).toBeVisible();
   const task = await sendPrompt(page, 'Prepare the release notes');
   await ask(await working(task), 'human.question', 'Which version should the notes cover?');
@@ -72,14 +74,6 @@ test('a question waits under "Needs your decision" and is answered from the view
     .getByTestId('attention.open')
     .click();
   await expect(page.getByTestId('chat.prompt.text').last()).toHaveText('Version 2.4');
-  // the notification of the occasion names the reason and leads back to the situation view
-  await page.goto('/notifications');
-  await page.getByTestId('login.submit').click();
-  const text = page.getByTestId('notifications.text').filter({ hasText: 'needs your decision' });
-  await expect(text).toHaveText('Task “Prepare the release notes” needs your decision: The agent has a question');
-  await text.click();
-  await expect(page).toHaveURL(new RegExp(`/o/${user.org}$`));
-  await expect(page.getByTestId('attention.screen')).toBeVisible();
 });
 
 test('an approval is given with a comment and starts with exactly "Approved."', async ({ page, baseURL }) => {
