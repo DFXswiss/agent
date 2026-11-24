@@ -258,14 +258,14 @@ def run_check_lane(
         result = None
         run_argv = argv
         profile_dir: str | None = None
-        if execution.delegated:
-            # The empty GitHub profile's path is a delegated read.
-            profile_context = tempfile.TemporaryDirectory(
-                prefix="agent-lane-empty-gh-"
-            )
-            profile_dir = profile_context.name
         try:
             try:
+                if execution.delegated:
+                    # The empty GitHub profile's path is a delegated read.
+                    profile_context = tempfile.TemporaryDirectory(
+                        prefix="agent-lane-empty-gh-"
+                    )
+                    profile_dir = profile_context.name
                 with sanitized_lane_argv(argv, profile_dir=profile_dir) as run_argv:
                     if execution.delegated:
                         run_argv = delegated_lane_argv(
