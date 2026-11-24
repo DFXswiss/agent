@@ -22,7 +22,9 @@ registration runs in one transaction:
    - `local_check: "rejected"` - `rejected` with the runner's error code, without H2-H6;
    - H2 the task owner (the actor) has `wg:write` on the workgroup now - else `denied` (`rights_denied`);
    - H3 the type is known (`agent_hub.operations.types`) - else `rejected` (`unknown_type`);
-   - H4 the type's limits (`agent_hub.operations.limits`) - else `denied` (`limit_exceeded`/`budget_exceeded`);
+   - H4 the type's limits (`agent_hub.operations.limits`) - else `denied` (`limit_exceeded`/`budget_exceeded`); only a
+     main session may ask a person: `human.question` / `human.approval` of a subagent (depth > 0) is `denied`
+     (`rights_denied`, ADR-064 section 3);
    - H5/H6 with a dedupe slot: a held slot makes the operation a `duplicate` of its holder, otherwise the operation
      takes the slot for the type's window (`agent_hub.operations.dedupe`); without a slot it is accepted directly.
 5. The decision is written: the operation row (`state`, `error_code`, `duplicate_of`, `decided_at`), transition 2
@@ -54,7 +56,7 @@ from agent_hub.events.store import StoredEvent, append_events
 from agent_hub.operations import children, dedupe, limits
 from agent_hub.operations.children import Parent
 from agent_hub.operations.steps import OperationRef, add_transition, audit_step
-from agent_hub.operations.types import OPERATION_TYPES, SUBAGENT_REQUEST, window
+from agent_hub.operations.types import HUMAN_TYPES, OPERATION_TYPES, SUBAGENT_REQUEST, window
 from agent_hub.orgs import rights
 from agent_hub.outbox.base import moment
 from agent_hub.outbox.bodies import OperationErrorCode, Time
@@ -237,6 +239,8 @@ def _limits(
     connection: Connection, request: RegistrationRequest, task: TaskRow, parent: Parent, now: datetime
 ) -> str | None:
     """H4: the error code of an exceeded limit of the type, None within the limits."""
+    if request.type in HUMAN_TYPES:
+        return "rights_denied" if parent.depth > 0 else None
     if request.type != SUBAGENT_REQUEST:
         return None
     exceeded = limits.subagent_limit(connection, task.id, parent.depth)

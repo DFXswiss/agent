@@ -309,3 +309,23 @@ def test_an_attention_frame_reaches_only_the_readers_of_its_workgroup() -> None:
     with_wg = Published(Audience("org", org), store.FRAME, {"task_id": str(UUID(int=7))}, wg_id=wg)
     assert frame_wg(with_wg) == wg
     assert frame_wg(Published(Audience("org", org), store.FRAME, {"task_id": str(UUID(int=7))})) == UNKNOWN
+
+
+@pytest.mark.parametrize("op_type", ["human.question", "human.approval"])
+def test_a_subagent_cannot_ask_a_person_and_its_refusal_is_not_the_main_sessions(
+    situation: Situation, op_type: str
+) -> None:
+    task, session = situation.working()
+    situation.hub.clock.advance(1)
+    operation, answer = situation.ops.decide(session, "subagent.request", dedupe="helper")
+    child = answer["child_session_id"]
+    situation.scene.sessions[child] = (task, situation.desk.wg)
+    situation.ops.finish(operation)
+    situation.step(child, "working")
+    situation.hub.clock.advance(1)
+    asked, refusal = situation.ops.decide(child, op_type)
+    assert refusal == {"state": "denied", "error_code": "rights_denied"}
+    assert situation.ops.audit(asked)[-1][:2] == ("operation.denied", "denied")
+    situation.step(child, "stopped")
+    situation.step(session, "idle")
+    assert situation.kind(task) == ("done", "idle")
