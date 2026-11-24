@@ -140,6 +140,7 @@ SPEC_EVENT_MATRIX = [
     ("org.profile", "org", "user", "org_admin"),
     ("wg.profile", "org", "user", "org_admin"),
     ("member.profile", "org", "user", "org_member_self"),
+    ("member.name", "org", "user", "org_admin"),
     ("device.profile", "org", "user", "org_admin"),
     ("whiteboard.entry", "org", "user", "org_admin"),
     ("whiteboard.edit", "org", "user", "org_admin"),
@@ -167,7 +168,7 @@ SPEC_EVENT_MATRIX = [
 ]
 # 03-api.md section 10 (event bodies): every kind.
 SPEC_EVENT_KINDS = (
-    "org.profile wg.profile member.profile device.profile task.meta prompt whiteboard.entry whiteboard.edit"
+    "org.profile wg.profile member.profile member.name device.profile task.meta prompt whiteboard.entry whiteboard.edit"
     " whiteboard.delete settings.workgroup session.output session.tool session.hook session.file session.terminal"
     " session.status session.error operation.params operation.result platform.read workvm.run workvm.state"
 )
@@ -315,7 +316,7 @@ def test_event_kind_matrix(contracts: Contracts) -> None:
     kinds = sorted({row["kind"] for row in rows})
     assert kinds == sorted(SPEC_EVENT_KINDS.split())
     assert sorted(common_enum(contracts, "event_kind")) == kinds
-    rules = {"empty", "set", "scope_id", "target", "author", "device", "entry", "operation", "read_target"}
+    rules = {"empty", "set", "scope_id", "target", "author", "device", "entry", "operation", "read_target", "subject"}
     for row in rows:
         assert set(row) <= {"kind", "scope", "authors", "right", "header", "note"}
         assert set(row["header"]) <= {"wg", "task", "session", "ref"}
@@ -330,6 +331,8 @@ def test_event_kind_matrix(contracts: Contracts) -> None:
     assert by_kind[("wg.profile", "org", ("user",))]["wg"] == "target"
     assert by_kind[("member.profile", "org", ("user",))]["ref"] == "author"
     assert by_kind[("device.profile", "org", ("user",))]["ref"] == "device"
+    # ADR-067: member.name names a user or a user invitation of the org at lh
+    assert by_kind[("member.name", "org", ("user",))]["ref"] == "subject"
     assert by_kind[("operation.result", "wg", ("device",))]["ref"] == "operation"
     for row in rows:
         if row["scope"] == "org" and row["kind"] != "wg.profile":

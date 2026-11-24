@@ -40,6 +40,17 @@
           "registered": {
             "type": "boolean"
           },
+          "registered_user": {
+            "description": "The account that registered with the invitation when it is an active member of the org now (the invitation is settled), else null; optional for older hubs (ADR-067).",
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "opened_at": {
             "description": "Time of the first answered lookup of the invitation (from the hub's audit of invite.lookup), null if it was never looked up; optional for older hubs (KOR-36).",
             "anyOf": [

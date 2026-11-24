@@ -1,5 +1,5 @@
 {
-  "description": "Event kinds x scope x author kind with the right required at lh and at receipt (04-crypto.md section 4.3, CON-03). One row per allowed (kind, scope, author) combination; anything else is kind_not_allowed. header: rules for header fields (empty = \"\"; set = a UUID; scope_id = equals scope_id; target = the workgroup the org-level object refers to; author/device/entry/operation/read_target = the ref names that object). Fields not listed are not constrained by this table.",
+  "description": "Event kinds x scope x author kind with the right required at lh and at receipt (04-crypto.md section 4.3, CON-03). One row per allowed (kind, scope, author) combination; anything else is kind_not_allowed. header: rules for header fields (empty = \"\"; set = a UUID; scope_id = equals scope_id; target = the workgroup the org-level object refers to; author/device/entry/operation/read_target = the ref names that object; subject = a UUID or an invite_id: the person the name is for). Fields not listed are not constrained by this table.",
   "rights": {
     "org_admin": "author is an admin of the org",
     "org_member_self": "author is an org member and ref == author",
@@ -59,6 +59,18 @@
       "header": {
         "wg": "empty",
         "ref": "device"
+      }
+    },
+    {
+      "kind": "member.name",
+      "scope": "org",
+      "authors": [
+        "user"
+      ],
+      "right": "org_admin",
+      "header": {
+        "wg": "empty",
+        "ref": "subject"
       }
     },
     {
