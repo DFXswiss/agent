@@ -1803,8 +1803,9 @@ vendor/role lists and built-in model choices in code. After adopting
    and, when needed, `interactive`.
 5. Set `lane_execution` before enabling launch paths: on the external lane host
    to `{"mode":"this-device-is-lane-host"}`, or on a work device to the
-   `delegate` form above. The local harness's lane starter is responsible for
-   starting work on that host.
+   `delegate` form above. With `this-device-is-lane-host`, the local harness's
+   lane starter is responsible for starting work on that host; with `delegate`,
+   Agent runs the declared operator command itself.
 6. Sessions without a binding of their own use the device-wide `lanes` map.
    An empty or missing file does not authorize a fallback identity.
 

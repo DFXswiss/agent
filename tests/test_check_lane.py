@@ -1501,3 +1501,32 @@ def test_check_lane_delegate_writes_the_judgment_output_file_back(
     assert stdins == ["Is this a duplicate?"]
     assert not profiles[0].exists()
     assert not outputs[0].exists()
+
+
+def test_check_lane_delegate_closes_its_row_when_the_profile_dir_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    accounts = accounts_document()
+    accounts["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/opt/operator/lane"],
+    }
+
+    def no_profile(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("no space left for the empty profile")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_check_lane.tempfile.TemporaryDirectory", no_profile
+    )
+    ctx = _placeholder_check_context(
+        tmp_path, "driver-d", accounts=accounts, lanes=_no_lane
+    )
+    outcome = _run_placeholder_check(ctx)
+
+    assert (outcome.status, outcome.value) == ("failed", None)
+    assert "no space left for the empty profile" in outcome.detail
+    # The working row is closed, so a later check launch is not blocked.
+    assert [row["status"] for row in _check_rows(ctx)] == ["done"]
+    assert [run["payload"]["status"] for run in _check_lane_runs(ctx)] == [
+        "unavailable"
+    ]

@@ -29,12 +29,13 @@ again for improvements, executes tests, and performs all GitHub communication.
 Model lanes never start subagents or execute tests themselves. Executor commands
 below belong to the script. See
 [DESIGN.md §19.1](../../../../DESIGN.md#191-responsibility-split).
-Those lanes require the external lane host's `ai-accounts.json` to declare
-`lane_execution`; a `delegate` declaration names one local foreground operator
-command that runs each headless lane elsewhere. The local harness's lane starter
-starts them there; Agent has no remote-execution fallback of its own and never
-runs a vendor CLI on an undeclared work device. The operator command does the
-copy and transport.
+Those lanes require `ai-accounts.json` to declare `lane_execution`. The local
+harness's lane starter starts them on the external lane host, whose declaration
+is `this-device-is-lane-host`; or a `delegate` declaration on the work device
+names one local foreground operator command that runs each headless lane
+elsewhere. Agent has no remote-execution fallback of its own and never runs a
+vendor CLI on an undeclared work device. The operator command does the copy and
+transport.
 `lane_execution` gates provider execution on this device; recording an Agent
 for a lane started elsewhere does not need it.
 
