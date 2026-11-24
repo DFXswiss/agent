@@ -355,6 +355,17 @@ bearing on keys).
 | [A5](KONZEPT.md#a-5) | Limits as settings. | none | – |
 | [A6](KONZEPT.md#a-6) | Test and browser VMs as platform operations, no keys inside. | carried | KM-37 |
 | [A7](KONZEPT.md#a-7) | Content of a task on a DFX device lies there in clear; support is different. | carried | [§6](#6-where-plaintext-lies) |
+| [A8](KONZEPT.md#a-8) | A test run's log is encrypted workgroup content of the operation; the VM holds no key. | carried | KM-37 |
+| [A9](KONZEPT.md#a-9) | One throw-away VM per test run. | none | – |
+| [A10](KONZEPT.md#a-10) | Subagents continue: still platform sessions without keys. | carried | KM-23 |
+| [A11](KONZEPT.md#a-11) | Reading across workgroups within owner ∩ instructing human. | gap → KOR-45 | [§8](#8-reading-across-workgroups), KM-34 |
+| [A12](KONZEPT.md#a-12) | Support is its own principal with a platform role; the device is not support. | gap → KOR-56 | KM-33 |
+| [A13](KONZEPT.md#a-13) | Default-workgroup write is a default an admin can lower to read (no rotation: the member still reads). | gap → KOR-55 | KM-32 |
+| [A14](KONZEPT.md#a-14) | No fixed limits. | none | – |
+| [A15](KONZEPT.md#a-15) | The instructing human's own credentials are usable on the session's device: a writer of the workgroup has explicit access, so the device is eligible for that human's `CK` – except in an org that admitted the human without consent (then E-05: the connection is asked for). | carried | KM-13, KM-15 |
+| [A16](KONZEPT.md#a-16) | Workflow files are not blocked. | none | – |
+| [A17](KONZEPT.md#a-17) | Protected branches. | none | – |
+| [A18](KONZEPT.md#a-18) | Blocked attempts are logged. | none | – |
 
 ## 11. Gaps and the requirements on the follow-up packages
 
