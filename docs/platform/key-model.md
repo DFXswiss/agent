@@ -352,7 +352,7 @@ bearing on keys).
 | [E-26](KONZEPT.md#e-26) | Simple and efficient use by AI agents. | none | – |
 | [E-27](KONZEPT.md#e-27) | An agent account without a human: created by invitation, signed in with the agent's own key, no passkey. | carried (pending KOR-62) | [§1](#1-principals) |
 | [E-28](KONZEPT.md#e-28) | Personal message of the requester at the consent. | none | – |
-| [E-29](KONZEPT.md#e-29) | GitHub with every repository the account can reach. | none (the connection stays a `github` credential under the user's `CK`, opened only on the device) | – |
+| [E-29](KONZEPT.md#e-29) | GitHub with every repository the account can reach (the token stays a `github` credential under the user's `CK`). | none | – |
 | [A1](KONZEPT.md#a-1) | Subagents have the parent's rights and no keys. | carried | [§1](#1-principals) |
 | [A2](KONZEPT.md#a-2) | Conflict fix by merge commit. | none | – |
 | [A3](KONZEPT.md#a-3) | The agent holds the user's identity; own identity with rotation later. | gap → KOR-57 | KM-28, KM-30 |
