@@ -1,4 +1,4 @@
-// Context checkpoints and pull-request tags (04-crypto.md sections 3 and 4.11, ADR-058), twin of
+// Context checkpoints and pull-request tags (04-crypto.md sections 3 and 4.11, ADR-059), twin of
 // `agent_hub.crypto.context` (vectors `contracts/vectors/context.json`). The browser holds the workgroup key, so it
 // can compute the opaque tag of a pull request (`GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag}`) and verify and
 // open a checkpoint like the runner does:

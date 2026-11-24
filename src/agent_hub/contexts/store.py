@@ -1,4 +1,4 @@
-"""Context checkpoints and pull-request links at the hub (ADR-058 sections 3, 5, 6 and 8; 03-api.md sections 4.6, 6.1).
+"""Context checkpoints and pull-request links at the hub (ADR-059 sections 3, 5, 6 and 8; 03-api.md sections 4.6, 6.1).
 
 **Upload** (`PUT /v1/device/contexts/{object}/chunks/{index}` `{session_id, ct}`, `device:session`): the session must
 exist (`404 not_found`), run or have run on the calling device and lie in a workgroup the device is assigned to
@@ -13,7 +13,7 @@ at least 29 bytes (`400 request_invalid` at `/ct`) and at most `CHUNK_CT_BYTES` 
 A refusal for a quota is recorded: the route writes the audit row `session.context_refused {reason, scope, limit, used,
 requested}` (actor the device, result `denied`) in a transaction of its own, after the refused one was rolled back.
 
-**Commit** (`POST /v1/device/contexts/{object}/commit` `{manifest, sig}`, same rights; exactly ADR-058 section 3): the
+**Commit** (`POST /v1/device/contexts/{object}/commit` `{manifest, sig}`, same rights; exactly ADR-059 section 3): the
 object must exist (`404`) and belong to the calling device (`403`); the manifest has the format of
 `agent_hub.crypto.context` (`400 header_invalid`/`non_ascii`) and names exactly the object's IDs (`object`, `org`,
 `wg`, `task`, `session`, `author` = the device) and an epoch of the workgroup (`400 request_invalid` with the

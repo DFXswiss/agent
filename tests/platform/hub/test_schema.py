@@ -262,7 +262,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("context_restore", T),
         ("context_reason", T),
     ],
-    # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-058)
+    # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-059)
     "context_object": [
         ("id", U),
         ("org_id", U),
@@ -582,7 +582,7 @@ def test_no_project_level_and_no_pull_request_table(owner: psycopg.Connection[An
     for (name,) in names:
         assert "project" not in name
         if name.startswith("pr_link"):
-            continue  # an opaque HMAC tag of a pull request, no pull-request data (KOR-33, ADR-058 section 8)
+            continue  # an opaque HMAC tag of a pull request, no pull-request data (KOR-33, ADR-059 section 8)
         assert not re.search(r"(^|_)(pr|pull|pulls|pull_request)(_|$)", name), name
 
 

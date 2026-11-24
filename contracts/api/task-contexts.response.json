@@ -9,7 +9,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "description": "metadata of one complete context checkpoint (ADR-058 section 5)",
+        "description": "metadata of one complete context checkpoint (ADR-059 section 5)",
         "properties": {
           "object_id": {
             "$ref": "../common.json#/$defs/uuid"

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/device-context-chunk-put.request.json",
   "title": "PUT /v1/device/contexts/{object}/chunks/{index} request",
-  "description": "Body of PUT /v1/device/contexts/{object}/chunks/{index} (03-api.md section 6.1, ADR-058 section 5): one sealed chunk of a context checkpoint of the session (nonce || AES-GCM, at most 2 MiB + 28 bytes).",
+  "description": "Body of PUT /v1/device/contexts/{object}/chunks/{index} (03-api.md section 6.1, ADR-059 section 5): one sealed chunk of a context checkpoint of the session (nonce || AES-GCM, at most 2 MiB + 28 bytes).",
   "type": "object",
   "properties": {
     "session_id": {

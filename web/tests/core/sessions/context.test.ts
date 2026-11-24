@@ -1,4 +1,4 @@
-// U-WEB-core-session-context (KOR-33, ADR-058 sections 5 and 7): the resume outcome of a session row, tolerant of
+// U-WEB-core-session-context (KOR-33, ADR-059 sections 5 and 7): the resume outcome of a session row, tolerant of
 // hubs that do not send `context_restore` and `context_reason`.
 import { describe, expect, it } from 'vitest';
 import { CONTEXT_REASONS, contextResume } from '../../../src/core/sessions/context';

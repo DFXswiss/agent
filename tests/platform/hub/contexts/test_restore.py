@@ -1,5 +1,5 @@
 """U-HUB-contexts (restore): what the device state offers a following main session on any device and what the hub keeps
-of the reported outcome (ADR-058 sections 5 and 7, 03-api.md section 4.6.3)."""
+of the reported outcome (ADR-059 sections 5 and 7, 03-api.md section 4.6.3)."""
 
 from __future__ import annotations
 

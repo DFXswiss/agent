@@ -166,7 +166,7 @@ class HubConfig:
     trusted_proxies: tuple[Network, ...] = ()
     forwarded_header: str = X_FORWARDED_FOR
     context_max_object_bytes: int = DEFAULT_CONTEXT_MAX_OBJECT_BYTES
-    """`AGENT_HUB_CONTEXT_MAX_OBJECT_BYTES`: the sealed bytes of one context checkpoint (ADR-058 section 6)."""
+    """`AGENT_HUB_CONTEXT_MAX_OBJECT_BYTES`: the sealed bytes of one context checkpoint (ADR-059 section 6)."""
     context_keep: int = DEFAULT_CONTEXT_KEEP
     """`AGENT_HUB_CONTEXT_KEEP`: complete checkpoints kept per task; older ones are deleted on a commit."""
     context_org_bytes: int = DEFAULT_CONTEXT_ORG_BYTES

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/device-context-commit.request.json",
   "title": "POST /v1/device/contexts/{object}/commit request",
-  "description": "Body of POST /v1/device/contexts/{object}/commit (03-api.md section 6.1, ADR-058 section 5): the manifest and the author device's signature over it.",
+  "description": "Body of POST /v1/device/contexts/{object}/commit (03-api.md section 6.1, ADR-059 section 5): the manifest and the author device's signature over it.",
   "type": "object",
   "properties": {
     "manifest": {

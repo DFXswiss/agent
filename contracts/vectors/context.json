@@ -1,5 +1,5 @@
 {
-  "about": "Context checkpoints and pull-request links of 04-crypto.md section 4.11 (ADR-058): k_ctx from WK and the manifest salt, sealed chunks, the signed manifest, the digest and pull-request tags.",
+  "about": "Context checkpoints and pull-request links of 04-crypto.md section 4.11 (ADR-059): k_ctx from WK and the manifest salt, sealed chunks, the signed manifest, the digest and pull-request tags.",
   "author_sig_pk": "SrlDZH2ENkGLIX8M7UujtAtUCnDmXs62mCroPdrgaW0",
   "chunks": [
     "99cYMU4-bFlgz6U-JykqB0tanVQfx4jme62AHeGYPSD9B5eq899cqi0ua4s4JoFsgnElzt1nX_iiiqgcupiruvlmPf43upqKOcf5-IzWW8QmCM5PRfYj6b3EVKYSPhg022Bx"

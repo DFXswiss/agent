@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/audit/session.context_saved.json",
   "title": "audit detail session.context_saved",
-  "description": "detail of audit rows with action session.context_saved: a device committed a context checkpoint of the session: chunk count, size in bytes and the number of older checkpoints of the task deleted beyond the keep setting (ADR-058 sections 5 and 6). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "description": "detail of audit rows with action session.context_saved: a device committed a context checkpoint of the session: chunk count, size in bytes and the number of older checkpoints of the task deleted beyond the keep setting (ADR-059 sections 5 and 6). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
   "type": "object",
   "properties": {
     "chunks": {

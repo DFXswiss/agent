@@ -19,7 +19,7 @@ session both reach the new main session (A-09). The prompt goes to the main sess
 working: queued by the runner); after `stopping`/`stopped`/`failed` (or on a closed task, which is reopened) the hub
 creates a new main session placed by the scheduler on any suitable device. That session continues the **same
 conversation**: the device state names the previous main session (`resume_from`) and the task's newest context
-checkpoint (`context`), which the runner restores before it resumes the agent (03-api.md section 4.6.3, ADR-058);
+checkpoint (`context`), which the runner restores before it resumes the agent (03-api.md section 4.6.3, ADR-059);
 only when no checkpoint can be used does the session start a new conversation, and the runner reports that.
 Replays answer the original `scope_seq` and session.
 

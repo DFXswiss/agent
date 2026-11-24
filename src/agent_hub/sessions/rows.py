@@ -6,7 +6,7 @@ and output in events. In a task row `main_session_id` is the **current** main se
 0: a follow-up prompt after `stopped`/`failed` creates a new one, 03-api.md section 4.6.3) and `title_event_id` the
 newest `task.meta` event of the task. A session row also names how a new main session continued the conversation
 (`context_restore`: `restored` from the task's checkpoint, `fallback` with `context_reason` when it had to start a new
-conversation, null while nothing was reported; ADR-058 section 7).
+conversation, null while nothing was reported; ADR-059 section 7).
 """
 
 from __future__ import annotations

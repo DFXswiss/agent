@@ -1,4 +1,4 @@
-"""U-HUB-contexts (pull-request links): the opaque tags of ADR-058 section 8."""
+"""U-HUB-contexts (pull-request links): the opaque tags of ADR-059 section 8."""
 
 from __future__ import annotations
 

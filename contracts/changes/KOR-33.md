@@ -1,6 +1,6 @@
 # KOR-33 – contract changes
 
-ADR-027 section 3 (additive). Real session resume (ADR-058): context checkpoints are exported from the guest,
+ADR-027 section 3 (additive). Real session resume (ADR-059): context checkpoints are exported from the guest,
 encrypted by the runner, stored at the hub and restored into a new sandbox on any VM.
 
 ## Guest
@@ -10,7 +10,7 @@ messages.
 
 - New endpoint `POST /v1/sessions/{id}/context/export` (`guest/session-context-export.request.json`,
   response_kind `tar`): body `{workspace_max_bytes, transcript_max_bytes}`; the answer is the context archive v1 of
-  ADR-058 section 2. `guest/session-context-export.response.json` describes its first member `context.json` (like the
+  ADR-059 section 2. `guest/session-context-export.response.json` describes its first member `context.json` (like the
   manifest member of `files/export`); `transcript/<path>` and `work/<path>` members follow.
 - New endpoint `POST /v1/contexts/{id}/stage` (`guest/context-stage.request.json`, request_kind `query+tar`, no
   query parameters; body a context archive of at most 16 GiB; every line of every transcript `.jsonl` must be

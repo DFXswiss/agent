@@ -1,4 +1,4 @@
-"""Routes of the context checkpoints and pull-request links (03-api.md sections 4.6 and 6.1, ADR-058).
+"""Routes of the context checkpoints and pull-request links (03-api.md sections 4.6 and 6.1, ADR-059).
 
 | Route | Right |
 |---|---|

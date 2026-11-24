@@ -1,5 +1,5 @@
 """U-HUB-contexts (checkpoints): upload, commit, download, quotas, pruning, expiry and deletion of context checkpoints
-(ADR-058 sections 3, 5 and 6; 03-api.md section 6.1)."""
+(ADR-059 sections 3, 5 and 6; 03-api.md section 6.1)."""
 
 from __future__ import annotations
 
@@ -198,7 +198,7 @@ def test_commit_refusals(checkpoints: Checkpoints) -> None:
 
 
 def test_a_half_upload_is_never_sealed(checkpoints: Checkpoints) -> None:
-    """A missing chunk - at the end or in the middle - never becomes a checkpoint (ADR-058 section 3)."""
+    """A missing chunk - at the end or in the middle - never becomes a checkpoint (ADR-059 section 3)."""
     device = checkpoints.outbox.device
     task, session = checkpoints.outbox.session()
     sealed = checkpoints.seal(task, session, [b"one", b"two", b"three"])

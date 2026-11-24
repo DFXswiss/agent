@@ -1,5 +1,5 @@
 """Vectors of the context checkpoints and pull-request links (`contracts/vectors/context.json`, 04-crypto.md
-sections 3 and 4.11, ADR-058), discovered by the generator of `agent_hub.crypto.vectors` through `SECTIONS`.
+sections 3 and 4.11, ADR-059), discovered by the generator of `agent_hub.crypto.vectors` through `SECTIONS`.
 
 Positive part: one checkpoint of one chunk (workgroup key, salt, `k_ctx`, the compressed archive, the sealed chunk,
 manifest and signature), three standalone chunks of one object at the indexes 0-2 with their AAD and the digest over
@@ -99,7 +99,7 @@ def build() -> Json:
     one = b64u_encode(sealed[0])
     base = {"manifest": manifest, "sig": sig, "author_sig_pk": pk}
     return {
-        "about": "Context checkpoints and pull-request links of 04-crypto.md section 4.11 (ADR-058): k_ctx from WK "
+        "about": "Context checkpoints and pull-request links of 04-crypto.md section 4.11 (ADR-059): k_ctx from WK "
         "and the manifest salt, sealed chunks, the signed manifest, the digest and pull-request tags.",
         "workgroup_key": b64u_encode(wk),
         "author_sig_pk": pk,

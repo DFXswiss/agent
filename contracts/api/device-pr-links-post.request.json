@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/device-pr-links-post.request.json",
   "title": "POST /v1/device/pr-links request",
-  "description": "Body of POST /v1/device/pr-links (03-api.md section 6.1, ADR-058 section 8): the opaque tag of a pull request the session created, under the workgroup epoch.",
+  "description": "Body of POST /v1/device/pr-links (03-api.md section 6.1, ADR-059 section 8): the opaque tag of a pull request the session created, under the workgroup epoch.",
   "type": "object",
   "properties": {
     "session_id": {

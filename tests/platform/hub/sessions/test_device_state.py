@@ -120,7 +120,7 @@ def test_a_restart_on_the_same_device_resumes(world: World, fleet: Fleet) -> Non
 
 
 def test_a_restart_on_another_device_resumes_too(world: World, fleet: Fleet) -> None:
-    """The conversation continues on any device (ADR-058): the next main session names the previous one wherever it
+    """The conversation continues on any device (ADR-059): the next main session names the previous one wherever it
     ran; the runner restores the task's checkpoint there."""
     desk = org_desk(world)
     task, first = desk.started()

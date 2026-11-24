@@ -1,7 +1,7 @@
 
 ## Hub
 
-1. Migration is `0011_session_context.sql`, not 0013: `agent_hub.db.migrate` refuses gaps, so 0013 cannot migrate on
+1. Migration is `0012_session_context.sql`, not 0013: `agent_hub.db.migrate` refuses gaps, so 0013 cannot migrate on
    this branch. It is renumbered to the next free number on rebase (its content does not depend on the number).
 2. New error code `quota_exceeded` (413) with the additive error detail `quota {scope: object|org, limit, used}`.
 3. Hub-side audit `session.context_saved {chunks, size, pruned}` on commit (actor device); the runner sends
@@ -27,5 +27,5 @@
     The audit detail checker gained `boolean` leaves for `stale`.
 13. The web consumes `contracts/vectors/context.json` (`web/src/core/crypto/context.ts`): the browser holds the
     workgroup key and can compute the pull-request tag for `GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag}`.
-14. ADR-058 links the concept with absolute URLs into the agent repository: `KONZEPT.md` exists only there until the
+14. ADR-059 links the concept with absolute URLs into the agent repository: `KONZEPT.md` exists only there until the
     repositories are merged (INF-06), and the ADR must resolve in both checkouts.

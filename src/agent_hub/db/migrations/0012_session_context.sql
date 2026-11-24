@@ -1,5 +1,5 @@
--- 0011_session_context: encrypted context checkpoints of main sessions, opaque pull-request links and the restore
--- outcome on the session row (KOR-33, ADR-058 sections 5-8; 02-data-model.md section 2.4).
+-- 0012_session_context: encrypted context checkpoints of main sessions, opaque pull-request links and the restore
+-- outcome on the session row (KOR-33, ADR-059 sections 5-8; 02-data-model.md section 2.4).
 --
 -- `context_object` is one checkpoint of a task: uploaded chunk by chunk (`uploading`, `chunks`/`size` count what is
 -- stored so far, `updated_at` = the last chunk) and sealed by the commit (`complete`: the signed manifest, its epoch and

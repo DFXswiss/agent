@@ -1,5 +1,5 @@
 {
-  "description": "Endpoints added by KOR-33 (ADR-058): the context checkpoints of main sessions (device upload, commit and download, the task's list for browsers) and the opaque pull-request links; 03-api.md sections 4.6 and 6.1.",
+  "description": "Endpoints added by KOR-33 (ADR-059): the context checkpoints of main sessions (device upload, commit and download, the task's list for browsers) and the opaque pull-request links; 03-api.md sections 4.6 and 6.1.",
   "rights": [
     "device:session",
     "device:wg",

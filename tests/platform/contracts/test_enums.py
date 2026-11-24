@@ -39,7 +39,7 @@ SPEC_ERRORS: dict[int, str] = {
     409: "id_conflict event_conflict seq_conflict version_conflict origin_seq_gap origin_seq_conflict no_device"
     " already_assigned rotation_required no_device_available invite_registered",
     410: "invite_expired",
-    413: "quota_exceeded",  # KOR-33 (ADR-058 section 6): a context checkpoint over its quota
+    413: "quota_exceeded",  # KOR-33 (ADR-059 section 6): a context checkpoint over its quota
     429: "rate_limited",
     503: "unavailable",
 }

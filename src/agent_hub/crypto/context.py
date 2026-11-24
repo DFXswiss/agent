@@ -1,4 +1,4 @@
-"""Context checkpoints and pull-request link tags (04-crypto.md sections 3 and 4.11, ADR-058 sections 3 and 8).
+"""Context checkpoints and pull-request link tags (04-crypto.md sections 3 and 4.11, ADR-059 sections 3 and 8).
 
 A checkpoint is the gzip-compressed context archive of one main session, split into chunks of at most `CHUNK_BYTES`
 compressed bytes and sealed under the object key of the task's workgroup:

@@ -297,7 +297,7 @@ workgroup merged with per-workgroup cursors (a row is shown only when no unloade
 §5.1 plus the workgroup. Filters: state, workgroup, "only mine" (signed owner), title search (in the browser). Empty
 state explains how to create a task. Details: `decisions/KOR-32.md`.
 
-### 5.1b Resume notice (task page, KOR-33, ADR-058 §7)
+### 5.1b Resume notice (task page, KOR-33, ADR-059 §7)
 
 Below the task header, `ContextNotice` reads `context_restore`/`context_reason` of the task's current main session
 (`core/sessions/context.ts`; an older hub sends neither field and nothing is shown):

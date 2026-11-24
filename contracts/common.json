@@ -562,7 +562,7 @@
             },
             "quota": {
               "type": "object",
-              "description": "the limit a context checkpoint reached (quota_exceeded, ADR-058 section 6): per checkpoint or per organisation, in sealed bytes",
+              "description": "the limit a context checkpoint reached (quota_exceeded, ADR-059 section 6): per checkpoint or per organisation, in sealed bytes",
               "properties": {
                 "scope": {
                   "type": "string",
@@ -2819,11 +2819,11 @@
     "q_index": {
       "type": "string",
       "pattern": "^(0|[1-9][0-9]{0,5})$",
-      "description": "path parameter text: the index of a context chunk (ADR-058)"
+      "description": "path parameter text: the index of a context chunk (ADR-059)"
     },
     "context_fallback_reason": {
       "type": "string",
-      "description": "why a session continued with a new conversation instead of restoring its checkpoint (ADR-058 section 7)",
+      "description": "why a session continued with a new conversation instead of restoring its checkpoint (ADR-059 section 7)",
       "enum": [
         "context_missing",
         "context_invalid",
@@ -2834,7 +2834,7 @@
     },
     "context_reason": {
       "type": "string",
-      "description": "why a main session's continuation is noteworthy (session row context_reason, ADR-058 section 7): with context_restore fallback one of the fallback reasons; with context_restore restored workspace_partial (the conversation is complete, parts of the workspace were left out) or workspace_omitted (the workspace was too large and was not restored)",
+      "description": "why a main session's continuation is noteworthy (session row context_reason, ADR-059 section 7): with context_restore fallback one of the fallback reasons; with context_restore restored workspace_partial (the conversation is complete, parts of the workspace were left out) or workspace_omitted (the workspace was too large and was not restored)",
       "enum": [
         "context_missing",
         "context_invalid",
@@ -2847,7 +2847,7 @@
     },
     "context_workspace": {
       "type": "string",
-      "description": "what a restore brought back of the workspace (audit session.context_restored, ADR-058 section 7): full, partial (some entries were left out and counted), omitted (too large, not part of the checkpoint) or empty (there was nothing)",
+      "description": "what a restore brought back of the workspace (audit session.context_restored, ADR-059 section 7): full, partial (some entries were left out and counted), omitted (too large, not part of the checkpoint) or empty (there was nothing)",
       "enum": [
         "full",
         "partial",
@@ -2857,7 +2857,7 @@
     },
     "context_manifest": {
       "type": "object",
-      "description": "manifest of a context checkpoint (04-crypto.md section 4.11, ADR-058 section 3): canonical JSON, signed by the author device",
+      "description": "manifest of a context checkpoint (04-crypto.md section 4.11, ADR-059 section 3): canonical JSON, signed by the author device",
       "properties": {
         "v": {
           "type": "integer",

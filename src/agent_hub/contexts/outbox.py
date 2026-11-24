@@ -1,4 +1,4 @@
-"""Outbox handler extension of the contexts area (ADR-027 section 4 `<area>/outbox.py:HANDLERS`, ADR-030, ADR-058
+"""Outbox handler extension of the contexts area (ADR-027 section 4 `<area>/outbox.py:HANDLERS`, ADR-030, ADR-059
 section 7).
 
 It runs after the base handler of the item kind `audit` (which checked the action, its detail and `device:session`

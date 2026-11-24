@@ -9,7 +9,7 @@
     for lack of capacity before it ever worked ran no agent and is skipped: the session before it counts (KOR-14);
   - `context`: the newest complete context checkpoint of the task's main sessions `{object_id, session_id,
     created_at, size}` (`agent_hub.contexts.store.newest`), from which the runner restores the same conversation
-    on whatever VM or device it starts the session (03-api.md section 4.6.3, ADR-058 sections 5 and 7). Old runners
+    on whatever VM or device it starts the session (03-api.md section 4.6.3, ADR-059 sections 5 and 7). Old runners
     ignore the field; without it a new runner reports the emergency path.
 - `pending_prompts` / `delivered_prompt_event_ids`: the prompt routing of `agent_hub.sessions.prompts` for the main
   sessions in `sessions` (pending only while the session is not `stopping`).

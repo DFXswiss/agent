@@ -119,7 +119,7 @@
     },
     "restore": {
       "type": "object",
-      "description": "restore the staged context (POST /v1/contexts/{id}/stage) and resume its conversation (ADR-058 section 7); not together with resume_claude_session_id",
+      "description": "restore the staged context (POST /v1/contexts/{id}/stage) and resume its conversation (ADR-059 section 7); not together with resume_claude_session_id",
       "properties": {
         "claude_session_id": {
           "$ref": "objects.json#/$defs/claude_session_id"

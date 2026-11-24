@@ -1,5 +1,5 @@
 """U-HUB-contexts (crypto): context checkpoints and pull-request tags of `agent_hub.crypto.context` (04-crypto.md
-sections 3 and 4.11, ADR-058 sections 3 and 8) and their vectors `contracts/vectors/context.json`."""
+sections 3 and 4.11, ADR-059 sections 3 and 8) and their vectors `contracts/vectors/context.json`."""
 
 from __future__ import annotations
 

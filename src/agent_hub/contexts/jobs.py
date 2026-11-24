@@ -1,5 +1,5 @@
 """Jobs of the contexts area (ADR-027 section 4): `contexts.expire` removes the uploads of context checkpoints that
-received no chunk for 6 hours (an upload the runner abandoned: it retries with a new object; ADR-058 section 6). A
+received no chunk for 6 hours (an upload the runner abandoned: it retries with a new object; ADR-059 section 6). A
 restore never sees such an object (only complete checkpoints are read), so removing it loses nothing."""
 
 from __future__ import annotations

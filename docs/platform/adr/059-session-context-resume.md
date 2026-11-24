@@ -1,4 +1,4 @@
-# ADR-058: The original session continues - encrypted context checkpoints and restore on any VM
+# ADR-059: The original session continues - encrypted context checkpoints and restore on any VM
 
 Status: Accepted (2026-11-23)
 

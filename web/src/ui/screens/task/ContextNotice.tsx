@@ -1,4 +1,4 @@
-// The resume notice of a task (ADR-058 sections 5 and 7, KOR-33): when the task's current main session could not
+// The resume notice of a task (ADR-059 sections 5 and 7, KOR-33): when the task's current main session could not
 // take over the original session's context, a visible warning names the reason ("This task was continued by a new
 // AI because …"); a successful restore gets one unobtrusive line, which also says when the workspace came back only
 // partly or not at all (too large). Old hubs report neither, then nothing is shown.

@@ -1,4 +1,4 @@
-// How the current main session of a task got its context (ADR-058 sections 5 and 7, KOR-33): the hub reports on
+// How the current main session of a task got its context (ADR-059 sections 5 and 7, KOR-33): the hub reports on
 // every `session_row` `context_restore` ("restored", "fallback" or null) and `context_reason`: with "fallback" why a new
 // AI took over, with "restored" whether the workspace came back only partly (`workspace_partial`) or not at all
 // because it was too large (`workspace_omitted`); the conversation itself is complete in both. Older hubs send neither
