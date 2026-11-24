@@ -11,6 +11,9 @@
 // | `invite.accepted` | "Z accepted the invitation to X" | the org's members |
 // | `rotation.required` | "Access in X is being updated" (neutral; the hub no longer creates it, ADR-058) | the org's members |
 // | `org.admitted` | "Z admitted you to X" (`ref` = the admitting admin, ADR-060) | the org |
+// | `operator.request` | "Organization <id> needs credit" / "… waits for access to the platform's computers" (to
+//   operators, no org, `ref` = `<reason>:<org id>`, ADR-077) | the settings |
+// | `device.needed` | "Workgroup X in Y needs a computer – assign one" (to admins, ADR-077) | the org's devices |
 // | `agent.account_change` | "Agent A removed a passkey" (replaced the recovery code, disconnected an agent, …;
 //   `ref` = `<action>:<acting agent id>:<target>`, no org; `agent_paired_remote` (ADR-067): a pairing from another
 //   computer was confirmed, named by the new agent, the target) | the settings |
@@ -24,7 +27,7 @@ import { isRecord } from '../registry';
 import { reasonKey } from '../attention/view';
 import { selectDirectory, selectTitle } from '../tasks/directory';
 import { agentName } from '../store/slices/agents';
-import { ACCOUNT_KIND, type NotificationRow } from '../store/slices/notifications';
+import { ACCOUNT_KIND, OPERATOR_KIND, type NotificationRow } from '../store/slices/notifications';
 import type { StoreState } from '../store/store';
 import { boardPath, orgBoard, taskBoard, wgBoard } from '../whiteboards/location';
 
@@ -66,6 +69,9 @@ export interface Message {
   /** Message key of a further text the UI translates into the parameter `reason` (`task.attention`). */
   readonly reason?: string;
 }
+
+/** The reasons of an `operator.request` (ADR-077 section 4). */
+export const OPERATOR_REASONS = ['credit_exhausted', 'platform_access_required'];
 
 /** Category and reason of a `task.attention` row (`ref` = `<category>:<reason>:<seq|wg>`); null when malformed. */
 export function attentionOf(
@@ -112,6 +118,14 @@ export function notificationMessage(row: NotificationRow, names: Names, fallback
       return { key: 'notifications.text.rotation.required', params: { org } };
     case 'org.admitted':
       return { key: 'notifications.text.org.admitted', params: { subject, org } };
+    case OPERATOR_KIND: {
+      // the operator is no member of the organization: it is named by its ID (`ref` = `<reason>:<org id>`)
+      const [reason = '', id = ''] = (row.ref ?? '').split(':');
+      const known = OPERATOR_REASONS.includes(reason) ? reason : 'unknown';
+      return { key: `notifications.text.operator.${known}`, params: { org: id } };
+    }
+    case 'device.needed':
+      return { key: 'notifications.text.device.needed', params: { wg, org } };
     default:
       return { key: 'notifications.text.unknown', params: { org } };
   }
@@ -132,6 +146,8 @@ export function notificationTarget(row: NotificationRow): string {
     case 'invite.accepted':
     case 'rotation.required':
       return `${org}/members`;
+    case 'device.needed':
+      return `${org}/devices`;
     default:
       return org;
   }

@@ -1,6 +1,7 @@
 // Tab "Chat" of a task (06-web.md section 5.2): the usage slot, the timeline (task events by time, system rows,
 // countdowns) and – for writers – the composer with the session controls; readers see "You have read access" and no
-// controls (section 1: controls the rights do not allow are not rendered).
+// controls (section 1: controls the rights do not allow are not rendered). A main session that failed for want of
+// model access shows the card that starts the connection (`ModelAccessCard`, ADR-077).
 import { useMemo } from 'react';
 import { loadChat } from '../../../core/chat/actions';
 import { selectTimeline } from '../../../core/chat/timeline';
@@ -11,6 +12,7 @@ import { useAppEnv } from '../../shell/context';
 import { useOrgView } from '../../screens/tasks/hooks';
 import type { TaskTabProps } from '../../registries/task-tabs';
 import { ChatComposer } from './ChatComposer';
+import { ModelAccessCard } from './ModelAccessCard';
 import { Timeline } from './Timeline';
 import { UsageSlot } from './UsageSlot';
 
@@ -43,6 +45,7 @@ function ChatView({ task }: { readonly task: TaskRow }) {
         </p>
       )}
       <Timeline items={items} empty={t(load?.status === 'loading' ? 'task.chat.loading' : 'task.chat.empty')} />
+      <ModelAccessCard task={task} main={main} userId={userId} />
       {writer ? (
         <ChatComposer task={task} main={main} />
       ) : (

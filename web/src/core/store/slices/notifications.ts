@@ -19,11 +19,15 @@ export const NOTIFICATION_KINDS = [
   'rotation.required',
   'agent.account_change',
   'org.admitted',
+  'operator.request',
+  'device.needed',
 ] as const;
 
 /** The account-level kind (no org): an account-changing action of one of the user's agents (11-agent-access.md
  *  section 8); `ref` is `<action>:<agent id>`. */
 export const ACCOUNT_KIND = 'agent.account_change';
+/** The other account-level kind: a request to the operator (ADR-077); `ref` is `<reason>:<org id>`. */
+export const OPERATOR_KIND = 'operator.request';
 
 /** At most this many toasts at a time (the oldest leaves first). */
 export const MAX_TOASTS = 3;
@@ -75,7 +79,7 @@ export function isNotificationRow(value: unknown): value is NotificationRow {
     isRecord(value) &&
     isId(value.notification_id) &&
     isId(value.kind) &&
-    (isId(value.org_id) || (value.org_id === null && value.kind === ACCOUNT_KIND)) &&
+    (isId(value.org_id) || (value.org_id === null && (value.kind === ACCOUNT_KIND || value.kind === OPERATOR_KIND))) &&
     isIdOrNull(value.wg_id) &&
     isIdOrNull(value.task_id) &&
     isIdOrNull(value.ref) &&

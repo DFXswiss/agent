@@ -1,8 +1,9 @@
 // Platform invitations of inviters (06-web.md section 7.4; 03-api.md section 4.2; 04-crypto.md sections 3, 5.3;
 // ADR-004, ADR-005, ADR-026).
 //
-// A user with the platform role `inviter` – read from the verified platform log (`role_grant`/`role_revoke`, compiled
-// root key), never from the hub's word – creates platform user invitations for customers: the browser draws the
+// A user with the platform role `inviter`, or every user while the switch `open_platform_invites` is on (ADR-077) – read
+// from the verified platform log (`role_grant`/`role_revoke`, `platform_policy`, compiled root key), never from the
+// hub's word – creates platform user invitations for customers: the browser draws the
 // 16-byte code, derives `invite_id` and `pk_inv` and sends only them and the expiry (`POST /v1/platform/invites`;
 // `pk_inv` lets only the code's holder register through the invitation, ADR-043); the code is
 // returned once (link `<origin>/invite#<code>`) and never stored or sent. A platform invitation has no package: the
@@ -28,9 +29,16 @@ export { EXPIRY_HOURS, USER_EXPIRY_HOURS };
 
 type Client = Pick<SignedClient, 'request'>;
 
-/** The platform role `inviter` in the verified platform log (false while it is not verified). */
+/** The switch that lets every user invite (ADR-077). */
+export const OPEN_INVITES = 'open_platform_invites';
+
+/**
+ * The user may create platform invitations as the verified platform log says (false while it is not verified): the
+ * platform role `inviter`, or anybody while the switch `open_platform_invites` is on (ADR-077; without the role the
+ * hub lists and revokes only the user's own invitations).
+ */
 export function isInviter(platform: PlatformState | null, userId: string | null): boolean {
-  return platform !== null && userId !== null && platform.hasRole(userId, INVITER);
+  return platform !== null && userId !== null && (platform.hasRole(userId, INVITER) || platform.policy(OPEN_INVITES));
 }
 
 /** A drawn invitation, ready to send (keep it to retry with the same ID and expiry). */

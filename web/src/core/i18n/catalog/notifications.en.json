@@ -35,5 +35,9 @@
   "unnamed.agent": "unknown",
   "text.task.attention": "Task “{task}” needs your attention",
   "text.task.attention.needs_decision": "Task “{task}” needs your decision: {reason}",
-  "text.task.attention.blocked": "Task “{task}” is stuck: {reason}"
+  "text.task.attention.blocked": "Task “{task}” is stuck: {reason}",
+  "text.operator.credit_exhausted": "Organization {org} has used up its credit and requests more",
+  "text.operator.platform_access_required": "Organization {org} waits for access to the platform's computers",
+  "text.operator.unknown": "Organization {org} needs you",
+  "text.device.needed": "Workgroup “{wg}” in “{org}” needs a computer – assign one"
 }

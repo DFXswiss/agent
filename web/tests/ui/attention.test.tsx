@@ -334,7 +334,9 @@ describe('situation view', () => {
     expect(within(entry('c')).getByTestId('attention.connect')).toHaveAttribute('href', '/settings');
     expect(within(entry('m')).getByTestId('attention.model')).toHaveAttribute('href', '/settings');
     expect(within(entry('d')).getByTestId('attention.assign')).toHaveAttribute('href', `/o/${t.org}/devices`);
-    expect(within(entry(E)).getByTestId('attention.credit')).toHaveTextContent('The operator sets the balance');
+    expect(within(entry(E)).getByTestId('attention.credit')).toHaveTextContent(
+      'Credit has been requested from the operator',
+    );
     fireEvent.click(within(entry(E)).getByTestId('attention.continue'));
     fireEvent.click(within(entry(F)).getByTestId('attention.retry'));
     await waitFor(() => expect(within(entry(F)).getByTestId('attention.sent')).toBeInTheDocument());
