@@ -286,9 +286,12 @@ def test_the_spend_watch_stops_the_run_when_the_spend_cannot_be_read() -> None:
     upstream = redteam.LiveUpstream("k", fetch=Spend(usage(1.0), OSError("a"), OSError("b"), OSError("c"), usage(1.1)))
     upstream.start()
     seen = []
-    for _ in range(4):
-        upstream.check()
-        seen.append(upstream.state()["abort"])
+    try:
+        for _ in range(4):
+            upstream.check()
+            seen.append(upstream.state()["abort"])
+    finally:
+        upstream.stop()
     message = "the key's spend could not be read 3 times in a row"
     assert seen == [None, None, message, message]
 
