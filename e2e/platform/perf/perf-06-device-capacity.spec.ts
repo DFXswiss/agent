@@ -21,7 +21,7 @@ import type { Orchestrator } from '../fixtures/orchestrator.ts';
 import { onboard, platformDevice, uuid } from '../fixtures/platform.ts';
 import { PageUser } from '../../../web/e2e/helpers/user.ts';
 import { evaluate, PROMPT } from './measure.ts';
-import { assignPlatformDevice, load, paced, probeWhile, series, type Summary } from './parallel.ts';
+import { assignPlatformDevice, failedStatus, load, paced, probeWhile, series, type Summary } from './parallel.ts';
 
 /** A positive whole number from the environment (a typo must not skip a part or loop without progress). */
 function count(name: string, fallback: number): number {
@@ -160,6 +160,21 @@ async function latest(orchestrator: Orchestrator, kind: string, entities: readon
         AND ts > '${since}'::timestamptz
       ORDER BY entity_id, ts DESC`,
   );
+}
+
+/**
+ * An append to the org log, read again and repeated after `409 seq_conflict` (another append took the next `seq`
+ * meanwhile; seen once at 90 workgroup VMs) and, through `paced`, after `429`.
+ */
+async function appended<T>(action: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await paced(action);
+    } catch (error) {
+      if (failedStatus(error) !== 409 || attempt >= 5) throw error;
+      console.log(`org log append: seq_conflict, attempt ${attempt}`);
+    }
+  }
 }
 
 const hubNow = async (orchestrator: Orchestrator) =>
@@ -328,8 +343,8 @@ test('@PERF-06 @needs-vm the capacity of one device: sessions per VM and VMs per
 
   // Part A: sessions in one workgroup VM.
   const partA: string[] = [];
-  const own = await paced(() => user.createWorkgroup(org, 'Capacity one VM'));
-  await paced(() => assignPlatformDevice(user, org, own, device));
+  const own = await appended(() => user.createWorkgroup(org, 'Capacity one VM'));
+  await appended(() => assignPlatformDevice(user, org, own, device));
   let stopA = `reached ${VM_MAX} sessions`;
   const first = await step('sessions-in-one-vm', [{ wg: own, prompts: [FIRST_PROMPT] }], partA);
   if (first.broken.length > 0) stopA = first.broken.join(', ');
@@ -370,8 +385,8 @@ test('@PERF-06 @needs-vm the capacity of one device: sessions per VM and VMs per
     }
     const groups: { wg: string; prompts: string[] }[] = [];
     for (let n = 1; n <= add; n += 1) {
-      const wg = await paced(() => user.createWorkgroup(org, `Capacity VM ${vms + n}`));
-      await paced(() => assignPlatformDevice(user, org, wg, device));
+      const wg = await appended(() => user.createWorkgroup(org, `Capacity VM ${vms + n}`));
+      await appended(() => assignPlatformDevice(user, org, wg, device));
       groups.push({ wg, prompts: [PROMPT] });
     }
     const measured = await step('vms-on-device', groups, partB);
