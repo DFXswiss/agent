@@ -13,5 +13,6 @@
   "auth_failed": "An access with a wrong session key was refused.",
   "auth_rate_limited": "Repeated accesses with wrong keys were slowed down.",
   "turn_unconfirmed": "A model call without a confirmed prompt was refused.",
+  "tools_unavailable": "The platform tools did not reach the AI in time; the prompt was held back and the start repeated (at most twice).",
   "unknown": "Unknown error ({code})."
 }

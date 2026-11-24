@@ -55,6 +55,7 @@ KINDS = (
     "session.hook",
     "session.file",
     "session.terminal",
+    "session.tools_ready",
     "usage",
     "operation.request",
     "platform.query",

@@ -32,6 +32,11 @@
       "vm_level": false
     },
     {
+      "kind": "session.tools_ready",
+      "body": "guest/journal/session.tools_ready.json",
+      "vm_level": false
+    },
+    {
       "kind": "usage",
       "body": "guest/journal/usage.json",
       "vm_level": false

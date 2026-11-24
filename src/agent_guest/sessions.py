@@ -19,8 +19,15 @@ credential exists would make the first model request fail. The start registers t
 ``PromptRegistry``, journals
 ``session.state agent_starting`` and opens the tmux session ``s-<id>`` (160x48) whose pane runs ``systemd-run --pty``
 with the unit properties of ``sandbox/unit.py`` around the Landlock launcher and the command line of ``driver.py``.
-The prompt goes on the command line when it fits (100 KiB); a longer one waits in ``deferred_prompt`` for the
-bracketed paste of GST-06.
+The initial prompt never goes on the command line (HOT-09: Claude Code would start the turn while its MCP servers still
+connect): it waits in ``deferred_prompt`` until the TUI is up and the agent listed the platform tools, and is then
+typed or pasted like every prompt (``delivery.py``).
+
+``restart`` (HOT-09) starts the agent of a session that is still ``agent_starting`` again: the run is stopped like
+``stop`` does (unit, tmux session), the session gets a new token (so the tools mark of the old run no longer counts,
+``toolsready.py``) and the same command line runs in a new tmux session; the registered, undelivered initial prompt
+stays waiting. ``agent_ended`` of the old run and ``agent_starting`` of the new one are emitted, the state stays
+``agent_starting`` (nothing is journaled for it).
 
 A watcher thread per started session reads the exit status of the pane command (``tmux.py``, one status file per run):
 status 126 (the launcher) fails the session with ``sandbox_failed``, any other end within ``START_WINDOW_SECONDS``
@@ -52,7 +59,7 @@ Extension points (modules of ``control_routes/``, ADR-027 section 4, discovered 
 A guest decision ends a live session with ``SessionManager.fail_running`` (``hook_unavailable``, ADR-064).
 
 Interface: ``SessionManager``, ``manager(context)``, ``install(context, manager)``, ``credential_provisioned``,
-``stop_session``, ``deferred_prompt``, ``free_uid``, ``Paths``, ``System``, ``LinuxSystem``.
+``stop_session``, ``restart_session``, ``deferred_prompt``, ``free_uid``, ``Paths``, ``System``, ``LinuxSystem``.
 """
 
 from __future__ import annotations
@@ -72,11 +79,11 @@ import threading
 import time
 import traceback
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from agent_guest import harness, registry, tmux
+from agent_guest import harness, registry, tmux, toolsready
 from agent_guest.clock import iso_ms
 from agent_guest.control import ControlContext
 from agent_guest.driver import AgentDriver, ClaudeCodeDriver, DriverError, Launch
@@ -273,6 +280,8 @@ class _Running:
     """Wall time of the run's start (``journalctl --since``); ``None`` when unknown."""
     stopped: bool = False
     """``stop`` ended this run: its watcher may see the pane end only after a resume and must not fail the session."""
+    start: _Start | None = None
+    """What ``restart`` needs to run the agent again (its token blanked: a restart makes a new one)."""
 
 
 @dataclass
@@ -500,13 +509,11 @@ class SessionManager:
         the environment that carries the token: ``--setenv=NAME`` without value takes it from ``systemd-run``'s own
         environment, so the token never appears on a command line (``/proc/<pid>/cmdline`` is world-readable)."""
         spec = self._spec(session_id, start)
-        prompt = start.prompt[1] if start.prompt and self.driver.prompt_fits(start.prompt[1]) else None
         launch = Launch(
             session_id=session_id,
             harness_file=self.paths.harness_file(session_id),
             resume_claude_session_id=start.resume,
             model_id=start.model_id,
-            initial_prompt=prompt,
         )
         limits = start.limits
         extra = [
@@ -539,31 +546,73 @@ class SessionManager:
                 return False
             del self._starts[session_id]
             self._register_prompt(session_id, start)
-            launch_file = f"{self.paths.launch_dir}/{session_id}.json"
-            # One status file per run: a watcher of an earlier run never reads the status of a later one.
-            status_file = f"{self.paths.launch_dir}/{session_id}.{secrets.token_hex(4)}.status"
-            try:
-                command, env = self._command(session_id, start)
-                tmux.write_launch(launch_file, command, status_file, env)
-            except (unit.UnitError, DriverError, OSError, ValueError):
-                self._fail(session, "sandbox_failed")
+            if not self._launch(session, start, first=True):
                 return False
+        self._emit("agent_starting", session_id)
+        return True
+
+    def _launch(self, session: Session, start: _Start, *, first: bool) -> bool:
+        """Write the launch file, open the tmux session and watch the run (under the lock); the first launch of a start
+        journals ``agent_starting``. ``False`` when the session failed instead."""
+        session_id = session.id
+        launch_file = f"{self.paths.launch_dir}/{session_id}.json"
+        # One status file per run: a watcher of an earlier run never reads the status of a later one.
+        status_file = f"{self.paths.launch_dir}/{session_id}.{secrets.token_hex(4)}.status"
+        try:
+            command, env = self._command(session_id, start)
+            tmux.write_launch(launch_file, command, status_file, env)
+        except (unit.UnitError, DriverError, OSError, ValueError):
+            self._fail(session, "sandbox_failed")
+            return False
+        if first:
             self._starting(session, start)
-            name = tmux.session_name(session_id)
-            try:
-                self.tmux.new_session(name, [self.paths.helper_python, "-I", self.paths.helper, "exec", launch_file])
-            except (tmux.TmuxError, OSError, subprocess.SubprocessError):
-                Path(launch_file).unlink(missing_ok=True)
-                self._fail(self.context.state.session(session_id) or session, "agent_start_failed")
+        name = tmux.session_name(session_id)
+        try:
+            self.tmux.new_session(name, [self.paths.helper_python, "-I", self.paths.helper, "exec", launch_file])
+        except (tmux.TmuxError, OSError, subprocess.SubprocessError):
+            Path(launch_file).unlink(missing_ok=True)
+            self._fail(self.context.state.session(session_id) or session, "agent_start_failed")
+            return False
+        running = _Running(status_file=status_file, started=self.monotonic(), start=replace(start, token=""))
+        self._running[session_id] = running
+        self._remember_run(session_id, status_file, deferred=self._deferred.get(session_id))
+        running.started_at = self.context.journal.clock.now()
+        running.thread = threading.Thread(
+            target=self._watch, args=(session_id, running), name="agent-guest-session", daemon=True
+        )
+        running.thread.start()
+        return True
+
+    def restart(self, session_id: str) -> bool:
+        """Run the agent of a session that is still ``agent_starting`` again (module docstring); ``False`` when the
+        session is not starting any more (accepted, stopped, failed, being stopped) or its run is unknown (a run
+        re-attached after a restart of the control process: its command line is not known)."""
+        with self._lock:
+            session = self.context.state.session(session_id)
+            running = self._running.get(session_id)
+            if (
+                session is None
+                or session.state != "agent_starting"
+                or session_id in self._stopping
+                or running is None
+                or running.start is None
+            ):
                 return False
-            running = _Running(status_file=status_file, started=self.monotonic())
-            self._running[session_id] = running
-            self._remember_run(session_id, status_file, deferred=self._deferred.get(session_id))
-            running.started_at = self.context.journal.clock.now()
-            running.thread = threading.Thread(
-                target=self._watch, args=(session_id, running), name="agent-guest-session", daemon=True
-            )
-            running.thread.start()
+            running.stopped = True  # its watcher must not report the end as an exit of the agent
+            del self._running[session_id]
+            start = replace(running.start, token=new_token())
+        self.system.stop_unit(unit.UNIT_PREFIX + session_id)
+        self.tmux.kill_session(tmux.session_name(session_id))
+        self._emit("agent_ended", session_id)
+        with self._lock:
+            session = self.context.state.session(session_id)
+            if session is None or session.state != "agent_starting" or session_id in self._stopping:
+                return False
+            renewed = replace(session, token_sha256=_token_sha256(start.token))
+            with self.context.journal.transaction() as db:
+                self.context.state.save_session(renewed, db)
+            if not self._launch(renewed, start, first=False):
+                return False
         self._emit("agent_starting", session_id)
         return True
 
@@ -578,8 +627,7 @@ class SessionManager:
         except StateError:
             start.prompt = None
             return
-        if not self.driver.prompt_fits(text):
-            self._deferred[session_id] = start.prompt
+        self._deferred[session_id] = start.prompt
 
     def _starting(self, session: Session, start: _Start) -> None:
         now = self._at()
@@ -843,6 +891,7 @@ class SessionManager:
                 continue  # retried by the next run; the metadata file keeps the end time
             Path(self._meta_file(session.id)).unlink(missing_ok=True)
             Path(self._deferred_file(session.id)).unlink(missing_ok=True)
+            toolsready.forget(self.context, session.id)
             removed.append(session.id)
         return removed
 
@@ -994,6 +1043,10 @@ def credential_provisioned(context: ControlContext, session_id: str) -> bool:
 
 def stop_session(context: ControlContext, session_id: str, final: str = "stopped") -> None:
     manager(context).stop(session_id, final)
+
+
+def restart_session(context: ControlContext, session_id: str) -> bool:
+    return manager(context).restart(session_id)
 
 
 def deferred_prompt(context: ControlContext, session_id: str) -> tuple[str, str] | None:

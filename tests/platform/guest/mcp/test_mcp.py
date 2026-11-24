@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from agent_guest import __version__, registry
+from agent_guest import __version__, registry, toolsready
 from agent_guest import mcp as mcp_core
 from agent_guest.apisock import ApiClient, ApiSockError
 from agent_guest.control import ControlContext
@@ -91,12 +91,37 @@ def test_ping_and_unknown_methods(
     assert ping["result"] == {}
     assert schemas.errors("mcp/ping.result.json", ping["result"]) == []
     assert refusals(context) == []
-    for method in ("resources/list", "prompts/list", "sampling/createMessage"):
+    for method in ("server/discover", "sampling/createMessage", "vendor/secret-name"):
         answer = mcp.call(method).json()
         assert answer["error"] == {"code": -32601, "message": "Method not found."}
         assert schemas.errors("mcp/jsonrpc.response.json", answer) == []
-    # the method text never reaches the journal
-    assert refusals(context) == [(SESSION_ID, {"code": "method_not_found", "tool": None})] * 3
+    # HOT-09: the log names the method when it is one of the protocol, a foreign name never reaches the journal
+    assert refusals(context) == [
+        (SESSION_ID, {"code": "method_not_found", "tool": None, "method": method})
+        for method in ("server/discover", "sampling/createMessage", "other")
+    ]
+
+
+def test_what_the_server_does_not_offer_is_an_empty_list(
+    mcp: McpClient, session: Session, schemas: SchemaSet, context: ControlContext
+) -> None:
+    """HOT-09: every list a client may ask for while it connects is answered, empty where there is nothing."""
+    answers = {method: mcp.call(method, {"cursor": "x"}).json() for method in mcp_core.EMPTY_LISTS}
+    assert {method: answer["result"] for method, answer in answers.items()} == {
+        "resources/list": {"resources": []},
+        "resources/templates/list": {"resourceTemplates": []},
+        "prompts/list": {"prompts": []},
+        "logging/setLevel": {},
+    }
+    assert all(schemas.errors("mcp/jsonrpc.response.json", answer) == [] for answer in answers.values())
+    assert refusals(context) == []
+    assert mcp_core.EMPTY_LISTS["prompts/list"] == {"prompts": []}  # answers are copies
+
+
+def test_the_method_names_are_those_of_the_contract() -> None:
+    record = json.loads((Path(mcp_core.__file__).parents[2] / "contracts/guest/journal/record.json").read_text())
+    [branch] = [item for item in record["$defs"]["body_platform_refused"]["oneOf"] if "method" in item["properties"]]
+    assert set(branch["properties"]["method"]["enum"]) == mcp_core.METHODS | {"other"}
 
 
 @pytest.mark.parametrize(
@@ -172,6 +197,41 @@ def test_tools_list_dereferences_the_input_schema(mcp: McpClient, session: Sessi
     assert "$ref" not in json.dumps(tool["inputSchema"])
     assert mcp.call("tools/list").json()["result"] == answer["result"]
     assert mcp.call("tools/list", {"page": 2}).json()["error"]["code"] == -32602
+
+
+def tools_ready_records(context: ControlContext) -> list[tuple[str | None, dict[str, Any]]]:
+    records = context.journal.read(0, 100)[0]
+    return [(record["session_id"], record["body"]) for record in records if record["kind"] == "session.tools_ready"]
+
+
+def test_tools_list_reports_that_the_tools_reached_the_agent(
+    mcp: McpClient, session: Session, context: ControlContext
+) -> None:
+    """HOT-09: the agent's ``tools/list`` is the proof that it has the platform tools; only the first listing of a run
+    is journaled, and a new run (new token) has to list them again."""
+    assert not toolsready.ready(context, SESSION_ID)
+    count = len(mcp.call("tools/list").json()["result"]["tools"])
+    assert toolsready.ready(context, SESSION_ID)
+    mcp.call("tools/list")
+    [(sid, body)] = tools_ready_records(context)
+    assert (sid, body["tools"]) == (SESSION_ID, count)
+    context.state.save_session(replace(session, token_sha256="0" * 64))
+    assert not toolsready.ready(context, SESSION_ID)
+
+
+def test_a_failed_tools_report_still_answers_the_listing(
+    schemas: SchemaSet, api_client: ApiClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unreachable(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        raise ApiSockError("unavailable")
+
+    monkeypatch.setattr(api_client, "call", unreachable)
+    status, answer = McpServer(schemas, api_client, load_tools()).handle(
+        SESSION_ID, b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+    )
+    assert status == 200
+    assert answer is not None
+    assert answer["result"]["tools"]
 
 
 def test_registry_holds_the_tools_of_this_package() -> None:

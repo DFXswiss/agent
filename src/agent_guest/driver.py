@@ -7,9 +7,12 @@ variables and nothing is inherited) and the agent version reported in the sessio
 
 Interface:
 
-* ``AgentDriver`` - protocol: ``kind``, ``version``, ``argv(launch)``, ``model_env(access, env)``,
-  ``prompt_fits(text)``
-* ``Launch`` - the per-start input of ``argv`` (session, harness file, resume ID, model, initial prompt)
+* ``AgentDriver`` - protocol: ``kind``, ``version``, ``argv(launch)``, ``model_env(access, env)``
+* ``Launch`` - the per-start input of ``argv`` (session, harness file, resume ID, model)
+
+The command line never carries a prompt (HOT-09): Claude Code would start the turn at once, while its MCP servers
+still connect in the background, so the turn would run without the platform tools. Every first prompt is delivered
+into the TUI once the agent listed the tools (``delivery.py``).
 * ``ClaudeCodeDriver(version, binary=..., mcp_config=...)`` - the only implementation
 * ``DriverError`` - input the driver refuses (``request_invalid`` for the caller)
 """
@@ -26,9 +29,6 @@ from agent_guest.sandbox import unit
 AGENT_KIND = "claude-code"
 CLAUDE_BINARY = unit.CLAUDE_BINARY
 MCP_CONFIG = "/opt/agent-guest/mcp.json"
-# 05 section 4.1: the initial prompt goes on the command line only up to 100 KiB (UTF-8); longer prompts are pasted
-# into the running TUI after the start (GST-06).
-MAX_ARGV_PROMPT_BYTES = 100 * 1024
 TOOLS = "Read,Glob,Grep,Edit,Write"
 DISALLOWED_TOOLS = "Bash,Agent,Task,WebFetch,WebSearch,NotebookEdit,Skill"
 # 05 section 10.3: the model variables exist only for the platform access (the runner fills them from the catalog).
@@ -43,13 +43,12 @@ class DriverError(ValueError):
 
 @dataclass(frozen=True)
 class Launch:
-    """One start of the agent: ``initial_prompt`` only when it fits on the command line (``prompt_fits``)."""
+    """One start of the agent."""
 
     session_id: str
     harness_file: str
     resume_claude_session_id: str | None = None
     model_id: str | None = None
-    initial_prompt: str | None = None
 
 
 class AgentDriver(Protocol):
@@ -62,8 +61,6 @@ class AgentDriver(Protocol):
     def argv(self, launch: Launch) -> list[str]: ...
 
     def model_env(self, access: str, env: Mapping[str, str]) -> dict[str, str]: ...
-
-    def prompt_fits(self, text: str) -> bool: ...
 
 
 class ClaudeCodeDriver:
@@ -83,7 +80,7 @@ class ClaudeCodeDriver:
         return self._version
 
     def argv(self, launch: Launch) -> list[str]:
-        """The command line of 05 section 4.1; the prompt follows ``--`` so it is never read as an option."""
+        """The command line of 05 section 4.1, without a prompt (module docstring)."""
         if not _ID_RE.fullmatch(launch.session_id):
             raise DriverError("session id")
         args = [
@@ -110,11 +107,6 @@ class ClaudeCodeDriver:
             if not _MODEL_RE.fullmatch(launch.model_id):
                 raise DriverError("model id")
             args += ["--model", launch.model_id]
-        if launch.initial_prompt is not None:
-            text = launch.initial_prompt
-            if not text or "\x00" in text or not self.prompt_fits(text):
-                raise DriverError("initial prompt")
-            args += ["--", launch.initial_prompt]
         return args
 
     def model_env(self, access: str, env: Mapping[str, str]) -> dict[str, str]:
@@ -125,9 +117,6 @@ class ClaudeCodeDriver:
         if unknown:
             raise DriverError("model env not on the allow-list")
         return dict(env)
-
-    def prompt_fits(self, text: str) -> bool:
-        return len(text.encode("utf-8")) <= MAX_ARGV_PROMPT_BYTES
 
 
 def driver_for(kind: str, version: str, *, binary: str = CLAUDE_BINARY, mcp_config: str = MCP_CONFIG) -> AgentDriver:

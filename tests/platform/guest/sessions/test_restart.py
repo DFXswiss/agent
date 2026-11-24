@@ -23,7 +23,6 @@ from agent_guest.control import ControlContext, ControlService
 from agent_guest.control_routes import capture as capture_routes
 from agent_guest.control_routes import prompts as prompt_routes
 from agent_guest.control_routes import sessions as session_routes
-from agent_guest.driver import MAX_ARGV_PROMPT_BYTES
 from tests.platform.guest.sessions.conftest import (
     PROMPT_ID,
     SESSION,
@@ -31,6 +30,9 @@ from tests.platform.guest.sessions.conftest import (
     TmuxRunner,
     request,
 )
+
+LONG_PROMPT = 100 * 1024 + 1
+"""Longer than any command line would take (every initial prompt waits for the TUI anyway, HOT-09)."""
 
 UNIT = f"agent-session-{SESSION}"
 
@@ -42,6 +44,12 @@ def records(context: ControlContext) -> list[dict[str, Any]]:
 
 def states(context: ControlContext) -> list[str]:
     return [body["state"] for body in records(context)]
+
+
+def failure(context: ControlContext) -> str | None:
+    """The reason of the session's ``failed`` record (an undelivered initial prompt is refused after it, HOT-09)."""
+    found = [record for record in records(context) if record["state"] == "failed"]
+    return str(found[-1]["reason"]) if found else None
 
 
 def wait_for(predicate: Any, timeout: float = 5.0) -> None:
@@ -88,8 +96,8 @@ def test_an_agent_killed_by_the_oom_killer_fails_with_oom(
     fake_system.oom.add(UNIT)
     clock[0] += 60
     Path(manager._running[SESSION].status_file).write_text("137\n")
-    wait_for(lambda: states(context)[-1] == "failed")
-    assert records(context)[-1]["reason"] == "oom"
+    wait_for(lambda: "failed" in states(context))
+    assert failure(context) == "oom"
     assert fake_system.oom_checked == [(UNIT, context.journal.clock.now())]  # systemd's entries since the run began
     wait_for(lambda: UNIT in fake_system.stopped)
 
@@ -101,8 +109,8 @@ def test_a_launcher_failure_stays_sandbox_failed_even_after_an_oom_kill(
     manager.start(SESSION)
     fake_system.oom.add(UNIT)
     Path(manager._running[SESSION].status_file).write_text("126\n")
-    wait_for(lambda: states(context)[-1] == "failed")
-    assert records(context)[-1]["reason"] == "sandbox_failed"
+    wait_for(lambda: "failed" in states(context))
+    assert failure(context) == "sandbox_failed"
 
 
 class Journalctl:
@@ -158,7 +166,7 @@ def test_linux_system_reads_oom_kills_from_the_cgroup_or_the_journal(
 def test_the_run_is_remembered_without_the_prompt(
     manager: sessions.SessionManager, session_paths: sessions.Paths
 ) -> None:
-    text = "y" * (MAX_ARGV_PROMPT_BYTES + 1)
+    text = "y" * LONG_PROMPT
     manager.create(request(initial_prompt={"prompt_id": PROMPT_ID, "text": text}))
     manager.start(SESSION)
     run = meta(session_paths)["run"]
@@ -173,7 +181,7 @@ def test_a_restarted_manager_watches_the_running_agent_again(
 ) -> None:
     clock = [100.0]
     manager.monotonic = lambda: clock[0]
-    text = "y" * (MAX_ARGV_PROMPT_BYTES + 1)
+    text = "y" * LONG_PROMPT
     manager.create(request(initial_prompt={"prompt_id": PROMPT_ID, "text": text}))
     manager.start(SESSION)
     status_file = manager._running[SESSION].status_file
@@ -185,8 +193,8 @@ def test_a_restarted_manager_watches_the_running_agent_again(
     assert again._deferred[SESSION] == (PROMPT_ID, text)  # restored from its root-only file
     assert again.reattach() == {}  # watched already
     Path(status_file).write_text("0\n")
-    wait_for(lambda: states(context)[-1] == "failed")
-    assert records(context)[-1]["reason"] == "agent_exited"  # the run started 60 s before its end
+    wait_for(lambda: "failed" in states(context))
+    assert failure(context) == "agent_exited"  # the run started 60 s before its end
 
 
 def test_without_the_run_the_end_is_seen_when_the_tmux_session_is_gone(
@@ -210,8 +218,8 @@ def test_without_the_run_the_end_is_seen_when_the_tmux_session_is_gone(
     Path(session_paths.meta_dir, f"{SESSION}.json").write_text(json.dumps(value))
     again.reattach()
     tmux_runner.codes["has-session"] = 1
-    wait_for(lambda: states(context)[-1] == "failed")
-    assert records(context)[-1]["reason"] == "agent_start_failed"  # no start time known: counted from now
+    wait_for(lambda: "failed" in states(context))
+    assert failure(context) == "agent_start_failed"  # no start time known: counted from now
 
 
 def test_a_lost_pending_start_fails_and_an_interrupted_stop_is_finished(
@@ -439,17 +447,16 @@ def test_the_registered_hooks_attach_sessions_again(
 def test_a_deferred_prompt_survives_a_restart_until_it_is_handed_out(
     manager: sessions.SessionManager, context: ControlContext, session_paths: sessions.Paths
 ) -> None:
-    text = "y" * (MAX_ARGV_PROMPT_BYTES + 1)
+    text = "y" * LONG_PROMPT
     manager.create(request(initial_prompt={"prompt_id": PROMPT_ID, "text": text}))
     manager.start(SESSION)
     prompt_file = Path(session_paths.meta_dir, f"{SESSION}.prompt")
     assert stat.S_IMODE(prompt_file.stat().st_mode) == 0o600
     found = delivery.manager(context)
-    assert not found._initial_pending(SESSION)  # deferred: registered, but held by the manager
     again = restarted(manager)
-    assert found._initial_pending(SESSION)  # nobody holds it ...
+    assert SESSION not in again._deferred  # nobody holds it ...
     again.reattach()
-    assert not found._initial_pending(SESSION)  # ... until the restarted manager restored it
+    assert again._deferred[SESSION] == (PROMPT_ID, text)  # ... until the restarted manager restored it
     assert again.deferred_prompt(SESSION) == (PROMPT_ID, text)
     assert not prompt_file.exists()  # handed out: the file is gone
     again = restarted(again)
@@ -462,7 +469,7 @@ def test_a_deferred_prompt_survives_a_restart_until_it_is_handed_out(
 def test_a_damaged_or_foreign_prompt_file_is_not_restored(
     manager: sessions.SessionManager, session_paths: sessions.Paths
 ) -> None:
-    text = "y" * (MAX_ARGV_PROMPT_BYTES + 1)
+    text = "y" * LONG_PROMPT
     manager.create(request(initial_prompt={"prompt_id": PROMPT_ID, "text": text}))
     manager.start(SESSION)
     prompt_file = Path(session_paths.meta_dir, f"{SESSION}.prompt")
@@ -477,7 +484,7 @@ def test_a_damaged_or_foreign_prompt_file_is_not_restored(
 def test_stop_and_cleanup_remove_the_prompt_file(
     manager: sessions.SessionManager, context: ControlContext, session_paths: sessions.Paths
 ) -> None:
-    text = "y" * (MAX_ARGV_PROMPT_BYTES + 1)
+    text = "y" * LONG_PROMPT
     manager.create(request(initial_prompt={"prompt_id": PROMPT_ID, "text": text}))
     manager.start(SESSION)
     prompt_file = Path(session_paths.meta_dir, f"{SESSION}.prompt")

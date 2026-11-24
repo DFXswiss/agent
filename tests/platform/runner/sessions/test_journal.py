@@ -284,6 +284,10 @@ def test_prompt_refused_without_new_id_changes_nothing_else(rig: Rig) -> None:
         ("session.terminal", {"frames": [[0, "o", "x" * 70000]]}),  # malformed and beyond the 64 KiB terminal limit
         # well-formed, but far more data than a guest may write into one record: refused, never split
         ("session.terminal", {"offset_ms_start": 0, "frames": [[0, "o", "x" * 70000]], "cols": 160, "rows": 48}),
+        ("session.tools_ready", {"tools": -1, "at": AT}),
+        ("session.tools_ready", {"tools": True, "at": AT}),
+        ("session.tools_ready", {"tools": 3}),
+        ("session.tools_ready", {"tools": 3, "at": AT, "names": ["get_context"]}),
     ],
 )
 def test_invalid_records_are_skipped_and_the_next_one_is_handled(rig: Rig, kind: str, body: dict[str, Any]) -> None:
@@ -554,3 +558,23 @@ def test_the_guest_error_codes_are_those_of_the_contract() -> None:
 
 def test_a_hook_outage_is_a_failure_a_guest_may_report() -> None:
     assert "hook_unavailable" in journal_module.GUEST_FAILURES
+
+
+def test_the_tools_at_the_agent_are_a_measured_start_step(rig: Rig) -> None:
+    """HOT-09: `session.tools_ready` changes no state and sends nothing; the start logs its own step `tools_ready`
+    between `agent_starting` and `prompt_delivering`."""
+
+    async def body(env: Any) -> None:
+        found, reader = await started(env)
+        sid = session_id()
+        found.guest.emit(sid, "session.tools_ready", {"tools": 17, "at": AT})
+        found.guest.emit(OTHER_SESSION, "session.tools_ready", {"tools": 17, "at": AT})  # not this VM's session
+        found.guest.emit(sid, "session.state", state("prompt_delivering"))
+        await consume(found, reader)
+        assert reader.skipped == 0
+        steps = [line.split(" step=")[1].split(" ")[0] for line in found.lines if "start_step" in line]
+        assert steps[-2:] == ["tools_ready", "prompt_delivering"]
+        assert (await found.transitions(sid))[-1] == ("prompt_delivering", None)
+        assert [header["kind"] for header, _ in await found.pushed_events()] == []
+
+    run(rig, body)

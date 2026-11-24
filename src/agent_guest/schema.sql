@@ -15,7 +15,7 @@ CREATE TABLE journal (
     ts TEXT NOT NULL,
     session_id TEXT,
     kind TEXT NOT NULL CHECK (kind IN ('session.state', 'session.output', 'session.tool', 'session.hook',
-        'session.file', 'session.terminal', 'usage', 'operation.request', 'platform.query', 'workvm.call',
+        'session.file', 'session.terminal', 'session.tools_ready', 'usage', 'operation.request', 'platform.query', 'workvm.call',
         'ping.delivered', 'platform.read', 'platform.refused', 'metrics', 'guest.error')),
     body TEXT NOT NULL,
     acked_at REAL

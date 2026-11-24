@@ -379,12 +379,13 @@ JSON bodies except tar streams.
 | `session.hook` | `{event,tool?,decision:"allow"|"deny"|"block"|"none",reason?,path?}` |
 | `session.file` | `{path,op:"write"|"edit"|"delete",sha256,size,patch?}` (patch ≤ 64 KiB); or a summary of many files `{path,op:"summary",files,deleted,bytes,paths,reason:"bulk"|"limit"}` (no patches, `paths` ≤ 20; HOT-06, 05-runner.md §6.4) |
 | `session.terminal` | `{offset_ms_start,frames:[[t_ms,"o",data]],cols,rows}` (asciicast v2 output events, ≤ 16 KiB per record, flushed every 100 ms) |
+| `session.tools_ready` | `{tools,at}`: the session's agent listed the platform tools (`tools/list` on `/mcp`) for the first time in this run of the agent; the first prompt is delivered only after it (HOT-09, 05-runner.md §6.1 step 6); the runner measures the start step `tools_ready` |
 | `usage` | `{request_id,model,provider?,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,thinking_tokens,cost_usd?,context_window_tokens,request_bytes,response_bytes,status}` |
 | `operation.request` | `{pending_id,operation_id,type,params,idempotency_key?,requested_at}` |
 | `platform.query` | `{pending_id,tool,arguments}` |
 | `ping.delivered` | `{ping_id,via:"hook"|"tool"}` |
 | `platform.read` | `{tool:"get_notifications",result_count}` (a read the guest answers itself; the runner records event and audit as for a forwarded read, KOR-07) |
-| `platform.refused` | `{code,tool}`: an MCP request refused before it was forwarded or answered; `code` ∈ `parse_error`, `invalid_request`, `method_not_found`, `unknown_tool`, `size_exceeded` (`tool` null), `params_invalid` (a tool name or null), `not_found` (`get_subagent_result`), `rate_limited` (a read tool); never arguments (KOR-07) |
+| `platform.refused` | `{code,tool,method?}`: an MCP request refused before it was forwarded or answered; `code` ∈ `parse_error`, `invalid_request`, `method_not_found`, `unknown_tool`, `size_exceeded` (`tool` null), `params_invalid` (a tool name or null), `not_found` (`get_subagent_result`), `rate_limited` (a read tool); never arguments (KOR-07); `method` only with `method_not_found`: the refused method by name when it is a request method of the protocol (`server/discover`, `resources/read`, `prompts/get`, `completion/complete`, …), else `other` (HOT-09) |
 | `guest.error` | `{code}` |
 
 ## 8. Session platform API (MCP)
@@ -392,7 +393,10 @@ JSON bodies except tar streams.
 Endpoint `http://127.0.0.1:7700/mcp` inside the VM; server name `platform`; JSON-RPC 2.0 over HTTP POST with
 JSON responses (no SSE). Methods: `initialize` (echo protocol version, default `2025-06-18`; `serverInfo
 {name:"agent-dfx-swiss-platform",version}`), `notifications/initialized` (202), `tools/list`, `tools/call`,
-`ping`; others → JSON-RPC error `-32601`. Authentication: `Authorization: Bearer ${PLATFORM_SESSION_TOKEN}`
+`ping`; `resources/list`, `resources/templates/list`, `prompts/list` answer an empty list and `logging/setLevel`
+`{}` (HOT-09: every method a client asks while it connects is answered); others → JSON-RPC error `-32601`, among them
+the probe `server/discover` of a client of a newer protocol generation, which then connects with `initialize`. The
+first successful `tools/list` of a run of the agent marks the tools as arrived (journal `session.tools_ready`). Authentication: `Authorization: Bearer ${PLATFORM_SESSION_TOKEN}`
 (constant-time comparison against the stored hash; 401 otherwise). Every call is journaled, except refusals beyond
 the per-session limits below; every journaled read is also an audit row (`read.session.<tool>`), also a read refused
 before it was forwarded or answered (`rejected`). A read whose arguments the tool refused (`params_invalid`) or that

@@ -292,8 +292,12 @@ Command line (inside the Landlock launcher, §4.3):
   --disallowedTools Bash,Agent,Task,WebFetch,WebSearch,NotebookEdit,Skill
   --permission-mode dontAsk --disable-slash-commands
   --append-system-prompt-file /run/agent-guest/harness/<session_id>.md
-  [--resume <claude_session_id>] [--model <model_id>] [<initial prompt>]
+  [--resume <claude_session_id>] [--model <model_id>]
 ```
+
+The command line carries no prompt (HOT-09): Claude Code connects its MCP servers in the background and runs a turn
+from a command-line prompt at once, so that turn would miss the platform tools. The initial prompt is delivered into
+the TUI like a follow-up once the agent listed the platform tools (step 6).
 
 `/opt/agent-guest/mcp.json`:
 `{"mcpServers":{"platform":{"type":"http","url":"http://127.0.0.1:7700/mcp","headers":{"Authorization":"Bearer ${PLATFORM_SESSION_TOKEN}"}}}}`.
@@ -480,8 +484,8 @@ Otherwise block (`03-api.md` §8.2), journal `session.state prompt_refused` and 
 | 2 | `vm_ready` | guest health assigned to this wg | – |
 | 3 | – | choose model access (§10.1), decrypt credential | 0.05 s |
 | 4 | `sandbox_ready` | `POST /v1/sessions` (user, dirs, harness file, token) + `PUT …/credential` | 0.3 s |
-| 5 | `agent_starting` | register initial prompt hash; start tmux window + unit with the initial prompt as last CLI argument if it is ≤ 100 KiB (else start without it and deliver it by bracketed paste, §6.2) | ≤ 120 s, else `failed` `agent_start_failed` (reconcile step 56, counted from the first reconcile that saw the state; KOR-02) |
-| 6 | `prompt_delivering` | Claude TUI up (transcript file created / first hook) | ≤ 2 s from step 5 |
+| 5 | `agent_starting` | register initial prompt hash; start tmux window + unit (no prompt on the command line, §4.1) | ≤ 120 s, else `failed` `agent_start_failed` (reconcile step 56, counted from the first reconcile that saw the state; KOR-02) |
+| 6 | `prompt_delivering` | the agent listed the platform tools (`tools/list` on `/mcp`, journal `session.tools_ready`, runner start step `tools_ready` ≤ 2 s from step 5) **and** the Claude TUI is up (input box visible); then the initial prompt is typed or pasted (§6.2). Tools not listed within `AGENT_GUEST_TOOLS_SECONDS` (30 s): `guest.error tools_unavailable` and the agent is started again (new run, new token), at most twice; then `failed` `agent_start_failed` (HOT-09) | ≤ 2 s after the tools |
 | 7 | `working` | UserPromptSubmit accepted (`prompt_accepted`) | ≤ 0.5 s |
 
 Warm-pool path total target ≤ 3 s; clone path ≤ 8.5 s; both under the 10 s requirement (`03-api.md` §4.6.1).

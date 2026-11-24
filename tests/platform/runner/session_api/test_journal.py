@@ -83,6 +83,7 @@ def test_refused_calls_audit_only_read_tools(rig: Rig) -> None:
                 (sid, "platform.refused", {"code": "params_invalid", "tool": "request_operation"}),
                 (sid, "platform.refused", {"code": "params_invalid", "tool": None}),
                 (sid, "platform.refused", {"code": "method_not_found", "tool": None}),
+                (sid, "platform.refused", {"code": "method_not_found", "tool": None, "method": "server/discover"}),
                 # KOR-10 (AUD-02 NB-07, NB-08)
                 (sid, "platform.refused", {"code": "rate_limited", "tool": "list_tasks"}),
                 (sid, "platform.refused", {"code": "not_found", "tool": "get_subagent_result"}),
@@ -102,10 +103,12 @@ def test_refused_calls_audit_only_read_tools(rig: Rig) -> None:
             for tool in ("get_task", "list_tasks", "get_subagent_result")
         ]
         assert await items(p, "event") == []
-        assert f"runner.session_api refused session_id={sid} code=params_invalid tool=get_task" in p.lines
-        assert f"runner.session_api refused session_id={sid} code=params_invalid tool=request_operation" in p.lines
-        assert f"runner.session_api refused session_id={sid} code=method_not_found tool=-" in p.lines
-        assert f"runner.session_api refused session_id={sid} code=size_exceeded tool=-" in p.lines
+        line = f"runner.session_api refused session_id={sid} code="
+        assert f"{line}params_invalid tool=get_task method=-" in p.lines
+        assert f"{line}params_invalid tool=request_operation method=-" in p.lines
+        assert f"{line}method_not_found tool=- method=-" in p.lines  # a guest before HOT-09
+        assert f"{line}method_not_found tool=- method=server/discover" in p.lines
+        assert f"{line}size_exceeded tool=- method=-" in p.lines
         await p.env.sync.pusher.drain()
         assert [item["body"]["action"] for item in p.env.hub.items() if item["item_kind"] == "audit"] == [
             "read.session.get_task",
@@ -149,6 +152,9 @@ def test_records_of_a_session_on_another_vm_change_nothing(rig: Rig) -> None:
         ("platform.refused", {"code": "rate_limited", "tool": None}),
         ("platform.refused", {"code": "not_found", "tool": "get_task"}),
         ("platform.refused", {"code": "size_exceeded", "tool": "get_task"}),
+        ("platform.refused", {"code": "method_not_found", "tool": None, "method": "tools/call\nforged"}),
+        ("platform.refused", {"code": "params_invalid", "tool": None, "method": "server/discover"}),
+        ("platform.refused", {"code": "method_not_found", "tool": "get_task", "method": "other"}),
     ],
 )
 def test_malformed_records_are_skipped(rig: Rig, kind: str, body: dict[str, Any]) -> None:
@@ -173,3 +179,9 @@ def test_the_parsers_accept_exactly_the_contract_fixtures(kind: str) -> None:
     for path in invalid:
         with pytest.raises(JournalRecordInvalid):
             parse(json.loads(path.read_text(encoding="utf-8")))
+
+
+def test_the_method_names_are_those_of_the_contract() -> None:
+    record = json.loads((CONTRACTS / "guest" / "journal" / "record.json").read_text(encoding="utf-8"))
+    [branch] = [item for item in record["$defs"]["body_platform_refused"]["oneOf"] if "method" in item["properties"]]
+    assert set(branch["properties"]["method"]["enum"]) == journal.METHODS

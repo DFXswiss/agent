@@ -9,8 +9,18 @@ JSON-RPC 2.0 over HTTP POST with JSON responses (no SSE, no MCP session IDs):
 * ``tools/call`` - arguments checked against the tool's input schema with the guest validator (integers never accept
   booleans, every argument object is closed); a mismatch is the tool error ``params_invalid``; an unknown tool is the
   JSON-RPC error ``-32602``
-* ``ping`` - ``{}``; every other method ``-32601``; a body that is not JSON ``-32700``, not a JSON-RPC request
-  ``-32600`` (HTTP 400 for both, 200 for the others)
+* ``ping`` - ``{}``; the lists of what the server does not offer answer empty (HOT-09: every method a client may ask
+  while it connects gets an answer): ``resources/list`` ``{resources:[]}``, ``resources/templates/list``
+  ``{resourceTemplates:[]}``, ``prompts/list`` ``{prompts:[]}``, ``logging/setLevel`` ``{}``; every other method
+  ``-32601`` - among them ``server/discover``, the probe of a client that speaks a newer protocol generation first:
+  ``-32601`` is the answer the protocol foresees for a server of the 2025 generation, the client then connects with
+  ``initialize``; a body that is not JSON ``-32700``, not a JSON-RPC request ``-32600`` (HTTP 400 for both, 200 for
+  the others)
+
+Tools at the agent (HOT-09): a successful ``tools/list`` is the proof that the session's agent has the platform tools
+(Claude Code connects its MCP servers in the background, ADR-029 addendum); the server reports it to the control
+process (op ``session.tools_listed {session_id, tools}``, best effort), which holds the first prompt until then
+(``delivery.py``).
 
 Tool results are ``{content:[{type:"text",text:<JSON>}], isError}``; errors carry ``{"error":<code>,"message":...}``
 with the codes of ``mcp/objects.json#/$defs/tool_error``.
@@ -29,7 +39,9 @@ answers), ``get_notifications`` by ``platform.read`` (written by the control pro
 refused before it is forwarded or answered is journaled as ``platform.refused {code, tool}``: ``parse_error``,
 ``invalid_request``, ``method_not_found``, ``unknown_tool`` or ``params_invalid`` (of ``initialize``/``tools/list``
 with ``tool`` null, of a tool call with the tool's name); ``tool`` names one of the registered tools or is null -
-never the method text, a foreign name or the arguments, so nothing the session sends reaches the runner as content.
+never a foreign name or the arguments, so nothing the session sends reaches the runner as content. A
+``method_not_found`` also carries ``method``: the method's name when it is one of the protocol's (``METHODS``), else
+``other`` (HOT-09: the log says which method was refused).
 The runner audits a refused read tool as ``read.session.<tool>`` with result ``rejected`` (KOR-07). Journaling is
 best effort: an unreachable control process does not change the answer.
 
@@ -70,6 +82,32 @@ READ_BURST = 120
 READ_RATE = 2.0
 RATE_LIMITED = "rate_limited"
 MAX_BUCKETS = 1024
+TOOLS_LISTED = "session.tools_listed"
+EMPTY_LISTS: dict[str, dict[str, Any]] = {
+    "resources/list": {"resources": []},
+    "resources/templates/list": {"resourceTemplates": []},
+    "prompts/list": {"prompts": []},
+    "logging/setLevel": {},
+}
+"""Methods of what the server does not offer, answered empty (module docstring)."""
+METHODS = frozenset(
+    {
+        "server/discover",
+        "resources/read",
+        "resources/subscribe",
+        "resources/unsubscribe",
+        "prompts/get",
+        "completion/complete",
+        "sampling/createMessage",
+        "elicitation/create",
+        "roots/list",
+        "tasks/get",
+        "tasks/list",
+        "tasks/result",
+        "tasks/cancel",
+    }
+)
+"""Request methods of the protocol that the server refuses ``-32601`` and names in the journal (others: ``other``)."""
 _SKIPPED_KEYS = frozenset({"$ref", "$schema", "$id", "$defs", "$comment", "title"})
 
 
@@ -223,11 +261,12 @@ def _error(ident: object, code: int, message: str) -> dict[str, Any]:
 
 
 class _RpcError(Exception):
-    def __init__(self, code: int, message: str, refusal: str) -> None:
+    def __init__(self, code: int, message: str, refusal: str, method: str | None = None) -> None:
         super().__init__(code)
         self.code = code
         self.message = message
         self.refusal = refusal
+        self.method = method
 
 
 class McpServer:
@@ -266,17 +305,26 @@ class McpServer:
         try:
             result = self._dispatch(session_id, message["method"], message.get("params", {}))
         except _RpcError as error:
-            self.refused(session_id, error.refusal)
+            self.refused(session_id, error.refusal, method=error.method)
             return 200, _error(ident, error.code, error.message)
         return 200, {"jsonrpc": "2.0", "id": ident, "result": result}
 
-    def refused(self, session_id: str, code: str, tool: str | None = None) -> None:
+    def refused(self, session_id: str, code: str, tool: str | None = None, *, method: str | None = None) -> None:
         """Journal a refused request unless the session's refusals are over their limit (module docstring); a control
         process that cannot be reached is ignored."""
         if self.refusals.take(session_id) == "refused_again":
             return
+        body: dict[str, Any] = {"code": code, "tool": tool}
+        if method is not None:
+            body["method"] = method
         with contextlib.suppress(ApiSockError):
-            self.control.append(REFUSED, {"code": code, "tool": tool}, session_id)
+            self.control.append(REFUSED, body, session_id)
+
+    def tools_listed(self, session_id: str) -> None:
+        """Tell the control process that the session's agent has the tools (best effort: without the report the
+        first prompt waits for the next listing or the control process's deadline)."""
+        with contextlib.suppress(ApiSockError):
+            self.control.call(TOOLS_LISTED, {"session_id": session_id, "tools": len(self.tools)})
 
     def _dispatch(self, session_id: str, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if method == "initialize":
@@ -290,14 +338,19 @@ class McpServer:
             return {}
         if method == "tools/list":
             self._check_params("mcp/tools-list.params.json", params)
-            return {"tools": self.listing()}
+            listing = self.listing()
+            self.tools_listed(session_id)
+            return {"tools": listing}
+        if method in EMPTY_LISTS:
+            return dict(EMPTY_LISTS[method])
         if method == "tools/call":
             name = params.get("name")
             tool = self.tools.get(name) if isinstance(name, str) else None
             if tool is None or set(params) - {"name", "arguments", "_meta"}:
                 raise _RpcError(INVALID_PARAMS, "Unknown tool.", "unknown_tool")
             return self.call(tool, session_id, params.get("arguments", {}))
-        raise _RpcError(METHOD_NOT_FOUND, "Method not found.", "method_not_found")
+        named = method if method in METHODS else "other"
+        raise _RpcError(METHOD_NOT_FOUND, "Method not found.", "method_not_found", named)
 
     def _check_params(self, rel: str, params: dict[str, Any]) -> None:
         if self.schemas.errors(rel, params):

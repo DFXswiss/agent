@@ -17,6 +17,8 @@ the host, 00-overview.md section 3 B4: a guest never speaks for another VM's ses
   of E8 (terminal 64 KiB; a well-formed terminal record beyond it becomes several events, `sync.seal.split_terminal`).
 - `session.hook` with a PreToolUse `deny`: additionally the audit `hook.denied` with tool name and rule number only
   (never the path).
+- `session.tools_ready {tools, at}` (HOT-09): the session's agent listed the platform tools; only measured - the start
+  step `tools_ready` of the start budget (`start.Starter.observe_journal`), nothing is stored or sent.
 - `usage`: handled by the model area (`model/journal.py`, RUN-12).
 - `guest.error`: a fact line `runner.journal guest_error` with the code; a record of a session on this VM with a code
   of the closed list (`GUEST_ERROR_CODES`, `contracts/guest/journal/record.json`) also becomes the device event
@@ -87,6 +89,7 @@ GUEST_ERROR_CODES = frozenset(
         "auth_failed",
         "auth_rate_limited",
         "turn_unconfirmed",
+        "tools_unavailable",
     }
 )
 DENY_RULES = range(2, 7)
@@ -210,6 +213,19 @@ def event_handler(kind: str) -> Callable[[Any, AsyncConnection[Any], JournalReco
     return handle
 
 
+# -- tools at the agent ---------------------------------------------------------------------------------------------
+
+
+async def tools_ready(journal: Any, conn: AsyncConnection[Any], record: JournalRecord) -> None:
+    session = await journal.session(conn, record)
+    if session is None:
+        return
+    tools = record.body.get("tools")
+    if set(record.body) != {"tools", "at"} or type(tools) is not int or not 0 <= tools <= MAX_COUNT:
+        raise JournalRecordInvalid(record.kind)
+    journal.reached(session.id, "tools_ready")
+
+
 # -- guest errors ----------------------------------------------------------------------------------------------------
 
 
@@ -231,5 +247,6 @@ async def guest_error(journal: Any, conn: AsyncConnection[Any], record: JournalR
 HANDLERS: dict[str, Callable[..., Any]] = {
     "session.state": session_state,
     **{kind: event_handler(kind) for kind in EVENT_KINDS},
+    "session.tools_ready": tools_ready,
     "guest.error": guest_error,
 }

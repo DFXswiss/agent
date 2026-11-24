@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from agent_guest import delivery, sessions, tmux
+from agent_guest import delivery, sessions, tmux, toolsready
 from agent_guest.control import ControlContext
 from agent_guest.control_routes import prompts as control_prompts
 from agent_guest.driver import ClaudeCodeDriver
@@ -174,6 +174,16 @@ def set_state(context: ControlContext, state: str) -> None:
 
 def register(context: ControlContext, text: str, prompt_id: str = PROMPT_ID) -> None:
     PromptRegistry(context.journal, context.state).register(SESSION_ID, prompt_id, text)
+
+
+def tools_listed(context: ControlContext) -> None:
+    """The session's agent listed the platform tools (what ``/mcp`` reports, HOT-09)."""
+    toolsready.mark(context, SESSION_ID, 17)
+
+
+def kinds(context: ControlContext) -> list[str]:
+    records, _ = context.journal.read(after=0, limit=1000)
+    return [record["kind"] for record in records]
 
 
 def journal(context: ControlContext) -> list[dict[str, Any]]:
@@ -948,6 +958,7 @@ def test_the_tui_coming_up_moves_the_session_to_prompt_delivering(
     context: ControlContext, engine: delivery.Delivery, tui: FakeTui
 ) -> None:
     put(context, "agent_starting", CLAUDE_ID)
+    tools_listed(context)
     tui.box = False
 
     def paint(count: int) -> None:
@@ -992,19 +1003,144 @@ def test_a_slow_tui_is_watched_until_the_session_ends(
     assert journal(context) == []
 
 
-def test_an_initial_prompt_on_the_command_line_holds_the_transition_back(
-    context: ControlContext, engine: delivery.Delivery, tui: FakeTui, clock_: Clock
+def test_the_tui_alone_is_not_ready_the_tools_must_have_arrived(
+    context: ControlContext,
+    engine: delivery.Delivery,
+    tui: FakeTui,
+    clock_: Clock,
+    session_manager: sessions.SessionManager,
+) -> None:
+    """HOT-09: the input box is visible at once, the tool server answers late; the session moves on only after the
+    agent listed the tools, and then the initial prompt is the first thing typed."""
+    put(context, "agent_starting")
+    register(context, "Read the platform at once.")
+    session_manager._deferred[SESSION_ID] = (PROMPT_ID, "Read the platform at once.")
+    tui.box = True
+    started: list[Callable[[], object]] = []
+    engine.spawn = started.append
+
+    def tools_late(elapsed: float) -> None:
+        if elapsed >= 1.5 and not toolsready.ready(context, SESSION_ID):
+            assert journal(context) == []  # nothing typed, no transition while the tools are missing
+            assert tui.submitted == []
+            tools_listed(context)
+        session = context.state.session(SESSION_ID)
+        if session is not None and session.state == "working":
+            set_state(context, "idle")
+
+    clock_.on_sleep = tools_late
+    assert engine.watch_ready(SESSION_ID)
+    assert kinds(context)[:2] == ["session.tools_ready", "session.state"]
+    assert sum(clock_.slept) >= 1.5
+    (worker,) = started
+    worker()
+    assert tui.submitted == ["Read the platform at once."]
+
+
+def test_missing_tools_restart_the_agent_twice_then_fail_the_start(
+    context: ControlContext,
+    make: Callable[..., delivery.Delivery],
+    tui: FakeTui,
+    *,
+    clock_: Clock,
+    session_manager: sessions.SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     put(context, "agent_starting")
-    register(context, "On the command line.")
+    register(context, "Needs the platform.")
+    session_manager._deferred[SESSION_ID] = (PROMPT_ID, "Needs the platform.")
+    tui.box = True
+    restarts: list[str] = []
 
-    def hook_accepts(elapsed: float) -> None:
-        if elapsed > 0.2:
-            PromptRegistry(context.journal, context.state).check(SESSION_ID, "On the command line.")
+    def restart(ctx: ControlContext, session_id: str) -> bool:
+        restarts.append(session_id)
+        return True
 
-    clock_.on_sleep = hook_accepts
+    monkeypatch.setattr(sessions, "restart_session", restart)
+    engine = make(tools_seconds=2.0)
+    for _ in range(2):
+        clock_.slept.clear()
+        assert not engine.watch_ready(SESSION_ID)
+        assert sum(clock_.slept) == pytest.approx(2.0)
+    assert restarts == [SESSION_ID, SESSION_ID]
+    assert session_manager._deferred[SESSION_ID] == (PROMPT_ID, "Needs the platform.")  # still waiting
+    assert journal(context) == []
+    # the third time the start ends: failed, and the waiting prompt is refused, never typed
     assert not engine.watch_ready(SESSION_ID)
-    assert [body["state"] for body in journal(context)] == ["prompt_accepted"]
+    assert restarts == [SESSION_ID, SESSION_ID]
+    assert [(body["state"], body.get("reason")) for body in journal(context)] == [
+        ("failed", "agent_start_failed"),
+        ("prompt_refused", "delivery_failed"),
+    ]
+    assert tui.submitted == []
+    records, _ = context.journal.read(after=0, limit=1000)
+    errors = [record for record in records if record["kind"] == "guest.error"]
+    assert [(record["session_id"], record["body"]) for record in errors] == [
+        (SESSION_ID, {"code": "tools_unavailable"})
+    ] * 3
+
+
+def test_a_run_that_cannot_be_restarted_fails_at_once(
+    context: ControlContext,
+    make: Callable[..., delivery.Delivery],
+    tui: FakeTui,
+    session_manager: sessions.SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    put(context, "agent_starting")
+    monkeypatch.setattr(sessions, "restart_session", lambda ctx, session_id: False)
+    assert not make(tools_seconds=1.0).watch_ready(SESSION_ID)
+    assert [body["state"] for body in journal(context)] == ["failed"]
+
+
+def test_the_restarts_count_again_after_a_start_that_got_its_tools(
+    context: ControlContext,
+    make: Callable[..., delivery.Delivery],
+    tui: FakeTui,
+    session_manager: sessions.SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    put(context, "agent_starting")
+    monkeypatch.setattr(sessions, "restart_session", lambda ctx, session_id: True)
+    engine = make(tools_seconds=1.0)
+    assert not engine.watch_ready(SESSION_ID)
+    assert engine._restarts == {SESSION_ID: 1}
+    tools_listed(context)
+    assert engine.watch_ready(SESSION_ID)
+    assert engine._restarts == {}
+
+
+def test_a_journal_that_cannot_take_the_error_still_restarts(
+    context: ControlContext,
+    make: Callable[..., delivery.Delivery],
+    tui: FakeTui,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    put(context, "agent_starting")
+    monkeypatch.setattr(sessions, "restart_session", lambda ctx, session_id: True)
+
+    def unavailable(*_args: object) -> int:
+        raise JournalError("unavailable")
+
+    monkeypatch.setattr(context.journal, "append", unavailable)
+    assert not make(tools_seconds=1.0).watch_ready(SESSION_ID)
+
+
+def test_a_closing_journal_ends_the_watch_without_an_error(
+    context: ControlContext,
+    make: Callable[..., delivery.Delivery],
+    tui: FakeTui,
+    session_manager: sessions.SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    put(context, "agent_starting")
+
+    def closing(ctx: ControlContext, session_id: str) -> bool:
+        raise JournalError("unavailable")
+
+    monkeypatch.setattr(sessions, "restart_session", closing)
+    assert not make(tools_seconds=1.0).watch_ready(SESSION_ID)
+    assert journal(context) == []
 
 
 def test_close_ends_the_watch(context: ControlContext, make: Callable[..., delivery.Delivery], tui: FakeTui) -> None:
@@ -1043,13 +1179,14 @@ def test_the_deferred_initial_prompt_is_delivered_when_the_tui_is_up(
     session_manager: sessions.SessionManager,
 ) -> None:
     put(context, "agent_starting")
+    tools_listed(context)
     text = "A long initial prompt " * 10
     register(context, text)
     session_manager._deferred[SESSION_ID] = (PROMPT_ID, text)
     started: list[Callable[[], object]] = []
     engine.spawn = started.append
     engine.agent_starting(SESSION_ID)
-    # The deferred prompt is registered but does not hold the transition back (it is not on the command line).
+    # The deferred prompt is registered and waits for the transition.
     started.pop(0)()
     assert [body["state"] for body in journal(context)] == ["prompt_delivering"]
     register(context, "Follow-up.", SECOND_ID)
@@ -1093,6 +1230,7 @@ def test_the_prompts_module_watches_every_start(
     context: ControlContext, engine: delivery.Delivery, tui: FakeTui
 ) -> None:
     put(context, "agent_starting")
+    tools_listed(context)
     watcher = control_prompts.SESSION_EVENTS["agent_starting"]
     assert watcher in sessions.session_events()["agent_starting"]
     tui.box = True

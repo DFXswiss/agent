@@ -338,9 +338,12 @@ def test_timer_marks_steps_and_budgets() -> None:
     assert not timer.over_budget("vm_ready")  # no budget
     timer.mark("sandbox", 10.3)
     timer.mark("agent_starting", 10.3)
-    timer.mark("prompt_delivering", 13.0)
+    timer.mark("tools_ready", 13.0)
+    timer.mark("prompt_delivering", 13.1)
     timer.mark("working", 13.2)
-    assert timer.over_budget("prompt_delivering")
+    assert timer.over_budget("tools_ready")  # 2.7 s > 2 s (HOT-09)
+    assert timer.step("prompt_delivering") == pytest.approx(0.1)  # measured from the tools
+    assert not timer.over_budget("prompt_delivering")
     assert not timer.over_budget("working")
     clone = StartTimer(started=0.0, path="clone")
     clone.mark("vm", 5.0)
@@ -466,8 +469,9 @@ def test_journal_marks_only_the_steps_after_agent_starting(rig: Rig) -> None:
         starter.observe_journal("s", "agent_starting")
         starter.observe_journal("s", "idle")
         assert timer.marks == {}
+        starter.observe_journal("s", "tools_ready")
         starter.observe_journal("s", "prompt_delivering")
-        assert set(timer.marks) == {"prompt_delivering"}
+        assert set(timer.marks) == {"tools_ready", "prompt_delivering"}
         starter.observe_journal("s", "failed")
         assert "s" not in starter.timers
         starter.timers["t"] = StartTimer(started=env.clock())

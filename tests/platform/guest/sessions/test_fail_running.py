@@ -15,7 +15,7 @@ from agent_guest.control_routes import turns
 from agent_guest.sandbox import unit
 from agent_guest.state import StateError
 from tests.platform.guest.sessions.conftest import SESSION, FakeSystem, TmuxRunner, request
-from tests.platform.guest.sessions.test_sessions import finish, records, states, wait_for
+from tests.platform.guest.sessions.test_sessions import failure, finish, records, states, wait_for
 
 
 def started(manager: sessions.SessionManager) -> None:
@@ -28,7 +28,8 @@ def test_a_live_session_ends_failed_with_the_reason(
 ) -> None:
     started(manager)
     assert manager.fail_running(SESSION, "hook_unavailable") is True
-    assert records(context)[-1] == {"state": "failed", "reason": "hook_unavailable", "at": records(context)[-1]["at"]}
+    [failed] = [record for record in records(context) if record["state"] == "failed"]
+    assert failed == {"state": "failed", "reason": "hook_unavailable", "at": failed["at"]}
     assert unit.UNIT_PREFIX + SESSION in fake_system.stopped
     assert "kill-session" in tmux_runner.subcommands()
     # the pane ends afterwards: the watcher reports nothing more (no agent_exited on top)
@@ -55,7 +56,7 @@ def test_a_session_that_is_not_running_ends_without_a_watcher(
 ) -> None:
     manager.create(request())  # sandbox_ready: no agent started yet
     assert manager.fail_running(SESSION, "hook_unavailable") is True
-    assert states(context)[-1] == "failed"
+    assert "failed" in states(context)
 
 
 # ---------------------------------------------------------------- the api.sock ops
@@ -81,7 +82,7 @@ def test_a_turn_is_confirmed_while_the_session_works(manager: sessions.SessionMa
 def test_a_failed_decision_hook_ends_the_session(manager: sessions.SessionManager, context: ControlContext) -> None:
     started(manager)
     assert turns.hook_failed(context, {"session_id": SESSION, "event": "Stop"}) == {"ended": True}
-    assert records(context)[-1]["reason"] == "hook_unavailable"
+    assert failure(context) == "hook_unavailable"
     assert turns.hook_failed(context, {"session_id": SESSION, "event": "PreToolUse"}) == {"ended": False}
 
 

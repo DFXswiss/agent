@@ -191,7 +191,7 @@ to, file name only, ADR-052) and added columns are listed in
 | `ping` | `id` PK, `session_id`, `kind` CHECK in (`whiteboard.entry`,`subagent.finished`,`operation.finished`), `level` NULL, `ref`, `created_at`, `noticed_at` NULL, `delivered_at` NULL | content-free notices; `noticed_at` when a hook answer carried the notice, `delivered_at` when `get_notifications` returned it (RUN-14) |
 
 Journal kinds: `session.state`, `session.output`, `session.tool`, `session.hook`, `session.file`,
-`session.terminal`, `usage`, `operation.request`, `platform.query`, `ping.delivered`, `platform.read`, `platform.refused`, `metrics`, `guest.error`.
+`session.terminal`, `session.tools_ready`, `usage`, `operation.request`, `platform.query`, `ping.delivered`, `platform.read`, `platform.refused`, `metrics`, `guest.error`.
 Bodies are defined in `03-api.md` §7.2.
 
 ## 6. Migrations

@@ -12,7 +12,9 @@
    `PUT .../credential` (the transition follows both);
 5. `agent_starting`: the guest registers the prompt hash and starts the agent once the credential is there.
 
-`prompt_delivering` and `working` come from the guest journal (`sessions/journal.py`). Every transition carries the
+`tools_ready` (the agent listed the platform tools, journal `session.tools_ready`, HOT-09), `prompt_delivering` (the
+guest moves there only after the tools arrived and the TUI is up) and `working` come from the guest journal
+(`sessions/journal.py`). Every transition carries the
 device time. Failures end the session `failed` with the reason of `session-failure-reasons.json`:
 
 - VM could not be made ready (clone/start/restart, golden missing): `vm_start_failed`;
@@ -31,8 +33,9 @@ runs (the guest journal reported `failed`, the hub stopped it), the start stops 
 
 Budget measurement (`StartTimer`): the monotonic time of every step from the start of step 1, logged as fact lines
 (`runner.session start_step ...`) with the VM path and `over_budget=1` when a step exceeded its budget of 05 section
-6.1 (pool 0.1 s, restart and clone 6 s, model choice 0.05 s, sandbox 0.3 s, TUI up 2 s after `agent_starting`,
-prompt accepted 0.5 s after that). The total from step 1 to `working` is logged with the path.
+6.1 (pool 0.1 s, restart and clone 6 s, model choice 0.05 s, sandbox 0.3 s, tools at the agent 2 s after
+`agent_starting`, TUI up 2 s after that, prompt accepted 0.5 s after that). The total from step 1 to `working` is
+logged with the path.
 """
 
 from __future__ import annotations
@@ -60,13 +63,14 @@ from agent_runner.vm.records import VmRow
 HEALTH_TIMEOUT_S = 5.0
 VM_BUDGET_S = {"running": 0.1, "pool": 0.1, "restart": 6.0, "clone": 6.0}
 STEP_BUDGET_S = {"model": 0.05, "sandbox": 0.3}
+TOOLS_BUDGET_S = 2.0
 TUI_BUDGET_S = 2.0
 ACCEPT_BUDGET_S = 0.5
 VM_REASONS = frozenset({"vm_start_failed", "capacity_exhausted"})
 REFRESH_TIMEOUT_S = 0.5
 UNEXPECTED = "agent_start_failed"
-MEASURED = ("vm", "vm_ready", "model", "sandbox", "agent_starting", "prompt_delivering", "working")
-JOURNAL_MEASURED = frozenset({"prompt_delivering", "working"})
+MEASURED = ("vm", "vm_ready", "model", "sandbox", "agent_starting", "tools_ready", "prompt_delivering", "working")
+JOURNAL_MEASURED = frozenset({"tools_ready", "prompt_delivering", "working"})
 
 
 class Ended(Exception):
@@ -105,6 +109,7 @@ class StartTimer:
             "vm": VM_BUDGET_S.get(self.path or "", 0.0),
             "model": STEP_BUDGET_S["model"],
             "sandbox": STEP_BUDGET_S["sandbox"],
+            "tools_ready": TOOLS_BUDGET_S,
             "prompt_delivering": TUI_BUDGET_S,
             "working": ACCEPT_BUDGET_S,
         }.get(name)

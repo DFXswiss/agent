@@ -154,6 +154,7 @@ SPEC_JOURNAL = {
     "session.hook": "event tool decision reason path",
     "session.file": "path op sha256 size patch",
     "session.terminal": "offset_ms_start frames cols rows",
+    "session.tools_ready": "tools at",
     "usage": "request_id model provider input_tokens output_tokens cache_read_tokens cache_write_tokens"
     " thinking_tokens cost_usd context_window_tokens request_bytes response_bytes status",
     "operation.request": "pending_id operation_id type params idempotency_key requested_at",
@@ -163,7 +164,7 @@ SPEC_JOURNAL = {
     "ping.delivered": "ping_id via",
     # contracts/changes/KOR-07.md: a read answered by the guest itself and an MCP request refused before forwarding
     "platform.read": "tool result_count",
-    "platform.refused": "code tool",
+    "platform.refused": "code tool method",
     "metrics": "at vm sessions",
     "guest.error": "code",
 }
@@ -580,7 +581,12 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
         604800,
     ),
     "github.comment": ("repo number body", "comment_id url", "repo number body", 86400),
-    "github.list_issues": ("repo state labels sort direction per_page page", "issues next_page truncated", "", None),
+    "github.list_issues": (
+        "repo state labels sort direction per_page page",
+        "issues next_page truncated note",
+        "",
+        None,
+    ),
     "github.get_issue": (
         "repo number comments_page comments_per_page",
         "number title body state state_reason author labels assignees created_at updated_at closed_at url"

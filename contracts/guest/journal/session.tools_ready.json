@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/journal/session.tools_ready.json",
+  "title": "journal body session.tools_ready",
+  "description": "Body of the journal record kind session.tools_ready (05-runner.md section 6.1 step 6; contracts/changes/HOT-09.md).",
+  "$ref": "record.json#/$defs/body_session_tools_ready"
+}

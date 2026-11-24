@@ -465,7 +465,9 @@ def test_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (config.api_host, config.api_port) == ("127.0.0.1", 7700)
     assert config.build_file == "/opt/agent-guest/build.json"
     assert config.contracts == str(Path(registry.__file__).resolve().parent.parent / "contracts")
+    assert config.tools_seconds == 30
     assert load_config({}) == config
+    assert load_config({"AGENT_GUEST_TOOLS_SECONDS": "39"}).tools_seconds == 39
 
 
 @pytest.mark.parametrize(
@@ -480,6 +482,10 @@ def test_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         ("API_PORT", "65536"),
         ("API_PORT", "07700"),
         ("API_PORT", "-1"),
+        ("TOOLS_SECONDS", "0"),
+        ("TOOLS_SECONDS", "40"),
+        ("TOOLS_SECONDS", "07"),
+        ("TOOLS_SECONDS", "1.5"),
     ],
 )
 def test_config_refusals(name: str, value: str) -> None:

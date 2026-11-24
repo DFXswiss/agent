@@ -13,5 +13,6 @@
   "auth_failed": "Ein Zugriff mit einem falschen Session-Schlüssel wurde abgewiesen.",
   "auth_rate_limited": "Wiederholte Zugriffe mit falschen Schlüsseln wurden gebremst.",
   "turn_unconfirmed": "Ein Modellaufruf ohne bestätigten Prompt wurde abgelehnt.",
+  "tools_unavailable": "Die Plattform-Werkzeuge kamen nicht rechtzeitig bei der KI an; der Prompt wurde zurückgehalten und der Start wiederholt (höchstens zweimal).",
   "unknown": "Unbekannter Fehler ({code})."
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -16,10 +17,10 @@ from typing import Any
 
 import pytest
 
-from agent_guest import harness, registry, sessions, tmux
+from agent_guest import harness, registry, sessions, tmux, toolsready
 from agent_guest.apisock import token_sha256
 from agent_guest.control import ControlContext
-from agent_guest.driver import MAX_ARGV_PROMPT_BYTES, ClaudeCodeDriver
+from agent_guest.driver import ClaudeCodeDriver
 from agent_guest.prompts import prompt_sha256
 from agent_guest.sandbox import unit
 from agent_guest.state import Session
@@ -36,6 +37,9 @@ from tests.platform.guest.sessions.conftest import (
     request,
 )
 
+LONG_PROMPT = 100 * 1024 + 1
+"""Longer than any command line would take (every initial prompt waits for the TUI anyway, HOT-09)."""
+
 USER = unit.user_name(SESSION)
 RULES_VERSION = hashlib.sha256(RULES.encode()).hexdigest()
 
@@ -47,6 +51,12 @@ def records(context: ControlContext, kind: str = "session.state") -> list[dict[s
 
 def states(context: ControlContext) -> list[str]:
     return [body["state"] for body in records(context)]
+
+
+def failure(context: ControlContext) -> str | None:
+    """The reason of the session's ``failed`` record (an undelivered initial prompt is refused after it, HOT-09)."""
+    found = [record for record in records(context) if record["state"] == "failed"]
+    return str(found[-1]["reason"]) if found else None
 
 
 def launch(paths: sessions.Paths) -> dict[str, Any]:
@@ -258,7 +268,7 @@ def test_existing_user_name_fails_the_sandbox_and_rolls_back(
     session = context.state.session(SESSION)
     assert session is not None
     assert (session.state, session.uid) == ("failed", -1)
-    assert records(context)[-1]["reason"] == "sandbox_failed"
+    assert failure(context) == "sandbox_failed"
     with pytest.raises(sessions.SessionError) as again:
         manager.create(request())
     assert again.value.code == "state_conflict"
@@ -331,7 +341,7 @@ def test_incomplete_image_fails_before_anything_is_created(
     session = context.state.session(SESSION)
     assert session is not None
     assert session.state == "failed"
-    assert records(context)[-1]["reason"] == "sandbox_failed"
+    assert failure(context) == "sandbox_failed"
 
 
 # -- start ----------------------------------------------------------------------------------------------------
@@ -369,7 +379,9 @@ def test_start_launches_the_unit_in_tmux_and_journals_agent_starting(
     argv = content["argv"]
     assert argv[:5] == ["systemd-run", "--pty", f"--unit=agent-session-{SESSION}", "--collect", "--quiet"]
     claude = argv[argv.index("/opt/claude/claude", argv.index("--")) :]
-    assert claude[-4:] == ["--model", "deepseek/deepseek-v4.1-flash-1017", "--", "Summarise the repository."]
+    # HOT-09: the command line ends with the model, the prompt waits for the TUI and the tools
+    assert claude[-2:] == ["--model", "deepseek/deepseek-v4.1-flash-1017"]
+    assert "Summarise the repository." not in argv
     assert claude[claude.index("--append-system-prompt-file") + 1] == session_paths.harness_file(SESSION)
     launcher = argv[argv.index("--") + 1 : argv.index("/opt/claude/claude", argv.index("--"))]
     assert launcher[:3] == ["/usr/bin/python3.12", "-I", unit.LAUNCHER]
@@ -382,6 +394,7 @@ def test_start_launches_the_unit_in_tmux_and_journals_agent_starting(
         rows = db.execute("SELECT session_id, sha256, used_at FROM prompt_registry").fetchall()
     assert rows == [(SESSION, prompt_sha256("Summarise the repository."), None)]
     assert manager.start(SESSION) is False
+    assert manager.deferred_prompt(SESSION) == (PROMPT_ID, "Summarise the repository.")
     assert manager.deferred_prompt(SESSION) is None
 
 
@@ -391,10 +404,10 @@ def test_start_of_an_unknown_session(manager: sessions.SessionManager) -> None:
     assert raised.value.code == "not_found"
 
 
-def test_a_long_initial_prompt_is_registered_and_deferred(
+def test_a_long_initial_prompt_is_registered_and_deferred_like_every_other(
     manager: sessions.SessionManager, context: ControlContext, session_paths: sessions.Paths
 ) -> None:
-    text = "y" * (MAX_ARGV_PROMPT_BYTES + 1)
+    text = "y" * LONG_PROMPT
     manager.create(request(initial_prompt={"prompt_id": PROMPT_ID, "text": text}))
     manager.start(SESSION)
     argv = launch(session_paths)["argv"]
@@ -429,7 +442,7 @@ def test_tmux_failure_fails_the_start(
     manager.create(request())
     assert manager.start(SESSION) is False
     assert states(context) == ["sandbox_ready", "agent_starting", "failed"]
-    assert records(context)[-1]["reason"] == "agent_start_failed"
+    assert failure(context) == "agent_start_failed"
     assert not Path(session_paths.launch_dir, f"{SESSION}.json").exists()
     assert json.loads(Path(session_paths.meta_dir, f"{SESSION}.json").read_text())["stopped_at"] is not None
 
@@ -464,13 +477,9 @@ def test_unexpected_end_fails_the_session(
     manager.start(SESSION)
     clock[0] += elapsed
     finish(manager, code)
-    wait_for(lambda: states(context)[-1] == "failed")
-    assert records(context)[-1] == {
-        "state": "failed",
-        "reason": reason,
-        "claude_session_id": RESUME,
-        "at": records(context)[-1]["at"],
-    }
+    wait_for(lambda: "failed" in states(context))
+    [failed] = [record for record in records(context) if record["state"] == "failed"]
+    assert failed == {"state": "failed", "reason": reason, "claude_session_id": RESUME, "at": failed["at"]}
     wait_for(lambda: "kill-session" in tmux_runner.subcommands())
     assert not Path(session_paths.launch_dir, f"{SESSION}.status").exists()
 
@@ -481,8 +490,8 @@ def test_a_vanished_tmux_session_without_status_is_an_end(
     tmux_runner.codes["has-session"] = 1
     manager.create(request())
     manager.start(SESSION)
-    wait_for(lambda: states(context)[-1] == "failed")
-    assert records(context)[-1]["reason"] == "agent_start_failed"
+    wait_for(lambda: "failed" in states(context))
+    assert failure(context) == "agent_start_failed"
 
 
 def test_a_status_written_while_the_session_vanished_is_used(
@@ -509,10 +518,10 @@ def test_a_status_written_while_the_session_vanished_is_used(
         manager.tmux_check = 0.0
         manager.create(request())
         manager.start(SESSION)
-        wait_for(lambda: states(context)[-1] == "failed")
+        wait_for(lambda: "failed" in states(context))
     finally:
         tmux.read_status = saved
-    assert records(context)[-1]["reason"] == "sandbox_failed"
+    assert failure(context) == "sandbox_failed"
 
 
 def test_agent_ended_event_and_failing_callbacks_are_logged(
@@ -550,7 +559,7 @@ def test_a_running_agent_is_watched_until_its_status_appears(
     wait_for(lambda: tmux_runner.subcommands().count("has-session") >= 3)
     assert states(context)[-1] == "agent_starting"
     finish(manager, 0)
-    wait_for(lambda: states(context)[-1] == "failed")
+    wait_for(lambda: "failed" in states(context))
 
 
 def test_stop_without_meta_file(
@@ -858,7 +867,7 @@ def test_default_manager_is_created_once(context: ControlContext) -> None:
 
 
 def test_module_level_entry_points(manager: sessions.SessionManager, context: ControlContext) -> None:
-    text = "z" * (MAX_ARGV_PROMPT_BYTES + 1)
+    text = "z" * LONG_PROMPT
     manager.create(request(initial_prompt={"prompt_id": PROMPT_ID, "text": text}))
     assert sessions.credential_provisioned(context, SESSION) is True
     assert sessions.credential_provisioned(context, SESSION) is False
@@ -1014,3 +1023,122 @@ def test_another_request_with_the_same_identity_conflicts(manager: sessions.Sess
     with pytest.raises(sessions.SessionError) as raised:
         manager.create(request(limits={"memory_max": 1, "cpu_quota": 1, "tasks_max": 1, "runtime_max_sec": 1}))
     assert raised.value.code == "id_conflict"
+
+
+# -- restart (HOT-09: the agent did not list the platform tools in time) --------------------------------------------
+
+
+def set_state(context: ControlContext, state: str) -> None:
+    current = context.state.session(SESSION)
+    assert current is not None
+    context.state.save_session(dataclasses.replace(current, state=state))
+
+
+def test_restart_runs_the_agent_again_with_a_new_token_and_the_prompt_still_waiting(
+    manager: sessions.SessionManager,
+    context: ControlContext,
+    tmux_runner: TmuxRunner,
+    session_paths: sessions.Paths,
+    fake_system: FakeSystem,
+) -> None:
+    events: list[str] = []
+    module = types.ModuleType("agent_guest.control_routes.fake_restart_events")
+    module.SESSION_EVENTS = {  # type: ignore[attr-defined]
+        "agent_starting": lambda ctx, sid: events.append("agent_starting"),
+        "agent_ended": lambda ctx, sid: events.append("agent_ended"),
+    }
+    manager.create(request())
+    original = registry.modules
+    try:
+        registry.modules = lambda package: [*original(package), module]
+        assert manager.start(SESSION)
+        first_run = manager._running[SESSION]
+        first = context.state.session(SESSION)
+        toolsready.mark(context, SESSION, 17)
+        assert manager.restart(SESSION)
+    finally:
+        registry.modules = original
+    assert events == ["agent_starting", "agent_ended", "agent_starting"]
+    second = context.state.session(SESSION)
+    assert first is not None
+    assert second is not None
+    assert second.token_sha256 != first.token_sha256
+    assert not toolsready.ready(context, SESSION)  # the new run must list the tools itself
+    assert unit_env(session_paths)["PLATFORM_SESSION_TOKEN"] is None  # the token travels in the launch env only
+    assert second.state == "agent_starting"
+    assert states(context) == ["sandbox_ready", "agent_starting"]  # nothing journaled for the restart
+    assert first_run.stopped
+    assert manager._running[SESSION] is not first_run
+    assert manager._running[SESSION].start is not None
+    assert manager._running[SESSION].start.token == ""
+    assert tmux_runner.subcommands().count("new-session") == 2
+    assert "kill-session" in tmux_runner.subcommands()
+    assert manager._deferred[SESSION] == (PROMPT_ID, "Summarise the repository.")
+    manager._ended(SESSION, first_run, -1, 1.0)  # the end of the old run fails nothing
+    assert states(context) == ["sandbox_ready", "agent_starting"]
+
+
+def test_restart_only_for_a_starting_session_with_a_known_run(
+    manager: sessions.SessionManager, context: ControlContext
+) -> None:
+    assert not manager.restart(SESSION)  # unknown
+    manager.create(request())
+    assert not manager.restart(SESSION)  # not started
+    manager.start(SESSION)
+    run = manager._running[SESSION]
+    saved, run.start = run.start, None  # a run re-attached after a restart of the control process
+    assert not manager.restart(SESSION)
+    run.start = saved
+    manager._stopping.add(SESSION)
+    assert not manager.restart(SESSION)
+    manager._stopping.discard(SESSION)
+    set_state(context, "prompt_delivering")
+    assert not manager.restart(SESSION)
+
+
+def test_restart_stops_when_the_session_ended_meanwhile(
+    manager: sessions.SessionManager,
+    context: ControlContext,
+    fake_system: FakeSystem,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager.create(request())
+    manager.start(SESSION)
+
+    def ended_meanwhile(name: str) -> None:
+        set_state(context, "failed")
+
+    monkeypatch.setattr(fake_system, "stop_unit", ended_meanwhile)
+    assert not manager.restart(SESSION)
+    assert SESSION not in manager._running
+
+
+def test_a_restart_that_cannot_launch_fails_the_session(
+    manager: sessions.SessionManager, context: ControlContext, tmux_runner: TmuxRunner
+) -> None:
+    manager.create(request())
+    manager.start(SESSION)
+    tmux_runner.codes["new-session"] = 1
+    assert not manager.restart(SESSION)
+    assert failure(context) == "agent_start_failed"
+
+
+def test_restart_session_uses_the_process_manager(manager: sessions.SessionManager, context: ControlContext) -> None:
+    sessions.install(context, manager)
+    manager.create(request())
+    manager.start(SESSION)
+    assert sessions.restart_session(context, SESSION)
+
+
+def test_cleanup_forgets_the_tools_mark(
+    manager: sessions.SessionManager, context: ControlContext, session_paths: sessions.Paths
+) -> None:
+    manager.create(request())
+    manager.start(SESSION)
+    toolsready.mark(context, SESSION, 17)
+    manager.stop(SESSION)
+    meta_file = Path(session_paths.meta_dir, f"{SESSION}.json")
+    meta_file.write_text(json.dumps({**json.loads(meta_file.read_text()), "stopped_at": 0}))
+    assert manager.cleanup() == [SESSION]
+    with context.journal.transaction() as db:
+        assert db.execute("SELECT 1 FROM guest_meta WHERE key LIKE 'tools_ready:%'").fetchone() is None

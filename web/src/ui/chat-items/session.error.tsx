@@ -21,6 +21,7 @@ export const GUEST_ERROR_CODES: ReadonlySet<string> = new Set([
   'auth_failed',
   'auth_rate_limited',
   'turn_unconfirmed',
+  'tools_unavailable',
 ]);
 const CODE_RE = /^[a-z][a-z0-9_]{0,63}$/;
 

@@ -43,13 +43,21 @@ registry row in the same transaction, so text left in the TUI can never be accep
 prompt in the meantime nothing is refused. Prompts of a session are delivered one at a time in arrival order by one
 worker thread; the same ``prompt_id`` is queued only once.
 
-TUI ready (05 §6.1 step 6; Claude Code 2.1.330 sends no ``SessionStart`` hook, ADR-029): when a session reaches
-``agent_starting`` (``SESSION_EVENTS`` of ``control_routes/prompts.py``) a watcher polls the pane until the input box
-appears and moves ``agent_starting`` -> ``prompt_delivering`` in one transaction with the state check. While an
-initial prompt on the command line is registered but not yet accepted the transition is held back: the hook's
-acceptance makes the session ``working`` directly. The watcher ends when the state changes; it polls every 50 ms for
-``READY_SECONDS``, then once a second. Then the initial prompt that did not fit on the command line
-(``sessions.deferred_prompt``) is queued (the runner sends no follow-up before the first prompt is accepted).
+Ready for a prompt (05 §6.1 step 6; Claude Code 2.1.330 sends no ``SessionStart`` hook, ADR-029): when a session
+reaches ``agent_starting`` (``SESSION_EVENTS`` of ``control_routes/prompts.py``) a watcher polls until the input box
+appears in the pane **and** the agent listed the platform tools (``toolsready.ready``, HOT-09: Claude Code connects its
+MCP servers in the background and would run a turn without them), then moves ``agent_starting`` ->
+``prompt_delivering`` in one transaction with the state check. It polls every 50 ms for ``READY_SECONDS``, then once
+a second, and ends when the state changes. Then the session's initial prompt (``sessions.deferred_prompt``: it never
+goes on the command line) is queued; the runner sends no follow-up before the first prompt is accepted. The same holds
+for every start of the agent: a new session, a resume, a restart.
+
+Tools missing: when the agent has not listed the tools ``tools_seconds`` (``AGENT_GUEST_TOOLS_SECONDS``, default 30)
+after the watcher began, the watcher journals ``guest.error tools_unavailable`` for the session (the runner shows it in
+the task as ``session.error``) and starts the agent again (``sessions.restart_session``: new run, new token, the
+prompt keeps waiting), at most ``TOOLS_RESTARTS`` times per session and control process; then - or when the run
+cannot be restarted - the session ends ``failed`` with ``agent_start_failed`` and its waiting prompt is refused. A
+prompt is never delivered to an agent without the tools.
 
 Input box: the last line of the pane that starts with the prompt marker (U+276F) below a horizontal rule (``─``); it
 reaches to the next rule. ``input_box(screen)`` returns its text (marker removed) or ``None``.
@@ -71,7 +79,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
-from agent_guest import sessions, tmux
+from agent_guest import sessions, tmux, toolsready
 from agent_guest.clock import iso_ms
 from agent_guest.control import ControlContext
 from agent_guest.journal import JournalError
@@ -91,6 +99,10 @@ WAIT_SECONDS = 120.0
 ACCEPT_SECONDS = 10.0
 READY_SECONDS = 30.0
 READY_SLOW_POLL = 1.0
+TOOLS_SECONDS = 30.0
+TOOLS_RESTARTS = 2
+TOOLS_UNAVAILABLE = "tools_unavailable"
+READY, ENDED, RESTARTED = "ready", "ended", "restarted"
 MARKER_LENGTH = 30
 PASTE_PLACEHOLDER = "[Pasted text"
 # One collapsed paste and nothing else (Claude Code 2.1.330: ``[Pasted text #<n>]``, ``[Pasted text #<n> +<k> lines]``).
@@ -253,11 +265,13 @@ class Delivery:
     wait_seconds: float = WAIT_SECONDS
     accept_seconds: float = ACCEPT_SECONDS
     ready_seconds: float = READY_SECONDS
+    tools_seconds: float = TOOLS_SECONDS
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
     _closed: threading.Event = field(default_factory=threading.Event, init=False)
     _queues: dict[str, collections.deque[tuple[str, str]]] = field(default_factory=dict, init=False)
     _queued: set[tuple[str, str]] = field(default_factory=set, init=False)
     _pane_locks: dict[str, threading.Lock] = field(default_factory=dict, init=False)
+    _restarts: dict[str, int] = field(default_factory=dict, init=False)
 
     # -- plumbing -----------------------------------------------------------------------------------------------
 
@@ -532,39 +546,52 @@ class Delivery:
         self._start(lambda: self.watch_ready(session_id))
 
     def watch_ready(self, session_id: str) -> bool:
-        """Poll the pane while the session is ``agent_starting`` until the input box appears, then move it to
-        ``prompt_delivering``; ``True`` when that happened. An initial prompt on the command line that the hook has not
-        accepted yet holds the transition back: the session goes to ``working`` instead (ADR-029). Polls every
-        ``poll`` seconds for ``ready_seconds``, then every ``READY_SLOW_POLL`` seconds; it ends when the state changes
-        (accepted, failed, stopped) or the delivery closes. Then the deferred initial prompt is queued."""
-        ready = self._watch(session_id)
+        """Poll while the session is ``agent_starting`` until the input box appears and the agent listed the platform
+        tools, then move it to ``prompt_delivering``; ``True`` when that happened. Polls every ``poll`` seconds for
+        ``ready_seconds``, then every ``READY_SLOW_POLL`` seconds; it ends when the state changes (failed, stopped) or
+        the delivery closes. Then the initial prompt is queued - unless the agent was started again (its run's watcher
+        takes over), see the module docstring for missing tools."""
+        outcome = self._watch(session_id)
+        if outcome == RESTARTED:
+            return False
+        with self._lock:
+            self._restarts.pop(session_id, None)
         deferred = sessions.deferred_prompt(self.context, session_id)
         if deferred is not None:
             self.submit(session_id, *deferred)
-        return ready
+        return outcome == READY
 
-    def _watch(self, session_id: str) -> bool:
+    def _watch(self, session_id: str) -> str:
         waited = 0.0
         while True:
             session = self._session(session_id)
             if session is None or session.state != "agent_starting":
-                return False
-            if self._box(session_id) is not None and not self._initial_pending(session_id):
-                return self._delivering(session_id)
+                return ENDED
+            tools = toolsready.ready(self.context, session_id)
+            if tools and self._box(session_id) is not None:
+                return READY if self._delivering(session_id) else ENDED
+            if not tools and waited >= self.tools_seconds:
+                return self._tools_missing(session_id)
             interval = self.poll if waited < self.ready_seconds else READY_SLOW_POLL
             if not self._pause(interval):
-                return False
+                return ENDED
             waited += interval
 
-    def _initial_pending(self, session_id: str) -> bool:
-        """An unused registration while ``agent_starting``: the initial prompt on the command line (a deferred one
-        is still held by the session manager and registered too, so it counts only when it fits no command line)."""
-        deferred = sessions.manager(self.context)._deferred.get(session_id)
-        with self.context.journal.transaction() as db:
-            rows = db.execute(
-                "SELECT prompt_id FROM prompt_registry WHERE session_id = ? AND used_at IS NULL", (session_id,)
-            ).fetchall()
-        return any(deferred is None or row[0] != deferred[0] for row in rows)
+    def _tools_missing(self, session_id: str) -> str:
+        """The agent did not list the tools in time: ``guest.error tools_unavailable``, then a restart of the agent or,
+        after ``TOOLS_RESTARTS`` of them (or when it cannot be restarted), the session ends ``agent_start_failed``."""
+        with contextlib.suppress(JournalError):
+            self.context.journal.append("guest.error", {"code": TOOLS_UNAVAILABLE}, session_id)
+        with self._lock:
+            attempt = self._restarts.get(session_id, 0)
+            self._restarts[session_id] = attempt + 1
+        try:
+            if attempt < TOOLS_RESTARTS and sessions.restart_session(self.context, session_id):
+                return RESTARTED
+            sessions.manager(self.context).fail_running(session_id, "agent_start_failed")
+        except JournalError:
+            pass  # the control process is shutting down: its restart finishes or fails the start (``reattach``)
+        return ENDED
 
     def _delivering(self, session_id: str) -> bool:
         at = iso_ms(self.context.journal.clock.now())
@@ -598,4 +625,5 @@ def manager(context: ControlContext) -> Delivery:
         existing = vars(context).get(_DELIVERY)
         if isinstance(existing, Delivery):
             return existing
-        return install(context, Delivery(context, TmuxPane(sessions.manager(context).tmux)))
+        pane = TmuxPane(sessions.manager(context).tmux)
+        return install(context, Delivery(context, pane, tools_seconds=float(context.config.tools_seconds)))

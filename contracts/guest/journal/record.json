@@ -806,7 +806,7 @@
       "additionalProperties": false
     },
     "body_platform_refused": {
-      "description": "an MCP request of the session refused before it was forwarded or answered (03-api.md section 8: every call is journaled); metadata only, never arguments (contracts/changes/KOR-07.md, KOR-10.md); a protocol-level refusal never names a tool",
+      "description": "an MCP request of the session refused before it was forwarded or answered (03-api.md section 8: every call is journaled); metadata only, never arguments (contracts/changes/KOR-07.md, KOR-10.md); a protocol-level refusal never names a tool; a refused method is named when it is one of the protocol (else other, contracts/changes/HOT-09.md)",
       "oneOf": [
         {
           "type": "object",
@@ -816,7 +816,6 @@
               "enum": [
                 "parse_error",
                 "invalid_request",
-                "method_not_found",
                 "unknown_tool",
                 "size_exceeded"
               ]
@@ -922,6 +921,43 @@
             "tool"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "a method the server does not offer; method names it when it is a request method of the protocol, else other (HOT-09; a guest before HOT-09 sends no method)",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "method_not_found"
+            },
+            "tool": {
+              "type": "null"
+            },
+            "method": {
+              "type": "string",
+              "enum": [
+                "completion/complete",
+                "elicitation/create",
+                "prompts/get",
+                "resources/read",
+                "resources/subscribe",
+                "resources/unsubscribe",
+                "roots/list",
+                "sampling/createMessage",
+                "server/discover",
+                "tasks/cancel",
+                "tasks/get",
+                "tasks/list",
+                "tasks/result",
+                "other"
+              ]
+            }
+          },
+          "required": [
+            "code",
+            "tool"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -969,7 +1005,8 @@
             "credential_missing",
             "auth_failed",
             "auth_rate_limited",
-            "turn_unconfirmed"
+            "turn_unconfirmed",
+            "tools_unavailable"
           ]
         }
       },
@@ -1143,6 +1180,35 @@
             },
             "body": {
               "$ref": "#/$defs/body_session_terminal"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
+              "const": "session.tools_ready"
+            },
+            "body": {
+              "$ref": "#/$defs/body_session_tools_ready"
             }
           },
           "required": [
@@ -1562,6 +1628,23 @@
           "additionalProperties": false
         }
       ]
+    },
+    "body_session_tools_ready": {
+      "type": "object",
+      "description": "the session's agent listed the platform tools on /mcp for the first time in this run of the agent (HOT-09): the first prompt is delivered only after it",
+      "properties": {
+        "tools": {
+          "$ref": "../../common.json#/$defs/count"
+        },
+        "at": {
+          "$ref": "../../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "tools",
+        "at"
+      ],
+      "additionalProperties": false
     }
   }
 }
