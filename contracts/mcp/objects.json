@@ -1318,7 +1318,8 @@
             "The tool call could not be checked and is denied.",
             "Write and Edit are allowed only inside the session workspace.",
             "This path is protected in agent.dfx.swiss sessions and cannot be written.",
-            "Read, Glob and Grep are allowed only inside the session workspace and the session harness file."
+            "Read, Glob and Grep are allowed only inside the session workspace and the session harness file.",
+            "Your question was passed to the person through agent.dfx.swiss. End your turn now; the answer arrives as your next prompt."
           ]
         },
         {

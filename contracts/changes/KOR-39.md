@@ -33,3 +33,10 @@ organization by it (Needs your decision, Stuck, Running, Done).
   Runners of before KOR-39 reject the types as `unknown_type`.
 
 Fixtures cover every new schema and the changed unions (frame, notification, operation params, notification list).
+
+## Hook deny reason `question_passed`
+
+- `mcp/hook-deny-reasons.json` and the `deny_reason` enum of `mcp/objects.json`: the guest denies Claude Code's
+  `AskUserQuestion` of a main session with the fixed sentence "Your question was passed to the person through
+  agent.dfx.swiss. End your turn now; the answer arrives as your next prompt." after it requested the operation
+  `human.question` for the session (rule 1a, ADR-064 section 3). Additive; byte-identical with the runner's copy.
