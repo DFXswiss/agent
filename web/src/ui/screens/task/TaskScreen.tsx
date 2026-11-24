@@ -4,7 +4,7 @@
 // Below the header, how the current main session took over the context after a resume (ContextNotice, KOR-33).
 // The send sequence of the home screen navigates here at once (WEB-04); the countdown is part of the chat. The header
 // names device and VM of the main session ("on <device> · vm-…", ADR-075 section 6).
-// The task's GitHub identity is shown below it; writers change it (`TaskIdentity.tsx`, ADR-076).
+// The task's GitHub identity is shown below it; writers change it (`TaskIdentity.tsx`, ADR-078).
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { closeTask, loadChat } from '../../../core/chat/actions';

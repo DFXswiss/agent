@@ -1,5 +1,5 @@
 """U-RUN-github (KOR-47): the GitHub identity choices and defaults of the desired state are kept in the store
-(`github_selection`, `github_default`; ADR-076 section 3): replaced by every answer, kept without one, tolerant of a
+(`github_selection`, `github_default`; ADR-078 section 3): replaced by every answer, kept without one, tolerant of a
 hub from before KOR-47, and enough for the resolution while the hub cannot be reached."""
 
 from __future__ import annotations

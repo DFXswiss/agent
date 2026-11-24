@@ -1,4 +1,4 @@
-// The GitHub identity of a new task (ADR-076 section 3): "Automatic" (the workgroup's or organization's default, else
+// The GitHub identity of a new task (ADR-078 section 3): "Automatic" (the workgroup's or organization's default, else
 // the user's primary account, else the operator's) or one of the identities a task of the organization may choose –
 // the user's own accounts and the company accounts of the organization. Shown only when there is a choice.
 import { useId } from 'react';

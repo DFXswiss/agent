@@ -1,4 +1,4 @@
-"""U-HUB-github (ADR-076 section 3): defaults of organizations and workgroups. Org admins set the org default, org
+"""U-HUB-github (ADR-078 section 3): defaults of organizations and workgroups. Org admins set the org default, org
 admins and writers of a workgroup the workgroup default; only a company record of that very organization can be a
 default (`identity_forbidden`, also for a personal record: A15); the feature gate refuses a default while a device of
 the org runs an older runner; a default goes away with its record; the device state carries the defaults."""

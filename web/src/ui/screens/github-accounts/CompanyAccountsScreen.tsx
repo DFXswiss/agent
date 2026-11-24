@@ -1,4 +1,4 @@
-// Company GitHub accounts of an organization (ADR-076 sections 1 and 3, key model KM-35, route `/o/:org/github`): the
+// Company GitHub accounts of an organization (ADR-078 sections 1 and 3, key model KM-35, route `/o/:org/github`): the
 // organization's accounts by metadata – "Company account of <org> · connected <date>", the login only where this
 // browser stored the record – since no browser can open them (they are sealed to the organization's devices), and
 // which one is the organization's default. Admins connect a company account (`github.connect` with `org_id` to a

@@ -13,7 +13,7 @@
   the duration of the block.
 - `identity_body(context, operation, data)` / `identity_client(context, operation, data)`: the body of, and a client
   with the token of, the GitHub identity a pre-check resolved for the acting user (`identity.Resolved.data()` in the
-  pre-check data, KOR-47, ADR-076), opened through `credentials.acting` as well: the acting user's primary record
+  pre-check data, KOR-47, ADR-078), opened through `credentials.acting` as well: the acting user's primary record
   (its record ID must still be the resolved one: a primary record changed in between is not used), any other record
   by its ID (`acting.opened_identity`; a personal record only of the acting user). `data_client` takes the resolved
   identity when the data names one, else the acting user's primary record (`actor_client`).

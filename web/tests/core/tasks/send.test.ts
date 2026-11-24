@@ -121,7 +121,7 @@ describe('prepareTask', () => {
     });
   });
 
-  it('sends the chosen GitHub identity with the task, none for automatic (ADR-076)', async () => {
+  it('sends the chosen GitHub identity with the task, none for automatic (ADR-078)', async () => {
     const t = await taskWorld();
     const id = '0190f000-0000-7000-8000-0000000000e1';
     const chosen = await prepareTask(t.context, { org: t.org, wg: t.wg, prompt: 'x', githubIdentity: id });

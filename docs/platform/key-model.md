@@ -255,7 +255,7 @@ test of a rule that only one component enforces, as `path::test name`. `gap KOR-
 | KM-32 | Write access to the default workgroup can be reduced to read by an admin (R stays empty: the member still reads; E5 refuses its writes); new members still start with write. | – | gap KOR-55 |
 | KM-33 | A support person reads or writes a workgroup only through an explicit, revocable release of that workgroup to support in the log plus a valid root-signed support role; revocation rotates. | – | gap KOR-56 |
 | KM-34 | A session reads across workgroups only within owner ∩ instructing human and only with keys its device already holds by assignment ([§8](#8-reading-across-workgroups)). | – | gap KOR-45 |
-| KM-35 | Credentials owned by an organization (a company identity) are readable by the devices that run its tasks, never by every member: the organization's `cred` scope has its assigned member devices as its only readers; an admin wraps each epoch without being a reader ([ADR-076](adr/076-github-identities.md)). | all | `log-wraps.json#cred_org_admin_for_device`; `log-wraps.json#cred_org_device_for_device`; `log-wraps.json#cred_org_admin_is_no_recipient`; `log-wraps.json#cred_org_member_is_no_wrapper`; `log-wraps.json#cred_org_removed_admin_is_no_wrapper` |
+| KM-35 | Credentials owned by an organization (a company identity) are readable by the devices that run its tasks, never by every member: the organization's `cred` scope has its assigned member devices as its only readers; an admin wraps each epoch without being a reader ([ADR-078](adr/078-github-identities.md)). | all | `log-wraps.json#cred_org_admin_for_device`; `log-wraps.json#cred_org_device_for_device`; `log-wraps.json#cred_org_admin_is_no_recipient`; `log-wraps.json#cred_org_member_is_no_wrapper`; `log-wraps.json#cred_org_removed_admin_is_no_wrapper` |
 | KM-36 | The hub never holds a scope key, private key, PRF output, code or credential value; a full flow leaves no canary in its database or logs. | hub | test:`e2e/platform/specs/e2e-09-zero-knowledge.spec.ts::the hub sees no confidential content over the full flows`; test:`tests/platform/hub/requests/test_devices_and_zero_knowledge.py::test_canaries_never_reach_hub_storage` |
 | KM-37 | VMs hold no scope key and no platform credential at rest: the guest has no cryptography library at all, and a work VM holds none of the platform's credentials. | runner, guest | test:`tests/platform/test_import_boundaries.py::test_guest_and_doubles_use_the_standard_library_only`; test:`tests/platform/images/test_workvm_attack_probes.py::test_credential_search_reports_counts_and_paths_never_the_secret` |
 | KM-38 | A remembered browser keeps the identity only under a non-extractable key of that browser profile; "Forget" deletes it there. | web | test:`web/tests/core/persist/device-key.test.ts::stores the key itself non-extractable`; test:`web/tests/core/persist/device-key.test.ts::remembers, survives a reload, unlocks the same identity and forgets` |
@@ -329,7 +329,7 @@ bearing on keys).
 | [E-03](KONZEPT.md#e-03) | The user creates only a passkey; the agent sets up everything with the user's identity. | carried | KM-28 |
 | [E-04](KONZEPT.md#e-04) | The agent can do everything the user can: it holds the user's identity. | carried | KM-28, [§6](#6-where-plaintext-lies) |
 | [E-05](KONZEPT.md#e-05) | A missing key is shown as "being unlocked" and delivered by catch-up; a key the device cannot get triggers the assignment. | carried | [§4](#4-who-receives-which-scope-when), [§8](#8-reading-across-workgroups) |
-| [E-06](KONZEPT.md#e-06) | Operator GitHub account: a company account of the operator's organization in its device-only `cred` scope (KOR-47, ADR-076 §7); copies for listed users outside it stay in their `CK`. | carried | [§2](#2-keys-per-principal) |
+| [E-06](KONZEPT.md#e-06) | Operator GitHub account: a company account of the operator's organization in its device-only `cred` scope (KOR-47, ADR-078 §7); copies for listed users outside it stay in their `CK`. | carried | [§2](#2-keys-per-principal) |
 | [E-07](KONZEPT.md#e-07) | Operator subscriptions on platform devices, outside the scope keys. | carried | [§2](#2-keys-per-principal) |
 | [E-08](KONZEPT.md#e-08) | Work VM without credentials and keys. | carried | KM-37 |
 | [E-09](KONZEPT.md#e-09) | Nothing monitored in the work VM; it holds no platform key. | carried | [§6](#6-where-plaintext-lies) |
@@ -466,7 +466,7 @@ The requirements of [§8](#8-reading-across-workgroups) points 1, 2 and 4–6 (K
    stops being a reader.
 2. **Vectors** for readers, W2, R and the record format.
 
-Built by KOR-47 ([ADR-076](adr/076-github-identities.md), KM-35): readers are the organization's assigned member
+Built by KOR-47 ([ADR-078](adr/078-github-identities.md), KM-35): readers are the organization's assigned member
 devices, admins wrap every new epoch and write each version under a fresh epoch; the operator account for other
 organizations' tasks is used only by devices that are readers of the operator's organization (the root-signed list
 stays KOR-49's).

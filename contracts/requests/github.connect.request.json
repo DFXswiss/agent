@@ -22,11 +22,11 @@
     },
     "org_id": {
       "$ref": "../common.json#/$defs/uuid",
-      "description": "connect a company account of this organization (requested by an admin): the final answer carries the credential body for the admin's client, which seals it under a fresh epoch of the organization's credential key for the organization's devices, signs and stores it (ADR-076 section 1)"
+      "description": "connect a company account of this organization (requested by an admin): the final answer carries the credential body for the admin's client, which seals it under a fresh epoch of the organization's credential key for the organization's devices, signs and stores it (ADR-078 section 1)"
     },
     "signing_key": {
       "type": "boolean",
-      "description": "create and register an own SSH signing key for the account (ADR-076 section 5)"
+      "description": "create and register an own SSH signing key for the account (ADR-078 section 5)"
     },
     "identity_id": {
       "$ref": "../common.json#/$defs/uuid",

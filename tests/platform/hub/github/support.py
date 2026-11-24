@@ -1,4 +1,4 @@
-"""Test support of the GitHub identities suite (U-HUB-github, ADR-076).
+"""Test support of the GitHub identities suite (U-HUB-github, ADR-078).
 
 `Studio` builds on the credentials desk (`tests/platform/hub/credentials/support.py`: an org with `admin`, `writer`
 (write on `wg`), `reader` (read on `wg`), the org devices `device` and `other_device` assigned to `wg`, and a

@@ -1,4 +1,4 @@
-"""The GitHub identity probe (KOR-47 stage a, ADR-076 "Pre-study") against the GitHub double.
+"""The GitHub identity probe (KOR-47 stage a, ADR-078 "Pre-study") against the GitHub double.
 
 `probelib.github_identity.run` and the command `scripts/probes/probe_github_identity.py` talk HTTP to a started
 double, with a classic token that may manage SSH signing keys and with tokens that may not.

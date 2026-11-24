@@ -1,4 +1,4 @@
-"""GitHub identities of the agent tool against the real hub (ADR-076): a company account connected through a device,
+"""GitHub identities of the agent tool against the real hub (ADR-078): a company account connected through a device,
 sealed on the tool for the organization's devices and stored by the hub's own checks (admin, fresh epoch, W3 for every
 wrap, every reader device covered), then the defaults behind the feature gate, the task's choice and the removal.
 The device's part (fetching the request, answering it) is played through the hub's device routes."""

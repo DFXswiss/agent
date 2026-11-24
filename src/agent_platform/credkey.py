@@ -33,7 +33,7 @@ user under it (same ID and kind, `version + 1`), all in one `POST /v1/me/credent
 device that lost eligibility is deleted first (re-signing it would launder what that device wrote); any other record
 that cannot be opened (signature, epoch, body as `contracts/credentials/<kind>.json` allows) blocks the rotation and
 nothing is deleted. A `409 version_conflict` is retried once from the start. The primary `github` record is one of
-these records; the user's further GitHub identities (ADR-076 section 1) are re-sealed right after the rotation
+these records; the user's further GitHub identities (ADR-078 section 1) are re-sealed right after the rotation
 (`identities.rewrap_own`, same ID, `version + 1`; the result names `github_resealed` when it re-sealed some and
 `github_rewrap_error` with the hub's code when it failed, which `github rewrap` or the next rotation repeats).
 """

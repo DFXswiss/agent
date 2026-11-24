@@ -253,7 +253,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("closed_at", TS),
         ("placement_device_id", U),  # KOR-41, migration 0020
         ("placement_vm_id", T),
-        ("github_identity", U),  # KOR-47, migration 0021
+        ("github_identity", U),  # KOR-47, migration 0022
     ],
     "task_transition": [("task_id", U), ("seq", INT), ("state", T), ("reason", T), ("at", TS), ("by_id", U)],
     # KOR-39, migration 0011 (ADR-076): the attention record of a task, a projection
@@ -297,7 +297,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("context_restore", T),
         ("context_reason", T),
         ("not_before", TS),  # KOR-41, migration 0020
-        ("github_identity", U),  # KOR-47, migration 0021
+        ("github_identity", U),  # KOR-47, migration 0022
     ],
     # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-072)
     "context_object": [
@@ -364,7 +364,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("decided_at", TS),
         ("started_at", TS),
         ("finished_at", TS),
-        ("github_identity", U),  # KOR-47, migration 0021
+        ("github_identity", U),  # KOR-47, migration 0022
         ("triggered_by", U),
     ],
     "operation_transition": [
@@ -422,11 +422,11 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("ct", B),
         ("sig", B),
         ("updated_at", TS),
-        ("owner_kind", T),  # KOR-47, migration 0021
+        ("owner_kind", T),  # KOR-47, migration 0022
         ("created_at", TS),
         ("is_primary", BOOL),
     ],
-    # default GitHub identities of orgs and workgroups (KOR-47, migration 0021)
+    # default GitHub identities of orgs and workgroups (KOR-47, migration 0022)
     "github_default": [("scope", T), ("scope_id", U), ("identity_id", U), ("set_by", U), ("set_at", TS)],
     "device_request": [
         ("id", U),
@@ -437,7 +437,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("envelope", T),
         ("created_at", TS),
         ("expires_at", TS),
-        ("org_id", U),  # KOR-47, migration 0021
+        ("org_id", U),  # KOR-47, migration 0022
     ],
     # credential-change notices for devices (HUB-13, ADR-035, migration 0003)
     "credential_notice": [("device_id", U), ("owner_id", U), ("kind", T), ("changed_at", TS)],

@@ -1,4 +1,4 @@
-"""U-HUB-github (ADR-076 sections 2 and 3): the identity of a task (`PUT /v1/tasks/{task}/github-identity`). Writers
+"""U-HUB-github (ADR-078 sections 2 and 3): the identity of a task (`PUT /v1/tasks/{task}/github-identity`). Writers
 of the workgroup set it to an identity they may use (own, or a company record of an org they are a member of; never
 another person's: `identity_forbidden`), clearing is always allowed, the feature gate refuses a choice while a device
 of the org runs an older runner; the task row, the `task` frame and the device state carry it."""

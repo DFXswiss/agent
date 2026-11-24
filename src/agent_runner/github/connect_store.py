@@ -1,4 +1,4 @@
-"""Where a personal `github.connect` stores the connection (KOR-47, ADR-076 section 1; 03-api.md section 6.1).
+"""Where a personal `github.connect` stores the connection (KOR-47, ADR-078 section 1; 03-api.md section 6.1).
 
 `store(flow, body, identity_id)` writes the credential body of the requesting user `U` as this device, answering the
 request, and returns the record ID of the identity it filled:

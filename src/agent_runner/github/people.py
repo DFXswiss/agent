@@ -1,4 +1,4 @@
-"""The humans of a task as GitHub co-authors (KOR-47, ADR-076 section 4).
+"""The humans of a task as GitHub co-authors (KOR-47, ADR-078 section 4).
 
 `account(context, user)` is `(GitHub account ID, login)` of the user's **own** primary identity
 (`credentials.acting.attribution`: attribution, not use of the connection - only the account ID and login are read,

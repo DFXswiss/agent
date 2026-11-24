@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/github-identity-put.request.json",
   "title": "PUT /v1/github-identities/{id} request",
-  "description": "Store a version of an identity record (expected_version 0 creates it): owner = the caller (sealed under the caller's CK) or an organization the caller is an admin of (sealed under a fresh epoch of the organization's credential key whose only readers are its devices, with `key`; author = the caller) (03-api.md section 4.8, ADR-076 section 1).",
+  "description": "Store a version of an identity record (expected_version 0 creates it): owner = the caller (sealed under the caller's CK) or an organization the caller is an admin of (sealed under a fresh epoch of the organization's credential key whose only readers are its devices, with `key`; author = the caller) (03-api.md section 4.8, ADR-078 section 1).",
   "type": "object",
   "properties": {
     "owner_id": {
@@ -16,7 +16,7 @@
     },
     "key": {
       "type": "object",
-      "description": "company records only (owner an organization): the new epoch of the organization's credential key (current + 1) created for this write and its wraps for every reader device (active member devices assigned to a workgroup of the organization); admins seal each version under a fresh key and cannot read it back (ADR-076 section 1, key model KM-35)",
+      "description": "company records only (owner an organization): the new epoch of the organization's credential key (current + 1) created for this write and its wraps for every reader device (active member devices assigned to a workgroup of the organization); admins seal each version under a fresh key and cannot read it back (ADR-078 section 1, key model KM-35)",
       "properties": {
         "epoch": {
           "$ref": "../common.json#/$defs/epoch"

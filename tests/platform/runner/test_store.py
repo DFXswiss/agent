@@ -243,7 +243,7 @@ TABLES = {
         "committed_at",
     ],
     "context_pr_link": ["operation_id", "state", "attempts", "next_at", "updated_at"],
-    # the last audited list of OPERATOR_GITHUB_USERS, keyed hashes only (KOR-47, migration 0021)
+    # the last audited list of OPERATOR_GITHUB_USERS, keyed hashes only (KOR-47, migration 0022)
     "operator_github_user": ["user_hmac"],
     # GitHub identities (KOR-47, migration 0017)
     "github_identity_cache": ["id", "owner_id", "owner_kind", "is_primary", "version", "record"],

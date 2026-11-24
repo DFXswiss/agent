@@ -74,7 +74,7 @@ describe('effective access (OrgState)', () => {
   });
 });
 
-describe('the credential key of an organization (KM-35, ADR-076)', () => {
+describe('the credential key of an organization (KM-35, ADR-078)', () => {
   it('is read by the assigned devices only and wrapped by them or an active admin', () => {
     const state = world.state;
     const readers = credReaders([state], world.org);

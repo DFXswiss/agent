@@ -1,4 +1,4 @@
-"""U-HUB-tasks (ADR-076 section 3): `POST /v1/tasks` with `github_identity`. The identity must be usable by the
+"""U-HUB-tasks (ADR-078 section 3): `POST /v1/tasks` with `github_identity`. The identity must be usable by the
 creator (own, or a company record of an org the creator is a member of), passes the feature gate of the org, is
 stored on the task and returned in the task row; a repeat must name the same identity."""
 

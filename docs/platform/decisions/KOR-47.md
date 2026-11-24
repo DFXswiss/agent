@@ -2,10 +2,10 @@
 
 GitHub identities: several accounts, company accounts, choice per operation, session and task, defaults per
 organization and workgroup, commit author, committer, co-authors and signature. Architecture:
-[ADR-076](../adr/076-github-identities.md); contract changes: `contracts/changes/KOR-47.md`.
+[ADR-078](../adr/078-github-identities.md); contract changes: `contracts/changes/KOR-47.md`.
 
 ## Stage a – pre-study
-1. **GitHub signs no REST commit made with a user token.** From GitHub's documentation (ADR-076 "Pre-study"): only
+1. **GitHub signs no REST commit made with a user token.** From GitHub's documentation (ADR-078 "Pre-study"): only
    web-interface commits, `createCommitOnBranch` and bot commits of a GitHub App without custom author, committer
    or signature are signed by GitHub. `createCommitOnBranch` cannot set author or committer. The package therefore
    offers `signing` `none` or `key` (own SSH key per identity), no "signed by GitHub".
@@ -34,7 +34,7 @@ organization and workgroup, commit author, committer, co-authors and signature. 
    - M1 foreign org accounts → usable are own, the task organization's and the operator's account only.
    - M2 the hub can swap choices → **not taken**: choices are hub columns; a swap can only pick another identity the
      acting human may use (the runner enforces §2), so rights never widen; signed choices in events would need new
-     event kinds in every verifier for an attribution-only risk. Documented in ADR-076 "Consequences".
+     event kinds in every verifier for an attribution-only risk. Documented in ADR-078 "Consequences".
    - M3 roles and endpoints of defaults → defined (03-api §4.8, agent tool).
    - M4 dangling choices → reconnecting fills the same record (`identity_id`, or the primary by GitHub account ID);
      a writer can change the task's choice.
@@ -74,7 +74,7 @@ organization and workgroup, commit author, committer, co-authors and signature. 
 13. **The pre-check compares the token's account with the record** (review M3): `GET /user` with the identity's token
     must name the record's `user_id`, so a record cannot claim another GitHub account for the attribution.
 14. **Company accounts reach every device of the organization** (review M5): the readers of the organization's
-    credential key are all its assigned member devices, for the operator's organization too. Documented in ADR-076
+    credential key are all its assigned member devices, for the operator's organization too. Documented in ADR-078
     §7; restricting the operator's account to platform devices needs the root-signed list of KOR-49.
 15. **The hub's choice check stays lenient** (review L4): the hub does not know the operator's organization; the
     runner refuses a company account of another organization with `identity_forbidden`.

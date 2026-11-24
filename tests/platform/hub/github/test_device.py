@@ -1,4 +1,4 @@
-"""U-HUB-github (ADR-076 sections 1 and 3, 03-api.md section 6.1): device access to identity records. A device reads
+"""U-HUB-github (ADR-078 sections 1 and 3, 03-api.md section 6.1): device access to identity records. A device reads
 a user's record when it is eligible for the user's `CK`, a company record when it is a reader device of the org
 credential key; the read clears its change notice. A device writes only a user's record while answering that user's
 `github.connect` (not one for an organization). The endpoints from before answer `404`/`403` for an organization, so

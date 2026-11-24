@@ -1,4 +1,4 @@
-"""U-DBL-github: commit identities of the GitHub double (KOR-47, ADR-076 "Pre-study").
+"""U-DBL-github: commit identities of the GitHub double (KOR-47, ADR-078 "Pre-study").
 
 Author, committer and ``signature`` of ``POST …/git/commits``, the ``verification`` of commit answers, the account
 attribution by email and the SSH signing keys of ``/user/ssh_signing_keys``. The signatures are made here with

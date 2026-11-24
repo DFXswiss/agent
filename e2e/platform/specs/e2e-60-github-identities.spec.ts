@@ -1,4 +1,4 @@
-// E2E-58 (07-testing.md section 2.1; ADR-076; KOR-47): GitHub identities. One organization of an owner and a member
+// E2E-60 (07-testing.md section 2.1; ADR-078; KOR-47): GitHub identities. One organization of an owner and a member
 // on the platform device, the GitHub double with five accounts (classic tokens):
 // - Migration of an existing connection and a further account: the owner's first account is stored through the
 //   endpoints of before (settings "Use an existing token", `PUT /v1/device/credentials/{user}/github`) and is the
@@ -17,7 +17,7 @@
 //   parameter `github_identity`: the double has it authored by that account's token), a comment with the workgroup
 //   default and a subagent with another identity (`subagent.request` `github_identity`) whose comment is made as that
 //   identity.
-// - The operator's account (ADR-076 section 7): the runner restarted with `OPERATOR_GITHUB_TOKEN_FILE` and
+// - The operator's account (ADR-078 section 7): the runner restarted with `OPERATOR_GITHUB_TOKEN_FILE` and
 //   `OPERATOR_GITHUB_ORG` = this organization; the admin's company connect answers with the operator's token; a
 //   member without an own account and without a default acts with it (step 7), without being listed anywhere.
 // The hub stores `github_identity` and `triggered_by` on the operation rows and in their audit, the Operations tab
@@ -53,7 +53,7 @@ import {
 } from '../fixtures/platform.ts';
 
 const scenario = JSON.parse(
-  readFileSync(new URL('../scenarios/e2e-58-github-identities.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../scenarios/e2e-60-github-identities.json', import.meta.url), 'utf8'),
 ) as Record<string, unknown>;
 const REPO = 'kz53-org/app';
 const BRANCH = 'e2e53/notes';
@@ -247,14 +247,14 @@ async function operatorAccount(orchestrator: Orchestrator, device: string, org: 
 
 test.describe.configure({ mode: 'serial' });
 
-test('@E2E-58 @R-9.1 @R-9.4 @needs-vm several GitHub identities, company and operator accounts: each operation acts as the chosen or usable account and never as another person', async ({
+test('@E2E-60 @R-9.1 @R-9.4 @needs-vm several GitHub identities, company and operator accounts: each operation acts as the chosen or usable account and never as another person', async ({
   page,
   browser,
   e2e,
   orchestrator,
   authenticator,
 }) => {
-  test.skip(e2e.topology !== 't1', 'E2E-58 changes the platform runner of the run (T1)');
+  test.skip(e2e.topology !== 't1', 'E2E-60 changes the platform runner of the run (T1)');
   test.setTimeout(1_800_000);
   await seedGitHub(orchestrator, world());
   const device = await platformDevice(orchestrator);

@@ -11,7 +11,7 @@
 // there never sends the task. The device choice (ADR-075 section 6) goes into the request as `placement`;
 // "Automatic" while the workgroup has a default is applied to the created task afterwards (`PUT
 // /v1/tasks/{task}/placement`, best effort), since a request without `placement` takes the default.
-// When the user may choose a GitHub identity (ADR-076 section 3: own accounts, company accounts of the
+// When the user may choose a GitHub identity (ADR-078 section 3: own accounts, company accounts of the
 // organization), a choice "GitHub account" goes with the task (`github_identity`; default automatic).
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';

@@ -631,7 +631,7 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
     # KOR-39 (ADR-076 section 3)
     "human.question": ("question", "", "", None),
     "human.approval": ("question", "", "", None),
-    # ADR-076 (contracts/changes/KOR-47.md)
+    # ADR-078 (contracts/changes/KOR-47.md)
     "github.list_identities": ("", "acting_user current identities co_authors", "", None),
 }
 SPEC_REPO = "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"

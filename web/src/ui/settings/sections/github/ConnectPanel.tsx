@@ -1,4 +1,4 @@
-// A connect panel for GitHub identities (KOR-47, ADR-076): the two ways of `ConnectFlow` (device flow, existing token)
+// A connect panel for GitHub identities (KOR-47, ADR-078): the two ways of `ConnectFlow` (device flow, existing token)
 // with the option "also create a signing key", for adding a further own account, reconnecting a listed one and
 // connecting a company account of an organization. The connection itself is `ConnectFlow` with `options`;
 // `complete` (company accounts) runs on `done`. Buttons of 44 px; the panel stacks on a phone.

@@ -1,6 +1,6 @@
 """U-RUN-credentials (KOR-47): GitHub identity records fetched by ID, verified with the author rule of their owner's
 kind (a user's `CK` readers, an organization's active admins), cached without rollback, purged on `404`, refreshed on
-the `credentials` hint and opened with the owner's `cred` key (ADR-076 section 1, 03-api.md section 6.1)."""
+the `credentials` hint and opened with the owner's `cred` key (ADR-078 section 1, 03-api.md section 6.1)."""
 
 from __future__ import annotations
 

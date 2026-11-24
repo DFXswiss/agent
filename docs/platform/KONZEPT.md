@@ -411,7 +411,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Umsetzung:** gebaut – [ADR-053](adr/053-operator-github-account.md) (KOR-27),
   [ADR-054](adr/054-repository-list-optional.md) (KOR-30); allgemeiner Verbindungsweg
   [ADR-065](adr/065-github-existing-token.md) (KOR-25); das Betreiberkonto als Konto seiner Organization und mehrere
-  Konten mit Wahl je Operation, Session und Aufgabe [ADR-076](adr/076-github-identities.md) (KOR-47).
+  Konten mit Wahl je Operation, Session und Aufgabe [ADR-078](adr/078-github-identities.md) (KOR-47).
 
 <a id="e-07"></a>
 

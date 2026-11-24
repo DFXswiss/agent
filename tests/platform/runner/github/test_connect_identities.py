@@ -1,4 +1,4 @@
-"""U-RUN-github (KOR-47, ADR-076 sections 1, 5 and 7): where `github.connect` puts the account, company accounts and
+"""U-RUN-github (KOR-47, ADR-078 sections 1, 5 and 7): where `github.connect` puts the account, company accounts and
 signing keys. Real request frames, the hub kit with `GET|PUT /v1/device/github-identities/{id}` (`IdentityHub`), real
 PostgreSQL and the GitHub double (classic tokens with and without `write:ssh_signing_key`, SSH signing keys).
 

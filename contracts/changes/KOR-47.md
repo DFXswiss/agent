@@ -1,6 +1,6 @@
 # KOR-47 – contract changes
 
-ADR-027 section 3 (additive). Decision: ADR-076 (GitHub identities).
+ADR-027 section 3 (additive). Decision: ADR-078 (GitHub identities).
 
 ## Credential body (`credentials/github.json`)
 - `source` adds `operator` (the operator's token stored as a company account or as a copy for a listed user).

@@ -193,7 +193,7 @@ class Config:
     """URL name of the GitHub App (`https://github.com/apps/<slug>`), for the install link of a next step (KOR-65)."""
     operator_github_org: str | None = None
     """The organization that owns the operator's GitHub account (platform devices only, only together with the file;
-    KOR-47, ADR-076 section 7): an admin's company `github.connect` for it answers with the operator's token."""
+    KOR-47, ADR-078 section 7): an admin's company `github.connect` for it answers with the operator's token."""
 
     @property
     def pg_dir(self) -> Path:
@@ -568,7 +568,7 @@ def _operator_github(
     devices only: the file needs users or the organization (an organization ID, normalized to lower case), and users
     or the organization need the file. The token is the operator's own GitHub connection, so the user list names at
     most one user - the operator; more are `config_invalid` `OPERATOR_GITHUB_USERS:one_user_only` (a personal
-    connection is never shared, HOT-14, ADR-053); the organization's members use it as a company account (ADR-076).
+    connection is never shared, HOT-14, ADR-053); the organization's members use it as a company account (ADR-078).
 
     Only the path is checked here: the file is replaced atomically while the daemon runs, so its type, owner, mode
     and content are checked at each read (`github.operator.read_token`)."""

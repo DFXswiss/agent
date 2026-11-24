@@ -3,7 +3,7 @@
 // 1. `prepareTask`: the title (`title.ts`), `task.meta` and `prompt` sealed with the workgroup's current key at
 //    `lh` = the verified head, a fresh `task_id`. The prepared body is kept by the caller: a retry sends the identical
 //    request (same IDs, same bytes), which the hub answers `replayed` (03-api.md section 1). An optional GitHub
-//    identity chosen for the task goes along as `github_identity` (ADR-076 section 3; without it: automatic).
+//    identity chosen for the task goes along as `github_identity` (ADR-078 section 3; without it: automatic).
 // 2. `ensureDevice` (step 1 of the first-task flow): if the workgroup has no assigned device, an admin of an org with
 //    platform access (ADR-026; in a private org the single member is the admin) assigns the first platform candidate
 //    that the verified platform log certifies with the same keys (`GET …/device-candidates`, compiled root key): one
@@ -163,7 +163,7 @@ export interface PreparedTask {
     readonly wg_id: string;
     readonly events: readonly unknown[];
     readonly placement?: { readonly device_id: string; readonly vm_id?: string };
-    /** The GitHub identity chosen for the task (ADR-076 section 3); absent for "automatic". */
+    /** The GitHub identity chosen for the task (ADR-078 section 3); absent for "automatic". */
     readonly github_identity?: string;
   };
 }

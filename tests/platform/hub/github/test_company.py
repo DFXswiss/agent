@@ -1,4 +1,4 @@
-"""U-HUB-github (ADR-076 section 1, key model KM-35): company identities of an organization. Only an active admin
+"""U-HUB-github (ADR-078 section 1, key model KM-35): company identities of an organization. Only an active admin
 writes one, each version under a fresh epoch of the org credential key whose wraps go to every reader device (the
 devices assigned to a workgroup of the org; no user, not even the admin); members see the metadata and the
 ciphertext, strangers nothing; a forged write by a member is refused."""

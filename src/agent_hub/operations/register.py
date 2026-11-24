@@ -21,7 +21,7 @@ registration runs in one transaction:
    - H1 the session has not ended (`stopped`/`failed`) and its task is not closed - else `denied` (`rights_denied`);
    - `local_check: "rejected"` - `rejected` with the runner's error code, without H2-H6;
    - H2 the task owner (the actor) has `wg:write` on the workgroup now - else `denied` (`rights_denied`);
-   - H2a the GitHub identity (ADR-076 sections 2, 3 and 6; else `denied` with `rights_denied`): `triggered_by` names
+   - H2a the GitHub identity (ADR-078 sections 2, 3 and 6; else `denied` with `rights_denied`): `triggered_by` names
      an active member of the task's org; `github_identity` names an existing `github` record that the acting human
      (`triggered_by`, else the task owner) may use in the hub's lenient form (`agent_hub.github.identities`: own, or a
      company record of an org in which the human is an active member); a `github.*` type without `github_identity`

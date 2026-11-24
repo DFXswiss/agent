@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/github-identity-primary.request.json",
   "title": "PUT /v1/github-identities/{id}/primary request",
-  "description": "Make an own record the caller's primary GitHub identity (03-api.md section 4.8, ADR-076 section 1).",
+  "description": "Make an own record the caller's primary GitHub identity (03-api.md section 4.8, ADR-078 section 1).",
   "type": "object",
   "properties": {},
   "required": [],

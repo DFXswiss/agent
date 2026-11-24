@@ -1,4 +1,4 @@
-"""GitHub identities against the hub double (ADR-076): `github accounts|primary|remove|rewrap|default set`, `github
+"""GitHub identities against the hub double (ADR-078): `github accounts|primary|remove|rewrap|default set`, `github
 connect --org|--identity|--signing-key` with the company account sealed for the organization's devices,
 `task create --github-identity`, `task github-identity`, the identities of `task operations` and the re-sealing of
 further own accounts after a rotation of `CK`."""

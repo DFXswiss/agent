@@ -1,5 +1,5 @@
-"""U-RUN-github (KOR-47): `github.list_identities` (ADR-076 section 3) and the co-author candidates of a task
-(`people`, ADR-076 section 4): which identities the acting human may use, which one applies now, which humans may be
+"""U-RUN-github (KOR-47): `github.list_identities` (ADR-078 section 3) and the co-author candidates of a task
+(`people`, ADR-078 section 4): which identities the acting human may use, which one applies now, which humans may be
 named, and that copies of the operator's account are never co-authors."""
 
 from __future__ import annotations

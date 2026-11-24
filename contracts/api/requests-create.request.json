@@ -10,7 +10,7 @@
     },
     "org_id": {
       "$ref": "../common.json#/$defs/uuid",
-      "description": "github.connect for a company account of this organization (admins only, ADR-076 section 1); optional"
+      "description": "github.connect for a company account of this organization (admins only, ADR-078 section 1); optional"
     }
   },
   "required": [

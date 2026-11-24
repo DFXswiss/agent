@@ -1,11 +1,11 @@
--- GitHub identities (KOR-47, ADR-076; 02-data-model.md section 4).
+-- GitHub identities (KOR-47, ADR-078; 02-data-model.md section 4).
 -- `github_identity_cache`: identity records fetched by ID (`GET /v1/device/github-identities/{id}`), kept exactly as
 -- the hub stores them (header, ciphertext, signature) with their owner (a user or an organization), the hub's primary
 -- mark and the verified version; the body is opened only into memory. A user's primary record stays in
 -- `credential_cache` as before (the legacy endpoints address it).
 -- `github_selection`: the last desired state's GitHub identity of each session and of its task;
 -- `github_default`: the defaults of the organizations and workgroups the device is assigned to. Both keep the hub's
--- last answer, so a restart without the hub never acts with another account (ADR-076 section 3).
+-- last answer, so a restart without the hub never acts with another account (ADR-078 section 3).
 CREATE TABLE runner.github_identity_cache (
     id uuid PRIMARY KEY,
     owner_id uuid NOT NULL,

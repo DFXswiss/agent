@@ -1,4 +1,4 @@
-"""The section `github_defaults` of `GET /v1/device/state` (03-api.md section 6.1, ADR-027 section 4, ADR-076
+"""The section `github_defaults` of `GET /v1/device/state` (03-api.md section 6.1, ADR-027 section 4, ADR-078
 section 3): the default GitHub identities of the organizations and workgroups the device is assigned to
 (`{scope, scope_id, identity_id}`, sorted by scope and scope ID). The runner keeps the last answer, so a restart
 without the hub never falls back to another account."""

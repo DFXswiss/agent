@@ -74,7 +74,7 @@ def valid_scopes(value: object) -> bool:
 
 
 def _signing_key(value: object) -> bool:
-    """The identity's own SSH signing key (`signing_key` of `contracts/credentials/github.json`, ADR-076 section 5)."""
+    """The identity's own SSH signing key (`signing_key` of `contracts/credentials/github.json`, ADR-078 section 5)."""
     return (
         isinstance(value, dict)
         and {"alg", "seed", "public"} <= set(value) <= {"alg", "seed", "public", "github_key_id"}
@@ -86,7 +86,7 @@ def _signing_key(value: object) -> bool:
 
 
 def valid_github(body: dict[str, Any]) -> bool:
-    """A `github` body (one GitHub identity, ADR-076): `source`, `name` and `signing_key` are optional."""
+    """A `github` body (one GitHub identity, ADR-078): `source`, `name` and `signing_key` are optional."""
     return (
         set(body) - GITHUB_OPTIONAL == {"token", "login", "user_id", "scopes", "created_at"}
         and _text(body["token"], PRINTABLE_RE)

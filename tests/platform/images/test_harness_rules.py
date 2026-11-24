@@ -40,7 +40,7 @@ SPEC_OPERATIONS: dict[str, tuple[set[str], set[str]]] = {
     "workvm.release": (set(), {"scope"}),
     "human.question": ({"question"}, set()),
     "human.approval": ({"question"}, set()),
-    # ADR-076 (KOR-47)
+    # ADR-078 (KOR-47)
     "github.list_identities": (set(), set()),
 }
 MANDATORY = [

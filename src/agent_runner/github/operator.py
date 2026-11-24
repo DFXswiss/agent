@@ -9,7 +9,7 @@ credential at once with `source:"operator"` (`approved`, `device_flow.connect`);
 flow. Like every `github` credential, the stored token can be opened by the user (browser) and by the devices holding
 the user's `CK`, and operations use it only for that user's own instructions (`credentials.acting`, ADR-053). A
 company `github.connect` of an admin for `OPERATOR_GITHUB_ORG` answers with this token as the organization's
-credential body (`for_org`, KOR-47, ADR-076 section 7); the organization's members use it as a company account.
+credential body (`for_org`, KOR-47, ADR-078 section 7); the organization's members use it as a company account.
 
 `read_token(path, state)` reads the file anew at each connect (the operator replaces it atomically). Only a regular
 file that is not a symlink, owned by the runner's account (effective uid) and without rights for group and others

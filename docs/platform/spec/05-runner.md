@@ -68,7 +68,7 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` | empty / empty | the operator's own GitHub token (absolute path) and the operator's user ID (exactly one UUID; more is `config_invalid` `OPERATOR_GITHUB_USERS:one_user_only`, HOT-14); both or neither, platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
 | `CONTEXT_INTERVAL_SECONDS` / `CONTEXT_CACHE_MIB` / `CONTEXT_WORKSPACE_MIB` / `CONTEXT_TRANSCRIPT_MIB` | 600 / 20480 / 4096 / 4096 | context checkpoints (§6.6, KOR-33): interval while working (30–86400), local encrypted cache cap (every object; the newest of each task is always kept), workspace above the limit is left out, transcript above the limit cannot be checkpointed |
 | `CONTEXT_WAIT_SECONDS` | 180 | how long a restore waits for the final checkpoint of the session it continues and retries transient hub failures (0–3600, §6.6) |
-| `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` / `OPERATOR_GITHUB_ORG` | empty / empty / empty | the operator's GitHub token (absolute path), the approved user IDs (comma-separated UUIDs) and the organization that owns the operator's account (an org UUID, KOR-47, ADR-076 §7); the file needs the users or the organization, each of them needs the file; platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
+| `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` / `OPERATOR_GITHUB_ORG` | empty / empty / empty | the operator's GitHub token (absolute path), the approved user IDs (comma-separated UUIDs) and the organization that owns the operator's account (an org UUID, KOR-47, ADR-078 §7); the file needs the users or the organization, each of them needs the file; platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
 | `GITHUB_CLIENT_ID` | required for the device flow | public client ID of the GitHub App; users approved for the operator's GitHub account (§11.4) connect without it |
 | `GITHUB_OAUTH_CLIENT_ID` | empty | public client ID of the OAuth App (device flow enabled, no secret) whose device flow "Connect GitHub" prefers (scopes `repo workflow`; KOR-65, ADR-077); without it the GitHub App's |
 | `GITHUB_APP_SLUG` | empty | URL name of the GitHub App (`https://github.com/apps/<slug>`), for the install link of a held operation's next step (KOR-65) |
@@ -893,7 +893,7 @@ stores `source:"device_flow"`; records without `source` stay valid) with the rep
 `{step:"done", login, scopes, source}`. The token is never logged or sent back. Such a token reaches as far as the
 account; the boundary stays the workgroup's allow-list, checked formally and audited for every operation.
 
-**Several accounts, company accounts, signing keys (KOR-47, ADR-076).** `github.connect` may name the record to fill
+**Several accounts, company accounts, signing keys (KOR-47, ADR-078).** `github.connect` may name the record to fill
 (`identity_id`: reconnect a listed account of the requesting user); without it the device updates the primary record
 when it holds the same GitHub account (`user_id`), creates the primary record when there is none and otherwise adds a
 record (`PUT /v1/device/github-identities/{id}`). With `org_id` (only accepted by the hub from an admin of that
@@ -965,7 +965,7 @@ Pipeline for every `request_operation`:
    (connected as `<login>` / not connected) and the rule: if the task needs GitHub, request the operation even
    without a connection; the platform obtains the connection from the user; do not explain what is missing and do
    not offer workarounds.
-   **GitHub identity (KOR-47, ADR-076 §§2–4).** Every `github.*` check first resolves the identity the operation acts
+   **GitHub identity (KOR-47, ADR-078 §§2–4).** Every `github.*` check first resolves the identity the operation acts
    with (`03-api.md` §9): operation parameter → session → task → workgroup default → organization default → the acting
    human's own primary record → the operator's account (`OPERATOR_GITHUB_ORG`), among the identities that human may use
    (own records; company records of the task's organization; the operator's account for members of its organization,

@@ -122,7 +122,7 @@
               "type": "null"
             }
           ],
-          "description": "the GitHub identity chosen for the task (ADR-076 section 3)"
+          "description": "the GitHub identity chosen for the task (ADR-078 section 3)"
         }
       },
       "required": [
@@ -445,7 +445,7 @@
               "type": "null"
             }
           ],
-          "description": "the GitHub identity of the session (subagents, ADR-076 section 3)"
+          "description": "the GitHub identity of the session (subagents, ADR-078 section 3)"
         }
       },
       "required": [
@@ -761,7 +761,7 @@
               "type": "null"
             }
           ],
-          "description": "the GitHub identity the operation acted with (ADR-076 section 6); null for other types and for operations registered by older runners"
+          "description": "the GitHub identity the operation acted with (ADR-078 section 6); null for other types and for operations registered by older runners"
         },
         "triggered_by": {
           "anyOf": [
@@ -772,7 +772,7 @@
               "type": "null"
             }
           ],
-          "description": "the human whose instruction the operation followed (ADR-076 section 2); null for operations registered by older runners"
+          "description": "the human whose instruction the operation followed (ADR-078 section 2); null for operations registered by older runners"
         }
       },
       "required": [
@@ -1759,7 +1759,7 @@
         "updated_at"
       ],
       "additionalProperties": false,
-      "description": "metadata of a GitHub identity (a github credential record, ADR-076); never the login or token"
+      "description": "metadata of a GitHub identity (a github credential record, ADR-078); never the login or token"
     },
     "github_default": {
       "type": "object",
@@ -1792,7 +1792,7 @@
         "set_at"
       ],
       "additionalProperties": false,
-      "description": "the default GitHub identity of an organization or workgroup (ADR-076 section 3)"
+      "description": "the default GitHub identity of an organization or workgroup (ADR-078 section 3)"
     }
   }
 }

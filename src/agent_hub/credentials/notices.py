@@ -2,7 +2,7 @@
 
 After a committed change of an owner's credentials (`PUT`, `DELETE`, CK rotation, primary mark) every device eligible
 for the owner's credential key (`agent_hub.credentials.eligibility.holder_ids`: the user's `CK`, or for a company
-record the org credential key, ADR-076) - except the device that made the change - gets
+record the org credential key, ADR-078) - except the device that made the change - gets
 
 - a durable notice `(device, owner, kind, changed_at)` per changed kind, written in the change's transaction
   (`note_change`) and listed by `GET /v1/device/state` as `credentials_changed`
@@ -13,7 +13,7 @@ record the org credential key, ADR-076) - except the device that made the change
 A device's fetch of the owner's record of a kind (`GET /v1/device/credentials/{owner}/{kind}`, also a `404` after a
 deletion) clears its notice of that kind (of kind `github` the list of every record of the owner,
 `GET /v1/device/github-identities?owner_id=`, does too; the read of one identity record does not, because the notice
-may stand for other records of the owner, ADR-076), but only up to the time the fetch read (`clear`): a change
+may stand for other records of the owner, ADR-078), but only up to the time the fetch read (`clear`): a change
 committed after the fetch keeps a newer notice. An owner stays listed until every changed kind was re-read, so a
 re-read of one kind never hides the deletion of another. Notices of devices that are no longer eligible are never
 listed and are removed by the job `credentials.prune_notices`.

@@ -1,4 +1,4 @@
-"""U-RUN-github (KOR-47): commit objects and SSH commit signatures (`github.signing`, ADR-076 sections 4 and 5),
+"""U-RUN-github (KOR-47): commit objects and SSH commit signatures (`github.signing`, ADR-078 sections 4 and 5),
 checked against the GitHub double's independent implementation (`agent_doubles.github.objects`, `.sshsig`)."""
 
 from __future__ import annotations

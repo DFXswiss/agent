@@ -1,4 +1,4 @@
-// The default GitHub identity of a workgroup (ADR-076 section 3, `PUT /v1/github-defaults/wg/{wg}`): only company
+// The default GitHub identity of a workgroup (ADR-078 section 3, `PUT /v1/github-defaults/wg/{wg}`): only company
 // accounts of the workgroup's organization, chosen by its admins and the writers of the workgroup; "none" lets the
 // organization's default apply. Readers see the current choice. A `409 peer_outdated` names the devices to update.
 import { useId, useState } from 'react';

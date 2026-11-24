@@ -5,7 +5,7 @@ is given (`answer_text`, the same text the web client sends).
 
 The tool seals what the web client seals: a new task is `POST /v1/tasks` with the events `task.meta` (`{"title"}`,
 derived from the prompt as `web/src/core/tasks/title.ts`, vectors `contracts/tasks/title.json`) and `prompt`
-(`{"attachments": [], "text"}`) and, when one is chosen, the task's GitHub identity (`github_identity`, ADR-076 section
+(`{"attachments": [], "text"}`) and, when one is chosen, the task's GitHub identity (`github_identity`, ADR-078 section
 3; without it the identity is automatic), a further prompt is `POST /v1/tasks/{task}/prompts`. Events are sealed for the
 workgroup under its current epoch (`eventio.seal`: the key from the user's own wraps, checked against the verified
 org log; refused while the workgroup's rotation is owed) and signed by the user's identity. Reading opens the task's

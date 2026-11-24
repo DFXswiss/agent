@@ -1,4 +1,4 @@
-"""GitHub identity records on the device (KOR-47, ADR-076 section 1; 03-api.md section 6.1
+"""GitHub identity records on the device (KOR-47, ADR-078 section 1; 03-api.md section 6.1
 `GET /v1/device/github-identities/{id}`; 04-crypto.md section 4.4; 02-data-model.md section 4 `github_identity_cache`).
 
 A GitHub identity is one `github` credential record, named by its record ID. Its owner is a user (a personal account)

@@ -23,7 +23,7 @@
   the account can reach. No login is `github_login_missing`. `github connect --app oauth_app|github_app` asks for that
   device flow (default: the device's preferred one, the OAuth App when set up).
 =======
-  GitHub identities (ADR-076, `agent_platform.identities`): `connect --identity` reconnects into that own record,
+  GitHub identities (ADR-078, `agent_platform.identities`): `connect --identity` reconnects into that own record,
   `--signing-key` asks the device for an own signing key (`signing` in the answer), `--org` connects a company account
   of an organization the user is an admin of: the request goes to a device of that organization and names it in
   plaintext as well; the device's final answer carries the credential body, which the tool seals for the

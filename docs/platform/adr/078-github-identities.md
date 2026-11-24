@@ -1,4 +1,4 @@
-# ADR-076: GitHub identities – several accounts, choice per operation, session and task, defaults per organization and workgroup, author, committer, signature and co-authors
+# ADR-078: GitHub identities – several accounts, choice per operation, session and task, defaults per organization and workgroup, author, committer, signature and co-authors
 
 Status: Accepted (2026-11-24)
 

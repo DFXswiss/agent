@@ -27,7 +27,7 @@ Pre-check (before the dedupe tag, so the snapshot decides the dedupe fields):
 6. dedupe fields `parent_sha` and `tree_sha` (the local root tree SHA); the executor's data: parent, parent tree, tree
    SHA, the tree entries and the number of changed files.
 
-Commit identity (KOR-47, ADR-076 sections 4 and 5; checked first, before the repository, `commit_identity`): the
+Commit identity (KOR-47, ADR-078 sections 4 and 5; checked first, before the repository, `commit_identity`): the
 pre-check runs after the resolution of the acting identity (`identity.resolved`). `committer` (an identity ID, default
 the acting identity) and `author` (default the committer) must each be usable by the acting user (`identity.usable`;
 `identity_forbidden`, also when the hub refuses the record with `403`); a record that is gone, refused or does not open

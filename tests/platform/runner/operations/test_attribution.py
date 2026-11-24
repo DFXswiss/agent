@@ -1,6 +1,6 @@
 """U-RUN-operations (KOR-47): the registration of every operation names the acting human (`triggered_by`) and, for
 `github.*` types, the identity the pre-check resolved (`github_identity`); `subagent.request` may name the child
-session's identity, which the acting human must be allowed to use (ADR-076 sections 2, 3 and 6; 03-api.md section
+session's identity, which the acting human must be allowed to use (ADR-078 sections 2, 3 and 6; 03-api.md section
 8.3)."""
 
 from __future__ import annotations

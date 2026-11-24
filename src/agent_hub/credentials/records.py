@@ -15,7 +15,7 @@ only the metadata of 04-crypto.md section 7 (owner, kind, version, epoch). Every
    record ID of the stored record (`request_invalid`, pointer `/record/header/id`); a new record whose ID is used by
    another record is `409 id_conflict`.
 
-**GitHub identities (ADR-076).** An owner may hold up to `MAX_GITHUB_RECORDS` `github` records (each kind other than
+**GitHub identities (ADR-078).** An owner may hold up to `MAX_GITHUB_RECORDS` `github` records (each kind other than
 `github` stays one record per owner). The owner is a user (`owner_kind = user`, sealed under the user's `CK`) or an
 organization (`org`, a company record; never primary). A company record is sealed under the **org credential key**
 (the `cred` scope of the org, KM-35), whose only readers are the org's devices assigned to a workgroup: the admin who
@@ -34,7 +34,7 @@ when the user has no primary record; more than `MAX_GITHUB_RECORDS` records of o
 `agent_hub.wraps.rules`, including the owner's self-wrap) and every stored record re-encrypted under the new epoch by
 the owner (same IDs and kinds, `version` + 1; a missing, extra or stale record is `409 version_conflict`). Of the
 `github` records the rotation must hold the primary one; a non-primary one may be re-encrypted with it (same rules)
-or left out (it keeps its epoch until a current client re-seals it, ADR-076 section 1). A refusal of
+or left out (it keeps its epoch until a current client re-seals it, ADR-078 section 1). A refusal of
 any part leaves everything unchanged. Each write appends `credential.put` / `credential.delete` / `credential.rotate`
 to the audit (the first two with `owner_kind`) and writes the change notices of `agent_hub.credentials.notices`.
 """
@@ -66,7 +66,7 @@ CRED = "cred"
 GITHUB = "github"
 USER, ORG = "user", "org"
 MAX_GITHUB_RECORDS = 20
-"""At most this many `github` records per owner (ADR-076 section 1)."""
+"""At most this many `github` records per owner (ADR-078 section 1)."""
 _LEGACY = "owner_kind = 'user' AND (kind <> 'github' OR is_primary)"
 """The records the endpoints from before address: user-owned, and of kind `github` only the primary one."""
 MAX_CT_CHARS = 87382

@@ -14,7 +14,7 @@ steps 4-5; 04-crypto.md sections 4.10 and 5.12; ADR-012).
 - the plaintext `type` when it is a well-formed operation type (`contracts/common.json#/$defs/operation_type`), else
   `invalid.type` (a guest-rejected request may name anything; the params event keeps the exact type);
 - `requested_at` of the journal record when it is a contract time, else the device time;
-- `triggered_by` (KOR-47, ADR-076 sections 2 and 6): the acting user stamped at the receipt (`operation.actor_id`,
+- `triggered_by` (KOR-47, ADR-078 sections 2 and 6): the acting user stamped at the receipt (`operation.actor_id`,
   `credentials.acting`, HOT-14); left out without one;
 - `github_identity`: for `github.*` types the identity the pre-check resolved, for `subagent.request` the child
   session's identity of its parameter (`attribution`); left out without one.

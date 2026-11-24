@@ -58,11 +58,11 @@
         },
         "github_identity": {
           "$ref": "../common.json#/$defs/uuid",
-          "description": "the GitHub identity the operation acts with (github.* types, ADR-076 section 6); optional"
+          "description": "the GitHub identity the operation acts with (github.* types, ADR-078 section 6); optional"
         },
         "triggered_by": {
           "$ref": "../common.json#/$defs/uuid",
-          "description": "the human whose instruction the operation follows (ADR-076 section 2); optional"
+          "description": "the human whose instruction the operation follows (ADR-078 section 2); optional"
         }
       },
       "required": [
@@ -135,11 +135,11 @@
         },
         "github_identity": {
           "$ref": "../common.json#/$defs/uuid",
-          "description": "the GitHub identity the operation acts with (github.* types, ADR-076 section 6); optional"
+          "description": "the GitHub identity the operation acts with (github.* types, ADR-078 section 6); optional"
         },
         "triggered_by": {
           "$ref": "../common.json#/$defs/uuid",
-          "description": "the human whose instruction the operation follows (ADR-076 section 2); optional"
+          "description": "the human whose instruction the operation follows (ADR-078 section 2); optional"
         }
       },
       "required": [

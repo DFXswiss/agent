@@ -31,7 +31,7 @@ secret), because a GitHub App user token reaches only owners where the app is in
 second way and an access refusal is held with one next step ([ADR-077](077-github-every-repository.md)).
 
 ## Addendum (2026-11-24, KOR-47)
-"Operations use the credential of the task owner" is replaced by [ADR-076](076-github-identities.md): an operation
+"Operations use the credential of the task owner" is replaced by [ADR-078](078-github-identities.md): an operation
 acts with the GitHub identity chosen for it, its session or task, or the default of its workgroup or organization,
 else the own primary account of the human whose instruction it follows, else the operator's account – only among the
 identities that human may use. A user may connect several accounts; organizations may hold company accounts.

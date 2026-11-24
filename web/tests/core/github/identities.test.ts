@@ -1,4 +1,4 @@
-// GitHub identities (ADR-076, KM-35): own records verified and opened in the browser (only the shown part leaves),
+// GitHub identities (ADR-078, KM-35): own records verified and opened in the browser (only the shown part leaves),
 // company records by metadata only, the changes (primary, delete, defaults, the task's identity), the devices of a
 // `peer_outdated`, storing a company account under a fresh epoch of the organization's credential key that only its
 // devices can open, re-sealing own further records under the newest CK, and the views of the task choice.

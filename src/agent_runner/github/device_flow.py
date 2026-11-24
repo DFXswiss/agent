@@ -18,7 +18,7 @@ token: a GitHub CLI login or a personal access token; without it the device flow
 `signing_key` (also an own signing key); IDs are UUIDv7 text. Any other key or form is `upstream_error`, a token that
 is not printable ASCII up to 4096 characters `token_invalid`.
 
-**Where the connection goes (KOR-47, ADR-076 section 1).** Without `org_id` the checked account is stored for the
+**Where the connection goes (KOR-47, ADR-078 section 1).** Without `org_id` the checked account is stored for the
 requesting user (`connect_store.store`: the named record, else the primary record when it holds the same GitHub
 account or there is none, else a new record) and the answer is `{step:"done", login, scopes, source, identity_id}`;
 a named record that is missing or not the user's is `credential_missing`. With `org_id` the device first checks in
@@ -32,7 +32,7 @@ from memory once sent. `identity_id` is ignored for a company account (the admin
 token this device minted through the device flow is remembered for the organization (`revoke.remember`), so the
 devices revoke it when the company record is purged; an existing or the operator's token is not.
 
-**Signing key (ADR-076 section 5).** With `signing_key: true`, after the account is checked, the device creates an
+**Signing key (ADR-078 section 5).** With `signing_key: true`, after the account is checked, the device creates an
 Ed25519 key (`github.signing`) and registers it with `POST /user/ssh_signing_keys` `{title: "agent.dfx.swiss
 <date>", key}`: success puts `signing_key {alg, seed, public, github_key_id}` into the body and adds
 `signing:"registered"` to the answer; `403`/`404` (classic scope `write:ssh_signing_key` missing, or a GitHub App
@@ -75,7 +75,7 @@ operator's token file is read, checked with step 4 (scopes from `X-OAuth-Scopes`
 stored with step 5 (`source: "operator"`, KOR-47); the only response is `done` (final) - the web client takes `done`
 as the first response as well. An unusable file is `credential_missing`; log lines of this way carry
 `source=operator`. The same way serves an admin's company connect for `OPERATOR_GITHUB_ORG` on a platform device
-(`operator.for_org`, ADR-076 section 7): the operator's token becomes the answered body with `source:"operator"`.
+(`operator.for_org`, ADR-078 section 7): the operator's token becomes the answered body with `source:"operator"`.
 
 Failures end with `{step:"failed", code}` (final): `flow_unavailable` (the asked device flow is not set up on this
 device), `upstream_error`, `upstream_unreachable`, `timeout`, `token_invalid`
@@ -487,14 +487,14 @@ async def _connected(flow: Flow, request: Request, by_operator: bool) -> tuple[d
     outcome: str | None = None
     key: dict[str, Any] | None = None
     if request.signing_key and by_operator and request.org_id is None:
-        outcome = "refused"  # a key in the operator's account only for an admin of its organization (ADR-076 §5)
+        outcome = "refused"  # a key in the operator's account only for an admin of its organization (ADR-078 §5)
     elif request.signing_key:
         outcome, key = await _signing(flow, account)
     body = _body(flow, account, key)
     answer: dict[str, Any] = {"step": "done", "login": account.login, "scopes": account.scopes}
     answer["source"] = account.source
     if request.org_id is not None:
-        answer["body"] = body  # the device stores nothing; the admin's client seals it (ADR-076 section 1)
+        answer["body"] = body  # the device stores nothing; the admin's client seals it (ADR-078 section 1)
         if account.minted:  # revoked when the company record is purged, like a personal one (KOR-40)
             await revoke.remember(flow.context, request.org_id, account.token)
     else:

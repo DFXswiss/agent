@@ -1,4 +1,4 @@
-// Shared parts of the GitHub identity views (ADR-076, 06-web.md section 8.1): `useIdentities` loads the user's
+// Shared parts of the GitHub identity views (ADR-078, 06-web.md section 8.1): `useIdentities` loads the user's
 // identities once per sign-in (the `githubIdentities` slice, `core/github/identities.ts`) and offers a reload;
 // `useIdentityText` names an identity – an own account by its login (and display name), a company account as
 // "Company account of <org> · connected <date>" with the login only when this browser stored it (company records are

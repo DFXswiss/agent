@@ -1,4 +1,4 @@
-"""U-HUB-github (ADR-076 section 1): a user's GitHub identities through `/v1/github-identities` and their compatibility
+"""U-HUB-github (ADR-078 section 1): a user's GitHub identities through `/v1/github-identities` and their compatibility
 with the endpoints from before (`/v1/me/credentials`, the rotation): the first record is primary, further ones are
 not, the endpoints from before see the primary record only, a deleted primary record promotes none, the primary mark
 switches atomically, and every refusal of a record write."""

@@ -29,9 +29,9 @@ export interface OperationRow {
   readonly decided_at: string | null;
   readonly started_at: string | null;
   readonly finished_at: string | null;
-  /** The GitHub identity the operation acted with (ADR-076 section 6); absent or null otherwise. */
+  /** The GitHub identity the operation acted with (ADR-078 section 6); absent or null otherwise. */
   readonly github_identity?: string | null;
-  /** The human whose instruction the operation followed (ADR-076 section 2); absent or null for older runners. */
+  /** The human whose instruction the operation followed (ADR-078 section 2); absent or null for older runners. */
   readonly triggered_by?: string | null;
 }
 

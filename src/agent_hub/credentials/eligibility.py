@@ -8,7 +8,7 @@ that admitted the user without its consent gets no `CK`, ADR-060). This is the
 `cred` reader rule W2 of `agent_hub.log.wraps.cred_readers`, answered from the projections of the membership logs,
 which are written in the same transaction as the log entries (`agent_hub.orgs.rights`).
 
-For the `cred` scope of an **organization** (its company credentials, KM-35, ADR-076) the eligible devices are its
+For the `cred` scope of an **organization** (its company credentials, KM-35, ADR-078) the eligible devices are its
 active devices that are active members of it and currently assigned to one of its workgroups (`org_device_ids`,
 `holds_org`); no user is eligible. `holder_ids` / `holds` answer for either kind of owner.
 

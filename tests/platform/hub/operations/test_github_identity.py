@@ -1,4 +1,4 @@
-"""U-HUB-operations (ADR-076 sections 2, 3 and 6): the GitHub identity of a registration (check H2a).
+"""U-HUB-operations (ADR-078 sections 2, 3 and 6): the GitHub identity of a registration (check H2a).
 
 `github_identity` and `triggered_by` are stored on the operation, written into every `operation.*` audit detail and
 returned in the operation row. A registration names only an identity the acting human may use (a member registering

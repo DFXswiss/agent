@@ -1,4 +1,4 @@
-// The identity part of the hub (03-api.md section 4.8, ADR-076) in memory behind a test world's fake client, and
+// The identity part of the hub (03-api.md section 4.8, ADR-078) in memory behind a test world's fake client, and
 // sealed own records (shared by the core and UI tests of GitHub identities).
 import { bodyJson } from '../../../src/core/encoding/json';
 import { newHeader, sealCredential } from '../../../src/core/crypto/credential';

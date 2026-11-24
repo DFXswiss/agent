@@ -66,7 +66,7 @@ further users, as the consequences below describe, is no longer possible.
   learns of an exhausted limit separately (more `rate_limited` failures, no wrong results).
 
 ## Addendum (2026-11-24, KOR-47)
-[ADR-076](076-github-identities.md) §7: with `OPERATOR_GITHUB_ORG` the operator's account becomes a company account of
+[ADR-078](078-github-identities.md) §7: with `OPERATOR_GITHUB_ORG` the operator's account becomes a company account of
 that organization, which its members use without being listed (E-06 stays the default). `OPERATOR_GITHUB_USERS`
 remains for users outside that organization until the owner decides otherwise; their copies are stored with
 `source:"operator"` and every change of the list is audited (`runner.operator_github_users`).

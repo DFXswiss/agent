@@ -1,4 +1,4 @@
-"""MIG-01 for migration 0021 (ADR-076): it applies on the previous schema with data. Every existing record becomes
+"""MIG-01 for migration 0022 (ADR-078): it applies on the previous schema with data. Every existing record becomes
 primary, user-owned and created at its last change; the new constraints hold (one primary `github` record per user,
 one record of every other kind per owner, company records are `github` and never primary); a default goes away with
 its record; the new nullable columns start empty."""

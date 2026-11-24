@@ -6,7 +6,7 @@ the operation, `depth` = parent depth + 1, owner = the task owner, agent `claude
 first transition. It writes the audit row `session.requested` (actor: the requesting device) and records the `session`
 frame for the org's browsers, the hint `session.start {session_id}` for the device (whose `GET /v1/device/state` lists
 the child in `sessions`) and the task derivation (`refresh_task`: the task's activity time and `task` frame). The
-child's `github_identity` is the one the registration names, else the parent session's (ADR-076 section 3). The model
+child's `github_identity` is the one the registration names, else the parent session's (ADR-078 section 3). The model
 of the child is chosen by the runner (the parent's access kind, or the `model_id` the runner allowed). The caller holds
 the task row (lock order of `agent_hub.sessions.taskstate`).
 """

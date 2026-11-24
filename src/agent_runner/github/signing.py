@@ -1,4 +1,4 @@
-"""Commit objects and SSH commit signatures (KOR-47, ADR-076 sections 4 and 5).
+"""Commit objects and SSH commit signatures (KOR-47, ADR-078 sections 4 and 5).
 
 - `Person(name, email, time)`: an author or committer line as git writes it (`name <email> time +0000`; the runner
   always commits in UTC with whole seconds, the form GitHub stores for dates ending in `Z`).

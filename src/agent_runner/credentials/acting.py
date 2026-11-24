@@ -27,9 +27,9 @@ keeps it so).
   `CredentialUnavailable("shared")` for a copy of the operator's GitHub token held by anybody but the operator's user
   (`github.operator.foreign_copy`; stored while several users could be approved).
 
-GitHub identities (KOR-47, ADR-076): the acting user may hold several own `github` records beside the primary one,
+GitHub identities (KOR-47, ADR-078): the acting user may hold several own `github` records beside the primary one,
 and a task may act with a company record of its organization (`github.identity` decides which one, with the acting
-user as the human of ADR-076 section 2). Every opening of a GitHub identity record for an operation goes through here
+user as the human of ADR-078 section 2). Every opening of a GitHub identity record for an operation goes through here
 as well:
 
 - `opened_identity(context, operation, record)`: the body of an identity record (`credentials.identities`) for one

@@ -14,7 +14,7 @@
 // sealed with HPKE to the device – never into the store, the URL, a log or the component state. The device checks it at
 // GitHub and answers `done` (login, scopes, source) or a failure with its own text (`github.token.failure.<code>`).
 //
-// GitHub identities (KOR-47, ADR-076): `options` name the account to reconnect, the organization of a company account
+// GitHub identities (KOR-47, ADR-078): `options` name the account to reconnect, the organization of a company account
 // (then only that organization's devices are offered) and ask for a signing key, whose outcome the done step shows.
 // `complete` runs once on `done` before `onConnected` (the admin's client seals and stores a company account's body);
 // its failure is shown with "Try again".

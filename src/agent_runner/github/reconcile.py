@@ -4,7 +4,7 @@
   disconnected GitHub token (`github.revoke`, KOR-40) once per daemon;
 - `github_selection` (order 45: after the desired state was read and the logs and wraps were verified, before the
   sessions start): keeps the GitHub identity choices and defaults of the desired state in the store
-  (`selection.store`, KOR-47, ADR-076 section 3). Without a desired state (pending device, hub not reached) the
+  (`selection.store`, KOR-47, ADR-078 section 3). Without a desired state (pending device, hub not reached) the
   stored answer stays.
 """
 

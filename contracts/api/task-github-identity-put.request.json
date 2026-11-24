@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/task-github-identity-put.request.json",
   "title": "PUT /v1/tasks/{task}/github-identity request",
-  "description": "Set or clear (null) the GitHub identity of a task (writers of the workgroup; the identity must be usable by the caller, ADR-076 sections 2 and 3).",
+  "description": "Set or clear (null) the GitHub identity of a task (writers of the workgroup; the identity must be usable by the caller, ADR-078 sections 2 and 3).",
   "type": "object",
   "properties": {
     "identity_id": {

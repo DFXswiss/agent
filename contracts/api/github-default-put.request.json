@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/github-default-put.request.json",
   "title": "PUT /v1/github-defaults/{scope}/{scope_id} request",
-  "description": "Set or clear (null) the default GitHub identity of an organization (scope org: org admins) or workgroup (scope wg: org admins and writers of the workgroup); only company records of that organization (03-api.md section 4.8, ADR-076 section 3).",
+  "description": "Set or clear (null) the default GitHub identity of an organization (scope org: org admins) or workgroup (scope wg: org admins and writers of the workgroup); only company records of that organization (03-api.md section 4.8, ADR-078 section 3).",
   "type": "object",
   "properties": {
     "identity_id": {

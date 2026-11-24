@@ -70,7 +70,7 @@ export function slotOf(value: { scope: string; scope_id: string; epoch: number; 
  * For a user: the owner and every active device assigned to a workgroup in which the owner has explicit access, over
  * all orgs in which the owner joined by its own entry (an org that admitted the owner without its consent gets no
  * credential key, ADR-060). For an organization among `states` (the credential key of its company accounts, KM-35,
- * ADR-076): every active device assigned to a workgroup of it – devices only, no user.
+ * ADR-078): every active device assigned to a workgroup of it – devices only, no user.
  */
 export function credReaders(states: Iterable<OrgState>, owner: string, excluded: Iterable<string> = []): Set<string> {
   const skip = new Set(excluded);

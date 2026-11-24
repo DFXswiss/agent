@@ -4,7 +4,7 @@ Both the registration (`agent_hub.operations.register`) and the expiry job (`age
 steps here; the outbox base handler (HUB-10) writes the steps the runner reports in the same form. Audit details are
 metadata only (`contracts/audit/operation.<state>.json`): type, error code, the original of a duplicate and the
 runner's local check (registration only), the GitHub identity the operation acts with and the human who triggered it
-(ADR-076 section 6; null when the registration named none). The audit `result` follows the decision: `rejected`,
+(ADR-078 section 6; null when the registration named none). The audit `result` follows the decision: `rejected`,
 `denied` and `duplicate` keep their name, `expired` is `failed`, everything else `ok`.
 """
 
@@ -42,7 +42,7 @@ class OperationRef:
 
 
 def identity_detail(github_identity: UUID | None, triggered_by: UUID | None) -> dict[str, str | None]:
-    """The audit detail fields `github_identity` and `triggered_by` of every `operation.*` row (ADR-076 section 6)."""
+    """The audit detail fields `github_identity` and `triggered_by` of every `operation.*` row (ADR-078 section 6)."""
     return {
         "github_identity": None if github_identity is None else str(github_identity),
         "triggered_by": None if triggered_by is None else str(triggered_by),

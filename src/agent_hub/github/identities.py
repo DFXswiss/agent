@@ -1,4 +1,4 @@
-"""Visibility, usability, defaults and the feature gate of GitHub identities at the hub (ADR-076; 03-api.md 4.8).
+"""Visibility, usability, defaults and the feature gate of GitHub identities at the hub (ADR-078; 03-api.md 4.8).
 
 An identity is a `github` credential record (`agent_hub.credentials.records`), named by its record ID. The hub never
 sees a login or token; it knows owner, owner kind, the primary mark and which record a task, session, default or
@@ -8,14 +8,14 @@ operation names.
   organization) of an organization in which the user is an active member (admin or member). Anything else is
   `404 not_found`, so the existence of another person's record does not leak. A member may read the ciphertext of a
   company record; only the organization's devices hold its key (KM-35).
-- **Usable** by a human for a task choice or an operation (the hub's lenient form of ADR-076 section 2): an own
+- **Usable** by a human for a task choice or an operation (the hub's lenient form of ADR-078 section 2): an own
   record of the human or a company record of an organization in which the human is an active member. The runner
   applies the strict rule (own, the task's organization or the operator's organization) from its verified logs.
 - **Defaults** (`github_default`): one per organization or workgroup, always a company record of that very
   organization (`403 identity_forbidden` otherwise); set by an active admin of the organization or, for a workgroup,
   by a writer of it (`403 forbidden` otherwise; `404 not_found` for an unknown scope). A default goes away with its
   record (foreign key). Every change appends `github.default` (target the organization or workgroup).
-- **Feature gate** (ADR-076 section 3, "Old runners"): a non-null task choice, session choice or default is refused
+- **Feature gate** (ADR-078 section 3, "Old runners"): a non-null task choice, session choice or default is refused
   with `409 peer_outdated` (`detail.devices`) while an active device assigned to a workgroup of the organization has
   not announced `github.identities` (`agent_hub.device.features`); clearing is always allowed.
 """
@@ -68,7 +68,7 @@ def find_visible(connection: Connection, record_id: UUID, user: UUID) -> Identit
 
 
 def usable_by(connection: Connection, identity_id: UUID | str, human: UUID | str) -> bool:
-    """The lenient hub rule of ADR-076 section 2 (module docstring)."""
+    """The lenient hub rule of ADR-078 section 2 (module docstring)."""
     row = connection.execute(
         "SELECT owner_id, owner_kind FROM hub.credential WHERE id = %s AND kind = 'github'", (identity_id,)
     ).fetchone()

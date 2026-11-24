@@ -1,6 +1,6 @@
 """Pre-checks of this area's operation types (`<area>/op_prechecks.py:PRECHECKS`, RUN-07 / ADR-041).
 
-Every `github.*` type resolves the GitHub identity it acts with first (`identity.resolved`, KOR-47, ADR-076 section
+Every `github.*` type resolves the GitHub identity it acts with first (`identity.resolved`, KOR-47, ADR-078 section
 3), except `github.request_connection` (the acting human's own connection) and `github.list_identities` (no
 connection needed; its pre-check only notes the acting human and the identity the resolution picks now)."""
 

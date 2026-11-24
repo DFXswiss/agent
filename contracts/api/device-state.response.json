@@ -176,7 +176,7 @@
                     "type": "null"
                   }
                 ],
-                "description": "the session's own GitHub identity (ADR-076 section 3)"
+                "description": "the session's own GitHub identity (ADR-078 section 3)"
               },
               "task_github_identity": {
                 "anyOf": [
@@ -187,7 +187,7 @@
                     "type": "null"
                   }
                 ],
-                "description": "the task's GitHub identity (ADR-076 section 3)"
+                "description": "the task's GitHub identity (ADR-078 section 3)"
               }
             },
             "required": [
@@ -447,7 +447,7 @@
         },
         "github_defaults": {
           "type": "array",
-          "description": "defaults of the organizations and workgroups the device is assigned to (ADR-076 section 3)",
+          "description": "defaults of the organizations and workgroups the device is assigned to (ADR-078 section 3)",
           "items": {
             "type": "object",
             "properties": {

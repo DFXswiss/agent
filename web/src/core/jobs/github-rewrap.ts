@@ -1,4 +1,4 @@
-// Job: re-sealing the user's further GitHub identities (ADR-076 section 1, 06-web.md section 11). A `CK` rotation of
+// Job: re-sealing the user's further GitHub identities (ADR-078 section 1, 06-web.md section 11). A `CK` rotation of
 // an older browser leaves the non-primary `github` records under their old epoch; this job re-seals every own
 // non-primary record whose epoch is older than the newest own `CK` under it (`rewrapOwnIdentities`: same ID,
 // version + 1, author the user), so that devices entitled after the rotation can read them and a device that lost

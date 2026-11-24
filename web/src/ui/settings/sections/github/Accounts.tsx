@@ -1,4 +1,4 @@
-// The user's own GitHub accounts in the settings section "GitHub" (KOR-47, ADR-076, 06-web.md section 8.1): every own
+// The user's own GitHub accounts in the settings section "GitHub" (KOR-47, ADR-078, 06-web.md section 8.1): every own
 // identity verified and opened in the browser (login and display name, primary badge, origin, scopes, signing key,
 // connection date – never the token), with "Make primary" (`PUT /v1/github-identities/{id}/primary`), "Reconnect"
 // (`github.connect` with `identity_id`: same record, version + 1) and, for further accounts, "Disconnect" (confirmation,

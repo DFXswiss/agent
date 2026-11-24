@@ -5,7 +5,7 @@
 - `task operations`: the task's operations newest first (`GET /v1/tasks/{task}/operations`, a hub must not slip in
   another task's row) with their `operation.params`/`operation.result` events opened and verified; with
   `--operation` one operation with its transitions (`GET /v1/operations/{id}`) and its events (`ref=<operation>`).
-  The rows keep the hub's `github_identity` and `triggered_by` (ADR-076 section 6); an operation with an identity also
+  The rows keep the hub's `github_identity` and `triggered_by` (ADR-078 section 6); an operation with an identity also
   gets `github_account`, its name as the user can tell it (`identities.names`: `{kind: login, login}` for an own
   account, `{kind: company, org_id}` for a company account, `{kind: other}` otherwise).
 - `session show`: `GET /v1/sessions/{id}` (row, transitions, usage, VM, children), the runtime (from the first

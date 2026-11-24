@@ -1,5 +1,5 @@
-"""`POST /runners/{name}/operator-github`: the operator's GitHub account on a platform runner (ADR-053, ADR-076
-section 7; 05-runner.md section 1.3), for the identities scenario (E2E-58).
+"""`POST /runners/{name}/operator-github`: the operator's GitHub account on a platform runner (ADR-053, ADR-078
+section 7; 05-runner.md section 1.3), for the identities scenario (E2E-60).
 
 `{"token": "<token>", "org": "<organization ID>"}` writes the token as one line into `token` of the directory
 `<runner home>-operator-github` on the runner device - the directory with mode 0700 and the file with mode 0600, both

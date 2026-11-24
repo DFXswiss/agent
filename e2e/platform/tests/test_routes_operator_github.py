@@ -1,4 +1,4 @@
-"""Control route of E2E-58: the operator's GitHub account on a platform runner (`routes/operator_github.py`). The
+"""Control route of E2E-60: the operator's GitHub account on a platform runner (`routes/operator_github.py`). The
 shell steps run for real in a temporary directory, so the modes the runner requires are checked on disk."""
 
 from __future__ import annotations

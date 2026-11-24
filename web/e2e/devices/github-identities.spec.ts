@@ -1,4 +1,4 @@
-// GitHub identities (ADR-076, KM-35) against the real hub with the device double: the user's primary account through
+// GitHub identities (ADR-078, KM-35) against the real hub with the device double: the user's primary account through
 // the device flow, a further own account stored by the user's browser under the user's CK, the list in the settings
 // with the primary badge, "make primary" and the disconnect of a further account; a company account connected by the
 // admin – the device answers the credential body, the browser seals it under a fresh epoch of the organization's
@@ -111,7 +111,7 @@ test('connects a company account for the devices of the organization only', asyn
   const company = listed.identities.find((identity) => identity.owner_kind === 'org')!;
   expect(company.epoch).toBe(1);
   expect(JSON.stringify(listed)).not.toContain('acme-bot');
-  // the workgroup's default: a company account of the organization (or the devices to update first, ADR-076 section 3)
+  // the workgroup's default: a company account of the organization (or the devices to update first, ADR-078 section 3)
   const me = (await api.request('GET', '/v1/me')) as { orgs: { org_id: string; default_wg: string }[] };
   const wg = me.orgs.find((org) => org.org_id === user.org)!.default_wg;
   await navigateInApp(page, `/o/${user.org}/w/${wg}/settings`);

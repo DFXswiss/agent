@@ -1,4 +1,4 @@
-// The GitHub identity of a task (ADR-076 section 3): its chosen identity ("Automatic" without a choice, "another
+// The GitHub identity of a task (ADR-078 section 3): its chosen identity ("Automatic" without a choice, "another
 // account" when the browser cannot name it), and for writers of the workgroup "Change" – the identities the task may
 // use or "Automatic" – saved with `PUT /v1/tasks/{task}/github-identity` (`409 peer_outdated` names the devices to
 // update, `403 identity_forbidden` is refused by the hub).

@@ -1,4 +1,4 @@
-// The text of a failed identity change (ADR-076 section 3): `409 peer_outdated` says that some devices of the
+// The text of a failed identity change (ADR-078 section 3): `409 peer_outdated` says that some devices of the
 // organization must be updated first, with their names when the hub names them; any other code its reason.
 import { outdatedDevices } from '../../../core/github/identities';
 import { requestErrorCode } from '../../../core/requests/client';

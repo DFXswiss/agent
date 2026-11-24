@@ -1,4 +1,4 @@
-// Slice `githubIdentities` (ADR-076, 06-web.md section 8.1): the user's GitHub identities as
+// Slice `githubIdentities` (ADR-078, 06-web.md section 8.1): the user's GitHub identities as
 // `core/github/identities.ts` last loaded them – own records verified and opened (login, name, source, scopes,
 // whether a signing key exists; never a token or a key seed), company records by metadata only (no browser can open
 // them, KM-35) – with the defaults of the organizations and workgroups (`unknown` until loaded), and the logins of

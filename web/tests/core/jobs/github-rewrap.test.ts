@@ -1,4 +1,4 @@
-// Job `github-rewrap` (ADR-076 section 1): own further GitHub records under an older CK epoch are re-sealed under the
+// Job `github-rewrap` (ADR-078 section 1): own further GitHub records under an older CK epoch are re-sealed under the
 // newest one, only in the queue of the first verified org, serialized with the credential re-wrap, nothing after a
 // sign-out; registered after the credential re-wrap on sign-in and the interval.
 import { describe, expect, it } from 'vitest';

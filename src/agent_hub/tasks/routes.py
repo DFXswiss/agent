@@ -4,7 +4,7 @@
 The writes live in `agent_hub.tasks.service` (one transaction each, effects sent after the commit), the reads in
 `agent_hub.tasks.read`. Reads answer `404 not_found` for unknown, malformed and forbidden IDs alike; writes `403
 forbidden` on a known task without `task:write` (03-api.md section 1). There is no project level anywhere (R-2.10):
-organization → workgroup → task. The task's GitHub identity (`github_identity` of `POST /v1/tasks`, ADR-076) is
+organization → workgroup → task. The task's GitHub identity (`github_identity` of `POST /v1/tasks`, ADR-078) is
 checked by the service; `PUT /v1/tasks/{task}/github-identity` lives in `agent_hub.github.routes`.
 """
 

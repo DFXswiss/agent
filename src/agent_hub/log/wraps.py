@@ -6,7 +6,7 @@ users with access to a workgroup (explicit, or inherited as admin, ADR-058) and 
 any org in which the owner joined by its own entry, not by `admit` (section 2, ADR-007, ADR-058 section 1: the
 inherited read of an admin does not spread credentials; ADR-060: an admission without consent does not either).
 Decertified platform devices are passed as `excluded`. The `cred` scope of an **organization** (the org credential
-key of its company credentials, KM-35, ADR-076) has devices as its only readers: every active device assigned to a
+key of its company credentials, KM-35, ADR-078) has devices as its only readers: every active device assigned to a
 workgroup of that org (no user, not even an admin). An active admin of the org may additionally wrap it (the admin
 creates each epoch with the company record it seals and wraps it to the reader devices, but never receives it).
 

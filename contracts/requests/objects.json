@@ -24,7 +24,7 @@
       ]
     },
     "github_body": {
-      "description": "Plaintext body of the credential kind github inside the record ciphertext (04-crypto.md section 4.4); one record is one GitHub identity (ADR-076).",
+      "description": "Plaintext body of the credential kind github inside the record ciphertext (04-crypto.md section 4.4); one record is one GitHub identity (ADR-078).",
       "type": "object",
       "properties": {
         "token": {
@@ -69,7 +69,7 @@
         },
         "signing_key": {
           "type": "object",
-          "description": "the identity's own SSH signing key (KOR-47, ADR-076 section 5): Ed25519 seed and its OpenSSH public key, registered at GitHub as a signing key of the account",
+          "description": "the identity's own SSH signing key (KOR-47, ADR-078 section 5): Ed25519 seed and its OpenSSH public key, registered at GitHub as a signing key of the account",
           "properties": {
             "alg": {
               "type": "string",

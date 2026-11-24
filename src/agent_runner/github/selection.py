@@ -1,4 +1,4 @@
-"""GitHub identity choices and defaults of the desired state (KOR-47, ADR-076 section 3; 03-api.md section 6.1
+"""GitHub identity choices and defaults of the desired state (KOR-47, ADR-078 section 3; 03-api.md section 6.1
 `GET /v1/device/state`; 02-data-model.md section 4 `github_selection`, `github_default`).
 
 The hub sends, per session, the session's own identity (`github_identity`) and its task's (`task_github_identity`),

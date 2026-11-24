@@ -1,4 +1,4 @@
-"""GitHub identities (ADR-076, key model KM-35; 03-api.md section 4.8, 11-agent-access.md section 8.4; twin of
+"""GitHub identities (ADR-078, key model KM-35; 03-api.md section 4.8, 11-agent-access.md section 8.4; twin of
 `web/src/core/github/identities.ts`, `screens/github-accounts`, `settings/sections/github`,
 `screens/wg-settings/GithubDefault.tsx` and `screens/task/TaskIdentity.tsx`).
 

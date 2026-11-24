@@ -1,14 +1,14 @@
-"""The GitHub identity an operation acts with (KOR-47, ADR-076 sections 2 and 3; 03-api.md section 9; 05-runner.md
+"""The GitHub identity an operation acts with (KOR-47, ADR-078 sections 2 and 3; 03-api.md section 9; 05-runner.md
 section 12 step 3).
 
-The human H of ADR-076 is the operation's **acting user** of HOT-14 (ADR-070): the verified author of the prompt that
+The human H of ADR-078 is the operation's **acting user** of HOT-14 (ADR-070): the verified author of the prompt that
 started the session's turn, stamped at the receipt (`operation.actor_id`, `credentials.acting`). An operation without
 acting user acts with no identity at all (`github_not_connected`; the pipeline rejects it at once). Every opening of a
 record goes through `credentials.acting` (`acting.opened`, `acting.opened_identity`).
 
 **Usable** (`usable`): for an operation of a task in organization O, an identity record is usable by H when it is H's
 own (owner = H, source `own`), a company record of O while H is an active user member of O in the verified membership
-log (`task_org`), or a company record of the operator's organization (`config.operator_github_org`, ADR-076 section
+log (`task_org`), or a company record of the operator's organization (`config.operator_github_org`, ADR-078 section
 7) while H is an active user member of that organization (`operator`). Never another person's personal record and
 never another organization's. The owner and its kind come from the verified record (`credentials.identities`); a hub
 cannot change them.
@@ -32,7 +32,7 @@ cannot change them.
 Nothing usable is `github_not_connected` (held). A hub that cannot be reached while a record is needed is
 `upstream_error` (a pre-check is not retried; the session may ask again).
 
-**Account check** (`resolved`, ADR-076 section 4): before the type's own pre-check, `GET /user` with the resolved
+**Account check** (`resolved`, ADR-078 section 4): before the type's own pre-check, `GET /user` with the resolved
 identity's token must name the GitHub account the record says (`user_id`); another account, or a record without
 `user_id`, is `identity_unavailable` (not held: the record must be connected again), `401` is `github_not_connected`
 (held), any other failure `upstream_error`. A check that passed is remembered per daemon for the record's version
@@ -118,7 +118,7 @@ def forbidden() -> CheckFailed:
 
 
 def operator_org(context: Any) -> str | None:
-    """`OPERATOR_GITHUB_ORG` (ADR-076 section 7), None while unset."""
+    """`OPERATOR_GITHUB_ORG` (ADR-078 section 7), None while unset."""
     found: str | None = context.config.operator_github_org
     return found
 

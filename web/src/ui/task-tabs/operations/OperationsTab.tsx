@@ -3,7 +3,7 @@
 // operation card; "Details" (`?tab=operations&op=<id>`) opens a drawer with the transitions (state, error code,
 // time, device or hub), the decrypted parameters and the decrypted result (`GET /v1/operations/{id}` and the
 // operation's events). Times are absolute local times (section 12.4). An operation with a GitHub identity or a
-// triggering human (ADR-076 section 6) says "as <login>, triggered by <name>": the login from the identities the
+// triggering human (ADR-078 section 6) says "as <login>, triggered by <name>": the login from the identities the
 // browser can open (a company account by its organization, else "another account"), the name from the members'
 // profiles; both are rendered as text only.
 import { useEffect, useMemo, useRef, useState } from 'react';

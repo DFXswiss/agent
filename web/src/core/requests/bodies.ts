@@ -3,7 +3,7 @@
 // that does not match is refused like a forged response (`params_invalid`): the browser renders only checked bodies.
 //
 // `github.connect` may carry an existing token (KOR-25, ADR-065); its `done` then names the scopes and the source.
-// GitHub identities (KOR-47, ADR-076): the request may name the record to reconnect (`identity_id`), a company account
+// GitHub identities (KOR-47, ADR-078): the request may name the record to reconnect (`identity_id`), a company account
 // of an organization (`org_id`, its `done` then carries the credential `body` for the admin's client to seal) and ask
 // for an own signing key (`signing_key`, outcome `signing`); `source` adds `operator`.
 //

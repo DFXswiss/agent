@@ -1,4 +1,4 @@
-"""Probe of GitHub's handling of API commits (KOR-47 stage a, ADR-076 "Pre-study").
+"""Probe of GitHub's handling of API commits (KOR-47 stage a, ADR-078 "Pre-study").
 
 The package itself never uses a real account; the operator runs `scripts/probes/probe_github_identity.py` once against
 a test repository after the merge. The probe answers, for a token of the test account:

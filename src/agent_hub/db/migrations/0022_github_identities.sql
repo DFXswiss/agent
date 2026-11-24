@@ -1,5 +1,5 @@
--- 0021_github_identities: several GitHub identities per owner, company identities, choices and defaults (KOR-47,
--- ADR-076; 02-data-model.md section 2.7, 04-crypto.md sections 4.4 and 7).
+-- 0022_github_identities: several GitHub identities per owner, company identities, choices and defaults (KOR-47,
+-- ADR-078; 02-data-model.md section 2.7, 04-crypto.md sections 4.4 and 7).
 --
 -- `credential.owner_kind` says whether the owner is a user (sealed under the user's `CK`) or an organization (a
 -- company record sealed under the org key); `created_at` is when the record was first stored (backfilled from

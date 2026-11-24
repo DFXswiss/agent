@@ -1,4 +1,4 @@
-"""Probe of GitHub identities for the operator (KOR-47 stage a, ADR-076; `probelib.github_identity`).
+"""Probe of GitHub identities for the operator (KOR-47 stage a, ADR-078; `probelib.github_identity`).
 
 Never part of `make platform-ci`; run once after the merge, on any machine with network access to GitHub, against a
 test repository of a test account:

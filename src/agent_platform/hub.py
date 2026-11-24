@@ -10,7 +10,7 @@
 Failures become `PlatformError`s: a connection failure `hub_unreachable`; a verified refusal `hub_refused` with the
 hub's code (`hub_error`, a code of the closed list `agent_runner.sync.codes`) and the refusal's `detail` kept on the
 error (not printed); a `409 peer_outdated` also names the devices that must update first (`devices`, when the hub's
-`detail.devices` lists UUIDs, ADR-076 section 3); an answer that does not verify `hub_refused` with `reason` (a closed
+`detail.devices` lists UUIDs, ADR-078 section 3); an answer that does not verify `hub_refused` with `reason` (a closed
 code of the signed client).
 """
 

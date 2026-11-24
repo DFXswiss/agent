@@ -3,7 +3,7 @@ step 3; RUN-07's registry hook `<area>/op_prechecks.py:PRECHECKS`, ADR-041).
 
 They run after the formal checks and before the dedupe tag and the registration. Every pre-check of a `github.*` type
 except `github.request_connection` runs after the resolution of the identity the operation acts with for its acting
-user (`identity.resolved`, KOR-47, ADR-076 section 3; the acting user is `credentials.acting`'s, HOT-14) and uses that
+user (`identity.resolved`, KOR-47, ADR-078 section 3; the acting user is `credentials.acting`'s, HOT-14) and uses that
 identity's token:
 
 <<<<<<< HEAD

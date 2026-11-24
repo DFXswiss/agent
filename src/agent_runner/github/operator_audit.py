@@ -1,4 +1,4 @@
-"""Audit of `OPERATOR_GITHUB_USERS` (KOR-47, ADR-076 section 7; `contracts/audit/runner.operator_github_users.json`).
+"""Audit of `OPERATOR_GITHUB_USERS` (KOR-47, ADR-078 section 7; `contracts/audit/runner.operator_github_users.json`).
 
 The users of that list connect through the operator's GitHub account and so receive its token. The daemon task
 `github_operator_users` (`github/tasks.py`) runs once at each start: it compares the configured list with the list

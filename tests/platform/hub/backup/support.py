@@ -236,7 +236,7 @@ class Estate:
                 ),
             ),
             (
-                # a company identity of the org and its org default (ADR-076)
+                # a company identity of the org and its org default (ADR-078)
                 "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at,"
                 " created_at, is_primary, owner_kind)"
                 " VALUES (%s, %s, 'github', 1, 1, '{}', %s, %s, %s, %s, false, 'org')",

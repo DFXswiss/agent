@@ -12,7 +12,7 @@ Routes (`ROUTES`, the REST subset the runner uses, 05-runner.md §11.4 and §12.
   ``sort``/``direction``; ``GET``/``PATCH …/issues/{number}``, ``POST …/issues``) and issue comments. A repository
   with ``has_issues: false`` answers the issue routes ``410 Issues are disabled for this repo`` (comments too, unless
   the number is a pull request).
-- Git Data commits (KOR-47, ADR-076 "Pre-study"): ``POST …/git/commits`` takes ``author`` and ``committer``
+- Git Data commits (KOR-47, ADR-078 "Pre-study"): ``POST …/git/commits`` takes ``author`` and ``committer``
   (``{name, email, date?}``; ``date`` in ISO 8601, stored in UTC with ``+0000``; the author defaults to the
   authenticated user with its ``email``, else its ``<id>+<login>@users.noreply.github.com`` address, at the double's
   logical time, the committer to the author) and ``signature`` (a string written into the ``gpgsig`` header, so the

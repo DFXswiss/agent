@@ -1,4 +1,4 @@
-// GitHub identities in jsdom (ADR-076, KM-35): the own accounts in the settings (primary badge, make primary,
+// GitHub identities in jsdom (ADR-078, KM-35): the own accounts in the settings (primary badge, make primary,
 // reconnect, disconnect a further account, add one with a signing key), the company accounts screen (members read,
 // admins connect – the device's body is sealed for the organization's devices – reconnect, remove and set the default,
 // `peer_outdated` with device names), the workgroup default, the identity of a new task and of a task, and the

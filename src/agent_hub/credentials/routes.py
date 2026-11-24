@@ -9,13 +9,13 @@
 | `PUT /v1/device/credentials/{owner}/{kind}` | `device_eligible` and answering an active request (`request_id`) |
 
 Of kind `github` these endpoints address the user's primary record only, and only user-owned records at all
-(`agent_hub.credentials.records`, ADR-076 section 1); further and company records live behind the routes of
+(`agent_hub.credentials.records`, ADR-078 section 1); further and company records live behind the routes of
 `agent_hub.github`. A device write needs an active device request of the owner addressed to the device whose kind
 produces the credential kind (`agent_hub.requests.store.CREDENTIAL_KINDS`).
 
 The rules live in `agent_hub.credentials.records`. A device read clears the device's change notice of the owner and
 kind, also when the answer is `404` (the record was deleted; also for an organization whose credential key the
-device holds: these endpoints address user records only, ADR-076, so an older runner that follows the notice of a
+device holds: these endpoints address user records only, ADR-078, so an older runner that follows the notice of a
 company record gets `404` and the notice is cleared). After a committed change the eligible devices get the hint
 `credentials {owner_id}` and, after a rotation, the recipients of the new wraps the `wraps` frame/hint. Unknown kinds
 and foreign owners are `404 not_found` for reads and `403 forbidden` for device writes.

@@ -58,7 +58,7 @@ _MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$")
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 """`contracts/common.json#/$defs/uuid` (UUIDv7, lower case)."""
 TRAILER_RE = re.compile(r"^[ \t]*(co-authored-by|signed-off-by|committed-by):", re.IGNORECASE | re.MULTILINE)
-"""A trailer-like line that would name an author (KOR-47, ADR-076 section 4)."""
+"""A trailer-like line that would name an author (KOR-47, ADR-078 section 4)."""
 MAX_CO_AUTHORS = 10
 LABEL_RE = re.compile(r"^[^,\x00-\x1f\x7f]{1,100}$")
 """A label name of the issue types: no comma (GitHub joins label filters with commas), no control character."""
@@ -316,7 +316,7 @@ def _paths_check(params: Mapping[str, Any]) -> None:
 
 
 def _commit_check(params: Mapping[str, Any]) -> None:
-    """`github.commit`: no trailer-like line in the message, every co-author once (KOR-47, ADR-076 section 4)."""
+    """`github.commit`: no trailer-like line in the message, every co-author once (KOR-47, ADR-078 section 4)."""
     if TRAILER_RE.search(params["message"]):
         raise CheckFailed(
             "params_invalid",

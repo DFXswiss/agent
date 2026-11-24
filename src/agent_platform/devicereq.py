@@ -8,7 +8,7 @@ and `credentials/login.ts`). The hub relays opaque envelopes only; everything is
   missing connection is started, not explained.
 - A request is sealed with HPKE to the device and signed with the user's identity (`POST /v1/device-requests`); a
   `github.connect` for a company account also names its organization in plaintext (`org_id`, the hub's admin check,
-  ADR-076 section 1).
+  ADR-078 section 1).
 - Every response of `GET /v1/device-requests/{id}` must be signed by the request's device, name this request, user,
   device, kind and its `seq`, open with the user's key and hold a body the contracts allow for the kind; anything else
   is `unverifiable` and never shown as content.

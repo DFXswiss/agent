@@ -7,7 +7,7 @@ and output in events. In a task row `main_session_id` is the **current** main se
 newest `task.meta` event of the task. A session row also names how a new main session continued the conversation
 (`context_restore`: `restored` from the task's checkpoint, `fallback` with `context_reason` when it had to start a new
 conversation, null while nothing was reported; ADR-072 section 7). `github_identity` is the GitHub identity chosen
-for the session (ADR-076 section 3, null without a choice).
+for the session (ADR-078 section 3, null without a choice).
 """
 
 from __future__ import annotations

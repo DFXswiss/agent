@@ -26,7 +26,7 @@
 //   else in the browser. `connectProgress` reads the flow's state from the opened responses: waiting → device code
 //   (user code, verification link, expiry from the response's time and `expires_in`) → done (login, scopes, source)
 //   or failed (code), or expired when the hub ended the request without an answer. With `ConnectOptions` (KOR-47,
-//   ADR-076) the request names the record to reconnect, the organization of a company account (`org_id`, also in the
+//   ADR-078) the request names the record to reconnect, the organization of a company account (`org_id`, also in the
 //   plaintext of `POST /v1/device-requests` for the hub's admin check) and asks for a signing key; `done` then names
 //   the identity and the signing outcome (the body of a company account is handled by `github/identities.ts`).
 // - `tokenInput`: the pasted token trimmed (a copied line ends in a newline), or null when its form cannot be one.

@@ -1,5 +1,5 @@
 """U-RUN-github (KOR-47): which identities the acting user may use (`identity.usable`), the resolution of the identity
-of a `github.*` operation in its precedence (ADR-076 sections 2 and 3) with the acting user stamped at the receipt
+of a `github.*` operation in its precedence (ADR-078 sections 2 and 3) with the acting user stamped at the receipt
 (HOT-14, ADR-070), forged choices, defaults that hold, the account check of the token (`GET /user`), and the clients
 the executors open for the resolved identity (`ops.identity_client`)."""
 

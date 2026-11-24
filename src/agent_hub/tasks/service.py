@@ -13,7 +13,7 @@ After the commit: the event announcement, the hint `session.start`, the `task`/`
 Idempotency over `task_id`: the same request again (same workgroup, owner, GitHub identity, byte-identical events and,
 when the request names one, the same stored `placement`; without one the stored workgroup default is not compared)
 answers the current state of the task with `replayed: true`; anything else under a known `task_id` is
-`409 id_conflict`. An optional `github_identity` (ADR-076 section 3) must be usable by the caller (`403
+`409 id_conflict`. An optional `github_identity` (ADR-078 section 3) must be usable by the caller (`403
 identity_forbidden`, `agent_hub.github.identities`) and passes the feature gate of the org (`409 peer_outdated`); it
 is stored as `task.github_identity`.
 

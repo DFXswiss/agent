@@ -48,7 +48,7 @@
 // serialized per store (`exclusive`), and a run that finds the rotation done by another run or browser does nothing.
 // A `409 version_conflict` (another browser rotated or wrote a record in between) is retried once from the start.
 //
-// GitHub identities (ADR-076 section 1): the rotation body holds the primary records only (`/v1/me/credentials` lists
+// GitHub identities (ADR-078 section 1): the rotation body holds the primary records only (`/v1/me/credentials` lists
 // one record per kind, the contract allows four records); right after the rotation the user's further `github` records
 // are re-sealed under the new epoch (`rewrapOwnIdentities`, same ID, version + 1). Should that fail, the job
 // `github-rewrap` does it on its next run.

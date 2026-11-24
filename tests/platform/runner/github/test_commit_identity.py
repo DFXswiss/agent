@@ -1,4 +1,4 @@
-"""U-RUN-github (KOR-47): the identity of `github.commit` (ADR-076 sections 4 and 5; 03-api.md section 9) through the
+"""U-RUN-github (KOR-47): the identity of `github.commit` (ADR-078 sections 4 and 5; 03-api.md section 9) through the
 operation pipeline against the GitHub double: author and committer of identities the acting human may use (with
 their noreply addresses and one runner time), co-authors as trailers, the identity's own SSH signature over exactly the
 commit object GitHub stores (verified by the double, commit ID equal to the git object ID), and every refusal."""

@@ -1,4 +1,4 @@
-"""U-RUN-github (KOR-47, ADR-076 section 7): every change of `OPERATOR_GITHUB_USERS` is audited once
+"""U-RUN-github (KOR-47, ADR-078 section 7): every change of `OPERATOR_GITHUB_USERS` is audited once
 (`runner.operator_github_users {count, added, removed}`, outbox item `audit`), an unchanged list never; the store keeps
 keyed hashes of the user IDs only. Real PostgreSQL and the hub kit's daemon context."""
 

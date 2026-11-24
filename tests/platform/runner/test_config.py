@@ -395,7 +395,7 @@ ORG = "01a1ee56-5e00-7aaa-8ec3-2c90dd7ae999"
 
 @pytest.mark.parametrize("users", ["", USER_A])
 def test_operator_github_org_on_platform_devices(users: str, base: dict[str, str], tmp_path: Path) -> None:
-    """KOR-47, ADR-076 section 7: the organization that owns the operator's account; the file then needs no users."""
+    """KOR-47, ADR-078 section 7: the organization that owns the operator's account; the file then needs no users."""
     plain = dict(base)
     base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = str(tmp_path / "github.token")
     base["AGENT_RUNNER_OPERATOR_GITHUB_ORG"] = f" {ORG.upper()} "

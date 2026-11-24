@@ -14,7 +14,7 @@ hub refuses an `admit` batch while an active device of the org has not announced
 them while an active device of the org has not announced it, `agent_hub.orgs.append`) and chooses the VM of each
 session itself (the hub then takes `session.vm_id` from the session transitions only).
 
-`github.identities`: the runner applies GitHub identity choices and defaults (ADR-076 section 3). The hub refuses to
+`github.identities`: the runner applies GitHub identity choices and defaults (ADR-078 section 3). The hub refuses to
 store a task or session choice or a default while an active device assigned to a workgroup of the org has not
 announced it (`agent_hub.github.identities.require_feature`, `409 peer_outdated`).
 """

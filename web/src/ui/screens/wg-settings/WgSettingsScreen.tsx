@@ -6,7 +6,7 @@
 // user edited it, a newer event shows the concurrent-edit warning: show the newer settings, or save the own ones
 // anyway. Readers see the values without any control (06-web.md section 1). A workgroup the user cannot read is "not
 // found" (existence is not revealed). Below the form: the workgroup's default GitHub identity (`GithubDefault.tsx`,
-// ADR-076), editable by the organization's admins and the writers of the workgroup.
+// ADR-078), editable by the organization's admins and the writers of the workgroup.
 import { type FormEvent, useEffect, useId, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { WG } from '../../../core/log/state';

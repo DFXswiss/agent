@@ -2,7 +2,7 @@
 
 Public keys (``POST /user/ssh_signing_keys``): an OpenSSH public key line ``ssh-ed25519 <base64> [comment]``. The
 double accepts Ed25519 keys only (GitHub also takes RSA, ECDSA and security-key types; the platform creates Ed25519
-keys only, ADR-076 section 5): the base64 must decode to ``string("ssh-ed25519") string(32-byte key)`` with nothing
+keys only, ADR-078 section 5): the base64 must decode to ``string("ssh-ed25519") string(32-byte key)`` with nothing
 after it. `parse_public_key` returns that blob; `key_line` the normalised line without comment (GitHub stores no
 comment).
 

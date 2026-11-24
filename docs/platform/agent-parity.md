@@ -53,9 +53,9 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | github-connect | settings/github | `github connect --device --request --wait` | done |
 | github-token | settings/github (an existing token, a GitHub CLI login or a personal access token, checked by the device, ADR-065; the pre-filled link to create one, KOR-65) | `github connect --token --device --wait`, `github connect --from-gh` (this computer's GitHub CLI login, KOR-65) | done |
 | github-disconnect | settings/github | `github disconnect` | done |
-| github-accounts | settings/github (further own accounts, ADR-076: list, make primary, reconnect, remove, an own signing key) | `github accounts`, `github primary --identity`, `github remove --identity`, `github connect --identity --signing-key` | done |
+| github-accounts | settings/github (further own accounts, ADR-078: list, make primary, reconnect, remove, an own signing key) | `github accounts`, `github primary --identity`, `github remove --identity`, `github connect --identity --signing-key` | done |
 | github-company-accounts | screens/github-accounts (company accounts of an organization, sealed for its devices only: list, connect, reconnect and remove as admin, the organization's default) | `github accounts`, `github connect --org --identity --device --wait`, `github remove --identity`, `github default set --org --identity --none` | done |
-| github-wg-default | screens/wg-settings (the workgroup's default GitHub identity, ADR-076 section 3) | `github default set --wg --identity --none` | done |
+| github-wg-default | screens/wg-settings (the workgroup's default GitHub identity, ADR-078 section 3) | `github default set --wg --identity --none` | done |
 | github-rewrap | jobs (github-rewrap: further own accounts re-sealed under the newest credential key) | `github rewrap`, `credentials rotate` | done |
 | passkey-list | settings/passkeys | `passkey list` | done |
 | passkey-add | settings/passkeys | `passkey add` (opens the settings page in the user's browser: a passkey needs the user's authenticator) | done |
@@ -115,7 +115,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | tasks-list | screens/tasks | `task list` | done |
 | tasks-overview | screens/tasks (overview of an org) | `task overview --org --state --mine --search` | done |
 | task-create | screens/home, screens/tasks | `task create --device --vm --github-identity` | done |
-| task-github-identity | screens/home, screens/tasks, screens/task (the task's GitHub identity at creation and changed later, ADR-076 section 3) | `task create --github-identity`, `task github-identity --task --identity --none` | done |
+| task-github-identity | screens/home, screens/tasks, screens/task (the task's GitHub identity at creation and changed later, ADR-078 section 3) | `task create --github-identity`, `task github-identity --task --identity --none` | done |
 | task-view | screens/task (chat) | `task show` | done |
 | task-prompt | screens/task (composer) | `task prompt` | done |
 | task-close | screens/task | `task close --task` | done |
@@ -129,7 +129,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | session-control | screens/session | `session stop\|interrupt --session` | done |
 | session-follow | screens/task, screens/session (live stream) | `task follow` | done |
 | operations | screens/task (tabs) | `task operations --task --operation --before` | done |
-| operations-identity | screens/task (Operations tab: the GitHub identity an operation acted with and the human who triggered it, ADR-076 section 6) | `task operations --task --operation` | done |
+| operations-identity | screens/task (Operations tab: the GitHub identity an operation acted with and the human who triggered it, ADR-078 section 6) | `task operations --task --operation` | done |
 | whiteboard-list | screens/whiteboard | `whiteboard list`, `whiteboard history` | done |
 | whiteboard-write | screens/whiteboard | `whiteboard add\|edit\|delete --notify` | done |
 | notifications-list | screens/notifications | `notifications list --unread --before` | done |

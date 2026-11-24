@@ -61,7 +61,7 @@ ALLOWED_BRANCHES = (
 )
 HOSTILE_TEXT = "$(id > /tmp/atk33) `id` ; id | id && id\n--upload-pack=/bin/sh\r\nX-Injected: 1 <script>"
 # REST routes per operation type (05-runner.md section 12.1), with the repository fixed; `{}` is one path segment.
-# Every type first checks that the identity's token is the account its record names (`GET /user`, ADR-076 section 4).
+# Every type first checks that the identity's token is the account its record names (`GET /user`, ADR-078 section 4).
 ACCOUNT_CHECK = "GET /user"
 ROUTES = {
     "github.create_branch": ("GET /repos/{r}", "GET /repos/{r}/git/ref/heads/.+", "POST /repos/{r}/git/refs"),

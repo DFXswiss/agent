@@ -1,4 +1,4 @@
-// GitHub identities (ADR-076, key model KM-35, 03-api.md section 4.8, 06-web.md section 8.1): the `github` credential
+// GitHub identities (ADR-078, key model KM-35, 03-api.md section 4.8, 06-web.md section 8.1): the `github` credential
 // records of the user – own accounts, verified and opened in the browser – and the company accounts of the user's
 // organizations, which no browser can open (they are sealed to the organization's devices only) and are shown by
 // metadata.

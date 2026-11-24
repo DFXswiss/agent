@@ -1,4 +1,4 @@
-"""Routes of the GitHub identities area (03-api.md sections 4.6, 4.8 and 6.1; ADR-076).
+"""Routes of the GitHub identities area (03-api.md sections 4.6, 4.8 and 6.1; ADR-078).
 
 | Route | Right |
 |---|---|

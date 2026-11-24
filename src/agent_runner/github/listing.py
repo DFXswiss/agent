@@ -1,4 +1,4 @@
-"""`github.list_identities` (KOR-47, ADR-076 section 3; 03-api.md section 9; `contracts/ops/objects.json`
+"""`github.list_identities` (KOR-47, ADR-078 section 3; 03-api.md section 9; `contracts/ops/objects.json`
 `result_github_list_identities`): which GitHub identities the human the session works for may use in this task, which
 one applies now and which humans may be named as co-authors.
 

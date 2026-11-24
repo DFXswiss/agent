@@ -1,5 +1,5 @@
 """GitHub identities in the hub fake as `agent_hub.github.routes`, `identities` and `credentials.records` run them
-(ADR-076, 03-api.md section 4.8):
+(ADR-078, 03-api.md section 4.8):
 
 - the primary record of a user is the `github` row of `HubFake.credentials` (what `/v1/me/credentials/github` serves);
   further own records and company records live in `records` by ID; `org_epochs` holds each organization's `cred`
