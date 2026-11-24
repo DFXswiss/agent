@@ -101,6 +101,36 @@ the end: no outbound connection except to the doubles (egress log of the orchest
 | PERF-05 | 30 parallel VMs | 30 workgroups with one session each on the runner device; all reach `working`; hub and runner stay responsive (PERF-03 holds) |
 | PERF-06 | Device capacity (KOR-60) | Stepwise load on one runner device with the model double, only with `E2E_PERF_CAPACITY=1` in the exclusive measuring mode: sessions in one workgroup VM, then workgroup VMs with one session each, until a fixed bound breaks (start p95 ≤ 30 s, first answer p95 ≤ 45 s, hub health p95 ≤ 1 s, runner status p95 ≤ 10 s, device memory ≤ 85 %, session memory of one VM ≤ 80 % of the VM, every new session answered, every sample present) or no VM slot is left. Records the capacity statement (section 2.2.1), no target: fails only when no step stayed within the bounds |
 
+#### 2.2.1 Capacity statement of one execution device (PERF-06, KOR-60)
+
+Measured on 2026-11-24 with PERF-06 in the exclusive measuring mode on a test runner device (macOS, 36 cores,
+256 GiB RAM, Lima/VZ, VM memory budget 224 GiB = RAM − `MEMORY_RESERVE_MIB` 32 GiB) with the model double: every
+session answers one question and stays open (`idle`, its Claude Code process in its sandbox). A capacity statement,
+not a target (KONZEPT E-02); raw data in the PERF-06 output and `perf-perf06-*.csv` of each run.
+
+| Dimension | Setting | Capacity within every bound | Next step | Bottleneck |
+|---|---|---|---|---|
+| Sessions in one workgroup VM | `VM_MEMORY_MIB` 8192 | 33 sessions (start p95 1.5 s, first answer p95 1.7 s) | 41: the sessions' memory 6.6 GiB = 83 % of the VM | VM memory: about 165 MiB per idle session (the first about 290 MiB), host RSS of the VM 1.4 GiB + 0.17 GiB per session; by interpolation about 39 sessions at the 80 % bound |
+| Workgroup VMs on the device | `VM_MEMORY_MIB` 8192 | 24 VMs (start p95 8.2 s, device memory 30 %) | no free slot (28 slots) | the slot budget, not the load: 0.7 GiB device memory per VM with one idle session |
+| Workgroup VMs on the device | `VM_MEMORY_MIB` 4096 | 50 VMs (start p95 8.9 s, device memory 37 %) | no free slot (56 slots) | the slot budget |
+| Workgroup VMs on the device | `VM_MEMORY_MIB` 2048 | 100 VMs (start p95 12.8 s, device memory 51 %) | no free slot (112 slots) | the slot budget |
+
+In every step the hub answered `GET /v1/health` with p95 ≤ 23 ms and `agent-runner status` with p95 ≤ 260 ms; no
+session failed; CPU stayed below 5 cores of 36 (load average ≤ 10 at 100 VMs). Not measured: sessions that work (tools, builds, long turns) - with
+a real model the CPU and the memory per session are higher, so these are upper bounds for open, mostly waiting
+sessions; work VMs (KOR-29: `standard` 8 GiB each, from the same budget, 13-work-vm.md section 7) count like
+workgroup VMs against the slots. The memory of the device alone would carry about 220 workgroup VMs with one idle
+session each before the 85 % bound (extrapolated from 0.7 GiB per VM, not measured).
+
+Proposed defaults for the limits that become settings (KOR-41, KOR-45; KONZEPT A5 "generous"): sessions per
+workgroup VM 32 for an 8 GiB VM (about 4 per GiB of VM memory, below the measured 80 % bound with room for sessions
+that work); the slot budget is the bottleneck for VMs per device - counting a workgroup VM with 4 GiB of the budget
+instead of its full `VM_MEMORY_MIB` doubles the VMs per device while the guest keeps its 8 GiB (measured with
+4 GiB guests: 50 VMs at 37 % device memory; an idle VM held the same 1.45 GiB on the host with 8 GiB and 4 GiB
+guests); a device-memory guard (`capacity_low` from 85 % used physical memory) then takes over
+from the reservation as the clear capacity message of E-02. Each default is to be confirmed with PERF-06 against
+sessions that work before it ships.
+
 ### 2.3 Attack suite (ATK)
 
 Scripted adversary model double (`agent_doubles.model` scenario files `atk-NN.json`), real Claude Code, real
