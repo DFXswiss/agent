@@ -455,10 +455,10 @@ def _cmd_ingest(args: list[str]) -> None:
 def _worker_preflight(paths: RunnerPaths) -> None:
     """Stop before the lock unless a dispatched job could actually run.
 
-    A job started here begins a real lane and posts a real review, so every
+    A job started here begins a real lane and posts a real output, so every
     input the worker needs must already be present. Checking before the lock
     and the store means a broken installation never leaves a half-created job;
-    the checks are the same ones `doctor` reports.
+    `doctor` reports these problems and more.
 
     A policy allows a *queue type*; the catalogue maps it to the skill whose id
     names a worker and a `runner.json` entry. A queue type no skill carries is
@@ -466,12 +466,12 @@ def _worker_preflight(paths: RunnerPaths) -> None:
     """
     from .ai_accounts import AccountError, load_ai_accounts
     from .main import die
-    from .runner_worker import WORKER_JOB_TYPES
+    from .runner_worker import PROMPT_FILES, WORKER_JOB_TYPES
 
-    # The worker this command starts runs `pr-review`, so its template is
+    # The worker this command starts also runs `pr-review`, so its template is
     # required whatever the policy allows: a queued `pr-review` row would
     # otherwise be announced and started only to fail on the missing file.
-    prompt = paths.prompts / "pr-review.md"
+    prompt = paths.prompts / PROMPT_FILES["pr-review"]
     if not prompt.is_file():
         die(f"prompt template {prompt} is missing")
     try:
@@ -493,8 +493,16 @@ def _worker_preflight(paths: RunnerPaths) -> None:
     if unknown:
         die(f"job type {unknown[0]} is not in the catalogue")
     for skill in skills:
-        if skill.id.lower() not in WORKER_JOB_TYPES:
+        worker = skill.id.lower()
+        if worker not in WORKER_JOB_TYPES:
             die(f"job type {skill.id} has no worker")
+        # Every allowed skill that has a worker renders its own template. The
+        # unconditional `pr-review` check above covers a queued row even when
+        # the policy allows no `pr-review`; this covers a `log-error` row the
+        # policy does allow, which would otherwise fail only after dispatch.
+        prompt = paths.prompts / PROMPT_FILES[worker]
+        if not prompt.is_file():
+            die(f"prompt template {prompt} is missing")
 
 
 def _cmd_dispatch(args: list[str], *, wrapper: str | None = None) -> None:
@@ -1040,7 +1048,7 @@ def _cmd_doctor(args: list[str]) -> None:
     # and a prompt template, a dispatched job could only fail after dispatch
     # had already created its worktree and session.
     from .ai_accounts import AccountError, load_ai_accounts
-    from .runner_worker import WORKER_JOB_TYPES
+    from .runner_worker import PROMPT_FILES, WORKER_JOB_TYPES
 
     ai = None
     try:
@@ -1089,12 +1097,14 @@ def _cmd_doctor(args: list[str]) -> None:
                     f"job type {job_type} is not in the catalogue"
                 )
             for skill in skills:
-                if skill.id.lower() not in WORKER_JOB_TYPES:
+                worker = skill.id.lower()
+                if worker not in WORKER_JOB_TYPES:
                     problems.append(f"job type {skill.id} has no worker")
-            # The template is required when an allowed queue type resolves to
-            # the one skill this worker knows how to run.
-            if any(skill.id.lower() == "pr-review" for skill in skills):
-                prompt = paths.prompts / "pr-review.md"
+                    continue
+                # Each allowed skill with a worker renders its own template.
+                # A missing one would fail a dispatched job only after it had
+                # already created a worktree and a session.
+                prompt = paths.prompts / PROMPT_FILES[worker]
                 if not prompt.is_file():
                     problems.append(f"prompt template {prompt} is missing")
             if ingest.default_skill(policy, catalog) is None:

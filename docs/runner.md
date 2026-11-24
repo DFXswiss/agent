@@ -26,7 +26,7 @@ from `ai-accounts.json`; it may point outside `$AGENT_HOME`.
 | `runner.json` | Runtime settings: capacity, budgets, deny-lists, retention. |
 | `skills-catalog.json` | The skills this installation publishes. |
 | `agent.json` | The agent pinning checked by `doctor`. |
-| `prompts/pr-review.md` | The operator's template for the reviewer prompt the worker renders. |
+| `prompts/<skill id>.md` | One operator template per skill with a worker: `pr-review.md` for the reviewer prompt, `log-error.md` for the analysis prompt. |
 | `state/tmux.sock` | The private tmux socket every job session uses. |
 | `state/repos/` | Bare clones, one per repository. |
 | `state/work/` | One worktree per job, named by job id. |
@@ -192,6 +192,7 @@ prints `ingest failed: notifications listing unusable` on standard error, exits
 Starts queued jobs while capacity allows. Before taking the lock it checks that
 the worker can run at all: `ai-accounts.json` names models and declares
 `lane_execution`, the catalogue is readable, `prompts/pr-review.md` exists,
+`prompts/<skill id>.md` exists for every allowed queue type that has a worker,
 and every queue type in `policy.json` maps to a catalogue skill whose id has a
 worker. An allowed queue type no catalogue skill carries is refused here. A
 failure stops the command before any row or worktree is created. For each job
@@ -254,63 +255,103 @@ absolute, `PATH` keeps only absolute entries, `PYTHONHOME` and `PYTHONUSERBASE`
 are unset, and the interpreter runs with `-P` and a `PYTHONPATH` that names
 only the directory holding the installed `agent_cli` package, so an `agent_cli`
 package or an executable shipped by the pull request is never imported or run;
-an operator does not normally run it. It performs one `pr-review` job and
-writes `state/logs/<id>.exit` last:
+an operator does not normally run it. It performs one `pr-review` or
+`log-error` job and writes `state/logs/<id>.exit` last. The shared steps run for
+both skills; only the facts read and the shape of the output branch:
 
 1. Identify the job from the current directory: it must be exactly the direct
    child worktree named by a safe job id. Require the row to be this device's,
-   to be `running`, and to carry a non-empty repository, numeric
-   `ref`, `pr-review` job type (case-insensitive), a session id matching
-   `[A-Za-z0-9_-]+`, an integer `attempts`, a non-empty `created_at`, and a
-   stored `worktree` equal to `state/work/<id>`.
-2. Read `prompts/pr-review.md`. It is the operator's template; the worker
-   substitutes the literal placeholders `{{REPO}}`, `{{NUMBER}}`, `{{BASE}}`,
-   `{{HEAD}}` and `{{JOB_ID}}` and adds nothing else before the fixed data
-   section.
+   to be `running`, and to carry a non-empty repository, numeric `ref`,
+   `pr-review` or `log-error` job type (case-insensitive), a session id
+   matching `[A-Za-z0-9_-]+`, an integer `attempts`, a non-empty `created_at`,
+   and a stored `worktree` equal to `state/work/<id>`. A `log-error` row must
+   also carry a `trigger` whose last part is a comment id; without one there is
+   no request to read and the worker fails with
+   `job has no usable trigger comment`.
+2. Read `prompts/<skill id>.md`: `prompts/pr-review.md` or
+   `prompts/log-error.md`. It is the operator's template; the worker
+   substitutes the literal placeholders and adds nothing else before the fixed
+   data section. `pr-review` fills `{{REPO}}`, `{{NUMBER}}`, `{{BASE}}`,
+   `{{HEAD}}` and `{{JOB_ID}}`; `log-error` fills the same tokens except
+   `{{BASE}}`, which is left literal because the job has no base ref.
 3. Read `policy.json` and require `expected_gh_user`. Read
    `github-accounts.json`, bind the session's account, and require its login to
    equal `expected_gh_user` case-insensitively. Finalize counts only the runner
    login's outputs, so posting as another account could never complete the job.
 4. Resolve the checked-out `HEAD^{commit}` locally and require a 40-character
-   lowercase SHA. Read the pull request's base branch through that account with
-   `gh api .../pulls/<n> --jq .base.ref` and accept it only when
-   `git check-ref-format --branch` accepts it. Take the local three-dot diff
-   `refs/remotes/origin/<base>...HEAD` with `--no-ext-diff` and `--no-textconv`,
-   so repository configuration or attributes cannot run a command or replace
-   the shown content. An empty diff fails, and a diff over 400,000 characters
-   fails rather than being truncated: the lane always reviews exactly the change
-   that was checked out.
-5. Write the rendered prompt atomically to `state/logs/<id>.prompt`. Its fixed
-   section marks everything below as repository data, fences the diff with a
-   fence longer than any backtick run in it, and states the output contract:
-   the review is the final message, ends with exactly `STATUS: complete` and
-   either `RESULT: approved` or `RESULT: rejected`, and the lane must not run
-   commands, contact GitHub or start other agents.
-6. Start exactly one `reviewer` lane through `lane.launch` with model slot
+   lowercase SHA.
+5. Read the skill's facts through the bound account (never the bare runner).
+   * `pr-review`: read the pull request's base branch with
+     `gh api .../pulls/<n> --jq .base.ref` and accept it only when
+     `git check-ref-format --branch` accepts it. Take the local three-dot diff
+     `refs/remotes/origin/<base>...HEAD` with `--no-ext-diff` and
+     `--no-textconv`, so repository configuration or attributes cannot run a
+     command or replace the shown content. An empty diff fails, and a diff over
+     400,000 characters fails rather than being truncated: the lane always
+     reviews exactly the change that was checked out.
+   * `log-error`: read the trigger comment with
+     `gh api repos/<owner>/<name>/issues/comments/<id>` and the issue or pull
+     request with `gh api repos/<owner>/<name>/issues/<n>`. The comment's
+     `issue_url` must end with `/issues/<n>` of this job, so a trigger from
+     another thread cannot feed it. Comment text is bounded at 65,536
+     characters, the title at 1,024 and the body at 65,536; a larger text
+     fails rather than being truncated. A failed call, a non-JSON answer or a
+     wrong shape fails with a fixed line that never copies `gh` output.
+6. Write the rendered prompt atomically to `state/logs/<id>.prompt`. The
+   `pr-review` section marks everything below as repository data, fences the
+   diff with a fence longer than any backtick run in it, and states the output
+   contract: the review is the final message, ends with exactly
+   `STATUS: complete` and either `RESULT: approved` or `RESULT: rejected`, and
+   the lane must not run commands, contact GitHub or start other agents. The
+   `log-error` section marks everything below as material from the issue or
+   pull request, not instructions, fences the title, body and triggering
+   comment each with its own suitably long fence, and states the contract: the
+   analysis is the final message for the people on the thread, ends with
+   exactly `STATUS: complete` and `RESULT: done` when a likely cause or a
+   concrete next step is named, or `RESULT: blocked` with what is missing when
+   the material and the code do not allow one, and the lane must not run
+   commands, contact GitHub, start other agents or repeat secrets or personal
+   data from the material.
+7. Start exactly one `reviewer` lane through `lane.launch` with model slot
    `first` (`ai-accounts.json`), `tmux=False`, the worktree as its directory and
    the agent home as its configuration home. `reviewer` is a read-only workflow
    kind, so a writable binding is refused. For the whole worker — from before
-   the base-ref read through the review POST — a heartbeat appends
+   the first GitHub read through the output POST — a heartbeat appends
    `worker: worker running` to the transcript so the stall watchdog sees
    progress during network waits that grow no transcript.
-7. Require `STATUS: complete` and `RESULT: approved` or `RESULT: rejected`,
-   remove the protocol lines, and refuse an empty review or a formatted body
-   over 60,000 characters.
-8. Insert a deterministic `review.post` (COMMENT) bound to the checked-out
-   head and to the GitHub account validated before the lane. Its id includes
-   the job generation (`created_at`), the attempt count and the head, so a
-   re-queued generation and a retry each get their own row while re-running one
-   attempt of one generation reuses its own. A row already `done` is not executed
-   again; an `error` row is reset to `pending`. Because the row carries that
-   account binding, a session binding that changes during the lane cannot post
-   the review through another login: the executor refuses the switch.
-9. Execute the activity through the script's GitHub executor, require the row
-   to be `done`, append `worker: review posted`, and write the exit file.
+8. Require `STATUS: complete` and strip the protocol lines with the same
+   helper.
+   * `pr-review`: require `RESULT: approved` or `RESULT: rejected`, and refuse
+     an empty review or a formatted body over 60,000 characters.
+   * `log-error`: require `RESULT: done` or `RESULT: blocked`, and refuse an
+     empty analysis or a formatted body over 60,000 characters. The posted
+     body is `Analysis at \`<head[:12]>\` (<vendor>, <model>): <done|blocked>`,
+     a blank line, then the text.
+9. Insert a deterministic activity bound to the GitHub account validated before
+   the lane. Its id includes the job generation (`created_at`), the attempt
+   count and the head, so a re-queued generation and a retry each get their own
+   row while re-running one attempt of one generation reuses its own. A row
+   already `done` is not executed again; an `error` row is reset to `pending`.
+   Because the row carries that account binding, a session binding that changes
+   during the lane cannot post through another login: the executor refuses the
+   switch.
+   * `pr-review`: a `review.post` (COMMENT) bound to the checked-out head.
+   * `log-error`: a plain new `comment.post` on `<repo>#<n>`, with no
+     `edit_marker`, so the analysis is its own comment rather than an edit of
+     the job's status comment.
+10. Execute the activity through the script's GitHub executor and require the
+    row to be `done`.
+    * `pr-review`: append `worker: review posted`.
+    * `log-error`: append the line `DONE log-error <n>` to the transcript
+      (this is what `finalize`'s `marker` kind reads; it carries the number,
+      because `finalize` strips a leading `#` from the row's ref), then
+      `worker: analysis posted`.
+    Then write the exit file.
 
 Every progress line is also written to the job's standard output with the
 `worker: ` prefix. Any missing or unusable input, a lane that does not report
-`STATUS: complete` and an approved/rejected result, an empty or oversized
-review, or a failed post writes a non-zero exit code and a fixed failure line to
+`STATUS: complete` and the skill's allowed result, an empty or oversized
+output, or a failed post writes a non-zero exit code and a fixed failure line to
 the transcript. The worker takes no runner lock: it runs for the whole job, and
 dispatch starts it from the worktree immediately before writing the row as
 running, so the worker waits up to 120 seconds for that handoff, re-reading the
@@ -400,9 +441,10 @@ allowed queue type that no catalogue skill carries, a catalogue skill with no
 worker, a catalogue skill id that is not lower-case without surrounding spaces,
 a catalogue skill id too long to form a job id with the longest repository
 name, a
-`default_skill_on_mention` that names no catalogue skill, and a
-missing `prompts/pr-review.md` when an allowed queue type resolves to
-`pr-review`. It requires the binaries `gh`, `git`,
+`default_skill_on_mention` that names no catalogue skill, and a missing
+`prompts/<skill id>.md` for each allowed queue type that has a worker
+(`prompts/pr-review.md`, `prompts/log-error.md`). It requires the binaries
+`gh`, `git`,
 `tmux` and `ps` on `PATH`. It checks that the runner directory and each existing
 directory under `state/` (`state`, `repos`, `work`, `logs`) is a writable
 directory; a missing one is created on first use. It also checks that the
@@ -451,11 +493,14 @@ mention already queued by another device must not be inserted again.
 
 ## Not yet
 
-- Skills other than `pr-review` (`merge-conflict`, `pr-mergeable`, …) have no
-  worker. Dispatch refuses a policy whose allowed queue types map to a skill
-  without a worker, and the worker fails a queued one instead of guessing. Only
-  `pr-review` has a worker today.
-- More prompt templates than `prompts/pr-review.md`.
+- Only `pr-review` and `log-error` have workers. Other skills
+  (`merge-conflict`, `pr-mergeable`, …) have none. Dispatch refuses a policy
+  whose allowed queue types map to a skill without a worker, and the worker
+  fails a queued one instead of guessing.
+- The old runner's `log-error` draft pull request is not ported: the worker
+  posts a comment on the issue or pull request instead.
+- More prompt templates than `prompts/pr-review.md` and
+  `prompts/log-error.md`.
 - A schedule or service unit for the subcommands.
 - Container packaging.
 - The mergeable probe for `pr-mergeable` jobs; those jobs record
