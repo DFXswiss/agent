@@ -3,7 +3,7 @@
 > As built: where the implementation refines or deviates from this document, see the register
 > [`spec-deviations.md`](../spec-deviations.md#06-web) (DOC-01).
 
-Status: binding. Implements the user-facing parts of KONZEPT §1–§13 in `agent-core/web/`. Uses the contracts of
+Status: binding. Implements the user-facing parts of KONZEPT §1–§13 in `web/` (former repository agent-core, ADR-061). Uses the contracts of
 `03-api.md`, the formats and flows of `04-crypto.md` and the data model of `02-data-model.md`. Stack decision:
 ADR-019. Everything confidential (`00-overview.md` §3) is decrypted **only** in the browser; the UI never sends
 plaintext of confidential content to the hub.
@@ -61,7 +61,7 @@ src/core/                 framework-free, runs unchanged in Node (Vitest) and th
 src/ui/                   React components, routes, hooks (`useStore(selector)` via useSyncExternalStore)
 src/main.tsx              bootstrap: config check (§10.4), restore session, router
 tests/                    Vitest unit tests (core 100 % on its own, ui via Testing Library)
-e2e/                      Playwright specs for web-only flows against a hub test server (full E2E in agent-core/e2e/platform)
+e2e/                      Playwright specs for web-only flows against a hub test server (full E2E in e2e/platform)
 ```
 
 `src/core` MUST NOT import React, the DOM outside `persist/` and `passkey/`, or anything from `src/ui`.
@@ -510,7 +510,7 @@ screen says so. Private organizations are only created from a platform invitatio
 
 ### 10.1 Build output
 
-`npm run build` (Vite) writes to `agent-core/src/agent_hub/static/`: `index.html`, `assets/<name>-<hash>.js|css`,
+`npm run build` (Vite) writes to `src/agent_hub/static/`: `index.html`, `assets/<name>-<hash>.js|css`,
 fonts, icons, `build-manifest.json`. All asset names are content-hashed; `index.html` is the only unhashed file and is
 served with `Cache-Control: no-cache`; assets with `immutable, max-age=31536000`. The hub serves `index.html` for all
 SPA routes (§2.4) and `/assets/…` statically.

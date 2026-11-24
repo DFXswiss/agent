@@ -105,6 +105,31 @@
       "workflow": ".github/workflows/platform-guest-linux.yml",
       "job": "guest-linux",
       "reason": "Reusable Linux-only platform guest tests; triggered only by workflow_call from platform-runner.yml and by manual workflow_dispatch, never by a pull_request event of its own. It never runs on pull requests to develop. Pull requests to ad5f2026-agent-platform, which A38 also enforces through the a38.default of .github/pr-guard.json, still run it as a GitHub check, and A38 does not replace GitHub checks on this public repository."
+    },
+    {
+      "workflow": ".github/workflows/agent-core-dev.yaml",
+      "job": "build-and-push",
+      "reason": "Publishes the development Docker image after a push to develop and notifies the image publish endpoint; runs on the merged branch with registry credentials, not a pull-request test."
+    },
+    {
+      "workflow": ".github/workflows/agent-core-prd.yaml",
+      "job": "build-and-push",
+      "reason": "Publishes the production Docker image after a push to main and notifies the image publish endpoint; a release step with registry credentials, not a pull-request test."
+    },
+    {
+      "workflow": ".github/workflows/auto-release-pr.yaml",
+      "job": "create-release-pr",
+      "reason": "Repository housekeeping after a push to develop: opens the develop to main release pull request through the GitHub API; measures nothing about the change, not a pull-request test."
+    },
+    {
+      "workflow": ".github/workflows/platform-hub.yml",
+      "job": "hub",
+      "reason": "Platform hub test gate (former agent-core repository); platform-hub.yml triggers only on pull_request and push for the ad5f2026-agent-platform branch. It never runs on pull requests to develop. Pull requests to ad5f2026-agent-platform, which A38 also enforces through the a38.default of .github/pr-guard.json, still run it as a GitHub check, and A38 does not replace GitHub checks on this public repository."
+    },
+    {
+      "workflow": ".github/workflows/platform-web.yml",
+      "job": "web",
+      "reason": "Platform web gate (former agent-core repository); platform-web.yml triggers only on pull_request and push for the ad5f2026-agent-platform branch. It never runs on pull requests to develop. Pull requests to ad5f2026-agent-platform, which A38 also enforces through the a38.default of .github/pr-guard.json, still run it as a GitHub check, and A38 does not replace GitHub checks on this public repository."
     }
   ]
 }

@@ -1,4 +1,8 @@
-# KOR-23 – Operator subscriptions for approved organizations (runner only)
+# KOR-23 – decisions
+
+This package changed both former repositories `agent` and `agent-core`, which were unified into `agent` (INF-06). Both notes follow unchanged, their headings one level lower: first the note of the former `agent` repository, then the note of the former `agent-core` repository.
+
+## KOR-23 – Operator subscriptions for approved organizations (runner only)
 
 Decisions taken while implementing ADR-052. The ADR holds the design; this file names the points that were open.
 
@@ -47,3 +51,11 @@ Decisions taken while implementing ADR-052. The ADR holds the design; this file 
     round trip, so concurrent starts spread. A failing renewal of one session no longer stops the task's round for
     the others. Bindings stay in the store while the pool is switched off; they are dropped at the first renewal after
     it is switched on again (sessions that ended meanwhile), and `doctor` must run as the runner account (owner check).
+
+## KOR-23 – Operator subscriptions (shared documentation)
+
+The change lives in the agent repository (runner only: selection, token-file pool, binding, renewal, doctor check
+`operator_subscriptions`, textfile metrics; see its `decisions/KOR-23.md`). No hub, contract or web change. This
+repository takes the shared documents unchanged: ADR-052 (and the ADR index), `spec/05-runner.md` (§1.2, §1.3, §10.1,
+§10.2), `spec/08-monitoring.md` §3, `spec/02-data-model.md` §4, `spec-deviations.md`,
+`runbooks/operator-subscriptions.md` (new), `runbooks/runner-installation.md` and the runbook index.

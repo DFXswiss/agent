@@ -31,7 +31,7 @@ def test_the_document_has_153_requirements_and_the_matrix_mirrors_it() -> None:
     report = t.check_suite(SUITE, milestone=0)
     assert report.ok, report.problems
     assert "E2E-00" in report.written
-    assert any("not checked (no agent checkout given)" in note for note in report.notes)
+    assert not any("not checked" in note for note in report.notes)
 
 
 def matrix_file(tmp_path: Path, data: Any) -> Path:

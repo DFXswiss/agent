@@ -160,7 +160,7 @@ def test_mcp_tool_constant_is_the_api_tool_list() -> None:
 
 def test_mcp_tool_constant_matches_the_contracts() -> None:
     tools_dir = REPO_ROOT / "contracts" / "mcp" / "tools"
-    assert tools_dir.is_dir(), "contracts/mcp/tools is missing: run scripts/sync-contracts.sh <agent-core checkout>"
+    assert tools_dir.is_dir(), "contracts/mcp/tools is missing from the checkout"
     names = {path.name.split(".", 1)[0] for path in tools_dir.glob("*.input.json")}
     assert names == set(settings.MCP_TOOLS)
 

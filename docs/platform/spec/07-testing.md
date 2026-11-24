@@ -137,6 +137,13 @@ read of foreign data, no egress, attempt journaled.
 
 ## 3. Coverage gates
 
+**Amendment (INF-06, ADR-061):** one repository and **one** platform gate: `.coveragerc-platform` measures
+`agent_hub` together with the runner packages (`source = agent_hub, agent_runner, …`), `make platform-test` runs
+`coverage run --rcfile=.coveragerc-platform -m pytest -n <workers> tests/platform`, combines the Linux part and fails
+below 100 % lines and branches; `[tool.coverage]` of `pyproject.toml` is the legacy configuration of `agent_cli`
+only. The rows below name the former repositories; the E2E orchestrator and web gates are unchanged.
+
+
 | Repo / package | Configuration | Gate |
 |---|---|---|
 | `agent-core` / `agent_hub` | `[tool.coverage.run] source = ["agent_hub"]`, `branch = true`; `[tool.coverage.report] fail_under = 100`, `show_missing`, `skip_covered`. The legacy test job does not run coverage and stays unchanged. | `make platform-test`: `pytest --cov` over `tests/platform` (pytest-xdist workers combined by pytest-cov, INF-01), then `coverage report` |
@@ -165,6 +172,10 @@ Rules:
   (`.github/a38.json` style) lists the platform jobs, so the PR guard cannot mark a PR ready without them.
 
 ## 4. Contract tests
+
+**Amendment (INF-06, ADR-061):** one repository, one `contracts/`; the copy in `agent/contracts/`, its
+synchronisation script and its hash comparison are gone. `VERSION` is still derived and checked; CON-04 of the E2E
+orchestrator compares the hub's and the runner's checkout, which are the same commit.
 
 - `agent-core/contracts/` is the single source: `api/`, `ws/`, `guest/`, `mcp/`, `ops/`, `events/`,
   `credentials/`, `audit-actions.json`, `vectors/`, `VERSION` (sha256 over all files in sorted path order,

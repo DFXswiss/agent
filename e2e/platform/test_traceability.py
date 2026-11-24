@@ -8,7 +8,8 @@ title, or the evidence of a gate) or belongs to a later milestone; no spec names
 
 `--milestone N` additionally requires every test and requirement due up to milestone N (09-milestones.md) to exist.
 Under pytest (`make platform-ci`) the check runs for milestone `E2E_TRACEABILITY_MILESTONE` (default 3, the last
-accepted milestone); the agent checkout is checked when `AGENT_RUNNER_SRC` names one.
+accepted milestone); the evidence of both former repositories lies in this checkout (`AGENT_RUNNER_SRC` may name
+another checkout for the `agent:` evidence).
 """
 
 from __future__ import annotations

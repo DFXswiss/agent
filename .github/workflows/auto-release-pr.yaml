@@ -16,6 +16,8 @@ concurrency:
 jobs:
   create-release-pr:
     name: Create Release PR
+    # Legacy image of the former agent-core repository: only there (INF-06, ADR-061).
+    if: github.repository == 'DFXswiss/agent-core'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

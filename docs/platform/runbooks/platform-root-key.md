@@ -2,7 +2,7 @@
 
 Scope: the offline Ed25519 key that signs the platform log ([ADR-023](../adr/023-platform-root-key.md),
 [04 §4.8](../spec/04-crypto.md#48-platform-log-new), [04 §5.9](../spec/04-crypto.md#59-platform-device-certification-and-assignment)).
-Commands: `agent-hub platform …` (agent-core, `src/agent_hub/platform/cli.py`). Roles: **operator** (holds the key),
+Commands: `agent-hub platform …` (`src/agent_hub/platform/cli.py`). Roles: **operator** (holds the key),
 **hub device** (runs the hub), **runner device** (execution device).
 
 ## What the key controls
@@ -22,7 +22,7 @@ operator CLI refuses the hub.
 
 ## 1. Create the key (once, offline)
 
-1. On an operator machine that is not the hub device, with the agent-core checkout and its `.venv`:
+1. On an operator machine that is not the hub device, with a checkout of `DFXswiss/agent` and its `.venv`:
    `agent-hub platform init --key-file <dir>/platform-root.json` (`python -m agent_hub platform init …` works too).
    The command never overwrites an existing file, writes it with mode 0600 and prints only the **public** key.
 2. Put the printed public key into the release configuration: `VITE_PLATFORM_ROOT_KEY` of the web build,

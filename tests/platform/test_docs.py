@@ -3,14 +3,12 @@
 Every relative Markdown link under `docs/platform/` must name an existing file inside the repository and, with a
 fragment, an existing heading of the target document (GitHub anchor rules). External links (`https:`, `mailto:`) are
 not fetched: the suite is hermetic. The indexes must list every ADR, runbook and manual check, and the specification
-must be complete. The same file runs in `agent` and `agent-core`; both repositories carry the same `docs/platform/spec/`
-and `docs/platform/adr/` (DOC-01 decision 1).
+must be complete. Until the repositories were unified (INF-06) the same file ran in `agent` and `agent-core` and
+compared their copies of `docs/platform/`; now there is one documentation tree and no copy to compare.
 """
 
 from __future__ import annotations
 
-import filecmp
-import os
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -49,9 +47,8 @@ RUNBOOKS = (
     "local-development-and-tests.md",
 )
 
-# Parts of docs/platform that are the same in both repositories (DOC-01 decision 1); their links stay inside
-# docs/platform so that they resolve in both checkouts.
-# CUTOVER.md is authored in agent-core and kept as an identical copy in agent (DOC-02).
+# Parts of docs/platform that were the same in both former repositories (DOC-01 decision 1, DOC-02); their links stay
+# inside docs/platform, so the documentation can be read on its own.
 SHARED = (
     "README.md",
     "PLATFORM-DESIGN.md",
@@ -62,7 +59,6 @@ SHARED = (
     "runbooks",
     "manual-checks",
 )
-SIBLINGS = {"agent": "agent-core", "agent-core": "agent"}
 
 FENCE_RE = re.compile(r"^(```|~~~).*?^\1[^\n]*$", re.MULTILINE | re.DOTALL)
 INLINE_CODE_RE = re.compile(r"(`+)(?:(?!\1).)+?\1", re.DOTALL)
@@ -147,7 +143,7 @@ def shared_files(docs: Path) -> list[Path]:
 
 
 def leaving_links(docs: Path) -> list[str]:
-    """Links of the shared files whose target lies outside `docs` (it would not exist in the other repository)."""
+    """Links of the shared files whose target lies outside `docs`."""
     problems = []
     for rel in shared_files(docs):
         if rel.suffix != ".md":
@@ -162,52 +158,23 @@ def leaving_links(docs: Path) -> list[str]:
     return problems
 
 
-def sibling_docs(root: Path, env: dict[str, str]) -> Path | None:
-    """docs/platform of the other repository: `PLATFORM_SIBLING_CHECKOUT`, else `../<other>` or, in a work-package
-    worktree `wt/<repo>/<id>`, `../../<other>/<id>`."""
-    if env.get("PLATFORM_SIBLING_CHECKOUT"):
-        return Path(env["PLATFORM_SIBLING_CHECKOUT"]) / "docs" / "platform"
-    for repo, other in SIBLINGS.items():
-        for candidate in (root.parent / other, root.parent.parent / other / root.name):
-            if repo in (root.name, root.parent.name) and (candidate / "docs" / "platform" / "spec").is_dir():
-                return candidate / "docs" / "platform"
-    return None
-
-
-def differences(docs: Path, other: Path) -> list[str]:
-    """Shared files that differ between the two trees or exist in one only."""
-    mine, theirs = set(shared_files(docs)), set(shared_files(other))
-    changed = [rel for rel in mine & theirs if not filecmp.cmp(docs / rel, other / rel, shallow=False)]
-    return sorted(str(rel) for rel in (mine ^ theirs) | set(changed))
-
-
-def unknown_doc_paths(docs: Path, other: Path | None) -> list[str]:
-    """Paths `docs/platform/...` named in code spans of the shared files that exist in neither repository.
-
-    A path into a shared part must exist here (the other repository has the same file). A path into a part that each
-    repository keeps for itself (`decisions/`, `acceptance/` ...) must exist here or in `other`; without the other
-    checkout such a path is only checked when it exists here."""
+def unknown_doc_paths(docs: Path) -> list[str]:
+    """Paths `docs/platform/...` named in code spans of the shared files that do not exist."""
     problems = []
     for rel in shared_files(docs):
         if rel.suffix != ".md":
             continue
         for named in DOC_PATH_RE.findall((docs / rel).read_text("utf-8")):
-            here = (docs / named).exists()
-            parts = Path(named).parts
-            shared = bool(parts) and parts[0] in SHARED
-            if here or (not shared and (other is None or (other / named).exists())):
-                continue
-            problems.append(f"{rel}: docs/platform/{named}")
+            if not (docs / named).exists():
+                problems.append(f"{rel}: docs/platform/{named}")
     return problems
 
 
-def stale_open_defects(docs: Path, other: Path | None) -> list[str]:
-    """Packages named by "open defect until <id>" in the register that are done: their decisions file exists in this
-    repository or in `other` (a package writes `decisions/<id>.md` with its merge)."""
+def stale_open_defects(docs: Path) -> list[str]:
+    """Packages named by "open defect until <id>" in the register that are done: their decisions file exists (a package
+    writes `decisions/<id>.md` with its merge)."""
     named = OPEN_UNTIL_RE.findall((docs / "spec-deviations.md").read_text("utf-8"))
-    return [
-        ident for ident in named if any((root / "decisions" / f"{ident}.md").exists() for root in (docs, other) if root)
-    ]
+    return [ident for ident in named if (docs / "decisions" / f"{ident}.md").exists()]
 
 
 def unknown_handling(register: str) -> list[str]:
@@ -268,19 +235,12 @@ def test_shared_links_stay_inside_the_documentation() -> None:
     assert leaving_links(DOCS) == []
 
 
-def test_shared_documentation_equals_the_other_repository() -> None:
-    other = sibling_docs(REPO_ROOT, dict(os.environ))
-    if other is None:
-        pytest.skip("no checkout of the other repository next to this one (set PLATFORM_SIBLING_CHECKOUT)")
-    assert differences(DOCS, other) == []
-
-
 def test_named_documentation_paths_exist() -> None:
-    assert unknown_doc_paths(DOCS, sibling_docs(REPO_ROOT, dict(os.environ))) == []
+    assert unknown_doc_paths(DOCS) == []
 
 
 def test_register_names_no_finished_correction_as_pending() -> None:
-    assert stale_open_defects(DOCS, sibling_docs(REPO_ROOT, dict(os.environ))) == []
+    assert stale_open_defects(DOCS) == []
 
 
 def test_register_handling_comes_from_the_closed_list() -> None:
@@ -352,7 +312,7 @@ def test_non_markdown_targets_are_not_searched_for_anchors(tmp_path: Path) -> No
     assert link_problems(tmp_path / "a.md", "x.json#/defs", tmp_path) == []
 
 
-def test_leaving_links_and_differences(tmp_path: Path) -> None:
+def test_leaving_links(tmp_path: Path) -> None:
     docs = tmp_path / "a" / "docs" / "platform"
     (docs / "spec").mkdir(parents=True)
     (docs / "README.md").write_text("[in](spec/x.md) [out](../../Makefile) [web](https://example.org) [top](#a)\n")
@@ -360,23 +320,13 @@ def test_leaving_links_and_differences(tmp_path: Path) -> None:
     (docs / "decisions").mkdir()
     (docs / "decisions" / "y.md").write_text("[out](../../../Makefile)\n", "utf-8")
     assert leaving_links(docs) == ["README.md: ../../Makefile"]
-    other = tmp_path / "b" / "docs" / "platform"
-    (other / "spec").mkdir(parents=True)
-    (other / "README.md").write_text((docs / "README.md").read_text())
-    (other / "spec" / "x.md").write_text("# B\n", "utf-8")
-    (other / "adr").mkdir()
-    (other / "adr" / "z.md").write_text("", "utf-8")
-    assert differences(docs, other) == ["adr/z.md", "spec/x.md"]
-    assert differences(docs, docs) == []
 
 
-def test_unknown_doc_paths_by_part(tmp_path: Path) -> None:
-    docs, other = tmp_path / "a" / "docs" / "platform", tmp_path / "b" / "docs" / "platform"
-    for root in (docs, other):
-        (root / "runbooks").mkdir(parents=True)
-        (root / "decisions").mkdir()
+def test_unknown_doc_paths(tmp_path: Path) -> None:
+    docs = tmp_path / "a" / "docs" / "platform"
+    (docs / "runbooks").mkdir(parents=True)
+    (docs / "decisions").mkdir()
     (docs / "decisions" / "A-1.md").write_text("", "utf-8")
-    (other / "decisions" / "B-1.md").write_text("", "utf-8")
     (docs / "README.md").write_text("", "utf-8")
     (docs / "runbooks" / "x.json").write_text("`docs/platform/runbooks/gone.md`", "utf-8")
     (docs / "runbooks" / "r.md").write_text(
@@ -385,24 +335,20 @@ def test_unknown_doc_paths_by_part(tmp_path: Path) -> None:
         "`docs/platform/acceptance/C-1.md` `docs/platform/runbooks/gone.md` `docs/platform/`\n",
         "utf-8",
     )
-    assert unknown_doc_paths(docs, other) == [
+    assert unknown_doc_paths(docs) == [
+        "runbooks/r.md: docs/platform/decisions/B-1.md",
         "runbooks/r.md: docs/platform/acceptance/C-1.md",
         "runbooks/r.md: docs/platform/runbooks/gone.md",
     ]
-    assert unknown_doc_paths(docs, None) == ["runbooks/r.md: docs/platform/runbooks/gone.md"]
 
 
 def test_stale_open_defects_by_decisions_file(tmp_path: Path) -> None:
-    docs, other = tmp_path / "a", tmp_path / "b"
-    for root in (docs, other):
-        (root / "decisions").mkdir(parents=True)
-    (docs / "decisions" / "K-1.md").write_text("", "utf-8")
-    (other / "decisions" / "K-2.md").write_text("", "utf-8")
-    (docs / "spec-deviations.md").write_text(
-        "| x | open defect until K-1 |\n| y | open defect until K-2 |\n| z | open defect until K-3 |\n", "utf-8"
+    (tmp_path / "decisions").mkdir(parents=True)
+    (tmp_path / "decisions" / "K-1.md").write_text("", "utf-8")
+    (tmp_path / "spec-deviations.md").write_text(
+        "| x | open defect until K-1 |\n| y | open defect until K-2 |\n", "utf-8"
     )
-    assert stale_open_defects(docs, other) == ["K-1", "K-2"]
-    assert stale_open_defects(docs, None) == ["K-1"]
+    assert stale_open_defects(tmp_path) == ["K-1"]
 
 
 def test_unknown_handling_reads_the_last_cell() -> None:
@@ -411,18 +357,3 @@ def test_unknown_handling_reads_the_last_cell() -> None:
         "| b | x | s | open defect until K-1 |\n| c | x | s | as built (closed) |\n| d | x | s | |\ntext | e |\n"
     )
     assert unknown_handling(register) == ["c"]
-
-
-def test_sibling_docs_is_found_by_variable_or_layout(tmp_path: Path) -> None:
-    assert sibling_docs(tmp_path / "agent", {"PLATFORM_SIBLING_CHECKOUT": "/x"}) == Path("/x/docs/platform")
-    for layout in (tmp_path / "flat", tmp_path / "wt"):
-        (layout / "agent").mkdir(parents=True)
-    (tmp_path / "flat" / "agent-core" / "docs" / "platform" / "spec").mkdir(parents=True)
-    expected = tmp_path / "flat" / "agent-core" / "docs" / "platform"
-    assert sibling_docs(tmp_path / "flat" / "agent", {}) == expected
-    (tmp_path / "wt" / "agent" / "p-1").mkdir()
-    (tmp_path / "wt" / "agent-core" / "p-1" / "docs" / "platform" / "spec").mkdir(parents=True)
-    expected = tmp_path / "wt" / "agent-core" / "p-1" / "docs" / "platform"
-    assert sibling_docs(tmp_path / "wt" / "agent" / "p-1", {}) == expected
-    assert sibling_docs(tmp_path / "wt" / "agent" / "p-2", {}) is None
-    assert sibling_docs(tmp_path / "other", {}) is None

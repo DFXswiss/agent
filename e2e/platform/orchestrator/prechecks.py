@@ -1,6 +1,7 @@
 """Checks before anything starts; each failure stops the run with its name.
 
-- `CON-04` (07-testing.md section 4): `contracts/VERSION` is the same in the agent-core and the agent checkout.
+- `CON-04` (07-testing.md section 4): `contracts/VERSION` is the same in the hub and the runner checkout (one
+  repository since INF-06; on a second device the runner runs from a copy of the same commit).
 - `traceability` (R-P.4): `test_traceability` structure checks (matrix, document mirror, spec tags).
 - `ports`: every port of the run is free on its device.
 - `vm-budget`: the planned VMs fit into the device's VM memory budget.

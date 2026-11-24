@@ -1,7 +1,9 @@
-# Coverage of the platform packages (docs/platform/spec/07-testing.md section 3). The legacy configuration
-# [tool.coverage] in pyproject.toml (source agent_cli) is separate and unchanged.
+# Coverage of the platform packages (docs/platform/spec/07-testing.md section 3): hub, runner, guest, doubles and the
+# agent tool together, one gate of 100 % lines and branches (INF-06). The legacy configuration [tool.coverage] in
+# pyproject.toml (source agent_cli) is separate and unchanged.
 [run]
 source =
+    agent_hub
     agent_runner
     agent_guest
     agent_doubles

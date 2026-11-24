@@ -1,11 +1,15 @@
-# ATS-03 decisions (final attack gate: scripted, model-driven, OS probe, report)
+# ATS-03 – decisions
+
+This package changed both former repositories `agent` and `agent-core`, which were unified into `agent` (INF-06). Both notes follow unchanged, their headings one level lower: first the note of the former `agent` repository, then the note of the former `agent-core` repository.
+
+## ATS-03 decisions (final attack gate: scripted, model-driven, OS probe, report)
 
 Small decisions of the package that runs the final attack gate (09-milestones.md WP-M3-02; 07-testing.md sections 2.3,
 6, 8; 05-runner.md sections 4, 5.3-5.5, 15; ADR-008, ADR-010) and closes the audit items A-19, A-20, B-09, B-10 and
 B-11 of the acceptance audit. Results: `docs/platform/security/attack-suite-results.md`. Architecture record of the
 gaps found: ADR-045. Conventions of ATS-01 and ATS-02 apply.
 
-## Golden images
+### Golden images
 1. **Shared cache golden, tunnel.** The gate runs against the shared TEST_MODE cache `cache-golden-<sha12>` of
    `tools/wp/golden-cache.sh` (ADR-036), built from this branch. Such a golden has no usable test model port (port 9),
    so `scripts/run-atk.sh --golden NAME` reaches the model double through one SSH reverse tunnel per VM on the guest's
@@ -16,7 +20,7 @@ gaps found: ADR-045. Conventions of ATS-01 and ATS-02 apply.
    only in a TEST_MODE golden. The evidence collection keeps its own sudo step of the test clone (`%agent-ctl`, which
    the boot hardening leaves alone); everything a session sees is the production configuration.
 
-## Gaps found and closed (ADR-045)
+### Gaps found and closed (ADR-045)
 3. **Instruction files.** Claude Code 2.1.330 loads `CLAUDE.local.md` and `AGENTS.md` (root, ancestors, nested
    directories, `.claude/`) as instructions; only `CLAUDE.md` and `.claude/` were protected. Both are protected names
    now in the PreToolUse policy and the managed settings (`Edit(**/CLAUDE.local.md)`, `Edit(**/AGENTS.md)`), so the
@@ -34,7 +38,7 @@ gaps found: ADR-045. Conventions of ATS-01 and ATS-02 apply.
    session can open a socket or execute code; ATK-01 ... ATK-12), so no attack breaks out; each removes a capability
    that code inside a session would have had.
 
-## Audit items
+### Audit items
 7. **A-19:** `InaccessiblePaths=-/run/systemd/transient` for `agent-guest-api`; the extended OS probe checks that the
    API process sees no transient unit file while sessions run (`api_transient_hidden`).
 8. **A-20:** `pollinate`, the Ubuntu Pro jobs (`ubuntu-advantage`, `ua-timer`, `esm-cache`, `apt-news`) are disabled and
@@ -76,7 +80,7 @@ gaps found: ADR-045. Conventions of ATS-01 and ATS-02 apply.
     owner; the victim never runs); a root-owned record or lock counts as the guest's only with no group/world write
     and no set-ID bit.
 
-## Red team
+### Red team
 15. **Harness location.** Prompt, test-only harness and the real-run tests live in `tests/platform/atk/redteam/`; the
     evaluation (`agent_doubles.atk.redteam`: classification, statistics, live upstream) is in the measured package,
     like the other suite helpers (decisions ATS-01: the coverage gate is pinned to three packages).
@@ -95,7 +99,7 @@ gaps found: ADR-045. Conventions of ATS-01 and ATS-02 apply.
 19. A live run ends with the model's `Stop` hook (no scenario); its tool calls and what the model saw come from the
     transcript (`RunEvidence.live`), so `no_foreign_read` searches the transcript.
 
-## Scope and ownership
+### Scope and ownership
 22. Beyond the owned paths (`tests/platform/atk/redteam/`, `redteam-*.json`, the results document) the package changes
     the suite's extension points of ATS-01/ATS-02 (`driver.py`, `evidence.py`, `catalog.py`, `extended.py`, the suite
     conftest, the scenarios of ATK-19 and ATK-40; no other package owns them now), the runner's `tarsafe.py` and
@@ -105,9 +109,34 @@ gaps found: ADR-045. Conventions of ATS-01 and ATS-02 apply.
 23. `tarsafe.PROTECTED_SEGMENTS` repeats the guest policy's names: `agent` code of the runner must not import the
     guest package (two processes, two hosts); a test of each side pins the list.
 
-## Tooling
+### Tooling
 20. `run-atk.sh` looks for an existing golden three times: `limactl list` can come back empty while other packages
     create or delete instances. Two `remote.sh` calls of the same package must not overlap: the second synchronisation
     deletes the first run's output below the repository directory.
 21. The extended probe's own directory `/var/lib/atk-suite-probe` is excluded from the file-system snapshot and no
     bytecode is written there (its writes fell into the first attacks' evidence windows in the first run).
+
+## Decisions of ATS-03 (Ed25519 boundary vectors, audit item B-11)
+
+1. **Small-order public keys are refused before the library.** What: `agent_hub.crypto.keys.ed25519_verify` and
+   the TypeScript core `ed25519Verify` (`web/src/core/crypto/keys.ts`) refuse a 32-byte key whose encoding, with the
+   sign bit (top bit of byte 31) cleared, is one of the 7 entries of the libsodium blacklist (the 8 torsion points
+   plus the non-canonical y = p and y = p + 1). Why: OpenSSL (pyca `cryptography`, and WebCrypto implementations built
+   on it) accepts `R = key, S = 0` under such a key for every message, so a small-order identity, device, hub or
+   platform-root key would make every signature forgeable. The refusal is `signature_invalid`, the same code and path
+   as a wrong signature, so callers and the error contract of `04-crypto.md` §8 are unchanged.
+2. **Non-canonical `S` is refused explicitly.** What: both implementations refuse a signature whose little-endian
+   `S` (bytes 32..63) is at least the group order `L`. Why: the libraries already refuse it; the explicit check is
+   defence in depth and makes Python and TypeScript independent of library versions. Node 26 WebCrypto already
+   rejects the identity-key forgery in the Vitest runs; browsers differ, so the check stays in the TypeScript core.
+3. **Every Ed25519 verification of `agent_hub` goes through the hardened function.** Where: the signature gate
+   (`agent_hub.auth.keys.ed25519_verifier`: device keys, the platform root key, enrolment proof of possession), the
+   audit checkpoint check (`agent_hub.audit.checkpoint.checkpoint_signature_valid`) and the operator CLI's check of
+   hub response signatures (`agent_hub.platform.cli.Operator`, which now pins the raw 32-byte hub key). The crypto
+   formats (`signed`, `log`, `invite`, ...) already used `ed25519_verify`. `ed25519_verifier` keeps its eager
+   `ValueError` for a malformed key. The legacy package `agent_core` is outside the platform code and unchanged.
+4. **R is not checked.** Only the key and `S` are checked, as the audit item asks; a small-order `R` under a
+   prime-order key cannot produce a forgery without the private key.
+5. **Contract vectors follow separately.** The negative vectors (`keys.json` `invalid`) are added in a second, additive
+   contract change, after the copy of the reference crypto in the agent repository has the same checks, so that the
+   contract sync into agent stays green.

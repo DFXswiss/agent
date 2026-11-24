@@ -35,7 +35,6 @@ def build(world: World, **changes: object) -> RunConfig:
         ({"AGENT_RUNNER_VM_PREFIX": None}, "AGENT_RUNNER_VM_PREFIX (or WP_VM_PREFIX) must be set"),
         ({"AGENT_RUNNER_VM_PREFIX": "Bad-"}, "must be lower case"),
         ({"AGENT_RUNNER_VM_PREFIX": "nodash"}, "end with '-'"),
-        ({"AGENT_RUNNER_SRC": None}, "AGENT_RUNNER_SRC must name the agent checkout"),
         ({"AGENT_RUNNER_SRC": "/nonexistent"}, "is not an agent checkout"),
         ({"E2E_POOL_SIZE": "-1"}, "E2E_POOL_SIZE must be a non-negative integer"),
         ({"E2E_RUNNERS": "5"}, "E2E_RUNNERS must be 1..4"),
@@ -46,6 +45,10 @@ def build(world: World, **changes: object) -> RunConfig:
 def test_invalid_options(world: World, changes: dict[str, object], message: str) -> None:
     with pytest.raises(ConfigError, match=message.replace("(", r"\(").replace(")", r"\)").replace("|", r"\|")):
         build(world, **changes)
+
+
+def test_runner_source_defaults_to_this_checkout(world: World) -> None:
+    assert build(world, AGENT_RUNNER_SRC=None).agent_src == CORE
 
 
 def test_valid_configuration(world: World) -> None:

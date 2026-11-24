@@ -114,7 +114,7 @@ def test_example_parameters_follow_the_operation_rules(text: str, operation: str
 
 def test_examples_validate_against_the_operation_contracts(text: str) -> None:
     ops = REPO_ROOT / "contracts" / "ops"
-    assert ops.is_dir(), "contracts/ops is missing: run scripts/sync-contracts.sh <agent-core checkout>"
+    assert ops.is_dir(), "contracts/ops is missing from the checkout"
     # Contract schemas reference each other by relative paths inside contracts/: register every file by its URI.
     registry: Registry[Any] = Registry().with_resources(
         (path.as_uri(), Resource.from_contents(json.loads(path.read_text(encoding="utf-8")), DRAFT202012))

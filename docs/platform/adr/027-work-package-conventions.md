@@ -11,6 +11,11 @@ inconsistencies that a planner has to settle: the location of the Python referen
 (`04-crypto.md` header vs. §10 vs. `09-milestones.md` WP-M0-03), per-work-package pull requests (`00-overview.md` §6)
 vs. serial fast-forward merges, and contract changes only "through a dedicated contract WP" (`09-milestones.md`).
 
+**Amendment (INF-06, 2026-11-23):** the repositories are one since [ADR-061](061-one-repository.md): one
+integration branch (`ad5f2026-live` of `DFXswiss/agent`), one branch per package, no contract copy and no contract
+synchronisation (§3: the copy and its synchronised commits are gone; `VERSION` stays derived). The reference crypto
+of §2 stays in `src/agent_hub/` and the runner's copy is checked against it in the same tree.
+
 ## Decision
 
 ### 1. Branches, commits, pull requests

@@ -1,4 +1,8 @@
-# KOR-20 – Claude Code on the runner host, doctor check `login_cli`
+# KOR-20 – decisions
+
+This package changed both former repositories `agent` and `agent-core`, which were unified into `agent` (INF-06). Both notes follow unchanged, their headings one level lower: first the note of the former `agent` repository, then the note of the former `agent-core` repository.
+
+## KOR-20 – Claude Code on the runner host, doctor check `login_cli`
 
 Finding of the rollout: the subscription login runs `LOGIN_ARGV` (default `claude setup-token`) on the host
 (05 §11.2), but neither the runbook nor `service install` nor `doctor` named Claude Code as a host prerequisite. A
@@ -41,3 +45,14 @@ device without it fails every login with `login_cli_failed`.
    `--version` fails (#4), the as-built register row, the runbook check command with `PATH`, the real output format,
    `node` beside `claude`, `AGENT_RUNNER_HOME` equal to the enrollment home, a bounded second wait after the kill, a
    pre-release part in the version. The commit subject follows the workspace rule "subject = pull-request title".
+
+## KOR-20 – Claude Code on the runner host (shared documentation)
+
+The change lives in the agent repository (doctor check `login_cli`, see its `decisions/KOR-20.md`). This repository
+takes the shared documents unchanged: `spec/05-runner.md`, `runbooks/runner-installation.md`,
+`runbooks/golden-image-release.md`, `runbooks/claude-code-upgrade-gate.md`, `CUTOVER.md` (§3.2, S9).
+
+Legacy-untouched test after the merge into `develop`: the test compares with the merge base of `origin/develop`.
+Before the merge every platform file was new there (`A`); since `develop` holds the platform, a change of a platform
+file shows as `M` and was refused. Platform paths are now accepted with any status; files outside the platform areas
+keep the old rules (new test with a platform file on the base).

@@ -6,8 +6,8 @@ export format, [02 §4](../spec/02-data-model.md#4-runner-store-postgresql-schem
 WP-M3-05, E2E-33).
 
 **Status:** the commands `agent-hub export`, `agent-hub restore` and `agent-hub rebuild-projections` are part of the
-hub (`src/agent_hub/backup/`, DR-01, decisions `docs/platform/decisions/DR-01.md` in agent-core). E2E-33
-(`e2e/platform/specs/e2e-33-export-restore.spec.ts` in agent-core) runs this procedure end to end and is the evidence
+hub (`src/agent_hub/backup/`, DR-01, decisions `docs/platform/decisions/DR-01.md`). E2E-33
+(`e2e/platform/specs/e2e-33-export-restore.spec.ts`) runs this procedure end to end and is the evidence
 that it works; its runs are recorded in the milestone acceptance ([M2](../acceptance/M2.md) onwards).
 
 ## 1. What an export contains

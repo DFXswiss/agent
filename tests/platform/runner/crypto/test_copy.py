@@ -2,7 +2,9 @@
 
 `src/agent_runner/crypto/ORIGIN.json` names the reference commit and the sha256 of every reference module;
 `copy_tool.normalize` undoes the origin paragraph, the renamed import lines and the recorded adaptations, so any
-other edit of a copy fails `test_copy_matches_reference` (decisions/CRY-03.md describes the update).
+other edit of a copy fails `test_copy_matches_reference` (decisions/CRY-03.md describes the update). Since the
+repositories were unified (INF-06) the reference lives in the same tree: `test_reference_in_this_tree_is_the_copied_one`
+fails as soon as a reference module changes without a new copy (`copy_tool.py --agent-core . --rev HEAD`).
 """
 
 from __future__ import annotations
@@ -78,6 +80,17 @@ def test_copy_matches_reference(entry: dict[str, Any]) -> None:
     assert source == entry["source"]
     assert commit == origin()["commit"][:12]
     assert adaptations(entry) == tool.SOURCE_ADAPTATIONS.get(entry["source"], [])
+
+
+def test_reference_in_this_tree_is_the_copied_one() -> None:
+    """The reference modules and tests in `src/agent_hub` and `tests/platform/hub` are the ones the copy was made of."""
+    data = origin()
+    changed = [
+        entry["source"]
+        for entry in data["files"] + data["tests"]
+        if tool.sha256((REPO_ROOT / entry["source"]).read_text(encoding="utf-8")) != entry["sha256"]
+    ]
+    assert changed == [], "reference changed: copy again with copy_tool.py --agent-core . --rev HEAD"
 
 
 def test_origin_lists_every_copied_module() -> None:

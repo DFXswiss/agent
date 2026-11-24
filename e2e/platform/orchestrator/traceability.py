@@ -262,12 +262,15 @@ def check(
 
 
 def check_suite(suite: Path, *, milestone: int | None = None, agent: Path | None = None) -> Report:
-    """`check` for the suite directory `e2e/platform` of an agent-core checkout."""
+    """`check` for the suite directory `e2e/platform` of a checkout.
+
+    Evidence of both former repositories (`agent-core:` and `agent:` in the matrix) lies in this checkout since they
+    were unified (INF-06); `agent` names another checkout for the `agent:` evidence only on request."""
     repo = suite.parents[1]
     try:
         matrix = load(suite / "traceability.json")
     except TraceabilityError as exc:
         return Report(problems=[str(exc)])
     document = parse_requirements((repo / REQUIREMENTS_DOC).read_text(encoding="utf-8"))
-    roots: dict[str, Path | None] = {"agent-core": repo, "agent": agent}
+    roots: dict[str, Path | None] = {"agent-core": repo, "agent": agent or repo}
     return check(matrix, spec_titles(suite), document=document, milestone=milestone, roots=roots)

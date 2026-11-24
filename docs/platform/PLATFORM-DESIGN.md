@@ -1,7 +1,8 @@
 # Platform design (agent.dfx.swiss)
 
 Status: **final for milestone 3** (DOC-01, 2026-11-22); binding for the platform packages on the integration branch
-`ad5f2026-agent-platform` of both repositories (ADR-001). Entry page of the documentation: [README.md](README.md).
+`ad5f2026-agent-platform` of both repositories (ADR-001); one repository `DFXswiss/agent` since
+[ADR-061](adr/061-one-repository.md). Entry page of the documentation: [README.md](README.md).
 
 This document is the design overview of the platform. The details are in the implementation specification
 [`spec/`](spec/00-overview.md), the architecture decisions [`adr/`](adr/README.md), the work-package decisions
@@ -37,15 +38,15 @@ sees confidential content** (KONZEPT §5, [ADR-003](adr/003-zero-knowledge-hub.m
 
 | Component | Repository / path | Runs on | Responsibility |
 |---|---|---|---|
-| Hub | agent-core `src/agent_hub/` | hub device | passkey and device authentication, membership- and platform-log enforcement, rights, ciphertext store, task/session/operation state, duplicate detection on opaque tags, device scheduling, SSE/WebSocket fan-out, audit and read log, serves the web build ([03](spec/03-api.md), [02 §2](spec/02-data-model.md#2-hub-schema-hub)) |
-| Web client | agent-core `web/` | browser, phone | all user flows; identity bundle with PRF and recovery code; log verification; encryption, wrapping, rotation; countdown, chat, read-only terminal, whiteboards, monitoring ([06](spec/06-web.md), ADR-019, ADR-020) |
-| Contracts | agent-core `contracts/` (hash-checked copy in agent) | both | JSON Schemas of every message, closed enums, crypto vectors ([ADR-027 §2–§3](adr/027-work-package-conventions.md)) |
-| Runner | agent `src/agent_runner/` | runner device (macOS, LaunchDaemon) | identity and enrollment, scope keys, outbox/inbox sync, reconcile, VM pool and lifecycle, sessions, prompt delivery, operations (GitHub REST, subagents), credentials and model access, metrics ([05 §1–§3, §6, §10–§14](spec/05-runner.md), ADR-013, ADR-022, ADR-028, ADR-030–ADR-041) |
-| Guest agent | agent `src/agent_guest/` (stdlib only) | each Lima VM | session sandboxes, MCP platform API, hook policy, prompt-origin check, model gateway, terminal recording and transcript, journal, control socket ([05 §4–§9](spec/05-runner.md#4-sandbox-two-independent-layers-adr-008)) |
-| Golden image | agent `images/` | runner device → Lima | Ubuntu 24.04 VM with pinned Claude Code, Node, guest agent, managed settings, nftables ([05 §3.1](spec/05-runner.md#31-golden-image), ADR-021, ADR-025) |
-| Test doubles | agent `src/agent_doubles/` | test machines | model, GitHub, mail, login CLI ([07 §9](spec/07-testing.md#9-test-data-and-doubles), ADR-034) |
-| E2E suite | agent-core `e2e/platform/` | test machines | cross-repository scenarios on topologies T1/T2, PERF, LIVE ([07 §5](spec/07-testing.md#5-e2e-setup), ADR-036) |
-| Monitoring | agent `deploy/monitoring/` | runner device, monitoring stack | textfile metrics, dashboards, alert rules as a patch for the infrastructure repository ([08](spec/08-monitoring.md), ADR-018, ADR-042) |
+| Hub | `src/agent_hub/` | hub device | passkey and device authentication, membership- and platform-log enforcement, rights, ciphertext store, task/session/operation state, duplicate detection on opaque tags, device scheduling, SSE/WebSocket fan-out, audit and read log, serves the web build ([03](spec/03-api.md), [02 §2](spec/02-data-model.md#2-hub-schema-hub)) |
+| Web client | `web/` | browser, phone | all user flows; identity bundle with PRF and recovery code; log verification; encryption, wrapping, rotation; countdown, chat, read-only terminal, whiteboards, monitoring ([06](spec/06-web.md), ADR-019, ADR-020) |
+| Contracts | `contracts/` (one copy since ADR-061) | both | JSON Schemas of every message, closed enums, crypto vectors ([ADR-027 §2–§3](adr/027-work-package-conventions.md)) |
+| Runner | `src/agent_runner/` | runner device (macOS, LaunchDaemon) | identity and enrollment, scope keys, outbox/inbox sync, reconcile, VM pool and lifecycle, sessions, prompt delivery, operations (GitHub REST, subagents), credentials and model access, metrics ([05 §1–§3, §6, §10–§14](spec/05-runner.md), ADR-013, ADR-022, ADR-028, ADR-030–ADR-041) |
+| Guest agent | `src/agent_guest/` (stdlib only) | each Lima VM | session sandboxes, MCP platform API, hook policy, prompt-origin check, model gateway, terminal recording and transcript, journal, control socket ([05 §4–§9](spec/05-runner.md#4-sandbox-two-independent-layers-adr-008)) |
+| Golden image | `images/` | runner device → Lima | Ubuntu 24.04 VM with pinned Claude Code, Node, guest agent, managed settings, nftables ([05 §3.1](spec/05-runner.md#31-golden-image), ADR-021, ADR-025) |
+| Test doubles | `src/agent_doubles/` | test machines | model, GitHub, mail, login CLI ([07 §9](spec/07-testing.md#9-test-data-and-doubles), ADR-034) |
+| E2E suite | `e2e/platform/` | test machines | cross-repository scenarios on topologies T1/T2, PERF, LIVE ([07 §5](spec/07-testing.md#5-e2e-setup), ADR-036) |
+| Monitoring | `deploy/monitoring/` | runner device, monitoring stack | textfile metrics, dashboards, alert rules as a patch for the infrastructure repository ([08](spec/08-monitoring.md), ADR-018, ADR-042) |
 
 ## 3. Trust boundaries
 

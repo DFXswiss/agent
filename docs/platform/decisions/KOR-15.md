@@ -1,4 +1,8 @@
-# KOR-15 decisions (agent repository: clone step of the VM start within its budget)
+# KOR-15 – decisions
+
+This package changed both former repositories `agent` and `agent-core`, which were unified into `agent` (INF-06). Both notes follow unchanged, their headings one level lower: first the note of the former `agent` repository, then the note of the former `agent-core` repository.
+
+## KOR-15 decisions (agent repository: clone step of the VM start within its budget)
 
 Open point 4 of the performance acceptance PFM-01 (agent-core `docs/platform/performance/results.md` section 6): the
 clone step of the session start (`05-runner.md` section 6.1, step 1, "clone ≤ 6 s") took 6.17–6.36 s device time
@@ -42,3 +46,19 @@ clone step of the session start (`05-runner.md` section 6.1, step 1, "clone ≤ 
    thread pool (32 workers on a 36-core device, enough for 28 parallel starts); per-instance locks are independent.
    The removed full listings ran twice per clone in that burst (about 60 instances each). The user sees the actual
    state during such a burst; the estimate in the burst stays the residual risk of PFM-01 decision 5.
+
+## KOR-15 decisions (agent-core repository: clone step of the VM start)
+
+The correction itself is in the runner (agent: `docs/platform/decisions/KOR-15.md`): `Lima.get` looks up one instance
+by name instead of listing every Lima instance of the device, which the clone path did twice.
+
+1. **Way A, specification unchanged.** The exclusive PERF-02 re-run on T1 (2026-11-23, 10 runs) measured the clone
+   step at 5.85–5.96 s device time (`vm_assigning` → `vm_ready`), inside the ≤ 6 s of `05-runner.md` section 6.1;
+   time to working 6.44–6.57 s (estimate 8000 ms shown, every run below 10 s). The budget column, the totals of
+   section 6.1, `03-api.md` section 4.6.1 and the scheduler's 8000 ms clone estimate stay as they are; no row in
+   `spec-deviations.md`.
+2. **`performance/results.md`.** Only the PERF-02 rows of section 3.1, the sentence on the clone step below them and
+   open point 4 of section 6 are updated with the re-run; the PERF-01 rows and the other sections keep the PFM-01
+   values (KOR-13 owns the rest of the document).
+3. **Many clones at once stay open as a number with its cause.** 10.7–12.8 s for 28 parallel clones (PERF-05): CPU
+   of the device (28 × 4 vCPU booting on 36 cores); not optimised in this package.

@@ -138,6 +138,14 @@ credentials. Hub-visible metadata is listed exhaustively in `04-crypto.md` §7.
 
 ## 5. Repository layout
 
+**Amendment (INF-06, [ADR-061](../adr/061-one-repository.md)):** the two repositories are one, `DFXswiss/agent`;
+agent-core was merged into it with its history and **every path below stays as it is** (5.1 and 5.2 now describe the
+parts by their former repository). There is one `contracts/` (no copy, no synchronisation) and one `docs/platform/`.
+The import rule below ("within the same repository") reads: the hub may import the listed `agent_core` modules, the
+runner the listed `agent_cli` modules, and the hub, the runner (with the agent tool), the guest and the doubles do not
+import each other (`tests/platform/test_import_boundaries.py`). One distribution `dfx-agent` with the extras
+`platform` (runner, agent tool) and `hub` (hub image) replaces the two (ADR-061 §2).
+
 ### 5.1 `agent-core` (hub, web, contracts, E2E)
 
 ```
@@ -200,6 +208,9 @@ Rules for both repos:
   copy names its origin in the module docstring.
 
 ## 6. Integration branches and work-package branches
+
+**Amendment (INF-06, ADR-061):** one repository, integration branch `ad5f2026-live` of `DFXswiss/agent`
+(PROJECT.md decision 12); the table below is history.
 
 | Repo | Integration branch | Base |
 |---|---|---|

@@ -1,4 +1,8 @@
-# KOR-28 decisions (duplicate protection independent of the idempotency key)
+# KOR-28 – decisions
+
+This package changed both former repositories `agent` and `agent-core`, which were unified into `agent` (INF-06). Both notes follow unchanged, their headings one level lower: first the note of the former `agent` repository, then the note of the former `agent-core` repository.
+
+## KOR-28 decisions (duplicate protection independent of the idempotency key)
 
 Correction of finding L3 of the concept audit: with an idempotency key the runner built the dedupe tag from
 `{idempotency_key, task}` instead of the type's fields, so a session that passed a new key published the same
@@ -39,3 +43,19 @@ KOR-28).
    `idempotency_fields`, which is still the key's field set; the vector `dedupe.json` is unchanged.
 9. **E2E-22** now expects: the same comment again with a new key `duplicate` of the first; the key reused for another
    body `rejected` `params_invalid`; still two comment POSTs at GitHub (two distinct bodies).
+
+## KOR-28 decisions (duplicate protection independent of the idempotency key)
+
+The runner change and its decisions are in `agent` (`docs/platform/decisions/KOR-28.md`). In this repository:
+
+1. Contract changes are description texts only (`contracts/changes/KOR-28.md`): `ops/dedupe-fields.json`,
+   `mcp/objects.json` `idempotency_key`, `vectors/README.md`. Field sets, windows, vectors and schemas are unchanged,
+   so the hub needs no code change: it compares the one tag of a registration as before.
+2. No hub source change: the reference crypto `agent_hub.crypto.dedupe` (CRY-01) and `agent_hub.operations.types`
+   stay as they are; `idempotency_fields` is still the key's field set of a type without dedupe fields.
+3. E2E-22 (`e2e/platform/specs/e2e-22-formal-checks.spec.ts`, scenario `e2e-22-formal-checks.json`) gets the step
+   `rekeyed` (the same comment with a new key: `duplicate`), and the reused key with another body is now `rejected`
+   `params_invalid` instead of `duplicate`. The spec could not run in this package (the runner device is production);
+   its lint and type checks ran.
+4. Shared documentation (spec 00, 01, 03, 04, 07, ADR-012 amendment, deviation register §9) is identical in both
+   repositories.

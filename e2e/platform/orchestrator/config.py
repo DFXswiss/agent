@@ -137,10 +137,9 @@ def build_config(  # noqa: PLR0912 - one validation per option
         raise ConfigError("AGENT_RUNNER_VM_PREFIX (or WP_VM_PREFIX) must be set: every VM of a run carries it")
     if not _PREFIX_RE.fullmatch(prefix) or not prefix.endswith("-"):
         raise ConfigError("AGENT_RUNNER_VM_PREFIX must be lower case, start with a letter and end with '-'")
+    # One repository since INF-06: runner and doubles come from this checkout unless AGENT_RUNNER_SRC names another.
     agent_text = environ.get("AGENT_RUNNER_SRC")
-    if not agent_text:
-        raise ConfigError("AGENT_RUNNER_SRC must name the agent checkout (doubles, runner)")
-    agent_src = Path(agent_text).expanduser()
+    agent_src = Path(agent_text).expanduser() if agent_text else core_src
     if not (agent_src / "src" / "agent_runner").is_dir() and topology == "t1":
         raise ConfigError(f"AGENT_RUNNER_SRC={agent_src} is not an agent checkout")
     numbers = {}

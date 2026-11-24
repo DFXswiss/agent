@@ -1,5 +1,5 @@
-"""U-RUN-hygiene (R-P.9): no coverage exclusions, internal names, private addresses, local paths or secrets in
-any new platform path (docs/platform/spec/07-testing.md section 3, CONTRIBUTING.md).
+"""U-HUB-hygiene and U-RUN-hygiene (R-P.9): no coverage exclusions, internal names, private addresses, local paths
+or secrets in any new platform path (docs/platform/spec/07-testing.md section 3, CONTRIBUTING.md).
 
 Literals that would match the checks are assembled at run time, so this file passes its own scan. Internal host
 and account names are listed only as SHA-256 digests: this repository is public and must not spell them.
@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Every path the platform packages create (ADR-001); legacy paths are covered by the legacy tests.
 SCANNED = (
+    "src/agent_hub",
     "src/agent_runner",
     "src/agent_guest",
     "src/agent_doubles",
@@ -30,6 +31,8 @@ SCANNED = (
     "scripts",
     "images",
     "deploy/monitoring",
+    "web",
+    "e2e/platform",
     "Makefile",
     ".coveragerc-platform",
     ".github/workflows",

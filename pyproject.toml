@@ -16,6 +16,11 @@ dependencies = [
   "psycopg[binary]>=3.2.0",
   "PyYAML>=6.0.2,<7",
   "cryptography>=42.0.0",
+  # Legacy hub agent_core (former agent-core repository): its Dockerfile installs this distribution with `pip install .`.
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "itsdangerous>=2.2.0",
+  "cbor2>=5.6,<6",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +33,20 @@ platform = [
   "psycopg[binary]>=3.2.0",
   "psycopg-pool>=3.2",
   "cryptography>=50",
+]
+# Platform hub (src/agent_hub, docs/platform/spec/00-overview.md section 4; ADR-061): the only dependencies the hub
+# image installs (with `--no-deps` for the distribution itself). cbor2 and PyYAML are needed by the legacy agent_core
+# modules the hub imports (passkey, signing, config); tests/platform/test_import_boundaries.py keeps this list complete.
+hub = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "psycopg[binary]>=3.2",
+  "psycopg-pool>=3.2",
+  "cryptography>=50",
+  "httpx>=0.27.0",
+  "websockets>=13",
+  "cbor2>=5.6,<6",
+  "PyYAML>=6.0.2,<7",
 ]
 # Gates of the platform packages (docs/platform/spec/07-testing.md section 3).
 platform-test = [
@@ -49,6 +68,8 @@ agent = "agent_cli.main:main"
 agent-runner = "agent_runner.__main__:main"
 agent-guest = "agent_guest.__main__:main"
 agent-platform = "agent_platform.__main__:main"
+agent-core = "agent_core.__main__:main"
+agent-hub = "agent_hub.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -58,6 +79,8 @@ agent_cli = ["static/*", "skills/**"]
 agent_doubles = ["**/*.json"]
 agent_runner = ["store/migrations/*.sql", "model/model-catalog.json"]
 agent_platform = ["guide.md"]
+agent_core = ["static/*"]
+agent_hub = ["static/**", "db/migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -83,7 +106,8 @@ show_missing = true
 skip_covered = true
 
 # Lint and types apply to the platform packages only; the Makefile names the paths. The platform coverage
-# configuration is .coveragerc-platform; [tool.coverage] above belongs to the legacy suite.
+# configuration is .coveragerc-platform (runner, guest, doubles, tool and hub together); [tool.coverage] above belongs
+# to the legacy suite of agent_cli. The legacy suite of agent_core runs without coverage, as before.
 [tool.ruff]
 line-length = 120
 target-version = "py312"
@@ -98,4 +122,4 @@ strict = true
 mypy_path = ["src", "scripts/probes", "deploy/monitoring"]
 explicit_package_bases = true
 warn_unreachable = true
-files = ["src/agent_runner", "src/agent_guest", "src/agent_doubles", "src/agent_platform", "scripts/probes", "deploy/monitoring/agent_monitoring", "tests/platform"]
+files = ["src/agent_hub", "src/agent_runner", "src/agent_guest", "src/agent_doubles", "src/agent_platform", "scripts/probes", "scripts/*.py", "deploy/monitoring/agent_monitoring", "tests/platform"]

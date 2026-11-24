@@ -19,3 +19,10 @@ playwright-report/
 .mypy_cache/
 .ruff_cache/
 .wp/
+
+# From the former agent-core repository (INF-06)
+contracts/node_modules/
+src/agent_hub/static/*
+!src/agent_hub/static/.keep
+!web/build/
+!web/tests/build/
