@@ -30,10 +30,11 @@ async function visit(page: Page, path: string): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`${path}$`));
 }
 
-/** The task's main session, started and working (as the runner reports it). */
+/** The task's main session, started and working (as the runner reports it; the director walks in the background). */
 async function working(task: string): Promise<string> {
   const main = await mainSession(task);
   await walk(main.session_id, [...START_STEPS, 'working']);
+  await expect.poll(async () => (await mainSession(task)).state, { timeout: 20_000 }).toBe('working');
   return main.session_id;
 }
 
@@ -106,7 +107,8 @@ test('a missing connection, a refused action and a failed session show under the
   const user = await freshUser(page, baseURL!);
   const first = await sendPrompt(page, 'Open the pull request');
   const api = await PageUser.open(page, user.recoveryCode);
-  const [refused, failing] = await api.createTasks(user.org, user.org, ['Push the hotfix', 'Build the site']);
+  const wg = (await api.log(user.org)).state.defaultWg;
+  const [refused, failing] = await api.createTasks(user.org, wg, ['Push the hotfix', 'Build the site']);
   const pr = await working(first);
   await operation(
     pr,

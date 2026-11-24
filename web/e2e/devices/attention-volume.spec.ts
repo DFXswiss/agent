@@ -55,10 +55,11 @@ async function probe(page: Page, since: number) {
 
 /** Creates the tasks through the API, paced below the rate limit. */
 async function createAll(api: PageUser, org: string): Promise<void> {
+  const wg = (await api.log(org)).state.defaultWg;
   const started = Date.now();
   for (let done = 0; done < TASKS; done += CHUNK) {
     const titles = Array.from({ length: Math.min(CHUNK, TASKS - done) }, (_, index) => `Bulk task ${done + index + 1}`);
-    await api.createTasks(org, org, titles);
+    await api.createTasks(org, wg, titles);
     const due = done + CHUNK <= BURST ? 0 : started + ((done + CHUNK - BURST) / RATE) * 1000 - Date.now();
     if (due > 0) await new Promise((resolve) => setTimeout(resolve, due));
   }
