@@ -152,10 +152,12 @@ def org_view(connection: Connection, org: UUID, user: UUID, now: datetime, onlin
         " ORDER BY created_at DESC, id DESC",
         (wgs,),
     ).fetchall()
+    # an ended session stays while a work VM it requested still sends samples (the task VM other sessions use)
     sessions = connection.execute(
         "SELECT id, task_id, wg_id, state FROM hub.session WHERE org_id = %s AND wg_id = ANY(%s::uuid[])"
-        " AND (ended_at IS NULL OR ended_at > %s) ORDER BY created_at DESC, id DESC",
-        (org, wgs, now - SESSION_GRACE),
+        " AND (ended_at IS NULL OR ended_at > %s OR id IN (SELECT session_id FROM hub.metric_sample"
+        " WHERE entity_kind = 'workvm' AND ts > %s)) ORDER BY created_at DESC, id DESC",
+        (org, wgs, now - SESSION_GRACE, now - SESSION_GRACE),
     ).fetchall()
     workvms = connection.execute(
         "SELECT entity_id, device_id, session_id FROM (SELECT DISTINCT ON (entity_id) entity_id, device_id, session_id,"

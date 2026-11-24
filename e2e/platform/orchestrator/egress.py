@@ -11,7 +11,10 @@ Two sources feed the log of a device (`egress.jsonl`, one JSON record per line):
   runner device and vice versa; inbound connections show the peer as remote address, too). The one exception: a Lima
   host agent's connections to port 123 (time sync) or to port 53 of one of the device's resolvers (`/etc/resolv.conf`,
   name lookups) belong to the guest operating system (`vm_os`, ADR-034); they are logged and allowed. Any other
-  connection of a VM (e.g. HTTPS, or DNS to another server) stays a violation.
+  connection of a VM (e.g. HTTPS, or DNS to another server) stays a violation. Second exception: the host agent of a
+  work VM (instance name `…wvm-<8 hex>`, agent ADR-056): a work VM is the session's own Ubuntu machine with internet
+  by design (its DNS goes to Cloudflare's public resolvers, its operating system updates itself); its connections are
+  logged with `workvm: true` and allowed. The scenarios themselves use only servers inside the VM.
 Processes are started with `HTTP(S)_PROXY` on the closed loopback port 9, so a client that honours the proxy
 variables cannot connect anywhere unexpected at all; the sampler catches clients that ignore them.
 """
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -37,6 +41,7 @@ LSOF_NOTHING_FOUND = 1
 NTP_PORT = 123
 DNS_PORT = 53
 RESOLV_CONF = Path("/etc/resolv.conf")
+WORKVM_AGENT = re.compile(r"limactl.* hostagent .*wvm-[0-9a-f]{8}")
 
 
 def _rows(ps_output: str) -> list[tuple[int, int, str]]:
@@ -52,6 +57,11 @@ def matching(ps_output: str, patterns: Iterable[str]) -> set[int]:
     """PIDs whose command line contains one of `patterns`."""
     wanted = [p for p in patterns if p]
     return {pid for pid, _, command in _rows(ps_output) if any(p in command for p in wanted)}
+
+
+def workvm_agents(ps_output: str) -> set[int]:
+    """PIDs of the Lima host agents of work VMs (their command line names the instance `…wvm-<8 hex>`)."""
+    return {pid for pid, _, command in _rows(ps_output) if WORKVM_AGENT.search(command)}
 
 
 def descendants(ps_output: str, roots: Iterable[int]) -> set[int]:
@@ -167,6 +177,7 @@ class EgressLog:
             self.error(f"ps exited with {rc}")
             return
         pids = descendants(listing, roots) | matching(listing, self.match)
+        workvm = workvm_agents(listing)
         if not pids:
             return
         rc, listing = self.run(["lsof", "-nP", "-a", "-i", "-p", ",".join(str(p) for p in sorted(pids)), "-F", "pcn"])
@@ -179,6 +190,9 @@ class EgressLog:
             if key in self._seen:
                 continue
             self._seen.add(key)
+            if conn["pid"] in workvm and not classify(conn, self.peers, self.dns):
+                self.write({"ts": self.clock(), "source": "sampler", "allowed": True, "workvm": True, **conn})
+                continue
             allowed = classify(conn, self.peers, self.dns)
             self.write({"ts": self.clock(), "source": "sampler", "allowed": allowed, **conn})
 

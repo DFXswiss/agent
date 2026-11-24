@@ -132,3 +132,32 @@ def test_run_patterns_leave_foreign_golden_builds_out() -> None:
         "12 1 /opt/homebrew/bin/limactl hostagent cache-golden-build-0123456789ab\n"
     )
     assert egress.matching(ps, patterns) == {10}
+
+
+def test_work_vm_connections_are_logged_and_allowed(tmp_path: Path) -> None:
+    """A work VM is the session's own machine with internet (agent ADR-056): its host agent's connections are
+    logged with `workvm: true`; a session VM's host agent with the same connection stays a violation."""
+    ps = (
+        " 40 1 /opt/homebrew/bin/limactl hostagent --pidfile /h/.lima/wp-t-e2e-r1-wvm-0a1b2c3d/ha.pid"
+        " wp-t-e2e-r1-wvm-0a1b2c3d\n"
+        " 41 1 /opt/homebrew/bin/limactl hostagent wp-t-e2e-r1-pool-1\n"
+    )
+    lsof = (
+        "p40\nclimactl\nn192.0.2.7:51000->1.1.1.1:53\nn[::1]:6000->[::1]:7000\n"
+        "p41\nclimactl\nn192.0.2.7:51001->198.51.100.9:443\n"
+    )
+    assert egress.workvm_agents(ps) == {40}
+
+    def run(argv: list[str]) -> tuple[int, str]:
+        return (0, ps) if argv[0] == "ps" else (0, lsof)
+
+    log = egress.EgressLog(tmp_path / "egress.jsonl", run, clock=lambda: 3.0)
+    log.match = ["wp-t-e2e-"]
+    log.sample([])
+    records = log.records()
+    assert [(r["pid"], r["allowed"], r.get("workvm", False)) for r in records] == [
+        (40, True, True),
+        (40, True, False),
+        (41, False, False),
+    ]
+    assert [r["remote"] for r in egress.violations(records)] == ["198.51.100.9:443"]

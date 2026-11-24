@@ -203,3 +203,9 @@ MON-3. **Runner measures only from outside** (`agent_runner.metrics.workvm`): th
     Open: `uninstall` follows the configured slot count (a lowered count leaves accounts - run it with the count of
     the installation); a reboot of the test device is not part of the rehearsal; no tests for the shell scripts
     beyond syntax and shellcheck.
+26. **Open review points of #23, done (2026-11-24).** M5: an ended session stays in the monitoring overview while a
+    work VM it requested still sends samples (the task VM the task's other sessions use). M8: a test runs three
+    concurrent `pool_assign` against two ready entries (two different entries taken, one `None`). L9: a waiting
+    request drops a ready pool entry only when the RAM of all ready entries would make it fit. L11: `limactl list`
+    of the monitoring round is bounded (10 s; a hanging listing leaves that slot's host values empty). Still open:
+    L10 (intended), L12 (hub before runner, documented), L13 (in-place change before merge, past).

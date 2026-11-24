@@ -260,9 +260,10 @@ class WorkVms:
                         return pooled
                     async with self.slot_lock:
                         slot = await self._free_slot()
-                        if slot is not None and await self.deps.free_memory_mib() >= memory_mib:
+                        free = await self.deps.free_memory_mib()
+                        if slot is not None and free >= memory_mib:
                             return await self._insert(build(slot))
-                    if await self._drop_one_pooled():
+                    if await self._drop_one_pooled(free_mib=free, need_mib=memory_mib):
                         continue
                 if self.deps.now() >= deadline:
                     raise OperationFailed(
@@ -477,11 +478,12 @@ class WorkVms:
         except LimaError as error:
             self.deps.log(f"runner.workvm pool_delete_failed slot={entry.slot} code={error.code}")
 
-    async def _drop_one_pooled(self) -> bool:
+    async def _drop_one_pooled(self, *, free_mib: int, need_mib: int) -> bool:
         """Give the slot and RAM of the oldest `ready` pool entry back (a `starting` one belongs to the running
-        refill); False when there is none."""
+        refill) - only when the RAM of all ready entries would make the request fit; False otherwise or when there
+        is none."""
         ready = [entry for entry in await records.pool(self.deps.db) if entry.state == "ready"]
-        if not ready:
+        if not ready or free_mib + sum(entry.memory_mib for entry in ready) < need_mib:
             return False
         await self._drop(ready[0])
         return True

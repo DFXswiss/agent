@@ -152,13 +152,23 @@ class Outcome:
         say(f"FAILED: {self.failures[-1]}")
 
 
-def needs_vm(suite: Path, only: tuple[str, ...]) -> bool:
-    """True when a selected spec title carries `@needs-vm` (the run then ensures the golden image)."""
+def needs_tag(suite: Path, only: tuple[str, ...], tag: str) -> bool:
+    """True when a selected spec title carries `tag`."""
     for path in sorted(p for sub in ("specs", "perf", "live") for p in (suite / sub).rglob("*.spec.ts")):
         for literal in re.findall(r"'[^'\n]*'|\"[^\"\n]*\"|`[^`]*`", path.read_text(encoding="utf-8")):
-            if "@needs-vm" in literal and (not only or any(f"@{test_id}" in literal for test_id in only)):
+            if tag in literal and (not only or any(f"@{test_id}" in literal for test_id in only)):
                 return True
     return False
+
+
+def needs_vm(suite: Path, only: tuple[str, ...]) -> bool:
+    """True when a selected spec title carries `@needs-vm` (the run then ensures the golden image)."""
+    return needs_tag(suite, only, "@needs-vm")
+
+
+def needs_workvm(suite: Path, only: tuple[str, ...]) -> bool:
+    """True when a selected spec title carries `@needs-workvm` (the run then ensures the work image cache)."""
+    return needs_tag(suite, only, "@needs-workvm")
 
 
 def grep_args(config: RunConfig) -> list[str]:
@@ -380,8 +390,7 @@ class Run:
         model, github, platform_key = self.start_doubles(ctx)
         golden = None
         if needs_vm(config.suite, config.only):
-            golden = self.ensure_golden(ctx)
-            ctx.notes.append(f"golden image {golden}")
+            golden = self.ensure_images(ctx)
             tunnels = [ctx.agent_python, "-m", "orchestrator.tunnels", "--prefix", config.run_prefix]
             tunnels += ["--port", str(config.port("model-relay"))]
             env = self.runner_side(ctx, clean_env(self.environ, {}))
@@ -466,6 +475,28 @@ class Run:
             # A build downloads packages; its detached Lima host agent is not sampled (`egress_patterns`), so a run
             # never counts as hermetic when it built its golden image: build it first (tools/wp/golden-cache.sh).
             raise ServiceError(f"golden image {name} was built inside the run; build the cache before the run")
+        return name
+
+    def ensure_images(self, ctx: Context) -> str:
+        """The golden image and, when a selected spec needs work VMs, the work image cache (both noted)."""
+        golden = self.ensure_golden(ctx)
+        ctx.notes.append(f"golden image {golden}")
+        if needs_workvm(self.config.suite, self.config.only):
+            ctx.workvm_image = self.ensure_workvm_image(ctx)
+            ctx.notes.append(f"work image {ctx.workvm_image}")
+        return golden
+
+    def ensure_workvm_image(self, ctx: Context) -> str:
+        argv = [ctx.agent_python, "-m", "orchestrator.workvm_image", "--agent", ctx.agent_src]
+        argv += ["--python", ctx.agent_python, "--home", f"{ctx.runner_scratch}/workvm-image-home"]
+        env = self.runner_side(ctx, clean_env(self.environ, {}))
+        done = ctx.runner_node.run(argv, env=env, cwd=f"{ctx.core_on_runner}/e2e/platform", timeout=3600)
+        if done["rc"] != 0:
+            raise ServiceError(f"work image: {done['stderr'].strip()[-300:]}")
+        name = str(done["stdout"]).strip()
+        if BUILT_MARK in str(done["stderr"]):
+            # same rule as the golden cache: a build downloads packages outside the egress sampler
+            raise ServiceError(f"work image {name} was built inside the run; build the cache before the run")
         return name
 
     def playwright(self, ctx: Context, root: Path, token: str) -> int:

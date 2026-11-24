@@ -1,0 +1,316 @@
+{
+  "name": "e2e-41-work-vm",
+  "description": "E2E-41 (KOR-29): the session checks out a repository, gets a work VM, runs the failing tests, fixes the code, runs them green and opens a draft pull request through the platform; a follow-up starts a service in the same VM, reads its page with the browser, shows the VM's status and hits the per-task limit with a clear refusal. Every result is checked by the next step's expectation.",
+  "steps": [
+    {
+      "id": "checkout",
+      "expect": {
+        "user_text_contains": "E2E41-FIX",
+        "has_tool_result": false,
+        "tools_include": ["mcp__platform__workvm_exec", "mcp__platform__workvm_browse", "mcp__platform__workvm_status"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Checking out the repository first."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "octo-org/calc"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "request-vm",
+      "expect": {
+        "tool_result_contains": "\"dir\":\"repos/octo-org/calc\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "workvm.request",
+              "params": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "tests-red",
+      "expect": {
+        "tool_result_contains": "\"created\":true"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__workvm_exec",
+            "input": {
+              "command": "cd repos/octo-org/calc && python3 test_calc.py",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fix",
+      "expect": {
+        "tool_result_contains": "\"exit_code\":1"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/octo-org/calc/calc.py",
+              "content": "def add(a, b):\n    return a + b  # kz41-file-m2n6b8v4\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "tests-green",
+      "expect": {
+        "tool_result_is_error": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__workvm_exec",
+            "input": {
+              "command": "cd repos/octo-org/calc && python3 test_calc.py",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "branch",
+      "expect": {
+        "tool_result_contains": "\"exit_code\":0"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_branch",
+              "params": {
+                "repo": "octo-org/calc",
+                "branch": "e2e41/fix",
+                "from": "main"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "commit",
+      "expect": {
+        "tool_result_contains": "\"branch\":\"e2e41/fix\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "octo-org/calc",
+                "branch": "e2e41/fix",
+                "message": "Fix the addition."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push",
+      "expect": {
+        "tool_result_contains": "\"files_changed\":1"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": {
+                "repo": "octo-org/calc",
+                "branch": "e2e41/fix",
+                "commit_sha": "${commit}"
+              }
+            }
+          }
+        ]
+      },
+      "capture": {
+        "commit": {
+          "regex": "\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"",
+          "source": "messages"
+        }
+      }
+    },
+    {
+      "id": "pull-request",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/octo-org/calc/tree/e2e41/fix\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_pull_request",
+              "params": {
+                "repo": "octo-org/calc",
+                "head": "e2e41/fix",
+                "base": "main",
+                "title": "Fix the addition kz41-title-c4x9z1q7",
+                "body": "Tests pass in the work VM.",
+                "draft": true
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fixed",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/octo-org/calc/pull/1\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The tests failed, I fixed add() and they pass now; draft pull request #1 is open kz41-answer-h3j7k1l5."
+          }
+        ]
+      }
+    },
+    {
+      "id": "service",
+      "expect": {
+        "user_text_contains": "E2E41-SERVICE"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__workvm_exec",
+            "input": {
+              "command": "mkdir -p /srv/kz41 && printf '<title>KZ41 page</title><h1>Hello kz41-page-r5t8y2u4</h1>' > /srv/kz41/index.html && systemd-run --unit=kz41-site python3 -m http.server 8041 --directory /srv/kz41 && sleep 2 && systemctl is-active kz41-site && curl -s http://127.0.0.1:8041/",
+              "sync": "none",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "browse",
+      "expect": {
+        "tool_result_contains": "Hello kz41-page-r5t8y2u4"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__workvm_browse",
+            "input": {
+              "url": "http://127.0.0.1:8041/"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "status",
+      "expect": {
+        "tool_result_contains": "\"title\":\"KZ41 page\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__workvm_status",
+            "input": {}
+          }
+        ]
+      }
+    },
+    {
+      "id": "second-vm",
+      "expect": {
+        "tool_result_contains": "\"workvm_id\":\"wvm-"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "workvm.request",
+              "params": {
+                "scope": "session"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "served",
+      "expect": {
+        "tool_result_contains": "limit_exceeded"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The page says: Hello kz41-page-r5t8y2u4. A second work VM is above the limit of this task kz41-answer-p8o2i6u3."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Work VM"
+          }
+        ]
+      }
+    }
+  ]
+}

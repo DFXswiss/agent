@@ -1146,3 +1146,18 @@ def test_dropping_an_entry_that_was_assigned_keeps_its_vm(world: World) -> None:
     world.instances[entry.lima_name] = "Running"
     world.run(lambda vms: vms._drop(entry))
     assert entry.lima_name in world.instances
+
+
+def test_a_request_the_pool_cannot_make_fit_leaves_the_pool(world: World) -> None:
+    pooled(world, slots=2)
+    world.settings = manager_module.Settings(**{**world.settings.__dict__, "queue_seconds": 2})
+
+    async def body(vms: WorkVms) -> None:
+        await vms.pool_pass()
+        world.free_mib = 1024  # free RAM plus the pool's 8 GiB is still below a large VM's 16 GiB
+        await request(vms, {"size": "large"})
+
+    with pytest.raises(OperationFailed) as caught:
+        world.run(body)
+    assert caught.value.code == "timeout"
+    assert [entry["state"] for entry in pool_rows(world)] == ["ready"]

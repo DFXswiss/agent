@@ -199,6 +199,39 @@ def test_vm_scenarios_ensure_the_golden_image(world: World, monkeypatch: pytest.
     assert any("golden image: golden: agent-runner image build" in f for f in summary(world)["failures"])
 
 
+def test_work_vm_scenarios_ensure_the_work_image(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(run, "needs_vm", lambda suite, only: True)
+    monkeypatch.setattr(run, "needs_workvm", lambda suite, only: True)
+    for rel in ("images/golden.yaml", "src/agent_guest/x.py"):
+        (world.agent / rel).parent.mkdir(parents=True, exist_ok=True)
+        (world.agent / rel).write_text(rel)
+    world.set(image="1")
+    monkeypatch.setenv("PYTHONPATH", str(SUITE))
+    # the golden cache first (built inside the run: refused), then the work image inputs appear
+    assert Run(config_of(world), world.environ, tools_of(world)).execute() == run.EXIT_FAILED
+    for rel in ("images/workvm.yaml", "images/workvm/provision.sh", "images/versions.json"):
+        (world.agent / rel).parent.mkdir(parents=True, exist_ok=True)
+        (world.agent / rel).write_text(rel)
+    # the cache is missing: built inside the run, which the run refuses (its downloads are not egress-sampled)
+    assert Run(config_of(world), world.environ, tools_of(world)).execute() == run.EXIT_FAILED
+    assert any("work image cache-wimg-" in f and "was built inside the run" in f for f in summary(world)["failures"])
+    # now it exists: used as is
+    assert Run(config_of(world), world.environ, tools_of(world)).execute() == run.EXIT_OK
+    assert any(note.startswith("work image cache-wimg-") for note in summary(world)["notes"])
+    world.lima.write_text(world.lima.read_text().split("\n", 1)[0] + "\n")  # the golden cache stays
+    world.set(workvm_build_fail="1")
+    assert Run(config_of(world), world.environ, tools_of(world)).execute() == run.EXIT_FAILED
+    assert any("work image: workvm image: work image build failed" in f for f in summary(world)["failures"])
+
+
+def test_spec_tags_select_the_work_image(tmp_path: Path) -> None:
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "a.spec.ts").write_text("test('@E2E-41 @needs-vm @needs-workvm work', () => {});\n")
+    assert run.needs_workvm(tmp_path, ()) is True
+    assert run.needs_workvm(tmp_path, ("E2E-41",)) is True
+    assert run.needs_workvm(tmp_path, ("E2E-40",)) is False
+
+
 def remote_factory(world: World, monkeypatch: pytest.MonkeyPatch) -> Callable[[str, list[str], IO[bytes] | None], Node]:
     """The runner device of T2 as a local `python -m orchestrator.node` (instead of SSH)."""
     monkeypatch.setenv("PYTHONPATH", str(SUITE))

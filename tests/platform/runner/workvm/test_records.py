@@ -161,3 +161,24 @@ def test_pool_entries_hold_slots_and_ram_and_turn_into_rows(dsn: str) -> None:
         assert await records.pool(db) == []
 
     run(dsn, body)
+
+
+def test_two_concurrent_assignments_never_take_the_same_entry(dsn: str) -> None:
+    async def body(db: Any) -> list[str | None]:
+        for index, name in enumerate(("wp-t-wvm-000000a1", "wp-t-wvm-000000a2")):
+            await records.pool_add(db, records.Pooled(name, index, "img", 8192, "ready", START))
+
+        def build_for(task: str, vm_id: str) -> Any:
+            return lambda name, slot: dataclasses.replace(ROW, id=vm_id, task_id=task, lima_name=name, slot=slot)
+
+        first, second, third = await asyncio.gather(
+            records.pool_assign(db, "img", 8192, build_for(TASK, "wvm-000000b1")),
+            records.pool_assign(db, "img", 8192, build_for(TASK_B, "wvm-000000b2")),
+            records.pool_assign(db, "img", 8192, build_for(ORG, "wvm-000000b3")),
+        )
+        return [None if vm is None else vm.lima_name for vm in (first, second, third)]
+
+    names = run(dsn, body)
+    taken = [name for name in names if name is not None]
+    assert sorted(taken) == ["wp-t-wvm-000000a1", "wp-t-wvm-000000a2"]
+    assert names.count(None) == 1

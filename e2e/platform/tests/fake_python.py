@@ -206,4 +206,10 @@ if module == "agent_runner" and ARGS[2:4] == ["image", "build"]:
             fh.write(json.dumps({"name": f"cache-golden-{tag}", "status": "Stopped", "memory": 0}) + "\n")
     sys.exit(1 if switch("IMAGE_BUILD_FAIL") else 0)
 
+if module == "agent_runner" and ARGS[2:5] == ["workvm", "image", "build"]:
+    if not switch("WORKVM_BUILD_FAIL"):
+        with open(HOME / "lima.jsonl", "a") as fh:
+            fh.write(json.dumps({"name": f"cache-wimg-{option('--name')}", "status": "Stopped", "memory": 0}) + "\n")
+    sys.exit(1 if switch("WORKVM_BUILD_FAIL") else 0)
+
 sys.exit(9)

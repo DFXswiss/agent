@@ -25,6 +25,7 @@ from agent_runner.vm.lima import Instance, LimaError
 from agent_runner.workvm import records
 from agent_runner.workvm.service import existing
 
+LIST_TIMEOUT_S = 10.0
 MIB = 1024 * 1024
 GIB = 1024 * MIB
 SAMPLED_STATES = ("starting", "running")
@@ -57,9 +58,14 @@ async def entries(context: Any, tools: Tools, at: datetime, line: Any) -> tuple[
     for slot in sorted({row.slot for row in rows}):
         lima = workvms.deps.lima_for(slot)
         try:
-            instances.update((instance.name, instance) for instance in await asyncio.to_thread(lima.list))
+            listed = await asyncio.wait_for(asyncio.to_thread(lima.list), LIST_TIMEOUT_S)
         except LimaError as exc:
             line(f"workvm_list_failed slot={slot} code={exc.code}")
+            continue
+        except TimeoutError:  # a hanging `limactl list` must not hold up the round (the thread ends by itself)
+            line(f"workvm_list_failed slot={slot} code=timeout")
+            continue
+        instances.update((instance.name, instance) for instance in listed)
     known = {row.lima_name for row in rows}
     host = await vm.host_values(tools, [instance for name, instance in instances.items() if name in known])
     found = []

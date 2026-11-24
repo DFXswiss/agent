@@ -30,6 +30,8 @@ class Context:
     links: dict[str, Node] = field(default_factory=dict)
     control_url: str = ""
     notes: list[str] = field(default_factory=list)
+    workvm_image: str = ""
+    """The shared work image cache of the run (`orchestrator.workvm_image`), when a spec needs work VMs."""
 
     def state(self) -> dict[str, Any]:
         return {

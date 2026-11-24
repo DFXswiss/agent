@@ -41,10 +41,12 @@ def test_the_overview_lists_the_work_vms_of_visible_sessions(watch: Watch) -> No
     watch.sample("workvm", "wvm-44444444", watch.own, age=16 * 60, session=session)  # torn down long ago
     watch.sample("workvm", HIDDEN_WVM, watch.own, session=hidden_session)
     watch.sample("workvm", OTHER_WVM, watch.shared, session=other_session)
+    # the requesting session ended long ago, but the task VM still runs for the task's other sessions: it stays
     watch.sample("workvm", "wvm-55555555", watch.own, session=gone_session)
 
     member = overview(watch, watch.member)
-    assert [item["workvm_id"] for item in member["workvms"]] == [WVM, "wvm-33333333"]
+    assert [item["workvm_id"] for item in member["workvms"]] == [WVM, "wvm-55555555", "wvm-33333333"]
+    assert gone_session in {item["session_id"] for item in member["sessions"]}
     found = member["workvms"][0]
     assert found == {
         "workvm_id": WVM,
@@ -57,9 +59,9 @@ def test_the_overview_lists_the_work_vms_of_visible_sessions(watch: Watch) -> No
         "stale": False,
     }
     assert found["latest"]["cpu_ratio"] == 3.5
-    assert member["workvms"][1]["stale"] is True
+    assert member["workvms"][2]["stale"] is True
     admin = overview(watch, watch.admin)
-    assert {item["workvm_id"] for item in admin["workvms"]} == {WVM, "wvm-33333333", HIDDEN_WVM}
+    assert {item["workvm_id"] for item in admin["workvms"]} == {WVM, "wvm-55555555", "wvm-33333333", HIDDEN_WVM}
     other = overview(watch, watch.other.founder, watch.other.id)
     assert [item["workvm_id"] for item in other["workvms"]] == [OTHER_WVM]
 

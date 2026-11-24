@@ -4,6 +4,7 @@ where the probes reach them, the runtime otherwise, and the `workvm` samples for
 
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ import pytest
 from agent_guest.schema import SchemaSet
 from agent_runner.metrics import outbox
 from agent_runner.metrics import vm as metrics_vm
+from agent_runner.metrics import workvm as workvm_metrics
 from agent_runner.metrics.vm import HostVm
 from agent_runner.metrics.workvm import GIB, MIB, WorkvmEntry, entries
 from agent_runner.store.migrate import migrate
@@ -110,6 +112,30 @@ def test_entries_of_the_live_work_vms(world: World, monkeypatch: pytest.MonkeyPa
     # a slot whose listing fails is left out of the host values, its VM is still an entry
     assert sorted(entry.workvm_id for entry in partial) == sorted([task_vm["workvm_id"], own["workvm_id"]])
     assert lines == [f"workvm_list_failed slot={broken} code=lima_failed"]
+
+
+class Hanging:
+    """The Lima of a slot whose listing does not answer in time."""
+
+    def list(self) -> list[Any]:
+        time.sleep(0.5)
+        return []
+
+
+def test_a_hanging_listing_does_not_hold_up_the_round(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(workvm_metrics, "LIST_TIMEOUT_S", 0.05)
+    lines: list[str] = []
+
+    async def body(vms: WorkVms) -> tuple[Any, ...]:
+        context = SimpleNamespace()
+        install(context, vms)
+        await vms.request(session(), {})
+        vms.deps.lima_for = lambda slot: Hanging()  # type: ignore[assignment,return-value]
+        return await entries(context, None, START, lines.append)  # type: ignore[arg-type]
+
+    [entry] = world.run(body)
+    assert entry.cpu_ratio is None
+    assert lines == ["workvm_list_failed slot=0 code=timeout"]
 
 
 def test_a_deleted_work_vm_is_no_entry(world: World) -> None:
