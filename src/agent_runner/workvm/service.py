@@ -19,7 +19,7 @@ import asyncio
 import hashlib
 import subprocess
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -31,6 +31,7 @@ from agent_runner.vm import records as vm_records
 from agent_runner.vm.capacity import physical_memory_mib
 from agent_runner.vm.lima import Lima
 from agent_runner.workvm import accounts, firewall, records
+from agent_runner.workvm.jobs import WorkVmError
 from agent_runner.workvm.manager import Deps, Identity, Settings, WorkVms
 from agent_runner.workvm.records import WorkVm
 from agent_runner.workvm.shell import SlotCommand, VmShell
@@ -93,8 +94,8 @@ class Boundary:
             return None
 
 
-def image_disk(image: str) -> Path:
-    return IMAGES_DIR / f"{image}.img"
+def image_disk(image: str, images: Path | None = None) -> Path:
+    return (IMAGES_DIR if images is None else images) / f"{image}.img"
 
 
 def base_template(template: str, disk: Path) -> str:
@@ -113,22 +114,40 @@ def base_template(template: str, disk: Path) -> str:
 
 
 class Bases:
-    """Clone bases per slot (see the module docstring)."""
+    """Clone bases per slot (see the module docstring).
 
-    def __init__(self, command: SlotCommand, prefix: str, template: Path) -> None:
+    `images` is the directory of the exported disks (`IMAGES_DIR`); None (self mode) clones the image instance itself.
+    A missing exported disk ends the start with `workvm_image_missing` and the line
+    `runner.workvm.base.failed slot=<n> path=<disk>` in `log`, before Lima is asked.
+    """
+
+    def __init__(
+        self,
+        command: SlotCommand,
+        prefix: str,
+        template: Path,
+        images: Path | None = IMAGES_DIR,
+        log: Callable[[str], None] = lambda _text: None,
+    ) -> None:
         self.command = command
         self.prefix = prefix
         self.template = template
+        self.images = images
+        self.log = log
 
     async def __call__(self, slot: int, image: str) -> str:
-        if not self.command.accounts:
+        if self.images is None:
             return image
         lima = Lima(self.command.sync_runner(slot), prefix=self.prefix)
         name = lima.name("wbase-" + hashlib.sha256(image.encode()).hexdigest()[:8])
         if await asyncio.to_thread(lima.get, name) is None:
-            path = IMAGES_DIR / f"{image}.yaml"
+            disk = image_disk(image, self.images)
+            if not disk.is_file():
+                self.log(f"runner.workvm.base.failed slot={slot} path={disk}")
+                raise WorkVmError("workvm_image_missing", image)
+            path = self.images / f"{image}.yaml"
             if not path.exists():
-                path.write_text(base_template(self.template.read_text(encoding="utf-8"), image_disk(image)))
+                path.write_text(base_template(self.template.read_text(encoding="utf-8"), disk))
                 path.chmod(0o644)
             await asyncio.to_thread(lima.create, name, str(path))
         return name
@@ -214,7 +233,13 @@ def workvms_for(context: Any) -> WorkVms | None:
         now=lambda: datetime.fromtimestamp(wall(), UTC),
         lima_for=lambda slot: Lima(command.sync_runner(slot), prefix=config.vm_prefix),
         shell_for=shell_for,
-        base_for=Bases(command, config.vm_prefix, config.workvm_template or default_template()),
+        base_for=Bases(
+            command,
+            config.vm_prefix,
+            config.workvm_template or default_template(),
+            None if config.workvm_slots_self else IMAGES_DIR,
+            _logger(context),
+        ),
         boundary_ok=Boundary(config, slots),
         free_memory_mib=free_memory_mib,
         log=_logger(context),

@@ -29,6 +29,7 @@ from agent_runner.store.pool import open_pool
 from agent_runner.vm import records as vm_records
 from agent_runner.vm.lima import Lima, LimactlRun
 from agent_runner.workvm import firewall, records, service
+from agent_runner.workvm.jobs import WorkVmError
 from agent_runner.workvm.manager import Identity, Settings, WorkVms
 from agent_runner.workvm.records import WorkVm
 from agent_runner.workvm.service import Bases, Boundary
@@ -163,6 +164,7 @@ def test_image_disk_and_default_template(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert service.image_disk("wimg-1") == Path("/var/agent-workvm/images/wimg-1.img")
     monkeypatch.setattr(service, "IMAGES_DIR", tmp_path)
     assert service.image_disk("wimg-1") == tmp_path / "wimg-1.img"
+    assert service.image_disk("wimg-1", Path("/e")) == Path("/e/wimg-1.img")
     assert service.default_template() == ROOT / "images" / "workvm.yaml"
     assert service.default_template().is_file()
 
@@ -224,17 +226,17 @@ class FakeCommand(SlotCommand):
 
 
 def test_bases_in_self_mode_clone_the_image_itself(tmp_path: Path) -> None:
-    bases = Bases(SlotCommand(()), "agent-", tmp_path / "missing.yaml")
+    bases = Bases(SlotCommand(()), "agent-", tmp_path / "missing.yaml", None)
     assert asyncio.run(bases(3, "agent-wimg-1")) == "agent-wimg-1"
 
 
-def test_bases_with_slot_accounts_create_one_base_per_slot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(service, "IMAGES_DIR", tmp_path / "images")
+def test_bases_with_slot_accounts_create_one_base_per_slot(tmp_path: Path) -> None:
     (tmp_path / "images").mkdir()
+    (tmp_path / "images" / "agent-wimg-1.img").write_bytes(b"disk")
     template = tmp_path / "workvm.yaml"
     template.write_text('images:\n- location: "https://x"\n  arch: aarch64\ncpus: 4\n', encoding="utf-8")
     homes = {0: FakeLimactl(), 1: FakeLimactl()}
-    bases = Bases(FakeCommand(("agentwvm00", "agentwvm01"), homes=homes), "agent-", template)
+    bases = Bases(FakeCommand(("agentwvm00", "agentwvm01"), homes=homes), "agent-", template, tmp_path / "images")
     name = "agent-wbase-" + hashlib.sha256(b"agent-wimg-1").hexdigest()[:8]
     spec = tmp_path / "images" / "agent-wimg-1.yaml"
 
@@ -254,6 +256,25 @@ def test_bases_with_slot_accounts_create_one_base_per_slot(monkeypatch: pytest.M
     assert asyncio.run(bases(1, "agent-wimg-1")) == name
     assert homes[1].calls == [["list", "--json", name], ["create", "-y", f"--name={name}", str(spec)]]
     assert spec.read_text(encoding="utf-8") == "kept\n"
+
+
+def test_bases_without_the_exported_disk_fail_with_its_path(tmp_path: Path) -> None:
+    (tmp_path / "images").mkdir()
+    home, lines = FakeLimactl(), list[str]()
+    bases = Bases(FakeCommand(("agentwvm00",), homes={0: home}), "agent-", tmp_path / "w.yaml", tmp_path / "images")
+    bases.log = lines.append
+    with pytest.raises(WorkVmError) as caught:
+        asyncio.run(bases(0, "agent-wimg-1"))
+    assert (caught.value.code, caught.value.name) == ("workvm_image_missing", "agent-wimg-1")
+    assert lines == [f"runner.workvm.base.failed slot=0 path={tmp_path}/images/agent-wimg-1.img"]
+    assert [call[0] for call in home.calls] == ["list"]
+    assert list((tmp_path / "images").iterdir()) == []
+
+
+def test_bases_log_nothing_by_default(tmp_path: Path) -> None:
+    bases = Bases(FakeCommand(("agentwvm00",), homes={0: FakeLimactl()}), "agent-", tmp_path / "w.yaml", tmp_path)
+    with pytest.raises(WorkVmError):
+        asyncio.run(bases(0, "agent-wimg-1"))
 
 
 # -- workvms_for -------------------------------------------------------------------------------------------------
@@ -358,6 +379,7 @@ def test_wiring_with_slot_accounts(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     command = deps.base_for.command
     assert command == SlotCommand(("agentwvm00", "agentwvm01"))
     assert (deps.base_for.prefix, deps.base_for.template) == ("agent", service.default_template())
+    assert deps.base_for.images == service.IMAGES_DIR
 
     lima = deps.lima_for(1)
     assert isinstance(lima, Lima)
@@ -385,6 +407,7 @@ def test_wiring_in_self_mode_with_a_template(monkeypatch: pytest.MonkeyPatch, tm
     assert isinstance(bases, Bases)
     assert bases.command == SlotCommand(())
     assert bases.template == template
+    assert bases.images is None
 
     async def boundary() -> bool:
         return await workvms.deps.boundary_ok()
