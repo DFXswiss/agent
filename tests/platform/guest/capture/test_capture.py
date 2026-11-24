@@ -19,14 +19,15 @@ import pytest
 
 from agent_guest import hooks, sessions, tmux, transcript
 from agent_guest.apisock import ApiClient, ApiSockError, token_sha256
-from agent_guest.control import ControlContext
+from agent_guest.config import GuestConfig
+from agent_guest.control import ControlContext, ControlService
 from agent_guest.control_routes import capture as capture_routes
 from agent_guest.control_routes.capture import Capture
 from agent_guest.control_routes.hooks import FILE_HINTS
 from agent_guest.driver import ClaudeCodeDriver
 from agent_guest.hook_addons import file_changes
 from agent_guest.state import Session
-from tests.platform.guest.conftest import SESSION_TOKEN
+from tests.platform.guest.conftest import SESSION_TOKEN, FakeClock
 from tests.platform.guest.hooks.conftest import HookClient, tool_body
 
 SID = "01a1ee56-5e00-7003-8f1b-340691d99f03"
@@ -381,3 +382,31 @@ def test_a_file_written_while_the_session_ends_is_left_to_its_last_scan(
     save(context, base, "stopping")
     assert capture.file_written(SID, "a.txt", "write") is False
     assert capture.sessions == {}
+
+
+def test_the_capture_ends_with_the_control_process(
+    guest_config: GuestConfig, clock: FakeClock, fake_tmux: FakeTmux, short_tmp: Path, base: Path
+) -> None:
+    service = ControlService(guest_config, clock, startup=())
+    context = service.start()
+    created = capture_routes.install(
+        context,
+        Capture(
+            context,
+            tmux.Tmux(socket="/run/agent-guest/tmux.sock", run=fake_tmux, scope=False),
+            fake_tmux,
+            fifo_dir=str(short_tmp / "capture"),
+            scan_seconds=0.02,
+            poll=0.01,
+        ),
+    )
+    save(context, base, "agent_starting")
+    emit(context, "agent_starting")
+    running = created.sessions[SID]
+    assert running.follower is not None
+    assert running.recorder is not None
+    threads = [running.thread, running.follower._thread, running.recorder._thread]
+    service.stop()
+    assert created.sessions == {}
+    assert not any(thread is not None and thread.is_alive() for thread in threads)
+    assert fake_tmux.subcommands() == ["pipe-pane", "pipe-pane"]

@@ -92,6 +92,22 @@ class ControlContext:
     pending: Pending
     info: GuestInfo
     guard: AuthGuard = field(default_factory=lambda: AuthGuard(time.monotonic))
+    closers: list[Callable[[], None]] = field(default_factory=list)
+
+    def on_close(self, closer: Callable[[], None]) -> None:
+        """Register ``closer`` to run when the control process stops (``close``), before the journal closes."""
+        self.closers.append(closer)
+
+    def close(self) -> None:
+        """Run the closers once, the latest first (a part closes before the parts it was built on); a failing closer
+        is logged and the others still run."""
+        while self.closers:
+            closer = self.closers.pop()
+            try:
+                closer()
+            except Exception:
+                sys.stderr.write("agent-guest-control: close failed\n")
+                traceback.print_exc(file=sys.stderr)
 
 
 def _json_file(path: str, name: str) -> dict[str, Any] | None:
@@ -346,6 +362,8 @@ class ControlService:
         for server in self._servers:
             server.shutdown()
         if self.context is not None:
+            # the threads of the parts (session watchers, capture) end while the journal they write is still open
+            self.context.close()
             self.context.pending.close()
             self.context.journal.close()
         for thread in self._threads:

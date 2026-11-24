@@ -216,6 +216,17 @@ class Capture:
         self._stop_run(capture)
         _logged("workspace scan", lambda: self.scan(capture.session, capture.scanner))
 
+    def close(self) -> None:
+        """Stop every capture of this process and wait for its threads (the control process stops); recorder and
+        follower write what they read. A restarted process attaches again (``attach_running``)."""
+        with self._lock:
+            captures = list(self.sessions.values())
+            self.sessions.clear()
+        for capture in captures:
+            capture.stop.set()
+            capture.thread.join(5)
+            self._stop_run(capture)
+
     def attach_running(self, exclude: str | None = None) -> None:
         """Attach the capture of running sessions that have none (after a restart of the control process)."""
         for session in self.context.state.sessions():
@@ -250,6 +261,7 @@ _capture_lock = threading.Lock()
 
 def install(context: ControlContext, created: Capture) -> Capture:
     vars(context)[_CAPTURE] = created
+    context.on_close(created.close)
     return created
 
 

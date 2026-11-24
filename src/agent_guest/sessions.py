@@ -1171,8 +1171,9 @@ _manager_lock = threading.Lock()
 
 
 def install(context: ControlContext, created: SessionManager) -> SessionManager:
-    """Attach ``created`` to ``context`` (tests and ``manager``)."""
+    """Attach ``created`` to ``context`` (tests and ``manager``); it closes with the control process."""
     vars(context)[_MANAGER] = created
+    context.on_close(created.close)
     return created
 
 
