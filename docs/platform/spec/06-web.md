@@ -621,12 +621,18 @@ Run while signed in and unlocked; serialized per org; status visible in a small 
 
 ### 12.2 Performance budget
 
-Initial JS ≤ 300 KiB gzip (route-level code splitting: terminal, charts, markdown and settings load lazily); time to
-interactive ≤ 3 s on a mid-range phone profile (Playwright CPU throttling ×4, "Fast 3G"); measured in the E2E suite.
-Temporary measurement tolerance (HOT-16, until its second stage has slimmed the initial bundle): the budget stays
-3 s, but the E2E check fails only when the median of three runs exceeds 3 s by more than 5 % (3150 ms); a median
-between 3000 and 3150 ms passes with a visible "over budget within tolerance" annotation. Reason: the throttled
-measurement varies by a few per cent between identical builds (2933 to 3109 ms in seven runs on one test device).
+Initial JS ≤ 300 KiB gzip (route-level code splitting: every screen except sign-in and not-found, the terminal, charts
+and Markdown load lazily); time to interactive ≤ 3 s on a mid-range phone profile (Playwright CPU throttling ×4,
+"Fast 3G"); measured in the E2E suite (median of three loads, no tolerance).
+
+The build enforces a tighter guard than the ceiling: `INITIAL_JS_BUDGET` in `web/build/budget.ts` is the measured first
+load plus 10 % (HOT-16: 191.8 KiB measured, guard 211 KiB). The guard runs in every package's gates (`npm run
+build:check`, the build tests and the E2E budget test), so growth of the first load is seen deterministically where it
+is caused, not later as a narrow timing failure. It is raised only together with a reason in this section. The first
+load is three scripts: the framework, the app modules imported statically from the entry (chunk group `$initial`) and
+the bundler runtime; what only lazy chunks share stays out of it. While a screen's chunk loads, its frame is shown at
+once (`screen.loading`); a chunk that cannot be loaded or fails its integrity check leads to the route's error page
+with its reload button (section 10.2 integrity checks apply to every lazy chunk).
 
 ### 12.3 Accessibility
 

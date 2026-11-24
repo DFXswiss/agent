@@ -2,12 +2,12 @@
 // unless both outputs are byte-identical, index.html satisfies the CSP/SRI rules (lazily loaded chunks included: the
 // asset table and the integrity-checking preload helper, KOR-04), the bundle contains no `__TEST__`
 // and assigns no globals, build-manifest.json describes exactly the files written and the initial JavaScript fits the
-// budget of 300 KiB gzip. Prints the build hash and the initial JS size.
+// budget (`INITIAL_JS_BUDGET`, 211 KiB gzip). Prints the build hash and the initial JS size.
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compiledRootKey, listFiles, MANIFEST_FILE, rootKeyFingerprint } from '../build/manifest.ts';
-import { budgetProblems, initialScripts } from '../build/budget.ts';
+import { budgetProblems, INITIAL_JS_BUDGET, initialScripts } from '../build/budget.ts';
 import { assetIntegrityProblems, dynamicImportProblems, htmlProblems, listAssets, readFrom } from '../build/sri.ts';
 import { buildWeb, WEB } from './build.mjs';
 
@@ -89,5 +89,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
   const initial = initialScripts(a).reduce((sum, script) => sum + script.gzip, 0);
   console.log(`build check passed: two builds byte-identical, SRI/CSP rules met, build hash ${hash}`);
-  console.log(`initial JS ${(initial / 1024).toFixed(1)} KiB gzip (budget 300 KiB)`);
+  console.log(`initial JS ${(initial / 1024).toFixed(1)} KiB gzip (budget ${INITIAL_JS_BUDGET / 1024} KiB)`);
 }

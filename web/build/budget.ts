@@ -1,13 +1,17 @@
 // Performance budget (06-web.md section 12.2): the JavaScript a first visit loads before any lazy chunk – the entry
 // scripts of index.html (`<script src>`, `<link rel="modulepreload">`) and every module they import statically,
-// followed transitively – at most 300 KiB after gzip (level 6, what servers and proxies use by default). Lazily
-// loaded chunks (`import("…")`: terminal, charts, Markdown, settings) do not count.
+// followed transitively – after gzip (level 6, what servers and proxies use by default). Lazily loaded chunks
+// (`import("…")`: screens, terminal, charts, Markdown) do not count.
 import { readFileSync } from 'node:fs';
 import { dirname, join, posix } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { parseAttributes } from './sri.ts';
 
-export const INITIAL_JS_BUDGET = 300 * 1024;
+/**
+ * The guard of the build: the measured first load (191.8 KiB gzip, HOT-16) plus 10 %, well below the 300 KiB ceiling of
+ * section 12.2, so every package sees growth of the first load in its own gates. Raise it only with a reason there.
+ */
+export const INITIAL_JS_BUDGET = 211 * 1024;
 
 const TAG_RE = /<(script|link)\b([^>]*)>/gi;
 // `import … from "x"`, `import "x"` and `export … from "x"` (also right after a comment) – never `import("x")`
