@@ -27,16 +27,18 @@ class RecordingWorkVms(WorkVms):
         super().__init__(cast(Deps, SimpleNamespace()))
         self.ended: list[LocalSession] = []
         self.paused: list[tuple[LocalSession, str, bool]] = []
+        self.reasons: list[str] = []
         self.gate = gate
 
     async def pause(self, session: LocalSession, *, reason: str, when_idle: bool = False) -> list[str]:
         self.paused.append((session, reason, when_idle))
         return []
 
-    async def session_ended(self, session: LocalSession) -> None:
+    async def session_ended(self, session: LocalSession, *, reason: str = "session_ended") -> None:
         if self.gate is not None:
             await self.gate.wait()
         self.ended.append(session)
+        self.reasons.append(reason)
 
 
 class RecordingRuns:
@@ -127,3 +129,21 @@ def test_the_teardown_runs_in_the_background() -> None:
 
     held, before, after, left = asyncio.run(run())
     assert (held, before, after, left) == (1, [], [SESSION], 0)
+
+
+def test_the_end_of_a_closed_task_s_session_is_named_task_closed() -> None:
+    task = "0192f3a4-0000-7000-8000-0000000000aa"
+    session = cast(LocalSession, SimpleNamespace(id=SESSION.id, task_id=task))
+    workvms = RecordingWorkVms()
+    context = SimpleNamespace()
+    service.install(context, workvms)
+    desired = {"sessions": [{"task_id": task, "task_closed": True}]}
+
+    async def run() -> None:
+        found = SimpleNamespace(env=SimpleNamespace(context=context, desired=desired))
+        await session_state.observe(found, cast(Any, None), session, {"state": "stopped"})
+        await asyncio.gather(*session_state.PENDING)
+
+    asyncio.run(run())
+    assert workvms.reasons == ["task_closed"]
+    assert RUNS.cancelled == [{"reason": "task_closed", "session_id": SESSION.id}]

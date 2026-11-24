@@ -4,7 +4,8 @@
 // failing tests as root, fixes the code in its workspace, runs them green and opens a draft pull request through
 // the GitHub operations. A follow-up prompt of the same task uses the same VM: it starts a program as a service,
 // reads its page with the browser of the VM and shows the VM's status; a second VM for the task is refused with
-// `limit_exceeded`. The chat shows every run; closing the task tears the VM down (`task_closed`, KOR-43). The measured
+// `limit_exceeded`. The chat shows every run; closing the task tears the VM down at once (`task_closed`, or `session_ended` when the stop of
+// the session came first; KOR-43). The measured
 // times (assignment, cold start of a pool entry) go to the iteration's artefacts (`e2e-48/work-vm.json`). T1 only.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -46,6 +47,9 @@ const FILES = {
     'import unittest\nfrom calc import add\n\n\nclass T(unittest.TestCase):\n    def test_add(self):\n' +
     '        self.assertEqual(add(2, 3), 5)\n\n\nunittest.main()\n',
 };
+
+// Closing the task deletes the VM at once: by the closed task, or by the end of its session when that came first.
+const CLOSED = new Set(['task_closed', 'session_ended']);
 
 interface WorkvmRow {
   readonly state: string;
@@ -148,23 +152,29 @@ test('@E2E-48 @needs-vm @needs-workvm the session gets a work VM, runs and fixes
   await page.getByTestId('task.close').click();
   await page.getByTestId('task.close.confirm').click();
   await expect
-    .poll(async () => runnerStore<WorkvmRow>(orchestrator, 'SELECT state, delete_reason, size FROM runner.workvm'), {
-      timeout: 180_000,
-      intervals: [2_000],
-    })
-    .toEqual([{ state: 'deleted', delete_reason: 'task_closed', size: 'standard' }]);
+    .poll(
+      async () =>
+        (
+          await runnerStore<WorkvmRow>(
+            orchestrator,
+            `SELECT state, delete_reason, size FROM runner.workvm WHERE task_id = '${uuid(task)}'`,
+          )
+        ).map((row) => ({ ...row, delete_reason: CLOSED.has(row.delete_reason ?? '') ? 'closed' : row.delete_reason })),
+      { timeout: 180_000, intervals: [2_000] },
+    )
+    .toEqual([{ state: 'deleted', delete_reason: 'closed', size: 'standard' }]);
   await expect
     .poll(
       async () =>
         (await taskBodies(page, orchestrator, onboarded, task, 'workvm.state')).map((body) => [
           body.state,
-          body.reason,
+          CLOSED.has(String(body.reason)) ? 'closed' : body.reason,
         ]),
       { timeout: 60_000 },
     )
     .toEqual([
       ['created', null],
-      ['deleted', 'task_closed'],
+      ['deleted', 'closed'],
     ]);
 
   const dir = join(e2e.iterationDir, 'e2e-48');

@@ -823,8 +823,8 @@ class WorkVms:
                 await asyncio.to_thread(self.deps.lima_for(vm.slot).stop, vm.lima_name)
             except LimaError as error:
                 self.deps.log(f"runner.workvm stop_failed workvm_id={vm.id} {failure(error)}")
-                await self._remove(current, reason="failed")
-                await self._emit_state(current, "deleted", reason="failed")
+                if await self._remove(current, reason="failed"):
+                    await self._emit_state(current, "deleted", reason="failed")
                 return False
             stopped = await records.update(self.deps.db, vm.id, state="stopped", stopped_at=self.deps.now())
             assert stopped is not None
@@ -944,18 +944,19 @@ class WorkVms:
             self.deps.log(f"runner.workvm boundary_failed deleted={len(removed)}")
         return removed
 
-    async def session_ended(self, session: LocalSession) -> None:
-        """Its session VM goes; the task VM goes when no other session of the task is active (decision 8). Its test
-        runs are ended by `testrun.TestRuns.session_ended`."""
+    async def session_ended(self, session: LocalSession, *, reason: str = "session_ended") -> None:
+        """Its session VM goes; the task VM goes when no other session of the task is active (decision 8); `reason`
+        is `task_closed` when the session ended because its task was closed. Its test runs are cancelled by the
+        observer (`testrun.TestRuns.cancel`)."""
         own = await records.for_scope(self.deps.db, task_id=session.task_id, session_id=session.id)
         if own is not None:
-            await self.delete(own, reason="session_ended")
+            await self.delete(own, reason=reason)
         task_vm = await records.for_scope(self.deps.db, task_id=session.task_id, session_id=None)
         if (
             task_vm is not None
             and await records.active_sessions(self.deps.db, session.task_id, except_id=session.id) == 0
         ):
-            await self.delete(task_vm, reason="session_ended")
+            await self.delete(task_vm, reason=reason)
 
     async def reconcile(self) -> None:
         """After a restart nothing is resumed (KONZEPT idea 44): every live VM and every own `wvm-` instance without
@@ -1027,8 +1028,13 @@ class WorkVms:
         workvm_id = new_workvm_id()
         try:
             await self.check_new(session, scope=scope, size="standard")
-            await self._emit_state(self._starting(session, scope, workvm_id), "starting")
-            await self.obtain(session, scope=scope, size="standard", implicit=True, workvm_id=workvm_id)
+            starting = self._starting(session, scope, workvm_id)
+            await self._emit_state(starting, "starting")
+            try:
+                await self.obtain(session, scope=scope, size="standard", implicit=True, workvm_id=workvm_id)
+            except OperationFailed:
+                await self._emit_state(starting, "deleted", reason="failed")  # the countdown ends
+                raise
         except OperationFailed as failed:
             raise CallFailed("unavailable", f"No work VM could be obtained: {failed.message}") from None
         return await self._vm_of(session)

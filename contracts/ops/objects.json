@@ -12,14 +12,14 @@
     "branch": {
       "type": "string",
       "description": "branch name; further rules (no .., @{, //, trailing / . .lock, component starting with .) in ops/rules.json#/branch",
-      "pattern": "^[^\u0000-\u001f\u007f ~^:?*\\[\\\\/.-][^\u0000-\u001f\u007f ~^:?*\\[\\\\]*$",
+      "pattern": "^[^\u0000-\u001f ~^:?*\\[\\\\/.-][^\u0000-\u001f ~^:?*\\[\\\\]*$",
       "minLength": 1,
       "maxLength": 200
     },
     "ref": {
       "type": "string",
       "description": "branch, tag or commit SHA (ops/rules.json#/ref)",
-      "pattern": "^[^\u0000-\u001f\u007f ~^:?*\\[\\\\/.-][^\u0000-\u001f\u007f ~^:?*\\[\\\\]*$",
+      "pattern": "^[^\u0000-\u001f ~^:?*\\[\\\\/.-][^\u0000-\u001f ~^:?*\\[\\\\]*$",
       "minLength": 1,
       "maxLength": 200
     },
@@ -44,7 +44,7 @@
     "rel_path": {
       "type": "string",
       "description": "repository-relative path (segment rules: ops/rules.json#/path)",
-      "pattern": "^[^/\u0000-\u001f\u007f][^\u0000-\u001f\u007f]*$",
+      "pattern": "^[^/\u0000-\u001f][^\u0000-\u001f]*$",
       "minLength": 1,
       "maxLength": 4096
     },
@@ -342,7 +342,7 @@
         "title": {
           "type": "string",
           "description": "1-120 characters, single line (no control characters, no line or paragraph separator)",
-          "pattern": "^[^\u0000-\u001f\u007f\u2028\u2029]{1,120}$"
+          "pattern": "^[^\u0000-\u001f  ]{1,120}$"
         }
       },
       "required": [
@@ -945,7 +945,7 @@
           "type": "null"
         }
       ],
-      "description": "the complete output as an encrypted log object (GET /v1/logs/{object}); truncated: only the last stored_bytes of bytes are kept"
+      "description": "the complete output as an encrypted log object (GET /v1/tasks/{task}/logs/{object}); truncated: only the last stored_bytes of bytes are kept"
     },
     "params_test_run": {
       "type": "object",
@@ -1123,7 +1123,7 @@
           "items": {
             "type": "string",
             "description": "label name: no comma (GitHub joins the filter with commas), no control character",
-            "pattern": "^[^,\u0000-\u001f\u007f]{1,100}$"
+            "pattern": "^[^,\u0000-\u001f]{1,100}$"
           },
           "minItems": 0,
           "maxItems": 20,
@@ -1220,7 +1220,7 @@
           "items": {
             "type": "string",
             "description": "label name: no comma (GitHub joins the filter with commas), no control character",
-            "pattern": "^[^,\u0000-\u001f\u007f]{1,100}$"
+            "pattern": "^[^,\u0000-\u001f]{1,100}$"
           },
           "minItems": 0,
           "maxItems": 20
@@ -1276,7 +1276,7 @@
           "items": {
             "type": "string",
             "description": "label name: no comma (GitHub joins the filter with commas), no control character",
-            "pattern": "^[^,\u0000-\u001f\u007f]{1,100}$"
+            "pattern": "^[^,\u0000-\u001f]{1,100}$"
           },
           "minItems": 0,
           "maxItems": 20,

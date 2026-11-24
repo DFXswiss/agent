@@ -118,7 +118,8 @@ Status: Accepted (2026-11-24)
 ### 5. End of life and visibility
 - Closing a task: the hub marks the task's sessions in the device state with `task_closed: true`; the reconcile step
   `workvm` deletes every VM of the task (task, session and run VMs) at once with reason `task_closed` and cancels its
-  runs.
+  runs. When the hub's stop hint ends a session of the task first, its VMs go at once with the session (reason
+  `task_closed` when the runner already knows the task is closed, else `session_ended`).
 - Implicit start: `workvm_exec`/`workvm_browse` without a VM write `workvm.state` `starting` first, so the panel shows
   the countdown as for `workvm.request`.
 - Event `test.run` (scope `wg`, author the device): written when a run starts (`running`) and when it ends, with the

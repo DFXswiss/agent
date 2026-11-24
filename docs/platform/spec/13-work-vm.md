@@ -238,7 +238,8 @@ machine-id at first boot (cloud-init new instance-id).
   (`workvm.release`), `idle` (no call and no running job for `WORKVM_IDLE_SECONDS`, default 1800), `session_ended`
   (scope `session`: its session reached a final state or `stopped`; scope `task`: no session of the task is in an
   active state any more), `task_closed` (the device state names the session's task closed, `task_closed: true`: the
-  reconcile step `workvm` deletes every VM of the task at once, KOR-43), `failed` (start failure, unhealthy helper),
+  reconcile step `workvm` deletes every VM of the task at once, KOR-43; when the stop hint ends the task's session
+  first, its VMs go with the session, `task_closed` when the runner already knew the task closed, else `session_ended`), `failed` (start failure, unhealthy helper),
   `restart` (the runner started and found it: no resume, KONZEPT idea 44), `run_ended` (the VM of one test run, §12),
   `credit_exhausted` (a run VM whose run the credit ended), `session_paused` (a stopped VM that stood
   `WORKVM_IDLE_SECONDS` or gave its slot to a waiting request). Runs still `running` at teardown are recorded with

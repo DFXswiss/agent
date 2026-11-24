@@ -177,6 +177,7 @@ class TestRuns:
     poll_seconds: float = POLL_SECONDS
     clock: Callable[[], float] = time.monotonic
     active: dict[str, Active] = field(default_factory=dict)
+    locks: dict[str, asyncio.Lock] = field(default_factory=dict)
 
     # -- executor ------------------------------------------------------------------------------------------------
 
@@ -186,36 +187,39 @@ class TestRuns:
         await self.workvms.check_new(session, scope=RUN_SCOPE, size=size)
         with tempfile.TemporaryDirectory(dir=self.workvms.deps.scratch) as scratch:
             exported = Path(scratch) / "export.tar"
-            try:
-                await export_workspace(ctx.env, session, exported)
-            except CallFailed as failed:
-                raise OperationFailed("upstream_error", retryable=True, message=failed.message) from None
-            manifest = sync.read_export(exported).manifest
-            digest = hashlib.sha256(
-                json.dumps({path: entry.sha256 for path, entry in manifest.items()}, sort_keys=True).encode("utf-8")
-            ).hexdigest()
-            key = (
-                session.id,
-                str(params["kind"]),
-                str(params["command"]),
-                str(params.get("cwd", WORKSPACE)),
-                size,
-                str(params.get("timeout_seconds", DEFAULT_TIMEOUT)),
-                digest,
-            )
-            for found in self.active.values():
-                if found.key == key and found.cancel is None:
-                    self.store.log(f"runner.testrun joined run_id={found.run_id} operation_id={ctx.operation.id}")
-                    return await asyncio.shield(found.result)
-            active = Active(
-                run_id=new_run_id(),
-                key=key,
-                session_id=session.id,
-                task_id=session.task_id,
-                org_id=session.org_id,
-                result=asyncio.get_running_loop().create_future(),
-            )
-            self.active[active.run_id] = active
+            # one export and registration per session at a time: two identical requests arriving together join
+            async with self.locks.setdefault(session.id, asyncio.Lock()):
+                try:
+                    await export_workspace(ctx.env, session, exported)
+                except CallFailed as failed:
+                    raise OperationFailed("upstream_error", retryable=True, message=failed.message) from None
+                manifest = sync.read_export(exported).manifest
+                digest = hashlib.sha256(
+                    json.dumps({path: entry.sha256 for path, entry in manifest.items()}, sort_keys=True).encode()
+                ).hexdigest()
+                key = (
+                    session.id,
+                    str(params["kind"]),
+                    str(params["command"]),
+                    str(params.get("cwd", WORKSPACE)),
+                    size,
+                    str(params.get("timeout_seconds", DEFAULT_TIMEOUT)),
+                    digest,
+                )
+                joined = next((found for found in self.active.values() if found.key == key and not found.cancel), None)
+                if joined is None:
+                    active = Active(
+                        run_id=new_run_id(),
+                        key=key,
+                        session_id=session.id,
+                        task_id=session.task_id,
+                        org_id=session.org_id,
+                        result=asyncio.get_running_loop().create_future(),
+                    )
+                    self.active[active.run_id] = active
+            if joined is not None:
+                self.store.log(f"runner.testrun joined run_id={joined.run_id} operation_id={ctx.operation.id}")
+                return await asyncio.shield(joined.result)
             try:
                 result = await self._run(ctx, active, exported, digest)
             except BaseException as error:
@@ -233,7 +237,6 @@ class TestRuns:
         begun = self.clock()
         vm = await self.workvms.obtain(session, scope=RUN_SCOPE, size=size)
         ready_ms = int((self.clock() - begun) * 1000)
-        self.store.log(f"runner.testrun ready run_id={active.run_id} ready_ms={ready_ms} workvm_id={vm.id}")
         run = Run(
             run_id=active.run_id,
             operation_id=ctx.operation.id,
@@ -246,10 +249,11 @@ class TestRuns:
             started_at=self.store.now(),
             ready_ms=ready_ms,
         )
-        await self._insert(run, vm, digest)
-        await self._event(run, "running")
         outcome = Outcome()
-        try:
+        try:  # from here on the VM goes on every path
+            self.store.log(f"runner.testrun ready run_id={active.run_id} ready_ms={ready_ms} workvm_id={vm.id}")
+            await self._insert(run, vm, digest)
+            await self._event(run, "running")
             await self._execute_job(vm, session, run=run, active=active, exported=exported, outcome=outcome)
         finally:
             await asyncio.shield(asyncio.ensure_future(self._finish(vm, run, outcome, active)))
@@ -311,37 +315,45 @@ class TestRuns:
             return active.cancel
         return "credit_exhausted" if self.workvms.deps.exhausted(active.org_id) else None
 
+    async def _keep(self, vm: WorkVm, run: Run, outcome: Outcome, job_id: str) -> tuple[str, dict[str, Any] | None]:
+        """The tail and the stored log of the run's job (no log without output or when the capture fails)."""
+        tail = ""
+        log: dict[str, Any] | None = None
+        shell = self.workvms.deps.shell_for(vm)
+        with contextlib.suppress(WorkVmError):
+            piece = jobs.parse_piece(
+                await shell(
+                    jobs.wait_argv(job_id, None, TAIL_CHARS * 4, 0),
+                    stdin=None,
+                    timeout=30.0,
+                    limit=jobs.HEADER_LIMIT + TAIL_CHARS * 4 + 1,
+                ),
+                limit=TAIL_CHARS * 4,
+            )
+            tail = jobs.text(piece.body)[-TAIL_CHARS:]
+            outcome.output_bytes = max(outcome.output_bytes, piece.output_bytes)
+            outcome.duration_ms = max(outcome.duration_ms, piece.duration_ms)
+        if outcome.output_bytes > 0:
+            try:
+                log = await asyncio.wait_for(
+                    self.capture(vm, run.identity, job_id, outcome.output_bytes, run.run_id), CAPTURE_TIMEOUT
+                )
+            except Exception as error:  # the run keeps its tail; the log line keeps the fact
+                self.store.log(f"runner.testrun capture_failed run_id={run.run_id} error={type(error).__name__}")
+        return tail, log
+
     async def _finish(self, vm: WorkVm, run: Run, outcome: Outcome, active: Active) -> None:
         """Keep the log, delete the VM, record the result (runs on every path, module docstring step 5)."""
         if outcome.state is None:
             outcome.end("error", reason="vm_lost")  # the executor was cancelled while the job ran
         tail = ""
         log: dict[str, Any] | None = None
-        if outcome.job_id is not None:
-            shell = self.workvms.deps.shell_for(vm)
-            with contextlib.suppress(WorkVmError):
-                piece = jobs.parse_piece(
-                    await shell(
-                        jobs.wait_argv(outcome.job_id, None, TAIL_CHARS * 4, 0),
-                        stdin=None,
-                        timeout=30.0,
-                        limit=jobs.HEADER_LIMIT + TAIL_CHARS * 4 + 1,
-                    ),
-                    limit=TAIL_CHARS * 4,
-                )
-                tail = jobs.text(piece.body)[-TAIL_CHARS:]
-                outcome.output_bytes = max(outcome.output_bytes, piece.output_bytes)
-                outcome.duration_ms = max(outcome.duration_ms, piece.duration_ms)
-            if outcome.output_bytes > 0:
-                try:
-                    log = await asyncio.wait_for(
-                        self.capture(vm, run.identity, outcome.job_id, outcome.output_bytes, run.run_id),
-                        CAPTURE_TIMEOUT,
-                    )
-                except Exception as error:  # the run keeps its tail; the log line keeps the fact
-                    self.store.log(f"runner.testrun capture_failed run_id={run.run_id} error={type(error).__name__}")
         reason = outcome.reason if outcome.reason in ("credit_exhausted", "task_closed", "session_ended") else None
-        await self.workvms.delete(vm, reason=reason or "run_ended")
+        try:
+            if outcome.job_id is not None:
+                tail, log = await self._keep(vm, run, outcome, outcome.job_id)
+        finally:
+            await self.workvms.delete(vm, reason=reason or "run_ended")
         state = str(outcome.state)
         run.result = {
             "run_id": run.run_id,

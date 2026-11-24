@@ -18,6 +18,7 @@ from psycopg import AsyncConnection
 
 from agent_runner.sessions.extensions import StateObserver
 from agent_runner.sessions.records import FINAL, LocalSession
+from agent_runner.workvm.reconcile import closed_tasks
 from agent_runner.workvm.service import existing, runs_of
 
 PENDING: set[asyncio.Task[Any]] = set()
@@ -35,8 +36,11 @@ async def observe(journal: Any, _conn: AsyncConnection[Any], session: LocalSessi
         return
     state = body.get("state")
     if state in FINAL:
-        runs_of(journal.env.context, workvms).cancel(reason="session_ended", session_id=session.id)
-        _background(workvms.session_ended(session))
+        # the stop of a closed task's session may arrive before the reconcile step saw the closed task
+        closed = session.task_id in closed_tasks(getattr(journal.env, "desired", None) or {})
+        reason = "task_closed" if closed else "session_ended"
+        runs_of(journal.env.context, workvms).cancel(reason=reason, session_id=session.id)
+        _background(workvms.session_ended(session, reason=reason))
     elif state == "suspended":
         _background(workvms.pause(session, reason="session_paused", when_idle=True))
 

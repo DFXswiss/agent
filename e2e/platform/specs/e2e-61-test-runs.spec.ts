@@ -4,7 +4,8 @@
 // announces itself), then runs the tests with the operation `test.run`: the first run fails and prints more than
 // 1 MiB, the session fixes the code, the second run passes in a fresh VM, and the session opens a draft pull request.
 // Both run VMs are gone right after their runs; the complete log is kept encrypted, opens in the browser and is the
-// same bytes the run printed; closing the task deletes the work VM (`task_closed`). The measured start times of the
+// same bytes the run printed; closing the task deletes the work VM at once (`task_closed`, or `session_ended` when the stop of the
+// session came first). The measured start times of the
 // run VMs go to the iteration's artefacts (`e2e-61/test-runs.json`). T1 only.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -44,6 +45,9 @@ const FILES = {
     'import unittest\nfrom calc import add\n\n\nclass T(unittest.TestCase):\n    def test_add(self):\n' +
     '        self.assertEqual(add(2, 3), 5)\n\n\nunittest.main()\n',
 };
+
+// Closing the task deletes the VM at once: by the closed task, or by the end of its session when that came first.
+const CLOSED = new Set(['task_closed', 'session_ended']);
 
 interface RunResult {
   readonly run_id: string;
@@ -135,7 +139,10 @@ test('@E2E-61 @needs-vm @needs-workvm tests run red then green in fresh VMs, the
   await expect
     .poll(
       async () =>
-        runnerStore<VmRow>(orchestrator, 'SELECT scope, state, delete_reason FROM runner.workvm ORDER BY created_at'),
+        runnerStore<VmRow>(
+          orchestrator,
+          `SELECT scope, state, delete_reason FROM runner.workvm WHERE task_id = '${uuid(task)}' ORDER BY created_at`,
+        ),
       { timeout: 120_000, intervals: [2_000] },
     )
     .toEqual([
@@ -145,7 +152,7 @@ test('@E2E-61 @needs-vm @needs-workvm tests run red then green in fresh VMs, the
     ]);
   const runs = await runnerStore<{ state: string }>(
     orchestrator,
-    'SELECT state FROM runner.test_run ORDER BY started_at',
+    `SELECT state FROM runner.test_run WHERE task_id = '${uuid(task)}' ORDER BY started_at`,
   );
   expect(runs.map((row) => row.state)).toEqual(['failed', 'passed']);
 
@@ -173,16 +180,21 @@ test('@E2E-61 @needs-vm @needs-workvm tests run red then green in fresh VMs, the
   expect(Buffer.byteLength(text)).toBe(red.log!.bytes);
   await viewer.getByTestId('log.close').click();
 
-  // 2. Closing the task deletes its work VM at once (`task_closed`).
+  // 2. Closing the task deletes its work VM at once.
   await page.getByTestId('task.close').click();
   await page.getByTestId('task.close.confirm').click();
   await expect
     .poll(
       async () =>
-        runnerStore<VmRow>(orchestrator, "SELECT scope, state, delete_reason FROM runner.workvm WHERE scope = 'task'"),
+        (
+          await runnerStore<VmRow>(
+            orchestrator,
+            `SELECT scope, state, delete_reason FROM runner.workvm WHERE scope = 'task' AND task_id = '${uuid(task)}'`,
+          )
+        ).map((row) => ({ ...row, delete_reason: CLOSED.has(row.delete_reason ?? '') ? 'closed' : row.delete_reason })),
       { timeout: 180_000, intervals: [2_000] },
     )
-    .toEqual([{ scope: 'task', state: 'deleted', delete_reason: 'task_closed' }]);
+    .toEqual([{ scope: 'task', state: 'deleted', delete_reason: 'closed' }]);
 
   const dir = join(e2e.iterationDir, 'e2e-61');
   mkdirSync(dir, { recursive: true });

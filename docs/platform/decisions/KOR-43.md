@@ -38,3 +38,17 @@ the ADR.
     `ref`/object check against the encrypted event bind a log to its run.
 16. **Restart capture**: after a restart a run ends `error` without its log (the VM went with the reconciliation); the
     stored tail of the `running` event is empty. Capturing before the reconciliation is left out (rare, E-25).
+17. **Code review (fresh context), findings taken:** a run VM is torn down on every path after `obtain` (a store error
+    before the run started leaked it); a failed implicit start ends its `starting` announcement with `deleted`
+    (`failed`); export and duplicate registration are serialised per session (two identical requests arriving together
+    join); a stop whose deletion fails writes no `deleted` event; the session observer names `task_closed` when the
+    last desired state named the task closed.
+18. **Deliberate deviation from the package text (pause rule):** the package asks to stop a paused session's VM *at
+    once*. An idle suspension stops it only when no job runs in it (decision 11): a long build or service the session
+    waits for would otherwise be killed by the platform's own idle suspension, which contradicts E-08. The credit stop
+    is immediate. The VM with a running job is billed until the idle pass deletes it. Reported to the orchestrator for
+    a decision.
+19. **E2E coverage:** the scenario covers red → change → green → pull request, a log over 1 MiB opened and downloaded,
+    the run VMs gone after their runs (also after a failure) and the close of the task. Time limit, restart in the
+    middle of a run, duplicate, credit 0 and the runtime charges are covered by the runner's tests with real PostgreSQL
+    (fake Lima and helper); a hermetic E2E for them would need a runner restart and billing in the same stack.

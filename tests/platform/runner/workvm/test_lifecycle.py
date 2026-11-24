@@ -393,3 +393,33 @@ def test_the_default_credit_check_never_refuses() -> None:
     from agent_runner.workvm import manager  # noqa: PLC0415
 
     assert manager._never(ORG) is False
+
+
+def test_a_failed_implicit_start_ends_its_countdown(world: World) -> None:
+    world.free_mib = 1024  # no VM fits: the queue times out
+
+    with pytest.raises(CallFailed):
+        world.run(lambda vms: vms.call(None, session(), "workvm_exec", {"command": "true", "sync": "none"}))
+    assert states(world) == [("starting", None), ("deleted", "failed")]
+
+
+def test_a_failing_stop_whose_deletion_fails_too_writes_no_deleted_event(world: World) -> None:
+    async def body(vms: WorkVms) -> bool:
+        created = await vms.request(session(), {})
+        world.fail.update({"stop", "delete"})
+        vm = await records.get(vms.deps.db, created["workvm_id"])
+        assert vm is not None
+        return await vms.stop(vm, reason="session_paused")
+
+    assert world.run(body) is False
+    assert rows(world)[0]["state"] == "deleting"
+    assert states(world) == [("created", None)]
+
+
+def test_a_session_of_a_closed_task_takes_its_vms_with_the_reason(world: World, active: dict[str, int]) -> None:
+    async def body(vms: WorkVms) -> None:
+        await vms.request(session(), {})
+        await vms.session_ended(session(), reason="task_closed")
+
+    world.run(body)
+    assert rows(world)[0]["delete_reason"] == "task_closed"

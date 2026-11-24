@@ -530,3 +530,20 @@ def test_a_run_of_another_command_is_never_joined(world: World) -> None:
     run_id, left = world.run(body)
     assert run_id != "tr-00000000000f"
     assert left == 1
+
+
+def test_a_store_failure_after_the_vm_started_still_tears_it_down(world: World) -> None:
+    async def body(vms: WorkVms) -> None:
+        runs = runs_for(vms)
+
+        async def broken(*_args: Any) -> None:
+            raise RuntimeError("store down")
+
+        runs._insert = broken  # type: ignore[method-assign,assignment]
+        with pytest.raises(RuntimeError):
+            await runs.execute(ctx({"kind": "unit", "command": "x"}))
+
+    world.run(body)
+    (vm,) = vm_rows(world)
+    assert (vm["state"], vm["delete_reason"]) == ("deleted", "run_ended")
+    assert world.instances == {}
