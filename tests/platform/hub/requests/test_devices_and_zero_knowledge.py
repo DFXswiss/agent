@@ -29,6 +29,7 @@ def test_my_devices_lists_eligible_devices_with_presence(desk: Desk) -> None:
             "UPDATE hub.device SET features = %s WHERE id = %s",
             (["log.admit", "github.ways", "github.device_flow"], scene.device.id),
         )
+        connection.execute("UPDATE hub.device SET features = '{}' WHERE id = %s", (scene.other_device.id,))
     body = scene.writer.browser.get("/v1/me/devices").json()
     by_id = {item["device_id"]: item for item in body["devices"]}
     assert sorted(by_id) == sorted([scene.device.id, scene.other_device.id])

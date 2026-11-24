@@ -89,18 +89,18 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
 @pytest.mark.parametrize(
     ("config", "found"),
     [
-        (None, ("log.admit", "github.ways")),
+        (None, ("log.admit", "log.org_assign", "vm.choice", "github.ways")),
         (
             SimpleNamespace(github_oauth_client_id=None, github_client_id=None, operator_github_token_file=None),
-            ("log.admit", "github.ways"),
+            ("log.admit", "log.org_assign", "vm.choice", "github.ways"),
         ),
         (
             SimpleNamespace(github_oauth_client_id=OAUTH_ID, github_client_id=None, operator_github_token_file=None),
-            ("log.admit", "github.ways", "github.device_flow", "github.oauth_app"),
+            ("log.admit", "log.org_assign", "vm.choice", "github.ways", "github.device_flow", "github.oauth_app"),
         ),
         (
             SimpleNamespace(github_oauth_client_id=None, github_client_id=CLIENT_ID, operator_github_token_file="t"),
-            ("log.admit", "github.ways", "github.device_flow", "github.operator"),
+            ("log.admit", "log.org_assign", "vm.choice", "github.ways", "github.device_flow", "github.operator"),
         ),
     ],
 )
