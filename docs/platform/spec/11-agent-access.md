@@ -19,7 +19,7 @@ up with the agent tool `agent-platform` (repository `agent`).
 | Remote pairing | A pairing of an agent on another computer than the confirming browser (server, container, SSH; ADR-067), chosen explicitly (`--remote`, `m=remote`, `remote` at the hub). |
 | Agent code | 10 characters (`XXXXX-XXXXX`) the agent tool shows for a remote pairing and the user types on the page (§3); not a secret. |
 | Return code | 8 characters (`XXXX-XXXX`) the page shows after confirming a remote pairing and the user gives to the agent; derived from `r`, checked by the tool before it claims (§3). |
-| Account of an agent alone | (rule E-27, ADR-068) an account that an agent created through an invitation without a person (§5.5): no passkey, the agent holds the identity like after a pairing. "Account without a passkey" is the state the hub checks (no active `hub.passkey` row); an account of a person that lost all its passkeys is in the same state. |
+| Account of an agent alone | (rule E-27, ADR-068) an account that an agent created through an invitation without a person (§5.5): no passkey, the agent holds the identity like after a pairing. "Account without a passkey" is the state the hub checks (no active `hub.passkey` row); an account of a person never reaches it (its last passkey cannot be removed, `last_passkey`). |
 | Proof method | the named way an agent proves possession of its keys at a registration or recovery without WebAuthn (`method`, today only `agent-signature-v1`: Ed25519 signatures over the texts of §3) |
 
 ## 2. Data (hub schema, migrations `0010_agent_access.sql`, `0017_agent_remote_pairing.sql`)
@@ -182,7 +182,8 @@ No person, no passkey, no browser in any step. The invitation and the limits of 
 
 An account of an agent alone is a valid state everywhere: lists, members, settings, recovery, audit, usage and
 billing, leaving and removal work on users without regard to passkeys; the web client shows it as a member with its
-display name. It never signs in to the web client (it has no passkey); a passkey added later through the recovery
+display name. After a hub restore its agent row is exported revoked like every agent row: the agent takes the account
+back with `recover` and the recovery code (not with a pairing). It never signs in to the web client (it has no passkey); a passkey added later through the recovery
 of the web client makes it an account of a person (then §6's exception and idea 34 apply).
 
 ### 5.3 Revocation
@@ -402,7 +403,7 @@ token as the lasting way.
 | Hub or database writer swaps keys of an agent account | the hub never sees the identity's private key; `id_sig` and `agent_sig` bind identity, agent and invitation, and the tool keeps its own state (§8.3) | as for every account: malicious hub withholding data; a hub can register an account of its own choosing only with an invitation code it never sees |
 | Stolen recovery code of an account without a passkey | `recovery/begin` limits (5 per hour per source, 20 per day per code); the move revokes the current agent (its next request: `key_revoked`), the user is notified (`recovery_finished`), audit `agent.register` | full takeover of that account, as a stolen recovery code of a person (§9 row "stolen agent key"); keep the code like a private key |
 | Stolen agent key of an account without a passkey | revocation by a recovery with the code (the stolen key is revoked); `agents list`, audit | the thief can replace the main orchestrator itself (`agents confirm`) and the recovery code (`recovery new`); the holder of the code can take it back only until the thief replaced the code. Same class as the row "stolen agent key" for persons, without a person to notice |
-| Agent of a person's account tries the passkey-free paths | `POST /v1/me/agents` by an agent and `recovery/finish` with `agent` are refused for an account with a passkey (`403 forbidden`) | an agent that removed every passkey of its person (allowed under equal rights) turns the account into one without a passkey; the person is notified of each removal (`passkey_removed`) and keeps the recovery code |
+| Agent of a person's account tries the passkey-free paths | `POST /v1/me/agents` by an agent and `recovery/finish` with `agent` are refused for an account with a passkey (`403 forbidden`); the last passkey of an account cannot be removed (`last_passkey`), so an agent cannot turn a person's account into one without a passkey | – |
 
 ## 10. Tests
 The end-to-end scenarios of the agent access are E2E-49 and E2E-50 (`07-testing.md` §2.1; E2E-40 and E2E-41 there

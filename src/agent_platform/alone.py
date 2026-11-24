@@ -67,6 +67,12 @@ from agent_runner.sync.http import hub_origin
 METHOD = agent_crypto.METHOD_AGENT_SIGNATURE
 SECRET_BYTES = 32
 CRED = "cred"
+OWN_INVITE = "own_invite"
+OWN_SCOPE = "own_scope"
+NEXT_ORG_PENDING = (
+    "The account exists (keep its recovery code), but its organization step failed (see org_failure): run the same "
+    "`agent-platform register --own-account` command with the same invitation link again to finish it."
+)
 NEXT_CONFIRMED = (
     "Give the new agent the return code; it runs `agent-platform pair --wait --return-code <code>`. "
     "This agent is disconnected now."
@@ -99,7 +105,9 @@ class Sealed:
             "claim_hash": b64u_encode(agent_crypto.claim_hash(claim)),
         }
 
-    def store(self, home: Home, origin: str, hub_key: Mapping[str, str], root_key: str) -> None:
+    def store(
+        self, home: Home, origin: str, hub_key: Mapping[str, str], root_key: str, extra: Mapping[str, str] = {}
+    ) -> None:
         """The state of this agent (a previous state is deleted first), as after a pairing."""
         try:
             previous = home.load()
@@ -118,6 +126,7 @@ class Sealed:
                 "bundle_ct": self.bundle_ct,
                 "secret": b64u_encode(self.secret),
                 "key_store": where,
+                **extra,
             }
         )
 
@@ -197,6 +206,9 @@ def register_own(
         raise PlatformError("invalid_argument")
     _label(name, host)
     secrets = invite_format.invite_secrets(code)
+    pending = _pending_account(home, origin, secrets.invite_id)
+    if pending is not None:
+        return {**pending, "display_name": member, **_found_or_join(home, pending["scope"], invite, member, secrets)}
     lookup = anon_request(origin, "POST", "/v1/invites/lookup", {"invite_id": secrets.invite_id})
     if lookup.get("registered") is True:
         raise refused("invite_registered", 409)
@@ -208,10 +220,50 @@ def register_own(
     identity, user_id = new_identity(), uuid7()
     sealed = Sealed(user_id, identity, name, host)
     prepared = _account_body(secrets, identity, user_id, sealed)
-    answer = anon_request(origin, "POST", "/v1/agent-accounts", prepared["body"])
+    answer = _send_once_more(origin, "/v1/agent-accounts", prepared["body"])
     if answer.get("user_id") != user_id or answer.get("agent_id") != sealed.agent_id:
         raise PlatformError("hub_refused", reason="response_invalid")
-    sealed.store(home, origin, hub_key, root)
+    sealed.store(home, origin, hub_key, root, {OWN_INVITE: secrets.invite_id, OWN_SCOPE: str(scope)})
+    return {
+        "agent_id": sealed.agent_id,
+        "user_id": user_id,
+        "hub": origin,
+        "scope": scope,
+        "display_name": member,
+        **_found_or_join(home, str(scope), invite, member, secrets),
+        "recovery_code": format_recovery_code(prepared["code"]),
+        "secret_fields": ["recovery_code"],
+    }
+
+
+def _send_once_more(origin: str, path: str, body: object) -> dict[str, Any]:
+    """An anonymous request sent again with the identical body when the first answer got lost (`hub_unreachable`):
+    the hub answers an identical repeat with the stored answer."""
+    try:
+        return anon_request(origin, "POST", path, body)
+    except PlatformError as error:
+        if error.code != "hub_unreachable":
+            raise
+    return anon_request(origin, "POST", path, body)
+
+
+def _pending_account(home: Home, origin: str, invite_id: str) -> dict[str, Any] | None:
+    """The account this tool registered through `invite_id` whose organization step is still owed (a run of the same
+    command again resumes it), else None."""
+    try:
+        state = home.load()
+    except PlatformError:
+        return None
+    if state.get(OWN_INVITE) != invite_id or state.get("hub") != origin:
+        return None
+    return {"agent_id": state["agent_id"], "user_id": state["user_id"], "hub": origin, "scope": state.get(OWN_SCOPE)}
+
+
+def _found_or_join(
+    home: Home, scope: str, invite: str, member: str, secrets: invite_format.InviteSecrets
+) -> dict[str, Any]:
+    """The private organization (platform invitation) or the joined one (org invitation). A failure keeps the account
+    and its result (with the recovery code): `org_failure` names the code, and the same command run again resumes."""
     account = Account.open(home)
     try:
         if scope == "platform":
@@ -220,18 +272,13 @@ def register_own(
         else:
             found = org_join(account, invite, member)
             joined = {"org_id": found["org_id"], "role": found["role"]}
+    except PlatformError as error:
+        return {"org_id": None, "org_failure": error.code, "next": NEXT_ORG_PENDING}
     finally:
         account.close()
-    return {
-        "agent_id": sealed.agent_id,
-        "user_id": user_id,
-        "hub": origin,
-        "scope": scope,
-        "display_name": member,
-        **joined,
-        "recovery_code": format_recovery_code(prepared["code"]),
-        "secret_fields": ["recovery_code"],
-    }
+    state = {key: value for key, value in home.load().items() if key not in (OWN_INVITE, OWN_SCOPE)}
+    home.save(state)
+    return joined
 
 
 def recover(

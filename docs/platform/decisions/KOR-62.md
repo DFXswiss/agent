@@ -49,3 +49,12 @@ Architecture in ADR-068; small decisions here.
     the hub: the signed texts carry the `invite_id` (registration) or the challenge of `recovery/begin` (recovery),
     both random and known to exactly one hub, so a proof cannot be replayed at another hub; the origin is not added
     to the text. A dedicated error code with the list of accepted methods comes with the second method.
+14. **Review findings (fresh context) not taken over, with reasons.** (a) Root key from `/v1/config`: no other source
+    exists without a browser; same trust as the web build (ADR-068, consequences). (b) `recover` replaces the code at
+    once: a recovery MUST make a new code (`04-crypto.md` §5.5), as for a person. (c) `agents confirm` deletes its
+    state before printing: it is replaced at the hub at that moment anyway; a lost output is recovered with the code.
+    (d) A loopback pairing confirmed by an agent writes no notification (only possible for an account without a
+    passkey, which nobody reads in a browser); a remote one writes `agent_paired_remote` with the acting agent.
+    Taken over: resumable organization step (`org_failure`, same command again), the identical repeat after a lost
+    answer, notification with the acting agent, inventory of `waiting.CONNECT` and case-insensitive action pattern,
+    spec/ADR wording on `last_passkey`, restore note, guide example without the code on the command line.

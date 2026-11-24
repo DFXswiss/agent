@@ -30,7 +30,7 @@ from pydantic import StringConstraints
 
 from agent_hub.agents import accounts, store
 from agent_hub.agents.keys import key_id_of
-from agent_hub.agents.notify import remote_notice
+from agent_hub.agents.notify import account_change, remote_notice
 from agent_hub.agents.revocation import revoke_agents
 from agent_hub.auth.fields import B64u32, BundleCt, Strict, Uuid7, decode
 from agent_hub.auth.keys import Principal
@@ -156,7 +156,12 @@ def _confirm(context: HubContext, principal: Principal, body: AgentConfirm) -> d
             connection, user, principal.key_id, confirmation, now, by_agent=principal.kind == "agent"
         )
         changed_remote = confirmed.changed and confirmed.remote
-        notices = remote_notice(connection, user, now, confirmation.pairing_id) if changed_remote else []
+        notices = []
+        if changed_remote and principal.kind == "agent":
+            # the agent of an account without a passkey confirmed its successor (KOR-62): the notice names it
+            notices = account_change(connection, user, "agent_paired_remote", now, target=confirmation.pairing_id)
+        elif changed_remote:
+            notices = remote_notice(connection, user, now, confirmation.pairing_id)
     publish_rows(notices)
     close_keys(user, [key_id_of(agent) for agent in confirmed.replaced])
     return {"agent_id": str(confirmation.pairing_id)}

@@ -255,6 +255,7 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | next:hub_too_old | `register --own-account` (no pairing at all) | built |
 | next:claude_login_missing | `claude connect` on a computer where Claude Code is logged in, `credentials set-api-key` | outside |
 | next:claude_login_expired | `claude sync`, `credentials set-api-key` | outside |
+| next:waiting.CONNECT | `github connect --token` (an existing token; the device page needs a person at GitHub) | outside |
 | next:claude_missing | `claude connect`, `credentials set-api-key` | outside |
 | next:claude_expired | `claude sync`, `credentials set-api-key` | outside |
 | next:claude_unreadable | `claude connect` | outside |

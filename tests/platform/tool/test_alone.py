@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from agent_platform import account as account_module
 from agent_platform import alone, cli
 from agent_platform.errors import PlatformError
 from agent_platform.state import Home
@@ -264,3 +265,92 @@ def test_confirm_needs_the_root_key_and_checks_the_hubs_answer(home: Home, monke
     assert passed_on.fields["hub_error"] == "pairing_unknown"
     other = FakeAccount(home, answer=lambda body: {"agent_id": uuid7()})
     assert refusal(lambda: confirm(other, pairing.link(), pairing.code())).fields["reason"] == "response_invalid"
+
+
+# --- a lost answer and a failed organization step ---
+
+
+class Closing:
+    """An account that is only opened, asked for its settings and closed."""
+
+    def me(self) -> dict[str, Any]:
+        return {"settings": {"locale": "de"}}
+
+    def close(self) -> None:
+        return None
+
+
+def accepting(user: list[str]) -> Answer:
+    """A hub that accepts the registration (the IDs of the body echoed back)."""
+
+    def answer(method: str, path: str, body: Any) -> dict[str, Any]:
+        if path == "/v1/invites/lookup":
+            return {"scope": "platform"}
+        user.append(body["user_id"])
+        return {"user_id": body["user_id"], "agent_id": body["agent"]["agent_id"]}
+
+    return answer
+
+
+def test_a_lost_answer_is_asked_again_with_the_identical_body(home: Home, monkeypatch: pytest.MonkeyPatch) -> None:
+    bodies: list[Any] = []
+    answer_of = accepting([])
+
+    def lossy(method: str, path: str, body: Any) -> dict[str, Any]:
+        if path == "/v1/agent-accounts":
+            bodies.append(body)
+            if len(bodies) == 1:
+                raise PlatformError("hub_unreachable")
+        return answer_of(method, path, body)
+
+    script(monkeypatch, lossy)
+    monkeypatch.setattr(alone, "_found_or_join", lambda *args: {"org_id": "org"})
+    made = register(home)
+    assert len(bodies) == 2
+    assert bodies[0] == bodies[1]
+    assert made["org_id"] == "org"
+
+    def refusing(method: str, path: str, body: Any) -> dict[str, Any]:
+        if path == "/v1/agent-accounts":
+            raise PlatformError("hub_refused", hub_error="signature_invalid", status=401)
+        return answer_of(method, path, body)
+
+    script(monkeypatch, refusing)
+    assert refusal(lambda: register(home)).fields["hub_error"] == "signature_invalid"
+
+
+def test_a_failed_organization_step_keeps_the_account_and_the_same_command_resumes_it(
+    home: Home, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    users: list[str] = []
+    calls = script(monkeypatch, accepting(users))
+    monkeypatch.setattr(account_module.Account, "open", classmethod(lambda cls, home: Closing()))
+
+    def failing(*args: Any) -> dict[str, Any]:
+        raise PlatformError("hub_unreachable")
+
+    monkeypatch.setattr(alone, "genesis", failing)
+    link = invite_link()
+    first = register(home, invite=link)
+    assert (first["org_id"], first["org_failure"], first["next"]) == (None, "hub_unreachable", alone.NEXT_ORG_PENDING)
+    assert first["secret_fields"] == ["recovery_code"]
+    assert home.load()[alone.OWN_INVITE]
+    monkeypatch.setattr(alone, "genesis", lambda *args: {"org_id": "org", "default_wg": "wg"})
+    before = len(calls)
+    resumed = register(home, invite=link)
+    assert calls[before:] == []
+    assert (resumed["user_id"], resumed["org_id"], resumed["default_wg"]) == (users[0], "org", "wg")
+    assert "recovery_code" not in resumed
+    assert alone.OWN_INVITE not in home.load()
+    # another invitation (or another hub) is a new registration, not a resumption
+    assert alone._pending_account(home, ORIGIN, "other") is None
+
+
+def test_an_org_invitation_is_joined(home: Home, monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = accepting([])
+    script(
+        monkeypatch, lambda method, path, body: {"scope": "org"} if "lookup" in path else answers(method, path, body)
+    )
+    monkeypatch.setattr(account_module.Account, "open", classmethod(lambda cls, home: Closing()))
+    monkeypatch.setattr(alone, "org_join", lambda account, link, member: {"org_id": "team", "role": "member"})
+    assert register(home)["role"] == "member"

@@ -80,7 +80,10 @@ complete.
   for persons yet; an agent account is certified like any account (`certify-user`) until it is. The tool draws the
   user ID itself, so the derived ID of a platform invitation can be adopted on both registration paths together.
 - Residual risks (`11-agent-access.md` §9): the holder of an invitation code gets an account (as with a passkey); a
-  stolen recovery code or agent key of an account without a passkey is a full takeover with nobody to notice; an agent
-  that removes every passkey of its person turns the account into one without a passkey (the person is notified of
-  every removal and keeps the recovery code).
+  stolen recovery code or agent key of an account without a passkey is a full takeover with nobody to notice. A
+  person's account never becomes one without a passkey (its last passkey cannot be removed). The platform root key of
+  an agent alone comes from the hub it registered at (`/v1/config`, or `--platform-root-key`): no browser hands one
+  over, so a malicious hub could name its own root key – the same trust a browser places in the web build that hub
+  serves. A person holding an agent account's recovery code could add a passkey through the web client's recovery;
+  the account is then one of a person (idea 34 applies from then on).
 - Rollout: no migration; hub first, then the tool (an older hub refuses both new forms; nothing is created).

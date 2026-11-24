@@ -77,7 +77,8 @@ def account_change(
 
 
 def recovery_notice(connection: psycopg.Connection[Any], user: UUID, now: datetime, passkey: str) -> list[Notification]:
-    """`recovery_finished` for the user: an anonymous recovery added the passkey `passkey` (no agent)."""
+    """`recovery_finished` for the user: an anonymous recovery added the passkey `passkey`, or - for an account
+    without a passkey (KOR-62) - made the agent `passkey` (its ID) the main orchestrator (no acting agent)."""
     return _insert(connection, user, "recovery_finished", now, agent=None, target=passkey)
 
 

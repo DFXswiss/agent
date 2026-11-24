@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from agent_platform import alone, diagnose, errors, remote
+from agent_platform import alone, diagnose, errors, remote, waiting
 from tests.platform.test_agent_parity import command_exists, commands, rows, table
 
 HEADING = "Without a person"
@@ -27,7 +27,9 @@ KINDS = {"built", "outside", "person"}
 NEEDS_PERSON = re.compile(
     r"\b(?:users?|persons?|browser|passkey|setup-token|claude login)\b|github connect(?! --token)", re.IGNORECASE
 )
-ACTION_NEEDS_PERSON = re.compile(r"\b(?:browser|opens|approval|setup-token|claude login)\b|github connect(?! --token)")
+ACTION_NEEDS_PERSON = re.compile(
+    r"\b(?:browser|opens|approval|setup-token|claude login)\b|github connect(?! --token)", re.IGNORECASE
+)
 ALWAYS = {"connect-agent", "register"}  # `pair` and `register` open the user's browser
 
 
@@ -39,6 +41,7 @@ def texts() -> dict[str, str]:
     for module in (remote, alone):
         name = module.__name__.rsplit(".", 1)[-1]
         found |= {f"next:{name}.{key}": value for key, value in vars(module).items() if key.startswith("NEXT")}
+    found["next:waiting.CONNECT"] = waiting.CONNECT  # the next step of a held operation's card
     return found
 
 

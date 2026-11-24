@@ -131,7 +131,7 @@ Take the account to another computer (the code on stdin; the agent on the old co
 you get a new recovery code, the old one stops working):
 
 ```sh
-printf '%s' "<recovery code>" | agent-platform recover --hub https://agent.dfx.swiss --name "Claude Code"
+agent-platform recover --hub https://agent.dfx.swiss --name "Claude Code" < recovery-code.txt   # or AGENT_PLATFORM_RECOVERY_CODE
 ```
 
 Hand the account to another agent without your recovery code: the new agent runs `pair --hub … --remote` and gives you
