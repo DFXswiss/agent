@@ -19,7 +19,8 @@ from agent_runner.crypto.errors import fail
 from agent_runner.crypto.kdf import KEY_BYTES, LABEL_WRAP
 from agent_runner.crypto.keys import ed25519_sign, ed25519_verify_b64u
 
-SCOPES = frozenset({"org", "wg", "cred"})
+SCOPES = frozenset({"org", "wg", "cred", "community"})
+"""`community` is the scope of the community key (14-community.md section 3, ADR-069)."""
 
 
 def _fields(scope: str, scope_id: str, epoch: int, recipient: str) -> dict[str, object]:
