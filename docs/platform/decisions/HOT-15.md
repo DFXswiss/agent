@@ -14,9 +14,9 @@ JournalError: unavailable` to the stderr of whatever test ran later on the same 
 `hub/db/test_cli.py::test_main_prints_one_line_on_stdout`, which asserts an empty stderr. In the guest the same
 window existed between `stop()` and the end of the process.
 
-**Decision:** `ControlContext` gets closers (`on_close`, `close`). `sessions.install` and `capture.install` register
-the `close` of their part. `ControlService.stop()` runs the closers, latest first, after the servers stopped and
-before the pending calls and the journal close. A failing closer is logged and the others still run.
+**Decision:** `ControlContext` gets closers (`on_close`, `close`). `sessions.install`, `capture.install` and
+`delivery.install` register the `close` of their part. `ControlService.stop()` runs the closers (order below) after the
+servers stopped and before the pending calls and the journal close. A failing closer is logged and the others still run.
 `Capture.close()` stops every capture of the process: the scan thread, recorder and follower each write what they
 have read. It runs no final scan, because the session has not ended; a restarted process attaches again through
 `attach_running`. The units and tmux sessions keep running, as before.
@@ -68,8 +68,7 @@ still starting. Now and then systemd-run then never ends: the output is only `^@
 earlier red runs of KOR-24, KOR-27, KOR-28 and KOR-39 all show exactly this output. Repro in the guest-ci VM: with
 stdin `/dev/null`, 1 of 250 runs hung; with an open pipe, 0 of 450. These numbers alone are weak. The cause is shown
 by the mechanism: with an open pipe, `script` writes nothing into the pty, so the only path that produces `^@` is
-gone. **Decision:** the test gives `script` a pipe that
-stays open until the command ended, as the tmux window does. The product is unchanged: in the tmux window the input
+gone. **Decision:** the test gives `script` a pipe that stays open until the command ended, as the tmux window does. The product is unchanged: in the tmux window the input
 never reaches EOF.
 
 ## 4. Performance budget of the first screen
