@@ -38,3 +38,23 @@
     and the second device-flow client). Whether GitHub answers a private repository of a restricting organisation with
     `403` (as the double) or `404` is not documented; with `404` the step would be `check_access` instead of
     `approve_app` - a residual risk named in the report.
+
+## Independent review (fresh context) and what was done
+- **High – a readable repository is not a writable one:** the pre-check of `github.create_branch`, `github.commit`
+  and `github.push` now also needs the right to push (`reach.check_write`: `permissions.push` false -> held with
+  `check_access` "may read but not write"; a GitHub App user token whose installations do not cover the repository ->
+  held with the step of a repository the token does not see). A `403` access refusal at execution time (after the
+  pre-checks passed; e.g. a comment in a public repository of an organisation that restricts OAuth Apps) ends
+  `repo_not_accessible` with the same step in the message: the operation is already registered and cannot be held
+  (deviation from "every operation is held", accepted; the session repeats it after the step).
+- **High – the step "connect" could loop:** devices announce `github.oauth_app`; the card's sign-in sends
+  `{app:"oauth_app"}` and offers only such devices; the agent tool names `github connect --app oauth_app`.
+- **Medium:** a token step becomes `connect` whenever the OAuth App is set up and the token is not its own (one
+  connection for every owner instead of a token that replaces it); cards fold per owner of the step (two owners, two
+  steps); a step's link must lead to `https://github.com/` (or the doubles' loopback host) in the web and the tool;
+  pre-filled token names `agent <owner>` and 90 days. Not changed: a `404` of the OAuth App's own token stays
+  `check_access` (GitHub does not document whether a restricting organisation answers `404`); `list_repositories`
+  does not list what the token does not reach (GitHub does not name it either).
+- **Low:** the recheck times of operations that were not held are dropped; a misplaced docstring moved.
+- The operator's account (ADR-053): a repository it does not reach gets `check_access` - the right step is that the
+  repository's owner gives that account access, which the sentence "ask its owner for access" covers.
