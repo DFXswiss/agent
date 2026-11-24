@@ -13,7 +13,8 @@
     ignore the field; without it a new runner reports the emergency path.
 - per session, only when set: the chosen VM of its task (`vm_id_pref`, ADR-075 section 6, while it is a live VM of the
   workgroup on this device; a subagent has none) and `vm_new_allowed: false` while the workgroup has reached
-  `AGENT_HUB_VMS_PER_WG` live VMs on all devices (the runner then takes no new VM for it; absent means true);
+  `AGENT_HUB_VMS_PER_WG` live VMs on all devices (the runner then takes no new VM for it; absent means true) and
+  `task_closed: true` while its task is closed (the runner deletes the task's work VMs at once, ADR-078 section 5);
 - per session, always: `github_identity` / `task_github_identity`, the GitHub identities chosen for the session and its
   task (ADR-078 section 3, null without a choice);
 - `pending_prompts` / `delivered_prompt_event_ids`: the prompt routing of `agent_hub.sessions.prompts` for the main
@@ -58,7 +59,8 @@ def provide(request: StateRequest) -> Mapping[str, Any]:
         "SELECT s.id, s.task_id, s.org_id, s.wg_id, s.state, s.parent_session_id, s.depth, s.owner_id,"
         " COALESCE(u.model_access, 'auto'), u.model_id,"
         " (SELECT v.id FROM hub.vm v WHERE v.id = t.placement_vm_id AND v.device_id = s.device_id"
-        " AND v.wg_id = s.wg_id AND v.state <> 'deleted' AND s.depth = 0), s.github_identity, t.github_identity"
+        " AND v.wg_id = s.wg_id AND v.state <> 'deleted' AND s.depth = 0), s.github_identity, t.github_identity,"
+        " t.state = 'closed'"
         " FROM hub.session s JOIN hub.task t ON t.id = s.task_id"
         " LEFT JOIN hub.user_settings u ON u.user_id = s.owner_id"
         " WHERE s.device_id = %s AND s.state NOT IN ('stopped', 'failed') ORDER BY s.created_at, s.id",
@@ -87,6 +89,8 @@ def provide(request: StateRequest) -> Mapping[str, Any]:
             item["vm_id_pref"] = row[10]
         if not _new_vm_allowed(request, str(row[3]), allowed):
             item["vm_new_allowed"] = False
+        if row[13]:
+            item["task_closed"] = True
         if row[6] == 0:
             previous = _resume_from(request, item["task_id"], item["session_id"])
             if previous is not None:

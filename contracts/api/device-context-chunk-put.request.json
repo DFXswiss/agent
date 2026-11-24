@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/device-context-chunk-put.request.json",
   "title": "PUT /v1/device/contexts/{object}/chunks/{index} request",
-  "description": "Body of PUT /v1/device/contexts/{object}/chunks/{index} (03-api.md section 6.1, ADR-072 section 5): one sealed chunk of a context checkpoint of the session (nonce || AES-GCM, at most 2 MiB + 28 bytes).",
+  "description": "Body of PUT /v1/device/contexts/{object}/chunks/{index} (03-api.md section 6.1, ADR-072 section 5): one sealed chunk of a context checkpoint or a log of the session (nonce || AES-GCM, at most 2 MiB + 28 bytes).",
   "type": "object",
   "properties": {
     "session_id": {
@@ -13,6 +13,14 @@
       "$ref": "../common.json#/$defs/b64u",
       "minLength": 39,
       "maxLength": 2796240
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "context",
+        "log"
+      ],
+      "description": "kind of the object, read with its first chunk (absent: context); a log is the output of a test run or a work VM job (ADR-078 section 3)"
     }
   },
   "required": [

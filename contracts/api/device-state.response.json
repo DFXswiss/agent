@@ -188,6 +188,10 @@
                   }
                 ],
                 "description": "the task's GitHub identity (ADR-078 section 3)"
+              },
+              "task_closed": {
+                "type": "boolean",
+                "description": "the session's task is closed: its work VMs go at once (ADR-078 section 5); absent means false"
               }
             },
             "required": [

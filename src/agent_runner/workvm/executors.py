@@ -1,5 +1,5 @@
-"""Executors of `workvm.request` and `workvm.release` (`<area>/executors.py:EXECUTORS`, ADR-027 section 4, ADR-041;
-docs/platform/spec/13-work-vm.md section 2).
+"""Executors of `workvm.request`, `workvm.release` and `test.run` (`<area>/executors.py:EXECUTORS`, ADR-027 section 4,
+ADR-041; docs/platform/spec/13-work-vm.md sections 2 and 12, ADR-078).
 
 They run after the hub accepted the operation (the request is audited there). Without work VMs on this device the
 operation fails `workvm_unavailable`.
@@ -12,7 +12,7 @@ from typing import Any
 
 from agent_runner.operations.extensions import OperationContext, OperationFailed
 from agent_runner.workvm.manager import NOT_ENABLED
-from agent_runner.workvm.service import workvms_for
+from agent_runner.workvm.service import testruns_for, workvms_for
 
 
 async def request_workvm(ctx: OperationContext) -> dict[str, Any]:
@@ -29,4 +29,15 @@ async def release_workvm(ctx: OperationContext) -> dict[str, Any]:
     return await workvms.release(ctx.session, ctx.params)
 
 
-EXECUTORS: dict[str, Callable[..., Any]] = {"workvm.request": request_workvm, "workvm.release": release_workvm}
+async def run_tests(ctx: OperationContext) -> dict[str, Any]:
+    runs = testruns_for(ctx.context)
+    if runs is None:
+        raise OperationFailed("workvm_unavailable", message=NOT_ENABLED)
+    return await runs.execute(ctx)
+
+
+EXECUTORS: dict[str, Callable[..., Any]] = {
+    "workvm.request": request_workvm,
+    "workvm.release": release_workvm,
+    "test.run": run_tests,
+}

@@ -807,6 +807,231 @@
       ],
       "additionalProperties": false
     },
+    "test_run_id": {
+      "type": "string",
+      "description": "ID of a test run (ADR-078)",
+      "pattern": "^tr-[0-9a-f]{12}$"
+    },
+    "test_run_kind": {
+      "type": "string",
+      "enum": [
+        "lint",
+        "format",
+        "unit",
+        "integration",
+        "security",
+        "custom"
+      ],
+      "description": "what the run checks; a label for people and lists (ADR-078 section 1)"
+    },
+    "test_run_state": {
+      "type": "string",
+      "enum": [
+        "running",
+        "passed",
+        "failed",
+        "error",
+        "timed_out",
+        "cancelled"
+      ],
+      "description": "running while it runs; passed = exit code 0, failed = another exit code, timed_out = the time limit ended it, cancelled = ended by the platform (credit), error = the platform could not run it"
+    },
+    "test_run_reason": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "credit_exhausted",
+            "restart",
+            "start_failed",
+            "transfer_failed",
+            "vm_lost",
+            "cancelled"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "why a run ended error or cancelled; null otherwise"
+    },
+    "test_run_summary": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "passed": {
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "failed": {
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "skipped": {
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "errors": {
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "passed",
+            "failed",
+            "skipped",
+            "errors"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "counts read from a summary line the runner recognises; null when there is none"
+    },
+    "log_ref": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "bytes": {
+              "$ref": "../common.json#/$defs/count"
+            },
+            "stored_bytes": {
+              "$ref": "../common.json#/$defs/count"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "object_id",
+            "bytes",
+            "stored_bytes",
+            "truncated"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "the complete output as an encrypted log object (GET /v1/logs/{object}); truncated: only the last stored_bytes of bytes are kept"
+    },
+    "params_test_run": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/test_run_kind"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "cwd": {
+          "type": "string",
+          "pattern": "^/[^\\u0000]*$",
+          "maxLength": 4096
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "size": {
+          "$ref": "#/$defs/workvm_size"
+        }
+      },
+      "required": [
+        "kind",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "result_test_run": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "$ref": "#/$defs/test_run_id"
+        },
+        "state": {
+          "$ref": "#/$defs/test_run_state"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_ms": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "ready_ms": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "summary": {
+          "$ref": "#/$defs/test_run_summary"
+        },
+        "log": {
+          "$ref": "#/$defs/log_ref"
+        },
+        "tail": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "reason": {
+          "$ref": "#/$defs/test_run_reason"
+        }
+      },
+      "required": [
+        "run_id",
+        "state",
+        "exit_code",
+        "duration_ms",
+        "ready_ms",
+        "summary",
+        "log",
+        "tail",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
     "result": {
       "anyOf": [
         {

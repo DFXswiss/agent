@@ -170,6 +170,8 @@ AUDIT_ACTIONS = frozenset(
         "read.task",
         "read.task.charges",
         "read.task.contexts",
+        "read.task.log",
+        "read.task.log.chunk",
         "read.task.operations",
         "read.user.identity",
         "read.user.lookup",

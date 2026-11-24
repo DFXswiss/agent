@@ -1,0 +1,18 @@
+{
+  "run_id": "tr-0123456789ab",
+  "operation_id": "0193000a-0000-7000-8000-0000000000c2",
+  "kind": "unit",
+  "command": "pytest -q",
+  "cwd": "/workspace",
+  "size": "standard",
+  "state": "running",
+  "exit_code": null,
+  "started_at": "2026-11-24T10:00:00.000Z",
+  "ended_at": null,
+  "duration_ms": 0,
+  "ready_ms": 1900,
+  "summary": null,
+  "log": null,
+  "tail": "",
+  "reason": null
+}

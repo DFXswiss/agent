@@ -124,6 +124,33 @@ def _header(data: bytes) -> tuple[dict[str, Any], bytes]:
 
 def parse_wait(result: ShellResult, *, job_id: str, command: str, limit: int) -> JobView:
     """The job of a `workvm-job wait` answer (`not_found` for an unknown job)."""
+    piece = parse_piece(result, limit=limit)
+    return JobView(
+        job_id=job_id,
+        command=command_label(command),
+        state=piece.state,
+        exit_code=piece.exit_code,
+        output=text(piece.body),
+        output_start=piece.start,
+        output_bytes=piece.output_bytes,
+        duration_ms=piece.duration_ms,
+    )
+
+
+@dataclass(frozen=True)
+class Piece:
+    """Raw output bytes of a job from `start` (a `wait` answer read as bytes, for a log)."""
+
+    state: str
+    exit_code: int | None
+    output_bytes: int
+    start: int
+    body: bytes
+    duration_ms: int
+
+
+def parse_piece(result: ShellResult, *, limit: int) -> Piece:
+    """The raw bytes of a `workvm-job wait` answer (the same checks as `parse_wait`, the body stays bytes)."""
     if result.returncode != 0 or result.truncated:
         raise WorkVmError("workvm_answer_invalid")
     header, body = _header(result.stdout)
@@ -134,20 +161,11 @@ def parse_wait(result: ShellResult, *, job_id: str, command: str, limit: int) ->
     state = header["state"]
     if not isinstance(state, str) or state not in STATES:
         raise WorkVmError("workvm_answer_invalid")
-    output_bytes, output_start = _count(header["output_bytes"]), _count(header["output_start"])
+    output_bytes, start = _count(header["output_bytes"]), _count(header["output_start"])
     body_bytes, duration = _count(header["body_bytes"]), _count(header["duration_ms"])
-    if body_bytes != len(body) or body_bytes > limit or output_start + body_bytes > output_bytes:
+    if body_bytes != len(body) or body_bytes > limit or start + body_bytes > output_bytes:
         raise WorkVmError("workvm_answer_invalid")
-    return JobView(
-        job_id=job_id,
-        command=command_label(command),
-        state=str(state),
-        exit_code=_exit_code(header["exit_code"]),
-        output=text(body),
-        output_start=output_start,
-        output_bytes=output_bytes,
-        duration_ms=duration,
-    )
+    return Piece(str(state), _exit_code(header["exit_code"]), output_bytes, start, body, duration)
 
 
 def start_argv(job_id: str, cwd: str, timeout: int | None) -> list[str]:

@@ -1,0 +1,4 @@
+{
+  "kind": "unit",
+  "command": "pytest -q"
+}

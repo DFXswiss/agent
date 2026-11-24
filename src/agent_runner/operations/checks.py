@@ -115,6 +115,7 @@ QUESTION: Rule = _text(1, rules.QUESTION_LIMITS["question_max_length"])
 MODEL: Rule = lambda value: isinstance(value, str) and _MODEL_ID_RE.fullmatch(value) is not None  # noqa: E731
 DIRECTION: Rule = _one_of("desc", "asc")
 UUID: Rule = lambda value: isinstance(value, str) and _UUID_RE.fullmatch(value) is not None  # noqa: E731
+_CWD_RE = re.compile(r"/[^\x00]{0,4095}", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -246,6 +247,17 @@ TYPES: Mapping[str, TypeRules] = {
         {"size": _one_of("standard", "large", "xlarge"), "scope": _one_of("task", "session")}, ()
     ),
     "workvm.release": TypeRules({"scope": _one_of("task", "session")}, ()),
+    # docs/platform/spec/13-work-vm.md section 12 (ADR-078)
+    "test.run": TypeRules(
+        {
+            "kind": _one_of("lint", "format", "unit", "integration", "security", "custom"),
+            "command": _text(1, 65536),
+            "cwd": lambda value: isinstance(value, str) and _CWD_RE.fullmatch(value) is not None,
+            "timeout_seconds": _range(1, 86400),
+            "size": _one_of("standard", "large", "xlarge"),
+        },
+        ("kind", "command"),
+    ),
     "human.question": TypeRules({"question": QUESTION}, ("question",)),
     "human.approval": TypeRules({"question": QUESTION}, ("question",)),
 }

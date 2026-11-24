@@ -1,0 +1,5 @@
+{
+  "kind": "unit",
+  "command": "pytest",
+  "timeout_seconds": 0
+}

@@ -31,8 +31,16 @@ A checkpoint of an earlier session that a device uploads late (it was offline wh
 supersedes or displaces those of its successor. The same order lists a task's checkpoints, picks the `context` of the
 device state and decides what the pruning keeps.
 
-**Download** (`GET /v1/device/contexts/{object}` and `…/chunks/{index}`, `device:wg`): a complete object of a
-workgroup the device is assigned to - a restore may run on any device of the workgroup; anything else is `404`.
+**Download** (`GET /v1/device/contexts/{object}` and `…/chunks/{index}`, `device:wg`): a complete checkpoint of a
+workgroup the device is assigned to - a restore may run on any device of the workgroup; anything else (a log too) is
+`404`.
+
+**Logs** (KOR-43, ADR-078 section 3): an object whose first chunk names `kind: "log"` is the output of a test run or
+of a long work VM job of a session (a subagent's too), sealed like a checkpoint. It is never listed as a checkpoint,
+never chosen as the `context` of the device state, and pruned on its own: complete logs of the task beyond the newest
+`AGENT_HUB_LOG_KEEP` (by creation time, then ID) go at the commit. A later chunk of another kind than the object's is
+`409 id_conflict`. Members with `task:read` read a complete log of the task (`task_log`, `task_log_chunk`); the hub
+holds no key.
 
 **Pull-request links** (`POST /v1/device/pr-links` `{session_id, epoch, tag}`, `device:session` as above): the tag is
 stored for the session's workgroup and an epoch of it (`400 request_invalid` at `/epoch`); the same tag for the same
@@ -52,7 +60,7 @@ import psycopg
 
 from agent_hub.audit import recorder
 from agent_hub.audit.chain import AuditRow, DetailValue, append_audit
-from agent_hub.crypto import context
+from agent_hub.crypto import context, runlog
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode, canonical, format_time
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.device.access import DeviceView
@@ -67,7 +75,7 @@ COMMIT_LOCK = 742180234
 """First key of the two-key advisory lock that serialises the commits (and their pruning) of one task."""
 _NEWEST_FIRST = (
     " FROM hub.context_object o JOIN hub.session s ON s.id = o.session_id WHERE o.task_id = %s"
-    " AND o.state = 'complete' ORDER BY s.created_at DESC, s.id DESC, o.id DESC"
+    " AND o.state = 'complete' AND o.kind = 'context' ORDER BY s.created_at DESC, s.id DESC, o.id DESC"
 )
 """The complete checkpoints of a task, newest first (module docstring)."""
 SAVED = "session.context_saved"
@@ -75,8 +83,13 @@ PR_LINKED = "session.pr_linked"
 REFUSED = "session.context_refused"
 _OBJECT = (
     "SELECT org_id, wg_id, task_id, session_id, author_id, state, chunks, size, manifest_text, sig, created_at,"
-    " completed_at, epoch, digest FROM hub.context_object WHERE id = %s"
+    " completed_at, epoch, digest, kind FROM hub.context_object WHERE id = %s"
 )
+_LOGS_NEWEST_FIRST = (
+    " FROM hub.context_object WHERE task_id = %s AND state = 'complete' AND kind = 'log'"
+    " ORDER BY created_at DESC, id DESC"
+)
+KINDS = frozenset({"context", "log"})
 
 
 @dataclass(frozen=True)
@@ -86,6 +99,9 @@ class Limits:
     max_object_bytes: int
     org_bytes: int
     keep: int
+    log_org_bytes: int = 0
+    """The sealed bytes of every log of the organisation (`AGENT_HUB_LOG_ORG_BYTES`, ADR-078 section 3): logs have a
+    quota of their own, so they never crowd out the checkpoints a resume needs."""
 
 
 @dataclass(frozen=True)
@@ -102,8 +118,11 @@ def _invalid(pointer: str) -> HubError:
     return HubError("request_invalid", detail={"pointers": [pointer]})
 
 
-def own_session(connection: Connection, view: DeviceView, device: UUID, session_id: str) -> SessionRow:
-    """The main session `session_id` of the calling device in an assigned workgroup (module docstring)."""
+def own_session(
+    connection: Connection, view: DeviceView, device: UUID, session_id: str, *, main: bool = True
+) -> SessionRow:
+    """The session `session_id` of the calling device in an assigned workgroup, a main session unless `main` is False
+    (a log may belong to a subagent; module docstring)."""
     row = connection.execute(
         "SELECT org_id, wg_id, task_id, id, device_id, depth FROM hub.session WHERE id = %s", (session_id,)
     ).fetchone()
@@ -111,7 +130,7 @@ def own_session(connection: Connection, view: DeviceView, device: UUID, session_
         raise HubError("not_found")
     if row[4] != device or not view.reads_wg(row[1]):
         raise HubError("forbidden")
-    if row[5] != 0:
+    if main and row[5] != 0:
         raise _invalid("/session_id")
     return SessionRow(org_id=row[0], wg_id=row[1], task_id=row[2], session_id=row[3])
 
@@ -168,24 +187,25 @@ def put_chunk(
     ct: bytes,
     now: datetime,
     limits: Limits,
+    kind: str = "context",
 ) -> bool:
     """Store one sealed chunk (module docstring); True when the identical chunk was stored before."""
     if len(ct) < context.MIN_CT_BYTES:
         raise _invalid("/ct")
-    if len(ct) > context.CHUNK_CT_BYTES:
+    if len(ct) > (context.CHUNK_CT_BYTES if kind == "context" else runlog.CHUNK_CT_BYTES):
         raise HubError("size_exceeded", status=413)
-    session = own_session(connection, view, device, session_id)
+    session = own_session(connection, view, device, session_id, main=kind == "context")
     # The no-op update locks an existing row and returns it in the same statement (it cannot vanish in between).
     row = cast(
         tuple[Any, ...],
         connection.execute(
             "INSERT INTO hub.context_object AS o (id, org_id, wg_id, task_id, session_id, author_id, state, created_at,"
-            " updated_at) VALUES (%s, %s, %s, %s, %s, %s, 'uploading', %s, %s) ON CONFLICT (id) DO UPDATE"
-            " SET updated_at = o.updated_at RETURNING session_id, author_id, state, size",
-            (object_id, session.org_id, session.wg_id, session.task_id, session.session_id, device, now, now),
+            " updated_at, kind) VALUES (%s, %s, %s, %s, %s, %s, 'uploading', %s, %s, %s) ON CONFLICT (id) DO UPDATE"
+            " SET updated_at = o.updated_at RETURNING session_id, author_id, state, size, kind",
+            (object_id, session.org_id, session.wg_id, session.task_id, session.session_id, device, now, now, kind),
         ).fetchone(),
     )
-    if row[0] != session.session_id or row[1] != device:
+    if row[0] != session.session_id or row[1] != device or row[4] != kind:
         raise HubError("id_conflict")
     stored = connection.execute(
         "SELECT ct FROM hub.context_chunk WHERE object_id = %s AND chunk_index = %s", (object_id, index)
@@ -205,12 +225,14 @@ def put_chunk(
         cast(
             tuple[int],
             connection.execute(
-                "SELECT COALESCE(SUM(size), 0) FROM hub.context_object WHERE org_id = %s", (session.org_id,)
+                "SELECT COALESCE(SUM(size), 0) FROM hub.context_object WHERE org_id = %s AND kind = %s",
+                (session.org_id, kind),
             ).fetchone(),
         )[0]
     )
-    if used + len(ct) > limits.org_bytes:
-        raise QuotaRefused(session, object_id, scope="org", limit=limits.org_bytes, used=used, requested=len(ct))
+    org_limit = limits.org_bytes if kind == "context" else limits.log_org_bytes
+    if used + len(ct) > org_limit:
+        raise QuotaRefused(session, object_id, scope="org", limit=org_limit, used=used, requested=len(ct))
     connection.execute(
         "INSERT INTO hub.context_chunk (object_id, chunk_index, ct, sha256) VALUES (%s, %s, %s, %s)",
         (object_id, index, ct, context.chunk_hash(ct)),
@@ -222,9 +244,9 @@ def put_chunk(
     return False
 
 
-def _manifest(value: object) -> dict[str, object]:
+def _manifest(value: object, kind: str) -> dict[str, object]:
     try:
-        return context.check_manifest(value)
+        return context.check_manifest(value) if kind == "context" else runlog.check_manifest(value)
     except CryptoError as refused:
         raise HubError(refused.code) from None
 
@@ -265,14 +287,16 @@ def commit(
     sig: str,
     now: datetime,
     keep: int,
+    log_keep: int = 0,
 ) -> dict[str, Any]:
-    """Verify and seal an upload (module docstring); `{completed_at, replayed}`."""
+    """Verify and seal an upload (module docstring); `{completed_at, replayed}`. `keep` complete checkpoints and
+    `log_keep` complete logs of the task stay."""
     row = connection.execute(_OBJECT + " FOR UPDATE", (object_id,)).fetchone()
     if row is None:
         raise HubError("not_found")
     if row[4] != device or not view.reads_wg(row[1]):
         raise HubError("forbidden")
-    manifest = _manifest(manifest_value)
+    manifest = _manifest(manifest_value, row[14])
     if row[5] == "complete":
         if row[8] != canonical(manifest).decode("ascii") or b64u_encode(bytes(row[9])) != sig:
             raise HubError("id_conflict")
@@ -286,7 +310,7 @@ def commit(
         raise _invalid("/manifest/epoch")
     key = cast(tuple[bytes], connection.execute("SELECT sig_pub FROM hub.device WHERE id = %s", (device,)).fetchone())
     try:
-        context.verify_manifest(manifest, sig, bytes(key[0]))
+        (context.verify_manifest if row[14] == "context" else runlog.verify_manifest)(manifest, sig, bytes(key[0]))
     except CryptoError as refused:
         raise HubError(refused.code) from None
     _check_chunks(connection, object_id, manifest, row)
@@ -303,12 +327,12 @@ def commit(
             object_id,
         ),
     )
-    # One commit of the task at a time: each prunes with every other completed checkpoint in view.
+    # One commit of the task at a time: each prunes with every other completed object of its kind in view.
     connection.execute("SELECT pg_catalog.pg_advisory_xact_lock(%s, hashtext(%s))", (COMMIT_LOCK, str(row[2])))
+    newest_first = "SELECT o.id" + _NEWEST_FIRST if row[14] == "context" else "SELECT id" + _LOGS_NEWEST_FIRST
     pruned = connection.execute(
-        "DELETE FROM hub.context_object WHERE id IN (SELECT o.id" + _NEWEST_FIRST + " OFFSET %s) AND id <> %s"
-        " RETURNING id",
-        (row[2], keep, object_id),
+        "DELETE FROM hub.context_object WHERE id IN (" + newest_first + " OFFSET %s) AND id <> %s RETURNING id",
+        (row[2], keep if row[14] == "context" else log_keep, object_id),
     ).fetchall()
     append_audit(
         connection,
@@ -323,7 +347,7 @@ def commit(
             task_id=row[2],
             session_id=row[3],
             device_id=device,
-            target_kind="context",
+            target_kind=row[14],
             target_id=str(object_id),
             detail={"chunks": int(row[6]), "size": int(row[7]), "pruned": len(pruned)},
         ),
@@ -333,14 +357,12 @@ def commit(
 
 def _complete(connection: Connection, view: DeviceView, object_id: UUID) -> tuple[Any, ...]:
     row = connection.execute(_OBJECT, (object_id,)).fetchone()
-    if row is None or row[5] != "complete" or not view.reads_wg(row[1]):
+    if row is None or row[5] != "complete" or row[14] != "context" or not view.reads_wg(row[1]):
         raise HubError("not_found")
     return cast(tuple[Any, ...], row)
 
 
-def get_object(connection: Connection, view: DeviceView, object_id: UUID) -> dict[str, Any]:
-    """`{manifest, sig, created_at, completed_at}` of a complete object of an assigned workgroup."""
-    row = _complete(connection, view, object_id)
+def _described(row: tuple[Any, ...]) -> dict[str, Any]:
     return {
         "manifest": json.loads(row[8]),
         "sig": b64u_encode(bytes(row[9])),
@@ -349,15 +371,42 @@ def get_object(connection: Connection, view: DeviceView, object_id: UUID) -> dic
     }
 
 
-def get_chunk(connection: Connection, view: DeviceView, object_id: UUID, index: int) -> dict[str, Any]:
-    """`{ct}` of one chunk of a complete object of an assigned workgroup."""
-    _complete(connection, view, object_id)
+def get_object(connection: Connection, view: DeviceView, object_id: UUID) -> dict[str, Any]:
+    """`{manifest, sig, created_at, completed_at}` of a complete checkpoint of an assigned workgroup."""
+    return _described(_complete(connection, view, object_id))
+
+
+def _chunk(connection: Connection, object_id: UUID, index: int) -> dict[str, Any]:
     found = connection.execute(
         "SELECT ct FROM hub.context_chunk WHERE object_id = %s AND chunk_index = %s", (object_id, index)
     ).fetchone()
     if found is None:
         raise HubError("not_found")
     return {"ct": b64u_encode(bytes(found[0]))}
+
+
+def get_chunk(connection: Connection, view: DeviceView, object_id: UUID, index: int) -> dict[str, Any]:
+    """`{ct}` of one chunk of a complete checkpoint of an assigned workgroup."""
+    _complete(connection, view, object_id)
+    return _chunk(connection, object_id, index)
+
+
+def _log(connection: Connection, task_id: UUID, object_id: UUID) -> tuple[Any, ...]:
+    row = connection.execute(_OBJECT, (object_id,)).fetchone()
+    if row is None or row[5] != "complete" or row[14] != "log" or row[2] != task_id:
+        raise HubError("not_found")
+    return cast(tuple[Any, ...], row)
+
+
+def task_log(connection: Connection, task_id: UUID, object_id: UUID) -> dict[str, Any]:
+    """`{manifest, sig, created_at, completed_at}` of a complete log of the task (the route checks `task:read`)."""
+    return _described(_log(connection, task_id, object_id))
+
+
+def task_log_chunk(connection: Connection, task_id: UUID, object_id: UUID, index: int) -> dict[str, Any]:
+    """`{ct}` of one chunk of a complete log of the task."""
+    _log(connection, task_id, object_id)
+    return _chunk(connection, object_id, index)
 
 
 def task_contexts(connection: Connection, task_id: UUID, limit: int) -> dict[str, Any]:

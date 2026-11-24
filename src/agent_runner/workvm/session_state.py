@@ -1,29 +1,44 @@
-"""Observer of the guest's `session.state` records (`sessions.extensions` `OBSERVERS`, ADR-032; ADR-059 decision 8):
-when a session reaches a final state its session work VM is torn down, and the task work VM when no other session of
-the task is active. Runs in the journal page's transaction, so the teardown itself runs in the background."""
+"""Observer of the guest's `session.state` records (`sessions.extensions` `OBSERVERS`, ADR-032; ADR-059 decision 8,
+ADR-078 section 4). Runs in the journal page's transaction, so the work itself runs in the background:
+
+- a session in a final state: its session work VM is torn down, and the task work VM when no other session of the
+  task is active; its test runs end `cancelled` (`session_ended`);
+- a session that was suspended (paused): the VMs it works in are stopped (`WorkVms.pause`, no RAM and no runtime
+  while they stand) unless a job still runs in them - a long build the session waits for keeps running and the idle
+  pass decides as before. The credit stop is the reconcile step `workvm`.
+"""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from typing import Any
 
 from psycopg import AsyncConnection
 
 from agent_runner.sessions.extensions import StateObserver
 from agent_runner.sessions.records import FINAL, LocalSession
-from agent_runner.workvm.service import existing
+from agent_runner.workvm.service import existing, runs_of
 
-PENDING: set[asyncio.Task[None]] = set()
+PENDING: set[asyncio.Task[Any]] = set()
+
+
+def _background(work: Awaitable[Any]) -> None:
+    task = asyncio.ensure_future(work)
+    PENDING.add(task)
+    task.add_done_callback(PENDING.discard)
 
 
 async def observe(journal: Any, _conn: AsyncConnection[Any], session: LocalSession, body: Mapping[str, Any]) -> None:
     workvms = existing(journal.env.context)
-    if workvms is None or body.get("state") not in FINAL:
+    if workvms is None:
         return
-    task = asyncio.ensure_future(workvms.session_ended(session))
-    PENDING.add(task)
-    task.add_done_callback(PENDING.discard)
+    state = body.get("state")
+    if state in FINAL:
+        runs_of(journal.env.context, workvms).cancel(reason="session_ended", session_id=session.id)
+        _background(workvms.session_ended(session))
+    elif state == "suspended":
+        _background(workvms.pause(session, reason="session_paused", when_idle=True))
 
 
 OBSERVERS = [StateObserver("workvm.session_end", observe)]

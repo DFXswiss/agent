@@ -40,8 +40,11 @@ starting services and containers are allowed there without asking.
    your latest edits are always there. A command that is still running after `wait_seconds` continues; follow it
    with `mcp__platform__workvm_output`, stop it with `mcp__platform__workvm_kill`, and see the VM and its jobs with
    `mcp__platform__workvm_status`.
-2. Run tests (lint, prettier, unit and integration tests) with `mcp__platform__workvm_exec`. The command, its
-   result, its log and its exit code are kept and visible to the user.
+2. Run tests, lint and formatting checks with the operation `test.run` (below): each run gets a fresh VM with a copy
+   of your workspace, and its result, complete log and exit code are kept and visible to the user. The command must
+   install what it needs (`npm ci && npm test`, `pip install -e . && pytest`). When you changed files inside the
+   work VM, bring them into your workspace with `workvm_sync` direction `from_vm` first. Everything else - building,
+   trying things out, services, debugging a single test - you run in the work VM without asking.
 3. Use the browser with `mcp__platform__workvm_browse`: read a page, take a screenshot (saved into your workspace,
    view it with `Read`), click or fill. For longer flows write a Playwright script (Chromium and Playwright are
    preinstalled) and run it with `mcp__platform__workvm_exec`. To search the web, open a search engine's result
@@ -115,6 +118,11 @@ Operation types and parameter examples:
   `{"type": "workvm.request", "params": {"size": "large", "scope": "session"}}`
 - `workvm.release` – tear down your work VM when you no longer need it (`scope` optional):
   `{"type": "workvm.release", "params": {}}`
+- `test.run` – run tests, lint or formatting checks in a fresh VM with a copy of your workspace (`kind` `lint`,
+  `format`, `unit`, `integration`, `security` or `custom`; `cwd`, `timeout_seconds` up to 86400 and `size` optional).
+  The result has `state` (`passed`, `failed`, `error`, `timed_out`, `cancelled`), `exit_code`, `summary`, the last
+  part of the output (`tail`) and the complete log for the user; the answer may be `pending` first:
+  `{"type": "test.run", "params": {"kind": "unit", "command": "cd repos/example-org/example-repo && npm ci && npm test"}}`
 - `human.question` – ask the person responsible for this task a question only a person can answer (main session
   only; up to 4000 characters, list the options when there are some):
   `{"type": "human.question", "params": {"question": "Which database should the service use?\n- PostgreSQL\n- SQLite"}}`

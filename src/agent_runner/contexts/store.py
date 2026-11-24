@@ -4,7 +4,9 @@
   `taken`, `postpone`, `drop_due`, `pending`, `mark_vm_due`, `due_on_vm`), plus the restore it started with
   (`set_restored`, `take_restore_audit`, `mark_restore_started`, `mark_restore_failed`, `restore_failed`).
 - `context_object`: the encrypted checkpoints of the local cache (`insert_object`, `get_object`, `objects_of_task`,
-  `uploads`, `uploaded`, `finish_object`, `retry_upload`, `delete_object`, `cache_rows`).
+  `uploads`, `uploaded`, `finish_object`, `retry_upload`, `restart_upload`, `delete_object`, `cache_rows`), and the
+  logs of test runs and work VM jobs (`kind` `log`, KOR-43, ADR-078 section 3; `objects_of_task` lists only
+  checkpoints).
 - `context_pr_link`: registrations of pull requests at the hub (`pr_link_work`, `pr_link_state`).
 
 Every function runs in the caller's transaction.
@@ -48,6 +50,8 @@ class StoredObject:
     uploaded: int
     attempts: int
     created_at: datetime
+    kind: str = "context"
+    """`context` (a checkpoint) or `log` (ADR-078 section 3)."""
     session_created_at: datetime | None = None
     """When this device created the object's session (`objects_of_task` only; None for a session of another
     device)."""
@@ -55,7 +59,7 @@ class StoredObject:
 
 OBJECT_COLUMNS = (
     "object_id::text AS object_id, task_id::text AS task_id, session_id::text AS session_id, org_id::text AS org_id,"
-    " wg_id::text AS wg_id, source, state, manifest, sig, bytes, uploaded, attempts, created_at"
+    " wg_id::text AS wg_id, source, state, manifest, sig, bytes, uploaded, attempts, created_at, kind"
 )
 
 
@@ -249,10 +253,11 @@ async def insert_object(
     state: str,
     size: int,
     at: datetime,
+    kind: str = "context",
 ) -> None:
     await conn.execute(
         "INSERT INTO runner.context_object (object_id, task_id, session_id, org_id, wg_id, source, state, manifest,"
-        " sig, bytes, created_at, committed_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        " sig, bytes, created_at, committed_at, kind) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         " ON CONFLICT (object_id) DO NOTHING",
         (
             manifest["object"],
@@ -267,6 +272,7 @@ async def insert_object(
             size,
             at,
             at if state == "committed" else None,
+            kind,
         ),
     )
 
@@ -285,7 +291,8 @@ async def objects_of_task(conn: AsyncConnection[Any], task_id: str) -> list[Stor
     columns = ", ".join(f"o.{part.strip()}" for part in OBJECT_COLUMNS.split(","))
     await cursor.execute(
         f"SELECT {columns}, s.created_at AS session_created_at FROM runner.context_object o"
-        " LEFT JOIN runner.session s ON s.id = o.session_id WHERE o.task_id = %s ORDER BY o.object_id",
+        " LEFT JOIN runner.session s ON s.id = o.session_id WHERE o.task_id = %s AND o.kind = 'context'"
+        " ORDER BY o.object_id",
         (task_id,),
     )
     return [StoredObject(**row) for row in await cursor.fetchall()]
@@ -319,6 +326,14 @@ async def finish_object(conn: AsyncConnection[Any], object_id: str, state: str, 
 async def retry_upload(conn: AsyncConnection[Any], object_id: str, next_at: datetime) -> None:
     await conn.execute(
         "UPDATE runner.context_object SET attempts = attempts + 1, next_at = %s WHERE object_id = %s",
+        (next_at, object_id),
+    )
+
+
+async def restart_upload(conn: AsyncConnection[Any], object_id: str, next_at: datetime) -> None:
+    """Upload the object again from its first chunk (the hub dropped the interrupted upload of a log)."""
+    await conn.execute(
+        "UPDATE runner.context_object SET uploaded = 0, attempts = attempts + 1, next_at = %s WHERE object_id = %s",
         (next_at, object_id),
     )
 

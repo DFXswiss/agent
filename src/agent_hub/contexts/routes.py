@@ -6,6 +6,7 @@
 | `GET /v1/device/contexts/{object}`, `GET /v1/device/contexts/{object}/chunks/{index}` | `device:wg` |
 | `POST /v1/device/pr-links` | `device:session` |
 | `GET /v1/tasks/{task}/contexts` | `task:read` |
+| `GET /v1/tasks/{task}/logs/{object}`, `GET /v1/tasks/{task}/logs/{object}/chunks/{index}` (KOR-43) | `task:read` |
 | `GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag}` | `wg:read` |
 
 The rules live in `agent_hub.contexts.store`; a chunk refused for a quota is audited (`session.context_refused`) in a
@@ -21,7 +22,7 @@ import asyncio
 import re
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
@@ -55,6 +56,7 @@ class ChunkRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     session_id: Uuid7
     ct: str
+    kind: Literal["context", "log"] = "context"
 
 
 class CommitRequest(BaseModel):
@@ -84,7 +86,10 @@ def _number(text: str, pattern: re.Pattern[str]) -> int:
 def _limits(context: HubContext) -> store.Limits:
     config = context.config
     return store.Limits(
-        max_object_bytes=config.context_max_object_bytes, org_bytes=config.context_org_bytes, keep=config.context_keep
+        max_object_bytes=config.context_max_object_bytes,
+        org_bytes=config.context_org_bytes,
+        keep=config.context_keep,
+        log_org_bytes=config.log_org_bytes,
     )
 
 
@@ -130,6 +135,7 @@ async def put_chunk(
                 ct=ct,
                 now=now,
                 limits=limits,
+                kind=body.kind,
             ),
         )
     except store.QuotaRefused as refused:
@@ -146,7 +152,7 @@ def _record_refusal(context: HubContext, device: UUID, refused: store.QuotaRefus
 @router.post("/v1/device/contexts/{object}/commit", auth="device", right="device:session")
 async def post_commit(context: Context, principal: ActiveDevice, object: str, body: CommitRequest) -> dict[str, Any]:
     object_id = path_id(object)
-    now, keep = context.clock(), context.config.context_keep
+    now, keep, log_keep = context.clock(), context.config.context_keep, context.config.log_keep
     return await _device_work(
         context,
         principal,
@@ -159,6 +165,7 @@ async def post_commit(context: Context, principal: ActiveDevice, object: str, bo
             sig=body.sig,
             now=now,
             keep=keep,
+            log_keep=log_keep,
         ),
     )
 
@@ -213,6 +220,41 @@ def _task_contexts(context: HubContext, user: UUID, task: UUID) -> dict[str, Any
 async def get_task_contexts(context: Context, principal: CurrentPrincipal, task: str) -> dict[str, Any]:
     user = cast(UUID, principal.principal_id)
     return await asyncio.to_thread(_task_contexts, context, user, path_id(task))
+
+
+def _task_log(context: HubContext, user: UUID, task: UUID, read: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
+    with context.pool.connection() as connection:
+        found = connection.execute("SELECT wg_id FROM hub.task WHERE id = %s", (task,)).fetchone()
+        if found is None:
+            raise HubError("not_found")
+        rights.require(connection, user, rights.TASK_READ, wg_id=found[0])
+        return read(connection)
+
+
+@router.get("/v1/tasks/{task}/logs/{object}", auth="browser", right="task:read", read_resource="task.log")
+async def get_task_log(context: Context, principal: CurrentPrincipal, task: str, object: str) -> dict[str, Any]:
+    user = cast(UUID, principal.principal_id)
+    task_id, object_id = path_id(task), path_id(object)
+    return await asyncio.to_thread(
+        _task_log, context, user, task_id, lambda connection: store.task_log(connection, task_id, object_id)
+    )
+
+
+@router.get(
+    "/v1/tasks/{task}/logs/{object}/chunks/{index}", auth="browser", right="task:read", read_resource="task.log.chunk"
+)
+async def get_task_log_chunk(
+    context: Context, principal: CurrentPrincipal, task: str, object: str, index: str
+) -> dict[str, Any]:
+    user = cast(UUID, principal.principal_id)
+    task_id, object_id, number = path_id(task), path_id(object), _number(index, INDEX_RE)
+    return await asyncio.to_thread(
+        _task_log,
+        context,
+        user,
+        task_id,
+        lambda connection: store.task_log_chunk(connection, task_id, object_id, number),
+    )
 
 
 def _pr_link(context: HubContext, user: UUID, wg: UUID, epoch: int, tag: str) -> dict[str, Any]:

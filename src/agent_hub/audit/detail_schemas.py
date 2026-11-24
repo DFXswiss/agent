@@ -1273,6 +1273,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.stream.terminal": {"properties": {}, "required": []},
     "read.task.charges": {"properties": {}, "required": []},
     "read.task.contexts": {"properties": {}, "required": []},
+    "read.task.log": {"properties": {}, "required": []},
+    "read.task.log.chunk": {"properties": {}, "required": []},
     "read.task": {"properties": {}, "required": []},
     "read.task.operations": {"properties": {}, "required": []},
     "read.user.identity": {"properties": {}, "required": []},

@@ -8,6 +8,10 @@ allows), cached for `BOUNDARY_TTL` seconds. The boundary holds whether or not th
 without it the work VMs have no internet (`internet` false). Self mode needs no filter (refused outside `TEST_MODE`
 by the configuration).
 
+Test runs (`testruns_for`, KOR-43): the daemon's `testrun.TestRuns` over the same work VMs; logs of runs and of long
+jobs are sealed into the context object cache (`agent_runner.contexts.logs`), at most `LOG_MAX_MIB` per log. On a
+platform device an exhausted organization (`billing.state.exhausted` of the last desired state) gets no new VM.
+
 Work images: in self mode the stopped image instance in the runner's Lima home is the clone base of every slot. With
 slot accounts each slot keeps its own base `<prefix>wbase-<image hash>` in its Lima home, created from the image's
 exported disk in `IMAGES_DIR` (readable by the slot accounts) on first use.
@@ -24,6 +28,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agent_runner.billing import state as billing_state
 from agent_runner.errors import RunnerError
 from agent_runner.sessions.events import session_event
 from agent_runner.sessions.records import LocalSession
@@ -35,8 +40,11 @@ from agent_runner.workvm.jobs import WorkVmError
 from agent_runner.workvm.manager import Deps, Identity, Settings, WorkVms
 from agent_runner.workvm.records import WorkVm
 from agent_runner.workvm.shell import SlotCommand, VmShell
+from agent_runner.workvm.testrun import Store, TestRuns, read_output
 
 ATTRIBUTE = "_workvms"
+RUNS_ATTRIBUTE = "_testruns"
+MIB = 1024 * 1024
 BOUNDARY_TTL = 60.0
 IMAGES_DIR = Path("/var/agent-workvm/images")
 BANDWIDTH_MBIT = 500
@@ -50,6 +58,50 @@ def existing(context: Any) -> WorkVms | None:
 def install(context: Any, workvms: WorkVms) -> WorkVms:
     setattr(context, ATTRIBUTE, workvms)
     return workvms
+
+
+def testruns_for(context: Any) -> TestRuns | None:
+    """The daemon's test runs; None where there are no work VMs."""
+    workvms = workvms_for(context)
+    return None if workvms is None else runs_of(context, workvms)
+
+
+def runs_of(context: Any, workvms: WorkVms) -> TestRuns:
+    """The daemon's test runs over its work VMs (built once)."""
+    found = getattr(context, RUNS_ATTRIBUTE, None)
+    if isinstance(found, TestRuns):
+        return found
+    deps = workvms.deps
+    runs = TestRuns(
+        workvms=workvms,
+        store=Store(db=deps.db, emit=deps.emit, now=deps.now, log=deps.log),
+        capture=Capturer(context, deps.shell_for),
+    )
+    setattr(context, RUNS_ATTRIBUTE, runs)
+    return runs
+
+
+class Capturer:
+    """Stores the output of a job as an encrypted log (`agent_runner.contexts.logs.store_log`)."""
+
+    def __init__(self, context: Any, shell_for: Callable[[WorkVm], Any]) -> None:
+        self.context = context
+        self.shell_for = shell_for
+
+    async def __call__(
+        self, vm: WorkVm, identity: Identity, job_id: str, output_bytes: int, ref: str | None = None
+    ) -> dict[str, Any] | None:
+        from agent_runner.contexts.env import contexts_for  # noqa: PLC0415 - the context area imports the sessions
+        from agent_runner.contexts.logs import Owner, store_log  # noqa: PLC0415
+
+        env = contexts_for(self.context)
+        if env is None:
+            return None
+        owner = Owner(identity.org_id, identity.wg_id, identity.task_id, identity.session_id)
+        pieces = read_output(
+            self.shell_for(vm), job_id, total=output_bytes, keep=int(self.context.config.log_max_mib) * MIB
+        )
+        return await store_log(env, owner, ref=ref or job_id, total=output_bytes, pieces=pieces)
 
 
 def run_command(argv: Sequence[str], timeout: float) -> subprocess.CompletedProcess[str]:
@@ -246,5 +298,9 @@ def workvms_for(context: Any) -> WorkVms | None:
         emit=emit,
         sleep=context.host.sleep,
         scratch=config.home / "tmp",
+        exhausted=lambda org_id: (
+            service.env.device_kind == "platform" and billing_state.exhausted(service.env.desired, org_id)
+        ),
+        capture=Capturer(context, shell_for),
     )
     return install(context, WorkVms(deps))

@@ -80,6 +80,7 @@ NAMES = (
     "WORKVM_MAX_PER_OWNER",
     "WORKVM_SSH_PORT_BASE",
     "WORKVM_TEMPLATE",
+    "LOG_MAX_MIB",
     "CONTEXT_INTERVAL_SECONDS",
     "CONTEXT_CACHE_MIB",
     "CONTEXT_WORKSPACE_MIB",
@@ -110,6 +111,8 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "WORKVM_MAX_PER_ORG": (16, 1, 100),
     "WORKVM_MAX_PER_OWNER": (8, 1, 100),
     "WORKVM_SSH_PORT_BASE": (47200, 1024, 65_435),
+    # KOR-43 logs of test runs and long work VM jobs (ADR-078 section 3): the kept bytes of one log (its last part).
+    "LOG_MAX_MIB": (256, 1, 1_000_000),
     # KOR-33 context checkpoints (ADR-072 sections 4 and 6): generous defaults, never a precondition.
     "CONTEXT_INTERVAL_SECONDS": (600, 30, 86_400),
     "CONTEXT_CACHE_MIB": (20_480, 0, 999_999_999),
@@ -217,6 +220,7 @@ class Config:
     workvm_queue_seconds: int = 900
     workvm_max_per_task: int = 4
     workvm_max_per_org: int = 16
+    log_max_mib: int = 256
     workvm_max_per_owner: int = 8
     workvm_ssh_port_base: int = 47200
     workvm_template: Path | None = None
@@ -332,6 +336,7 @@ class _WorkVmSettings(TypedDict):
     workvm_max_per_owner: int
     workvm_ssh_port_base: int
     workvm_template: Path | None
+    log_max_mib: int
 
 
 def _workvm(
@@ -358,6 +363,7 @@ def _workvm(
         "workvm_max_per_task": integers["WORKVM_MAX_PER_TASK"],
         "workvm_max_per_org": integers["WORKVM_MAX_PER_ORG"],
         "workvm_max_per_owner": integers["WORKVM_MAX_PER_OWNER"],
+        "log_max_mib": integers["LOG_MAX_MIB"],
         "workvm_ssh_port_base": integers["WORKVM_SSH_PORT_BASE"],
         "workvm_template": template,
     }

@@ -1,6 +1,7 @@
 """Work VM rows of the runner store (docs/platform/spec/13-work-vm.md section 8, migration 0012).
 
-`runner.workvm` holds one row per work VM the runner created; the partial unique indexes make "one live task VM per
+`runner.workvm` holds one row per work VM the runner created (scope `task`, `session`, or `run` for the fresh VM of one
+test run, migration 0020); the partial unique indexes make "one live task VM per
 task", "one live session VM per session" and "one live VM per slot" database rules. `runner.workvm_mirror` keeps the
 SHA-256 manifest of the workspace files last mirrored into a VM (per VM, session and root directory), so the next
 mirror sends only changed files. `runner.workvm_image` lists the work images (`ready`: the newest one is cloned).
@@ -100,10 +101,12 @@ async def live(db: Any, *states: str) -> list[WorkVm]:
 
 
 async def counts(db: Any, *, task_id: str, org_id: str, owner_id: str | None) -> tuple[int, int, int]:
-    """Live VMs of the task, of the organization and of the owner (spec 11 section 2 limits)."""
+    """Live VMs of the task (without its run VMs), of the organization and of the owner (spec 11 section 2 limits,
+    ADR-078 section 2)."""
     rows = await _rows(
         db,
-        "SELECT count(*) FILTER (WHERE task_id = %s) AS task, count(*) FILTER (WHERE org_id = %s) AS org,"
+        "SELECT count(*) FILTER (WHERE task_id = %s AND scope <> 'run') AS task,"
+        " count(*) FILTER (WHERE org_id = %s) AS org,"
         " count(*) FILTER (WHERE owner_id IS NOT DISTINCT FROM %s) AS owner"
         " FROM runner.workvm WHERE state <> 'deleted'",
         (task_id, org_id, owner_id),
@@ -150,6 +153,12 @@ async def insert(db: Any, vm: WorkVm) -> WorkVm:
     except psycopg.errors.UniqueViolation:
         raise RunnerError("workvm_exists") from None
     return WorkVm(**rows[0])
+
+
+async def delete_reason(db: Any, workvm_id: str) -> str | None:
+    """The teardown reason recorded for the VM (set when its deletion began)."""
+    rows = await _rows(db, "SELECT delete_reason FROM runner.workvm WHERE id = %s", (workvm_id,))
+    return str(rows[0]["delete_reason"]) if rows and rows[0]["delete_reason"] is not None else None
 
 
 async def update(db: Any, workvm_id: str, *, expect: Sequence[str] | None = None, **fields: Any) -> WorkVm | None:

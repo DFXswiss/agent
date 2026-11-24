@@ -1,0 +1,7 @@
+{
+  "kind": "integration",
+  "command": "npm ci && npm test",
+  "cwd": "/workspace/repos/octo-org/calc",
+  "timeout_seconds": 1800,
+  "size": "large"
+}

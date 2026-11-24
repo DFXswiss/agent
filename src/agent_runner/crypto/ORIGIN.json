@@ -206,6 +206,12 @@
     },
     {
       "adaptations": [],
+      "copy": "src/agent_runner/crypto/runlog.py",
+      "sha256": "dd5306e107e2bbb869de46190098d15d7366144306a740b08dfb2ce227b312b3",
+      "source": "src/agent_hub/crypto/runlog.py"
+    },
+    {
+      "adaptations": [],
       "copy": "src/agent_runner/crypto/signed.py",
       "sha256": "1bd155881855a69ab80c55f5f5434d617c469b68e30544560ec00c484761a19b",
       "source": "src/agent_hub/crypto/signed.py"

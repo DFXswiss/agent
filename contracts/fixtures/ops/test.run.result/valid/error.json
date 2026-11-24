@@ -1,0 +1,11 @@
+{
+  "run_id": "tr-0123456789ab",
+  "state": "error",
+  "exit_code": null,
+  "duration_ms": 4200,
+  "ready_ms": 1900,
+  "summary": null,
+  "log": null,
+  "tail": "",
+  "reason": "restart"
+}

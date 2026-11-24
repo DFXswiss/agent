@@ -111,6 +111,12 @@
       "dedupe": false
     },
     {
+      "type": "test.run",
+      "params": "ops/test.run.params.json",
+      "result": "ops/test.run.result.json",
+      "dedupe": false
+    },
+    {
       "type": "human.question",
       "params": "ops/human.question.params.json",
       "result": "ops/human.question.result.json",

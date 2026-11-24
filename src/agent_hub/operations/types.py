@@ -27,6 +27,7 @@ OPERATION_TYPES = frozenset(
         "task.set_title",
         "workvm.request",
         "workvm.release",
+        "test.run",
         "github.list_issues",
         "github.get_issue",
         "github.create_issue",

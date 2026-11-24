@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-log-chunk.request.json",
+  "title": "GET /v1/tasks/{task}/logs/{object}/chunks/{index} request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/test.run.params.json",
+  "title": "operation test.run params",
+  "description": "Parameters of the operation type test.run (03-api.md section 9, 13-work-vm.md section 12, ADR-078); additionalProperties false.",
+  "$ref": "objects.json#/$defs/params_test_run"
+}

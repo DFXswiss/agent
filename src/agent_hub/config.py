@@ -47,6 +47,8 @@ FORWARDED_HEADER = "AGENT_HUB_FORWARDED_HEADER"
 CONTEXT_MAX_OBJECT_BYTES = "AGENT_HUB_CONTEXT_MAX_OBJECT_BYTES"
 CONTEXT_KEEP = "AGENT_HUB_CONTEXT_KEEP"
 CONTEXT_ORG_BYTES = "AGENT_HUB_CONTEXT_ORG_BYTES"
+LOG_KEEP = "AGENT_HUB_LOG_KEEP"
+LOG_ORG_BYTES = "AGENT_HUB_LOG_ORG_BYTES"
 VMS_PER_WG = "AGENT_HUB_VMS_PER_WG"
 CAPACITY_REFUSALS = "AGENT_HUB_CAPACITY_REFUSALS"
 REFUSAL_HOLD_SECONDS = "AGENT_HUB_REFUSAL_HOLD_SECONDS"
@@ -72,6 +74,8 @@ KNOWN_VARIABLES = frozenset(
         CONTEXT_MAX_OBJECT_BYTES,
         CONTEXT_KEEP,
         CONTEXT_ORG_BYTES,
+        LOG_KEEP,
+        LOG_ORG_BYTES,
         VMS_PER_WG,
         CAPACITY_REFUSALS,
         REFUSAL_HOLD_SECONDS,
@@ -96,6 +100,10 @@ DEFAULT_CONTEXT_MAX_OBJECT_BYTES = 8 * GIB
 DEFAULT_CONTEXT_KEEP = 3
 MAX_CONTEXT_KEEP = 1000
 DEFAULT_CONTEXT_ORG_BYTES = 200 * GIB
+DEFAULT_LOG_KEEP = 500
+"""Complete logs kept per task (ADR-078 section 3)."""
+MAX_LOG_KEEP = 999_999
+DEFAULT_LOG_ORG_BYTES = 100 * GIB
 MAX_CONTEXT_BYTES = 2**53 - 1
 
 # Limits of 03-api.md section 12 and section 1 that the hub enforces and `/v1/config` publishes.
@@ -191,6 +199,10 @@ class HubConfig:
     """`AGENT_HUB_CONTEXT_KEEP`: complete checkpoints kept per task; older ones are deleted on a commit."""
     context_org_bytes: int = DEFAULT_CONTEXT_ORG_BYTES
     """`AGENT_HUB_CONTEXT_ORG_BYTES`: the sealed checkpoint bytes of all tasks of one organisation."""
+    log_keep: int = DEFAULT_LOG_KEEP
+    """`AGENT_HUB_LOG_KEEP`: complete logs kept per task; older ones are deleted on a commit (ADR-078 section 3)."""
+    log_org_bytes: int = DEFAULT_LOG_ORG_BYTES
+    """`AGENT_HUB_LOG_ORG_BYTES`: the sealed log bytes of all tasks of one organisation (apart from the checkpoints)."""
     downloads_dir: Path | None = None
     """`AGENT_HUB_DOWNLOADS_DIR`: the download area of an own device (ADR-074 section 7); None = no downloads."""
     vms_per_wg: int = DEFAULT_VMS_PER_WG
@@ -503,6 +515,8 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
         context_org_bytes=_bounded_int(
             environ, CONTEXT_ORG_BYTES, DEFAULT_CONTEXT_ORG_BYTES, _BYTES_RE, MAX_CONTEXT_BYTES
         ),
+        log_keep=_bounded_int(environ, LOG_KEEP, DEFAULT_LOG_KEEP, _SECONDS_RE, MAX_LOG_KEEP),
+        log_org_bytes=_bounded_int(environ, LOG_ORG_BYTES, DEFAULT_LOG_ORG_BYTES, _BYTES_RE, MAX_CONTEXT_BYTES),
         downloads_dir=_downloads_dir(environ),
         vms_per_wg=_setting(environ, VMS_PER_WG, DEFAULT_VMS_PER_WG, MAX_VMS_PER_WG),
         capacity_refusals=_bounded_int(

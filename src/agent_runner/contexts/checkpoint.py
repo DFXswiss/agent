@@ -339,7 +339,9 @@ class Checkpointer:
                 data = await asyncio.to_thread(env.cache.read_chunk, oid, index)
                 if data is None:
                     return await self._finish(obj, "refused", "upload_refused code=chunk_missing")
-                body = {"session_id": obj.session_id, "ct": b64u_encode(data)}
+                body: dict[str, str] = {"session_id": obj.session_id, "ct": b64u_encode(data)}
+                if obj.kind == "log":
+                    body["kind"] = "log"
                 await env.hub.request("PUT", f"/v1/device/contexts/{oid}/chunks/{index}", body)
                 async with env.sessions.transaction() as conn:
                     await store.uploaded(conn, oid, index + 1)
@@ -361,8 +363,17 @@ class Checkpointer:
         return await self._finish(obj, "committed", "checkpoint_committed")
 
     async def _expired(self, obj: StoredObject, code: str) -> str:
-        """The hub dropped the interrupted upload: the object stays local, the session's checkpoint is due again."""
+        """The hub dropped the interrupted upload: the object stays local, the session's checkpoint is due again; a log
+        (it cannot be taken again) is uploaded again from its first chunk under the same ID (its manifest is still
+        valid)."""
         env = self.env
+        if obj.kind == "log":
+            async with env.sessions.transaction() as conn:
+                await store.restart_upload(
+                    conn, obj.object_id, env.now() + timedelta(seconds=retry_delay(obj.attempts))
+                )
+            env.line(f"upload_expired code={code} object_id={obj.object_id} session_id={obj.session_id} again=1")
+            return "expired"
         async with env.sessions.transaction() as conn:
             await store.finish_object(conn, obj.object_id, "refused", env.now())
             await store.mark_due(
@@ -414,6 +425,13 @@ class Checkpointer:
         removed: list[str] = []
         kept: list[StoredObject] = []
         for row in rows:  # newest first
+            if row.kind == "log":  # a log leaves the cache once the hub holds it or refused it for good
+                if row.state != "sealed":
+                    removed.append(row.object_id)
+                else:
+                    newest.add(row.object_id)  # never evicted before the hub has it
+                    kept.append(row)
+                continue
             if row.task_id not in seen:
                 seen.add(row.task_id)
                 newest.add(row.object_id)

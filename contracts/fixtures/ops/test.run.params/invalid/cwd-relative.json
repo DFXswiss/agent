@@ -1,0 +1,5 @@
+{
+  "kind": "lint",
+  "command": "ruff check",
+  "cwd": "repo"
+}

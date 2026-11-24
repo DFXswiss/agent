@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-log.response.json",
+  "title": "GET /v1/tasks/{task}/logs/{object} response",
+  "description": "Body of a successful response to GET /v1/tasks/{task}/logs/{object} (03-api.md section 4.6, ADR-078 section 3): a complete log object's manifest and signature; its chunks hold at most 256 KiB of uncompressed output each.",
+  "type": "object",
+  "properties": {
+    "manifest": {
+      "$ref": "../common.json#/$defs/context_manifest"
+    },
+    "sig": {
+      "$ref": "../common.json#/$defs/b64u_64"
+    },
+    "created_at": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "completed_at": {
+      "$ref": "../common.json#/$defs/time"
+    }
+  },
+  "required": [
+    "manifest",
+    "sig",
+    "created_at",
+    "completed_at"
+  ],
+  "additionalProperties": false
+}

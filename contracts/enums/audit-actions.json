@@ -690,6 +690,14 @@
       "group": "read"
     },
     {
+      "action": "read.task.log",
+      "group": "read"
+    },
+    {
+      "action": "read.task.log.chunk",
+      "group": "read"
+    },
+    {
       "action": "read.workgroup.pr_link",
       "group": "read"
     },

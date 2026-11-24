@@ -72,7 +72,8 @@
             "operation.result",
             "platform.read",
             "workvm.run",
-            "workvm.state"
+            "workvm.state",
+            "test.run"
           ]
         },
         "ref": {
@@ -1102,6 +1103,30 @@
             },
             "type": {
               "type": "string",
+              "const": "test.run"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_test_run"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
               "const": "human.question"
             },
             "params": {
@@ -1529,6 +1554,9 @@
         },
         "output_bytes": {
           "$ref": "../common.json#/$defs/count"
+        },
+        "log": {
+          "$ref": "../ops/objects.json#/$defs/log_ref"
         }
       },
       "required": [
@@ -1548,7 +1576,7 @@
     },
     "body_workvm_state": {
       "type": "object",
-      "description": "a work VM was created or deleted, with its runtime (13-work-vm.md section 8, KONZEPT idea 46)",
+      "description": "a work VM is starting (implicit request), was created, stopped (paused session) or deleted, with its runtime (13-work-vm.md section 8, KONZEPT idea 46)",
       "properties": {
         "workvm_id": {
           "$ref": "../ops/objects.json#/$defs/workvm_id"
@@ -1557,7 +1585,9 @@
           "type": "string",
           "enum": [
             "created",
-            "deleted"
+            "deleted",
+            "starting",
+            "stopped"
           ]
         },
         "scope": {
@@ -1594,7 +1624,9 @@
                 "session_ended",
                 "task_closed",
                 "failed",
-                "restart"
+                "restart",
+                "session_paused",
+                "credit_exhausted"
               ]
             },
             {
@@ -1632,6 +1664,98 @@
         "started_at",
         "ended_at",
         "runtime_ms"
+      ],
+      "additionalProperties": false
+    },
+    "body_test_run": {
+      "type": "object",
+      "description": "a test run of the operation test.run, written when it starts and when it ends (13-work-vm.md section 12, ADR-078)",
+      "properties": {
+        "run_id": {
+          "$ref": "../ops/objects.json#/$defs/test_run_id"
+        },
+        "operation_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "kind": {
+          "$ref": "../ops/objects.json#/$defs/test_run_kind"
+        },
+        "command": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "cwd": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "size": {
+          "$ref": "../ops/objects.json#/$defs/workvm_size"
+        },
+        "state": {
+          "$ref": "../ops/objects.json#/$defs/test_run_state"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_ms": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "ready_ms": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "summary": {
+          "$ref": "../ops/objects.json#/$defs/test_run_summary"
+        },
+        "log": {
+          "$ref": "../ops/objects.json#/$defs/log_ref"
+        },
+        "tail": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "reason": {
+          "$ref": "../ops/objects.json#/$defs/test_run_reason"
+        }
+      },
+      "required": [
+        "run_id",
+        "operation_id",
+        "kind",
+        "command",
+        "cwd",
+        "size",
+        "state",
+        "exit_code",
+        "started_at",
+        "ended_at",
+        "duration_ms",
+        "ready_ms",
+        "summary",
+        "log",
+        "tail",
+        "reason"
       ],
       "additionalProperties": false
     },
