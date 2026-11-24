@@ -1061,8 +1061,9 @@ def _cmd_doctor(args: list[str]) -> None:
         # `runner.json` key, so only a lower-case id without surrounding spaces
         # resolves its own settings. `ingest` ignores any other id, which makes
         # the mismatch silent; report it here instead. A canonical id also has
-        # to leave room in a job id: a request that would exceed the limit is
-        # skipped by `ingest`, so the skill could never run.
+        # to leave room in a job id: `ingest` skips a request that would exceed
+        # the limit, so a skill that does not fit with the longest legal
+        # repository name cannot run for such a repository.
         for entry in ingest.catalog_skills(catalog) or []:
             raw_id = entry.get("id")
             if isinstance(raw_id, str) and raw_id != raw_id.strip().lower():
@@ -1073,7 +1074,8 @@ def _cmd_doctor(args: list[str]) -> None:
                 longest = job_id("a" * 39 + "/" + "b" * 100, "1", raw_id)
                 if not safe_job_id(longest):
                     problems.append(
-                        f"skill id {raw_id} is too long to form a job id"
+                        f"skill id {raw_id} is too long to form a job id with the "
+                        "longest repository name"
                     )
     if policy is not None:
         # A policy allows queue types; the catalogue names the skill each one

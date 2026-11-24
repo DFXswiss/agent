@@ -3249,8 +3249,8 @@ def test_doctor_reports_a_catalogue_id_too_long_to_form_a_job_id(
 ) -> None:
     # The longest legal repository plus a one-digit reference leaves only so
     # much room in a job id. A skill id that does not fit would make ingest
-    # skip every request for it, so doctor reports the skill rather than
-    # calling the installation healthy.
+    # skip its requests for a repository with such a name, so doctor reports
+    # the skill rather than calling the installation healthy.
     home = tmp_path / "home"
     paths = _healthy_runner_files(home)
     too_long = "x" * 42
@@ -3280,7 +3280,8 @@ def test_doctor_reports_a_catalogue_id_too_long_to_form_a_job_id(
     assert raised.value.code == 1
     out = capsys.readouterr().out
     assert (
-        f"doctor problem: skill id {too_long} is too long to form a job id" in out
+        f"doctor problem: skill id {too_long} is too long to form a job id "
+        "with the longest repository name" in out
     )
     assert "doctor 1 problems" in out
 
