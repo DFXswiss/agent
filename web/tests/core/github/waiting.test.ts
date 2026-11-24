@@ -1,6 +1,6 @@
 // Held operations in the chat (KOR-25): the waiting body exactly as the contract allows it (manipulated bodies are no
-// card, the removed approval reason included), the folding of many waiting items into one card per reason, and the
-// card's state.
+// card, the removed approval reason included), the folding of many waiting items into one card per reason and
+// addressee (`for_user`, HOT-14: the person who gave the instruction), and the card's state.
 import { describe, expect, it } from 'vitest';
 import type { TimelineItem } from '../../../src/core/chat/timeline';
 import {
@@ -15,6 +15,7 @@ import type { OperationRow } from '../../../src/core/store/slices/operations';
 const OP1 = '0193002d-0000-7000-8000-000000000051';
 const OP2 = '0193002d-0000-7000-8000-000000000052';
 const OP3 = '0193002d-0000-7000-8000-000000000053';
+const BOB = '0193002d-0000-7000-8000-0000000000b0';
 const UNTIL = '2026-11-23T09:45:00.000Z';
 const UNTIL_MS = Date.parse(UNTIL);
 
@@ -34,8 +35,10 @@ describe('parseWaiting', () => {
       operationId: OP1,
       operationType: 'github.list_issues',
       repo: 'example-org/example-repo',
+      forUser: null,
       until: UNTIL_MS,
     });
+    expect(parseWaiting({ ...BODY, for_user: BOB })).toMatchObject({ forUser: BOB });
     const { repo: _repo, ...bare } = BODY;
     expect(parseWaiting({ ...bare, operation_type: 'github.request_connection' })).toMatchObject({
       repo: null,
@@ -64,6 +67,9 @@ describe('parseWaiting', () => {
       { ...BODY, operation_type: `github.${'a'.repeat(60)}` },
       // no approval card any more (no repository list means every repository, ADR-054)
       { ...BODY, waiting_for: 'repo_approval' },
+      // the addressee is a user ID, never text
+      { ...BODY, for_user: 'the task owner' },
+      { ...BODY, for_user: 7 },
     ]) {
       expect(parseWaiting(bad), JSON.stringify(bad)).toBeNull();
     }
@@ -113,12 +119,21 @@ describe('foldWaiting', () => {
       reason: 'github_connection',
       repo: 'example-org/example-repo',
       operationType: 'github.request_connection',
+      forUser: null,
       operations: [OP1, OP2, OP3],
       until: Date.parse('2026-11-23T09:50:00.000Z'),
       since: 9,
     });
     // the first item without a repository has none
     expect(foldWaiting([item(1, bare)])[0]!.waiting).toMatchObject({ repo: null });
+  });
+
+  it('keeps one card per person asked to connect', () => {
+    const folded = foldWaiting([item(1, BODY), item(2, { ...BODY, operation_id: OP2, for_user: BOB }), item(3, BODY)]);
+    expect(folded.map((entry) => [entry.key, entry.waiting?.forUser, entry.waiting?.operations])).toEqual([
+      ['e2', BOB, [OP2]],
+      ['e3', null, [OP1]],
+    ]);
   });
 
   it('flood: a hundred waiting items are one card', () => {
@@ -146,6 +161,7 @@ describe('waitStatus', () => {
     reason: 'github_connection',
     repo: null,
     operationType: 'github.list_issues',
+    forUser: null,
     operations: [OP1, OP2],
     until: UNTIL_MS,
     since,

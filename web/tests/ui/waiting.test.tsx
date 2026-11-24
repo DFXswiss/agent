@@ -195,6 +195,36 @@ describe('waiting card', () => {
     expect(screen.getByTestId('waiting.other')).toHaveTextContent('Waiting for Ada to connect GitHub.');
   });
 
+  it('asks only the person who gave the instruction, never the owner for someone else (HOT-14)', async () => {
+    const t = await page({ member: true, owner: 'me' });
+    // my task, but Ada asked for the operation: the card asks Ada, I only see whom it waits for
+    put(t, entry(t, 'session.status', waiting({ for_user: t.ada.id })));
+    const card = await screen.findByTestId('waiting.card');
+    expect(card).toHaveAttribute('data-owner', 'false');
+    expect(within(card).queryByTestId('github.ways')).toBeNull();
+    expect(within(card).getByTestId('waiting.other')).toHaveTextContent(
+      'Waiting for the person who gave the instruction to connect GitHub.',
+    );
+    // my own connection does not end it: the operation will run with Ada's, not mine
+    connected(t, ago(0));
+    expect(screen.getByTestId('waiting.card')).toHaveAttribute('data-status', 'open');
+    // a second item of another addressee is a card of its own, addressed to me: my connection settles it
+    put(t, entry(t, 'session.status', waiting({ operation_id: OP2, for_user: t.me.id }), { ts: ago(1000) }));
+    await waitFor(() => expect(screen.getAllByTestId('waiting.card')).toHaveLength(2));
+    expect(screen.getAllByTestId('waiting.card').map((found) => found.getAttribute('data-status'))).toEqual([
+      'open',
+      'done',
+    ]);
+  });
+
+  it('asks me in a task of someone else when my instruction asked for it (HOT-14)', async () => {
+    const t = await page({ member: true, owner: 'ada' });
+    put(t, entry(t, 'session.status', waiting({ for_user: t.me.id })));
+    const card = await screen.findByTestId('waiting.card');
+    expect(card).toHaveAttribute('data-owner', 'true');
+    expect(within(card).getByTestId('github.connect')).toHaveTextContent('Connect GitHub');
+  });
+
   it('shows no owner when none is known', async () => {
     const t = await page({ owner: 'none' });
     put(t, entry(t, 'session.status', waiting()));

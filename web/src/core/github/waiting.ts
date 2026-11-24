@@ -47,7 +47,10 @@ export interface Waiting {
 export function parseWaiting(body: unknown): Waiting | null {
   if (!isRecord(body) || body.state !== 'waiting') return null;
   const keys = Object.keys(body);
-  if (!REQUIRED.every((key) => keys.includes(key)) || !keys.every((key) => REQUIRED.includes(key) || OPTIONAL.includes(key)))
+  if (
+    !REQUIRED.every((key) => keys.includes(key)) ||
+    !keys.every((key) => REQUIRED.includes(key) || OPTIONAL.includes(key))
+  )
     return null;
   const { waiting_for: reason, operation_id: id, operation_type: type, repo, for_user: forUser } = body;
   if (!(WAIT_REASONS as readonly unknown[]).includes(reason)) return null;
