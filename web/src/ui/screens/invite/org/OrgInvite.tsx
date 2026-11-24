@@ -503,12 +503,7 @@ export function OrgInvite({
               )}
               {proposedName !== null && <ProposedName name={proposedName} />}
               {rename && nameField(step.busy, t('invite-org.existing.name'))}
-              <button
-                type="submit"
-                className={PRIMARY}
-                disabled={step.busy || !codeOk}
-                data-testid="invite.join"
-              >
+              <button type="submit" className={PRIMARY} disabled={step.busy || !codeOk} data-testid="invite.join">
                 {joinLabel(step)}
               </button>
               {!rename && proposedName === null && (
