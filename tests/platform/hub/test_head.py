@@ -1,7 +1,7 @@
-"""U-HUB-head (HOT-19, RFC 9110 section 9.3.2): every route that answers `GET` answers `HEAD` - as the app discovers
-them, so every later package's route is checked by this test - with the status and headers of its `GET`
-(`Content-Length`, `Cache-Control`, the security headers) and no body; rights, rate limit and read log as for the
-`GET`. The router registers `HEAD` with every `GET`; the pipeline ends the route after its response start."""
+"""U-HUB-rights (HEAD, HOT-19, RFC 9110 section 9.3.2): every route that answers `GET` answers `HEAD` - as the
+app discovers them, so every later package's route is checked by this test - with the status and headers of its
+`GET` (`Content-Length`, `Cache-Control`, the security headers) and no body; rights, rate limit and read log as for
+the `GET`. The router registers `HEAD` with every `GET`; the pipeline ends the route after its response start."""
 
 from __future__ import annotations
 
@@ -124,8 +124,14 @@ def test_contains_finds_the_head_answer_however_it_was_wrapped(error: BaseExcept
 
 def test_contains_ends_on_a_cycle_without_the_kind() -> None:
     first, second = ValueError("first"), KeyError("second")
-    first.__context__, second.__context__ = second, first
+    first.__cause__, second.__cause__ = second, first
     assert not contains(first, HeadAnswered)
+
+
+def test_contains_ignores_an_exception_raised_while_handling_the_kind() -> None:
+    failure = ValueError("cleanup failed")
+    failure.__context__ = HeadAnswered()
+    assert not contains(failure, HeadAnswered)
 
 
 @pytest.mark.parametrize("state", ["confirmed", "active", "revoked"])

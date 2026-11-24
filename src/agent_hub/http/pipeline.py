@@ -25,8 +25,9 @@ For an HTTP request it
    limits, body) or answered `429` is not (ADR-063 section 1).
 
 A `HEAD` request passes the steps of its `GET` (the router registers `HEAD` with every `GET` route). Its answer is
-the status and headers of the `GET` without a body: the route stops after its response start (a file is not read, a
-stream not followed), and a held response is released with an empty body.
+the status and headers of the `GET` without a body: the route stops after its response start (a `FileResponse` does
+not read its file, a stream is not followed and its response releases it), and a held response is released with an
+empty body.
 
 A WebSocket upgrade passes steps 1, 2, 4 and 5 and is closed with code 1008 when it fails; streams are never
 response-signed.
@@ -215,8 +216,8 @@ def source_address(scope: Scope) -> str:
 
 
 def contains(error: BaseException, kind: type[BaseException]) -> bool:
-    """Whether `error` is a `kind`, was raised from or while handling one, or groups one (Starlette re-raises an
-    exception of a route as another one or inside an exception group)."""
+    """Whether `error` is a `kind`, was raised from one or groups one (Starlette re-raises an exception of a route as
+    another one `from` it, or inside an exception group); an exception merely raised while one was handled is not."""
     seen: set[int] = set()
     pending: list[BaseException] = [error]
     while pending:
@@ -228,7 +229,8 @@ def contains(error: BaseException, kind: type[BaseException]) -> bool:
             return True
         if isinstance(current, BaseExceptionGroup):
             pending.extend(current.exceptions)
-        pending.extend(item for item in (current.__cause__, current.__context__) if item is not None)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
     return False
 
 
@@ -390,7 +392,7 @@ class HubPipeline:
 
         async def release(start: Message) -> None:
             nonlocal started
-            body = b"" if scope.get("method") == "HEAD" else b"".join(chunks)
+            body = b"" if head else b"".join(chunks)
             headers = list(start.get("headers", []))
             signed = scope.get(SIGNED_KEY)
             if isinstance(signed, SignedHeaders):

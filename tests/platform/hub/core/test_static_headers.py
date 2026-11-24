@@ -114,6 +114,7 @@ def test_failure_below_the_pipeline_is_unavailable_with_headers(
     head = web.base.request("HEAD", "/v1/config", headers=dict(response.request.headers))
     assert head.status_code == 503
     assert head.content == b""
+    assert head.headers["content-length"] == response.headers["content-length"] == str(len(response.content))
 
 
 def test_assets_are_immutable(web: HubHarness) -> None:

@@ -58,9 +58,13 @@ Decision (one place each, not per route):
 - `HubRouter.hub_route` registers `HEAD` with every `GET` route. A `HEAD` therefore passes the whole pipeline as its
   `GET`: authentication class, rights, rate limits, query check and read log (`read.<resource>`). An agent is admitted
   to `HEAD` exactly where it is admitted to the `GET` (`agents.scope.agent_allowed`).
-- The pipeline sends the response start of the route, an empty body, and ends the route (`HeadAnswered`): a
-  `FileResponse` sends only its start for `HEAD` anyway, so the package file is not read, and the browser live
-  channel is not followed. A held (signed) answer is released with an empty body; error answers keep the
+- The pipeline sends the response start of the route, an empty body, and ends the route (`HeadAnswered`; found as
+  the exception itself, its `__cause__` or inside an exception group, never through `__context__`, so a failure
+  while it unwinds is still logged): a `FileResponse` sends only its start for `HEAD` anyway, so the package file is
+  not read, and the browser live channel is not followed. The browser stream is registered before its response
+  starts (no event is lost between its opening frames and the first byte) and was released only by its body; a
+  response whose body never starts (`HEAD`, and a client gone before the first byte, which already leaked before)
+  now releases it too (`stream.routes.OpenedStream`). Review finding (high) of HOT-19. A held (signed) answer is released with an empty body; error answers keep the
   `Content-Length` of their JSON body (`json_response_messages(..., head=True)`). The response signature of a `HEAD`
   covers the bytes sent (none), so a client can verify it.
 - The contract index (`contracts/api/INDEX.json`) keeps one row per `GET`; `HEAD` has no row of its own. Tests that

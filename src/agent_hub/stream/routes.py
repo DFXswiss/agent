@@ -16,6 +16,7 @@ from uuid import UUID
 
 from fastapi import Query, Request
 from fastapi.responses import StreamingResponse
+from starlette.types import Receive, Scope, Send
 from starlette.websockets import WebSocket
 
 from agent_hub.audit.chain import AuditRow
@@ -28,10 +29,28 @@ from agent_hub.http.context import CurrentPrincipal
 from agent_hub.http.readlog import read_row
 from agent_hub.http.routing import HubRouter
 from agent_hub.stream.service import StreamService, service_of
-from agent_hub.stream.sse import StreamQuery, parse_query
+from agent_hub.stream.sse import BrowserStream, StreamQuery, parse_query
 
 router = HubRouter()
 STREAM_HEADERS = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
+
+
+class OpenedStream(StreamingResponse):
+    """The response of an opened browser stream. The stream is registered before the response starts (no event is
+    missed between its opening frames and the first byte) and forgotten when the response ends, however it ends -
+    also when its body never starts (a `HEAD`, answered with the response start; a client gone before the first
+    byte), where the body's own cleanup never runs."""
+
+    def __init__(self, service: StreamService, stream: BrowserStream) -> None:
+        super().__init__(service.browser_body(stream), media_type="text/event-stream", headers=STREAM_HEADERS)
+        self.service = service
+        self.stream = stream
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.service.abandon(self.stream)
 
 
 def _service(service: StreamService | None) -> StreamService:
@@ -73,7 +92,7 @@ async def stream(
     except Exception:
         service.abandon(opened)  # nothing leaves the hub without its read rows (review M3)
         raise
-    return StreamingResponse(service.browser_body(opened), media_type="text/event-stream", headers=STREAM_HEADERS)
+    return OpenedStream(service, opened)
 
 
 @router.hub_websocket("/v1/device/ws", auth="device", right="device")

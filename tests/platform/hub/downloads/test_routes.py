@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 from psycopg_pool import ConnectionPool
 
@@ -63,14 +64,18 @@ def test_latest_json_is_served_unchanged_and_revalidated(hub_with_downloads: Hub
 
 
 def test_head_of_the_package_answers_its_headers_without_reading_it(
-    hub_with_downloads: HubHarness, downloads_dir: Path
+    hub_with_downloads: HubHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     got = hub_with_downloads.anon.get(f"/downloads/runner/{PACKAGE_NAME}")
-    (downloads_dir / "runner" / PACKAGE_NAME).chmod(0)  # a read would fail now
-    try:
-        head = hub_with_downloads.anon.request("HEAD", f"/downloads/runner/{PACKAGE_NAME}")
-    finally:
-        (downloads_dir / "runner" / PACKAGE_NAME).chmod(0o644)
+    opened: list[object] = []
+
+    def no_read(*args: object, **kwargs: object) -> None:
+        opened.append(args)
+        raise AssertionError("the package was opened")
+
+    monkeypatch.setattr(anyio, "open_file", no_read)  # what FileResponse opens its file with
+    head = hub_with_downloads.anon.request("HEAD", f"/downloads/runner/{PACKAGE_NAME}")
+    assert opened == []
     assert head.status_code == 200
     assert head.content == b""
     assert dict(head.headers) == dict(got.headers)
