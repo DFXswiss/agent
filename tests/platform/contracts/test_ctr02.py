@@ -568,57 +568,57 @@ def test_deny_reason_file_matches_the_schema(deny: dict[str, Any], contracts: Co
 # 03-api.md section 9: type -> params | result fields | dedupe fields (as normalised by 04-crypto.md section 4.10 and
 # agent_hub.crypto.dedupe) | window in seconds.
 SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
-    "github.list_repositories": ("", "repositories", "", None),
-    "github.checkout": ("repo ref", "repo commit_sha dir files bytes", "repo ref session", 600),
+    "github.list_repositories": ("github_identity", "repositories", "", None),
+    "github.checkout": ("repo ref github_identity", "repo commit_sha dir files bytes", "repo ref session", 600),
     "github.get_pull_request": (
-        "repo number",
+        "repo number github_identity",
         "number title body state draft head base url files comments truncated",
         "",
         None,
     ),
-    "github.create_branch": ("repo branch from", "branch sha", "repo branch", 86400),
+    "github.create_branch": ("repo branch from github_identity", "branch sha", "repo branch", 86400),
     "github.commit": (
-        "repo branch message paths",
+        "repo branch message paths github_identity author committer co_authors signing",
         "commit_sha parent_sha tree_sha files_changed",
         "repo branch parent_sha tree_sha",
         86400,
     ),
-    "github.push": ("repo branch commit_sha", "branch sha url", "repo branch commit_sha", 86400),
+    "github.push": ("repo branch commit_sha github_identity", "branch sha url", "repo branch commit_sha", 86400),
     "github.create_pull_request": (
-        "repo head base title body draft",
+        "repo head base title body draft github_identity",
         "number url id draft existing",
         "repo head base",
         604800,
     ),
-    "github.comment": ("repo number body", "comment_id url", "repo number body", 86400),
+    "github.comment": ("repo number body github_identity", "comment_id url", "repo number body", 86400),
     "github.list_issues": (
-        "repo state labels sort direction per_page page",
+        "repo state labels sort direction per_page page github_identity",
         "issues next_page truncated note",
         "",
         None,
     ),
     "github.get_issue": (
-        "repo number comments_page comments_per_page",
+        "repo number comments_page comments_per_page github_identity",
         "number title body state state_reason author labels assignees created_at updated_at closed_at url"
         " pull_request comments_total comments comments_next_page truncated",
         "",
         None,
     ),
-    "github.create_issue": ("repo title body labels", "number url id", "repo title body", 86400),
+    "github.create_issue": ("repo title body labels github_identity", "number url id", "repo title body", 86400),
     "github.update_issue": (
-        "repo number state state_reason title body labels",
+        "repo number state state_reason title body labels github_identity",
         "number url state state_reason title labels",
         "",
         None,
     ),
     "github.list_pull_requests": (
-        "repo state base sort direction per_page page",
+        "repo state base sort direction per_page page github_identity",
         "pull_requests next_page truncated",
         "",
         None,
     ),
     "github.request_connection": ("", "login", "", None),
-    "subagent.request": ("purpose prompt model_id", "session_id", "session prompt", 600),
+    "subagent.request": ("purpose prompt model_id github_identity", "session_id", "session prompt", 600),
     "task.set_title": ("title", "", "", None),
     # 13-work-vm.md section 2 (contracts/changes/KOR-29.md)
     "workvm.request": (
@@ -631,6 +631,8 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
     # KOR-39 (ADR-076 section 3)
     "human.question": ("question", "", "", None),
     "human.approval": ("question", "", "", None),
+    # ADR-076 (contracts/changes/KOR-47.md)
+    "github.list_identities": ("", "acting_user current identities co_authors", "", None),
 }
 SPEC_REPO = "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
 # 03-api.md section 9: (type, field, longest valid value length).

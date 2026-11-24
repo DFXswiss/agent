@@ -12,7 +12,7 @@ from agent_hub.operations import jobs
 from agent_hub.registry import JOBS, concat_sequences
 from agent_hub.stream.publish import MemoryPublisher
 from tests.platform.hub.conftest import contracts_registry
-from tests.platform.hub.operations.support import Ops
+from tests.platform.hub.operations.support import NO_IDENTITY, Ops
 
 
 def _run(ops: Ops) -> int:
@@ -45,7 +45,13 @@ def test_accepted_without_executing_expires_after_30_minutes(
     assert ops.slot_holder("slow") is None
     audit = ops.audit(waiting)[-1]
     assert audit[:4] == ("operation.expired", "failed", "hub", None)
-    assert audit[4] == {"type": "github.comment", "error_code": "timeout", "duplicate_of": None, "local_check": None}
+    assert audit[4] == {
+        "type": "github.comment",
+        "error_code": "timeout",
+        "duplicate_of": None,
+        "local_check": None,
+        **NO_IDENTITY,
+    }
     contracts_registry().validate("audit/operation.expired.json", audit[4])
     sent = [dict(entry.data) for entry in published.items() if entry.frame == "operation"]
     assert [(frame["operation_id"], frame["state"]) for frame in sent] == [(waiting, "expired")]

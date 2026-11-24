@@ -234,7 +234,8 @@
         "handover_required",
         "handover_unexpected",
         "placement_forbidden",
-        "placement_invalid"
+        "placement_invalid",
+        "identity_forbidden"
       ],
       "description": "codes the hub sends (enums/error-codes.json)"
     },
@@ -263,7 +264,9 @@
         "model_not_allowed",
         "tree_mismatch",
         "no_changes",
-        "workvm_unavailable"
+        "workvm_unavailable",
+        "identity_forbidden",
+        "identity_unavailable"
       ],
       "description": "enums/operation-error-codes.json"
     },
@@ -3408,6 +3411,13 @@
         "device"
       ],
       "additionalProperties": false
+    },
+    "github_default_scope": {
+      "type": "string",
+      "enum": [
+        "org",
+        "wg"
+      ]
     }
   }
 }

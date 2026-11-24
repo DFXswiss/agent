@@ -20,7 +20,9 @@ from agent_doubles.github.repos import (
     Issue,
     Pull,
     Repo,
+    SigningKey,
     User,
+    Verification,
     World,
     diff_trees,
     iso,
@@ -134,16 +136,9 @@ def authenticated_user(urls: Urls, user: User, created: int) -> dict[str, Any]:
     }
 
 
-def noreply_email(user: User) -> str:
-    return f"{user.id}+{user.login}@users.noreply.github.com"
-
-
-def user_for_email(world: World, email: str) -> User | None:
-    """The seeded user a commit e-mail belongs to (own address or the noreply address)."""
-    for user in world.users.values():
-        if email.lower() in {noreply_email(user).lower(), (user.email or "").lower()}:
-            return user
-    return None
+def ssh_signing_key(key: SigningKey) -> dict[str, Any]:
+    """An SSH signing key of ``GET``/``POST /user/ssh_signing_keys``."""
+    return {"key": key.line, "id": key.id, "title": key.title, "created_at": iso(key.created)}
 
 
 # --- repositories ------------------------------------------------------------------------------------
@@ -330,7 +325,15 @@ def _signature(signature: Signature) -> dict[str, Any]:
     return {"name": signature.name, "email": signature.email, "date": iso(signature.time)}
 
 
-VERIFICATION = {"verified": False, "reason": "unsigned", "signature": None, "payload": None, "verified_at": None}
+def verification(found: Verification) -> dict[str, Any]:
+    """The ``verification`` object of a commit."""
+    return {
+        "verified": found.verified,
+        "reason": found.reason,
+        "signature": found.signature,
+        "payload": found.payload,
+        "verified_at": iso(found.verified_at) if found.verified_at is not None else None,
+    }
 
 
 def git_commit(urls: Urls, repo: Repo, sha: str) -> dict[str, Any]:
@@ -350,12 +353,12 @@ def git_commit(urls: Urls, repo: Repo, sha: str) -> dict[str, Any]:
             {"sha": p, "url": f"{api}/git/commits/{p}", "html_url": f"{urls.web}/{repo.full_name}/commit/{p}"}
             for p in commit.parents
         ],
-        "verification": dict(VERIFICATION),
+        "verification": verification(repo.verification(sha)),
     }
 
 
 def _account(urls: Urls, world: World, signature: Signature) -> dict[str, Any] | None:
-    user = user_for_email(world, signature.email)
+    user = world.user_for_email(signature.email)
     return simple_user(urls, user.login, user.id) if user is not None else None
 
 
@@ -373,7 +376,7 @@ def commit_summary(urls: Urls, world: World, repo: Repo, sha: str) -> dict[str, 
             "tree": {"sha": commit.tree, "url": f"{api}/git/trees/{commit.tree}"},
             "url": f"{api}/git/commits/{sha}",
             "comment_count": 0,
-            "verification": dict(VERIFICATION),
+            "verification": verification(repo.verification(sha)),
         },
         "url": f"{api}/commits/{sha}",
         "html_url": f"{urls.web}/{repo.full_name}/commit/{sha}",

@@ -1,0 +1,20 @@
+{
+  "acting_user": "0193000a-0000-7000-8000-00000000000a",
+  "identities": [
+    {
+      "id": "01930050-0000-7000-8000-000000000050",
+      "login": "octo-cat",
+      "owner_kind": "user",
+      "owner_id": "0193000a-0000-7000-8000-00000000000a",
+      "primary": true,
+      "signing": false,
+      "source": "own"
+    }
+  ],
+  "co_authors": [
+    {
+      "user_id": "0193000a-0000-7000-8000-00000000000a",
+      "login": "octo-cat"
+    }
+  ]
+}

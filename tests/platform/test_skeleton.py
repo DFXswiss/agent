@@ -38,6 +38,7 @@ AREAS: dict[ModuleType, list[str]] = {
         "device",
         "downloads",
         "events",
+        "github",
         "health",
         "http",
         "invites",

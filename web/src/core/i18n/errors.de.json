@@ -199,6 +199,16 @@
     "body": "Ein Eintrag mit dieser ID existiert bereits mit anderem Inhalt.",
     "action": "Lade die Seite neu und versuche es noch einmal."
   },
+  "identity_forbidden": {
+    "title": "Dieses GitHub-Konto kann hier nicht genutzt werden",
+    "body": "Für Aufgaben dieser Organisation können nur deine eigenen Konten und die Firmenkonten der Organisation gewählt werden.",
+    "action": "Wähle ein anderes Konto oder Automatisch."
+  },
+  "identity_unavailable": {
+    "title": "GitHub-Konto nicht verfügbar",
+    "body": "Das GitHub-Konto für diesen Schritt ist nicht verbunden oder kann dafür nicht genutzt werden.",
+    "action": "Verbinde dein eigenes GitHub-Konto in den Einstellungen und versuche es dann erneut."
+  },
   "identity_unproven": {
     "title": "Konto nicht gefunden",
     "body": "Es gibt kein Konto mit dieser Kennung oder ID, das direkt aufgenommen werden kann.",

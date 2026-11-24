@@ -165,6 +165,17 @@ login by the agent tool, ADR-056), `mailbox {imap_host, imap_port, imap_user, im
 owner (browser) or a device that holds `CK` and acted on a device request of the owner. `version` = previous version
 + 1 (1 for a new record), set by the author and checked by the hub against `expected_version`.
 
+**GitHub identities (KOR-47, ADR-076).** An owner may hold several `github` records (one per GitHub account; the
+user's primary one is what the endpoints from before address). A **company record** has an organization as `owner`
+and lives in the `cred` scope of that organization (`scope_id` = the organization): W2 for such a scope names as
+readers **only the devices** that are active members of the organization and assigned to one of its workgroups (key
+model KM-35); an active admin of the organization may wrap (it creates each epoch) without being a reader. Every
+version is written by an admin under a fresh epoch (current + 1) with the wraps for every reader device in the same
+request; the admin forgets the key and cannot read the record back, and readers refuse a company record whose author
+is not an active admin. Devices holding an epoch wrap it to devices entitled later (§5.11). After a `CK` rotation a
+current client re-seals the user's non-primary `github` records the rotation left out. The `github` body may carry
+the identity's own SSH signing key (`signing_key`), readable by everyone who can open the record.
+
 ### 4.5 Device request and response **(new)**
 
 Requests from a user to one device (GitHub connect, Claude login, credential check):
@@ -553,13 +564,13 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | Membership and platform logs (roles, accesses, public keys, invite IDs, device assignments, epochs) | rights enforcement, scheduling |
 | Passkey credential IDs and public keys, sign counters, session public keys | authentication |
 | Event headers (kind, scope, epoch, author, task, session, ref, ts, lh), sizes, receive times | sync, fan-out, audit |
-| Task state, owner, timestamps; session state, device, VM ID, parent session, depth, model access kind, model ID | countdown, status, limits |
-| Operation type, state, decision, error code, dedupe tag, timestamps, actor | duplicate protection, audit, limits |
+| Task state, owner, timestamps; session state, device, VM ID, parent session, depth, model access kind, model ID; the GitHub identity (record ID) chosen for a task or session (ADR-076) | countdown, status, limits, identity choice |
+| Operation type, state, decision, error code, dedupe tag, timestamps, actor; the GitHub identity (record ID) an operation acted with and the human who triggered it (ADR-076) | duplicate protection, audit, limits, traceability |
 | Resource metrics, token counters, cost, context-window percentage, subscription quota percentages | monitoring, limits, display (KONZEPT §6, §7) |
 | Notification records (recipient, kind, target IDs) | notifications |
 | Attention record of a task (category, reason code, ref ID, times, subagent counters), derived from the task, session and operation metadata above; the operation types `human.question` / `human.approval` (the question itself is sealed in `operation.params`) | situation view, notifications (ADR-076, KOR-39) |
 | Audit and read-log rows (actor, action, target IDs, result) | KONZEPT §6, §8 |
-| Credential metadata (owner, kind, version) | lifecycle |
+| Credential metadata (owner, owner kind user/organization, kind, version, epoch, times, the primary mark of a user's GitHub record, so the number of GitHub records per owner); the default GitHub identity (record ID) of an organization or workgroup (ADR-076) | lifecycle, identity choice |
 | User settings (model access preference, model choice, locale) | session start |
 | Admission (ADR-060): `user_certify` entries, the identity proof of a platform registration, the capabilities a device announced (`device.features`), which account looked up which identity or account code (read log) | direct admission without consent steps |
 | Context checkpoints (ADR-072): object, task, session, author device and workgroup IDs, epoch, chunk count, sizes, digest and chunk hashes, the manifest (salt, times), upload and commit times; pull-request links: opaque tag, epoch, task and session; restore outcomes (`context_restore`, `context_reason`: restored, workspace partial/omitted, fallback reason) | storage, quotas, pruning, the newest checkpoint for a restore, PR → task lookup, the notice on the task |

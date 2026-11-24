@@ -32,7 +32,10 @@ The rotation: a fresh `CK_{e+1}`, wrapped for the user and every device entitled
 user under it (same ID and kind, `version + 1`), all in one `POST /v1/me/credentials/rotate`. A record written by a
 device that lost eligibility is deleted first (re-signing it would launder what that device wrote); any other record
 that cannot be opened (signature, epoch, body as `contracts/credentials/<kind>.json` allows) blocks the rotation and
-nothing is deleted. A `409 version_conflict` is retried once from the start.
+nothing is deleted. A `409 version_conflict` is retried once from the start. The primary `github` record is one of
+these records; the user's further GitHub identities (ADR-076 section 1) are re-sealed right after the rotation
+(`identities.rewrap_own`, same ID, `version + 1`; the result names `github_resealed` when it re-sealed some and
+`github_rewrap_error` with the hub's code when it failed, which `github rewrap` or the next rotation repeats).
 """
 
 from __future__ import annotations
@@ -44,6 +47,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
+from agent_platform import identities
 from agent_platform.account import Account, LogUnverifiable, unverified
 from agent_platform.batch import make_wrap
 from agent_platform.commands import Context, Tree
@@ -401,13 +405,21 @@ def _delete(account: Account, kind: str) -> None:
 
 
 def rotate_credentials(account: Account, *, force: bool = False, former: Sequence[VerifiedLog] = ()) -> dict[str, Any]:
-    """The check and, when owed (or forced), the rotation; one retry after `version_conflict`."""
+    """The check and, when owed (or forced), the rotation; one retry after `version_conflict`; after a rotation the
+    further GitHub identities follow (module docstring)."""
     try:
-        return _attempt(account, force, former)
+        result = _attempt(account, force, former)
     except PlatformError as error:
         if error.fields.get("hub_error") != "version_conflict":
             raise
-    return _attempt(account, force, former)
+        result = _attempt(account, force, former)
+    if result["status"] != "rotated":
+        return result
+    try:
+        resealed = identities.rewrap_own(account)
+    except PlatformError as error:
+        return {**result, "github_rewrap_error": error.fields.get("hub_error", error.code)}
+    return {**result, "github_resealed": resealed} if resealed else result
 
 
 def rotate_if_owed(account: Account, former: Sequence[VerifiedLog] = ()) -> dict[str, Any]:

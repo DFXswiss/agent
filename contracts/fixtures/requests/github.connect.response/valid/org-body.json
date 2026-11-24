@@ -1,0 +1,20 @@
+{
+  "step": "done",
+  "login": "octo-cat",
+  "scopes": [
+    "repo"
+  ],
+  "source": "operator",
+  "identity_id": "01930050-0000-7000-8000-000000000050",
+  "signing": "scope_missing",
+  "body": {
+    "token": "ghp_example",
+    "login": "octo-cat",
+    "user_id": 583231,
+    "scopes": [
+      "repo"
+    ],
+    "created_at": "2026-11-24T12:00:00.000Z",
+    "source": "operator"
+  }
+}

@@ -5,6 +5,9 @@
 - `task operations`: the task's operations newest first (`GET /v1/tasks/{task}/operations`, a hub must not slip in
   another task's row) with their `operation.params`/`operation.result` events opened and verified; with
   `--operation` one operation with its transitions (`GET /v1/operations/{id}`) and its events (`ref=<operation>`).
+  The rows keep the hub's `github_identity` and `triggered_by` (ADR-076 section 6); an operation with an identity also
+  gets `github_account`, its name as the user can tell it (`identities.names`: `{kind: login, login}` for an own
+  account, `{kind: company, org_id}` for a company account, `{kind: other}` otherwise).
 - `session show`: `GET /v1/sessions/{id}` (row, transitions, usage, VM, children), the runtime (from the first
   `working` or the creation to the end, or to now while the session runs) and whether the hub reaches its device
   (`online` of `GET /v1/orgs/{org}/devices`; null without a device, when the device is not listed or the read fails).
@@ -27,6 +30,7 @@ import unicodedata
 from typing import Any, cast
 from urllib.parse import urlencode
 
+from agent_platform import identities
 from agent_platform.account import Account, unverified
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
@@ -91,6 +95,7 @@ def task_operations(account: Account, task: str, before: str | None, operation: 
         events, left_out = _operation_events(account, wg, item["operation_id"])
         listed.append({**item, "events": events})
         skipped += left_out
+    _name_accounts(account, listed)
     following = answer.get("next_before")
     return {
         "task_id": task,
@@ -100,15 +105,28 @@ def task_operations(account: Account, task: str, before: str | None, operation: 
     }
 
 
+def _name_accounts(account: Account, rows: list[dict[str, Any]]) -> None:
+    """`github_account` of every row with an identity (module docstring); the identities are read once, if needed."""
+    if not any(isinstance(row.get("github_identity"), str) for row in rows):
+        return
+    found = identities.names(account)
+    for row in rows:
+        name = identities.name_of(found, row.get("github_identity"))
+        if name is not None:
+            row["github_account"] = name
+
+
 def _operation(account: Account, task: str, operation: str) -> dict[str, Any]:
     answer = account.call("GET", f"/v1/operations/{segment(operation)}")
     row = answer.get("operation")
     if not isinstance(row, dict) or row.get("operation_id") != operation or row.get("task_id") != task:
         raise unverified("response_invalid")
     events, skipped = _operation_events(account, str(task_row(account, task)["wg_id"]), operation)
+    found = {**row, "events": events}
+    _name_accounts(account, [found])
     return {
         "task_id": task,
-        "operation": {**row, "events": events},
+        "operation": found,
         "transitions": rows_of(answer, "transitions"),
         "unverified": skipped,
     }

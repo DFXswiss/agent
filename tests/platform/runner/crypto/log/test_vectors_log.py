@@ -206,6 +206,15 @@ def test_con02_wrap_cases_and_catch_up() -> None:
             [log], plan["owner"], plan["wrapper"], current_epoch=plan["current_epoch"], existing=cred_existing
         )
         assert [slot.to_json() for slot in missing] == plan["missing"]
+    org_existing = [
+        wraps.WrapSlot(s["scope"], s["scope_id"], s["epoch"], s["recipient_id"])
+        for s in data["org_cred_catch_up"]["existing"]
+    ]
+    for plan in data["org_cred_catch_up"]["plans"]:
+        missing = catchup.missing_cred_wraps(
+            [log], plan["owner"], plan["wrapper"], current_epoch=plan["current_epoch"], existing=org_existing
+        )
+        assert [slot.to_json() for slot in missing] == plan["missing"]
 
 
 def test_con02_event_cases() -> None:

@@ -253,6 +253,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("closed_at", TS),
         ("placement_device_id", U),  # KOR-41, migration 0020
         ("placement_vm_id", T),
+        ("github_identity", U),  # KOR-47, migration 0021
     ],
     "task_transition": [("task_id", U), ("seq", INT), ("state", T), ("reason", T), ("at", TS), ("by_id", U)],
     # KOR-39, migration 0011 (ADR-076): the attention record of a task, a projection
@@ -296,6 +297,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("context_restore", T),
         ("context_reason", T),
         ("not_before", TS),  # KOR-41, migration 0020
+        ("github_identity", U),  # KOR-47, migration 0021
     ],
     # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-072)
     "context_object": [
@@ -362,6 +364,8 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("decided_at", TS),
         ("started_at", TS),
         ("finished_at", TS),
+        ("github_identity", U),  # KOR-47, migration 0021
+        ("triggered_by", U),
     ],
     "operation_transition": [
         ("operation_id", U),
@@ -418,7 +422,12 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("ct", B),
         ("sig", B),
         ("updated_at", TS),
+        ("owner_kind", T),  # KOR-47, migration 0021
+        ("created_at", TS),
+        ("is_primary", BOOL),
     ],
+    # default GitHub identities of orgs and workgroups (KOR-47, migration 0021)
+    "github_default": [("scope", T), ("scope_id", U), ("identity_id", U), ("set_by", U), ("set_at", TS)],
     "device_request": [
         ("id", U),
         ("user_id", U),
@@ -428,6 +437,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("envelope", T),
         ("created_at", TS),
         ("expires_at", TS),
+        ("org_id", U),  # KOR-47, migration 0021
     ],
     # credential-change notices for devices (HUB-13, ADR-035, migration 0003)
     "credential_notice": [("device_id", U), ("owner_id", U), ("kind", T), ("changed_at", TS)],
@@ -669,6 +679,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "dedupe_slot": ("wg_id", "epoch", "tag"),
     "device_response": ("request_id", "seq"),
     "credential_notice": ("device_id", "owner_id", "kind"),
+    "github_default": ("scope", "scope_id"),
     "metric_sample": ("entity_kind", "entity_id", "ts"),
     "metric_rollup": ("entity_kind", "entity_id", "ts"),
     "quota_snapshot": ("owner_id", "window"),
@@ -804,6 +815,8 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("task_attention", "(wg_id, category, since)"),
         ("task_attention", "(owner_id, category, wg_id)"),
         ("event", "(task_id, received_at DESC) WHERE (kind = 'prompt'::text)"),
+        ("credential", "(owner_id, kind) WHERE (kind <> 'github'::text)"),
+        ("credential", "(owner_id) WHERE ((kind = 'github'::text) AND is_primary)"),
     ],
 )
 def test_named_indexes(owner: psycopg.Connection[Any], table: str, definition: str) -> None:
@@ -882,6 +895,7 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
         ),
         ("device_request", "kind", ["github.connect", "claude.login", "credential.check", "mailbox.check"]),
         ("device_request", "state", ["pending", "delivered", "answered", "failed", "expired"]),
+        ("github_default", "scope", ["org", "wg"]),
         ("metric_sample", "entity_kind", ["device", "vm", "session", "workvm"]),
         ("usage_counter", "cost_basis", ["provider", "list_price", "subscription_equivalent"]),
         ("audit", "actor_kind", ["user", "device", "session", "hub", "operator", "anonymous"]),

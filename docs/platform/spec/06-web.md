@@ -566,6 +566,22 @@ screen says so. Private organizations are only created from a platform invitatio
   with the regex of `03-api.md` §9; empty = every repository of the GitHub connection, ADR-054), protected branch patterns (defaults prefilled), PR draft default; saved as
   `settings.workgroup` event (latest wins; concurrent edit warning when a newer event arrived meanwhile).
 
+**Several accounts, company accounts, defaults (KOR-47, ADR-076).** Below the primary connection the section lists the
+user's further GitHub accounts (`GET /v1/me/github-identities`, every own record opened and checked like the primary
+one; login, source, scopes, signing key yes/no – never the token): "make primary", "reconnect" (`github.connect` with
+`identity_id`), "disconnect", "add another account" (device flow or existing token) and the option "also create a
+signing key" (`signing_key:true`, outcome shown). The screen **GitHub** of an organization (`/o/:org/github`) lists
+its company accounts by metadata only – no browser opens them (key model KM-35): "Company account of <org> ·
+connected <date>". Admins connect one (`github.connect` with `org_id` to a device of the organization; the browser
+seals the answered body under a fresh epoch of the organization's credential key for its devices and stores it with
+`PUT /v1/github-identities/{id}`), reconnect, remove it and set or clear the organization's default. The workgroup
+settings offer the workgroup's default (company accounts of its organization; admins and writers). The composer offers
+"GitHub account" (Automatic, own accounts, company accounts of the task's organization; `github_identity` of
+`POST /v1/tasks`); the task header shows the task's account and lets a writer change or clear it. The operations tab
+shows "as <login>, triggered by <member>" (or "a company account of <org>", "another account"). `409 peer_outdated`
+reads "some devices of this organization must be updated first". A job re-seals own non-primary records under the
+newest `CK` after a rotation.
+
 ### 8.2 Model access
 
 - Preference (`auto`, `subscription`, `api_key`, `platform`) and model choice (`PUT /v1/me/settings`). Allowed model

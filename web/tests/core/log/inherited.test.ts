@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { CryptoError } from '../../../src/core/crypto/errors';
 import { catchUpEpochs, compatSkip, confirmedSlots, missingWraps } from '../../../src/core/log/catchup';
 import { buildBatch, checkBatch, SELF_OWED } from '../../../src/core/log/rotation';
-import { compareSlots, credReaders, slotJson } from '../../../src/core/log/wraps';
+import { compareSlots, credReaders, mayWrapCred, slotJson } from '../../../src/core/log/wraps';
 import { actors, type Actor, idOf, TS, World } from './world';
 
 const code = async (promise: Promise<unknown>) => {
@@ -71,6 +71,20 @@ describe('effective access (OrgState)', () => {
     await world.batch(alice, [{ type: 'device_unassign', device: device.id, wg: world.defaultWg }]);
     expect(credReaders([world.state], carol.id).has(device.id)).toBe(false);
     expect(credReaders([world.state], alice.id).has(device.id)).toBe(true);
+  });
+});
+
+describe('the credential key of an organization (KM-35, ADR-076)', () => {
+  it('is read by the assigned devices only and wrapped by them or an active admin', () => {
+    const state = world.state;
+    const readers = credReaders([state], world.org);
+    expect(readers.has(device.id)).toBe(true);
+    expect([...readers].every((id) => state.member(id)?.kind === 'device')).toBe(true);
+    expect(credReaders([state], world.org, [device.id]).has(device.id)).toBe(false);
+    const slot = { scope: 'cred', scope_id: world.org, epoch: 1, recipient: device.id };
+    expect(mayWrapCred([state], slot, alice.id, 1)).toBe(true);
+    expect(mayWrapCred([state], slot, bob.id, 1)).toBe(false);
+    expect(mayWrapCred([state], { ...slot, recipient: alice.id }, alice.id, 1)).toBe(false);
   });
 });
 

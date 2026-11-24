@@ -2,11 +2,11 @@
 
 `store_wraps` applies W3 to every wrap with the hub's own verified log state: for an `org`/`wg` scope the log of the
 scope's org (`agent_hub.log.wraps.check_wrap`), for the `cred` scope of a user the logs of every org in which that
-user or the wrapper is an active member and the user's current CK epoch (`check_cred_wrap`); the wrapper must be an
-active principal and the decertified platform devices are no recipients. A request is all or nothing: one wrap that
-violates W1/W2 refuses the whole request (`400 wrap_unauthorized`). A wrap
-for a slot that already holds a wrap is ignored (wraps are insert-only, 02-data-model.md section 2.2) and counted in
-`ignored`.
+user or the wrapper is an active member and the user's current CK epoch (`check_cred_wrap`), for the `cred` scope of
+an organization (its company credentials, KM-35) the log of that org and its current `cred` epoch; the wrapper must
+be an active principal and the decertified platform devices are no recipients. A request is all or nothing: one wrap
+that violates W1/W2 refuses the whole request (`400 wrap_unauthorized`). A wrap for a slot that already holds a wrap
+is ignored (wraps are insert-only, 02-data-model.md section 2.2) and counted in `ignored`.
 
 `wraps_for` lists the wraps stored for one recipient (`GET /v1/wraps`, `GET /v1/device/wraps`).
 """
@@ -28,7 +28,7 @@ from agent_hub.errors import HubError
 from agent_hub.log.platform import PlatformState
 from agent_hub.log.state import ORG, WG
 from agent_hub.log.verify import VerifiedLog
-from agent_hub.log.wraps import CRED, WRAP_KEYS, WrapSlot, check_cred_wrap, check_wrap
+from agent_hub.log.wraps import CRED, WRAP_KEYS, WrapSlot, check_cred_wrap, check_wrap, cred_readers
 from agent_hub.orgs import logs
 
 Connection = psycopg.Connection[Any]
@@ -99,7 +99,8 @@ def check_one(connection: Connection, loaded: _Logs, wrap: object, wrapper: str)
         epoch = cred_epoch(connection, scope_id)
         if epoch is None:
             fail("wrap_unauthorized")
-        org_logs = loaded.of_members(scope_id, wrapper)
+        owner_org = scope_org(connection, ORG, scope_id)
+        org_logs = [loaded.of(owner_org)] if owner_org is not None else loaded.of_members(scope_id, wrapper)
         excluded = frozenset().union(*(loaded.excluded(log) for log in org_logs))
         return check_cred_wrap(wrap, wrapper, org_logs, epoch, excluded, require_active=True)
     org_id = scope_org(connection, scope, scope_id)
@@ -107,6 +108,14 @@ def check_one(connection: Connection, loaded: _Logs, wrap: object, wrapper: str)
         fail("wrap_unauthorized")
     log = loaded.of(org_id)
     return check_wrap(wrap, wrapper, log, loaded.excluded(log), require_active=True)
+
+
+def org_cred_readers(connection: Connection, org_id: UUID, root_key: bytes) -> frozenset[str]:
+    """The readers of the org's own `cred` scope in the hub's verified log: its active devices assigned to a
+    workgroup of it, decertified platform devices left out (KM-35)."""
+    loaded = _Logs(connection, root_key)
+    log = loaded.of(org_id)
+    return cred_readers([log.state], str(org_id), loaded.excluded(log))
 
 
 def store_wraps(

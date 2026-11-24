@@ -87,17 +87,29 @@ class Signature:
 
 @dataclass(frozen=True)
 class Commit:
-    """A commit object."""
+    """A commit object; `signature` (the ``signature`` of ``POST …/git/commits``) is written into the ``gpgsig``
+    header, every further line of it indented by one space, as git writes it."""
 
     tree: str
     parents: tuple[str, ...]
     author: Signature
     committer: Signature
     message: str
+    signature: str | None = None
+
+    def _header(self) -> list[str]:
+        lines = [f"tree {self.tree}", *(f"parent {parent}" for parent in self.parents)]
+        return [*lines, f"author {self.author.line()}", f"committer {self.committer.line()}"]
+
+    def unsigned_payload(self) -> bytes:
+        """The commit object without the ``gpgsig`` header: what a signature covers."""
+        return ("\n".join(self._header()) + "\n\n" + self.message).encode()
 
     def payload(self) -> bytes:
-        lines = [f"tree {self.tree}", *(f"parent {parent}" for parent in self.parents)]
-        lines += [f"author {self.author.line()}", f"committer {self.committer.line()}"]
+        """The commit object as stored (its id is the git object id of these bytes)."""
+        lines = self._header()
+        if self.signature is not None:
+            lines.append("gpgsig " + "\n ".join(self.signature.rstrip("\n").split("\n")))
         return ("\n".join(lines) + "\n\n" + self.message).encode()
 
 

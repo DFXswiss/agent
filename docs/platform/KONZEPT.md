@@ -410,7 +410,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** ergänzt [§9 Punkt 1](#k-9-b1) und [Idee 37](#k-idee-37).
 - **Umsetzung:** gebaut – [ADR-053](adr/053-operator-github-account.md) (KOR-27),
   [ADR-054](adr/054-repository-list-optional.md) (KOR-30); allgemeiner Verbindungsweg
-  [ADR-065](adr/065-github-existing-token.md) (KOR-25).
+  [ADR-065](adr/065-github-existing-token.md) (KOR-25); das Betreiberkonto als Konto seiner Organization und mehrere
+  Konten mit Wahl je Operation, Session und Aufgabe [ADR-076](adr/076-github-identities.md) (KOR-47).
 
 <a id="e-07"></a>
 
@@ -860,7 +861,7 @@ Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [A11](#a-11) Lesen über Workgroups | Eine Session liest nur in ihrer eigenen Workgroup, andere sieht sie nur namentlich | KOR-45 |
 | [A12](#a-12) Support | Keine Support-Freigabe | KOR-56 |
 | [A13](#a-13) Default-Workgroup | Das Schreibrecht in der Default-Workgroup lässt sich nicht herabsetzen | KOR-55 |
-| [A15](#a-15) Gemeinsame Sessions | Die Session erfährt nicht, wer anweist; Folgen und GitHub-Aktionen hängen am Besitzer der Aufgabe | KOR-46, KOR-47 |
+| [A15](#a-15) Gemeinsame Sessions | Die Session erfährt nicht, wer anweist; Verbrauch und Kinder hängen am Besitzer der Aufgabe (Operationen nennen den Anweisenden, GitHub-Aktionen nutzen nur seine Identitäten: gebaut mit KOR-47) | KOR-46 |
 | [A17](#a-17) Geschützte Branches | Ohne Einstellung der Workgroup gelten `main`, `master`, `develop` und `release/*` als geschützt | KOR-49 |
 | [A18](#a-18) Blockierter Versuch | Ablehnungen durch den Kernel werden nicht je Session gezählt | KOR-60 |
 | Ideen 27–47, §16 | Stand je Idee in [spec/01-requirements.md](spec/01-requirements.md) Block R-16 | dort genannt |

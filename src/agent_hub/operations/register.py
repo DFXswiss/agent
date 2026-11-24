@@ -21,6 +21,13 @@ registration runs in one transaction:
    - H1 the session has not ended (`stopped`/`failed`) and its task is not closed - else `denied` (`rights_denied`);
    - `local_check: "rejected"` - `rejected` with the runner's error code, without H2-H6;
    - H2 the task owner (the actor) has `wg:write` on the workgroup now - else `denied` (`rights_denied`);
+   - H2a the GitHub identity (ADR-076 sections 2, 3 and 6; else `denied` with `rights_denied`): `triggered_by` names
+     an active member of the task's org; `github_identity` names an existing `github` record that the acting human
+     (`triggered_by`, else the task owner) may use in the hub's lenient form (`agent_hub.github.identities`: own, or a
+     company record of an org in which the human is an active member); a `github.*` type without `github_identity`
+     (an older runner; `github.request_connection` and `github.list_identities` act with no identity) is denied while
+     the session or the task names an identity or a default of the task's workgroup or org exists, so an old runner
+     never acts with another account than the chosen one;
    - H3 the type is known (`agent_hub.operations.types`) - else `rejected` (`unknown_type`);
    - H4 the type's limits (`agent_hub.operations.limits`) - else `denied` (`limit_exceeded`/`budget_exceeded`); only a
      main session may ask a person: `human.question` / `human.approval` of a subagent (depth > 0) is `denied`
@@ -29,8 +36,10 @@ registration runs in one transaction:
      takes the slot for the type's window (`agent_hub.operations.dedupe`); without a slot it is accepted directly.
 5. The decision is written: the operation row (`state`, `error_code`, `duplicate_of`, `decided_at`), transition 2
    (`at` = hub time, `by_id` NULL = the hub) and the audit row `operation.<state>` (actor: the device; detail with
-   the local check). An accepted `subagent.request` creates the child session (`agent_hub.operations.children`) and
-   answers its ID.
+   the local check, `github_identity` and `triggered_by`). An accepted `subagent.request` creates the child session
+   (`agent_hub.operations.children`; its `github_identity` is the registration's, else the parent session's) and
+   answers its ID. A `subagent.request` naming a `github_identity` passes the feature gate of the org first (`409
+   peer_outdated`, nothing stored).
 
 6. The task's attention record is refreshed (`agent_hub.attention.store`, ADR-076; the last lock of the transaction).
 
@@ -54,6 +63,7 @@ from agent_hub.audit.recorder import unchanged
 from agent_hub.auth.fields import B64u32, Strict, Uuid7
 from agent_hub.errors import HubError
 from agent_hub.events.store import StoredEvent, append_events
+from agent_hub.github import identities
 from agent_hub.operations import children, dedupe, limits
 from agent_hub.operations.children import Parent
 from agent_hub.operations.steps import OperationRef, add_transition, audit_step
@@ -71,6 +81,9 @@ OperationType = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z_]*(\.[a-z]
 Epoch = Annotated[int, Field(ge=1, le=2**31 - 1)]
 DECISION_SEQ = 2
 PARAMS_KIND = "operation.params"
+GITHUB_PREFIX = "github."
+IDENTITY_FREE = frozenset({"github.request_connection", "github.list_identities"})
+"""The `github.*` types that act with no identity (no backstop for them, H2a)."""
 FUTURE_SKEW = timedelta(seconds=120)
 """How far `requested_at` may lie ahead of the hub clock (the signature window of 03-api.md section 1)."""
 
@@ -95,6 +108,8 @@ class RegistrationRequest(Strict):
     error_code: OperationErrorCode | None = None
     dedupe: DedupeRequest | None
     params_event: dict[str, Any]
+    github_identity: Uuid7 | None = None
+    triggered_by: Uuid7 | None = None
 
     def check_form(self) -> None:
         """The error code comes exactly with `local_check: "rejected"` (the contract's `oneOf`)."""
@@ -197,13 +212,17 @@ def _one(connection: Connection, query: str, params: tuple[object, ...]) -> tupl
     return cast(tuple[Any, ...], connection.execute(query, params).fetchone())
 
 
+def _text(value: UUID | None) -> str | None:
+    return None if value is None else str(value)
+
+
 def _replay(connection: Connection, request: RegistrationRequest, params_event_id: str) -> Outcome:
     """The original decision of a repeated registration, or `409 id_conflict` for other content."""
     operation = UUID(request.operation_id)
     row = _one(
         connection,
-        "SELECT session_id, task_id, wg_id, type, created_at, dedupe_epoch, dedupe_tag, params_event_id, duplicate_of"
-        " FROM hub.operation WHERE id = %s",
+        "SELECT session_id, task_id, wg_id, type, created_at, dedupe_epoch, dedupe_tag, params_event_id, duplicate_of,"
+        " github_identity, triggered_by FROM hub.operation WHERE id = %s",
         (operation,),
     )
     decision = _one(
@@ -218,7 +237,19 @@ def _replay(connection: Connection, request: RegistrationRequest, params_event_i
         (request.task_id, request.operation_id),
     )
     dedupe_given = (None, None) if request.dedupe is None else (request.dedupe.epoch, request.dedupe.tag)
-    stored = (str(row[0]), str(row[1]), str(row[2]), row[3], row[4], row[5], row[6], str(row[7]), audited[0])
+    stored = (
+        str(row[0]),
+        str(row[1]),
+        str(row[2]),
+        row[3],
+        row[4],
+        row[5],
+        row[6],
+        str(row[7]),
+        audited[0],
+        _text(row[9]),
+        _text(row[10]),
+    )
     given = (
         request.session_id,
         request.task_id,
@@ -228,6 +259,8 @@ def _replay(connection: Connection, request: RegistrationRequest, params_event_i
         *dedupe_given,
         params_event_id,
         request.local_check,
+        request.github_identity,
+        request.triggered_by,
     )
     local_error_matches = request.local_check == "passed" or tuple(decision) == ("rejected", request.error_code)
     if stored != given or not local_error_matches:
@@ -255,6 +288,26 @@ def _limits(
     return verdict if isinstance(verdict, str) else "budget_exceeded"
 
 
+def _identity_allowed(connection: Connection, request: RegistrationRequest, task: TaskRow) -> bool:
+    """H2a (module docstring)."""
+    if request.triggered_by is not None and not identities.is_member(connection, task.org_id, request.triggered_by):
+        return False
+    if request.github_identity is not None:
+        human = request.triggered_by or task.owner_id
+        return identities.usable_by(connection, request.github_identity, human)
+    if not request.type.startswith(GITHUB_PREFIX) or request.type in IDENTITY_FREE:
+        return True
+    chosen = cast(
+        tuple[UUID | None, UUID | None],
+        connection.execute(
+            "SELECT s.github_identity, t.github_identity FROM hub.session s JOIN hub.task t ON t.id = s.task_id"
+            " WHERE s.id = %s",
+            (request.session_id,),
+        ).fetchone(),
+    )
+    return chosen == (None, None) and not identities.has_default(connection, task.org_id, task.wg_id)
+
+
 def _refusal(
     connection: Connection,
     request: RegistrationRequest,
@@ -270,6 +323,8 @@ def _refusal(
     if request.local_check == "rejected":
         return "rejected", request.error_code
     if not rights.can(connection, task.owner_id, rights.WG_WRITE, wg_id=task.wg_id):
+        return "denied", "rights_denied"
+    if not _identity_allowed(connection, request, task):
         return "denied", "rights_denied"
     if request.type not in OPERATION_TYPES:
         return "rejected", "unknown_type"
@@ -310,11 +365,13 @@ def register(
     connection.execute("SELECT pg_advisory_xact_lock(%s)", (AUDIT_LOCK,))
     _check_header(request, stored)
     _check_session(request, session)
+    if request.type == SUBAGENT_REQUEST and request.github_identity is not None:
+        identities.require_feature(connection, session.org_id, root_key)
     operation = UUID(request.operation_id)
     inserted = connection.execute(
         "INSERT INTO hub.operation (id, org_id, wg_id, task_id, session_id, device_id, actor_id, type, state,"
-        " dedupe_epoch, dedupe_tag, params_event_id, created_at)"
-        " SELECT %s, org_id, wg_id, task_id, id, device_id, owner_id, %s, 'received', %s, %s, %s, %s"
+        " dedupe_epoch, dedupe_tag, params_event_id, created_at, github_identity, triggered_by)"
+        " SELECT %s, org_id, wg_id, task_id, id, device_id, owner_id, %s, 'received', %s, %s, %s, %s, %s, %s"
         " FROM hub.session WHERE id = %s ON CONFLICT (id) DO NOTHING RETURNING id",
         (
             operation,
@@ -323,6 +380,8 @@ def register(
             None if request.dedupe is None else request.dedupe.tag,
             stored.id,
             requested_at,
+            request.github_identity,
+            request.triggered_by,
             request.session_id,
         ),
     ).fetchone()
@@ -350,6 +409,8 @@ def register(
         session_id=parent.id,
         device_id=device,
         type=request.type,
+        github_identity=None if request.github_identity is None else UUID(request.github_identity),
+        triggered_by=None if request.triggered_by is None else UUID(request.triggered_by),
     )
     audit_step(
         connection,
@@ -365,7 +426,9 @@ def register(
     outcome = Outcome({})
     child = None
     if state == "accepted" and request.type == SUBAGENT_REQUEST:
-        child = children.create_child(connection, task, parent, operation, now, effects=outcome.effects)
+        child = children.create_child(
+            connection, task, parent, operation, now, effects=outcome.effects, github_identity=request.github_identity
+        )
     outcome.body = _answer(connection, state, error_code, duplicate_of, child)
     outcome.effects.org_frame(task.org_id, "operation", operation_row(connection, operation))
     attention.refresh(connection, task.id, now, outcome.effects)

@@ -1957,6 +1957,69 @@
             "detail"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "runner.operator_github_users"
+            },
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "denied",
+                "rejected",
+                "duplicate",
+                "failed"
+              ]
+            },
+            "task_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "session_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "target_kind": {
+              "type": "string",
+              "pattern": "^[a-z_]{1,32}$"
+            },
+            "target_id": {
+              "type": "string",
+              "description": "an ID (UUID, vm-..., key or code), never content",
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+            },
+            "detail": {
+              "description": "detail of audit rows with action runner.operator_github_users: the platform device's list of users outside the operator's organization who connect through the operator's GitHub account changed (ADR-076 section 7); counts only, never user IDs or the account. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+              "type": "object",
+              "properties": {
+                "count": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "added": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "removed": {
+                  "$ref": "../common.json#/$defs/count"
+                }
+              },
+              "required": [
+                "count",
+                "added",
+                "removed"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "result",
+            "target_kind",
+            "target_id",
+            "detail"
+          ],
+          "additionalProperties": false
         }
       ]
     },

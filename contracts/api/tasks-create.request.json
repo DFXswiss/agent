@@ -33,6 +33,10 @@
         "device_id"
       ],
       "additionalProperties": false
+    },
+    "github_identity": {
+      "$ref": "../common.json#/$defs/uuid",
+      "description": "the GitHub identity of the task (ADR-076 section 3); optional"
     }
   },
   "required": [

@@ -1,0 +1,13 @@
+{
+  "step": "done",
+  "login": "octo-cat",
+  "body": {
+    "login": "octo-cat",
+    "user_id": 583231,
+    "scopes": [
+      "repo"
+    ],
+    "created_at": "2026-11-24T12:00:00.000Z",
+    "source": "operator"
+  }
+}

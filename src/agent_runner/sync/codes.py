@@ -35,6 +35,7 @@ HUB_ERROR_CODES = frozenset(
         "header_invalid",
         "hpke_short",
         "id_conflict",
+        "identity_forbidden",
         "identity_unproven",
         "invite_code_invalid",
         "invite_code_length",

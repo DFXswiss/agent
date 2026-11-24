@@ -5,14 +5,17 @@
 (`journal.py`, state `received`) to its end, each in its own asyncio task, woken by `NOTIFY runner_operation` (task
 `operations`) and by a scan every `PERIOD_S`:
 
-1. **Checks** (`_check`): workgroup settings of the latest verified `settings.workgroup` event (defaults otherwise), the
-   acting user's GitHub connection (`credentials.acting`, HOT-14: the person whose instruction started the turn, stamped
-   at the receipt - never the task owner as such), the task's commits, then the formal checks (`checks.check`), the type
-   enabled on this device (an executor, and a pre-check for `extensions.NEEDS_PRECHECK`, else `unknown_type`) and the
-   type's pre-check (`extensions.PRECHECKS`; any error other than `CheckFailed` is `upstream_error`). The guest's
-   `local_check:"rejected"` skips them: its error is binding. An operation that needs a personal connection
-   (`acting.needs`) without an acting user (prompts of more than one person in the turn, or none known) is rejected at
-   once with `github_not_connected` and `acting.NO_ACTOR`: it never uses anybody's connection and is never held.
+1. **Checks** (`_check`): workgroup settings of the latest verified `settings.workgroup` event (defaults otherwise),
+   whether a GitHub identity may be available for the acting user (`github.identity.available`, KOR-47; the acting
+   user is `credentials.acting`'s, HOT-14: the person whose instruction started the turn, stamped at the receipt -
+   never the task owner as such), the task's commits, then the formal checks (`checks.check`), the type enabled on
+   this device (an executor, and a pre-check for `extensions.NEEDS_PRECHECK`, else `unknown_type`), the type's
+   pre-check (`extensions.PRECHECKS`; any error other than `CheckFailed` is `upstream_error`; every `github.*`
+   pre-check first resolves the identity the operation acts with, `github.identity`) and the attribution
+   (`register.attribution`: the identity of a `subagent.request`). The guest's `local_check:"rejected"` skips them:
+   its error is binding. An operation that needs a personal connection (`acting.needs`) without an acting user
+   (prompts of more than one person in the turn, or none known) is rejected at once with `github_not_connected` and
+   `acting.NO_ACTOR`: it never uses anybody's connection and is never held.
 
 1a. **Hold** (`_hold`, KOR-25, 05-runner.md section 12 step 3): a `github.*` operation whose checks fail only with
    `github_not_connected` is not registered but held (state `received`, `held_*` columns of migration 0012): `until`
@@ -25,6 +28,7 @@
    so the result comes with `operation.finished`). At `until` the hold ends with `github_not_connected` and
    `TIMEOUT_MESSAGES` (registered `rejected` like every local rejection). A held operation whose session ended
    (`SESSION_ENDED`; closing a task stops its sessions) is released and registered `rejected` with `not_found`, so it
+<<<<<<< HEAD
    never runs. A cached credential that the check refused (a revoked token, `401`) is remembered by its version
    (`held_credential`): the checks are skipped - no request with the refused token - until another version arrives.
    **Repository access** (KOR-65, rule E-29): a check that fails with `repo_not_accessible` and a next step
@@ -34,6 +38,12 @@
    authorisation at GitHub changes nothing the runner sees) and at once when a new credential of the acting user
    arrives; a changed reason or step (connected, but no access yet) is announced again. At `until` the operation is
    rejected with the timeout text followed by the step.
+=======
+   never runs. A check refused with the GitHub state of the device as it was (a revoked token, `401`, or no usable
+   identity) is remembered by the generation of that state (`held_credential` = `credentials.identities.generation`:
+   every cached `github` and identity record with its version, the choices and defaults, KOR-47): the checks are
+   skipped - no request with the refused token - until any of them changed.
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
    Flood limits per session: at most `HOLD_MAX` held at a time (more are rejected at once with `FULL_MESSAGES`), at
    most one `waiting` event per reason per `WAITING_EVERY_S` (a held operation whose event was left out gets it at a
    later scan). The state lives in the store, so a restarted daemon goes on with it.
@@ -83,11 +93,15 @@ from typing import Any
 import psycopg
 
 from agent_runner import registry
-from agent_runner.credentials import acting
+from agent_runner.credentials import acting, identities
 from agent_runner.credentials import cache as credential_cache
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import uuid7
+<<<<<<< HEAD
 from agent_runner.github import reach
+=======
+from agent_runner.github import identity
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.operations import checks, records, register, results, rules
 from agent_runner.operations import settings as workgroup_settings
@@ -347,7 +361,7 @@ class Pipeline:
         env = self.env
         async with store_session(env.db) as conn:
             current = await workgroup_settings.load(conn, env.storage_key, op.wg_id)
-            connected = await acting.cached_version(conn, op, "github") is not None
+            connected = await identity.available(conn, op, session)
             commits = await records.task_commits(conn, op.task_id) if op.type == "github.push" else set()
         request = checks.CheckRequest(
             op_type=op.type,
@@ -373,7 +387,8 @@ class Pipeline:
                 raise CheckFailed("upstream_error", message="A pre-check of the operation failed.") from None
         if any(name not in found.dedupe for name in NEEDS_PRECHECK.get(op.type, ())):
             raise CheckFailed("unknown_type", message="The operation type is not enabled on this device.")
-        return {"params": params, "dedupe": dict(found.dedupe), "data": dict(found.data)}
+        noted = await register.attribution(env.context, session, op, params)
+        return {"params": params, "dedupe": dict(found.dedupe), "data": {**noted, **found.data}}
 
     async def _checks(self, op: Operation) -> tuple[Operation, dict[str, Any] | None, dict[str, Any]] | None:
         """The (reloaded) operation, the local error and the checked parameters; None while the operation is held."""
@@ -435,7 +450,7 @@ class Pipeline:
 
     async def _github_version(self, op: Operation) -> int | None:
         async with store_session(self.env.db) as conn:
-            return await acting.cached_version(conn, op, "github")
+            return await identities.generation(conn)
 
     async def _hold(
         self,
@@ -578,6 +593,7 @@ class Pipeline:
                         error_code=None if error is None else str(error["code"]),
                         params=checked.get("params", op.params),
                         extra=checked.get("dedupe", {}),
+                        attribution=checked.get("data", {}),
                     )
                     if built.size_exceeded and error is None:
                         error = {"code": "size_exceeded", "message": "The parameters are too large."}

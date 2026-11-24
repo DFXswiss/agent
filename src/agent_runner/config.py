@@ -66,6 +66,7 @@ NAMES = (
     "OPERATOR_SUBSCRIPTION_ORGS",
     "OPERATOR_GITHUB_TOKEN_FILE",
     "OPERATOR_GITHUB_USERS",
+    "OPERATOR_GITHUB_ORG",
     # Work VMs (docs/platform/spec/13-work-vm.md, ADR-059)
     "WORKVM_SLOTS",
     "WORKVM_SLOTS_SELF",
@@ -190,6 +191,9 @@ class Config:
     """Public client ID of the OAuth App whose device flow "Connect GitHub" prefers (KOR-65, ADR-015 addendum)."""
     github_app_slug: str | None = None
     """URL name of the GitHub App (`https://github.com/apps/<slug>`), for the install link of a next step (KOR-65)."""
+    operator_github_org: str | None = None
+    """The organization that owns the operator's GitHub account (platform devices only, only together with the file;
+    KOR-47, ADR-076 section 7): an admin's company `github.connect` for it answers with the operator's token."""
 
     @property
     def pg_dir(self) -> Path:
@@ -260,7 +264,7 @@ def load_config(
     if openrouter is not None and device_kind == "org":
         raise RunnerError("config_invalid", "OPENROUTER_KEY_FILE")
     operator_dir, operator_orgs = _operator(raw, require, device_kind)
-    github_file, github_users = _operator_github(raw, require, device_kind)
+    github_file, github_users, github_org = _operator_github(raw, require, device_kind)
     automation_raw = raw("LOGIN_AUTOMATION") or ("on" if device_kind == "platform" else "off")
     if automation_raw not in ("on", "off"):
         raise RunnerError("config_invalid", "LOGIN_AUTOMATION")
@@ -305,6 +309,7 @@ def load_config(
         operator_subscription_orgs=operator_orgs,
         operator_github_token_file=github_file,
         operator_github_users=github_users,
+        operator_github_org=github_org,
         **_workvm(raw, require, integers, test_mode),
         context_interval_seconds=integers["CONTEXT_INTERVAL_SECONDS"],
         context_cache_mib=integers["CONTEXT_CACHE_MIB"],
@@ -380,6 +385,7 @@ def environment(config: Config) -> dict[str, str]:
         "OPERATOR_SUBSCRIPTION_ORGS": ",".join(sorted(config.operator_subscription_orgs)) or None,
         "OPERATOR_GITHUB_TOKEN_FILE": config.operator_github_token_file,
         "OPERATOR_GITHUB_USERS": ",".join(sorted(config.operator_github_users)) or None,
+        "OPERATOR_GITHUB_ORG": config.operator_github_org,
         "WORKVM_MAX_SIZE": None if config.workvm_max_size == "large" else config.workvm_max_size,
         "WORKVM_TEMPLATE": config.workvm_template,
     }
@@ -557,10 +563,12 @@ def _org_ids(value: str) -> frozenset[str]:
 
 def _operator_github(
     raw: Callable[[str], str], require: frozenset[str], device_kind: DeviceKind | None
-) -> tuple[Path | None, frozenset[str]]:
-    """`OPERATOR_GITHUB_TOKEN_FILE` and `OPERATOR_GITHUB_USERS` (KOR-27): both or neither, platform devices only.
-    The token is the operator's own GitHub connection, so the list names exactly one user - the operator; more are
-    `config_invalid` `OPERATOR_GITHUB_USERS:one_user_only` (a personal connection is never shared, HOT-14, ADR-053).
+) -> tuple[Path | None, frozenset[str], str | None]:
+    """`OPERATOR_GITHUB_TOKEN_FILE`, `OPERATOR_GITHUB_USERS` (KOR-27) and `OPERATOR_GITHUB_ORG` (KOR-47), platform
+    devices only: the file needs users or the organization (an organization ID, normalized to lower case), and users
+    or the organization need the file. The token is the operator's own GitHub connection, so the user list names at
+    most one user - the operator; more are `config_invalid` `OPERATOR_GITHUB_USERS:one_user_only` (a personal
+    connection is never shared, HOT-14, ADR-053); the organization's members use it as a company account (ADR-076).
 
     Only the path is checked here: the file is replaced atomically while the daemon runs, so its type, owner, mode
     and content are checked at each read (`github.operator.read_token`)."""
@@ -571,17 +579,30 @@ def _operator_github(
         lambda v: _absolute(v, "OPERATOR_GITHUB_TOKEN_FILE"),
     )
     users = _user_ids(raw("OPERATOR_GITHUB_USERS"))
+    org = _org_id(raw("OPERATOR_GITHUB_ORG"))
     if path is not None and device_kind == "org":
         raise RunnerError("config_invalid", "OPERATOR_GITHUB_TOKEN_FILE")
     if users and device_kind == "org":
         raise RunnerError("config_invalid", "OPERATOR_GITHUB_USERS")
-    if path is not None and not users:
+    if org is not None and device_kind == "org":
+        raise RunnerError("config_invalid", "OPERATOR_GITHUB_ORG")
+    if path is not None and not users and org is None:
         raise RunnerError("config_invalid", "OPERATOR_GITHUB_USERS")
-    if users and path is None:
+    if (users or org is not None) and path is None:
         raise RunnerError("config_invalid", "OPERATOR_GITHUB_TOKEN_FILE")
     if len(users) > 1:
         raise RunnerError("config_invalid", OPERATOR_GITHUB_ONE_USER)
-    return path, users
+    return path, users, org
+
+
+def _org_id(value: str) -> str | None:
+    """`OPERATOR_GITHUB_ORG`: one organization ID (a UUID, normalized to lower case); empty = none."""
+    if not value.strip():
+        return None
+    try:
+        return str(uuid.UUID(value.strip()))
+    except ValueError:
+        raise RunnerError("config_invalid", "OPERATOR_GITHUB_ORG") from None
 
 
 def _user_ids(value: str) -> frozenset[str]:

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/github-identities-list.request.json",
+  "title": "GET /v1/me/github-identities request",
+  "description": "No query parameters (03-api.md section 4.8).",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

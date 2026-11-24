@@ -8,8 +8,10 @@
   runner's signed client (`agent_runner.sync.http.HubClient`), whose answers must be signed by the pinned hub key.
 
 Failures become `PlatformError`s: a connection failure `hub_unreachable`; a verified refusal `hub_refused` with the
-hub's code (`hub_error`, a code of the closed list `agent_runner.sync.codes`); an answer that does not verify
-`hub_refused` with `reason` (a closed code of the signed client).
+hub's code (`hub_error`, a code of the closed list `agent_runner.sync.codes`) and the refusal's `detail` kept on the
+error (not printed); a `409 peer_outdated` also names the devices that must update first (`devices`, when the hub's
+`detail.devices` lists UUIDs, ADR-076 section 3); an answer that does not verify `hub_refused` with `reason` (a closed
+code of the signed client).
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from urllib.parse import quote
 import httpx
 
 from agent_platform.errors import PlatformError
+from agent_runner.crypto.ids import is_uuid7
 from agent_runner.crypto.keys import Identity
 from agent_runner.sync.codes import HUB_ERROR_CODES
 from agent_runner.sync.http import HubClient, HubRefusal, HubTransportError, encode_body
@@ -41,10 +44,19 @@ def segment(value: str) -> str:
     return quote(value, safe="")
 
 
-def refused(code: str, status: int, retry_after: int | None = None) -> PlatformError:
-    """A verified refusal; `retry_after` the seconds of the hub's `Retry-After` (a `429 rate_limited`)."""
-    extra = {} if retry_after is None else {"retry_after": retry_after}
-    return PlatformError("hub_refused", hub_error=code, status=status, **extra)
+def refused(
+    code: str, status: int, retry_after: int | None = None, detail: dict[str, object] | None = None
+) -> PlatformError:
+    """A verified refusal; `retry_after` the seconds of the hub's `Retry-After` (a `429 rate_limited`), `detail` the
+    refusal's detail (module docstring)."""
+    extra: dict[str, object] = {} if retry_after is None else {"retry_after": retry_after}
+    found = detail or {}
+    devices = found.get("devices")
+    if code == "peer_outdated" and isinstance(devices, list) and devices and all(is_uuid7(d) for d in devices):
+        extra["devices"] = devices
+    error = PlatformError("hub_refused", hub_error=code, status=status, **extra)
+    error.detail = dict(found)
+    return error
 
 
 def anon_request(origin: str, method: str, path: str, body: object | None = None) -> dict[str, Any]:
@@ -100,7 +112,7 @@ class AgentClient:
                 raise PlatformError("agent_revoked") from None
             if refusal.code == "key_unknown":
                 raise PlatformError("not_paired", hub_error="key_unknown") from None
-            raise refused(refusal.code, refusal.status, refusal.retry_after) from None
+            raise refused(refusal.code, refusal.status, refusal.retry_after, refusal.detail) from None
         except HubTransportError as error:
             if error.reason == "hub_unreachable":
                 raise PlatformError("hub_unreachable") from None

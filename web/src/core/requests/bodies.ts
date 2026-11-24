@@ -3,8 +3,12 @@
 // that does not match is refused like a forged response (`params_invalid`): the browser renders only checked bodies.
 //
 // `github.connect` may carry an existing token (KOR-25, ADR-065); its `done` then names the scopes and the source.
+// GitHub identities (KOR-47, ADR-076): the request may name the record to reconnect (`identity_id`), a company account
+// of an organization (`org_id`, its `done` then carries the credential `body` for the admin's client to seal) and ask
+// for an own signing key (`signing_key`, outcome `signing`); `source` adds `operator`.
 //
 // Used by WEB-09 (`github.connect`) and WEB-10 (`claude.login`, `credential.check`, `mailbox.check`).
+import { isUuid7 } from '../encoding/ids';
 import { isRecord } from '../registry';
 
 export const REQUEST_KINDS = ['github.connect', 'claude.login', 'credential.check', 'mailbox.check'] as const;
@@ -42,11 +46,44 @@ export const CODE_RE = /^[!-~]+$/;
 export const TOKEN_RE = /^[!-~]{1,4096}$/;
 /** A scope of a classic token (`X-OAuth-Scopes`). */
 export const SCOPE_RE = /^[a-z0-9:_-]{1,64}$/;
+<<<<<<< HEAD
 export const SOURCES = ['device_flow', 'token'] as const;
 /** The device flows `github.connect` may name (`app`, KOR-65). */
 export const APPS = ['oauth_app', 'github_app'] as const;
 export type App = (typeof APPS)[number];
+=======
+export const SOURCES = ['device_flow', 'token', 'operator'] as const;
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 export type Source = (typeof SOURCES)[number];
+/** Outcomes of `signing_key` in the final answer of `github.connect` (KOR-47). */
+export const SIGNING_OUTCOMES = ['registered', 'scope_missing', 'refused'] as const;
+export type SigningOutcome = (typeof SIGNING_OUTCOMES)[number];
+/** The display name of a GitHub account (`contracts/credentials/github.json`): printable ASCII without `<` and `>`. */
+export const NAME_RE = /^[ -;=?-~]{1,255}$/;
+/** b64u of exactly 32 bytes. */
+const B64U_32_RE = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
+/** The OpenSSH form of an Ed25519 public key with an optional comment. */
+const SSH_PUBLIC_RE = /^ssh-ed25519 [A-Za-z0-9+/]{68}( [!-~]{1,64})?$/;
+
+/** The identity's own signing key (`signing_key` of `contracts/credentials/github.json`). */
+export interface SigningKey {
+  readonly alg: 'ssh-ed25519';
+  readonly seed: string;
+  readonly public: string;
+  readonly github_key_id?: number;
+}
+
+/** The plaintext body of a `github` credential record (`contracts/credentials/github.json`). */
+export interface GithubBody {
+  readonly token: string;
+  readonly login: string;
+  readonly user_id: number;
+  readonly scopes: string[];
+  readonly source?: Source;
+  readonly created_at: string;
+  readonly name?: string;
+  readonly signing_key?: SigningKey;
+}
 
 export type ResponseBody =
   | {
@@ -64,6 +101,9 @@ export type ResponseBody =
       readonly valid?: boolean;
       readonly scopes?: readonly string[];
       readonly source?: Source;
+      readonly identity_id?: string;
+      readonly signing?: SigningOutcome;
+      readonly body?: GithubBody;
     }
   | { readonly step: 'failed'; readonly code: FailureCode };
 
@@ -88,11 +128,37 @@ const isInt = (value: unknown, min: number, max: number): value is number =>
 export const isScopes = (value: unknown): value is string[] =>
   Array.isArray(value) && value.length <= 64 && value.every((scope) => matches(scope, SCOPE_RE));
 
+const isPositive = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 1;
+
+const isSigningKey = (value: unknown): value is SigningKey =>
+  isRecord(value) &&
+  keysAre(value, ['alg', 'seed', 'public'], ['github_key_id']) &&
+  value.alg === 'ssh-ed25519' &&
+  matches(value.seed, B64U_32_RE) &&
+  matches(value.public, SSH_PUBLIC_RE) &&
+  (value.github_key_id === undefined || isPositive(value.github_key_id));
+
+/** The body exactly as `contracts/credentials/github.json` allows it (`source`, `name`, `signing_key` optional). */
+export const isGithubBody = (value: unknown): value is GithubBody =>
+  isRecord(value) &&
+  keysAre(value, ['token', 'login', 'user_id', 'scopes', 'created_at'], ['source', 'name', 'signing_key']) &&
+  matches(value.token, TOKEN_RE) &&
+  matches(value.login, LOGIN_RE) &&
+  isPositive(value.user_id) &&
+  isScopes(value.scopes) &&
+  (value.source === undefined || (SOURCES as readonly unknown[]).includes(value.source)) &&
+  typeof value.created_at === 'string' &&
+  (value.name === undefined || matches(value.name, NAME_RE)) &&
+  (value.signing_key === undefined || isSigningKey(value.signing_key));
+
+const optionalUuid = (value: unknown): boolean => value === undefined || isUuid7(value);
+
 /** A request body a user may send for `kind` (first request or, with `follows`, a follow-up). */
 export function validRequestBody(kind: RequestKind, body: unknown, followUp: boolean): boolean {
   if (!isRecord(body)) return false;
   switch (kind) {
     case 'github.connect':
+<<<<<<< HEAD
       // without `token` the device flow runs (of the app `app` names, KOR-65); with it the device checks and stores an
       // existing token (KOR-25); never both
       return (
@@ -100,6 +166,16 @@ export function validRequestBody(kind: RequestKind, body: unknown, followUp: boo
         keysAre(body, [], ['token', 'app']) &&
         (body.token === undefined || matches(body.token, TOKEN_RE)) &&
         (body.app === undefined || (body.token === undefined && (APPS as readonly unknown[]).includes(body.app)))
+=======
+      // without `token` the device flow runs; with it the device checks and stores an existing token (KOR-25)
+      return (
+        !followUp &&
+        keysAre(body, [], ['token', 'org_id', 'signing_key', 'identity_id']) &&
+        (body.token === undefined || matches(body.token, TOKEN_RE)) &&
+        optionalUuid(body.org_id) &&
+        optionalUuid(body.identity_id) &&
+        (body.signing_key === undefined || typeof body.signing_key === 'boolean')
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
       );
     case 'mailbox.check':
       return !followUp && keysAre(body, []);
@@ -135,10 +211,13 @@ export function checkResponseBody(kind: RequestKind, body: unknown): ResponseBod
           );
         return (
           body.step === 'done' &&
-          keysAre(body, ['step', 'login'], ['scopes', 'source']) &&
+          keysAre(body, ['step', 'login'], ['scopes', 'source', 'identity_id', 'signing', 'body']) &&
           matches(body.login, LOGIN_RE) &&
           (body.scopes === undefined || isScopes(body.scopes)) &&
-          (body.source === undefined || (SOURCES as readonly unknown[]).includes(body.source))
+          (body.source === undefined || (SOURCES as readonly unknown[]).includes(body.source)) &&
+          optionalUuid(body.identity_id) &&
+          (body.signing === undefined || (SIGNING_OUTCOMES as readonly unknown[]).includes(body.signing)) &&
+          (body.body === undefined || isGithubBody(body.body))
         );
       case 'claude.login':
         if (body.step === 'authorize')

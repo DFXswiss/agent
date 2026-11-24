@@ -1746,6 +1746,15 @@ def build_wraps() -> Json:
                 "current_epoch": 2,
             },
         ),
+        # Key model KM-35 (ADR-076): the `cred` scope of the org itself (company credentials) is read by the devices
+        # assigned to its workgroups only; an active admin wraps each epoch for them, a device wraps for a device.
+        ("cred_org_admin_for_device", {**args("alice", "cred", ORG, 1, "device"), "current_epoch": 1}),
+        ("cred_org_device_for_device", {**args("device", "cred", ORG, 1, "pdev"), "current_epoch": 1}),
+        ("cred_org_device_self", {**args("pdev", "cred", ORG, 1, "pdev"), "current_epoch": 1}),
+        (
+            "cred_org_admin_by_inheritance_for_device",
+            {**edge_args("carol", "cred", ORG, 1, "dev2"), "current_epoch": 1},
+        ),
     ):
         ctx.run("check_cred_wrap", case)
         cred_valid.append({"name": name, "args": case})
@@ -1809,6 +1818,32 @@ def build_wraps() -> Json:
             {**args("carol", "cred", pid("alice"), 2, "device"), "current_epoch": 2},
             "wrap_unauthorized",
         ),
+        # Key model KM-35: no user receives the org's credential key, not even an admin; a member that is no admin
+        # and a removed admin do not wrap it; an epoch after the current one is refused.
+        neg(
+            "cred_org_admin_is_no_recipient",
+            "check_cred_wrap",
+            {**args("alice", "cred", ORG, 1, "alice"), "current_epoch": 1},
+            "wrap_unauthorized",
+        ),
+        neg(
+            "cred_org_member_is_no_wrapper",
+            "check_cred_wrap",
+            {**edge_args("bob", "cred", ORG, 1, "dev2"), "current_epoch": 1},
+            "wrap_unauthorized",
+        ),
+        neg(
+            "cred_org_removed_admin_is_no_wrapper",
+            "check_cred_wrap",
+            {**args("carol", "cred", ORG, 1, "device"), "current_epoch": 1},
+            "wrap_unauthorized",
+        ),
+        neg(
+            "cred_org_epoch_in_future",
+            "check_cred_wrap",
+            {**args("alice", "cred", ORG, 2, "device"), "current_epoch": 1},
+            "wrap_unauthorized",
+        ),
         # Key model (docs/platform/key-model.md): KM-10, a device without a workgroup is no reader of the org key
         # (ADR-007); KM-06, only principals of the log receive wraps (an ID outside the log, e.g. an agent's, is none).
         neg(
@@ -1857,6 +1892,21 @@ def build_wraps() -> Json:
         }
         for wrapper in ("alice", "device", "bob")
     ]
+    org_cred_existing = [wraps.WrapSlot("cred", ORG, 1, pid("device"))]
+    org_cred_plans = [
+        {
+            "owner": ORG,
+            "wrapper": pid(wrapper),
+            "current_epoch": 1,
+            "missing": [
+                slot.to_json()
+                for slot in catchup.missing_cred_wraps(
+                    [log], ORG, pid(wrapper), current_epoch=1, existing=org_cred_existing
+                )
+            ],
+        }
+        for wrapper in ("device", "pdev", "alice", "bob")
+    ]
     rotated = edge.copy()
     rotated.add("rotate", "alice", scope="wg", scope_id=W1, epoch=2)  # 13: carol needs W1 epochs 1 and 2
     edge_log = verify.verify_log(rotated.entries, sig_pk("alice"))
@@ -1872,7 +1922,8 @@ def build_wraps() -> Json:
     return {
         "about": "Wrap rules W1-W3 of 04-crypto.md section 6.3 against the final state of the main log of log.json "
         "and, for admins without explicit workgroup access (ADR-058), the edge log of log-rotation.json; cred wraps, "
-        "and catch-up plans (section 5.11). See README.md, 'Log vectors'.",
+        "and catch-up plans (section 5.11), also for the credential key of an organization (devices only, KM-35). See "
+        "README.md, 'Log vectors'.",
         "identities": _identities(),
         "ids": _ids(),
         "founder": sig_pk("alice"),
@@ -1897,6 +1948,7 @@ def build_wraps() -> Json:
         "cred_valid": cred_valid,
         "catch_up": {"existing": [slot.to_json() for slot in existing], "plans": plans},
         "cred_catch_up": {"existing": [slot.to_json() for slot in cred_existing], "plans": cred_plans},
+        "org_cred_catch_up": {"existing": [slot.to_json() for slot in org_cred_existing], "plans": org_cred_plans},
         "admin_catch_up": {
             "log": _ref("edge_rotated", EDGE_COUNT + 1),
             "existing": [slot.to_json() for slot in edge_existing],

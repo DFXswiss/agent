@@ -121,6 +121,15 @@ describe('prepareTask', () => {
     });
   });
 
+  it('sends the chosen GitHub identity with the task, none for automatic (ADR-076)', async () => {
+    const t = await taskWorld();
+    const id = '0190f000-0000-7000-8000-0000000000e1';
+    const chosen = await prepareTask(t.context, { org: t.org, wg: t.wg, prompt: 'x', githubIdentity: id });
+    expect(chosen.body.github_identity).toBe(id);
+    const automatic = await prepareTask(t.context, { org: t.org, wg: t.wg, prompt: 'x' });
+    expect(automatic.body).not.toHaveProperty('github_identity');
+  });
+
   it('refuses without write access, without text, above the size limit and in a blocked org', async () => {
     const t = await taskWorld();
     const input = { org: t.org, wg: t.wg, prompt: 'x' };

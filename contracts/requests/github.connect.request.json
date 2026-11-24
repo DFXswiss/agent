@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/github.connect.request.json",
   "title": "device request body github.connect",
-  "description": "no parameters: the GitHub device flow the device prefers (the OAuth App when set up, else the GitHub App; KOR-65); app: the device flow of that app; token: store an existing GitHub token (a GitHub CLI login or a personal access token) after the device checked it (KOR-25). At most one of app and token (the device answers upstream_error to both)",
+  "description": "no parameters: the device flow of the GitHub App; token: store an existing GitHub token (a GitHub CLI login or a personal access token) after the device checked it (KOR-25); org_id: a company account of the organization (KOR-47); signing_key: also an own signing key (KOR-47)",
   "type": "object",
   "properties": {
     "token": {
@@ -19,6 +19,18 @@
         "github_app"
       ],
       "description": "oauth_app: the OAuth App (every repository the account can reach); github_app: the GitHub App (repositories of owners where it is installed)"
+    },
+    "org_id": {
+      "$ref": "../common.json#/$defs/uuid",
+      "description": "connect a company account of this organization (requested by an admin): the final answer carries the credential body for the admin's client, which seals it under a fresh epoch of the organization's credential key for the organization's devices, signs and stores it (ADR-076 section 1)"
+    },
+    "signing_key": {
+      "type": "boolean",
+      "description": "create and register an own SSH signing key for the account (ADR-076 section 5)"
+    },
+    "identity_id": {
+      "$ref": "../common.json#/$defs/uuid",
+      "description": "reconnect into this identity record of the requesting user (same ID, version + 1); without it the device updates the primary record when it holds the same GitHub account, creates the primary record when there is none and otherwise adds a record (KOR-47)"
     }
   },
   "required": [],

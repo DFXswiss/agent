@@ -5,7 +5,8 @@ is given (`answer_text`, the same text the web client sends).
 
 The tool seals what the web client seals: a new task is `POST /v1/tasks` with the events `task.meta` (`{"title"}`,
 derived from the prompt as `web/src/core/tasks/title.ts`, vectors `contracts/tasks/title.json`) and `prompt`
-(`{"attachments": [], "text"}`), a further prompt is `POST /v1/tasks/{task}/prompts`. Events are sealed for the
+(`{"attachments": [], "text"}`) and, when one is chosen, the task's GitHub identity (`github_identity`, ADR-076 section
+3; without it the identity is automatic), a further prompt is `POST /v1/tasks/{task}/prompts`. Events are sealed for the
 workgroup under its current epoch (`eventio.seal`: the key from the user's own wraps, checked against the verified
 org log; refused while the workgroup's rotation is owed) and signed by the user's identity. Reading opens the task's
 events of the workgroup scope with the one reader (`reader.settle`); an event whose key the user does not hold is
@@ -117,18 +118,26 @@ def _placement(device: str | None, vm: str | None) -> dict[str, str] | None:
 
 
 def task_create(
-    account: Account, wg: str, text: str, device: str | None = None, vm: str | None = None
+    account: Account,
+    wg: str,
+    text: str,
+    device: str | None = None,
+    vm: str | None = None,
+    *,
+    github_identity: str | None = None,
 ) -> dict[str, Any]:
-    """A new task with its first prompt in workgroup `wg` (on the chosen device and VM, if any)."""
+    """A new task with its first prompt in workgroup `wg` (on the chosen device and VM and with the chosen GitHub
+    identity, if any)."""
     org = find_org(account, _id(wg))
     prompt = _prompt(text)
     placement = _placement(device, vm)
+    chosen = {} if github_identity is None else {"github_identity": _id(github_identity)}
     task = uuid7()
     events = [
         _seal(account, (org, wg, task), "task.meta", {"title": derive_title(prompt)}),
         _seal(account, (org, wg, task), "prompt", {"attachments": [], "text": prompt}),
     ]
-    body: dict[str, object] = {"task_id": task, "wg_id": wg, "events": events}
+    body: dict[str, object] = {"task_id": task, "wg_id": wg, "events": events, **chosen}
     if placement is not None:
         body["placement"] = placement
     try:
@@ -145,6 +154,7 @@ def task_create(
         "title": derive_title(prompt),
         "session_id": session.get("session_id") if isinstance(session, dict) else None,
         "placement": placement,
+        **chosen,
     }
 
 

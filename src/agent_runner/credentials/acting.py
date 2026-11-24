@@ -26,6 +26,28 @@ keeps it so).
   ("no_actor")` without an acting user, so nothing is ever opened for an operation whose acting user is unknown, and
   `CredentialUnavailable("shared")` for a copy of the operator's GitHub token held by anybody but the operator's user
   (`github.operator.foreign_copy`; stored while several users could be approved).
+
+GitHub identities (KOR-47, ADR-076): the acting user may hold several own `github` records beside the primary one,
+and a task may act with a company record of its organization (`github.identity` decides which one, with the acting
+user as the human of ADR-076 section 2). Every opening of a GitHub identity record for an operation goes through here
+as well:
+
+- `opened_identity(context, operation, record)`: the body of an identity record (`credentials.identities`) for one
+  use. A personal record (`owner_kind` `user`) opens only when its owner is the acting user (and is no foreign copy of
+  the operator's token); a company record (`org`) is no personal connection - whether the acting user may use it is
+  decided by `github.identity.usable` from the verified membership log - and opens for any operation with an acting
+  user. `CredentialUnavailable` (`no_actor`, `not_actor`, `shared` or the opening's own reason) otherwise.
+- `primary_record_id(conn, operation)`: the record ID of the acting user's cached primary record (None without one).
+- `attribution(context, user)`: `(GitHub account ID, login)` of a person's own primary `github` record, for naming
+  that person as a co-author of a commit (`Co-authored-by`). This is **attribution, not use of the connection**: only
+  the account ID and login leave this function, never the token; nothing is sent with it. None without a record, for
+  a body without a valid account ID and login, and for a copy of the operator's token (`source:"operator"`, or a
+  foreign copy).
+- `instructors(conn, task_id)`: the verified authors of the task's delivered prompts that are still stored on this
+  device (`prompt_event.author_id`, deliveries `typed` or `accepted`), newest prompt first, each once - the humans
+  that may be named as co-authors (the task owner through the prompt that created the task). Prompt events are pruned
+  a day after their delivery except the earliest accepted one of each task (`prompts.retention`), so a person whose
+  prompts are all pruned can no longer be named.
 """
 
 from __future__ import annotations
@@ -37,11 +59,16 @@ from typing import Any, Protocol
 
 from psycopg import AsyncConnection
 
-from agent_runner.credentials import cache
+from agent_runner.credentials import cache, identities
+from agent_runner.credentials.identities import Identity
 from agent_runner.github import operator
+from agent_runner.sync.http import HubRefusal
 
 PERSONAL_KINDS = frozenset({"github"})
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_LOGIN_RE = re.compile(r"^[A-Za-z0-9-]{1,39}$")
+MAX_ACCOUNT_ID = 9_007_199_254_740_991
+DELIVERED = ("typed", "accepted")
 NO_ACTOR = (
     "This instruction cannot be attributed to exactly one person, so no personal GitHub connection is used. Ask the"
     " person who wants the GitHub action to write the request again."
@@ -124,3 +151,59 @@ async def opened(context: Any, operation: Acting, kind: str) -> AsyncIterator[di
         if operator.foreign_copy(context, operation.actor_id, body.get("token")):
             raise cache.CredentialUnavailable("shared")
         yield body
+
+
+@asynccontextmanager
+async def opened_identity(context: Any, operation: Acting, record: Identity) -> AsyncIterator[dict[str, Any]]:
+    """The body of a GitHub identity record for one use (module docstring)."""
+    if needs(operation.type) != "github":
+        raise ValueError("not a personal connection of this operation")
+    if operation.actor_id is None:
+        raise cache.CredentialUnavailable("no_actor")
+    if record.owner_kind == identities.USER and record.owner != operation.actor_id:
+        raise cache.CredentialUnavailable("not_actor")
+    async with identities.opened(context, record) as body:
+        if record.owner_kind == identities.USER and operator.foreign_copy(context, record.owner, body.get("token")):
+            raise cache.CredentialUnavailable("shared")
+        yield body
+
+
+async def primary_record_id(conn: AsyncConnection[Any], operation: Acting) -> str | None:
+    """The record ID of the acting user's cached primary `github` record."""
+    if operation.actor_id is None:
+        return None
+    return await identities.primary_id(conn, operation.actor_id)
+
+
+def _account(body: dict[str, Any]) -> tuple[int, str] | None:
+    login, account = body.get("login"), body.get("user_id")
+    if not isinstance(login, str) or not _LOGIN_RE.fullmatch(login):
+        return None
+    if not isinstance(account, int) or isinstance(account, bool) or not 1 <= account <= MAX_ACCOUNT_ID:
+        return None
+    return account, login
+
+
+async def attribution(context: Any, user: str) -> tuple[int, str] | None:
+    """`(account ID, login)` of the person's own primary GitHub record, to name the person (module docstring)."""
+    try:
+        async with cache.opened(context, user, "github") as body:
+            found = _account(body)
+            copy = body.get("source") == "operator" or operator.foreign_copy(context, user, body.get("token"))
+    except (cache.CredentialUnavailable, HubRefusal):
+        return None
+    return None if copy else found
+
+
+async def instructors(conn: AsyncConnection[Any], task_id: str) -> list[str]:
+    """The verified authors of the task's delivered prompts stored on this device, newest first, each once."""
+    cur = await conn.execute(
+        "SELECT e.author_id::text FROM runner.prompt_event e JOIN runner.prompt_delivery d ON d.event_id = e.event_id"
+        " WHERE e.task_id = %s AND d.state = ANY(%s) AND e.author_id IS NOT NULL ORDER BY e.scope_seq DESC",
+        (task_id, list(DELIVERED)),
+    )
+    found: list[str] = []
+    for (author,) in await cur.fetchall():
+        if author not in found:
+            found.append(author)
+    return found

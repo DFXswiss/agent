@@ -34,7 +34,8 @@ and an optional value (versions, counts, seconds; never a secret). The order is 
 - `operator_github` (KOR-27, ADR-053): ok `off` without the setting, ok `usable` when the operator's GitHub token
   file passes the checks of every connect (`github.operator`), else warn with the reason (`missing`, `directory`,
   `not_regular`, `owner`, `mode`, `unreadable`, `format`): connects of approved users fail until it is fixed, the
-  daemon runs on (as for `operator_subscriptions`). Never the token, the account or the approved users.
+  daemon runs on (as for `operator_subscriptions`); `value` is `OPERATOR_GITHUB_ORG` when set (KOR-47). Never the
+  token, the account or the approved users.
 - `test_mode`: ok for `AGENT_RUNNER_TEST_MODE=0`; warn `test_mode_on` (production MUST run with 0).
 - `sync`: ok when nothing waits for an operator; one fail per marker: `device_revoked`, `sync_fatal`
   (`origin_seq_conflict`, ...), `platform_stopped`, `org_stopped`.
@@ -350,7 +351,7 @@ def check_operator_subscriptions(config: Config) -> Check:
 
 def check_operator_github(config: Config) -> Check:
     result, detail = operator_github.check(config)
-    return Check("operator_github", result, detail)
+    return Check("operator_github", result, detail, config.operator_github_org)
 
 
 def check_test_mode(test_mode: bool) -> Check:

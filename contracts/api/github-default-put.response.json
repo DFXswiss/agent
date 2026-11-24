@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/github-default-put.response.json",
+  "title": "PUT /v1/github-defaults/{scope}/{scope_id} response",
+  "description": "Empty object.",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

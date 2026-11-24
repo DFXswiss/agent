@@ -21,7 +21,7 @@ A **held** operation (KOR-25, migration 0015, 05-runner.md section 12 step 3) st
 checked repository of its `session.status` `waiting` event, if any),
 `held_until` (the request plus 15 min), `held_notified_at` (when its `waiting` event was written), `held_ended_at`
 (when the hold ended: the acting user connected, the session ended, or `held_until` passed) and `held_credential`
-(the version of the acting user's cached `github` credential the last check refused; `credentials.acting`). `actor_id`
+(the GitHub generation of the device the last check refused, `credentials.identities.generation`, KOR-47). `actor_id`
 is the acting user stamped at the receipt (migration 0016, HOT-14). It is held while
 `held_until` is set and `held_ended_at` is not (`held`). `held_count` and `last_waiting` serve the flood limits per
 session.

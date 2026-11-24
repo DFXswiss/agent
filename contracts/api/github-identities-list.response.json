@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/github-identities-list.response.json",
+  "title": "GET /v1/me/github-identities response",
+  "description": "The GitHub identities the caller can open (own records and the company records of every organization the caller is an active member of) and the defaults of those organizations and of the workgroups the caller reads (03-api.md section 4.8, ADR-076).",
+  "type": "object",
+  "properties": {
+    "identities": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/github_identity_meta"
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    },
+    "defaults": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/github_default"
+      },
+      "minItems": 0,
+      "maxItems": 10000
+    }
+  },
+  "required": [
+    "identities",
+    "defaults"
+  ],
+  "additionalProperties": false
+}

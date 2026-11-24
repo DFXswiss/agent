@@ -414,6 +414,15 @@ agent-platform github connect              # opens GitHub's device page for your
 agent-platform github connect --request <request_id> --wait 120  # until done
 printf '%s' "$GITHUB_TOKEN" | agent-platform github connect --token -  # an existing token instead (see below)
 agent-platform github disconnect
+agent-platform github accounts             # every GitHub account: own ones, company ones, the defaults (no token)
+agent-platform github connect --identity <identity_id> --signing-key   # reconnect that account, with a signing key
+agent-platform github primary --identity <identity_id>                 # the account used when nothing is chosen
+agent-platform github remove --identity <identity_id>
+agent-platform github rewrap               # further own accounts under the newest credential key (also after rotate)
+agent-platform github connect --org <org_id> --wait 120                # a company account (admins of the org)
+agent-platform github default set --org <org_id> --identity <identity_id>   # or --wg <wg_id>; --none clears it
+agent-platform task create --wg <wg_id> --text "…" --github-identity <identity_id>   # the task acts as that account
+agent-platform task github-identity --task <task_id> --identity <identity_id>        # or --none: automatic
 ```
 
 **GitHub with an existing token.** Instead of the device page, `github connect --from-gh` stores the GitHub CLI login
@@ -426,6 +435,19 @@ GitHub and stores it encrypted. The result names the login, the scopes and `sour
 for the organization's SSO at GitHub first). Use a token only when your user asks for it. `github disconnect` says
 whether the devices revoke the token at GitHub (`revoked_at_github`); a token the platform did not mint stays valid
 there (`revoke_at` names the page).
+
+**Several GitHub accounts.** Your user may connect several GitHub accounts; each is an identity with its own ID
+(`github accounts`). The primary one is used when nothing else is chosen. A task, a workgroup default or an
+organization default can name another one: the platform takes the task's choice, then the workgroup's default, then
+the organization's default, then the primary account of the human who gave the latest prompt. Defaults can only be
+company accounts. A company account belongs to an organization: only its admins connect one (`github connect --org`);
+the device's answer is sealed on this computer for the organization's execution devices only, so afterwards neither
+your user nor you can read it back, and `github accounts` shows it by organization and date only. `--identity` with
+`--org` reconnects that company account. `--signing-key` asks the device for an own SSH signing key of the account
+(`signing`: `registered`, or `scope_missing` when the token may not add signing keys). A choice or default refused
+with `hub_error: peer_outdated` names the execution `devices` that need a newer runner first; tell your user.
+`task operations` names the account each operation acted with (`github_account`) and who triggered it
+(`triggered_by`).
 
 **Account**
 

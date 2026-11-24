@@ -21,6 +21,7 @@
     "runner.log_fork",
     "runner.alert",
     "session.context_restored",
-    "session.context_fallback"
+    "session.context_fallback",
+    "runner.operator_github_users"
   ]
 }

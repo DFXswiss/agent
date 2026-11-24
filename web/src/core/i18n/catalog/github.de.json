@@ -90,5 +90,7 @@
   "waiting.access.link.approve_app": "Freigabe bei {owner} anfragen",
   "waiting.access.link.authorize_sso": "Für {owner} freigeben",
   "waiting.access.link.new_token": "Token für {owner} erstellen",
-  "waiting.access.link.check_access": "Repository bei GitHub öffnen"
+  "waiting.access.link.check_access": "Repository bei GitHub öffnen",
+  "source.operator": "Konto des Plattformbetreibers",
+  "scopes.none.operator": "Berechtigungen: die des Betreiberkontos."
 }

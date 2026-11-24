@@ -7,7 +7,8 @@ reset (``POST /_double/reset``) empties everything. Format (every key optional):
     {"users": [{"login": "octo-user", "id": 101, "name": "Octo User", "email": null,
                 "tokens": ["<token>", {"token": "<token>", "kind": "classic", "scopes": ["repo", "read:org"],
                                        "repositories": ["octo-org/hello"], "revoked": false, "sso": ["octo-org"]}],
-                "personal_tokens": ["<token>"], "collaborator": ["octo-org/hello"]}],
+                "personal_tokens": ["<token>"], "collaborator": ["octo-org/hello"],
+                "ssh_signing_keys": ["ssh-ed25519 AAAA…", {"key": "ssh-ed25519 AAAA…", "title": "laptop"}]}],
      "installations": [{"id": 31, "account": "octo-org", "account_type": "Organization",
                         "repository_selection": "selected", "repositories": ["octo-org/hello"],
                         "users": ["octo-user"], "permissions": {"contents": "write", ...}}],
@@ -53,6 +54,19 @@ refuses classic tokens there with ``403`` (the organisation's personal access to
 restricts nothing.
 ``personal_tokens`` (KOR-27) are short for classic tokens with the scope ``repo`` that reach the repositories the
 user owns and those named in ``collaborator`` (a name that is not seeded is simply not reachable).
+``ssh_signing_keys`` registers SSH signing keys of the user (a key line or ``{"key", "title"}``), as
+``POST /user/ssh_signing_keys`` would (`agent_doubles.github.sshsig`: Ed25519 only; a key belongs to one account).
+Which token may manage keys follows its ``kind`` and ``scopes`` (`agent_doubles.github.server`).
+
+Commit verification (``verification`` of the commit answers) is decided once, when a signed commit is created
+(`World.verify`), and kept, like GitHub's persistent verification records: a later removal of the key does not change
+it. An unsigned commit is ``unsigned``. For an SSH signature (`agent_doubles.github.sshsig.classify`) the reasons are,
+in this order: ``malformed_signature`` (does not parse), ``unknown_key`` (the signing key is no registered signing key
+of any account), ``invalid`` (the signature does not verify over the commit without its ``gpgsig`` header, or its
+namespace is not ``git``), ``bad_email`` (the key's account does not own the committer email: neither the account's
+``email`` nor its ``<id>+<login>@users.noreply.github.com`` address) and ``valid`` (``verified: true`` with
+``verified_at``); a PGP signature is ``gpgverify_unavailable``, anything else ``unknown_signature_type``.
+``signature`` and ``payload`` (the signed bytes as text) are given for every signed commit.
 
 Time is logical: seeded and created objects take timestamps from `World.stamp`, which starts at ``base_time`` and
 advances one second per object, so object ids are deterministic.
@@ -72,6 +86,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from agent_doubles.github import sshsig
 from agent_doubles.github.objects import (
     BLOB_MODES,
     EXEC_MODE,
@@ -101,6 +116,9 @@ SHORT_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
 class SeedError(ValueError):
     """Seed data the double refuses (the control route answers 400)."""
+
+
+NOREPLY_DOMAIN = "users.noreply.github.com"
 
 
 def iso(seconds: int) -> str:
@@ -221,6 +239,32 @@ class Token:
         return "repo" in self.scopes or ("public_repo" in self.scopes and not repo.private)
 
 
+@dataclass(frozen=True)
+class SigningKey:
+    """An SSH signing key of an account: `blob` is the public key blob, `line` the normalised key line."""
+
+    id: int
+    login: str
+    title: str
+    line: str
+    blob: bytes
+    created: int
+
+
+@dataclass(frozen=True)
+class Verification:
+    """The ``verification`` of a commit (`verified_at` in seconds since the epoch)."""
+
+    verified: bool
+    reason: str
+    signature: str | None = None
+    payload: str | None = None
+    verified_at: int | None = None
+
+
+UNSIGNED = Verification(False, "unsigned")
+
+
 @dataclass
 class Organization:
     """An organisation's access policies (KOR-65): OAuth App restrictions with the approved client IDs, and whether
@@ -319,6 +363,11 @@ class Repo:
     comments: list[Comment] = field(default_factory=list)
     labels: dict[str, Label] = field(default_factory=dict)
     next_number: int = 1
+    verifications: dict[str, Verification] = field(default_factory=dict)
+    """The verification decided when a signed commit was created, by commit id (unsigned commits have none)."""
+
+    def verification(self, sha: str) -> Verification:
+        return self.verifications.get(sha, UNSIGNED)
 
     @property
     def full_name(self) -> str:
@@ -506,7 +555,11 @@ class World:
             self.tokens: dict[str, Token] = {}
             self.installations: dict[int, Installation] = {}
             self.repos: dict[str, Repo] = {}
+<<<<<<< HEAD
             self.organizations: dict[str, Organization] = {}
+=======
+            self.signing_keys: dict[int, SigningKey] = {}
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
             self._tick = 0
             self._ids = 1000
 
@@ -618,11 +671,61 @@ class World:
     def repo(self, owner: str, name: str) -> Repo | None:
         return self.repos.get(f"{owner}/{name}".lower())
 
+    def user_for_email(self, email: str) -> User | None:
+        """The user a commit email belongs to: its ``email`` or its noreply address (case-insensitive)."""
+        for user in self.users.values():
+            if email.lower() in {noreply_email(user).lower(), (user.email or "").lower()}:
+                return user
+        return None
+
+    # --- SSH signing keys and commit verification ---------------------------------------------------
+
+    def add_signing_key(self, login: str, title: str, line: str) -> SigningKey:
+        """Register an SSH signing key for user `login` (lower case); `SeedError` for an invalid key or one that is
+        already registered (with any account)."""
+        try:
+            blob = sshsig.parse_public_key(line)
+        except sshsig.Malformed as exc:
+            raise SeedError("key is invalid. You must supply a key in OpenSSH public key format") from exc
+        if any(key.blob == blob for key in self.signing_keys.values()):
+            raise SeedError("key is already in use")
+        key = SigningKey(self.new_id(), login, title, sshsig.key_line(blob), blob, self.stamp())
+        self.signing_keys[key.id] = key
+        return key
+
+    def user_signing_keys(self, login: str) -> list[SigningKey]:
+        """The signing keys of user `login` (lower case), by id."""
+        return sorted((key for key in self.signing_keys.values() if key.login == login), key=lambda key: key.id)
+
+    def verify(self, commit: Commit) -> Verification:
+        """The verification of a newly created commit (module docstring)."""
+        if commit.signature is None:
+            return UNSIGNED
+        signature, payload = commit.signature, commit.unsigned_payload()
+        reason = self._reason(signature, payload, commit.committer.email)
+        verified_at = self.stamp() if reason == "valid" else None
+        return Verification(reason == "valid", reason, signature, payload.decode(), verified_at)
+
+    def _reason(self, signature: str, payload: bytes, email: str) -> str:
+        found = sshsig.classify(signature)
+        if isinstance(found, str):
+            return found
+        key = next((key for key in self.signing_keys.values() if key.blob == found.public_key), None)
+        if key is None:
+            return "unknown_key"
+        if not sshsig.verifies(found, payload):
+            return "invalid"
+        owner = self.user_for_email(email)
+        if owner is None or owner.login.lower() != key.login:
+            return "bad_email"
+        return "valid"
+
     # --- seeding ------------------------------------------------------------------------------------
 
     def seed(self, payload: Any) -> None:
         """Add seed data (see the module docstring); device flow, faults and expectations are read by the server."""
         data = _object(payload, "seed")
+<<<<<<< HEAD
         _check_keys(
             data,
             {"users", "installations", "repositories", "organizations", "device_flow", "faults", "expectations"},
@@ -630,6 +733,18 @@ class World:
         )
         saved = (dict(self.users), dict(self.tokens), dict(self.installations), dict(self.repos), self._tick, self._ids)
         organizations = dict(self.organizations)
+=======
+        _check_keys(data, {"users", "installations", "repositories", "device_flow", "faults", "expectations"}, "seed")
+        saved = (
+            dict(self.users),
+            dict(self.tokens),
+            dict(self.installations),
+            dict(self.repos),
+            dict(self.signing_keys),
+            self._tick,
+            self._ids,
+        )
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
         try:
             for raw in _list(data.get("users", []), "users"):
                 self._seed_user(_object(raw, "user"))
@@ -641,12 +756,20 @@ class World:
                 self.set_organization(raw)
         except SeedError:
             # A refused seed leaves nothing behind (seeding only adds new objects, so restoring the tables suffices).
+<<<<<<< HEAD
             self.users, self.tokens, self.installations, self.repos, self._tick, self._ids = saved
             self.organizations = organizations
+=======
+            self.users, self.tokens, self.installations, self.repos, self.signing_keys, self._tick, self._ids = saved
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
             raise
 
     def _seed_user(self, data: dict[str, Any]) -> None:
-        _check_keys(data, {"login", "id", "name", "email", "tokens", "personal_tokens", "collaborator"}, "user")
+        _check_keys(
+            data,
+            {"login", "id", "name", "email", "tokens", "personal_tokens", "collaborator", "ssh_signing_keys"},
+            "user",
+        )
         login = _text(data, "login", "user")
         if not LOGIN_RE.match(login):
             raise SeedError(f"invalid login {login!r}")
@@ -674,6 +797,12 @@ class World:
             if token.kind == "oauth":
                 token.collaborator = [name.lower() for name in user.collaborator]
             self._add_seeded(token)
+        for raw in _list(data.get("ssh_signing_keys", []), "user.ssh_signing_keys"):
+            spec = _object({"key": raw} if isinstance(raw, str) else raw, "ssh signing key")
+            _check_keys(spec, {"key", "title"}, "ssh signing key")
+            self.add_signing_key(
+                user.login.lower(), _text(spec, "title", "ssh signing key", ""), _text(spec, "key", "ssh signing key")
+            )
 
     def _add_seeded(self, token: Token) -> None:
         if token.token in self.tokens:
@@ -1002,3 +1131,8 @@ class World:
         assert item is not None
         item.updated = comment.created
         return comment
+
+
+def noreply_email(user: User) -> str:
+    """The account's ``<id>+<login>@users.noreply.github.com`` address."""
+    return f"{user.id}+{user.login}@{NOREPLY_DOMAIN}"

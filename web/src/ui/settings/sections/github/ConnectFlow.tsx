@@ -13,9 +13,15 @@
 // Its value is read once when the user sends it, the field is emptied at once, and the token goes only into the request
 // sealed with HPKE to the device – never into the store, the URL, a log or the component state. The device checks it at
 // GitHub and answers `done` (login, scopes, source) or a failure with its own text (`github.token.failure.<code>`).
+//
+// GitHub identities (KOR-47, ADR-076): `options` name the account to reconnect, the organization of a company account
+// (then only that organization's devices are offered) and ask for a signing key, whose outcome the done step shows.
+// `complete` runs once on `done` before `onConnected` (the admin's client seals and stores a company account's body);
+// its failure is shown with "Try again".
 import { type RefObject, useEffect, useId, useRef, useState } from 'react';
 import {
   connectDevices,
+  type ConnectOptions,
   connectProgress,
   type ConnectProgress,
   type DeviceChoice,
@@ -122,11 +128,13 @@ function Request({
   method,
   onConnected,
   onRetry,
+  complete,
 }: {
   readonly prepared: PreparedRequest;
   readonly method: ConnectMethod;
   readonly onConnected: () => void;
   readonly onRetry: () => void;
+  readonly complete?: ((view: RequestView) => Promise<void>) | undefined;
 }) {
   const { app } = useAppEnv();
   const { t } = useI18n();
@@ -147,9 +155,17 @@ function Request({
   );
   const progress: ConnectProgress = view === null ? { step: 'waiting' } : connectProgress(view);
   const done = progress.step === 'done';
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const finished = useRef(false);
   useEffect(() => {
-    if (done) onConnected();
-  }, [done, onConnected]);
+    if (!done || finished.current) return;
+    finished.current = true;
+    if (complete === undefined) {
+      onConnected();
+      return;
+    }
+    complete(view!).then(onConnected, (error: unknown) => setSaveError(requestErrorCode(error)));
+  }, [done, onConnected, complete, view]);
   if (progress.step === 'waiting')
     return (
       <div className="flex flex-col gap-1">
@@ -166,9 +182,27 @@ function Request({
   if (progress.step === 'device_code') return <DeviceCode progress={progress} />;
   if (progress.step === 'done')
     return (
-      <p role="status" data-testid="github.done">
-        {t('github.done', { login: progress.login })}
-      </p>
+      <div className="flex flex-col gap-1">
+        <p role="status" data-testid="github.done">
+          {t('github.done', { login: progress.login })}
+        </p>
+        {progress.signing !== null && (
+          <p className="text-sm" data-testid="github.signing" data-signing={progress.signing}>
+            {t(`identities.signing.${progress.signing}`)}
+          </p>
+        )}
+        {complete !== undefined && saveError === null && <p data-testid="github.saving">{t('identities.saving')}</p>}
+        {saveError !== null && (
+          <>
+            <p role="alert" data-testid="github.save-failed" data-code={saveError}>
+              {t('identities.save-failed', { reason: reason(saveError) })}
+            </p>
+            <button type="button" className={BUTTON} onClick={onRetry} data-testid="github.retry">
+              {t('github.retry')}
+            </button>
+          </>
+        )}
+      </div>
     );
   return (
     <div className="flex flex-col gap-2">
@@ -212,12 +246,16 @@ export function ConnectFlow({
   app,
   onConnected,
   onClose,
+  options = {},
+  complete,
 }: {
   readonly method?: ConnectMethod;
   /** The OAuth App's sign-in only (the step "connect" of a held operation, KOR-65). */
   readonly app?: 'oauth_app' | undefined;
   readonly onConnected: () => void;
   readonly onClose: () => void;
+  readonly options?: ConnectOptions;
+  readonly complete?: (view: RequestView) => Promise<void>;
 }) {
   const { app: env } = useAppEnv();
   const { t } = useI18n();
@@ -230,6 +268,7 @@ export function ConnectFlow({
   useEffect(() => {
     if (phase.kind !== 'devices') return;
     // while the devices load the flow offers only "Close", which unmounts it: a late answer changes nothing
+<<<<<<< HEAD
     connectDevices(env.tasks).then(
       (found) => {
         const devices =
@@ -243,6 +282,18 @@ export function ConnectFlow({
       (error: unknown) => setPhase({ kind: 'error', code: requestErrorCode(error) }),
     );
   }, [env, phase, method, app]);
+=======
+    connectDevices(app.tasks, options.orgId).then(
+      (found) =>
+        setPhase(
+          found.preselected === null
+            ? { kind: 'none' }
+            : { kind: 'choose', devices: found.devices, selected: found.preselected },
+        ),
+      (error: unknown) => setPhase({ kind: 'error', code: requestErrorCode(error) }),
+    );
+  }, [app, phase, options.orgId]);
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
   const start = async (device: string) => {
     let token: string | undefined;
     if (method === 'token') {
@@ -255,7 +306,11 @@ export function ConnectFlow({
     }
     setPhase({ kind: 'starting' });
     try {
+<<<<<<< HEAD
       setPhase({ kind: 'request', prepared: await startConnect(env.tasks, device, token, app) });
+=======
+      setPhase({ kind: 'request', prepared: await startConnect(app.tasks, device, token, options) });
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
     } catch (error) {
       setPhase({ kind: 'error', code: requestErrorCode(error) });
     }
@@ -342,7 +397,13 @@ export function ConnectFlow({
         </>
       )}
       {phase.kind === 'request' && (
-        <Request prepared={phase.prepared} method={method} onConnected={onConnected} onRetry={retry} />
+        <Request
+          prepared={phase.prepared}
+          method={method}
+          onConnected={onConnected}
+          onRetry={retry}
+          complete={complete}
+        />
       )}
       <button type="button" className={BUTTON} onClick={onClose} data-testid="github.flow.close">
         {t('github.close')}

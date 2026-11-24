@@ -9,6 +9,13 @@ from __future__ import annotations
 AUDIT_ACTIONS = frozenset(
     {
         "agent.claim",
+        "read.device.github_identity",
+        "read.device.github_identities",
+        "read.github_identity",
+        "read.me.github_identities",
+        "task.github_identity",
+        "github.primary",
+        "github.default",
         "agent.confirm",
         "agent.pairing",
         "agent.register",
@@ -176,6 +183,7 @@ AUDIT_ACTIONS = frozenset(
         "request.refused",
         "request.write",
         "runner.alert",
+        "runner.operator_github_users",
         "runner.inbound_rejected",
         "runner.log_fork",
         "runner.log_rollback",

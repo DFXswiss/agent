@@ -112,6 +112,17 @@
               "type": "null"
             }
           ]
+        },
+        "github_identity": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the GitHub identity chosen for the task (ADR-076 section 3)"
         }
       },
       "required": [
@@ -424,6 +435,17 @@
               "type": "null"
             }
           ]
+        },
+        "github_identity": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the GitHub identity of the session (subagents, ADR-076 section 3)"
         }
       },
       "required": [
@@ -729,6 +751,28 @@
               "type": "null"
             }
           ]
+        },
+        "github_identity": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the GitHub identity the operation acted with (ADR-076 section 6); null for other types and for operations registered by older runners"
+        },
+        "triggered_by": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the human whose instruction the operation followed (ADR-076 section 2); null for operations registered by older runners"
         }
       },
       "required": [
@@ -1671,6 +1715,84 @@
         "sessions"
       ],
       "additionalProperties": false
+    },
+    "github_identity_meta": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "owner_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "owner_kind": {
+          "type": "string",
+          "enum": [
+            "user",
+            "org"
+          ]
+        },
+        "primary": {
+          "type": "boolean"
+        },
+        "version": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "epoch": {
+          "$ref": "../common.json#/$defs/epoch"
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "updated_at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "id",
+        "owner_id",
+        "owner_kind",
+        "primary",
+        "version",
+        "epoch",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false,
+      "description": "metadata of a GitHub identity (a github credential record, ADR-076); never the login or token"
+    },
+    "github_default": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "org",
+            "wg"
+          ]
+        },
+        "scope_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "identity_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "set_by": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "set_at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "scope",
+        "scope_id",
+        "identity_id",
+        "set_by",
+        "set_at"
+      ],
+      "additionalProperties": false,
+      "description": "the default GitHub identity of an organization or workgroup (ADR-076 section 3)"
     }
   }
 }

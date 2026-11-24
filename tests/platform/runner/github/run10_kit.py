@@ -228,3 +228,17 @@ def refused(op: records.Operation) -> str:
     code: str = op.answer["error"]["code"]
     assert op.error_code == code
     return code
+
+
+def known_user(handle: Callable[[httpx.Request], httpx.Response | None]) -> httpx.MockTransport:
+    """A mock transport that answers `GET /user` with the account of the test token (the account check of the
+    resolution, KOR-47) and everything else with `handle`."""
+
+    def route(request: httpx.Request) -> httpx.Response:
+        if (request.method, request.url.path) == ("GET", "/user"):
+            return httpx.Response(200, json={"login": "octo-user", "id": 101})
+        found = handle(request)
+        assert found is not None
+        return found
+
+    return httpx.MockTransport(route)

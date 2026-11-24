@@ -1,0 +1,10 @@
+{
+ "body": {
+  "created_at": "s",
+  "id": 0,
+  "key": "s",
+  "title": "s"
+ },
+ "route": "POST /user/ssh_signing_keys",
+ "source": "docs.github.com REST reference example (values neutralised)"
+}

@@ -23,7 +23,7 @@ from agent_runner.operations.extensions import CheckFailed
 
 from ..credentials.kit import ALICE, Env, github_body, kit_env, make_record
 from .conftest import OTHER_TOKEN, REPO, TOKEN, GitHub
-from .test_executors import execute, fails, precheck_request, refused, result_ok, with_env
+from .test_executors import execute, fails, own, precheck_request, refused, result_ok, with_env
 
 QUIET = "octo-org/quiet"
 SSO_TOKEN = "double-sso-token"  # not a secret: the double only compares it
@@ -516,9 +516,9 @@ def test_the_new_types_check_the_connection_and_the_repository(store_dsn: str, g
 
     async def body(env: Env) -> None:
         for op_type in (*new, "github.list_pull_requests"):
-            assert PRECHECKS[op_type] is precheck.repo_access
+            assert PRECHECKS[op_type].__wrapped__ is precheck.repo_access  # type: ignore[attr-defined]
             found = await PRECHECKS[op_type](precheck_request(env, op_type, {"repo": REPO}))
-            assert (found.dedupe, found.data) == ({}, {})
+            assert (found.dedupe, found.data) == ({}, await own(env))
             assert await refused(env, op_type, {"repo": "octo-org/nothing"}) == "repo_not_accessible"
             assert await refused(env, op_type, {"repo": REPO}, owner=None) == "github_not_connected"
         assert {

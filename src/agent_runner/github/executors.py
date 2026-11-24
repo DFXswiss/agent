@@ -1,7 +1,8 @@
 """Executors of the GitHub area, parts I and II (`<area>/executors.py:EXECUTORS`, ADR-027 section 4; 05-runner.md
-section 12.1): REST only, with the acting user's credential (`ops.actor_client`, HOT-14); checkout, commit and push
-(RUN-10) in their own modules; the issue types, the pull-request list and the connection request (KOR-25) in `issues`,
-`pull_list` and `connection`."""
+section 12.1): REST only, with the GitHub identity each operation's pre-check resolved for its acting user
+(`ops.executor`, `github.identity`, KOR-47; the acting user is `credentials.acting`'s, HOT-14); checkout, commit and
+push (RUN-10) in their own modules; the issue types, the pull-request list and the connection request (KOR-25) in
+`issues`, `pull_list` and `connection`; the identity list (KOR-47) in `listing`."""
 
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from agent_runner.github import (
     commit,
     connection,
     issues,
+    listing,
     pull_list,
     pulls,
     push,
@@ -36,4 +38,5 @@ EXECUTORS: dict[str, Callable[..., Any]] = {
     "github.update_issue": issues.execute_update,
     "github.list_pull_requests": pull_list.execute,
     "github.request_connection": connection.execute,
+    "github.list_identities": listing.execute,
 }

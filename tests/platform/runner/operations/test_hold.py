@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_guest.schema import SchemaSet
-from agent_runner.credentials import cache
+from agent_runner.credentials import cache, identities
 from agent_runner.operations.extensions import CheckFailed, OperationContext, PrecheckRequest, PrecheckResult
 from agent_runner.operations.pipeline import (
     FULL_MESSAGES,
@@ -389,6 +389,12 @@ def test_a_held_operation_of_an_ended_session_never_runs(rig: Rig) -> None:
     run(rig, body)
 
 
+async def generation(env: Any) -> int | None:
+    """The GitHub generation of the device that a held operation remembers (KOR-47)."""
+    async with env.pool.connection() as conn:
+        return await identities.generation(conn)
+
+
 def test_a_refused_credential_is_not_checked_again_until_another_version_arrives(rig: Rig) -> None:
     async def body(env: Any) -> None:
         asked: list[str] = []
@@ -402,7 +408,9 @@ def test_a_refused_credential_is_not_checked_again_until_another_version_arrives
         sid = await kit_.session()
         op_id = await kit_.request(sid, "github.comment", COMMENT)
         await kit_.pipeline.process(op_id)
-        assert (await kit_.op(op_id)).held_credential == 1
+        first: int | None = await generation(env)
+        assert first is not None
+        assert (await kit_.op(op_id)).held_credential == first
         for second in (5, 10, 15):
             at(kit_, second)
             await kit_.pipeline.process(op_id)
@@ -414,7 +422,9 @@ def test_a_refused_credential_is_not_checked_again_until_another_version_arrives
         await kit_.pipeline.process(op_id)
         await kit_.pipeline.process(op_id)
         assert asked == [op_id, op_id]
-        assert (await kit_.op(op_id)).held_credential == 2
+        changed = await generation(env)
+        assert changed not in (None, first)
+        assert (await kit_.op(op_id)).held_credential == changed
         assert len(await waiting(kit_)) == 1
         # the timeout still ends it, without another request
         at(kit_, HOLD_S + 1)

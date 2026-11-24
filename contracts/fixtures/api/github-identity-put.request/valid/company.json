@@ -1,0 +1,34 @@
+{
+  "owner_id": "01930001-0000-7000-8000-000000000001",
+  "record": {
+    "header": {
+      "v": 1,
+      "alg": "A256GCM-HKDF",
+      "id": "01930050-0000-7000-8000-000000000050",
+      "owner": "0193000a-0000-7000-8000-00000000000a",
+      "kind": "github",
+      "version": 2,
+      "epoch": 1,
+      "author": "0193000a-0000-7000-8000-00000000000a",
+      "ts": "2026-11-21T12:00:00.000Z",
+      "salt": "FRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRU",
+      "nonce": "FhYWFhYWFhYWFhYW"
+    },
+    "ct": "FxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcX",
+    "sig": "GBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGA"
+  },
+  "expected_version": 0,
+  "key": {
+    "epoch": 2,
+    "wraps": [
+      {
+        "scope": "cred",
+        "scope_id": "0193000a-0000-7000-8000-00000000000a",
+        "epoch": 2,
+        "recipient_id": "0193000a-0000-7000-8000-00000000000a",
+        "wrap": "EhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhI",
+        "sig": "ExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEw"
+      }
+    ]
+  }
+}

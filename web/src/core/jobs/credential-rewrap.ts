@@ -47,7 +47,13 @@
 // `CK` belongs to the user while jobs run per org queue: only the queue of the first verified org acts, runs are
 // serialized per store (`exclusive`), and a run that finds the rotation done by another run or browser does nothing.
 // A `409 version_conflict` (another browser rotated or wrote a record in between) is retried once from the start.
+//
+// GitHub identities (ADR-076 section 1): the rotation body holds the primary records only (`/v1/me/credentials` lists
+// one record per kind, the contract allows four records); right after the rotation the user's further `github` records
+// are re-sealed under the new epoch (`rewrapOwnIdentities`, same ID, version + 1). Should that fail, the job
+// `github-rewrap` does it on its next run.
 import { formatTime } from '../encoding/time';
+import { rewrapOwnIdentities } from '../github/identities';
 import { Secret } from '../crypto/secret';
 import {
   deleteCredential,
@@ -323,6 +329,12 @@ export async function rotateCredentialKey(
   if (!stillCurrent()) return null;
   await context.client.request('POST', '/v1/me/credentials/rotate', { body: { epoch, wraps, records } });
   for (const loss of losses.values()) handled.add(loss.key);
+  try {
+    // the further GitHub identities follow at once (module comment); a failure is left to the job `github-rewrap`
+    await rewrapOwnIdentities(context);
+  } catch {
+    // the rotation itself is done
+  }
   return { status: 'rotated', epoch, records: records.length, dropped: dropped.length };
 }
 

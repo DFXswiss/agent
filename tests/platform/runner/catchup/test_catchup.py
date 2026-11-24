@@ -104,6 +104,17 @@ def test_cred_plans_match_the_vectors() -> None:
     assert [s for s in plan.plan(book, stranger, memory) if s.scope == "cred"] == []
 
 
+def test_an_organizations_cred_scope_is_planned_for_every_held_epoch() -> None:
+    # company GitHub accounts (KOR-47, key model KM-35): each admin write uses a fresh epoch of the organization's
+    # `cred` scope, so every epoch the device holds is offered, while a user's only at its newest
+    [vector] = [p for p in VECTORS["cred_catch_up"]["plans"] if label_of(p["wrapper"]) == "device"]
+    book = vector_book(vector["wrapper"])
+    (org,) = book.logs
+    owner = vector["owner"]
+    held = {("cred", org, 3), ("cred", org, 1), ("cred", owner, 1), ("cred", owner, 2), ("wg", org, 1)}
+    assert plan._cred_owners(book, held) == {org: [1, 3], owner: [2]}
+
+
 def test_the_plan_is_limited_and_remembers() -> None:
     [vector] = [p for p in DEVICE_PLANS if label_of(p["wrapper"]) == "device"]
     book = vector_book(vector["wrapper"])

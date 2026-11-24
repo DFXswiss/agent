@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/github.primary.json",
+  "title": "audit detail github.primary",
+  "description": "detail of audit rows with action github.primary: a user made an own GitHub identity primary (target the user). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "identity_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "identity_id"
+  ],
+  "additionalProperties": false
+}

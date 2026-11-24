@@ -4,6 +4,7 @@
 // Below the header, how the current main session took over the context after a resume (ContextNotice, KOR-33).
 // The send sequence of the home screen navigates here at once (WEB-04); the countdown is part of the chat. The header
 // names device and VM of the main session ("on <device> · vm-…", ADR-075 section 6).
+// The task's GitHub identity is shown below it; writers change it (`TaskIdentity.tsx`, ADR-076).
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { closeTask, loadChat } from '../../../core/chat/actions';
@@ -23,6 +24,7 @@ import { LoadError } from '../errors/pages';
 import { useDirectory, useOrgView, useTitle } from '../tasks/hooks';
 import { ContextNotice } from './ContextNotice';
 import { activeTab, Tabs } from './Tabs';
+import { TaskIdentity } from './TaskIdentity';
 import { Unlocking } from '../../unlock/Unlocking';
 import { sessionVm } from '../../../core/tasks/placement';
 import { useDeviceNames } from '../devices/labels';
@@ -129,7 +131,7 @@ function TaskView({ row }: { readonly row: TaskRow }) {
   // the task with its sessions and their usage after a reconnect or resync (frames may have been lost, KOR-11)
   useLiveReload(app.store, () => void loadTask(app.tasks, row.task_id).catch(() => null));
   const { state, userId } = useOrgView(row.org_id);
-  useDirectory(row.org_id, state !== null);
+  const directory = useDirectory(row.org_id, state !== null);
   const writer = state !== null && userId !== null && state.canWriteWg(userId, row.wg_id);
   const tabs = TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey) }));
   const active = TABS.find((tab) => tab.id === activeTab(location.search, tabs))!;
@@ -152,6 +154,7 @@ function TaskView({ row }: { readonly row: TaskRow }) {
           </span>
           <TaskRuntime start={row.created_at} end={row.closed_at} />
           <TaskPlacement row={row} />
+          <TaskIdentity row={row} writer={writer && row.state !== 'closed'} orgName={directory.orgName} />
         </div>
         {writer && <TaskMenu task={row} />}
       </header>

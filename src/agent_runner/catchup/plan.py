@@ -11,7 +11,11 @@ hub uses for `GET /v1/orgs/{org}/catch-up`):
 - `cred` scope of a user: the owner and the devices assigned to a workgroup in which the owner has explicit access,
   over every acting org (an admin's inherited read does not count, ADR-058 section 1). The device cannot read a
   user's current `CK` epoch from the logs; it plans for the newest epoch it holds (the hub refuses an epoch beyond
-  the owner's current one, and an older epoch only gives the recipient a key it might need for older records).
+  the owner's current one, and an older epoch only gives the recipient a key it might need for older records);
+- `cred` scope of an organization (company GitHub accounts, KOR-47, docs/platform/key-model.md KM-35): its readers
+  are the organization's member devices (`crypto.log.wraps.cred_readers`). Every write of an admin uses a fresh
+  epoch, so different company records of one organization may have different epochs: the device plans **every**
+  epoch of the organization it holds, so a newly assigned device can open each record.
 
 A slot is planned only when the device holds the key of that epoch. The device does not see which wraps the hub
 already stores for others: slots uploaded once (stored or ignored as existing) are remembered per daemon (`done`), so
@@ -66,19 +70,23 @@ def heads(book: OrgBook) -> Heads:
     return tuple(found)
 
 
-def _cred_owners(book: OrgBook, held: Iterable[Slot]) -> dict[str, int]:
-    """Owner -> newest `CK` epoch the device holds (users only: a `cred` scope is keyed by its owner)."""
-    owners: dict[str, int] = {}
+def _cred_owners(book: OrgBook, held: Iterable[Slot]) -> dict[str, list[int]]:
+    """Owner -> the `cred` epochs to plan: the newest one the device holds for a user, every held one for an acting
+    organization (a `cred` scope is keyed by its owner; other IDs are left out)."""
+    owners: dict[str, set[int]] = {}
     for scope, scope_id, epoch in held:
         if scope == CRED:
-            owners[scope_id] = max(epoch, owners.get(scope_id, 0))
-    known = {
+            owners.setdefault(scope_id, set()).add(epoch)
+    orgs = set(book.acting_orgs())
+    users = {
         principal.id
-        for org in book.acting_orgs()
+        for org in orgs
         for principal in book.logs[org].state.principals.values()
         if principal.kind != DEVICE
     }
-    return {owner: epoch for owner, epoch in owners.items() if owner in known}
+    found = {owner: [max(epochs)] for owner, epochs in owners.items() if owner in users}
+    found.update({owner: sorted(epochs) for owner, epochs in owners.items() if owner in orgs})
+    return found
 
 
 def plan(book: OrgBook, held: Iterable[Slot], memory: Memory, limit: int | None = None) -> list[WrapSlot]:
@@ -94,10 +102,11 @@ def plan(book: OrgBook, held: Iterable[Slot], memory: Memory, limit: int | None 
                 chosen.add(slot)
     logs = [book.logs[org] for org in acting]
     excluded = frozenset().union(*(book.excluded(org) for org in acting))
-    for owner, epoch in sorted(_cred_owners(book, holding).items()):
-        chosen.update(
-            missing_cred_wraps(logs, owner, book.device_id, current_epoch=epoch, existing=skip, excluded=excluded)
-        )
+    for owner, epochs in sorted(_cred_owners(book, holding).items()):
+        for epoch in epochs:
+            chosen.update(
+                missing_cred_wraps(logs, owner, book.device_id, current_epoch=epoch, existing=skip, excluded=excluded)
+            )
     return sorted(chosen)[: MAX_WRAPS if limit is None else limit]
 
 

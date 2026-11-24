@@ -199,6 +199,16 @@
     "body": "An item with this ID already exists with different content.",
     "action": "Reload the page and try again."
   },
+  "identity_forbidden": {
+    "title": "This GitHub account cannot be used here",
+    "body": "Only your own accounts and the company accounts of this organization can be chosen for its tasks.",
+    "action": "Choose another account or Automatic."
+  },
+  "identity_unavailable": {
+    "title": "GitHub account unavailable",
+    "body": "The GitHub account needed for this step is not connected or cannot be used for it.",
+    "action": "Connect your own GitHub account in the settings, then try again."
+  },
   "identity_unproven": {
     "title": "Account not found",
     "body": "There is no account with this code or ID that can be admitted directly.",

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-github-identities-list.response.json",
+  "title": "GET /v1/device/github-identities response",
+  "description": "Metadata of every github record of the owner, for a device eligible for the owner (the user's CK, or a reader device of the organization's credential key); 404 otherwise (03-api.md section 6.1, KOR-47).",
+  "type": "object",
+  "properties": {
+    "identities": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/github_identity_meta"
+      },
+      "minItems": 0,
+      "maxItems": 20
+    }
+  },
+  "required": [
+    "identities"
+  ],
+  "additionalProperties": false
+}

@@ -177,7 +177,7 @@
         }
       ],
       "copy": "src/agent_runner/crypto/log/vectors.py",
-      "sha256": "4fd93e928040218637015c5f0d0d86cc3544148ad64db904a2eece9cc4849bcc",
+      "sha256": "82962b273eb9abd25988caee8a09b748248366b1933bcac1945e4d321663ae89",
       "source": "src/agent_hub/log/vectors.py"
     },
     {
@@ -189,7 +189,7 @@
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/wraps.py",
-      "sha256": "dfa34b47ea335b8d742e393c6f1733c95084e0e82b2851bed2e1c8de29bdce4d",
+      "sha256": "600d7df29d1d04365a11d5b410f889a316f8c547edc3032174d449094d0acae4",
       "source": "src/agent_hub/log/wraps.py"
     },
     {
@@ -289,8 +289,8 @@
     },
     {
       "copy": "tests/platform/runner/crypto/log/test_vectors_log.py",
-      "copy_sha256": "918c52effdfdfd44c58305e6d6ba75e439ee9d2e501ce229b3fe11f912d6bb19",
-      "sha256": "f2acef67a0902e5c64aa7cb707000c7f1a43a817d04c5501b3012571d9633abf",
+      "copy_sha256": "fcdafd0adced64b4e5c859d390d0a8193bf21c8d4dc08d229450c973e18260b2",
+      "sha256": "5c490a67ef4ce681ac90591cb0ff7fd09e5096f1d16a95dfc176de18606068c7",
       "source": "tests/platform/hub/log/test_vectors_log.py"
     },
     {

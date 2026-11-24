@@ -7,7 +7,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "header_invalid",
@@ -15,7 +15,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "params_invalid",
@@ -23,7 +23,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "non_ascii",
@@ -31,7 +31,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "kind_not_allowed",
@@ -39,7 +39,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "epoch_stale",
@@ -47,7 +47,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "invite_code_invalid",
@@ -55,7 +55,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "ceremony_invalid",
@@ -63,7 +63,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "client_data_invalid",
@@ -71,7 +71,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "challenge_mismatch",
@@ -79,7 +79,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "origin_mismatch",
@@ -87,7 +87,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "attestation_invalid",
@@ -95,7 +95,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "authenticator_data_invalid",
@@ -103,7 +103,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "rp_id_mismatch",
@@ -111,7 +111,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "user_presence_missing",
@@ -119,7 +119,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "user_verification_missing",
@@ -127,7 +127,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "credential_invalid",
@@ -135,7 +135,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "statement_invalid",
@@ -143,7 +143,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "certificate_expiry_invalid",
@@ -151,7 +151,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "counter_regressed",
@@ -159,7 +159,7 @@
         400
       ],
       "origin": "hub",
-      "source": "03-api §11 (agent_core.passkey.errors)"
+      "source": "03-api \u00a711 (agent_core.passkey.errors)"
     },
     {
       "code": "size_exceeded",
@@ -168,7 +168,7 @@
         413
       ],
       "origin": "hub",
-      "source": "03-api §11 (400 for field limits such as E8, 413 for the request body)"
+      "source": "03-api \u00a711 (400 for field limits such as E8, 413 for the request body)"
     },
     {
       "code": "signature_missing",
@@ -176,7 +176,7 @@
         401
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "key_unknown",
@@ -184,7 +184,7 @@
         401
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "key_revoked",
@@ -192,7 +192,7 @@
         401
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "time_skew",
@@ -200,7 +200,7 @@
         401
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "signature_invalid",
@@ -208,7 +208,7 @@
         401
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "nonce_replayed",
@@ -216,7 +216,7 @@
         401
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "session_expired",
@@ -224,7 +224,7 @@
         401
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "unauthorized",
@@ -232,7 +232,7 @@
         401
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "forbidden",
@@ -240,7 +240,7 @@
         403
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "last_admin",
@@ -248,7 +248,7 @@
         403
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "last_passkey",
@@ -256,7 +256,7 @@
         403
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "device_not_assigned",
@@ -264,7 +264,7 @@
         403
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "platform_invite_required",
@@ -272,7 +272,7 @@
         403
       ],
       "origin": "hub",
-      "source": "03-api §11 (additional)"
+      "source": "03-api \u00a711 (additional)"
     },
     {
       "code": "platform_access_denied",
@@ -280,7 +280,7 @@
         403
       ],
       "origin": "hub",
-      "source": "03-api §11 (additional)"
+      "source": "03-api \u00a711 (additional)"
     },
     {
       "code": "not_found",
@@ -288,7 +288,7 @@
         404
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "invite_unknown",
@@ -296,7 +296,7 @@
         404
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "id_conflict",
@@ -304,7 +304,7 @@
         409
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "event_conflict",
@@ -312,7 +312,7 @@
         409
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "seq_conflict",
@@ -320,7 +320,7 @@
         409
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "version_conflict",
@@ -328,7 +328,7 @@
         409
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "origin_seq_gap",
@@ -336,7 +336,7 @@
         409
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "origin_seq_conflict",
@@ -344,7 +344,7 @@
         409
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "no_device",
@@ -352,7 +352,7 @@
         409
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "already_assigned",
@@ -360,7 +360,7 @@
         409
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "rotation_required",
@@ -368,7 +368,7 @@
         409
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "no_device_available",
@@ -376,7 +376,7 @@
         409
       ],
       "origin": "hub",
-      "source": "03-api §11 (additional)"
+      "source": "03-api \u00a711 (additional)"
     },
     {
       "code": "invite_registered",
@@ -384,7 +384,7 @@
         409
       ],
       "origin": "hub",
-      "source": "03-api §11 (additional)"
+      "source": "03-api \u00a711 (additional)"
     },
     {
       "code": "community_muted",
@@ -424,7 +424,7 @@
         410
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "quota_exceeded",
@@ -440,7 +440,7 @@
         429
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "unavailable",
@@ -448,7 +448,7 @@
         503
       ],
       "origin": "hub",
-      "source": "03-api §11"
+      "source": "03-api \u00a711"
     },
     {
       "code": "decrypt_failed",
@@ -456,7 +456,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "prf_length",
@@ -464,7 +464,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "recovery_code_length",
@@ -472,7 +472,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "hpke_short",
@@ -480,7 +480,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "invite_code_length",
@@ -488,7 +488,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "wrap_unauthorized",
@@ -496,7 +496,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "log_empty",
@@ -504,7 +504,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "log_chain",
@@ -512,7 +512,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "log_genesis",
@@ -520,7 +520,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "log_accept",
@@ -528,7 +528,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "log_admit",
@@ -536,7 +536,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "log_signature",
@@ -544,7 +544,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "log_rights",
@@ -552,7 +552,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "log_epoch",
@@ -560,7 +560,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "log_type",
@@ -568,7 +568,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "invite_not_in_log",
@@ -576,7 +576,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "invite_consumed",
@@ -584,7 +584,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "invite_revoked",
@@ -592,7 +592,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "author_not_writer",
@@ -600,7 +600,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "pairing_unknown",
@@ -608,7 +608,7 @@
         404
       ],
       "origin": "hub",
-      "source": "11-agent-access §4"
+      "source": "11-agent-access \u00a74"
     },
     {
       "code": "pairing_gesture_required",
@@ -616,7 +616,7 @@
         403
       ],
       "origin": "hub",
-      "source": "11-agent-access §4"
+      "source": "11-agent-access \u00a74"
     },
     {
       "code": "claim_invalid",
@@ -624,43 +624,43 @@
         401
       ],
       "origin": "hub",
-      "source": "11-agent-access §4"
+      "source": "11-agent-access \u00a74"
     },
     {
       "code": "login_automation_failed",
       "statuses": [],
       "origin": "client",
-      "source": "03-api §11 (client-only)"
+      "source": "03-api \u00a711 (client-only)"
     },
     {
       "code": "prf_missing",
       "statuses": [],
       "origin": "client",
-      "source": "03-api §11 (client-only)"
+      "source": "03-api \u00a711 (client-only)"
     },
     {
       "code": "log_rollback",
       "statuses": [],
       "origin": "client",
-      "source": "03-api §11 (client-only)"
+      "source": "03-api \u00a711 (client-only)"
     },
     {
       "code": "log_fork",
       "statuses": [],
       "origin": "client",
-      "source": "03-api §11 (client-only)"
+      "source": "03-api \u00a711 (client-only)"
     },
     {
       "code": "platform_root_mismatch",
       "statuses": [],
       "origin": "client",
-      "source": "03-api §11 (client-only)"
+      "source": "03-api \u00a711 (client-only)"
     },
     {
       "code": "pairing_mismatch",
       "statuses": [],
       "origin": "client",
-      "source": "11-agent-access §5"
+      "source": "11-agent-access \u00a75"
     },
     {
       "code": "identity_unproven",
@@ -717,6 +717,14 @@
       ],
       "origin": "hub",
       "source": "ADR-075"
+    },
+    {
+      "code": "identity_forbidden",
+      "statuses": [
+        403
+      ],
+      "origin": "hub",
+      "source": "ADR-076"
     }
   ]
 }

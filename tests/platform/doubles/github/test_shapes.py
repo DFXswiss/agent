@@ -13,6 +13,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
 from agent_doubles.github.deviceflow import DEFAULT_CLIENT_ID, GRANT_TYPE
 
 REPO = "/repos/octo-org/hello"
@@ -102,6 +105,12 @@ def answers(gh: Any) -> dict[str, Any]:
     out["installation-repositories"] = gh.get("/user/installations/31/repositories")
     out["error-404"] = gh.api("GET", "/repos/octo-org/none").json()
     out["error-422"] = gh.api("GET", f"{REPO}/commits/none").json()
+    signer = {"token": "double-key-token", "kind": "classic", "scopes": ["write:ssh_signing_key"]}
+    gh.double.seed({"users": [{"login": "key-user", "tokens": [signer]}]})
+    raw = Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    blob = b"\0\0\0\x0bssh-ed25519\0\0\0\x20" + raw
+    key = {"title": "Signing key", "key": f"ssh-ed25519 {base64.b64encode(blob).decode()}"}
+    out["ssh-signing-key"] = gh.api("POST", "/user/ssh_signing_keys", key, token="double-key-token").json()
     json_headers = {"accept": "application/json"}
     code = gh.client.request("POST", "/login/device/code", {"client_id": DEFAULT_CLIENT_ID}, json_headers).json()
     out["device-code"] = code
@@ -135,6 +144,7 @@ FIXTURE_NAMES = (
     "pulls",
     "ref",
     "repository",
+    "ssh-signing-key",
     "tree",
     "user",
 )

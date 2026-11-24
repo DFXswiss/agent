@@ -21,6 +21,8 @@ from tests.platform.hub.orgs.support import Actor, new_id
 from tests.platform.hub.outbox.support import Outbox, item
 
 NOT_CONTRACT = {"contract": False}
+NO_IDENTITY = {"github_identity": None, "triggered_by": None}
+"""The identity fields of an `operation.*` audit detail of a registration without them (ADR-076 section 6)."""
 
 
 def tag(name: str) -> str:

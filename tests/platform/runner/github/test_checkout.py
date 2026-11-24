@@ -28,7 +28,7 @@ from agent_runner.sessions import records as session_records
 
 from ..sync.fakehub import CONTRACTS
 from .conftest import REPO, GitHub
-from .run10_kit import BINARY, R10, MockDouble, refused, run10, world
+from .run10_kit import BINARY, R10, MockDouble, known_user, refused, run10, world
 
 SCHEMAS = SchemaSet(CONTRACTS)
 
@@ -57,6 +57,7 @@ def test_checkout_of_the_default_branch_fills_the_workspace(store_dsn: str, star
         }
         assert SCHEMAS.errors("ops/github.checkout.result.json", op.result) == []
         assert r.journal() == [
+            "GET /user",
             f"GET /repos/{REPO}",
             f"GET /repos/{REPO}/commits/main",
             f"GET /repos/{REPO}/tarball/{sha}",
@@ -64,7 +65,8 @@ def test_checkout_of_the_default_branch_fills_the_workspace(store_dsn: str, star
         ]
         assert r.ok.hub.requests[0]["dedupe"] is not None
         assert op.checked is not None
-        assert op.checked["data"] == {"commit_sha": sha}
+        assert op.checked["data"]["commit_sha"] == sha
+        assert op.checked["data"]["identity_owner"] == op.checked["data"]["acting_user"]  # the owner's own record
         root = r.guest.work(sid) / "repos" / "octo-org" / "hello"
         assert sorted(str(p.relative_to(root)) for p in root.rglob("*")) == [
             "README.md",
@@ -142,7 +144,7 @@ def test_checkout_of_a_repository_without_a_valid_default_branch(store_dsn: str,
         return httpx.Response(200, json={"default_branch": "-bad"})
 
     async def body(r: R10) -> None:
-        r.ok.env.context.github_options = GitHubOptions(transport=httpx.MockTransport(handle))
+        r.ok.env.context.github_options = GitHubOptions(transport=known_user(handle))
         sid = await r.session()
         op = await r.run(sid, "github.checkout", {"repo": REPO})
         assert refused(op) == "upstream_error"
@@ -245,7 +247,7 @@ def test_unsafe_archives_are_refused(store_dsn: str, tmp_path: Path, archive: by
         return httpx.Response(200, json={"default_branch": "main"})
 
     async def body(r: R10) -> None:
-        r.ok.env.context.github_options = GitHubOptions(transport=httpx.MockTransport(handle))
+        r.ok.env.context.github_options = GitHubOptions(transport=known_user(handle))
         sid = await r.session()
         op = await r.run(sid, "github.checkout", {"repo": REPO})
         assert (op.state, op.error_code) == ("failed", code)

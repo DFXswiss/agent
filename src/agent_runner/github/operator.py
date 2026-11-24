@@ -1,12 +1,15 @@
 """The operator's GitHub account (KOR-27, ADR-053): a second way to connect beside the device flow of ADR-015.
 
 On a platform device the operator may place the operator's own GitHub token in `OPERATOR_GITHUB_TOKEN_FILE` and name
-the operator's user in `OPERATOR_GITHUB_USERS` (`config._operator_github`; both or neither, refused on org devices,
-exactly one user: a personal connection is never shared, so more than one is `config_invalid`, HOT-14). A
-`github.connect` of that user - the user of the verified request header, so nobody can trigger it for another user -
-stores this token as the user's `github` credential at once (`device_flow.connect`); every other user keeps the device
+the operator's user in `OPERATOR_GITHUB_USERS` or the organization that owns the account in `OPERATOR_GITHUB_ORG`
+(`config._operator_github`; the file needs one of them, refused on org devices, at most one user: a personal
+connection is never shared, so more than one is `config_invalid`, HOT-14). A `github.connect` of that user - the user
+of the verified request header, so nobody can trigger it for another user - stores this token as the user's `github`
+credential at once with `source:"operator"` (`approved`, `device_flow.connect`); every other user keeps the device
 flow. Like every `github` credential, the stored token can be opened by the user (browser) and by the devices holding
-the user's `CK`, and operations use it only for that user's own instructions (`credentials.acting`, ADR-053).
+the user's `CK`, and operations use it only for that user's own instructions (`credentials.acting`, ADR-053). A
+company `github.connect` of an admin for `OPERATOR_GITHUB_ORG` answers with this token as the organization's
+credential body (`for_org`, KOR-47, ADR-076 section 7); the organization's members use it as a company account.
 
 `read_token(path, state)` reads the file anew at each connect (the operator replaces it atomically). Only a regular
 file that is not a symlink, owned by the runner's account (effective uid) and without rights for group and others
@@ -19,6 +22,7 @@ Its directory must be owned by the runner's account and writable by nobody else 
 
 Reasons: `missing`, `directory`, `not_regular` (directory, symlink, device, ...), `owner`, `mode`, `unreadable`,
 `format`.
+The doctor line `operator_github` (`check`) names `OPERATOR_GITHUB_ORG` as its `value` when it is set.
 The counters `connects` and `failures` (successful and failed connects through the operator's token) feed the
 textfile metrics (`metrics.counters`).
 """
@@ -73,6 +77,17 @@ def approved(context: Any, user: str) -> bool:
         context.identity.device.kind == "platform"
         and config.operator_github_token_file is not None
         and user.lower() in config.operator_github_users
+    )
+
+
+def for_org(context: Any, org: str) -> bool:
+    """Whether a company connect for `org` takes the operator's token: only on a platform device with the file and
+    `OPERATOR_GITHUB_ORG` naming `org` (the admin check of the request is the caller's)."""
+    config = context.config
+    return (
+        context.identity.device.kind == "platform"
+        and config.operator_github_token_file is not None
+        and getattr(config, "operator_github_org", None) == org
     )
 
 

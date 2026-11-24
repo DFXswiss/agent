@@ -1,0 +1,11 @@
+{
+  "repo": "example-org/example-repo",
+  "branch": "feature/x",
+  "message": "Fix the parser.",
+  "paths": [
+    "src/parser.py"
+  ],
+  "co_authors": [
+    "Claude <noreply@example.com>"
+  ]
+}

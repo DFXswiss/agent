@@ -166,6 +166,28 @@
               },
               "vm_new_allowed": {
                 "type": "boolean"
+              },
+              "github_identity": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "the session's own GitHub identity (ADR-076 section 3)"
+              },
+              "task_github_identity": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "the task's GitHub identity (ADR-076 section 3)"
               }
             },
             "required": [
@@ -422,6 +444,36 @@
         },
         "hub_time": {
           "$ref": "../common.json#/$defs/time"
+        },
+        "github_defaults": {
+          "type": "array",
+          "description": "defaults of the organizations and workgroups the device is assigned to (ADR-076 section 3)",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "org",
+                  "wg"
+                ]
+              },
+              "scope_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "identity_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              }
+            },
+            "required": [
+              "scope",
+              "scope_id",
+              "identity_id"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 20000
         }
       },
       "required": [

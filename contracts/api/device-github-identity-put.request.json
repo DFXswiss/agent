@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-github-identity-put.request.json",
+  "title": "PUT /v1/device/github-identities/{id} request",
+  "description": "A user's identity record written by a device while answering a github.connect request of that user (company records are written by admins only, ADR-076 section 1).",
+  "type": "object",
+  "properties": {
+    "owner_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "record": {
+      "$ref": "../common.json#/$defs/credential_record"
+    },
+    "expected_version": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "request_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "owner_id",
+    "record",
+    "expected_version",
+    "request_id"
+  ],
+  "additionalProperties": false
+}

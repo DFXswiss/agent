@@ -10,7 +10,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from agent_runner.credentials import cache
+from agent_runner.credentials import cache, identities
 from agent_runner.github.client import GitHubOptions
 from agent_runner.github.executors import EXECUTORS
 from agent_runner.github.op_prechecks import PRECHECKS
@@ -85,7 +85,8 @@ def test_a_held_comment_runs_against_github_once_the_credential_arrives(store_ds
         op = await kit.op(op_id)
         assert (op.state, op.held) == ("succeeded", False)
         assert kit.seq == journaled  # no new request of the session
-        assert github.paths() == [f"GET /repos/{REPO}", f"POST /repos/{REPO}/issues/1/comments"]
+        # the account check of the token (KOR-47), the access check, the comment
+        assert github.paths() == ["GET /user", f"GET /repos/{REPO}", f"POST /repos/{REPO}/issues/1/comments"]
         assert kit.answers() == [op.answer]
         await kit.kit.pushed_events()
 
@@ -141,13 +142,13 @@ def test_a_revoked_token_is_sent_to_github_once_per_credential_version(store_dsn
             await kit.pipeline.scan()
             await kit.pipeline.settle()
         assert (await kit.op(op_id)).held
-        assert github.paths() == [f"GET /repos/{REPO}"]
+        assert github.paths() == ["GET /user"]  # refused once (`401`), not asked again for this version
         served["record"] = make_record(github_body(token=TOKEN), version=2)
         await cache.fetch(kit.env.context, ALICE, "github")
         await kit.pipeline.scan()
         await kit.pipeline.settle()
         assert (await kit.op(op_id)).state == "succeeded"
-        assert github.paths() == [f"GET /repos/{REPO}"] * 2 + [f"POST /repos/{REPO}/issues/1/comments"]
+        assert github.paths() == ["GET /user"] * 2 + [f"GET /repos/{REPO}", f"POST /repos/{REPO}/issues/1/comments"]
 
     held_run(store_dsn, github, body)
 
@@ -158,7 +159,9 @@ def test_request_connection_with_a_revoked_token_asks_to_connect_again(store_dsn
         await cache.fetch(kit.env.context, ALICE, "github")
         sid = await kit.session()
         held = await kit.run(sid, "github.request_connection", {})
-        assert (held.state, held.held, held.held_credential) == ("received", True, 1)
+        assert (held.state, held.held) == ("received", True)
+        async with kit.env.pool.connection() as conn:
+            assert held.held_credential == await identities.generation(conn)
         statuses = [i["body"] for k, i in await kit.outbox() if k == "event"]
         assert [s["waiting_for"] for s in statuses] == ["github_connection"]
         assert github.paths() == ["GET /user"]

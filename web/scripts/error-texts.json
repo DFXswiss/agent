@@ -1570,5 +1570,29 @@
       "body": "Die Workgroup nutzt so viele VMs wie erlaubt – die Aufgabe startet, sobald eine davon Platz hat.",
       "action": "Keine Aktion nötig."
     }
+  },
+  "identity_forbidden": {
+    "en": {
+      "title": "This GitHub account cannot be used here",
+      "body": "Only your own accounts and the company accounts of this organization can be chosen for its tasks.",
+      "action": "Choose another account or Automatic."
+    },
+    "de": {
+      "title": "Dieses GitHub-Konto kann hier nicht genutzt werden",
+      "body": "Für Aufgaben dieser Organisation können nur deine eigenen Konten und die Firmenkonten der Organisation gewählt werden.",
+      "action": "Wähle ein anderes Konto oder Automatisch."
+    }
+  },
+  "identity_unavailable": {
+    "en": {
+      "title": "GitHub account unavailable",
+      "body": "The GitHub account needed for this step is not connected or cannot be used for it.",
+      "action": "Connect your own GitHub account in the settings, then try again."
+    },
+    "de": {
+      "title": "GitHub-Konto nicht verfügbar",
+      "body": "Das GitHub-Konto für diesen Schritt ist nicht verbunden oder kann dafür nicht genutzt werden.",
+      "action": "Verbinde dein eigenes GitHub-Konto in den Einstellungen und versuche es dann erneut."
+    }
   }
 }

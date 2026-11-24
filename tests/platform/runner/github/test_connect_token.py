@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import ANY
 
 import httpx
 import pytest
@@ -50,7 +51,13 @@ def stored(dsn: str, transport: httpx.MockTransport, body: dict[str, Any]) -> tu
 def test_a_classic_token_is_checked_stored_and_answered_without_a_client_id(store_dsn: str) -> None:
     transport = user_answer(headers={"x-oauth-scopes": "repo, read:org, gist"})
     bodies, record, log = stored(store_dsn, transport, {"token": TOKEN})
-    done = {"step": "done", "login": "octo-user", "scopes": ["gist", "read:org", "repo"], "source": "token"}
+    done = {
+        "step": "done",
+        "login": "octo-user",
+        "scopes": ["gist", "read:org", "repo"],
+        "source": "token",
+        "identity_id": ANY,
+    }
     assert bodies == [done]
     assert record is not None
     assert {key: record[key] for key in ("token", "login", "user_id", "scopes", "source")} == {
@@ -77,7 +84,7 @@ def test_fine_grained_and_public_repo_tokens_are_accepted(
     store_dsn: str, headers: dict[str, str], scopes: list[str]
 ) -> None:
     bodies = mocked(store_dsn, user_answer(headers=headers), client_id=None, body={"token": TOKEN})
-    assert bodies == [{"step": "done", "login": "octo-user", "scopes": scopes, "source": "token"}]
+    assert bodies == [{"step": "done", "login": "octo-user", "scopes": scopes, "source": "token", "identity_id": ANY}]
 
 
 @pytest.mark.parametrize(

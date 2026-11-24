@@ -7,7 +7,10 @@ users with access to a workgroup (explicit, or inherited as admin, ADR-058) and 
 `cred` scope of a user the owner plus devices assigned to any workgroup in which the owner has **explicit** access, in
 any org in which the owner joined by its own entry, not by `admit` (section 2, ADR-007, ADR-058 section 1: the
 inherited read of an admin does not spread credentials; ADR-060: an admission without consent does not either).
-Decertified platform devices are passed as `excluded`.
+Decertified platform devices are passed as `excluded`. The `cred` scope of an **organization** (the org credential
+key of its company credentials, KM-35, ADR-076) has devices as its only readers: every active device assigned to a
+workgroup of that org (no user, not even an admin). An active admin of the org may additionally wrap it (the admin
+creates each epoch with the company record it seals and wraps it to the reader devices, but never receives it).
 
 - W1: a principal may wrap a scope epoch for itself if it holds the key (it is entitled now; e.g. the self-wrap of
   the package keys after `accept`, section 5.2).
@@ -52,11 +55,25 @@ class WrapSlot:
         return {"scope": self.scope, "scope_id": self.scope_id, "epoch": self.epoch, "recipient_id": self.recipient}
 
 
+def _org_state(states: Iterable[OrgState], owner: str) -> OrgState | None:
+    """The state of the org `owner` when the owner of a `cred` scope is an organization among `states`."""
+    return next((state for state in states if state.org == owner), None)
+
+
 def cred_readers(states: Iterable[OrgState], owner: str, excluded: Iterable[str] = ()) -> frozenset[str]:
-    """The owner and every active device assigned to a workgroup in which the owner has explicit access, over all
-    orgs in which the owner joined by its own entry (an org that admitted the owner without its consent gets no
-    credential key, ADR-060)."""
+    """For a user: the owner and every active device assigned to a workgroup in which the owner has explicit access,
+    over all orgs in which the owner joined by its own entry (an org that admitted the owner without its consent gets
+    no credential key, ADR-060). For an organization among `states`: every active device assigned to a workgroup of
+    it (devices only, KM-35)."""
     skip = set(excluded)
+    states = list(states)
+    org = _org_state(states, owner)
+    if org is not None:
+        return frozenset(
+            device.id
+            for device in org.principals.values()
+            if device.kind == DEVICE and device.id not in skip and org.device_wgs(device.id)
+        )
     found = {owner}
     for state in states:
         member = state.member(owner)
@@ -84,13 +101,16 @@ def may_wrap(log: VerifiedLog, slot: WrapSlot, wrapped_by: str, excluded: Iterab
 def may_wrap_cred(
     states: Sequence[OrgState], slot: WrapSlot, wrapped_by: str, current_epoch: int, excluded: Iterable[str] = ()
 ) -> bool:
-    """W1/W2 for the `cred` scope of user `slot.scope_id` (its epochs live outside the membership logs)."""
+    """W1/W2 for the `cred` scope of user or organization `slot.scope_id` (its epochs live outside the membership
+    logs); for an organization an active admin of it may wrap as well."""
     readers = cred_readers(states, slot.scope_id, excluded)
+    org = _org_state(states, slot.scope_id)
+    admin = org is not None and org.is_admin(wrapped_by)
     return (
         slot.scope == CRED
         and 1 <= slot.epoch <= current_epoch
         and slot.recipient in readers
-        and (wrapped_by == slot.recipient or wrapped_by in readers)
+        and (wrapped_by == slot.recipient or wrapped_by in readers or admin)
     )
 
 
@@ -148,7 +168,8 @@ def check_cred_wrap(
     *,
     require_active: bool = False,
 ) -> WrapSlot:
-    """W3 for a `cred` wrap; `logs` are the verified logs of the owner's orgs, `current_epoch` the owner's CK epoch."""
+    """W3 for a `cred` wrap; `logs` are the verified logs of the owner's orgs (for an organization: its own log),
+    `current_epoch` the owner's current `cred` epoch."""
     states = [log.state for log in logs]
     slot = _slot_and_signature(wrap, wrapped_by, states, require_active)
     if not may_wrap_cred(states, slot, wrapped_by, current_epoch, excluded):

@@ -5,7 +5,8 @@
 // The form starts from the newest verified settings event and follows newer ones while it is unchanged. Once the
 // user edited it, a newer event shows the concurrent-edit warning: show the newer settings, or save the own ones
 // anyway. Readers see the values without any control (06-web.md section 1). A workgroup the user cannot read is "not
-// found" (existence is not revealed).
+// found" (existence is not revealed). Below the form: the workgroup's default GitHub identity (`GithubDefault.tsx`,
+// ADR-076), editable by the organization's admins and the writers of the workgroup.
 import { type FormEvent, useEffect, useId, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { WG } from '../../../core/log/state';
@@ -28,6 +29,7 @@ import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { errorCode } from '../../shell/errors';
 import { useDirectory, useOrgView } from '../tasks/hooks';
+import { GithubDefault } from './GithubDefault';
 
 interface Draft {
   readonly input: SettingsInput;
@@ -293,6 +295,12 @@ export function WgSettingsScreen() {
         )}
       </h1>
       <Settings key={wg} org={org} wg={wg} writer={state.canWriteWg(userId, wg)} />
+      <GithubDefault
+        org={org}
+        wg={wg}
+        orgName={directory.orgName}
+        editable={state.isAdmin(userId) || state.canWriteWg(userId, wg)}
+      />
     </main>
   );
 }

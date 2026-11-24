@@ -3,7 +3,7 @@
 | Route | Right |
 |---|---|
 | `GET /v1/me/devices` | `user`: the devices eligible for the user's device requests and `CK` |
-| `POST /v1/device-requests` | `user`, the device in `GET /v1/me/devices` |
+| `POST /v1/device-requests` | `user`, the device in `GET /v1/me/devices`; with `org_id` an admin of that org |
 | `GET /v1/device-requests/{id}` | `owner`: the user of the request |
 | `GET /v1/device/requests/{id}` | `device_addressed` |
 | `POST /v1/device/requests/{id}/responses` | `device_addressed` |
@@ -21,10 +21,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from datetime import timedelta
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent_hub.agents.notify import account_change
 from agent_hub.credentials.eligibility import eligible_devices
@@ -42,10 +42,18 @@ router = HubRouter()
 
 
 class EnvelopeBody(BaseModel):
-    """Body of `POST /v1/device-requests` and `POST /v1/device/requests/{id}/responses` (form checked by the store)."""
+    """Body of `POST /v1/device/requests/{id}/responses` (form checked by the store)."""
 
     model_config = ConfigDict(extra="forbid")
     envelope: dict[str, Any]
+
+
+class RequestBody(EnvelopeBody):
+    """Body of `POST /v1/device-requests`: the envelope and, for a company identity, the organization."""
+
+    org_id: (
+        Annotated[str, Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")] | None
+    ) = None
 
 
 async def _in_transaction[T](context: HubContext, work: Callable[[Any], T]) -> T:
@@ -97,11 +105,12 @@ async def get_my_devices(context: Context, principal: CurrentPrincipal) -> dict[
 
 
 @router.post("/v1/device-requests", auth="browser", right="user")
-async def post_request(context: Context, principal: CurrentPrincipal, body: EnvelopeBody) -> dict[str, Any]:
+async def post_request(context: Context, principal: CurrentPrincipal, body: RequestBody) -> dict[str, Any]:
     user, now = user_id(principal), context.clock()
+    org = None if body.org_id is None else UUID(body.org_id)
 
     def work(connection: Any) -> tuple[store.Created, list[Notification]]:
-        created = store.create_request(connection, user, body.envelope, now)
+        created = store.create_request(connection, user, body.envelope, now, org_id=org)
         if created.replayed:
             return created, []
         # an agent sent a device request (e.g. connect GitHub): the user is told (KOR-24)

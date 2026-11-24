@@ -7,6 +7,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any
+from unittest.mock import ANY
 
 import httpx
 import pytest
@@ -74,7 +75,13 @@ def test_connect_relays_the_device_code_stores_the_credential_and_answers_done(s
         assert first["verification_uri"] == "https://github.example/login/device"
         assert first["expires_in"] == 900
         assert first["user_code"] == github.double.device.grants()[-1]["user_code"]
-        assert last == {"step": "done", "login": "octo-user", "scopes": [], "source": "device_flow"}
+        assert last == {
+            "step": "done",
+            "login": "octo-user",
+            "scopes": [],
+            "source": "device_flow",
+            "identity_id": env.hub.records[(ALICE, "github")]["header"]["id"],
+        }
         assert [h["final"] for h, _b in env.hub.responses(request_id)] == [False, True]
         record = env.hub.records[(ALICE, "github")]
         assert record["header"]["author"] == env.context.identity.device.device_id
@@ -269,7 +276,13 @@ def test_mock_happy_path_records_the_granted_scopes(store_dsn: str) -> None:
         login_oauth_access_token=[(200, {"error": "slow_down"}), (200, TOKEN)],
         user=(200, USER),
     )
-    done = {"step": "done", "login": "octo-user", "scopes": ["read:user", "repo"], "source": "device_flow"}
+    done = {
+        "step": "done",
+        "login": "octo-user",
+        "scopes": ["read:user", "repo"],
+        "source": "device_flow",
+        "identity_id": ANY,
+    }
     assert mocked(store_dsn, transport)[-1] == done
 
 

@@ -98,6 +98,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "claim_invalid": (401,),
     "handover_required": (400,),
     "handover_unexpected": (400,),
+    "identity_forbidden": (403,),
 }
 
 # The detail keys of `contracts/common.json#/$defs/error` (closed).

@@ -4,8 +4,10 @@
 - `POST /v1/device-requests {envelope}`: the envelope verifies with the caller's identity (crypto codes as the hub
   answers them), `header.user` is the caller (`403 forbidden`), the kind is one of the four (`400 header_invalid`), a
   follow-up names an earlier request of the same user, device and kind (`400 params_invalid`), the device may read the
-  user's `CK` by the logs (`403 device_not_assigned`); the same ID again is `replayed` when identical, else `409
-  id_conflict`; a new root request ends an active one of the same user, device and kind (`failed`);
+  user's `CK` by the logs (`403 device_not_assigned`); a plaintext `org_id` (a company account, KOR-47) is accepted
+  for a `github.connect` of an admin of that org only (`403 forbidden`) and kept with the request; the same ID again
+  is `replayed` when identical, else `409 id_conflict`; a new root request ends an active one of the same user, device
+  and kind (`failed`);
 - `GET /v1/device-requests/{id}` (owner, else `404`): state, expiry and the responses in `seq` order;
 - `GET /v1/me/devices` without seeded rows lists the devices the logs make eligible (assigned to a workgroup the user
   can access), online.
@@ -110,13 +112,18 @@ def install(hub: HubFake) -> None:
             return original_devices(request, body)
         return 200, {"devices": eligible(hub, cast(str, request.user))}
 
-    def create(request: Request, body: Any) -> tuple[int, Any]:  # noqa: PLR0911
-        if not isinstance(body, dict) or set(body) != {"envelope"}:
+    def create(request: Request, body: Any) -> tuple[int, Any]:  # noqa: PLR0911, PLR0912
+        if not isinstance(body, dict) or set(body) - {"org_id"} != {"envelope"}:
             return 400, {"error": "request_invalid"}
         user = hub.users[cast(str, request.user)]
         envelope = body["envelope"]
         header = verify_request(envelope, user.identity.sig_public())
         if header["user"] != user.id:
+            return 403, {"error": "forbidden"}
+        org = body.get("org_id")
+        if org is not None and (
+            header["kind"] != "github.connect" or org not in hub.orgs or not hub.orgs[org].log.state.is_admin(user.id)
+        ):
             return 403, {"error": "forbidden"}
         if header["kind"] not in KINDS:
             return 400, {"error": "header_invalid"}
@@ -149,6 +156,7 @@ def install(hub: HubFake) -> None:
             "envelope": envelope,
             "user": user.id,
             "follows": follows,
+            "org_id": org,
         }
         answers = found.script.get(header["kind"])
         for answer, final in answers.pop(0) if answers else []:

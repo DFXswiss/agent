@@ -67,14 +67,24 @@ export function slotOf(value: { scope: string; scope_id: string; epoch: number; 
 }
 
 /**
- * The owner and every active device assigned to a workgroup in which the owner has explicit access, over all orgs in
- * which the owner joined by its own entry (an org that admitted the owner without its consent gets no credential key,
- * ADR-060).
+ * For a user: the owner and every active device assigned to a workgroup in which the owner has explicit access, over
+ * all orgs in which the owner joined by its own entry (an org that admitted the owner without its consent gets no
+ * credential key, ADR-060). For an organization among `states` (the credential key of its company accounts, KM-35,
+ * ADR-076): every active device assigned to a workgroup of it – devices only, no user.
  */
 export function credReaders(states: Iterable<OrgState>, owner: string, excluded: Iterable<string> = []): Set<string> {
   const skip = new Set(excluded);
+  const list = [...states];
+  const org = list.find((state) => state.org === owner);
+  if (org !== undefined) {
+    return new Set(
+      [...org.principals.values()]
+        .filter((device) => device.kind === DEVICE && !skip.has(device.id) && org.deviceWgs(device.id).length > 0)
+        .map((device) => device.id),
+    );
+  }
   const found = new Set([owner]);
-  for (const state of states) {
+  for (const state of list) {
     if (state.member(owner)?.consented !== true) continue;
     for (const device of state.principals.values()) {
       const eligible = state.deviceWgs(device.id).some((wg) => state.explicitAccess(owner, wg) !== null);
@@ -95,7 +105,10 @@ export function mayWrap(log: VerifiedLog, slot: WrapSlot, wrappedBy: string, exc
   return wrappedBy === slot.recipient || holders.has(wrappedBy) || readers.includes(wrappedBy);
 }
 
-/** W1/W2 for the `cred` scope of user `slot.scope_id` (its epochs live outside the membership logs). */
+/**
+ * W1/W2 for the `cred` scope of user or organization `slot.scope_id` (its epochs live outside the membership logs); for
+ * an organization an active admin of it may wrap as well (it creates each epoch with the company record it seals).
+ */
 export function mayWrapCred(
   states: readonly OrgState[],
   slot: WrapSlot,
@@ -104,12 +117,13 @@ export function mayWrapCred(
   excluded: Iterable<string> = [],
 ): boolean {
   const readers = credReaders(states, slot.scope_id, excluded);
+  const admin = states.some((state) => state.org === slot.scope_id && state.isAdmin(wrappedBy));
   return (
     slot.scope === CRED &&
     slot.epoch >= 1 &&
     slot.epoch <= currentEpoch &&
     readers.has(slot.recipient) &&
-    (wrappedBy === slot.recipient || readers.has(wrappedBy))
+    (wrappedBy === slot.recipient || readers.has(wrappedBy) || admin)
   );
 }
 

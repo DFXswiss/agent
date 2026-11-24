@@ -37,7 +37,7 @@ def test_create_read_list_and_audit(desk: Desk, published: MemoryPublisher) -> N
     [(actor_kind, actor_id, device_id, target_kind, target_id, detail)] = desk.audit("credential.put")
     assert (actor_kind, str(actor_id), device_id, target_kind) == ("user", writer.id, None, "credential")
     assert target_id == record["header"]["id"]
-    assert detail == {"kind": "github", "version": 1}
+    assert detail == {"kind": "github", "version": 1, "owner_kind": "user"}
     devices = sorted([desk.scene.device.id, desk.scene.other_device.id])
     assert sorted(_hints(published)) == [(device, {"owner_id": writer.id}) for device in devices]
     notices = desk.world.rows("SELECT device_id::text, owner_id::text FROM hub.credential_notice ORDER BY device_id")
@@ -196,7 +196,7 @@ def test_delete_is_hard_and_notifies_every_eligible_device(desk: Desk, published
     [(actor_kind, actor_id, _device, target_kind, target_id, detail)] = desk.audit("credential.delete")
     assert (actor_kind, str(actor_id), target_kind) == ("user", writer.id, "credential")
     assert target_id == record["header"]["id"]
-    assert detail == {"kind": "github", "version": 1}
+    assert detail == {"kind": "github", "version": 1, "owner_kind": "user"}
     devices = sorted([desk.scene.device.id, desk.scene.other_device.id])
     assert sorted(_hints(published)) == [(device, {"owner_id": writer.id}) for device in devices]
     assert len(desk.world.rows("SELECT 1 FROM hub.credential_notice WHERE owner_id = %s", writer.id)) == 2

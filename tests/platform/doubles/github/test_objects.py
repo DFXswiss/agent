@@ -133,6 +133,22 @@ def test_commit_ids_match_git_commit_tree(git: Callable[..., str]) -> None:
     assert set(store.commit_ids()) == {first, second, object_id("commit", raw.payload())}
 
 
+def test_signed_commit_ids_match_git_hash_object(git: Callable[..., str]) -> None:
+    """The signature goes into the ``gpgsig`` header (further lines indented by one space, a final newline of the
+    signature dropped); the payload without it is what the signature covers."""
+    store = ObjectStore()
+    sig = Signature("A", "a@example.invalid", 5)
+    plain = Commit(EMPTY_TREE, (), sig, sig, "Signed.\n")
+    signed = Commit(EMPTY_TREE, (), sig, sig, "Signed.\n", "-----BEGIN X-----\nabc\n-----END X-----\n")
+    assert signed.unsigned_payload() == plain.payload() == plain.unsigned_payload()
+    assert signed.payload() == (
+        b"tree " + EMPTY_TREE.encode() + b"\nauthor A <a@example.invalid> 5 +0000\n"
+        b"committer A <a@example.invalid> 5 +0000\ngpgsig -----BEGIN X-----\n abc\n -----END X-----\n\nSigned.\n"
+    )
+    assert store.put_commit(signed) == git("hash-object", "-t", "commit", "--stdin", data=signed.payload())
+    assert store.commit(object_id("commit", signed.payload())).signature == signed.signature
+
+
 def test_store_refuses_invalid_objects() -> None:
     store = ObjectStore()
     blob = store.put_blob(b"x")

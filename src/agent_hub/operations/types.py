@@ -35,6 +35,7 @@ OPERATION_TYPES = frozenset(
         "github.request_connection",
         "human.question",
         "human.approval",
+        "github.list_identities",
     }
 )
 SUBAGENT_REQUEST = "subagent.request"

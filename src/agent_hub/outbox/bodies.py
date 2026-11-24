@@ -59,6 +59,7 @@ OUTBOX_AUDIT_ACTIONS = (
     "runner.alert",
     "session.context_restored",
     "session.context_fallback",
+    "runner.operator_github_users",
 )
 """A copy of `contracts/enums/outbox-audit-actions.json` (a test compares them)."""
 OPERATION_ERROR_CODES = (
@@ -85,6 +86,8 @@ OPERATION_ERROR_CODES = (
     "tree_mismatch",
     "no_changes",
     "workvm_unavailable",
+    "identity_forbidden",
+    "identity_unavailable",
 )
 """A copy of `contracts/enums/operation-error-codes.json` (a test compares them)."""
 
@@ -140,6 +143,8 @@ OperationErrorCode = Literal[
     "tree_mismatch",
     "no_changes",
     "workvm_unavailable",
+    "identity_forbidden",
+    "identity_unavailable",
 ]
 
 
@@ -427,6 +432,12 @@ class ContextFallback(Strict):
     ]
 
 
+class OperatorGithubUsers(Strict):
+    count: Count
+    added: Count
+    removed: Count
+
+
 AUDIT_DETAILS: dict[str, type[Strict]] = {
     "hook.denied": HookDenied,
     **{action: ReadCount for action in OUTBOX_AUDIT_ACTIONS if action.startswith("read.session.")},
@@ -439,6 +450,7 @@ AUDIT_DETAILS: dict[str, type[Strict]] = {
     "runner.alert": RunnerAlert,
     "session.context_restored": ContextRestored,
     "session.context_fallback": ContextFallback,
+    "runner.operator_github_users": OperatorGithubUsers,
 }
 
 

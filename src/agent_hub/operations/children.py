@@ -5,9 +5,10 @@ the parent's task on the parent's device and VM, `parent_session_id` = the reque
 the operation, `depth` = parent depth + 1, owner = the task owner, agent `claude-code`, state `requested` with its
 first transition. It writes the audit row `session.requested` (actor: the requesting device) and records the `session`
 frame for the org's browsers, the hint `session.start {session_id}` for the device (whose `GET /v1/device/state` lists
-the child in `sessions`) and the task derivation (`refresh_task`: the task's activity time and `task` frame). The model
-of the child is chosen by the runner (the parent's access kind, or the `model_id` the runner allowed). The caller
-holds the task row (lock order of `agent_hub.sessions.taskstate`).
+the child in `sessions`) and the task derivation (`refresh_task`: the task's activity time and `task` frame). The
+child's `github_identity` is the one the registration names, else the parent session's (ADR-076 section 3). The model
+of the child is chosen by the runner (the parent's access kind, or the `model_id` the runner allowed). The caller holds
+the task row (lock order of `agent_hub.sessions.taskstate`).
 """
 
 from __future__ import annotations
@@ -52,13 +53,15 @@ def create_child(
     now: datetime,
     *,
     effects: Effects,
+    github_identity: str | None = None,
 ) -> UUID:
     """Create the child session of an accepted `subagent.request` (module docstring); its ID."""
     child = UUID(uuid7(int(now.timestamp() * 1000)))
     connection.execute(
         "INSERT INTO hub.session (id, task_id, org_id, wg_id, owner_id, device_id, vm_id, parent_session_id,"
-        " origin_operation_id, depth, state, agent_kind, created_at)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'requested', %s, %s)",
+        " origin_operation_id, depth, state, agent_kind, created_at, github_identity)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'requested', %s, %s,"
+        " COALESCE(%s::uuid, (SELECT github_identity FROM hub.session WHERE id = %s)))",
         (
             child,
             task.id,
@@ -72,6 +75,8 @@ def create_child(
             parent.depth + 1,
             AGENT_KIND,
             now,
+            github_identity,
+            parent.id,
         ),
     )
     connection.execute(

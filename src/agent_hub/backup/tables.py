@@ -44,7 +44,7 @@ DEVICE_ROWS = "device_id = ANY(%(devices)s)"
 ALL_ROWS = "TRUE"
 SCOPE_ROWS = (
     "(scope = 'org' AND scope_id = %(org)s) OR (scope = 'wg' AND scope_id = ANY(%(wgs)s))"
-    " OR (scope = 'cred' AND scope_id = ANY(%(users)s))"
+    " OR (scope = 'cred' AND (scope_id = ANY(%(users)s) OR scope_id = %(org)s))"
 )
 
 
@@ -119,8 +119,10 @@ RULES: tuple[TableRule, ...] = (
     TableRule("session_ping", "session_id = ANY(%(sessions)s)"),
     # the org's notifications and the account notifications of its users (`agent.account_change`, no org; ADR-056)
     TableRule("notification", "org_id = %(org)s OR (org_id IS NULL AND recipient_id = ANY(%(users)s))"),
-    TableRule("credential", "owner_id = ANY(%(users)s)"),
-    TableRule("credential_notice", "owner_id = ANY(%(users)s)"),
+    # the records of the org's users and the org's own company records (ADR-076)
+    TableRule("credential", "owner_id = ANY(%(users)s) OR owner_id = %(org)s"),
+    TableRule("github_default", "(scope = 'org' AND scope_id = %(org)s) OR (scope = 'wg' AND scope_id = ANY(%(wgs)s))"),
+    TableRule("credential_notice", "owner_id = ANY(%(users)s) OR owner_id = %(org)s"),
     TableRule("device_request", USER_ROWS),
     TableRule("device_response", "request_id IN (SELECT id FROM hub.device_request WHERE user_id = ANY(%(users)s))"),
     TableRule("metric_sample", DEVICE_ROWS),

@@ -53,6 +53,8 @@ def test_a_new_session_with_its_first_prompt(world: World, fleet: Fleet) -> None
             "owner_id": desk.scene.writer.id,
             "model_access_pref": "auto",
             "model_id_pref": None,
+            "github_identity": None,
+            "task_github_identity": None,
         }
     ]
     first = prompt_ids(desk, task)

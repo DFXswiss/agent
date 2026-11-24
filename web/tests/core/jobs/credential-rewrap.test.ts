@@ -300,6 +300,23 @@ describe('rotateCredentialKey', () => {
     expect(await rotateCredentialKey(t.context)).toBeNull();
   });
 
+  it('re-seals the further GitHub identities right after the rotation, and rotates even when that fails', async () => {
+    const t = await credWorld();
+    await seed(t, 'anthropic_api_key', API_KEY);
+    await unassign(t);
+    t.clock.now = T0 + 3600_000;
+    // without the identity list (an older hub) the rotation stands; the job github-rewrap repeats the re-sealing
+    expect(await rotateCredentialKey(t.context)).toMatchObject({ status: 'rotated', epoch: 2 });
+    expect(t.client.of('GET /v1/me/github-identities')).toHaveLength(1);
+    const again = await credWorld();
+    await seed(again, 'anthropic_api_key', API_KEY);
+    await unassign(again);
+    again.clock.now = T0 + 3600_000;
+    again.client.on('GET /v1/me/github-identities', () => ({ identities: [], defaults: [] }));
+    expect(await rotateCredentialKey(again.context)).toMatchObject({ status: 'rotated', epoch: 2 });
+    expect(again.client.of('GET /v1/me/github-identities')).toHaveLength(1);
+  });
+
   it('re-encrypts a login token of the agent tool unchanged, with its expiry (ADR-056 section 7)', async () => {
     const t = await credWorld();
     await seed(t, 'claude_subscription', LOGIN_TOKEN);

@@ -1,0 +1,541 @@
+{
+  "name": "e2e-58-github-identities",
+  "description": "E2E-58: GitHub identities (ADR-076). The owner's task asks which identities apply, checks out and branches with the owner's primary account, writes a file and tries two forged commits (a free-text author object, a Co-authored-by line in the message): both params_invalid. A second member's prompt files an issue: held for a connection (no default, no own account) until the workgroup default names the company account, then the session waits for it with get_operation. The owner's next prompt commits with author != committer and both humans as co-authors (identity and user IDs from the spec's variables), pushes, opens a draft pull request as the owner's second account (github_identity), comments with the workgroup default and starts a subagent with another identity, which comments as that identity. A last task of the second member files an issue with the operator's account. The spec fills the variables before loading.",
+  "variables": {
+    "ada": "00000000-0000-7000-8000-000000000001",
+    "bob": "00000000-0000-7000-8000-000000000002",
+    "ada_main": "00000000-0000-7000-8000-000000000003",
+    "ada_second": "00000000-0000-7000-8000-000000000004"
+  },
+  "steps": [
+    {
+      "id": "identities",
+      "expect": {
+        "user_text_contains": "E2E53-ADA",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Which GitHub accounts may I use?"
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.list_identities",
+              "params": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "checkout",
+      "expect": {
+        "tool_result_contains": "\"acting_user\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": {
+                "repo": "kz53-org/app"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "branch",
+      "expect": {
+        "tool_result_contains": "\"dir\":\"repos/kz53-org/app\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_branch",
+              "params": {
+                "repo": "kz53-org/app",
+                "branch": "e2e53/notes",
+                "from": "main"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "write",
+      "expect": {
+        "tool_result_contains": "\"branch\":\"e2e53/notes\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/kz53-org/app/NOTES.md",
+              "content": "Notes kz53-file-h4v8c2\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "forged-author",
+      "expect": {
+        "tool_result_is_error": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "kz53-org/app",
+                "branch": "e2e53/notes",
+                "message": "Add the notes.",
+                "author": {
+                  "name": "Release Bot",
+                  "email": "release-bot@example.com"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "forged-trailer",
+      "expect": {
+        "tool_result_contains": "\"params_invalid\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "kz53-org/app",
+                "branch": "e2e53/notes",
+                "message": "Add the notes.\n\nCo-authored-by: Release Bot <release-bot@example.com>"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "prepared",
+      "expect": {
+        "tool_result_contains": "/params/message"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The notes are prepared kz53-answer-ada-p3w7."
+          }
+        ]
+      }
+    },
+    {
+      "id": "bob-issue",
+      "expect": {
+        "user_text_contains": "E2E53-BOB"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_issue",
+              "params": {
+                "repo": "kz53-org/app",
+                "title": "Review the notes kz53-issue-bob-t5n1",
+                "body": "Filed for the second member."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "bob-wait",
+      "expect": {
+        "tool_result_contains": "\"operation_id\":\""
+      },
+      "capture": {
+        "issue_op": {
+          "regex": "\"operation_id\":\"([0-9a-f-]{36})\"(?![\\s\\S]*\"operation_id\")",
+          "source": "messages"
+        }
+      },
+      "delay_ms": 5000,
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${issue_op}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${issue_op}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${issue_op}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${issue_op}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${issue_op}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${issue_op}",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "bob-done",
+      "expect": {
+        "tool_result_contains": "/kz53-org/app/issues/1\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Issue #1 is filed kz53-answer-bob-m6x2."
+          }
+        ]
+      }
+    },
+    {
+      "id": "commit",
+      "expect": {
+        "user_text_contains": "E2E53-COMMIT"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "kz53-org/app",
+                "branch": "e2e53/notes",
+                "message": "Add the notes.",
+                "author": "${ada_second}",
+                "committer": "${ada_main}",
+                "co_authors": ["${ada}", "${bob}"]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push",
+      "expect": {
+        "tool_result_contains": "\"files_changed\":1"
+      },
+      "capture": {
+        "commit": {
+          "regex": "\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": {
+                "repo": "kz53-org/app",
+                "branch": "e2e53/notes",
+                "commit_sha": "${commit}"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "pull-request",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/kz53-org/app/tree/e2e53/notes\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_pull_request",
+              "params": {
+                "repo": "kz53-org/app",
+                "head": "e2e53/notes",
+                "base": "main",
+                "title": "Add the notes kz53-title-r8d4",
+                "body": "Opened as the chosen account.",
+                "draft": true,
+                "github_identity": "${ada_second}"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "comment",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/kz53-org/app/pull/2\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "kz53-org/app",
+                "number": 2,
+                "body": "Ready for review kz53-comment-main-w2q9"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "subagent",
+      "expect": {
+        "tool_result_contains": "issuecomment-"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Review the pull request",
+                "prompt": "E2E53-CHILD review pull request 2 of kz53-org/app",
+                "github_identity": "${ada_main}"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "wait-child",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "capture": {
+        "child": {
+          "regex": "\"result\":\\{\"session_id\":\"([0-9a-f-]{36})\"\\}",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${child}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${child}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${child}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${child}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": {
+              "session_id": "${child}",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "child-comment",
+      "expect": {
+        "user_text_contains": "E2E53-CHILD",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.comment",
+              "params": {
+                "repo": "kz53-org/app",
+                "number": 2,
+                "body": "Reviewed kz53-comment-child-j7k3"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "child-done",
+      "expect": {
+        "tool_result_contains": "issuecomment-"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Review posted kz53-child-v5b1."
+          }
+        ]
+      }
+    },
+    {
+      "id": "pull-request-done",
+      "expect": {
+        "tool_result_contains": "Review posted kz53-child-v5b1."
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Pull request #2 is open: https://github.example/kz53-org/app/pull/2 kz53-answer-commit-c9f6."
+          }
+        ]
+      }
+    },
+    {
+      "id": "operator-issue",
+      "expect": {
+        "user_text_contains": "E2E53-OPERATOR",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_issue",
+              "params": {
+                "repo": "kz53-org/app",
+                "title": "Release checklist kz53-issue-op-y3h8",
+                "body": "Filed with the operator's account."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "operator-done",
+      "expect": {
+        "tool_result_contains": "/kz53-org/app/issues/3\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Issue #3 is filed kz53-answer-op-g1r5."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Notes"
+          }
+        ]
+      }
+    }
+  ]
+}

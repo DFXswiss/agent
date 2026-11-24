@@ -21,6 +21,7 @@ repeats until none is left.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
@@ -45,13 +46,14 @@ def _expire_batch(context: Any) -> int:
     with context.pool.connection() as connection, connection.transaction():
         connection.execute("SELECT pg_advisory_xact_lock(%s)", (AUDIT_LOCK,))
         found = connection.execute(
-            "SELECT id, org_id, wg_id, task_id, session_id, device_id, type, state FROM hub.operation"
+            "SELECT id, org_id, wg_id, task_id, session_id, device_id, type, state, github_identity, triggered_by"
+            " FROM hub.operation"
             " WHERE (state = 'received' AND created_at <= %s) OR (state = 'accepted' AND decided_at <= %s)"
             " ORDER BY created_at, id LIMIT %s FOR UPDATE SKIP LOCKED",
             (now - RECEIVED_LIMIT, now - ACCEPTED_LIMIT, BATCH),
         ).fetchall()
         for row in found:
-            ref = OperationRef(*row[:7])
+            ref = replace(OperationRef(*row[:7]), github_identity=row[8], triggered_by=row[9])
             code = CODES[row[7]]
             connection.execute(
                 "UPDATE hub.operation SET state = 'expired', error_code = %s, finished_at = %s WHERE id = %s",

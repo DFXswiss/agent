@@ -2323,6 +2323,193 @@
       "read_resource": "org.attention.summary",
       "streaming": false,
       "owner": "KOR-39"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/github-identities",
+      "name": "github-identities-list",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/github-identities-list.request.json",
+      "response": "api/github-identities-list.response.json",
+      "read_resource": "me.github_identities",
+      "streaming": false,
+      "owner": "KOR-47"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/github-identities/{id}",
+      "name": "github-identity-get",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/github-identity-get.request.json",
+      "response": "api/github-identity-get.response.json",
+      "read_resource": "github_identity",
+      "streaming": false,
+      "owner": "KOR-47"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/github-identities/{id}",
+      "name": "github-identity-put",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/github-identity-put.request.json",
+      "response": "api/github-identity-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-47"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/github-identities/{id}",
+      "name": "github-identity-delete",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/github-identity-delete.request.json",
+      "response": "api/github-identity-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-47"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/github-identities/{id}/primary",
+      "name": "github-identity-primary",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/github-identity-primary.request.json",
+      "response": "api/github-identity-primary.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-47"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/github-defaults/{scope}/{scope_id}",
+      "name": "github-default-put",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "scope": "github_default_scope",
+        "scope_id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/github-default-put.request.json",
+      "response": "api/github-default-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-47"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/tasks/{task}/github-identity",
+      "name": "task-github-identity-put",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "wg:write"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/task-github-identity-put.request.json",
+      "response": "api/task-github-identity-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-47"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/github-identities/{id}",
+      "name": "device-github-identity-get",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_eligible"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/device-github-identity-get.request.json",
+      "response": "api/device-github-identity-get.response.json",
+      "read_resource": "device.github_identity",
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/device/github-identities/{id}",
+      "name": "device-github-identity-put",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_eligible"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/device-github-identity-put.request.json",
+      "response": "api/device-github-identity-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "CTR-03"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/github-identities",
+      "name": "device-github-identities-list",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_eligible"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/device-github-identities-list.request.json",
+      "response": "api/device-github-identities-list.response.json",
+      "read_resource": "device.github_identities",
+      "streaming": false,
+      "owner": "CTR-03"
     }
   ]
 }

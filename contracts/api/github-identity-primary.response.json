@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/github-identity-primary.response.json",
+  "title": "PUT /v1/github-identities/{id}/primary response",
+  "description": "Empty object.",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

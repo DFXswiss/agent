@@ -96,12 +96,13 @@ class Meter:
     def subscribe(self, owner: Actor) -> None:
         """A stored `claude_subscription` credential of the owner (the hub keeps it as opaque ciphertext)."""
         self.execute(
-            "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at)"
-            " VALUES (%s, %s, 'claude_subscription', 1, 1, 'h', %s, %s, %s)",
+            "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at,"
+            " created_at, is_primary) VALUES (%s, %s, 'claude_subscription', 1, 1, 'h', %s, %s, %s, %s, true)",
             new_id(),
             owner.id,
             secrets.token_bytes(32),
             secrets.token_bytes(64),
+            self.hub.clock(),
             self.hub.clock(),
         )
 

@@ -354,7 +354,9 @@ def cmd_task_list(account: Account, args: argparse.Namespace, context: Context) 
 
 
 def cmd_task_create(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return tasks.task_create(account, args.wg, text_argument(args, context), args.device, args.vm)
+    return tasks.task_create(
+        account, args.wg, text_argument(args, context), args.device, args.vm, github_identity=args.github_identity
+    )
 
 
 def cmd_task_prompt(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -537,6 +539,7 @@ def _task_commands(tree: Tree) -> None:
     sub.add_argument("--text", required=True, help="the prompt, or - to read it from stdin")
     sub.add_argument("--device", help="run it on this device (a device assigned to the workgroup)")
     sub.add_argument("--vm", help="and on this VM of the workgroup on that device (needs --device)")
+    sub.add_argument("--github-identity", help="the task's GitHub identity (from `github accounts`; default automatic)")
     sub = tree.add(
         group,
         "prompt",

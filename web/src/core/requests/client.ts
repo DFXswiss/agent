@@ -11,7 +11,8 @@
 // - `prepareRequest`: a fresh request ID, the header (`follows` = `""` or the original request), the body checked
 //   against the kind (`bodies.ts`), sealed with HPKE to the device and signed with the user identity. The prepared
 //   request is kept by the caller: a retry posts the identical envelope (the hub answers `replayed`).
-// - `submitRequest`: `POST /v1/device-requests {envelope}`.
+// - `submitRequest`: `POST /v1/device-requests {envelope}` (plus `org_id` for a company account's `github.connect`,
+//   KOR-47, which the hub checks against the organization's admins).
 // - `readRequest`: `GET /v1/device-requests/{id}` – state and responses. Every response must be signed by the device
 //   of the request, name this request (`in_reply_to`), this user, device and kind, carry the `seq` it is listed under,
 //   open with the user's X25519 key and hold a body that the contracts allow for the kind. A response that fails any
@@ -128,6 +129,8 @@ export interface PreparedRequest {
   readonly follows: string;
   readonly device: DeviceKeys;
   readonly envelope: Envelope;
+  /** The organization of a company account's `github.connect`, posted in plaintext (KOR-47). */
+  readonly orgId?: string;
 }
 
 export interface RequestInput {
@@ -136,6 +139,8 @@ export interface RequestInput {
   readonly body: unknown;
   /** The original request of a follow-up message (same kind). */
   readonly follows?: PreparedRequest;
+  /** `org_id` of `POST /v1/device-requests` (a company account's `github.connect`, KOR-47). */
+  readonly orgId?: string;
 }
 
 /** Seals a request (module comment); `params_invalid` for a body the kind does not allow. */
@@ -161,12 +166,17 @@ export async function prepareRequest(context: RequestsContext, input: RequestInp
     enc_alg: ENC_ALG,
   };
   const envelope = await sealRequest(header, b64uDecode(device.kem), bodyJson(input.body), identity.sig.privateKey);
-  return { id: header.id, kind: input.kind, follows: header.follows, device, envelope };
+  const prepared = { id: header.id, kind: input.kind, follows: header.follows, device, envelope };
+  return input.orgId === undefined ? prepared : { ...prepared, orgId: input.orgId };
 }
 
-/** `POST /v1/device-requests`; returns the request state. */
+/** `POST /v1/device-requests` (with `org_id` when the request names one); returns the request state. */
 export async function submitRequest(context: RequestsContext, prepared: PreparedRequest): Promise<string> {
-  const answer = await context.client.request('POST', '/v1/device-requests', { body: { envelope: prepared.envelope } });
+  const body = {
+    envelope: prepared.envelope,
+    ...(prepared.orgId !== undefined && { org_id: prepared.orgId }),
+  };
+  const answer = await context.client.request('POST', '/v1/device-requests', { body });
   if (!isRecord(answer) || answer.request_id !== prepared.id || typeof answer.state !== 'string') {
     throw new HubError('unavailable', 200);
   }

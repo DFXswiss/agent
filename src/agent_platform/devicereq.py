@@ -6,7 +6,9 @@ and `credentials/login.ts`). The hub relays opaque envelopes only; everything is
   decertified platform devices excluded), never from the hub; anything else is `device_not_assigned`.
 - Without a device (a fresh private org) the tool assigns one to the default workgroup first, as the web does: a
   missing connection is started, not explained.
-- A request is sealed with HPKE to the device and signed with the user's identity (`POST /v1/device-requests`).
+- A request is sealed with HPKE to the device and signed with the user's identity (`POST /v1/device-requests`); a
+  `github.connect` for a company account also names its organization in plaintext (`org_id`, the hub's admin check,
+  ADR-076 section 1).
 - Every response of `GET /v1/device-requests/{id}` must be signed by the request's device, name this request, user,
   device, kind and its `seq`, open with the user's key and hold a body the contracts allow for the kind; anything else
   is `unverifiable` and never shown as content.
@@ -23,7 +25,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from agent_platform.account import Account, unverified
-from agent_platform.credentials import EMAIL_RE, LOGIN_RE, SOURCES, valid_scopes
+from agent_platform.credentials import EMAIL_RE, LOGIN_RE, SOURCES, valid_github, valid_scopes
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import rows_of, uuid_argument
 from agent_platform.hub import segment
@@ -32,7 +34,7 @@ from agent_platform.pairing import open_browser
 from agent_platform.reader import excluded
 from agent_runner.crypto.encoding import b64u_decode, body_json, parse_json
 from agent_runner.crypto.errors import CryptoError
-from agent_runner.crypto.ids import uuid7
+from agent_runner.crypto.ids import is_uuid7, uuid7
 from agent_runner.crypto.log.state import DEVICE
 from agent_runner.crypto.log.wraps import cred_readers
 from agent_runner.crypto.request import ENC_ALG, open_response, seal_request, verify_response
@@ -56,6 +58,7 @@ FAILURE_CODES = frozenset(
     }
 )
 REQUEST_FAILED = "request_failed"
+SIGNING_OUTCOMES = ("registered", "scope_missing", "refused")
 PROGRESS_STAGES = frozenset({"browser_started", "email_entered", "magic_link_received", "authorized"})
 URL_RE = re.compile(r"https://[!-~]{1,2040}|http://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?(/[!-~]{0,2000})?")
 USER_CODE_RE = re.compile(r"[A-Z0-9-]{4,16}")
@@ -85,13 +88,17 @@ def _github(body: dict[str, Any]) -> bool:
             and not isinstance(seconds, bool)
             and 1 <= seconds <= 3600
         )
-    # with an existing token (KOR-25) `done` names the token's scopes and the source
+    # with an existing token (KOR-25) `done` names the token's scopes and the source; with GitHub identities (KOR-47)
+    # the record, the outcome of `signing_key` and, for a company account, the credential body for the admin's client
     return (
         body.get("step") == "done"
-        and _keys(body, {"step", "login"}, frozenset({"scopes", "source"}))
+        and _keys(body, {"step", "login"}, frozenset({"scopes", "source", "identity_id", "signing", "body"}))
         and _match(body.get("login"), LOGIN_RE)
         and ("scopes" not in body or valid_scopes(body["scopes"]))
         and body.get("source", SOURCES[0]) in SOURCES
+        and ("identity_id" not in body or is_uuid7(body["identity_id"]))
+        and body.get("signing", SIGNING_OUTCOMES[0]) in SIGNING_OUTCOMES
+        and ("body" not in body or (isinstance(body["body"], dict) and valid_github(body["body"])))
     )
 
 
@@ -193,9 +200,16 @@ def choose_device(account: Account, device: str | None) -> tuple[str, Keys]:
 
 
 def submit(
-    account: Account, target: tuple[str, Keys], kind: str, body: dict[str, Any], follows: str = ""
+    account: Account,
+    target: tuple[str, Keys],
+    kind: str,
+    body: dict[str, Any],
+    follows: str = "",
+    *,
+    org: str | None = None,
 ) -> dict[str, Any]:
-    """Seal and post a request to the device `(id, keys)`; the prepared request `{id, kind, device, keys}`."""
+    """Seal and post a request to the device `(id, keys)` (with `org`: the plaintext `org_id` of a company account);
+    the prepared request `{id, kind, device, keys}`."""
     device, keys = target
     header = {
         "v": 1,
@@ -208,7 +222,8 @@ def submit(
         "enc_alg": ENC_ALG,
     }
     envelope = seal_request(header, keys[0], body_json(body), account.identity.sig)
-    answer = account.call("POST", "/v1/device-requests", {"envelope": envelope})
+    plain = {} if org is None else {"org_id": org}
+    answer = account.call("POST", "/v1/device-requests", {"envelope": envelope, **plain})
     if answer.get("request_id") != header["id"] or not isinstance(answer.get("state"), str):
         raise unverified("response_invalid")
     return {"id": header["id"], "kind": kind, "device": device, "keys": keys}

@@ -2,7 +2,10 @@
 // (`GET /v1/tasks/{task}/operations`, older pages on demand, new ones live from `operation` frames), each as an
 // operation card; "Details" (`?tab=operations&op=<id>`) opens a drawer with the transitions (state, error code,
 // time, device or hub), the decrypted parameters and the decrypted result (`GET /v1/operations/{id}` and the
-// operation's events). Times are absolute local times (section 12.4).
+// operation's events). Times are absolute local times (section 12.4). An operation with a GitHub identity or a
+// triggering human (ADR-076 section 6) says "as <login>, triggered by <name>": the login from the identities the
+// browser can open (a company account by its organization, else "another account"), the name from the members'
+// profiles; both are rendered as text only.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { formatEventTime } from '../../../core/i18n';
@@ -25,6 +28,30 @@ import { useAppEnv } from '../../shell/context';
 import { errorCode } from '../../shell/errors';
 import type { TaskTabProps } from '../../registries/task-tabs';
 import { useDeviceNames } from '../../screens/devices/labels';
+import { useDirectory } from '../../screens/tasks/hooks';
+import { IdentityName, useIdentities } from '../../settings/sections/github/identities';
+
+/** "as <identity>, triggered by <name>" of an operation (module comment); nothing for an operation without either. */
+function Attribution({ org, row }: { readonly org: string; readonly row: OperationRow }) {
+  const { t } = useI18n();
+  const directory = useDirectory(org, false);
+  useIdentities();
+  const identity = row.github_identity ?? null;
+  const by = row.triggered_by ?? null;
+  if (identity === null && by === null) return null;
+  const name = by === null ? null : (directory.members.get(by) ?? t('identities.member.unknown'));
+  return (
+    <p className="text-xs text-gray-600" data-testid="operations.attribution">
+      {identity !== null && (
+        <>
+          {t('identities.as')} <IdentityName id={identity} orgName={directory.orgName} />
+        </>
+      )}
+      {identity !== null && name !== null && ', '}
+      {name !== null && <span data-testid="operations.triggered-by">{t('identities.triggered-by', { name })}</span>}
+    </p>
+  );
+}
 
 const rowsOf = memoize((rows: Readonly<Record<string, OperationRow>>) => Object.values(rows));
 
@@ -181,6 +208,7 @@ function Item({ org, row }: { readonly org: string; readonly row: OperationRow }
         {time(row.created_at)}
       </time>
       <CardBody view={view} org={org} task={row.task_id} />
+      <Attribution org={org} row={row} />
       <Link
         className="min-h-11 self-start py-2 text-sm text-blue-800 underline"
         to={operationLink(org, row.task_id, row.operation_id)}

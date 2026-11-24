@@ -13,9 +13,10 @@ full form. This module writes the base fields
 and composes every other field from the sections other areas register as `<area>/device_state.py:SECTION`, a
 `Section(fields, provide)`: `provide(request)` returns exactly its `fields` (`sessions`, `pending_prompts`,
 `delivered_prompt_event_ids` from the tasks area, `requests`/`credentials_changed` from requests and credentials,
-`pings` from notifications, `quota_poll_owners`/`platform_budget` from usage). A field may be provided by one area
-only. A field no area provides is sent empty: `[]`, `{}` for `delivered_prompt_event_ids`, `null` for
-`platform_budget`. Every provider reads in the same transaction as the base fields.
+`pings` from notifications, `quota_poll_owners`/`platform_budget` from usage, `github_defaults` from github). A field
+may be provided by one area only. A field no area provides is sent empty: `[]`, `{}` for
+`delivered_prompt_event_ids`, `null` for `platform_budget`. Every provider reads in the same transaction as the base
+fields.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ SECTION_FIELDS: Mapping[str, Callable[[], Any]] = {
     "quota_poll_owners": list,
     "platform_budget": lambda: None,
     "billing": lambda: {"api": 1, "active": False, "orgs": {}},
+    "github_defaults": list,
 }
 """The fields sections provide, with the value of a field no area provides."""
 

@@ -1,0 +1,15 @@
+{
+  "repo": "example-org/example-repo",
+  "branch": "feature/x",
+  "message": "Fix the parser.",
+  "paths": [
+    "src/parser.py"
+  ],
+  "github_identity": "01930050-0000-7000-8000-000000000050",
+  "author": "01930050-0000-7000-8000-000000000050",
+  "committer": "01930050-0000-7000-8000-000000000050",
+  "co_authors": [
+    "0193000a-0000-7000-8000-00000000000a"
+  ],
+  "signing": "key"
+}

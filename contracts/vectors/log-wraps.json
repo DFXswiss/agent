@@ -1,5 +1,5 @@
 {
-  "about": "Wrap rules W1-W3 of 04-crypto.md section 6.3 against the final state of the main log of log.json and, for admins without explicit workgroup access (ADR-058), the edge log of log-rotation.json; cred wraps, and catch-up plans (section 5.11). See README.md, 'Log vectors'.",
+  "about": "Wrap rules W1-W3 of 04-crypto.md section 6.3 against the final state of the main log of log.json and, for admins without explicit workgroup access (ADR-058), the edge log of log-rotation.json; cred wraps, and catch-up plans (section 5.11), also for the credential key of an organization (devices only, KM-35). See README.md, 'Log vectors'.",
   "admin_catch_up": {
     "existing": [
       {
@@ -504,6 +504,101 @@
         "wrapped_by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
       },
       "name": "cred_device_of_org_with_consent"
+    },
+    {
+      "args": {
+        "current_epoch": 1,
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 27,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        },
+        "wrap": {
+          "epoch": 1,
+          "recipient_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+          "scope": "cred",
+          "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "sig": "8MxKZESeqi0CTBDlNa0eKqowAKHR_bedsfnYF5yyO44YVvUovyqmJp-gL-bSFoZwtG1gJkKGN5V81AICCPmDBQ",
+          "wrap": "Fxw-h9iTNkQ7SVeEm8yW0hpJSBsmFKC5LjnbC-BNCmusefIoJSoJwVupN4QDBs4hZgkpegOUIYKLI_IfmbChROnjrE-0wStWe908RAiFmrA"
+        },
+        "wrapped_by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+      },
+      "name": "cred_org_admin_for_device"
+    },
+    {
+      "args": {
+        "current_epoch": 1,
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 27,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        },
+        "wrap": {
+          "epoch": 1,
+          "recipient_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+          "scope": "cred",
+          "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "sig": "ie521iFEcxRIesUdLDAX3vujaOKiBZyyGzH-XC-bXeCi8IFvdC5_0OVH5bFy9649ImgtuZ_wHdV5B3OCho9eBg",
+          "wrap": "VblUmnNNwje8cZqaIgLnZspwmavJmbX4R2MO74f5VQ6FeCVf0fKcULohJwLUjGzUuYMYP0cJT56RlubewsWVdOn2QthKZ4EFGyeWwfJrMEg"
+        },
+        "wrapped_by": "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+      },
+      "name": "cred_org_device_for_device"
+    },
+    {
+      "args": {
+        "current_epoch": 1,
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 27,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        },
+        "wrap": {
+          "epoch": 1,
+          "recipient_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+          "scope": "cred",
+          "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "sig": "Q6gvKLa9TEW7iHX8AZC-55OLqsAky7xd94RPf_Kh9eoERkC_D3bEXgEWkYU8WSo9O1KFFvT57EHFW1jmXCH4Dw",
+          "wrap": "CcnGAQQ0RoI5os9lUvjDCyKuqtgbmAOh8EIcOEa4xT21ctNwEre92fAWIHJzr7v-tbLtOzdp4uJJf_DiNo4RuXJZI8fAmlxx7MUG7qSaPOM"
+        },
+        "wrapped_by": "01a1ee56-5e00-73ca-a67e-25beb91e6d26"
+      },
+      "name": "cred_org_device_self"
+    },
+    {
+      "args": {
+        "current_epoch": 1,
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 13,
+          "name": "edge"
+        },
+        "wrap": {
+          "epoch": 1,
+          "recipient_id": "01a1ee56-5e00-77cb-af24-df9025b06699",
+          "scope": "cred",
+          "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "sig": "EI-xBJ7a4U0B3imOz3UJ_Qi2QTJ96vQc2Yb5isJ_PpLHM7GYY5s8j_akUyvfELnVVBLsO0Q16e69QEJ4ebKGBQ",
+          "wrap": "P4xxD2G95_zApARyeE8lV8i_LAMRL0nrptM_0ukacF7tQpNvf2x5iR41hljU3FVZr6CaKklvDDKEK3seZjGUyh2sN47ehZG5exG0Mpbh0KU"
+        },
+        "wrapped_by": "01a1ee56-5e00-7b9f-84a7-ee811cbbfda3"
+      },
+      "name": "cred_org_admin_by_inheritance_for_device"
     }
   ],
   "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
@@ -1014,6 +1109,109 @@
       },
       "error": "wrap_unauthorized",
       "name": "cred_wrapper_not_eligible",
+      "op": "check_cred_wrap"
+    },
+    {
+      "args": {
+        "current_epoch": 1,
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 27,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        },
+        "wrap": {
+          "epoch": 1,
+          "recipient_id": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+          "scope": "cred",
+          "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "sig": "f5WoJQo1aaAKR1MR3049RBubZlOUyK4ZhuFjapt-wPGXp1CH4XaofNUtT0b0Wfstry8oZ3geUkGRgOIUsRSABg",
+          "wrap": "yJYhlJzTbdANNWuf-Fx7dWGG5gie3C_keHecyc5vt2Rsk9EUT9dTOgOPPQY0nk-ohG095_fnK_jSNoJt3KMbgFpP8UP9sQRr-yMfKda9MpQ"
+        },
+        "wrapped_by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+      },
+      "error": "wrap_unauthorized",
+      "name": "cred_org_admin_is_no_recipient",
+      "op": "check_cred_wrap"
+    },
+    {
+      "args": {
+        "current_epoch": 1,
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 13,
+          "name": "edge"
+        },
+        "wrap": {
+          "epoch": 1,
+          "recipient_id": "01a1ee56-5e00-77cb-af24-df9025b06699",
+          "scope": "cred",
+          "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "sig": "7y7ccogG6P4PLXNB31b70l6EB-OUMuy4b7H3FcKon8zp6NVMnw0ARQ4aCKWz8vcghRUGjSwRL_aDOTis9_kjDw",
+          "wrap": "4r7bvejnJ0PJzlzkutfx-YHJuJo62mP797bltOcFvERzJCNXSHiC0wZikaFT6iIXKXcFRdag7A8T_v0FOzgZ-30CSstUx9ZsrmYCWt2BdUc"
+        },
+        "wrapped_by": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+      },
+      "error": "wrap_unauthorized",
+      "name": "cred_org_member_is_no_wrapper",
+      "op": "check_cred_wrap"
+    },
+    {
+      "args": {
+        "current_epoch": 1,
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 27,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        },
+        "wrap": {
+          "epoch": 1,
+          "recipient_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+          "scope": "cred",
+          "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "sig": "LAfBSudnwhltlMF-BdcWmJR-i_t2QZ9fnr8Qcv6F_uzGJ9JG6JDgipwlX4B9gEIZ2vwg0mSwxNJgGeV8PVXCBA",
+          "wrap": "X0n1PSyr2GUyNFAJZsPpQRpYVg0p8ESlNlKSFZIUsGj1_zbCISjBet_u5ezkJ9p_kjk-hTlZs_Y3JVTicrOEm76dowPzpXfOjOoLyqE7moI"
+        },
+        "wrapped_by": "01a1ee56-5e00-7b9f-84a7-ee811cbbfda3"
+      },
+      "error": "wrap_unauthorized",
+      "name": "cred_org_removed_admin_is_no_wrapper",
+      "op": "check_cred_wrap"
+    },
+    {
+      "args": {
+        "current_epoch": 1,
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 27,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        },
+        "wrap": {
+          "epoch": 2,
+          "recipient_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+          "scope": "cred",
+          "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "sig": "XKaUWnXGGQ2nYQg7tEJdyCe8J9qStdPFOPzz8TnJDMF52dT8hrfkbynKdPMQLCuQfNdNRcuKY1D4Yy9rQNVyDw",
+          "wrap": "VRHLkYT3MS7u06mOlzI6eMRFVSTYBQq5ww09i5DbVmrnftEGOsJUPP5qws1PwzAmchPl8-762eFwT08gIptXiS21VXJtVhDbDBMK5BKqjCg"
+        },
+        "wrapped_by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+      },
+      "error": "wrap_unauthorized",
+      "name": "cred_org_epoch_in_future",
       "op": "check_cred_wrap"
     },
     {
@@ -2746,6 +2944,63 @@
           "v": 1
         },
         "sig": "Db8DJfkgYL5OcyLdFQ-qnIV3wz_V6pPUgPyrSjeNWfIdZF84WGeDyaKtivCD6ye6L1jarY_9Nl9g1qQdXDu9Bw"
+      }
+    ]
+  },
+  "org_cred_catch_up": {
+    "existing": [
+      {
+        "epoch": 1,
+        "recipient_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+        "scope": "cred",
+        "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc"
+      }
+    ],
+    "plans": [
+      {
+        "current_epoch": 1,
+        "missing": [
+          {
+            "epoch": 1,
+            "recipient_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "scope": "cred",
+            "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc"
+          }
+        ],
+        "owner": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "wrapper": "01a1ee56-5e00-740b-8803-c7ea5d113b0f"
+      },
+      {
+        "current_epoch": 1,
+        "missing": [
+          {
+            "epoch": 1,
+            "recipient_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "scope": "cred",
+            "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc"
+          }
+        ],
+        "owner": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "wrapper": "01a1ee56-5e00-73ca-a67e-25beb91e6d26"
+      },
+      {
+        "current_epoch": 1,
+        "missing": [
+          {
+            "epoch": 1,
+            "recipient_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "scope": "cred",
+            "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc"
+          }
+        ],
+        "owner": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "wrapper": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+      },
+      {
+        "current_epoch": 1,
+        "missing": [],
+        "owner": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+        "wrapper": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
       }
     ]
   },

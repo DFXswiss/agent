@@ -13,7 +13,7 @@ from agent_hub.device.state import Section, StateRequest
 
 def provide(request: StateRequest) -> Mapping[str, Any]:
     """The field `credentials_changed` for the device of `request`."""
-    return {"credentials_changed": owners_for(request.connection, request.device_id)}
+    return {"credentials_changed": owners_for(request.connection, request.device_id, request.config.platform_root_key)}
 
 
 SECTION = Section(fields=("credentials_changed",), provide=provide)

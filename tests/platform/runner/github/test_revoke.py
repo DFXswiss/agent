@@ -13,11 +13,12 @@ from typing import Any
 import httpx
 import pytest
 
-from agent_runner.credentials import cache
+from agent_runner.credentials import cache, identities
 from agent_runner.github import revoke
 from agent_runner.github.client import GitHubOptions
 from agent_runner.github.reconcile import STEPS
-from tests.platform.runner.credentials.kit import ALICE, Env, github_body, kit_env, make_record
+from tests.platform.runner.credentials.identity_kit import ORG_A, IdentityHub, identity_body
+from tests.platform.runner.credentials.kit import ALICE, Env, github_body, kit_env, make_record, pid
 
 Body = Callable[[Env], Awaitable[None]]
 
@@ -156,7 +157,7 @@ def test_the_reconcile_step_registers_the_revocation(store_dsn: str) -> None:
     github = GitHub()
 
     async def body(env: Env) -> None:
-        (step,) = STEPS
+        step = STEPS[0]
         assert (step.order, step.name) == (6, "github_revoke")
         await step.run(type("Run", (), {"context": env.context})())
         assert getattr(env.context, revoke.ATTRIBUTE) is True
@@ -206,3 +207,60 @@ def test_a_record_that_does_not_open_is_purged_without_the_hook(store_dsn: str) 
         assert f"before_purge_skipped owner={ALICE} kind=github reason=key_missing" in env.log()
 
     run(store_dsn, body, GitHub())
+
+
+# ---------------------------------------------------------------- identity records (KOR-47)
+
+
+def test_a_minted_token_of_an_identity_record_is_revoked_when_the_record_goes(store_dsn: str) -> None:
+    github = GitHub()
+
+    async def body(env: Env) -> None:
+        hub = IdentityHub(env.hub).install()
+        await env.add_ck()
+        await env.add_ck(owner=ORG_A)
+        own = hub.add(identity_body(token="ghu_own0123456789"), owner=ALICE)
+        company = hub.add(identity_body(token="ghu_company0123456"), owner=ORG_A, kind="org")
+        transferred = hub.add(identity_body(token="gho_transferred012"), owner=ALICE)
+        for record_id in (own, company, transferred):
+            await identities.fetch(env.context, record_id)
+        await revoke.remember(env.context, ALICE, "ghu_own0123456789")
+        await revoke.remember(env.context, ORG_A, "ghu_company0123456")
+        revoke.subscribe(env.context)
+        del hub.served[own]
+        assert await identities.fetch(env.context, own) is None  # deleted at the hub: 404
+        del hub.served[company]
+        del hub.served[transferred]
+        assert await identities.sync_owner(env.context, ORG_A) is True  # gone from the organization's list
+        assert await identities.sync_owner(env.context, ALICE) is True
+        revoked = [json.loads(request.content)["credentials"] for request in github.requests]
+        assert revoked == [["ghu_own0123456789"], ["ghu_company0123456"]]
+        assert f"github_revoke outcome=revoked owner={ORG_A}" in env.log()
+        assert f"github_revoke outcome=skipped reason=not_minted owner={ALICE}" in env.log()  # the transferred one
+
+    run(store_dsn, body, github)
+
+
+def test_a_purged_identity_record_that_does_not_open_or_a_failing_listener_changes_nothing(store_dsn: str) -> None:
+    github = GitHub()
+
+    async def broken(_owner: str, _kind: str, _body: dict[str, Any]) -> None:
+        raise RuntimeError("listener")
+
+    async def body(env: Env) -> None:
+        hub = IdentityHub(env.hub).install()
+        assert await identities.purge(env.context, pid("nothing")) is False  # no listener, nothing cached
+        cache.subscribe_before_purge(env.context, frozenset({"github"}), broken)
+        no_key = hub.add(identity_body(), owner=ALICE)
+        await identities.fetch(env.context, no_key)
+        assert await identities.purge(env.context, no_key) is True
+        assert f"before_purge_skipped id={no_key} reason=key_missing" in env.log()
+        await env.add_ck()
+        opens = hub.add(identity_body(), owner=ALICE)
+        await identities.fetch(env.context, opens)
+        assert await identities.purge(env.context, opens) is True
+        assert "before_purge_failed error=RuntimeError" in env.log()
+        assert await identities.purge(env.context, pid("nothing")) is False  # a listener, but nothing cached
+        assert github.requests == []
+
+    run(store_dsn, body, github)

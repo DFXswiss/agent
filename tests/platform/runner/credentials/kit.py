@@ -103,6 +103,7 @@ def make_record(
     author: str = "alice",
     record_id: str | None = None,
     key: bytes | None = None,
+    ts: float = WALL,
 ) -> Json:
     header = credential_format.new_header(
         id=record_id or uuid7(),
@@ -111,13 +112,23 @@ def make_record(
         version=version,
         epoch=epoch,
         author=pid(author),
-        ts=ms(WALL),
+        ts=ms(ts),
     )
     return credential_format.seal_credential(key or ck(owner, epoch), header, body_json(body), v.identity(author).sig)
 
 
+ACCOUNTS = {
+    "double-user-token": 101,
+    "double-other-token": 102,
+    "operator-double-token-1": 501,
+    "operator-double-token-2": 502,
+}
+"""The GitHub account ID of each token of the GitHub doubles' worlds (the account check, `GET /user`, KOR-47)."""
+
+
 def github_body(token: str = "double-user-token", login: str = "octo-user") -> Json:
-    return {"token": token, "login": login, "user_id": 101, "scopes": [], "created_at": ms(WALL)}
+    """A credential body whose `user_id` is the account of the token (101 for unknown tokens)."""
+    return {"token": token, "login": login, "user_id": ACCOUNTS.get(token, 101), "scopes": [], "created_at": ms(WALL)}
 
 
 @dataclass
@@ -326,6 +337,7 @@ def config(github_url: str = "http://127.0.0.1:9") -> SimpleNamespace:
         github_web_url=github_url,
         operator_github_token_file=None,
         operator_github_users=frozenset(),
+        operator_github_org=None,
     )
 
 

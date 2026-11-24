@@ -280,7 +280,7 @@ the new platform starts empty; the legacy Team Record remains readable from its 
 | Warm pool | Running neutral clones of the golden image without workgroup data. |
 | Membership log | Per-organization signed, hash-chained, append-only log of membership, rights, device assignments and key epochs. |
 | Platform log | Platform-wide signed log of operator registrations, platform device certifications and platform roles. |
-| Scope / scope key | Encryption domain: `org` (org key OK), `wg` (workgroup key WK), `cred` (per-user credential key CK). Keys have epochs. |
+| Scope / scope key | Encryption domain: `org` (org key OK), `wg` (workgroup key WK), `cred` (per-user credential key CK; per organization for company GitHub accounts, readable by its devices only, ADR-076). Keys have epochs. |
 | Wrap | HPKE encryption of a scope key for one recipient (user identity or device). |
 | Identity bundle | A user's private X25519 and Ed25519 keys, stored at the hub only encrypted (per passkey slot and recovery slot). |
 | Recovery code | 128-bit code, shown once when it is made (on request in the settings, after a recovery; ADR-055); unlocks the identity bundle without a passkey. |

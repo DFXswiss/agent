@@ -31,7 +31,7 @@ from agent_runner.sessions import records as session_records
 
 from ..sync.fakehub import CONTRACTS
 from .conftest import REPO, GitHub
-from .run10_kit import R10, MockDouble, refused, run10, world
+from .run10_kit import R10, MockDouble, known_user, refused, run10, world
 
 SCHEMAS = SchemaSet(CONTRACTS)
 README = "README.md"
@@ -344,7 +344,7 @@ def test_parent_answers_outside_the_git_format(store_dsn: str, tmp_path: Path) -
         return httpx.Response(200, json={"default_branch": "main"})
 
     async def body(r: R10) -> None:
-        r.ok.env.context.github_options = GitHubOptions(transport=httpx.MockTransport(handle))
+        r.ok.env.context.github_options = GitHubOptions(transport=known_user(handle))
         sid = await r.session()
         op = await r.run(sid, "github.commit", {"repo": REPO, "branch": "work", "message": "M."})
         assert refused(op) == "upstream_error"
@@ -403,7 +403,7 @@ def test_executor_refuses_a_blob_stored_under_another_sha(store_dsn: str, tmp_pa
         return httpx.Response(201, json={"sha": "d" * 40})
 
     async def body(r: R10) -> None:
-        r.ok.env.context.github_options = GitHubOptions(transport=httpx.MockTransport(handle))
+        r.ok.env.context.github_options = GitHubOptions(transport=known_user(handle))
         sid = await r.session()
         async with r.ok.env.pool.connection() as conn:
             found = await session_records.get(conn, sid)

@@ -26,14 +26,16 @@ CATEGORIES: dict[str, str] = {
     "auth": "Passkey credential IDs and public keys, sign counters, session public keys",
     "events": "Event headers (kind, scope, epoch, author, task, session, ref, ts, lh), sizes, receive times",
     "tasks": "Task state, owner, timestamps; session state, device, VM ID, parent session, depth, model access kind, "
-    "model ID",
-    "operations": "Operation type, state, decision, error code, dedupe tag, timestamps, actor",
+    "model ID; the GitHub identity (record ID) chosen for a task or session",
+    "operations": "Operation type, state, decision, error code, dedupe tag, timestamps, actor; the GitHub identity "
+    "(record ID) an operation acted with and the human who triggered it",
     "metrics": "Resource metrics, token counters, cost, context-window percentage, subscription quota percentages",
     "notifications": "Notification records (recipient, kind, target IDs)",
     "attention": "Attention record of a task (category, reason code, ref ID, times, subagent counters), derived from "
     "the task, session and operation metadata (ADR-076)",
     "audit": "Audit and read-log rows (actor, action, target IDs, result)",
-    "credentials": "Credential metadata (owner, kind, version)",
+    "credentials": "Credential metadata (owner, owner kind user/org, kind, version, epoch, times, primary mark); "
+    "default GitHub identities (record ID) of organizations and workgroups",
     "settings": "User settings (model access preference, model choice, locale)",
     "community": "Community metadata (14-community.md section 2.3, ADR-069): message IDs, authors, sequence numbers, "
     "times, sizes, tombstones, key epochs and checks, key requests, members, read positions, mutes, moderators",
@@ -94,7 +96,7 @@ context_object: contexts | id:uuid@ids org_id:uuid@ids wg_id:uuid@ids task_id:uu
   author_id:uuid@ids state:code chunks:number size:number epoch:number digest:code manifest_text:json sig:bytes
   created_at:time updated_at:time completed_at:time
 credential: credentials | id:uuid owner_id:uuid kind:code version:number epoch:number header_text:json
-  ct:bytes@ciphertext sig:bytes updated_at:time
+  ct:bytes@ciphertext sig:bytes updated_at:time owner_kind:code created_at:time is_primary:flag
 credential_notice: credentials | device_id:uuid owner_id:uuid kind:code changed_at:time
 dedupe_slot: operations | wg_id:uuid epoch:number tag:code operation_id:uuid expires_at:time
 device: logs | id:uuid@ids kind:code kem_pub:bytes sig_pub:bytes owner_org:uuid state:code enrolled_at:time
@@ -103,13 +105,14 @@ device: logs | id:uuid@ids kind:code kem_pub:bytes sig_pub:bytes owner_org:uuid 
 device_enrollment: logs | invite_id:code device_id:uuid request:json created_at:time certified_at:time
 device_presence: metrics | device_id:uuid hub_instance:code connected_at:time last_heartbeat_at:time
 device_request: operations | id:uuid user_id:uuid device_id:uuid kind:code state:code envelope:json@ciphertext
-  created_at:time expires_at:time
+  created_at:time expires_at:time org_id:uuid
 device_response: operations | request_id:uuid seq:number envelope:json@ciphertext created_at:time
 device_stream: events | device_id:uuid last_origin_seq:number
 event: events | scope_id:uuid scope_seq:number id:uuid scope:code org_id:uuid wg_id:uuid task_id:uuid
   session_id:uuid author_id:uuid author_kind:code kind:code ref:code epoch:number ts:time lh:number header_text:json
   ct:bytes@ciphertext sig:bytes size:number origin_device_id:uuid origin_seq:number received_at:time
 event_audit_cover: audit | scope_id:uuid covered_seq:number
+github_default: credentials | scope:code scope_id:uuid identity_id:uuid set_by:uuid set_at:time
 identity_bundle: ciphertext | user_id:uuid@ids slot:code@auth ct:bytes updated_at:time@auth
 invite: logs | id:code scope:code kind:code org_id:uuid log_seq:number created_by:uuid created_at:time
   expires_at:time registered_user:uuid registered_at:time used_at:time used_by:uuid revoked_at:time
@@ -133,7 +136,7 @@ notification: notifications | id:uuid recipient_id:uuid kind:code org_id:uuid wg
 operation: operations | id:uuid org_id:uuid wg_id:uuid task_id:uuid session_id:uuid device_id:uuid actor_id:uuid
   type:code state:code error_code:code retryable:flag dedupe_epoch:number dedupe_tag:code duplicate_of:uuid
   attempt:number params_event_id:uuid result_event_id:uuid created_at:time decided_at:time started_at:time
-  finished_at:time
+  finished_at:time github_identity:uuid triggered_by:uuid
 operation_transition: operations | operation_id:uuid seq:number state:code error_code:code at:time by_id:uuid
 org: logs | id:uuid@ids private:flag platform_access:flag default_wg:uuid created_by:uuid created_at:time
   log_head_seq:number log_head_hash:code rotation_pending:json
@@ -159,12 +162,14 @@ session: tasks | id:uuid task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid devic
   parent_session_id:uuid origin_operation_id:uuid depth:number state:code state_reason:code model_access:code
   model_id:code agent_kind:code agent_version:code estimate_ms:number created_at:time ready_at:time
   first_working_at:time ended_at:time context_restore:code@contexts context_reason:code@contexts not_before:time
+  github_identity:uuid
 session_ping: notifications | id:uuid session_id:uuid kind:code level:code ref:code created_at:time
   delivered_at:time
 session_transition: tasks | session_id:uuid seq:number state:code reason:code at:time received_at:time
   reported_by:uuid
 task: tasks | id:uuid org_id:uuid wg_id:uuid owner_id:uuid state:code state_reason:code created_at:time
   state_at:time last_activity_at:time closed_at:time placement_device_id:uuid placement_vm_id:code
+  github_identity:uuid
 task_attention: attention | task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid category:code reason:code
   ref_kind:code ref_id:uuid since:time seq:number subagents_total:number subagents_active:number updated_at:time
 task_transition: tasks | task_id:uuid seq:number state:code reason:code at:time by_id:uuid

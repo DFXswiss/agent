@@ -15,7 +15,7 @@ PRUNE_INTERVAL_SECONDS = 3600.0
 def prune_notices(context: Any) -> int:
     """One pass; the number of notices removed."""
     with transaction(context.pool) as connection:
-        return prune(connection)
+        return prune(connection, context.config.platform_root_key)
 
 
 JOBS = (Job("credentials.prune_notices", PRUNE_INTERVAL_SECONDS, prune_notices),)

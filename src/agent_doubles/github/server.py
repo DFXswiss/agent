@@ -12,6 +12,22 @@ Routes (`ROUTES`, the REST subset the runner uses, 05-runner.md §11.4 and §12.
   ``sort``/``direction``; ``GET``/``PATCH …/issues/{number}``, ``POST …/issues``) and issue comments. A repository
   with ``has_issues: false`` answers the issue routes ``410 Issues are disabled for this repo`` (comments too, unless
   the number is a pull request).
+- Git Data commits (KOR-47, ADR-076 "Pre-study"): ``POST …/git/commits`` takes ``author`` and ``committer``
+  (``{name, email, date?}``; ``date`` in ISO 8601, stored in UTC with ``+0000``; the author defaults to the
+  authenticated user with its ``email``, else its ``<id>+<login>@users.noreply.github.com`` address, at the double's
+  logical time, the committer to the author) and ``signature`` (a string written into the ``gpgsig`` header, so the
+  commit id is the one git computes for the signed object). Wrong JSON types are ``422`` in GitHub's wording. The
+  ``verification`` of commit answers (git commit, REST commit, compare) and the account attribution by email
+  (``author``/``committer`` of the REST commit) follow `agent_doubles.github.repos`.
+- SSH signing keys of the authenticated user: ``GET``/``POST /user/ssh_signing_keys``,
+  ``GET``/``DELETE /user/ssh_signing_keys/{key_id}`` (``POST {title?, key}`` is ``201 {key, id, title,
+  created_at}``; an invalid or already registered key ``422 Validation Failed``; another account's or an unknown key
+  ``404``). A classic token needs ``read:ssh_signing_key`` (or a higher one) to read, ``write:ssh_signing_key`` (or
+  ``admin:…``) to add, ``admin:ssh_signing_key`` to delete; without it the route is ``404`` with
+  ``X-Accepted-OAuth-Scopes``, as GitHub answers missing scopes on user routes. GitHub App user tokens are ``403
+  Resource not accessible by integration`` (the App of ADR-015 requests no "SSH signing keys" account permission),
+  fine-grained tokens ``403 Resource not accessible by personal access token`` (the double models no account
+  permissions of fine-grained tokens).
 - ``POST /credentials/revoke`` (``{"credentials": [token, ...]}``, KOR-40): unauthenticated like GitHub's (a request
   with ``Authorization`` is ``403`` and a failure); known tokens are forgotten, answered ``202 {}``. The journal
   keeps only the length of each token (`CREDENTIAL_FIELDS`, HOT-11), like the ``Authorization`` header.
@@ -87,6 +103,7 @@ from agent_doubles.github.repos import (
     Token,
     User,
     World,
+    noreply_email,
     parse_iso,
     tarball,
 )
@@ -142,6 +159,7 @@ _PARAM_PATTERNS = {
     "tree": r".+",
     "ref": r".+",
     "basehead": r".+",
+    "key_id": r"[0-9]+",
 }
 
 
@@ -173,6 +191,10 @@ ROUTES = (
     Route("GET", "/user/installations", "api", "installations"),
     Route("GET", "/user/installations/{installation_id}/repositories", "api", "installation_repositories"),
     Route("GET", "/user/repos", "api", "user_repos"),
+    Route("GET", "/user/ssh_signing_keys", "api", "list_signing_keys"),
+    Route("POST", "/user/ssh_signing_keys", "api", "create_signing_key"),
+    Route("GET", "/user/ssh_signing_keys/{key_id}", "api", "get_signing_key"),
+    Route("DELETE", "/user/ssh_signing_keys/{key_id}", "api", "delete_signing_key"),
     Route("GET", "/repos/{owner}/{repo}", "api", "repository"),
     Route("GET", "/repos/{owner}/{repo}/commits/{ref}", "api", "commit"),
     Route("GET", "/repos/{owner}/{repo}/tarball/{ref}", "api", "tarball"),
@@ -214,6 +236,8 @@ WRITE_PERMISSIONS = {
     "create_issue": "issues",
     "update_issue": "issues",
 }
+SIGNING_SCOPES = ("read:ssh_signing_key", "write:ssh_signing_key", "admin:ssh_signing_key")
+"""The classic scopes of SSH signing keys, each including the ones before it."""
 
 
 def match_route(method: str, path: str) -> tuple[Route, dict[str, str]] | None:
@@ -551,14 +575,21 @@ def _page_args(query: dict[str, str]) -> tuple[int, int]:
 
 
 def _signature(raw: Any, default: Signature, what: str) -> Signature:
+    """`what` (``author`` or ``committer``) of ``POST …/git/commits``: a missing one is `default`; a value of the wrong
+    JSON type is refused in GitHub's wording, a missing name or email or an unreadable date as before."""
     if raw is None:
         return default
-    if not isinstance(raw, dict) or not isinstance(raw.get("name"), str) or not isinstance(raw.get("email"), str):
+    if not isinstance(raw, dict):
+        raise not_a(what, raw, "an object")
+    for key in ("name", "email", "date"):
+        if raw.get(key) is not None and not isinstance(raw[key], str):
+            raise not_a(key, raw[key], "a string")
+    if raw.get("name") is None or raw.get("email") is None:
         raise unprocessable(f"Invalid request.\n\nInvalid {what}: name and email are required.")
     stamp = default.time
-    if "date" in raw:
+    if raw.get("date") is not None:
         try:
-            stamp = parse_iso(str(raw["date"]))
+            stamp = parse_iso(raw["date"])
         except SeedError as exc:
             raise unprocessable(f"Invalid request.\n\nInvalid {what} date.") from exc
     return Signature(raw["name"], raw["email"], stamp)
@@ -904,6 +935,63 @@ class _Handler(DoubleHandler):
         page, headers = self._paginate(call, repos)
         return 200, [render.repository(self.double.urls, r, push=self._can_push(call, r)) for r in page], headers
 
+    # --- SSH signing keys ---------------------------------------------------------------------------
+
+    @staticmethod
+    def _signing_scope(call: Call, needed: str) -> None:
+        """The token's right to the SSH signing keys of its user (module docstring); `needed` is the lowest scope."""
+        token = call.the_token
+        if token.kind == "app":
+            raise Reply(403, render.error_body(403, "Resource not accessible by integration"))
+        if token.kind == "fine_grained":
+            raise Reply(403, render.error_body(403, "Resource not accessible by personal access token"))
+        accepted = SIGNING_SCOPES[SIGNING_SCOPES.index(needed) :]
+        if not set(accepted) & set(token.scopes):
+            raise Reply(404, render.error_body(404, "Not Found"), (("x-accepted-oauth-scopes", ", ".join(accepted)),))
+
+    def _r_list_signing_keys(self, call: Call) -> Result:
+        self._signing_scope(call, "read:ssh_signing_key")
+        keys = self.double.world.user_signing_keys(call.the_token.login)
+        page, headers = self._paginate(call, keys)
+        return 200, [render.ssh_signing_key(key) for key in page], headers
+
+    def _r_create_signing_key(self, call: Call) -> Result:
+        self._signing_scope(call, "write:ssh_signing_key")
+        body = call.json_body()
+        key, title = body.get("key"), body.get("title", "")
+        if key is None:
+            raise unprocessable('Invalid request.\n\n"key" wasn\'t supplied.')
+        if not isinstance(key, str):
+            raise not_a("key", key, "a string")
+        if title is not None and not isinstance(title, str):
+            raise not_a("title", title, "a string")
+        try:
+            created = self.double.world.add_signing_key(call.the_token.login, title or "", key)
+        except SeedError as exc:
+            raise Reply(422, render.validation_error(str(exc), "SshSigningKey", "key")) from exc
+        return (
+            201,
+            render.ssh_signing_key(created),
+            [("location", f"{self.double.urls.api}/user/ssh_signing_keys/{created.id}")],
+        )
+
+    def _signing_key(self, call: Call) -> int:
+        """The id of a signing key of the token's user (``404`` for any other)."""
+        found = self.double.world.signing_keys.get(int(call.params["key_id"]))
+        if found is None or found.login != call.the_token.login:
+            raise not_found()
+        return found.id
+
+    def _r_get_signing_key(self, call: Call) -> Result:
+        self._signing_scope(call, "read:ssh_signing_key")
+        key = self.double.world.signing_keys[self._signing_key(call)]
+        return 200, render.ssh_signing_key(key), []
+
+    def _r_delete_signing_key(self, call: Call) -> Result:
+        self._signing_scope(call, "admin:ssh_signing_key")
+        del self.double.world.signing_keys[self._signing_key(call)]
+        return 204, b"", []
+
     # --- repositories, commits, tarball -------------------------------------------------------------
 
     def _r_repository(self, call: Call) -> Result:
@@ -1087,12 +1175,19 @@ class _Handler(DoubleHandler):
             raise unprocessable("Tree SHA does not exist")
         if not isinstance(parents, list) or any(not isinstance(p, str) or objects.kind(p) != "commit" for p in parents):
             raise unprocessable("Parent SHA does not exist or is not a commit object")
+        signature = body.get("signature")
+        if signature is not None and not isinstance(signature, str):
+            raise not_a("signature", signature, "a string")
         user = call.the_user
-        email = user.email or render.noreply_email(user)
-        default = Signature(user.name or user.login, email, self.double.world.stamp())
+        world = self.double.world
+        email = user.email or noreply_email(user)
+        default = Signature(user.name or user.login, email, world.stamp())
         author = _signature(body.get("author"), default, "author")
         committer = _signature(body.get("committer"), author, "committer")
-        sha = objects.put_commit(Commit(tree, tuple(parents), author, committer, message))
+        commit = Commit(tree, tuple(parents), author, committer, message, signature)
+        sha = objects.put_commit(commit)
+        if signature is not None and sha not in repo.verifications:
+            repo.verifications[sha] = world.verify(commit)
         payload = render.git_commit(self.double.urls, repo, sha)
         return 201, payload, [("location", payload["url"])]
 

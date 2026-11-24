@@ -1,7 +1,8 @@
 """Credential-change notices for devices (`hub.credential_notice`, migration 0003, ADR-035).
 
-After a committed change of a user's credentials (`PUT`, `DELETE`, CK rotation) every device eligible for the user's
-`CK` (`agent_hub.credentials.eligibility`) - except the device that made the change - gets
+After a committed change of an owner's credentials (`PUT`, `DELETE`, CK rotation, primary mark) every device eligible
+for the owner's credential key (`agent_hub.credentials.eligibility.holder_ids`: the user's `CK`, or for a company
+record the org credential key, ADR-076) - except the device that made the change - gets
 
 - a durable notice `(device, owner, kind, changed_at)` per changed kind, written in the change's transaction
   (`note_change`) and listed by `GET /v1/device/state` as `credentials_changed`
@@ -10,10 +11,12 @@ After a committed change of a user's credentials (`PUT`, `DELETE`, CK rotation) 
   queues hints, 03-api.md section 6.2).
 
 A device's fetch of the owner's record of a kind (`GET /v1/device/credentials/{owner}/{kind}`, also a `404` after a
-deletion) clears its notice of that kind, but only up to the time the fetch read (`clear`): a change committed after
-the fetch keeps a newer notice. An owner stays listed until every changed kind was re-read, so a re-read of one kind
-never hides the deletion of another. Notices of devices that are no longer eligible are never listed and are removed
-by the job `credentials.prune_notices`.
+deletion) clears its notice of that kind (of kind `github` the list of every record of the owner,
+`GET /v1/device/github-identities?owner_id=`, does too; the read of one identity record does not, because the notice
+may stand for other records of the owner, ADR-076), but only up to the time the fetch read (`clear`): a change
+committed after the fetch keeps a newer notice. An owner stays listed until every changed kind was re-read, so a
+re-read of one kind never hides the deletion of another. Notices of devices that are no longer eligible are never
+listed and are removed by the job `credentials.prune_notices`.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from uuid import UUID
 
 import psycopg
 
-from agent_hub.credentials.eligibility import eligible_device_ids
+from agent_hub.credentials.eligibility import holder_ids
 from agent_hub.stream.publish import hint
 
 Connection = psycopg.Connection[Any]
@@ -37,11 +40,12 @@ def note_change(
     kinds: Iterable[str],
     now: datetime,
     *,
+    root_key: bytes,
     except_device: UUID | None = None,
 ) -> list[UUID]:
     """Write the notices of a change of the owner's records of `kinds`; returns the noticed devices (sorted)."""
     changed = sorted(set(kinds))
-    devices = sorted(eligible_device_ids(connection, owner_id) - {except_device}, key=str) if changed else []
+    devices = sorted(holder_ids(connection, owner_id, root_key) - {except_device}, key=str) if changed else []
     for device in devices:
         for kind in changed:
             connection.execute(
@@ -66,21 +70,21 @@ def clear(connection: Connection, device_id: UUID, owner_id: UUID, kind: str, re
     )
 
 
-def owners_for(connection: Connection, device_id: UUID) -> list[str]:
+def owners_for(connection: Connection, device_id: UUID, root_key: bytes) -> list[str]:
     """The owners with a notice for the device for whom the device is still eligible, sorted."""
     rows = connection.execute(
         "SELECT DISTINCT owner_id FROM hub.credential_notice WHERE device_id = %s ORDER BY owner_id", (device_id,)
     ).fetchall()
-    return [str(owner) for (owner,) in rows if device_id in eligible_device_ids(connection, owner)]
+    return [str(owner) for (owner,) in rows if device_id in holder_ids(connection, owner, root_key)]
 
 
-def prune(connection: Connection) -> int:
+def prune(connection: Connection, root_key: bytes) -> int:
     """Remove the notices of devices that are no longer eligible for the owner; the number removed."""
     removed = 0
     for device_id, owner_id in connection.execute(
         "SELECT DISTINCT device_id, owner_id FROM hub.credential_notice ORDER BY device_id, owner_id"
     ).fetchall():
-        if device_id not in eligible_device_ids(connection, owner_id):
+        if device_id not in holder_ids(connection, owner_id, root_key):
             removed += connection.execute(
                 "DELETE FROM hub.credential_notice WHERE device_id = %s AND owner_id = %s", (device_id, owner_id)
             ).rowcount

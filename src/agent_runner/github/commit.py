@@ -27,10 +27,29 @@ Pre-check (before the dedupe tag, so the snapshot decides the dedupe fields):
 6. dedupe fields `parent_sha` and `tree_sha` (the local root tree SHA); the executor's data: parent, parent tree, tree
    SHA, the tree entries and the number of changed files.
 
+Commit identity (KOR-47, ADR-076 sections 4 and 5; checked first, before the repository, `commit_identity`): the
+pre-check runs after the resolution of the acting identity (`identity.resolved`). `committer` (an identity ID, default
+the acting identity) and `author` (default the committer) must each be usable by the acting user (`identity.usable`;
+`identity_forbidden`, also when the hub refuses the record with `403`); a record that is gone, refused or does not open
+with a valid `login` and `user_id` is `identity_unavailable`, and so is a token GitHub names another account for
+(`GET /user`, `identity.check_account`). `co_authors` (user IDs; duplicates are refused by the formal checks) must
+each be a human who instructed the task (the author of a delivered prompt stored here, `credentials.acting.
+instructors`; else `identity_forbidden`) with an own primary identity that is no copy of the operator's account
+(`people.account`, login and account ID only; else `identity_unavailable`). `signing` is `key` by default when the
+committer identity holds a signing key, else `none`; `key` without one is `identity_unavailable`. The data keeps author
+and committer as `{name: login, email: <id>+<login>@users.noreply.github.com}`, the co-authors likewise, the signing
+choice and the committer identity (`signer`, to open its key at execution); never a token or key.
+
 Executor: `POST /repos/{r}/git/blobs` (base64) for every added or modified file - each blob read from the snapshot and
 checked against its SHA, each answer's SHA compared with the local one; `POST /repos/{r}/git/trees` with `base_tree` =
 the parent tree, deletions (`sha: null`) first, then the files; GitHub's tree SHA must equal the local one
-(`tree_mismatch`, not retryable); `POST /repos/{r}/git/commits {message, tree, parents: [parent]}`. Result
+(`tree_mismatch`, not retryable); `POST /repos/{r}/git/commits {message, tree, parents: [parent], author, committer,
+signature?}`. Author and committer are always sent (explicit attribution, also for the acting identity) with one
+runner time (UTC, whole seconds; `signing.Person`). The co-authors follow the message as `Co-authored-by: <login>
+<email>` trailer lines after one blank line (a message that ends with a line feed gets one more, one that does not
+gets two) and the trailers end with a line feed (`full_message`). With `signing:"key"` the committer identity's seed
+signs exactly the commit object GitHub stores (`signing.commit_text`) and the armoured SSH signature is sent as
+`signature`; a key that is gone or not valid then is `identity_unavailable`. Result
 `{commit_sha, parent_sha, tree_sha, files_changed}`. The scratch directory is removed when the operation ends, kept
 after a retryable failure for the next attempt; the snapshot never leaves the device except as these blobs.
 """
@@ -44,7 +63,11 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
-from agent_runner.github import access, checkout, gitobj, ops, snapshot, tarsafe
+from agent_runner.credentials import acting, identities
+from agent_runner.credentials.cache import RecordRefused
+from agent_runner.crypto.encoding import b64u_decode
+from agent_runner.crypto.errors import CryptoError
+from agent_runner.github import access, checkout, gitobj, identity, ops, people, signing, snapshot, tarsafe
 from agent_runner.github.client import GitHubClient, GitHubError
 from agent_runner.guestlink.errors import GuestError
 from agent_runner.operations.extensions import (
@@ -55,12 +78,18 @@ from agent_runner.operations.extensions import (
     PrecheckResult,
 )
 from agent_runner.operations.rules import COMMIT_LIMITS, find_secret, path_valid
+from agent_runner.orgs.book import OrgBook
 from agent_runner.orgs.db import session as store_session
+from agent_runner.sync.http import HubRefusal
 
 MAX_CHANGES = COMMIT_LIMITS["files"]
 MAX_FILE = COMMIT_LIMITS["file_bytes"]
 MAX_TOTAL = COMMIT_LIMITS["total_bytes"]
 SNAPSHOT_MISSING = "The workspace snapshot of the commit is missing."
+UNAVAILABLE = "A GitHub identity of the commit is not connected on this device."
+NOT_INSTRUCTING = "A co-author must be a human who instructed this task."
+NO_COAUTHOR = "A co-author has no own GitHub identity that can be named."
+NO_KEY = "The committer identity holds no signing key."
 
 
 @dataclass(frozen=True)
@@ -182,9 +211,79 @@ async def _snapshot(request: PrecheckRequest, repo: str, scratch: Any) -> snapsh
         raise CheckFailed("upstream_error", message="The workspace export was not valid.") from None
 
 
+def _unavailable(message: str = UNAVAILABLE) -> CheckFailed:
+    return CheckFailed("identity_unavailable", message=message)
+
+
+async def _person(
+    request: PrecheckRequest, book: OrgBook, identity_id: object, resolved: identity.Resolved
+) -> dict[str, Any]:
+    """`{name, email, signing, data}` of the identity `identity_id` (None: the acting identity)."""
+    data, version = resolved.data(), resolved.version
+    if identity_id is not None:
+        try:
+            found = await identities.meta(request.context, str(identity_id))
+        except HubRefusal as refusal:
+            raise (identity.forbidden() if refusal.status == 403 else _unavailable()) from None
+        except RecordRefused:
+            raise _unavailable() from None
+        if found is None:
+            raise _unavailable()
+        user, org = resolved.acting_user, request.session.org_id
+        if identity.usable(request.context, book, found.owner, found.owner_kind, user=user, org_id=org) is None:
+            raise identity.forbidden()
+        data = {
+            **data,
+            "github_identity": found.id,
+            "identity_owner": found.owner,
+            "identity_kind": found.owner_kind,
+            "identity_primary": False,
+        }
+        version = found.version
+    try:
+        async with ops.identity_body(request.context, request.operation, data) as body:
+            named, key = people.login_of(body), isinstance(body.get("signing_key"), dict)
+    except ops.NotConnected:
+        raise _unavailable() from None
+    if named is None:
+        raise _unavailable()
+    # the account behind the token (the acting identity was checked by the resolution, remembered per version)
+    await identity.check_account(request.context, request.operation, data, version)
+    return {"name": named[1], "email": signing.noreply(*named), "signing": key, "data": data}
+
+
+async def commit_identity(request: PrecheckRequest) -> dict[str, Any]:
+    """Author, committer, co-authors and signing of the commit (module docstring); `CheckFailed` otherwise."""
+    params, resolved = request.params, identity.current()
+    book = await identity.loaded(request.context)
+    committer = await _person(request, book, params.get("committer"), resolved)
+    author = committer if "author" not in params else await _person(request, book, params["author"], resolved)
+    async with store_session(request.context.pool) as conn:
+        humans = await acting.instructors(conn, request.session.task_id)
+    co_authors = []
+    for human in params.get("co_authors", []):
+        if human not in humans:
+            raise CheckFailed("identity_forbidden", message=NOT_INSTRUCTING)
+        found = await people.account(request.context, human)
+        if found is None:
+            raise _unavailable(NO_COAUTHOR)
+        co_authors.append({"name": found[1], "email": signing.noreply(*found)})
+    choice = params.get("signing", "key" if committer["signing"] else "none")
+    if choice == "key" and not committer["signing"]:
+        raise _unavailable(NO_KEY)
+    return {
+        "author": {"name": author["name"], "email": author["email"]},
+        "committer": {"name": committer["name"], "email": committer["email"]},
+        "co_authors": co_authors,
+        "signing": choice,
+        "signer": committer["data"],
+    }
+
+
 async def check(request: PrecheckRequest) -> PrecheckResult:
     repo, branch = str(request.params["repo"]), str(request.params["branch"])
     context, op_id = request.context, request.operation.id
+    attribution = await commit_identity(request)
     async with access.client(request) as github:
         await access.repository(github, repo, write=True)
         parent = await _parent(github, request, repo, branch)
@@ -209,6 +308,7 @@ async def check(request: PrecheckRequest) -> PrecheckResult:
         "tree_sha": found.tree_sha,
         "entries": found.entries,
         "files_changed": found.files_changed,
+        "commit": attribution,
     }
     return PrecheckResult(dedupe={"parent_sha": parent, "tree_sha": found.tree_sha}, data=data)
 
@@ -232,12 +332,45 @@ async def _create(ctx: OperationContext, github: GitHubClient, scratch: Any) -> 
     answer = await github.request("POST", f"/repos/{repo}/git/trees", body=body)
     if ops.obj(answer.data).get("sha") != tree_sha:
         raise OperationFailed("tree_mismatch", message="GitHub built another tree than the snapshot.")
-    message = str(ctx.params["message"])
-    answer = await github.request(
-        "POST", f"/repos/{repo}/git/commits", body={"message": message, "tree": tree_sha, "parents": [parent]}
-    )
+    body = {"message": str(ctx.params["message"]), "tree": tree_sha, "parents": [parent]}
+    body = await _attributed(ctx, github, body, data["commit"])
+    answer = await github.request("POST", f"/repos/{repo}/git/commits", body=body)
     commit = ops.text(ops.obj(answer.data).get("sha"), ops.SHA_RE)
     return {"commit_sha": commit, "parent_sha": parent, "tree_sha": tree_sha, "files_changed": data["files_changed"]}
+
+
+def full_message(message: str, co_authors: Sequence[Mapping[str, str]]) -> str:
+    """The message with one `Co-authored-by` trailer per co-author after a blank line (module docstring)."""
+    if not co_authors:
+        return message
+    lines = "".join(f"Co-authored-by: {item['name']} <{item['email']}>\n" for item in co_authors)
+    return message + ("\n" if message.endswith("\n") else "\n\n") + lines
+
+
+async def _seed(ctx: OperationContext, signer: Mapping[str, Any]) -> bytes:
+    """The committer identity's signing seed (`identity_unavailable` when it is gone or not valid)."""
+    try:
+        async with ops.identity_body(ctx.context, ctx.operation, signer) as body:
+            key = body.get("signing_key")
+            return b64u_decode(key.get("seed") if isinstance(key, dict) else None, signing.SEED_BYTES)
+    except (ops.NotConnected, CryptoError):
+        raise OperationFailed("identity_unavailable", message=NO_KEY) from None
+
+
+async def _attributed(
+    ctx: OperationContext, github: GitHubClient, body: dict[str, Any], found: Mapping[str, Any]
+) -> dict[str, Any]:
+    """`body` with author, committer, the co-author trailers and, with `signing:"key"`, the signature."""
+    when = int(github.wall())
+    author = signing.Person(found["author"]["name"], found["author"]["email"], when)
+    committer = signing.Person(found["committer"]["name"], found["committer"]["email"], when)
+    message = full_message(body["message"], found["co_authors"])
+    out = {**body, "message": message, "author": author.api(), "committer": committer.api()}
+    if found["signing"] == "key":
+        seed = await _seed(ctx, found["signer"])
+        text = signing.commit_text(body["tree"], list(body["parents"]), author, committer, message)
+        out["signature"] = signing.sign(seed, text)
+    return out
 
 
 async def commit(ctx: OperationContext, github: GitHubClient) -> dict[str, Any]:

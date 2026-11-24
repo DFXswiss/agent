@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from unittest.mock import ANY
 
 import pytest
 
@@ -116,7 +117,7 @@ def test_an_approved_user_is_connected_at_once_with_the_operators_token(
         env.context.config.github_client_id = None  # as on the platform device: no GitHub App registered
         request_id = await connect(env)
         assert env.hub.bodies(request_id) == [
-            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}
+            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "operator", "identity_id": ANY}
         ]
         assert [h["final"] for h, _b in env.hub.responses(request_id)] == [True]
         for response in env.hub.bodies(request_id):
@@ -208,7 +209,9 @@ def test_a_missing_file_fails_logged_once_and_a_later_file_connects(
         assert opgh.paths() == []
         write_token(token_file, OPERATOR_TOKEN)
         third = await connect(env)
-        assert env.hub.bodies(third) == [{"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}]
+        assert env.hub.bodies(third) == [
+            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "operator", "identity_id": ANY}
+        ]
         token_file.unlink()
         await connect(env)
         assert env.log().count("operator_github file_unusable reason=missing") == 2
@@ -224,11 +227,11 @@ def test_a_file_replaced_between_connects_is_read_anew(store_dsn: str, opgh: Git
 
     async def body(env: Env) -> None:
         assert env.hub.bodies(await connect(env)) == [
-            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}
+            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "operator", "identity_id": ANY}
         ]
         write_token(token_file, OTHER_OPERATOR_TOKEN + "\n")
         assert env.hub.bodies(await connect(env)) == [
-            {"step": "done", "login": "op-second", "scopes": ["repo"], "source": "token"}
+            {"step": "done", "login": "op-second", "scopes": ["repo"], "source": "operator", "identity_id": ANY}
         ]
         async with cache.opened(env.context, ALICE, "github") as stored:
             assert (stored["token"], stored["login"]) == (OTHER_OPERATOR_TOKEN, "op-second")
@@ -422,7 +425,7 @@ def test_the_repository_list_falls_back_to_the_accounts_repositories_with_pages(
 
     async def body(env: Env) -> None:
         assert env.hub.bodies(await connect(env)) == [
-            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}
+            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "operator", "identity_id": ANY}
         ]
         data = {"allowed": [REPO, "op-account/tools"]}
         result = await EXECUTORS["github.list_repositories"](context_for(env, {}, data=data))
@@ -450,7 +453,7 @@ def test_other_failures_of_the_installation_list_are_not_a_fallback(
 
     async def body(env: Env) -> None:
         assert env.hub.bodies(await connect(env)) == [
-            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}
+            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "operator", "identity_id": ANY}
         ]
         opgh.faults({"route": "GET /user/installations", "kind": "error", "status": 503, "times": 1})
         with pytest.raises(OperationFailed) as failed:
@@ -469,7 +472,7 @@ def test_connect_then_read_and_write_a_pull_request_with_the_operators_token(
 
     async def body(env: Env) -> None:
         assert env.hub.bodies(await connect(env)) == [
-            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "token"}
+            {"step": "done", "login": "op-account", "scopes": ["repo"], "source": "operator", "identity_id": ANY}
         ]
         for op_type in ("github.get_pull_request", "github.create_branch", "github.comment"):
             await PRECHECKS[op_type](precheck_request(env, op_type, {"repo": REPO}))

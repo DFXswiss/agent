@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/runner.operator_github_users.json",
+  "title": "audit detail runner.operator_github_users",
+  "description": "detail of audit rows with action runner.operator_github_users: the platform device's list of users outside the operator's organization who connect through the operator's GitHub account changed (ADR-076 section 7); counts only, never user IDs or the account. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "count": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "added": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "removed": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "count",
+    "added",
+    "removed"
+  ],
+  "additionalProperties": false
+}

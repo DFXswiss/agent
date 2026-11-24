@@ -141,7 +141,7 @@ class Estate:
     def _rows(self) -> None:
         scene, now = self.scene, self.hub.clock()
         writer, device, wg, org = scene.writer, scene.device, scene.wg, scene.org
-        operation, request, context_object = new_id(), new_id(), new_id()
+        operation, request, context_object, company = new_id(), new_id(), new_id(), new_id()
         credential_key = secrets.token_bytes(32)
         statements: list[tuple[str, tuple[object, ...]]] = [
             (
@@ -224,15 +224,28 @@ class Estate:
                 (new_id(), writer.id, org, wg, self.task, now),
             ),
             (
-                "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at)"
-                " VALUES (%s, %s, 'github', 1, 1, '{}', %s, %s, %s)",
+                "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at,"
+                " created_at, is_primary) VALUES (%s, %s, 'github', 1, 1, '{}', %s, %s, %s, %s, true)",
                 (
                     new_id(),
                     writer.id,
                     aead.seal_blob(credential_key, CANARIES[2].encode(), b"aad"),
                     secrets.token_bytes(64),
                     now,
+                    now,
                 ),
+            ),
+            (
+                # a company identity of the org and its org default (ADR-076)
+                "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at,"
+                " created_at, is_primary, owner_kind)"
+                " VALUES (%s, %s, 'github', 1, 1, '{}', %s, %s, %s, %s, false, 'org')",
+                (company, org, secrets.token_bytes(40), secrets.token_bytes(64), now, now),
+            ),
+            (
+                "INSERT INTO hub.github_default (scope, scope_id, identity_id, set_by, set_at)"
+                " VALUES ('org', %s, %s, %s, %s)",
+                (org, company, writer.id, now),
             ),
             (
                 "INSERT INTO hub.agent (id, user_id, kem_pub, sig_pub, state, bundle_ct, label_ct, claim_hash,"

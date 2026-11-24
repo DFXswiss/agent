@@ -4,7 +4,8 @@
 The writes live in `agent_hub.tasks.service` (one transaction each, effects sent after the commit), the reads in
 `agent_hub.tasks.read`. Reads answer `404 not_found` for unknown, malformed and forbidden IDs alike; writes `403
 forbidden` on a known task without `task:write` (03-api.md section 1). There is no project level anywhere (R-2.10):
-organization → workgroup → task.
+organization → workgroup → task. The task's GitHub identity (`github_identity` of `POST /v1/tasks`, ADR-076) is
+checked by the service; `PUT /v1/tasks/{task}/github-identity` lives in `agent_hub.github.routes`.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ class CreateTaskRequest(BaseModel):
     wg_id: str
     events: list[dict[str, Any]] = Field(min_length=2, max_length=2)
     placement: Placement | None = None
+    github_identity: str | None = None
 
 
 class PromptRequest(BaseModel):
@@ -90,7 +92,8 @@ async def create_task(context: Context, principal: CurrentPrincipal, body: Creat
         if vm is not None and VM_ID.fullmatch(vm) is None:
             raise HubError("request_invalid", detail={"pointers": ["/placement/vm_id"]})
         requested = (body_id(body.placement.device_id, "/placement/device_id"), vm)
-    write = functools.partial(service.create_task, requested=requested)
+    identity = None if body.github_identity is None else body_id(body.github_identity, "/github_identity")
+    write = functools.partial(service.create_task, requested=requested, github_identity=identity)
     return await asyncio.to_thread(_run, context, write, user, task_id, wg_id, body.events)
 
 

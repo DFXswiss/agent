@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from agent_guest.schema import SchemaSet
+from agent_runner.credentials import identities
 from agent_runner.crypto.encoding import body_json
 from agent_runner.crypto.ids import uuid7
 from agent_runner.github import branches, comments, precheck, pulls, repos
@@ -22,6 +23,7 @@ from agent_runner.github.op_prechecks import PRECHECKS
 from agent_runner.operations.extensions import CheckFailed, OperationContext, OperationFailed, PrecheckRequest
 from agent_runner.operations.settings import DEFAULTS
 
+from ..credentials.identity_kit import session_of
 from ..credentials.kit import ALICE, Env, github_body, kit_env, make_record
 from ..sync.fakehub import CONTRACTS
 from .conftest import OTHER_TOKEN, REPO, TOKEN, GitHub
@@ -473,10 +475,23 @@ def precheck_request(env: Env, op_type: str, params: dict[str, Any], owner: str 
     return PrecheckRequest(
         context=env.context,
         operation=SimpleNamespace(id=uuid7(), type=op_type, actor_id=owner),  # type: ignore[arg-type]
-        session=SimpleNamespace(owner_id=owner),  # type: ignore[arg-type]
+        session=session_of(owner),  # type: ignore[arg-type]
         settings=settings,
         params=params,
     )
+
+
+async def own(env: Env, owner: str = ALICE) -> dict[str, Any]:
+    """The pre-check data of an operation that acts with the owner's primary record (KOR-47)."""
+    async with env.pool.connection() as conn:
+        record_id = await identities.primary_id(conn, owner)
+    return {
+        "github_identity": record_id,
+        "identity_owner": owner,
+        "identity_kind": "user",
+        "identity_primary": True,
+        "acting_user": owner,
+    }
 
 
 async def refused(env: Env, op_type: str, params: dict[str, Any], **kw: Any) -> str:
@@ -490,8 +505,8 @@ def test_prechecks_check_connection_and_repository_access(store_dsn: str, github
     async def body(env: Env) -> None:
         assert set(PRECHECKS) == set(EXECUTORS)
         listed = await PRECHECKS["github.list_repositories"](precheck_request(env, "github.list_repositories", {}))
-        assert listed.data == {"allowed": ["octo-org/hello", "octo-org/hidden"], "restricted": True}
-        assert github.journal() == []
+        assert listed.data == {"allowed": ["octo-org/hello", "octo-org/hidden"], "restricted": True, **await own(env)}
+        assert github.journal() == ["GET /user"]  # the account check of the token, once per record version
         for op_type in (
             "github.get_pull_request",
             "github.create_branch",
@@ -499,8 +514,8 @@ def test_prechecks_check_connection_and_repository_access(store_dsn: str, github
             "github.comment",
         ):
             found = await PRECHECKS[op_type](precheck_request(env, op_type, {"repo": REPO}))
-            assert (found.dedupe, found.data) == ({}, {})
-        assert github.paths() == [f"GET /repos/{REPO}"] * 4
+            assert (found.dedupe, found.data) == ({}, await own(env))
+        assert github.paths() == ["GET /user"] + [f"GET /repos/{REPO}"] * 4
         assert await refused(env, "github.comment", {"repo": "octo-org/hidden"}) == "repo_not_accessible"
         assert await refused(env, "github.comment", {"repo": REPO}, owner=None) == "github_not_connected"
         assert await refused(env, "github.list_repositories", {}, owner=None) == "github_not_connected"
@@ -527,4 +542,4 @@ def test_the_modules_expose_their_executors() -> None:
         "github.create_pull_request": pulls.execute_create,
         "github.comment": comments.execute,
     }.items() <= EXECUTORS.items()
-    assert PRECHECKS["github.comment"] is precheck.repo_access
+    assert PRECHECKS["github.comment"].__wrapped__ is precheck.repo_access  # type: ignore[attr-defined]

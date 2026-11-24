@@ -792,6 +792,38 @@
     {
       "action": "read.platform.waiting",
       "group": "read"
+    },
+    {
+      "action": "github.default",
+      "group": "credential"
+    },
+    {
+      "action": "github.primary",
+      "group": "credential"
+    },
+    {
+      "action": "task.github_identity",
+      "group": "task"
+    },
+    {
+      "action": "read.me.github_identities",
+      "group": "read"
+    },
+    {
+      "action": "read.github_identity",
+      "group": "read"
+    },
+    {
+      "action": "read.device.github_identity",
+      "group": "read"
+    },
+    {
+      "action": "runner.operator_github_users",
+      "group": "runner"
+    },
+    {
+      "action": "read.device.github_identities",
+      "group": "read"
     }
   ]
 }

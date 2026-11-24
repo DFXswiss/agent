@@ -10,8 +10,12 @@ without any active assigned device waits with `no_device` or `platform_access_re
 (else the workgroup default) is checked and stored with the task (`agent_hub.placement.service`: `403
 placement_forbidden`, `409 placement_invalid`).
 After the commit: the event announcement, the hint `session.start`, the `task`/`session` frames and `task.state`.
-Idempotency over `task_id`: the same request again (same workgroup, owner and byte-identical events) answers the
-current state of the task with `replayed: true`; anything else under a known `task_id` is `409 id_conflict`.
+Idempotency over `task_id`: the same request again (same workgroup, owner, GitHub identity, byte-identical events and,
+when the request names one, the same stored `placement`; without one the stored workgroup default is not compared)
+answers the current state of the task with `replayed: true`; anything else under a known `task_id` is
+`409 id_conflict`. An optional `github_identity` (ADR-076 section 3) must be usable by the caller (`403
+identity_forbidden`, `agent_hub.github.identities`) and passes the feature gate of the org (`409 peer_outdated`); it
+is stored as `task.github_identity`.
 
 **`add_prompt`** (`POST /v1/tasks/{task}/prompts`, `task:write`): the `prompt` event (of the task, in its workgroup)
 is stored, then the task is locked. Follow-ups of one task are serialised before anything else (a per-task advisory
@@ -46,6 +50,7 @@ from agent_hub.crypto.ids import uuid7
 from agent_hub.errors import HubError
 from agent_hub.events import notify
 from agent_hub.events.store import StoredEvent, append_events, hub_error, stored_event
+from agent_hub.github import identities
 from agent_hub.http.context import HubContext
 from agent_hub.log.events import check_replay
 from agent_hub.orgs import rights
@@ -110,13 +115,32 @@ def _first_main(connection: Connection, task_id: UUID) -> str:
     return str(cast(tuple[Any, ...], row)[0])
 
 
+@dataclass(frozen=True)
+class Given:
+    """What a `POST /v1/tasks` chose besides its events: a repeat must choose the same (module docstring)."""
+
+    github_identity: UUID | None
+    requested: tuple[UUID, str | None] | None
+
+
 def _replayed_create(
-    connection: Connection, user: UUID, task_id: UUID, wg_id: UUID, events: Sequence[dict[str, Any]]
+    connection: Connection,
+    user: UUID,
+    task_id: UUID,
+    wg_id: UUID,
+    events: Sequence[dict[str, Any]],
+    *,
+    given: Given,
 ) -> dict[str, Any]:
     """The answer to a repeated `POST /v1/tasks` (module docstring), `409 id_conflict` for other content."""
     unchanged()
-    found = connection.execute("SELECT wg_id, owner_id FROM hub.task WHERE id = %s", (task_id,)).fetchone()
-    if found is None or (found[0], found[1]) != (wg_id, user):
+    found = connection.execute(
+        "SELECT wg_id, owner_id, github_identity, placement_device_id, placement_vm_id FROM hub.task WHERE id = %s",
+        (task_id,),
+    ).fetchone()
+    if found is None or (found[0], found[1], found[2]) != (wg_id, user, given.github_identity):
+        raise HubError("id_conflict")
+    if given.requested is not None and (found[3], found[4]) != given.requested:
         raise HubError("id_conflict")
     results = []
     for event in events:
@@ -144,9 +168,11 @@ def create_task(
     events: Sequence[dict[str, Any]],
     *,
     requested: tuple[UUID, str | None] | None = None,
+    github_identity: UUID | None = None,
 ) -> Outcome:
     """`POST /v1/tasks` (module docstring); `requested` is the chosen device and VM of the request."""
     now = context.clock()
+    given = Given(github_identity=github_identity, requested=requested)
     actor = Actor("user", user)
     with context.pool.connection() as connection, connection.transaction():
         rights.require(connection, user, rights.WG_WRITE, wg_id=wg_id, write=True)
@@ -154,19 +180,25 @@ def create_task(
             check_event(event, f"/events/{position}", kind, task_id, wg_id)
         known = connection.execute("SELECT 1 FROM hub.task WHERE id = %s", (task_id,)).fetchone()
         if known is not None:
-            return Outcome(body=_replayed_create(connection, user, task_id, wg_id, events))
+            return Outcome(body=_replayed_create(connection, user, task_id, wg_id, events, given=given))
+        if github_identity is not None:
+            identities.require_usable(connection, github_identity, user)
+            identities.require_feature(
+                connection, cast(UUID, rights.wg_org(connection, wg_id)), context.config.platform_root_key
+            )
         pin = placement.for_new_task(connection, wg_id, requested)
         decision = load.decide(connection, wg_id, now, context.config.device_online_seconds, pin=pin, owner=user)
         stored = append_events(connection, list(events), str(user), now=now, root_key=context.config.platform_root_key)
         if any(item.replayed for item in stored):
             if not all(item.replayed for item in stored):
                 raise HubError("id_conflict")
-            return Outcome(body=_replayed_create(connection, user, task_id, wg_id, events))
+            return Outcome(body=_replayed_create(connection, user, task_id, wg_id, events, given=given))
         org_id = cast(UUID, rights.wg_org(connection, wg_id))
         inserted = connection.execute(
-            "INSERT INTO hub.task (id, org_id, wg_id, owner_id, state, created_at, state_at, last_activity_at)"
-            " VALUES (%s, %s, %s, %s, 'scheduling', %s, %s, %s) ON CONFLICT (id) DO NOTHING RETURNING id",
-            (task_id, org_id, wg_id, user, now, now, now),
+            "INSERT INTO hub.task (id, org_id, wg_id, owner_id, state, created_at, state_at, last_activity_at,"
+            " github_identity) VALUES (%s, %s, %s, %s, 'scheduling', %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING"
+            " RETURNING id",
+            (task_id, org_id, wg_id, user, now, now, now, github_identity),
         ).fetchone()
         if inserted is None:  # a concurrent create of the same task_id with other events committed first
             raise HubError("id_conflict")

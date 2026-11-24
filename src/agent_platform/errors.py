@@ -121,13 +121,15 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
 
 
 class PlatformError(Exception):
-    """A failure with a code of `CODES` and extra fields (codes of closed lists only)."""
+    """A failure with a code of `CODES` and extra fields (codes of closed lists only); `detail` keeps the `detail` of a
+    hub refusal for the code that handles it (never printed)."""
 
     def __init__(self, code: str, **fields: object) -> None:
         if code not in CODES:
             raise ValueError(f"unknown error code {code}")
         self.code = code
         self.fields = fields
+        self.detail: dict[str, object] = {}
         super().__init__(code)
 
     def to_json(self) -> dict[str, object]:

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/github.connect.response.json",
   "title": "device response body github.connect",
-  "description": "Plaintext body of a device response to github.connect (seq 1..n, final on the last; 05-runner.md section 11). Never contains a secret.",
+  "description": "Plaintext body of a device response to github.connect (seq 1..n, final on the last; 05-runner.md section 11). Never contains a secret, except the body of a company account for the requesting admin (KOR-47).",
   "oneOf": [
     {
       "type": "object",
@@ -59,8 +59,26 @@
           "type": "string",
           "enum": [
             "device_flow",
-            "token"
+            "token",
+            "operator"
           ]
+        },
+        "identity_id": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the record ID of the identity (KOR-47)"
+        },
+        "signing": {
+          "type": "string",
+          "enum": [
+            "registered",
+            "scope_missing",
+            "refused"
+          ],
+          "description": "outcome of signing_key (KOR-47)"
+        },
+        "body": {
+          "$ref": "objects.json#/$defs/github_body",
+          "description": "company accounts only (org_id): the credential body for the requesting admin's client, which seals it under the org key, signs and stores it; the response is end-to-end encrypted to that admin, who can open the stored record anyway (KOR-47)"
         }
       },
       "required": [

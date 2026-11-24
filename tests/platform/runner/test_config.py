@@ -84,7 +84,7 @@ def test_default_home_expands_user(base: dict[str, str]) -> None:
 
 
 def test_every_name_is_listed_once() -> None:
-    assert len(NAMES) == len(set(NAMES)) == 49
+    assert len(NAMES) == len(set(NAMES)) == 50
     assert "VM_PREFIX" in NAMES
     assert "TEST_MODE" in NAMES
     assert frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"}) == HUB_NAMES
@@ -388,6 +388,38 @@ def test_operator_github_settings_are_refused(base: dict[str, str], tmp_path: Pa
     del base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"]
     refused(base, "OPERATOR_GITHUB_TOKEN_FILE")
     refused(base, "OPERATOR_GITHUB_USERS", device_kind="org")
+
+
+ORG = "01a1ee56-5e00-7aaa-8ec3-2c90dd7ae999"
+
+
+@pytest.mark.parametrize("users", ["", USER_A])
+def test_operator_github_org_on_platform_devices(users: str, base: dict[str, str], tmp_path: Path) -> None:
+    """KOR-47, ADR-076 section 7: the organization that owns the operator's account; the file then needs no users."""
+    plain = dict(base)
+    base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = str(tmp_path / "github.token")
+    base["AGENT_RUNNER_OPERATOR_GITHUB_ORG"] = f" {ORG.upper()} "
+    base["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = users
+    found = load(base, device_kind="platform")
+    assert (found.operator_github_org, found.operator_github_users) == (ORG, frozenset({USER_A} if users else ()))
+    env = environment(found)
+    assert env["AGENT_RUNNER_OPERATOR_GITHUB_ORG"] == ORG
+    assert load(env, device_kind="platform") == found
+    assert load(plain).operator_github_org is None
+    assert "AGENT_RUNNER_OPERATOR_GITHUB_ORG" not in environment(load(plain))
+
+
+def test_operator_github_org_is_refused(base: dict[str, str], tmp_path: Path) -> None:
+    base["AGENT_RUNNER_OPERATOR_GITHUB_ORG"] = ORG
+    refused(base, "OPERATOR_GITHUB_TOKEN_FILE")  # the organization needs the file
+    base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = str(tmp_path / "github.token")
+    refused(base, "OPERATOR_GITHUB_TOKEN_FILE", device_kind="org")
+    del base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"]
+    refused(base, "OPERATOR_GITHUB_ORG", device_kind="org")
+    base["AGENT_RUNNER_OPERATOR_GITHUB_ORG"] = "not-an-org"
+    refused(base, "OPERATOR_GITHUB_ORG")
+    base["AGENT_RUNNER_OPERATOR_GITHUB_ORG"] = f"{ORG},{ORG}"
+    refused(base, "OPERATOR_GITHUB_ORG")
 
 
 @pytest.mark.parametrize("value", ["Iv1.0123456789abcdef", "Iv23liAbCdEf", "client_id-1"])

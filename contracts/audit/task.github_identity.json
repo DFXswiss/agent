@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/task.github_identity.json",
+  "title": "audit detail task.github_identity",
+  "description": "detail of audit rows with action task.github_identity: the GitHub identity of a task was set or cleared (target the task). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "identity_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "identity_id"
+  ],
+  "additionalProperties": false
+}

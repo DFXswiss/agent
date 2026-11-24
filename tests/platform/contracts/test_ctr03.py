@@ -92,7 +92,7 @@ def test_device_rows_are_complete(index: dict[str, Any], contracts: Contracts) -
     assert {e["path"] for e in rows} | later >= {
         e["path"] for e in index["endpoints"] if e["path"].startswith("/v1/device/")
     }
-    assert len(rows) == 17
+    assert len(rows) == 20  # KOR-47: list, GET and PUT of /v1/device/github-identities
     for e in rows:
         assert e["request"] in contracts.schemas, e
         assert e["response"] in contracts.schemas, e

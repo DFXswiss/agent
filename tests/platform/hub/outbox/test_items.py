@@ -234,6 +234,8 @@ def test_operation_transitions(outbox: Outbox, published: MemoryPublisher) -> No
         "error_code": "upstream_error",
         "duplicate_of": None,
         "local_check": None,
+        "github_identity": None,
+        "triggered_by": None,
     }
     sent = _published(published, "operation")
     assert [(kind, target, data["state"]) for kind, target, data in sent] == [

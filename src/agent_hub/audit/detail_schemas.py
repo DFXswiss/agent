@@ -166,6 +166,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "handover_unexpected",
                         "placement_forbidden",
                         "placement_invalid",
+                        "identity_forbidden",
                     ],
                 }
             ],
@@ -243,6 +244,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "kind": [{"type": "string", "enum": ["github", "anthropic_api_key", "claude_subscription", "mailbox"]}],
             "version": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+            "owner_kind": [{"type": "string", "enum": ["user", "org"]}],
         },
         "required": ["kind", "version"],
     },
@@ -250,6 +252,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "kind": [{"type": "string", "enum": ["github", "anthropic_api_key", "claude_subscription", "mailbox"]}],
             "version": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+            "owner_kind": [{"type": "string", "enum": ["user", "org"]}],
         },
         "required": ["kind", "version"],
     },
@@ -374,6 +377,24 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "ct_bytes": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
         },
         "required": ["scope", "count", "first_scope_seq", "last_scope_seq", "ct_bytes"],
+    },
+    "github.default": {
+        "properties": {
+            "scope": [{"type": "string", "enum": ["org", "wg"]}],
+            "identity_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
+        "required": ["scope", "identity_id"],
+    },
+    "github.primary": {
+        "properties": {
+            "identity_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ]
+        },
+        "required": ["identity_id"],
     },
     "hook.denied": {
         "properties": {
@@ -539,6 +560,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "tree_mismatch",
                         "no_changes",
                         "workvm_unavailable",
+                        "identity_forbidden",
+                        "identity_unavailable",
                     ],
                 },
                 {"type": "null"},
@@ -548,6 +571,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                 {"type": "null"},
             ],
             "local_check": [{"type": "string", "enum": ["passed", "rejected"]}, {"type": "null"}],
+            "github_identity": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
         },
         "required": ["type", "error_code", "duplicate_of", "local_check"],
     },
@@ -581,6 +612,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "tree_mismatch",
                         "no_changes",
                         "workvm_unavailable",
+                        "identity_forbidden",
+                        "identity_unavailable",
                     ],
                 },
                 {"type": "null"},
@@ -590,6 +623,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                 {"type": "null"},
             ],
             "local_check": [{"type": "string", "enum": ["passed", "rejected"]}, {"type": "null"}],
+            "github_identity": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
         },
         "required": ["type", "error_code", "duplicate_of", "local_check"],
     },
@@ -623,6 +664,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "tree_mismatch",
                         "no_changes",
                         "workvm_unavailable",
+                        "identity_forbidden",
+                        "identity_unavailable",
                     ],
                 },
                 {"type": "null"},
@@ -632,6 +675,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                 {"type": "null"},
             ],
             "local_check": [{"type": "string", "enum": ["passed", "rejected"]}, {"type": "null"}],
+            "github_identity": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
         },
         "required": ["type", "error_code", "duplicate_of", "local_check"],
     },
@@ -665,6 +716,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "tree_mismatch",
                         "no_changes",
                         "workvm_unavailable",
+                        "identity_forbidden",
+                        "identity_unavailable",
                     ],
                 },
                 {"type": "null"},
@@ -674,6 +727,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                 {"type": "null"},
             ],
             "local_check": [{"type": "string", "enum": ["passed", "rejected"]}, {"type": "null"}],
+            "github_identity": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
         },
         "required": ["type", "error_code", "duplicate_of", "local_check"],
     },
@@ -707,6 +768,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "tree_mismatch",
                         "no_changes",
                         "workvm_unavailable",
+                        "identity_forbidden",
+                        "identity_unavailable",
                     ],
                 },
                 {"type": "null"},
@@ -716,6 +779,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                 {"type": "null"},
             ],
             "local_check": [{"type": "string", "enum": ["passed", "rejected"]}, {"type": "null"}],
+            "github_identity": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
         },
         "required": ["type", "error_code", "duplicate_of", "local_check"],
     },
@@ -749,6 +820,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "tree_mismatch",
                         "no_changes",
                         "workvm_unavailable",
+                        "identity_forbidden",
+                        "identity_unavailable",
                     ],
                 },
                 {"type": "null"},
@@ -758,6 +831,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                 {"type": "null"},
             ],
             "local_check": [{"type": "string", "enum": ["passed", "rejected"]}, {"type": "null"}],
+            "github_identity": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
         },
         "required": ["type", "error_code", "duplicate_of", "local_check"],
     },
@@ -791,6 +872,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "tree_mismatch",
                         "no_changes",
                         "workvm_unavailable",
+                        "identity_forbidden",
+                        "identity_unavailable",
                     ],
                 },
                 {"type": "null"},
@@ -800,6 +883,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                 {"type": "null"},
             ],
             "local_check": [{"type": "string", "enum": ["passed", "rejected"]}, {"type": "null"}],
+            "github_identity": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
         },
         "required": ["type", "error_code", "duplicate_of", "local_check"],
     },
@@ -833,6 +924,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "tree_mismatch",
                         "no_changes",
                         "workvm_unavailable",
+                        "identity_forbidden",
+                        "identity_unavailable",
                     ],
                 },
                 {"type": "null"},
@@ -842,6 +935,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                 {"type": "null"},
             ],
             "local_check": [{"type": "string", "enum": ["passed", "rejected"]}, {"type": "null"}],
+            "github_identity": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
         },
         "required": ["type", "error_code", "duplicate_of", "local_check"],
     },
@@ -875,6 +976,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "tree_mismatch",
                         "no_changes",
                         "workvm_unavailable",
+                        "identity_forbidden",
+                        "identity_unavailable",
                     ],
                 },
                 {"type": "null"},
@@ -884,6 +987,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                 {"type": "null"},
             ],
             "local_check": [{"type": "string", "enum": ["passed", "rejected"]}, {"type": "null"}],
+            "github_identity": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
         },
         "required": ["type", "error_code", "duplicate_of", "local_check"],
     },
@@ -996,6 +1107,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "handover_unexpected",
                         "placement_forbidden",
                         "placement_invalid",
+                        "identity_forbidden",
                     ],
                 }
             ],
@@ -1062,6 +1174,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.device.context.chunk": {"properties": {}, "required": []},
     "read.device.context": {"properties": {}, "required": []},
     "read.device.credential": {"properties": {}, "required": []},
+    "read.device.github_identities": {"properties": {}, "required": []},
+    "read.device.github_identity": {"properties": {}, "required": []},
     "read.device.logs": {"properties": {}, "required": []},
     "read.device.platform_log": {"properties": {}, "required": []},
     "read.device.pull": {"properties": {}, "required": []},
@@ -1071,12 +1185,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.device.workgroup.tasks": {"properties": {}, "required": []},
     "read.device.wraps": {"properties": {}, "required": []},
     "read.device_request": {"properties": {}, "required": []},
+    "read.github_identity": {"properties": {}, "required": []},
     "read.me.agents": {"properties": {}, "required": []},
     "read.me.audit": {"properties": {}, "required": []},
     "read.me.bundles.recovery": {"properties": {}, "required": []},
     "read.me.credential": {"properties": {}, "required": []},
     "read.me.credentials": {"properties": {}, "required": []},
     "read.me.devices": {"properties": {}, "required": []},
+    "read.me.github_identities": {"properties": {}, "required": []},
     "read.me.invitees": {"properties": {}, "required": []},
     "read.me": {"properties": {}, "required": []},
     "read.me.quotas": {"properties": {}, "required": []},
@@ -1212,6 +1328,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "offered_seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
         },
         "required": ["verified_seq", "offered_seq"],
+    },
+    "runner.operator_github_users": {
+        "properties": {
+            "count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "added": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "removed": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+        },
+        "required": ["count", "added", "removed"],
     },
     "session.agent_starting": {
         "properties": {
@@ -1408,6 +1532,15 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "task.create": {
         "properties": {"origin": [{"type": "string", "enum": ["browser", "device"]}]},
         "required": ["origin"],
+    },
+    "task.github_identity": {
+        "properties": {
+            "identity_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ]
+        },
+        "required": ["identity_id"],
     },
     "task.placement": {
         "properties": {

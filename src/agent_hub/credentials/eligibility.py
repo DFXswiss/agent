@@ -8,11 +8,16 @@ that admitted the user without its consent gets no `CK`, ADR-060). This is the
 `cred` reader rule W2 of `agent_hub.log.wraps.cred_readers`, answered from the projections of the membership logs,
 which are written in the same transaction as the log entries (`agent_hub.orgs.rights`).
 
+For the `cred` scope of an **organization** (its company credentials, KM-35, ADR-076) the eligible devices are its
+active devices that are active members of it and currently assigned to one of its workgroups (`org_device_ids`,
+`holds_org`); no user is eligible. `holder_ids` / `holds` answer for either kind of owner.
+
 The same set serves
 
 - `GET /v1/me/devices`: the devices a user may address with device requests, one row per device and org with the
   workgroups that make it eligible and its presence;
-- `GET/PUT /v1/device/credentials/{owner}/{kind}`: the device must be eligible for the owner;
+- `GET/PUT /v1/device/credentials/{owner}/{kind}` and `GET/PUT /v1/device/github-identities/{id}`: the device must
+  be eligible for the owner;
 - the `credentials` hints and notices after a change of the owner's credentials (`agent_hub.credentials.notices`).
 """
 
@@ -24,6 +29,8 @@ from typing import Any
 from uuid import UUID
 
 import psycopg
+
+from agent_hub.wraps.rules import org_cred_readers
 
 Connection = psycopg.Connection[Any]
 
@@ -74,3 +81,29 @@ def is_eligible(connection: Connection, device_id: UUID | str, user_id: UUID | s
     """The device is eligible for the user's `CK`."""
     query = _ELIGIBLE + " AND d.device_id = %(device)s LIMIT 1"
     return connection.execute(query, {"user": user_id, "device": device_id}).fetchone() is not None
+
+
+def is_org(connection: Connection, owner_id: UUID | str) -> bool:
+    """The owner is an organization."""
+    return connection.execute("SELECT 1 FROM hub.org WHERE id = %s", (owner_id,)).fetchone() is not None
+
+
+def org_device_ids(connection: Connection, org_id: UUID | str, root_key: bytes) -> set[UUID]:
+    """The devices eligible for the org's credential key: exactly the readers of the org's `cred` scope in the hub's
+    verified log (`agent_hub.wraps.rules.org_cred_readers`: active devices assigned to a workgroup of it, decertified
+    platform devices left out, KM-35)."""
+    return {UUID(reader) for reader in org_cred_readers(connection, UUID(str(org_id)), root_key)}
+
+
+def holder_ids(connection: Connection, owner_id: UUID | str, root_key: bytes) -> set[UUID]:
+    """The devices eligible for the credential key of an owner (a user or an organization)."""
+    if is_org(connection, owner_id):
+        return org_device_ids(connection, owner_id, root_key)
+    return eligible_device_ids(connection, owner_id)
+
+
+def holds(connection: Connection, device_id: UUID | str, owner_id: UUID | str, root_key: bytes) -> bool:
+    """The device is eligible for the credential key of an owner (a user or an organization)."""
+    if is_org(connection, owner_id):
+        return UUID(str(device_id)) in org_device_ids(connection, owner_id, root_key)
+    return is_eligible(connection, device_id, owner_id)

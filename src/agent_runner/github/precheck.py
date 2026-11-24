@@ -1,9 +1,12 @@
 """Pre-checks of the GitHub operation types (03-api.md section 9 "Repository-level checks", 05-runner.md section 12
 step 3; RUN-07's registry hook `<area>/op_prechecks.py:PRECHECKS`, ADR-041).
 
-They run after the formal checks (which already refused an acting user without a cached `github` credential;
-`credentials.acting`) and before the dedupe tag and the registration:
+They run after the formal checks and before the dedupe tag and the registration. Every pre-check of a `github.*` type
+except `github.request_connection` runs after the resolution of the identity the operation acts with for its acting
+user (`identity.resolved`, KOR-47, ADR-076 section 3; the acting user is `credentials.acting`'s, HOT-14) and uses that
+identity's token:
 
+<<<<<<< HEAD
 - `connection(request)` (every `github.*` type): the acting user's credential opens on this device and holds a token
   (`github_not_connected` otherwise). `github.list_repositories` uses only this; its pre-check data carries the
   workgroup's allow-list for the executor (`allowed`) and whether it restricts at all (`restricted`; false without a
@@ -16,6 +19,23 @@ They run after the formal checks (which already refused an acting user without a
   `repo_not_accessible` with the one next step (`reach.refusal`, KOR-65: the pipeline holds the operation and asks the
   acting user to take that step), `401` -> `github_not_connected`; any other failure -> `upstream_error` (a pre-check
   is not retried: the session may request the operation again).
+=======
+- `connection(request)`: the resolved identity opens on this device and holds a token (`github_not_connected`
+  otherwise). `github.list_repositories` uses only this; its pre-check data carries the workgroup's allow-list for the
+  executor (`allowed`) and whether it restricts at all (`restricted`; false without a list: then every repository is
+  allowed, KOR-30).
+- `verified_connection(request)` (`github.request_connection`, KOR-25): the acting user's **own** connection (the
+  primary record, `ops.actor_client`): `GET /user` with its token, so a revoked token is not answered with its login:
+  `401` -> `github_not_connected` (the runner holds the operation and the acting user is asked to connect again), an
+  account other than the record's `user_id` -> `identity_unavailable`, any other failure -> `upstream_error`. Its data
+  names that record (`github_identity`) and the acting user.
+- `repo_access(request)` (every type with `repo`): additionally `GET /repos/{repo}` with the identity's token: `404`
+  -> `repo_not_accessible` (the repository is allowed by the settings, or no list is set, but not reachable with the
+  identity's token: GitHub App installations, or the account's own access for the operator's token of ADR-053), `401`
+  -> `github_not_connected`; any other failure -> `upstream_error` (a pre-check is not retried: the session may request
+  the operation again; a `403` for an organisation that requires SSO authorisation of the token says so,
+  `ops.SSO_REQUIRED`).
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 
 RUN-10 registers its own pre-checks for `github.checkout`, `github.commit` and `github.push` (the registry allows one
 per type) and calls `repo_access` first, so every `github.*` type gets the same connection and access checks.
@@ -23,16 +43,25 @@ per type) and calls `repo_access` first, so every `github.*` type gets the same 
 
 from __future__ import annotations
 
+<<<<<<< HEAD
 from agent_runner.github import ops, reach
 from agent_runner.github.client import GitHubClient, GitHubError
 from agent_runner.operations.extensions import CheckFailed, PrecheckRequest, PrecheckResult
 
 ACCESS_FAILED = "The repository could not be checked at GitHub."
+=======
+from agent_runner.github import identity, ops
+from agent_runner.github.client import GitHubError
+from agent_runner.operations.extensions import CheckFailed, PrecheckRequest, PrecheckResult
+
+ACCESS_FAILED = "The repository could not be checked at GitHub."
+NOT_ACCESSIBLE = "The repository is not accessible with the GitHub identity the operation acts with."
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 
 
 async def connection(request: PrecheckRequest) -> PrecheckResult:
     try:
-        async with ops.actor_client(request.context, request.operation):
+        async with ops.identity_client(request.context, request.operation, identity.current().data()):
             pass
     except ops.NotConnected:
         raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
@@ -44,14 +73,20 @@ async def connection(request: PrecheckRequest) -> PrecheckResult:
 async def verified_connection(request: PrecheckRequest) -> PrecheckResult:
     try:
         async with ops.actor_client(request.context, request.operation) as client:
-            await client.request("GET", "/user")
+            answer = await client.request("GET", "/user")
     except ops.NotConnected:
         raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
     except GitHubError as error:
         if error.kind == "unauthorized":
             raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
         raise CheckFailed("upstream_error", message=ops.SSO_REQUIRED if error.sso else ACCESS_FAILED) from None
-    return PrecheckResult()
+    found = await identity.primary(request.context, request.operation)
+    if found is None:  # the record went away in between
+        raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED)
+    named = answer.data.get("id") if isinstance(answer.data, dict) else None
+    if not identity.same_account(named, found.account):
+        raise CheckFailed("identity_unavailable", message=identity.OTHER_ACCOUNT)
+    return PrecheckResult(data=found.data())
 
 
 async def list_repositories(request: PrecheckRequest) -> PrecheckResult:
@@ -64,10 +99,15 @@ async def repo_access(request: PrecheckRequest) -> PrecheckResult:
     repo = str(request.params["repo"])
     client: GitHubClient | None = None
     try:
+<<<<<<< HEAD
         async with ops.actor_client(request.context, request.operation) as client:
             answer = await client.request("GET", f"/repos/{repo}")
             if request.operation.type in reach.PUSH_TYPES:
                 await reach.check_write(client, repo, ops.obj(answer.data))
+=======
+        async with ops.identity_client(request.context, request.operation, identity.current().data()) as client:
+            await client.request("GET", f"/repos/{repo}")
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
     except ops.NotConnected:
         raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
     except GitHubError as error:

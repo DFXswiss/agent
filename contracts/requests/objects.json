@@ -22,6 +22,86 @@
         "sso_required",
         "flow_unavailable"
       ]
+    },
+    "github_body": {
+      "description": "Plaintext body of the credential kind github inside the record ciphertext (04-crypto.md section 4.4); one record is one GitHub identity (ADR-076).",
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "printable ASCII without spaces",
+          "pattern": "^[!-~]+$",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "login": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]{1,39}$"
+        },
+        "user_id": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9:_-]{1,64}$"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "device_flow",
+            "token",
+            "operator"
+          ],
+          "description": "how the connection was made: the GitHub App device flow, an existing token stored by the owner (KOR-25) or the operator's token stored as an organization's account (KOR-47); missing on records written before"
+        },
+        "name": {
+          "type": "string",
+          "description": "the account's display name at GitHub (KOR-47), printable ASCII without angle brackets; left out otherwise",
+          "pattern": "^[ -;=?-~]{1,255}$"
+        },
+        "signing_key": {
+          "type": "object",
+          "description": "the identity's own SSH signing key (KOR-47, ADR-076 section 5): Ed25519 seed and its OpenSSH public key, registered at GitHub as a signing key of the account",
+          "properties": {
+            "alg": {
+              "type": "string",
+              "const": "ssh-ed25519"
+            },
+            "seed": {
+              "$ref": "../common.json#/$defs/b64u_32"
+            },
+            "public": {
+              "type": "string",
+              "pattern": "^ssh-ed25519 [A-Za-z0-9+/]{68}( [!-~]{1,64})?$"
+            },
+            "github_key_id": {
+              "$ref": "../common.json#/$defs/positive"
+            }
+          },
+          "required": [
+            "alg",
+            "seed",
+            "public"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "token",
+        "login",
+        "user_id",
+        "scopes",
+        "created_at"
+      ],
+      "additionalProperties": false
     }
   }
 }

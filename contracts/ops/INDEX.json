@@ -121,6 +121,12 @@
       "params": "ops/human.approval.params.json",
       "result": "ops/human.approval.result.json",
       "dedupe": false
+    },
+    {
+      "type": "github.list_identities",
+      "params": "ops/github.list_identities.params.json",
+      "result": "ops/github.list_identities.result.json",
+      "dedupe": false
     }
   ]
 }

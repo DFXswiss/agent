@@ -31,10 +31,15 @@ PRINTABLE_RE = re.compile(r"[!-~]{1,4096}")
 HOST_RE = re.compile(r"[A-Za-z0-9.-]{1,253}")
 IMAP_USER_RE = re.compile(r"[ -~]{1,256}")
 SCOPE_RE = re.compile(r"[a-z0-9:_-]{1,64}")
+NAME_RE = re.compile(r"[ -;=?-~]{1,255}")
+SEED_RE = re.compile(r"[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]")
+SSH_PUBLIC_RE = re.compile(r"ssh-ed25519 [A-Za-z0-9+/]{68}( [!-~]{1,64})?")
 ORIGINS = ("setup_token", "login_token")
-SOURCES = ("device_flow", "token")
-"""How a GitHub connection was made: the GitHub App's device flow or an existing token (KOR-25); records written
-before carry no `source` and came from the device flow."""
+SOURCES = ("device_flow", "token", "operator")
+"""How a GitHub connection was made: the GitHub App's device flow, an existing token (KOR-25) or the operator's token
+stored as an organization's account (KOR-47); records written before carry no `source` and came from the device
+flow."""
+GITHUB_OPTIONAL = frozenset({"source", "name", "signing_key"})
 
 Guard = Callable[[Mapping[str, Any], object, Mapping[str, Any] | None], dict[str, Any] | None]
 """`guard(new body, stored record or None, stored body or None)`: a result to return instead of writing, or None."""
@@ -68,14 +73,29 @@ def valid_scopes(value: object) -> bool:
     return isinstance(value, list) and len(value) <= 64 and all(_text(scope, SCOPE_RE) for scope in value)
 
 
-def _github(body: dict[str, Any]) -> bool:
+def _signing_key(value: object) -> bool:
+    """The identity's own SSH signing key (`signing_key` of `contracts/credentials/github.json`, ADR-076 section 5)."""
     return (
-        set(body) - {"source"} == {"token", "login", "user_id", "scopes", "created_at"}
+        isinstance(value, dict)
+        and {"alg", "seed", "public"} <= set(value) <= {"alg", "seed", "public", "github_key_id"}
+        and value["alg"] == "ssh-ed25519"
+        and _text(value["seed"], SEED_RE)
+        and _text(value["public"], SSH_PUBLIC_RE)
+        and ("github_key_id" not in value or _count(value["github_key_id"], 1, 2**53 - 1))
+    )
+
+
+def valid_github(body: dict[str, Any]) -> bool:
+    """A `github` body (one GitHub identity, ADR-076): `source`, `name` and `signing_key` are optional."""
+    return (
+        set(body) - GITHUB_OPTIONAL == {"token", "login", "user_id", "scopes", "created_at"}
         and _text(body["token"], PRINTABLE_RE)
         and _text(body["login"], LOGIN_RE)
         and _count(body["user_id"], 1, 2**53 - 1)
         and valid_scopes(body["scopes"])
         and body.get("source", SOURCES[0]) in SOURCES
+        and ("name" not in body or _text(body["name"], NAME_RE))
+        and ("signing_key" not in body or _signing_key(body["signing_key"]))
         and _time(body["created_at"])
     )
 
@@ -111,7 +131,7 @@ def valid_body(kind: str, body: object) -> bool:
     if kind == "anthropic_api_key":
         return set(body) == {"key"} and _text(body["key"], PRINTABLE_RE)
     if kind == "github":
-        return _github(body)
+        return valid_github(body)
     if kind == "mailbox":
         return valid_mailbox(body)
     return _subscription(body)

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from unittest.mock import ANY
 
 import httpx
 import pytest
@@ -145,7 +146,9 @@ def connected(dsn: str, github: GitHub, token: str) -> tuple[list[Any], Any, str
 
 def test_a_token_connected_on_the_device_works_for_the_operations(store_dsn: str, tokens: GitHub) -> None:
     bodies, record, log = connected(store_dsn, tokens, CLASSIC)
-    assert bodies == [{"step": "done", "login": "octo-user", "scopes": ["read:org", "repo"], "source": "token"}]
+    assert bodies == [
+        {"step": "done", "login": "octo-user", "scopes": ["read:org", "repo"], "source": "token", "identity_id": ANY}
+    ]
     assert {key: record[key] for key in ("token", "login", "user_id", "scopes", "source")} == {
         "token": CLASSIC,
         "login": "octo-user",

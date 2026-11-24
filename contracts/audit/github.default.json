@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/github.default.json",
+  "title": "audit detail github.default",
+  "description": "detail of audit rows with action github.default: the default GitHub identity of an organization or workgroup was set or cleared (target org or workgroup). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "scope": {
+      "type": "string",
+      "enum": [
+        "org",
+        "wg"
+      ]
+    },
+    "identity_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "scope",
+    "identity_id"
+  ],
+  "additionalProperties": false
+}

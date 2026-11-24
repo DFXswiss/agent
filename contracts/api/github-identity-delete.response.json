@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/github-identity-delete.response.json",
+  "title": "DELETE /v1/github-identities/{id} response",
+  "description": "Empty object.",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

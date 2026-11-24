@@ -15,6 +15,9 @@ authorization code typed during `claude.login`). Rules:
 - the device must be eligible for the user (`agent_hub.credentials.eligibility`, the set of `GET /v1/me/devices`),
   else `403 device_not_assigned`;
 - at most one active root per user, device and kind: a new root replaces an active one, whose chain becomes `failed`;
+- a `github.connect` for a company identity names the organization (`org_id`, ADR-076 section 1): only an active
+  admin of it may send one, and only of kind `github.connect` (`403 forbidden` otherwise); it is stored as
+  `device_request.org_id`, and the device stores no record while answering it (`agent_hub.github.routes`);
 - a follow-up is accepted only while its root (same user, device and kind, itself no follow-up) is `pending` or
   `delivered` and not past its expiry; anything else is `400 params_invalid` (pointer `/envelope/header/follows`;
   one answer for unknown, foreign and closed roots);
@@ -47,6 +50,7 @@ from agent_hub.crypto import request as request_format
 from agent_hub.crypto.encoding import canonical, format_time
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.errors import ERROR_STATUSES, HubError
+from agent_hub.orgs import rights
 
 Connection = psycopg.Connection[Any]
 PENDING, DELIVERED, ANSWERED, FAILED, EXPIRED = "pending", "delivered", "answered", "failed", "expired"
@@ -236,8 +240,16 @@ def _check_follows(connection: Connection, header: dict[str, object], now: datet
     return original
 
 
-def create_request(connection: Connection, user_id: UUID, envelope: dict[str, Any], now: datetime) -> Created:
-    """Store a new request of the user (module docstring); an identical repeat is answered as `replayed`."""
+def request_org(connection: Connection, request_id: UUID) -> UUID | None:
+    """The organization a request names (`github.connect` for a company identity), None for a user's request."""
+    row = connection.execute("SELECT (SELECT org_id FROM hub.device_request WHERE id = %s)", (request_id,)).fetchone()
+    return cast(UUID | None, cast(tuple[Any], row)[0])
+
+
+def _checked_header(
+    connection: Connection, user_id: UUID, envelope: dict[str, Any], org_id: UUID | None
+) -> dict[str, object]:
+    """The request's verified header: the user's signature, a known kind, the size, the user and the organization."""
     user_sig = identity_key(connection, user_id)
     if user_sig is None:
         raise HubError("forbidden")
@@ -251,12 +263,24 @@ def create_request(connection: Connection, user_id: UUID, envelope: dict[str, An
         raise HubError("size_exceeded")
     if header["user"] != str(user_id):
         raise HubError("forbidden")
+    if org_id is not None and (
+        header["kind"] != "github.connect" or not rights.can(connection, user_id, rights.ORG_ADMIN, org_id=org_id)
+    ):
+        raise HubError("forbidden")
+    return header
+
+
+def create_request(
+    connection: Connection, user_id: UUID, envelope: dict[str, Any], now: datetime, *, org_id: UUID | None = None
+) -> Created:
+    """Store a new request of the user (module docstring); an identical repeat is answered as `replayed`."""
+    header = _checked_header(connection, user_id, envelope, org_id)
     text = canonical(envelope).decode("ascii")
     _lock_user(connection, user_id)
     request_id = UUID(cast(str, header["id"]))
     existing = load(connection, request_id)
     if existing is not None:
-        if existing.user_id == user_id and existing.envelope == text:
+        if existing.user_id == user_id and existing.envelope == text and request_org(connection, request_id) == org_id:
             unchanged()
             return Created(row=existing, replayed=True)
         raise HubError("id_conflict")
@@ -281,8 +305,18 @@ def create_request(connection: Connection, user_id: UUID, envelope: dict[str, An
     try:
         with connection.transaction():
             connection.execute(
-                f"INSERT INTO hub.device_request ({_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (row.id, row.user_id, row.device_id, row.kind, row.state, row.envelope, row.created_at, row.expires_at),
+                f"INSERT INTO hub.device_request ({_COLUMNS}, org_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    row.id,
+                    row.user_id,
+                    row.device_id,
+                    row.kind,
+                    row.state,
+                    row.envelope,
+                    row.created_at,
+                    row.expires_at,
+                    org_id,
+                ),
             )
     except psycopg.errors.UniqueViolation:
         raise HubError("id_conflict") from None

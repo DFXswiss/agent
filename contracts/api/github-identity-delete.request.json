@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/github-identity-delete.request.json",
+  "title": "DELETE /v1/github-identities/{id} request",
+  "description": "No query parameters; hard delete of an own record or, by an admin, of a company record; the defaults naming it are removed (03-api.md section 4.8).",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

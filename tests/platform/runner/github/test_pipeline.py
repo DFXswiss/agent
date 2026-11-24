@@ -49,7 +49,7 @@ def test_a_comment_runs_precheck_then_one_post(store_dsn: str, github: GitHub) -
         assert op.answer["status"] == "succeeded"
         assert op.result is not None
         assert op.result["url"].startswith("https://github.example/")
-        assert github.paths() == [f"GET /repos/{REPO}", f"POST /repos/{REPO}/issues/1/comments"]
+        assert github.paths() == ["GET /user", f"GET /repos/{REPO}", f"POST /repos/{REPO}/issues/1/comments"]
         assert kit.hub.requests[0]["dedupe"] is not None
 
     pipeline_run(store_dsn, github, body)
@@ -63,6 +63,7 @@ def test_a_retryable_5xx_is_retried_within_the_same_operation(store_dsn: str, gi
         op = await kit.run(sid, "github.comment", {"repo": REPO, "number": 1, "body": "Done."})
         assert (op.state, op.attempt) == ("succeeded", 2)
         assert github.paths() == [
+            "GET /user",
             f"GET /repos/{REPO}",
             f"POST /repos/{REPO}/issues/1/comments",
             f"POST /repos/{REPO}/issues/1/comments",
@@ -85,6 +86,7 @@ def test_an_open_pull_request_at_github_succeeds_as_existing_and_is_answered_dup
         assert op.answer["result"]["existing"] is True
         assert op.answer["result"]["number"] == 1
         assert github.journal() == [
+            "GET /user",
             f"GET /repos/{REPO}",
             f"GET /repos/{REPO}/pulls?head=octo-org%3Afeature&base=main&state=open",
         ]
@@ -96,9 +98,15 @@ def test_an_allowed_repository_the_owner_cannot_reach_is_held_with_a_next_step(s
     async def body(kit: OKit) -> None:
         sid = await kit.session()
         op = await kit.run(sid, "github.create_branch", {"repo": "octo-org/hidden", "branch": "x", "from": "main"})
+<<<<<<< HEAD
         assert (op.state, op.held_reason) == ("received", "github_access")
         assert kit.hub.requests == []
         assert github.paths() == ["GET /repos/octo-org/hidden"]
+=======
+        assert (op.state, op.error_code) == ("rejected", "repo_not_accessible")
+        assert kit.hub.requests[0]["local_check"] == "rejected"
+        assert github.paths() == ["GET /user", "GET /repos/octo-org/hidden"]
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 
     pipeline_run(store_dsn, github, body)
 

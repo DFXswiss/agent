@@ -13,7 +13,16 @@ steps 4-5; 04-crypto.md sections 4.10 and 5.12; ADR-012).
   the key marks the same request, it never opens a second slot;
 - the plaintext `type` when it is a well-formed operation type (`contracts/common.json#/$defs/operation_type`), else
   `invalid.type` (a guest-rejected request may name anything; the params event keeps the exact type);
-- `requested_at` of the journal record when it is a contract time, else the device time.
+- `requested_at` of the journal record when it is a contract time, else the device time;
+- `triggered_by` (KOR-47, ADR-076 sections 2 and 6): the acting user stamped at the receipt (`operation.actor_id`,
+  `credentials.acting`, HOT-14); left out without one;
+- `github_identity`: for `github.*` types the identity the pre-check resolved, for `subagent.request` the child
+  session's identity of its parameter (`attribution`); left out without one.
+
+`attribution(context, session, operation, params)` runs after the pre-checks of every operation: for
+`subagent.request` with `github_identity`, the check that the acting user may use that identity
+(`github.identity.usable`; `identity_forbidden` otherwise, also when the hub refuses the record with `403`; a record
+that is gone or refused is `identity_unavailable`).
 
 The body is stored with the operation (`registration`), so every retry sends the same content and the hub answers a
 repeat with `replayed:true` instead of `409 id_conflict`.
@@ -33,11 +42,14 @@ from typing import Any
 
 from psycopg import AsyncConnection
 
+from agent_runner.credentials import identities
+from agent_runner.credentials.cache import RecordRefused
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import uuid7
+from agent_runner.github import identity
 from agent_runner.operations import records
 from agent_runner.operations.dedupe import WINDOWS, dedupe_slot
-from agent_runner.operations.extensions import OPERATION_ERROR_CODES
+from agent_runner.operations.extensions import OPERATION_ERROR_CODES, CheckFailed
 from agent_runner.operations.records import Operation
 from agent_runner.orgs.keys import load_scope_key
 from agent_runner.sync.backoff import Backoff
@@ -86,6 +98,31 @@ class Decision:
     """HTTP status of a `refused` request."""
 
 
+async def attribution(context: Any, session: Any, operation: Operation, params: Mapping[str, Any]) -> dict[str, Any]:
+    """The checked `github_identity` of a `subagent.request` (module docstring); empty otherwise."""
+    chosen = params.get("github_identity")
+    if operation.type != "subagent.request" or chosen is None:
+        return {}
+    user = operation.actor_id
+    if user is None:
+        raise identity.forbidden()
+    try:
+        record = await identities.meta(context, str(chosen))
+    except HubRefusal as refusal:
+        if refusal.status == 403:
+            raise identity.forbidden() from None
+        record = None
+    except RecordRefused:
+        record = None
+    if record is None:
+        raise CheckFailed("identity_unavailable", message="The GitHub identity is not connected.")
+    book = await identity.loaded(context)
+    usable = identity.usable(context, book, record.owner, record.owner_kind, user=user, org_id=session.org_id)
+    if usable is None:
+        raise identity.forbidden()
+    return {"github_identity": record.id}
+
+
 def plain_type(op_type: str) -> str:
     return op_type if len(op_type) <= TYPE_MAX and TYPE_RE.fullmatch(op_type) else INVALID_TYPE
 
@@ -123,8 +160,10 @@ async def build(
     error_code: str | None,
     params: Mapping[str, Any],
     extra: Mapping[str, object],
+    attribution: Mapping[str, Any] | None = None,
 ) -> Built:
     """The registration body (`NoKey` while the device holds no workgroup key)."""
+    noted = attribution or {}
     draft = params_draft(op, at=at, params=op.params)
     size_exceeded = False
     try:
@@ -148,6 +187,11 @@ async def build(
         "type": plain_type(op.type),
         "requested_at": op.requested_at if TIME_RE.fullmatch(op.requested_at) else at,
     }
+    if op.actor_id is not None:
+        body["triggered_by"] = op.actor_id
+    chosen = noted.get("github_identity")
+    if isinstance(chosen, str) and (op.type.startswith("github.") or op.type == "subagent.request"):
+        body["github_identity"] = chosen
     if error_code is not None:
         body.update({"local_check": "rejected", "error_code": error_code, "dedupe": None})
     else:

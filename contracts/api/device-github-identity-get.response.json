@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-github-identity-get.response.json",
+  "title": "GET /v1/device/github-identities/{id} response",
+  "description": "An identity record for a device eligible for its owner: the owner's CK for a user's record, the organization's credential key (an active member device assigned to a workgroup of the organization) for a company record (03-api.md section 6.1).",
+  "type": "object",
+  "properties": {
+    "owner_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "owner_kind": {
+      "type": "string",
+      "enum": [
+        "user",
+        "org"
+      ]
+    },
+    "primary": {
+      "type": "boolean"
+    },
+    "record": {
+      "$ref": "../common.json#/$defs/credential_record"
+    }
+  },
+  "required": [
+    "owner_id",
+    "owner_kind",
+    "primary",
+    "record"
+  ],
+  "additionalProperties": false
+}

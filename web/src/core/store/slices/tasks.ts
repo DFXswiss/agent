@@ -25,6 +25,8 @@ export interface TaskRow {
   readonly title_event_id: string | null;
   /** The chosen device and VM (ADR-075 section 6); only present when set. */
   readonly placement?: { readonly device_id: string; readonly vm_id: string | null } | null;
+  /** The GitHub identity chosen for the task (ADR-076 section 3); absent from hubs before KOR-47. */
+  readonly github_identity?: string | null;
 }
 
 /** The fields of `session_row` the client uses (the row is kept as received). */

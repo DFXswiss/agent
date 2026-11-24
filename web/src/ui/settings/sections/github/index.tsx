@@ -2,7 +2,8 @@
 // decrypted `github` credential (login, how it was made, its scopes – never the token), "Connect GitHub" and "Use an
 // existing token" (device request `github.connect`, `Connect.tsx`/`ConnectFlow.tsx`) and
 // "Disconnect" (confirmation, `DELETE /v1/me/credentials/github`, then a link to the GitHub settings page where the
-// user revokes the app authorization).
+// user revokes the app authorization). Below it the list of all own accounts (`Accounts.tsx`, KOR-47): further
+// accounts, the primary badge, reconnect, make primary, disconnect a further account and "Add another account".
 import { useCallback, useEffect, useState } from 'react';
 import { disconnectGithub, GITHUB_SETTINGS_URL, loadGithub } from '../../../../core/github/connection';
 import { requestErrorCode } from '../../../../core/requests/client';
@@ -11,6 +12,8 @@ import { useStore } from '../../../hooks/useStore';
 import { useI18n } from '../../../i18n';
 import { Dialog } from '../../../screens/members/Dialog';
 import { useAppEnv } from '../../../shell/context';
+import { loadIdentities } from '../../../../core/github/identities';
+import { GithubAccounts } from './Accounts';
 import { GithubConnect } from './Connect';
 import { useReason } from './reason';
 
@@ -37,13 +40,15 @@ export function GithubSection() {
   const connected = useCallback(() => {
     setDisconnected(null);
     load();
-  }, [load]);
+    loadIdentities(app.tasks).catch(() => undefined);
+  }, [load, app]);
   const revocable = connection.status === 'connected' && connection.revocable;
   const disconnect = async () => {
     setBusy(true);
     setDisconnectError(null);
     try {
       await disconnectGithub(app.tasks);
+      loadIdentities(app.tasks).catch(() => undefined);
       setDisconnected(revocable ? 'revoked' : 'kept');
       setConfirming(false);
     } catch (error) {
@@ -116,6 +121,7 @@ export function GithubSection() {
           {t('github.disconnect')}
         </button>
       )}
+      <GithubAccounts primaryConnected={connection.status === 'connected'} />
       {confirming && (
         <Dialog
           title={t('github.disconnect.title')}

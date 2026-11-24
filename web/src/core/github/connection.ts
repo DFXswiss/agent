@@ -25,7 +25,10 @@
 //   ADR-065) the body is `{token}`, sealed with HPKE to the device that checks it – the token is not kept anywhere
 //   else in the browser. `connectProgress` reads the flow's state from the opened responses: waiting → device code
 //   (user code, verification link, expiry from the response's time and `expires_in`) → done (login, scopes, source)
-//   or failed (code), or expired when the hub ended the request without an answer.
+//   or failed (code), or expired when the hub ended the request without an answer. With `ConnectOptions` (KOR-47,
+//   ADR-076) the request names the record to reconnect, the organization of a company account (`org_id`, also in the
+//   plaintext of `POST /v1/device-requests` for the hub's admin check) and asks for a signing key; `done` then names
+//   the identity and the signing outcome (the body of a company account is handled by `github/identities.ts`).
 // - `tokenInput`: the pasted token trimmed (a copied line ends in a newline), or null when its form cannot be one.
 import { b64uDecode } from '../encoding/b64u';
 import { parseJson } from '../encoding/json';
@@ -42,7 +45,11 @@ import { setGithub } from '../store/slices/github';
 import type { Store } from '../store/store';
 import { ensureDevice } from '../tasks/send';
 import type { TasksContext } from '../tasks/pull';
+<<<<<<< HEAD
 import { type App, isScopes, LOGIN_RE, REQUEST_FAILED, type Source, SOURCES, TOKEN_RE } from '../requests/bodies';
+=======
+import { isGithubBody, REQUEST_FAILED, type SigningOutcome, type Source, TOKEN_RE } from '../requests/bodies';
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 import {
   deviceKeys,
   type EligibleDevice,
@@ -123,30 +130,8 @@ export function authorKey(store: Store, userId: string, identity: Identity, auth
   return device === null ? null : b64uDecode(device.sig);
 }
 
-interface GithubBody {
-  readonly token: string;
-  readonly login: string;
-  readonly scopes: string[];
-  readonly source?: Source;
-  readonly created_at: string;
-}
-
-/** The body exactly as `contracts/credentials/github.json` allows it (`source` optional). */
-export const isGithubBody = (value: unknown): value is GithubBody =>
-  isRecord(value) &&
-  Object.keys(value)
-    .filter((key) => key !== 'source')
-    .sort()
-    .join(',') === 'created_at,login,scopes,token,user_id' &&
-  typeof value.token === 'string' &&
-  TOKEN_RE.test(value.token) &&
-  typeof value.login === 'string' &&
-  LOGIN_RE.test(value.login) &&
-  Number.isSafeInteger(value.user_id) &&
-  (value.user_id as number) >= 1 &&
-  isScopes(value.scopes) &&
-  (value.source === undefined || (SOURCES as readonly unknown[]).includes(value.source)) &&
-  typeof value.created_at === 'string';
+/** The body exactly as `contracts/credentials/github.json` allows it (`requests/bodies.ts`). */
+export { isGithubBody };
 
 /** Verifies and opens a `github` record (module comment). */
 export async function openGithubRecord(context: RequestsContext, record: unknown): Promise<GithubConnection> {
@@ -246,13 +231,17 @@ export function defaultWorkgroup(store: Store): { readonly org: string; readonly
     : null;
 }
 
-/** The devices for a request and the preselected one (module comment). */
+/**
+ * The devices for a request and the preselected one (module comment); with `org` (a company account, KOR-47) only the
+ * devices of that organization, without the automatic assignment.
+ */
 export async function connectDevices(
   context: TasksContext,
+  org?: string,
 ): Promise<{ readonly devices: readonly DeviceChoice[]; readonly preselected: string | null }> {
-  let listedDevices = await eligibleDevices(context);
+  let listedDevices = (await eligibleDevices(context)).filter((item) => org === undefined || item.org_id === org);
   const home = defaultWorkgroup(context.store);
-  if (listedDevices.length === 0 && home !== null) {
+  if (listedDevices.length === 0 && home !== null && org === undefined) {
     await ensureDevice(context, home.org, home.wg);
     listedDevices = await eligibleDevices(context);
   }
@@ -285,16 +274,51 @@ export function tokenInput(text: string): string | null {
   return TOKEN_RE.test(token) ? token : null;
 }
 
+<<<<<<< HEAD
 /** Seals and posts the `github.connect` request to `device` (with `token`: store that token; with `app`: that device
  *  flow, KOR-65; module comment). */
+=======
+/** What a `github.connect` request asks for besides the way (KOR-47, `contracts/requests/github.connect.request.json`). */
+export interface ConnectOptions {
+  /** Reconnect into this own identity record (same ID, version + 1). */
+  readonly identityId?: string;
+  /** A company account of this organization (admins; the answer carries the body, `github/identities.ts`). */
+  readonly orgId?: string;
+  /** Also create and register an own signing key. */
+  readonly signingKey?: boolean;
+}
+
+/**
+ * Seals and posts the `github.connect` request to `device` (with `token`: store that token, module comment); `options`
+ * add the identity to reconnect, the organization of a company account (also in plaintext for the hub) and the
+ * signing key.
+ */
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 export async function startConnect(
   context: RequestsContext,
   device: string,
   token?: string,
+<<<<<<< HEAD
   app?: App,
 ): Promise<PreparedRequest> {
   const body = token !== undefined ? { token } : app !== undefined ? { app } : {};
   const prepared = await prepareRequest(context, { device, kind: 'github.connect', body });
+=======
+  options: ConnectOptions = {},
+): Promise<PreparedRequest> {
+  const body = {
+    ...(token !== undefined && { token }),
+    ...(options.orgId !== undefined && { org_id: options.orgId }),
+    ...(options.identityId !== undefined && { identity_id: options.identityId }),
+    ...(options.signingKey === true && { signing_key: true }),
+  };
+  const prepared = await prepareRequest(context, {
+    device,
+    kind: 'github.connect',
+    body,
+    ...(options.orgId !== undefined && { orgId: options.orgId }),
+  });
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
   await submitRequest(context, prepared);
   return prepared;
 }
@@ -313,6 +337,10 @@ export type ConnectProgress =
       readonly login: string;
       readonly scopes: readonly string[] | null;
       readonly source: Source | null;
+      /** The record ID of the identity (KOR-47), null when the device named none. */
+      readonly identityId: string | null;
+      /** The outcome of `signing_key`, null when none was asked for. */
+      readonly signing: SigningOutcome | null;
     }
   | { readonly step: 'failed'; readonly code: string };
 
@@ -322,7 +350,14 @@ export function connectProgress(view: RequestView): ConnectProgress {
   const last = verified.at(-1);
   const body = last?.body;
   if (body?.step === 'done')
-    return { step: 'done', login: body.login!, scopes: body.scopes ?? null, source: body.source ?? null };
+    return {
+      step: 'done',
+      login: body.login!,
+      scopes: body.scopes ?? null,
+      source: body.source ?? null,
+      identityId: body.identity_id ?? null,
+      signing: body.signing ?? null,
+    };
   if (body?.step === 'failed') return { step: 'failed', code: body.code };
   if (view.state === 'expired') return { step: 'failed', code: 'timeout' };
   // the hub fails a request whose device lost its eligibility or that a newer one of the same kind replaced

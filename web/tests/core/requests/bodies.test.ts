@@ -6,9 +6,12 @@ import { WEB_DIR } from '../../helpers';
 import {
   checkResponseBody,
   FAILURE_CODES,
+  isGithubBody,
   isRequestKind,
   PROGRESS_STAGES,
   REQUEST_KINDS,
+  SIGNING_OUTCOMES,
+  SOURCES,
   validRequestBody,
 } from '../../../src/core/requests/bodies';
 
@@ -130,6 +133,72 @@ describe('checkResponseBody', () => {
       expect(checkResponseBody(kind, { step: 'done', valid: 'yes' })).toBeNull();
       expect(checkResponseBody(kind, { step: 'progress', stage: 'authorized' })).toBeNull();
       expect(checkResponseBody(kind, { step: 'failed', code: 'credential_missing' })).not.toBeNull();
+    }
+  });
+});
+
+describe('GitHub identities (KOR-47)', () => {
+  const ID = '0190f000-0000-7000-8000-0000000000e1';
+  const BODY = {
+    token: 'ghp_x',
+    login: 'octo-cat',
+    user_id: 7,
+    scopes: ['repo'],
+    created_at: '2026-11-24T12:00:00.000Z',
+  };
+  const KEY = { alg: 'ssh-ed25519', seed: `${'A'.repeat(42)}w`, public: `ssh-ed25519 ${'A'.repeat(68)} key` };
+
+  it('takes the source operator and the signing outcomes from the contracts', () => {
+    const response = contract('github.connect.response.json') as {
+      oneOf: { properties: { source?: { enum: string[] }; signing?: { enum: string[] } } }[];
+    };
+    expect([...SOURCES]).toEqual(response.oneOf[1]!.properties.source!.enum);
+    expect([...SIGNING_OUTCOMES]).toEqual(response.oneOf[1]!.properties.signing!.enum);
+  });
+
+  it('accepts the request fields org_id, identity_id and signing_key', () => {
+    expect(validRequestBody('github.connect', { org_id: ID, identity_id: ID, signing_key: true }, false)).toBe(true);
+    expect(validRequestBody('github.connect', { token: 'x', signing_key: false }, false)).toBe(true);
+    for (const bad of [{ org_id: 'org' }, { identity_id: ID.toUpperCase() }, { signing_key: 'yes' }]) {
+      expect(validRequestBody('github.connect', bad, false)).toBe(false);
+    }
+  });
+
+  it('accepts the identity, the signing outcome and a credential body in done', () => {
+    const done = { step: 'done', login: 'octo-cat', source: 'operator', identity_id: ID, signing: 'scope_missing' };
+    expect(checkResponseBody('github.connect', done)).toEqual(done);
+    expect(checkResponseBody('github.connect', { ...done, body: BODY })).not.toBeNull();
+    for (const bad of [
+      { ...done, identity_id: 'x' },
+      { ...done, signing: 'maybe' },
+      { ...done, body: { ...BODY, token: undefined } },
+    ]) {
+      expect(checkResponseBody('github.connect', bad)).toBeNull();
+    }
+  });
+
+  it('checks the credential body exactly', () => {
+    expect(isGithubBody(BODY)).toBe(true);
+    expect(isGithubBody({ ...BODY, source: 'operator', name: 'Octo Cat', signing_key: KEY })).toBe(true);
+    expect(isGithubBody({ ...BODY, signing_key: { ...KEY, github_key_id: 9 } })).toBe(true);
+    for (const bad of [
+      null,
+      { ...BODY, extra: 1 },
+      { ...BODY, token: 'a b' },
+      { ...BODY, login: 'bad login' },
+      { ...BODY, user_id: 0 },
+      { ...BODY, scopes: 'repo' },
+      { ...BODY, source: 'paste' },
+      { ...BODY, created_at: 5 },
+      { ...BODY, name: 'a <b>' },
+      { ...BODY, signing_key: 'key' },
+      { ...BODY, signing_key: { ...KEY, alg: 'ed25519' } },
+      { ...BODY, signing_key: { ...KEY, seed: 'short' } },
+      { ...BODY, signing_key: { ...KEY, public: 'ssh-rsa AAAA' } },
+      { ...BODY, signing_key: { ...KEY, github_key_id: 0 } },
+      { ...BODY, signing_key: { ...KEY, extra: 1 } },
+    ]) {
+      expect(isGithubBody(bad)).toBe(false);
     }
   });
 });

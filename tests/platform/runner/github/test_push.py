@@ -19,7 +19,7 @@ from agent_runner.github.op_prechecks import PRECHECKS
 
 from ..sync.fakehub import CONTRACTS
 from .conftest import PUBLIC, REPO, GitHub
-from .run10_kit import R10, MockDouble, refused, run10, world
+from .run10_kit import R10, MockDouble, known_user, refused, run10, world
 
 SCHEMAS = SchemaSet(CONTRACTS)
 
@@ -113,7 +113,7 @@ def mocked(
         return httpx.Response(200, json={"html_url": html_url})
 
     async def body(r: R10) -> None:
-        r.ok.env.context.github_options = GitHubOptions(transport=httpx.MockTransport(route))
+        r.ok.env.context.github_options = GitHubOptions(transport=known_user(route))
         sid = await r.session()
         op_id = await r.ok.request(sid, "github.commit", {"repo": REPO, "branch": "work", "message": "M."})
         async with r.ok.env.pool.connection() as conn:
@@ -213,4 +213,4 @@ def test_a_repository_answer_without_an_https_url_refuses_the_push(store_dsn: st
 def test_the_area_registers_executors_and_prechecks_of_part_two() -> None:
     for op_type, module in (("github.checkout", checkout), ("github.commit", commit), ("github.push", push)):
         assert EXECUTORS[op_type] is module.execute
-        assert PRECHECKS[op_type] is module.check
+        assert PRECHECKS[op_type].__wrapped__ is module.check  # type: ignore[attr-defined]

@@ -15,7 +15,7 @@ from agent_hub.crypto.encoding import format_time
 from agent_hub.operations import register as register_module
 from agent_hub.stream.publish import MemoryPublisher
 from tests.platform.hub.conftest import contracts_registry
-from tests.platform.hub.operations.support import NOT_CONTRACT, Ops, tag
+from tests.platform.hub.operations.support import NO_IDENTITY, NOT_CONTRACT, Ops, tag
 from tests.platform.hub.orgs.support import new_id
 
 
@@ -78,7 +78,13 @@ def test_accepted_operation_rows_transitions_audit_and_frame(ops: Ops, published
             "ok",
             "device",
             ops.device.id,
-            {"type": "github.comment", "error_code": None, "duplicate_of": None, "local_check": "passed"},
+            {
+                "type": "github.comment",
+                "error_code": None,
+                "duplicate_of": None,
+                "local_check": "passed",
+                **NO_IDENTITY,
+            },
         )
     ]
     contracts_registry().validate("audit/operation.accepted.json", ops.audit(operation)[0][4])
@@ -165,6 +171,7 @@ def test_local_rejection_is_stored_without_h2_to_h6(ops: Ops) -> None:
         "error_code": "params_invalid",
         "duplicate_of": None,
         "local_check": "rejected",
+        **NO_IDENTITY,
     }
     contracts_registry().validate("audit/operation.rejected.json", audit[0][4])
 

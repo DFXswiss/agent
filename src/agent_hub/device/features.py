@@ -13,6 +13,10 @@ hub refuses an `admit` batch while an active device of the org has not announced
 `log.org_assign` and `vm.choice` (ADR-075): the runner verifies assignments to the whole organization (the hub refuses
 them while an active device of the org has not announced it, `agent_hub.orgs.append`) and chooses the VM of each
 session itself (the hub then takes `session.vm_id` from the session transitions only).
+
+`github.identities`: the runner applies GitHub identity choices and defaults (ADR-076 section 3). The hub refuses to
+store a task or session choice or a default while an active device assigned to a workgroup of the org has not
+announced it (`agent_hub.github.identities.require_feature`, `409 peer_outdated`).
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ LOG_ORG_ASSIGN = "log.org_assign"
 """The runner verifies `device_assign_org` / `device_unassign_org` (ADR-075 section 5)."""
 VM_CHOICE = "vm.choice"
 """The runner chooses the VM of each session and names it in `session_transition` (ADR-075 section 4)."""
+GITHUB_IDENTITIES = "github.identities"
 MAX_FEATURES = 16
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,31}")
 

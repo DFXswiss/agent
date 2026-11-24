@@ -1,0 +1,94 @@
+{
+  "description": "Endpoints of GitHub identities (ADR-076, KOR-47): the identities a user can open, one identity record, its primary mark, the defaults of organizations and workgroups, the task's choice and the device's read and write of identity records.",
+  "rights": [
+    "user",
+    "wg:write",
+    "device_eligible"
+  ],
+  "auth": [
+    "browser",
+    "device"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/me/github-identities",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/github-identities/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/github-identities/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/github-identities/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/github-identities/{id}/primary",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/github-defaults/{scope}/{scope_id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/tasks/{task}/github-identity",
+      "rights": [
+        "wg:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/github-identities/{id}",
+      "rights": [
+        "device_eligible"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/device/github-identities/{id}",
+      "rights": [
+        "device_eligible"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/github-identities",
+      "rights": [
+        "device_eligible"
+      ],
+      "section": "6.1"
+    }
+  ]
+}

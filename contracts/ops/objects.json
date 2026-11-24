@@ -12,14 +12,14 @@
     "branch": {
       "type": "string",
       "description": "branch name; further rules (no .., @{, //, trailing / . .lock, component starting with .) in ops/rules.json#/branch",
-      "pattern": "^[^\u0000-\u001f ~^:?*\\[\\\\/.-][^\u0000-\u001f ~^:?*\\[\\\\]*$",
+      "pattern": "^[^\u0000-\u001f\u007f ~^:?*\\[\\\\/.-][^\u0000-\u001f\u007f ~^:?*\\[\\\\]*$",
       "minLength": 1,
       "maxLength": 200
     },
     "ref": {
       "type": "string",
       "description": "branch, tag or commit SHA (ops/rules.json#/ref)",
-      "pattern": "^[^\u0000-\u001f ~^:?*\\[\\\\/.-][^\u0000-\u001f ~^:?*\\[\\\\]*$",
+      "pattern": "^[^\u0000-\u001f\u007f ~^:?*\\[\\\\/.-][^\u0000-\u001f\u007f ~^:?*\\[\\\\]*$",
       "minLength": 1,
       "maxLength": 200
     },
@@ -44,7 +44,7 @@
     "rel_path": {
       "type": "string",
       "description": "repository-relative path (segment rules: ops/rules.json#/path)",
-      "pattern": "^[^/\u0000-\u001f][^\u0000-\u001f]*$",
+      "pattern": "^[^/\u0000-\u001f\u007f][^\u0000-\u001f\u007f]*$",
       "minLength": 1,
       "maxLength": 4096
     },
@@ -91,7 +91,15 @@
       "additionalProperties": false
     },
     "params_github_list_repositories": {
-      "$ref": "../common.json#/$defs/empty"
+      "$ref": "../common.json#/$defs/empty",
+      "type": "object",
+      "properties": {
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
+        }
+      },
+      "additionalProperties": false
     },
     "params_github_checkout": {
       "type": "object",
@@ -101,6 +109,10 @@
         },
         "ref": {
           "$ref": "#/$defs/ref"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
         }
       },
       "required": [
@@ -116,6 +128,10 @@
         },
         "number": {
           "$ref": "#/$defs/number"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
         }
       },
       "required": [
@@ -135,6 +151,10 @@
         },
         "from": {
           "$ref": "#/$defs/ref"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
         }
       },
       "required": [
@@ -165,6 +185,35 @@
           },
           "minItems": 1,
           "maxItems": 500
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
+        },
+        "author": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "identity ID of the commit author (default: the committer); never free text (ADR-076 section 4)"
+        },
+        "committer": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "identity ID of the committer (default: the acting identity)"
+        },
+        "co_authors": {
+          "type": "array",
+          "description": "user IDs of humans who instructed the task; written as Co-authored-by trailers of their own GitHub identity (each at most once: params_invalid otherwise)",
+          "items": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "minItems": 1,
+          "maxItems": 10
+        },
+        "signing": {
+          "type": "string",
+          "enum": [
+            "none",
+            "key"
+          ],
+          "description": "none, or the committer identity's own SSH signing key (default: key when it has one)"
         }
       },
       "required": [
@@ -185,6 +234,10 @@
         },
         "commit_sha": {
           "$ref": "#/$defs/sha"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
         }
       },
       "required": [
@@ -217,6 +270,10 @@
         },
         "draft": {
           "type": "boolean"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
         }
       },
       "required": [
@@ -240,6 +297,10 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 65536
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
         }
       },
       "required": [
@@ -264,6 +325,10 @@
         },
         "model_id": {
           "$ref": "../common.json#/$defs/model_id"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the subagent session's GitHub identity (default: the parent session's, ADR-076 section 3)"
         }
       },
       "required": [
@@ -278,7 +343,7 @@
         "title": {
           "type": "string",
           "description": "1-120 characters, single line (no control characters, no line or paragraph separator)",
-          "pattern": "^[^\u0000-\u001f  ]{1,120}$"
+          "pattern": "^[^\u0000-\u001f\u007f\u2028\u2029]{1,120}$"
         }
       },
       "required": [
@@ -804,6 +869,9 @@
         },
         {
           "$ref": "#/$defs/result_human_approval"
+        },
+        {
+          "$ref": "#/$defs/result_github_list_identities"
         }
       ],
       "description": "result of any operation type"
@@ -828,7 +896,7 @@
           "items": {
             "type": "string",
             "description": "label name: no comma (GitHub joins the filter with commas), no control character",
-            "pattern": "^[^,\u0000-\u001f]{1,100}$"
+            "pattern": "^[^,\u0000-\u001f\u007f]{1,100}$"
           },
           "minItems": 0,
           "maxItems": 20,
@@ -862,6 +930,10 @@
           "minimum": 1,
           "maximum": 1000,
           "description": "default 1"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
         }
       },
       "required": [
@@ -889,6 +961,10 @@
           "minimum": 1,
           "maximum": 100,
           "description": "default 100"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
         }
       },
       "required": [
@@ -917,10 +993,14 @@
           "items": {
             "type": "string",
             "description": "label name: no comma (GitHub joins the filter with commas), no control character",
-            "pattern": "^[^,\u0000-\u001f]{1,100}$"
+            "pattern": "^[^,\u0000-\u001f\u007f]{1,100}$"
           },
           "minItems": 0,
           "maxItems": 20
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
         }
       },
       "required": [
@@ -969,11 +1049,15 @@
           "items": {
             "type": "string",
             "description": "label name: no comma (GitHub joins the filter with commas), no control character",
-            "pattern": "^[^,\u0000-\u001f]{1,100}$"
+            "pattern": "^[^,\u0000-\u001f\u007f]{1,100}$"
           },
           "minItems": 0,
           "maxItems": 20,
           "description": "replaces every label of the issue"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
         }
       },
       "required": [
@@ -1027,6 +1111,10 @@
           "minimum": 1,
           "maximum": 1000,
           "description": "default 1"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-076 section 3); must be usable by the human the session works for"
         }
       },
       "required": [
@@ -1545,6 +1633,112 @@
     },
     "result_human_approval": {
       "$ref": "../common.json#/$defs/empty"
+    },
+    "params_github_list_identities": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "result_github_list_identities": {
+      "type": "object",
+      "description": "the GitHub identities the human the session works for may use in this task, the one that applies now and the humans that may be named as co-authors (ADR-076)",
+      "properties": {
+        "acting_user": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "current": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "identities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "login": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9-]{1,39}$"
+              },
+              "owner_kind": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "org"
+                ]
+              },
+              "owner_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "primary": {
+                "type": "boolean"
+              },
+              "signing": {
+                "type": "boolean",
+                "description": "the identity holds an own signing key"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "own",
+                  "task_org",
+                  "operator"
+                ],
+                "description": "why the human may use it"
+              }
+            },
+            "required": [
+              "id",
+              "login",
+              "owner_kind",
+              "owner_id",
+              "primary",
+              "signing",
+              "source"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "co_authors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "user_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "login": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9-]{1,39}$"
+              }
+            },
+            "required": [
+              "user_id",
+              "login"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "acting_user",
+        "current",
+        "identities",
+        "co_authors"
+      ],
+      "additionalProperties": false
     }
   }
 }

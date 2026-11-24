@@ -59,6 +59,7 @@ VALID: dict[str, dict[str, Any]] = {
     "github.update_issue": {"repo": REPO, "number": 7, "state": "closed", "state_reason": "not_planned"},
     "github.list_pull_requests": {"repo": REPO, "state": "closed", "base": "develop", "sort": "updated"},
     "github.request_connection": {},
+    "github.list_identities": {},
     "subagent.request": {"purpose": "Review", "prompt": "Review PR 7.", "model_id": "deepseek/deepseek-v4-pro"},
     "task.set_title": {"title": "Fix the login"},
     "human.question": {"question": "Which database should the service use?\n- PostgreSQL\n- SQLite"},
@@ -94,7 +95,7 @@ def test_the_rule_table_covers_every_type_with_the_contract_keys() -> None:
     assert set(checks.TYPES) == {entry["type"] for entry in INDEX["types"]}
     for op_type, rule in checks.TYPES.items():
         schema = OBJECTS["params_" + op_type.replace(".", "_")]
-        if "$ref" in schema:  # list_repositories: the empty object
+        if "$ref" in schema:  # the empty object (`github.request_connection`)
             assert rule.fields == {}
             assert rule.required == ()
             continue
@@ -269,12 +270,16 @@ def test_a_protected_base_or_a_nested_release_branch_is_fine() -> None:
     checks.check(request("github.create_branch", with_("github.create_branch", branch="release/1/hotfix")))
 
 
-@pytest.mark.parametrize("op_type", [t for t in VALID if t.startswith("github.")])
+@pytest.mark.parametrize("op_type", [t for t in VALID if t.startswith("github.") and t != "github.list_identities"])
 def test_github_types_need_the_owners_connection(op_type: str) -> None:
     assert refused(op_type, VALID[op_type], connected=False).code == "github_not_connected"
 
 
+<<<<<<< HEAD
 @pytest.mark.parametrize("op_type", ["subagent.request", "task.set_title", "human.question", "human.approval"])
+=======
+@pytest.mark.parametrize("op_type", ["subagent.request", "task.set_title", "github.list_identities"])
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 def test_other_types_need_no_github_connection(op_type: str) -> None:
     checks.check(request(op_type, VALID[op_type], connected=False))
 
@@ -377,3 +382,66 @@ def test_check_failures_build_the_error_object() -> None:
     assert CheckFailed("timeout", message="non-ASCII ü").error() == {"code": "timeout"}
     failed = CheckFailed("params_invalid", pointers=[f"/p/{n}" for n in range(40)], message="M.")
     assert failed.error() == {"code": "params_invalid", "message": "M.", "pointers": [f"/p/{n}" for n in range(32)]}
+
+
+# --- GitHub identities (KOR-47) ------------------------------------------------------------------------------------
+
+IDENTITY = "0193000a-0000-7000-8000-00000000000b"
+OTHER = "01930009-0000-7000-8000-000000000002"
+NO_IDENTITY = ("github.request_connection", "github.list_identities")
+
+
+@pytest.mark.parametrize("op_type", [t for t in VALID if t.startswith("github.") and t not in NO_IDENTITY])
+def test_every_github_type_takes_an_identity_id_and_never_free_text(op_type: str) -> None:
+    assert checks.check(request(op_type, with_(op_type, github_identity=IDENTITY)))["github_identity"] == IDENTITY
+    for bad in ("octo-user", IDENTITY.upper(), 7):
+        failed = refused(op_type, with_(op_type, github_identity=bad))
+        assert (failed.code, failed.pointers) == ("params_invalid", ["/params/github_identity"])
+
+
+def test_the_connection_request_and_the_identity_list_take_no_identity() -> None:
+    for op_type in NO_IDENTITY:
+        assert refused(op_type, {"github_identity": IDENTITY}).code == "params_invalid"
+    sub = with_("subagent.request", github_identity=IDENTITY)
+    assert checks.check(request("subagent.request", sub))["github_identity"] == IDENTITY
+
+
+def test_commit_identity_params_are_ids_and_known_signing_choices() -> None:
+    params = with_("github.commit", author=IDENTITY, committer=OTHER, co_authors=[IDENTITY, OTHER], signing="key")
+    assert checks.check(request("github.commit", params)) == params
+    for name, value in (
+        ("author", "Octo User <octo@example.com>"),
+        ("committer", "x"),
+        ("co_authors", []),
+        ("co_authors", ["octo-user"]),
+        ("co_authors", [IDENTITY] * 11),
+        ("co_authors", IDENTITY),
+        ("signing", "github"),
+    ):
+        failed = refused("github.commit", with_("github.commit", **{name: value}))
+        assert (failed.code, failed.pointers) == ("params_invalid", [f"/params/{name}"]), name
+
+
+def test_a_co_author_named_twice_is_refused() -> None:
+    failed = refused("github.commit", with_("github.commit", co_authors=[IDENTITY, OTHER, IDENTITY]))
+    assert (failed.code, failed.pointers) == ("params_invalid", ["/params/co_authors"])
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Fix.\n\nCo-authored-by: Somebody <a@example.com>",
+        "Fix.\n  signed-off-by: x",
+        "Fix.\n\tCOMMITTED-BY: tool",
+        "co-Authored-By: x",
+    ],
+)
+def test_a_trailer_like_line_in_the_message_is_refused(message: str) -> None:
+    failed = refused("github.commit", with_("github.commit", message=message))
+    assert (failed.code, failed.pointers) == ("params_invalid", ["/params/message"])
+    assert failed.message == "The message must not contain Co-authored-by, Signed-off-by or Committed-by lines."
+
+
+def test_the_words_inside_a_line_are_fine() -> None:
+    message = "Mention co-authored-by: in the docs.\nNo trailer here: signed-off-by"
+    assert checks.check(request("github.commit", with_("github.commit", message=message)))["message"] == message

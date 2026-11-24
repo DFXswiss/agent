@@ -40,7 +40,9 @@ SPEC_ERRORS: dict[int, str] = {
     403: "forbidden last_admin last_passkey device_not_assigned platform_invite_required platform_access_denied"
     " pairing_gesture_required placement_forbidden"
     # 14-community.md section 4.1 (KOR-26)
-    " community_muted",
+    " community_muted"
+    # ADR-076 (contracts/changes/KOR-47.md)
+    " identity_forbidden",
     404: "not_found invite_unknown pairing_unknown identity_unproven",
     409: "id_conflict event_conflict seq_conflict version_conflict origin_seq_gap origin_seq_conflict no_device"
     " already_assigned rotation_required no_device_available invite_registered peer_outdated"
@@ -69,6 +71,7 @@ SPEC_OPERATION_ERRORS = (
     " credit_exhausted"  # 12-billing.md section 6 (contracts/changes/KOR-31.md)
     " rights_denied hub_unreachable upstream_error timeout model_not_allowed tree_mismatch no_changes"
     " workvm_unavailable"  # 13-work-vm.md section 2 (contracts/changes/KOR-29.md)
+    " identity_forbidden identity_unavailable"  # ADR-076 (contracts/changes/KOR-47.md)
 )
 SPEC_SESSION_FAILURES = (
     "model_access_unavailable vm_start_failed guest_unreachable sandbox_failed agent_start_failed agent_exited"
@@ -87,6 +90,7 @@ SPEC_OUTBOX_AUDIT = (
     "hook.denied read.session.<tool> ping.delivered session.prompt_refused model.provider_outside_allowlist"
     " runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert session.context_restored"
     " session.context_fallback"
+    " runner.operator_github_users"  # ADR-076 section 7 (contracts/changes/KOR-47.md)
 )
 # 03-api.md section 8.1: the session platform tools that read (request_operation writes).
 SPEC_MCP_TOOLS = (
@@ -136,6 +140,8 @@ DECIDED_AUDIT = (
 )
 # 12-billing.md sections 8 and 10 (contracts/changes/KOR-31.md): credit changes, USD/CHF rates and the export.
 KOR31_AUDIT = "credit.changed billing.fx_set billing.export"
+# ADR-076 (contracts/changes/KOR-47.md): defaults, primary mark and the task's identity; the reads come from INDEX.json.
+KOR47_AUDIT = "github.default github.primary task.github_identity runner.operator_github_users"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
 SPEC_WAITING_REASONS = "no_device platform_access_required wg_vm_limit placement_full placement_offline keys_pending"
@@ -256,6 +262,7 @@ def test_audit_actions(index: dict[str, Any]) -> None:
         assert set(row) == {"action", "group"}
         assert re.fullmatch(r"[a-z_]+(\.[a-z_]+)+", row["action"]), row
     expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split()) | set(KOR31_AUDIT.split())
+    expected |= set(KOR47_AUDIT.split())
     for prefix, values in SPEC_AUDIT_PATTERNS.items():
         expected |= {f"{prefix}.{value}" for value in values.split()}
     expected |= {f"read.{e['read_resource']}" for e in index["endpoints"] if e["read_resource"]}

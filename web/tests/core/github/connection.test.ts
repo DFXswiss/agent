@@ -326,6 +326,24 @@ describe('connectDevices', () => {
     expect(t.client.of('GET /v1/me/devices')).toHaveLength(2);
   });
 
+  it('offers only the devices of the organization of a company account, without an assignment', async () => {
+    const t = await world();
+    setProfile(t.store, meProfile(t));
+    const item = (org: string) => ({
+      device_id: t.device.id,
+      kind: 'org',
+      org_id: org,
+      wg_ids: [t.wg],
+      online: true,
+      last_seen_at: null,
+    });
+    t.client.on('GET /v1/me/devices', () => ({ devices: [item('0190f000-0000-7000-8000-00000000eeee')] }));
+    expect(await connectDevices(t.context, t.org)).toEqual({ devices: [], preselected: null });
+    expect(t.client.of('GET /v1/me/devices')).toHaveLength(1);
+    t.client.on('GET /v1/me/devices', () => ({ devices: [item(t.org)] }));
+    expect((await connectDevices(t.context, t.org)).preselected).toBe(t.device.id);
+  });
+
   it('does not assign without a profile', async () => {
     const t = await taskWorld();
     t.client.on('GET /v1/me/devices', () => ({ devices: [] }));
@@ -380,6 +398,31 @@ describe('startConnect and connectProgress', () => {
     });
   });
 
+  it('names the identity, the organization (also in plaintext) and the signing key (KOR-47)', async () => {
+    const t = await world();
+    t.client.on('POST /v1/device-requests', (body) => ({
+      request_id: (body as { envelope: { header: { id: string } } }).envelope.header.id,
+      state: 'pending',
+    }));
+    const id = '0190f000-0000-7000-8000-0000000000e1';
+    const prepared = await startConnect(t.context, t.device.id, undefined, {
+      orgId: t.org,
+      identityId: id,
+      signingKey: true,
+    });
+    const opened = JSON.parse(
+      fromUtf8(await openRequest(t.device.identity.kem, prepared.envelope, t.me.identity.sigPublic())),
+    );
+    expect(opened).toEqual({ org_id: t.org, identity_id: id, signing_key: true });
+    expect(prepared.orgId).toBe(t.org);
+    expect(t.client.calls.at(-1)!.body).toEqual({ envelope: prepared.envelope, org_id: t.org });
+    const plain = await startConnect(t.context, t.device.id, undefined, { signingKey: false });
+    expect(
+      JSON.parse(fromUtf8(await openRequest(t.device.identity.kem, plain.envelope, t.me.identity.sigPublic()))),
+    ).toEqual({});
+    expect(t.client.calls.at(-1)!.body).toEqual({ envelope: plain.envelope });
+  });
+
   it('trims a pasted token and refuses what cannot be one', () => {
     expect(tokenInput('  ghp_abc\n')).toBe('ghp_abc');
     expect(tokenInput('')).toBeNull();
@@ -414,6 +457,8 @@ describe('startConnect and connectProgress', () => {
       login: 'octo',
       scopes: null,
       source: null,
+      identityId: null,
+      signing: null,
     });
     const token = { step: 'done', login: 'octo', scopes: ['repo'], source: 'token' };
     expect(connectProgress({ ...base, responses: [verified(1, token, true)] })).toEqual({
@@ -421,6 +466,13 @@ describe('startConnect and connectProgress', () => {
       login: 'octo',
       scopes: ['repo'],
       source: 'token',
+      identityId: null,
+      signing: null,
+    });
+    const named = { ...token, identity_id: '0190f000-0000-7000-8000-0000000000e1', signing: 'registered' };
+    expect(connectProgress({ ...base, responses: [verified(1, named, true)] })).toMatchObject({
+      identityId: named.identity_id,
+      signing: 'registered',
     });
     expect(connectProgress({ ...base, responses: [verified(1, { step: 'failed', code: 'busy' }, true)] })).toEqual({
       step: 'failed',

@@ -3,11 +3,23 @@
 - `actor_client(context, operation)`: a client with the token of the operation's **acting user** - the person whose
   instruction started the turn (`credentials.acting`, the only place that decides it and opens the credential;
   HOT-14, ADR-070, replacing the task owner's credential of ADR-015) - decrypted from the credential cache only for
+<<<<<<< HEAD
   the duration of the block. No acting user, no cached or fetchable record, a record that does not open or a body
   without a usable token is `NotConnected`; a hub that cannot be asked for a missing record is
   `GitHubError("unreachable")` (retryable).
 - `executor(body)`: a `403` that refuses access (SAML single sign-on, an organisation's restriction, a right the token
   lacks) is `repo_not_accessible` with the one next step in its message (`reach`, KOR-65); everything else is
+=======
+  the duration of the block.
+- `identity_body(context, operation, data)` / `identity_client(context, operation, data)`: the body of, and a client
+  with the token of, the GitHub identity a pre-check resolved for the acting user (`identity.Resolved.data()` in the
+  pre-check data, KOR-47, ADR-076), opened through `credentials.acting` as well: the acting user's primary record
+  (its record ID must still be the resolved one: a primary record changed in between is not used), any other record
+  by its ID (`acting.opened_identity`; a personal record only of the acting user). `data_client` takes the resolved
+  identity when the data names one, else the acting user's primary record (`actor_client`).
+- No acting user, no cached or fetchable record, a record that does not open or a body without a usable token is
+  `NotConnected`; a hub that cannot be asked for a missing record is `GitHubError("unreachable")` (retryable).
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 - `failure(error, not_found=...)`: the operation failure of a `GitHubError`: `401` -> `github_not_connected`, `404`
   -> the type's code, `410` (the repository's issues are disabled, KOR-25) -> `not_found` with `ISSUES_DISABLED`,
   retryable errors (network, `5xx`, `429`, secondary and primary rate limits) -> `upstream_error` with `retryable`
@@ -20,16 +32,22 @@
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
+<<<<<<< HEAD
 from agent_runner.credentials import acting
 from agent_runner.credentials.cache import CredentialUnavailable
 from agent_runner.github import reach
+=======
+from agent_runner.credentials import acting, identities
+from agent_runner.credentials.cache import CredentialUnavailable, RecordRefused
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
 from agent_runner.github.client import TOKEN_RE, GitHubClient, GitHubError, settings_for
 from agent_runner.operations.extensions import OperationContext, OperationFailed
 from agent_runner.operations.records import Operation
+from agent_runner.orgs.db import session
 from agent_runner.sync.http import HubRefusal, HubTransportError
 
 URL_RE = re.compile(r"^https://[!-~]{1,2048}$")
@@ -57,8 +75,21 @@ class NotConnected(Exception):
 
 
 @asynccontextmanager
+async def client_of(context: Any, body: Mapping[str, Any], label: str) -> AsyncIterator[GitHubClient]:
+    """A client with the token of an opened body (`NotConnected` without a usable token)."""
+    token = body.get("token")
+    if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
+        raise NotConnected
+    client = settings_for(context).client(token, label)
+    del token
+    async with client:
+        yield client
+
+
+@asynccontextmanager
 async def actor_client(context: Any, operation: Operation) -> AsyncIterator[GitHubClient]:
     try:
+<<<<<<< HEAD
         async with acting.opened(context, operation, "github") as body:
             token = body.get("token")
             if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
@@ -70,10 +101,62 @@ async def actor_client(context: Any, operation: Operation) -> AsyncIterator[GitH
             del token
             async with client:
                 yield client
+=======
+        async with (
+            acting.opened(context, operation, "github") as body,
+            client_of(context, body, str(operation.actor_id)) as client,
+        ):
+            yield client
+>>>>>>> ba248bc71 (Add GitHub identities: several accounts, company accounts, choices and defaults, and the commit's author, committer, co-authors and signature.)
     except (CredentialUnavailable, HubRefusal):
         raise NotConnected from None
     except HubTransportError:
         raise GitHubError("unreachable", retryable=True) from None
+
+
+@asynccontextmanager
+async def _body(context: Any, operation: Operation, data: Mapping[str, Any]) -> AsyncIterator[dict[str, Any]]:
+    identity_id, owner = str(data["github_identity"]), str(data["identity_owner"])
+    if data.get("identity_primary"):
+        async with acting.opened(context, operation, "github") as body:
+            async with session(context.pool) as conn:
+                current = await acting.primary_record_id(conn, operation)
+            if (current, operation.actor_id) != (identity_id, owner):
+                raise NotConnected
+            yield body
+        return
+    found = await identities.meta(context, identity_id)
+    if found is None or found.owner != owner:
+        raise NotConnected
+    async with acting.opened_identity(context, operation, found) as body:
+        yield body
+
+
+@asynccontextmanager
+async def identity_body(context: Any, operation: Operation, data: Mapping[str, Any]) -> AsyncIterator[dict[str, Any]]:
+    """The decrypted body of the resolved identity (module docstring)."""
+    try:
+        async with _body(context, operation, data) as body:
+            yield body
+    except (CredentialUnavailable, HubRefusal, RecordRefused):
+        raise NotConnected from None
+    except HubTransportError:
+        raise GitHubError("unreachable", retryable=True) from None
+
+
+@asynccontextmanager
+async def identity_client(context: Any, operation: Operation, data: Mapping[str, Any]) -> AsyncIterator[GitHubClient]:
+    """A client with the token of the resolved identity (module docstring)."""
+    label = str(data["identity_owner"])
+    async with identity_body(context, operation, data) as body, client_of(context, body, label) as client:
+        yield client
+
+
+def data_client(
+    context: Any, operation: Operation, data: Mapping[str, Any]
+) -> AbstractAsyncContextManager[GitHubClient]:
+    """The resolved identity's client when the pre-check data names one, else the acting user's primary record."""
+    return identity_client(context, operation, data) if "github_identity" in data else actor_client(context, operation)
 
 
 def failure(error: GitHubError, *, not_found: str = "not_found") -> OperationFailed:
@@ -94,12 +177,12 @@ Body = Callable[[OperationContext, GitHubClient], Awaitable[dict[str, Any]]]
 
 
 def executor(body: Body, *, not_found: str = "not_found") -> Callable[[OperationContext], Awaitable[dict[str, Any]]]:
-    """An executor that runs `body` with the acting user's client and maps the GitHub failures."""
+    """An executor that runs `body` with the resolved identity's client and maps the GitHub failures."""
 
     async def run(ctx: OperationContext) -> dict[str, Any]:
         client: GitHubClient | None = None
         try:
-            async with actor_client(ctx.context, ctx.operation) as client:
+            async with data_client(ctx.context, ctx.operation, ctx.data) as client:
                 return await body(ctx, client)
         except NotConnected:
             raise OperationFailed("github_not_connected", message=NOT_CONNECTED) from None

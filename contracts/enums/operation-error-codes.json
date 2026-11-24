@@ -23,6 +23,8 @@
     "model_not_allowed",
     "tree_mismatch",
     "no_changes",
-    "workvm_unavailable"
+    "workvm_unavailable",
+    "identity_forbidden",
+    "identity_unavailable"
   ]
 }

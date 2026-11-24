@@ -255,7 +255,7 @@ def test_a_shared_task_uses_the_github_of_whoever_gave_the_instruction(
         await kit.pipeline.process(op_id)
         done = await kit.op(op_id)
         assert done.state == "succeeded"
-        assert callers(github) == ["bob", "bob"]
+        assert callers(github) == ["bob", "bob", "bob"]  # the account check (KOR-47), the access check, the comment
         comments = [c for c in github.repo()["comments"] if c["body"] == "From bob."]
         assert [c["user"] for c in comments] == ["other-user"]
         assert await results(kit) == [(op_id, BOB)]  # the task's record names whose connection was used
@@ -263,7 +263,7 @@ def test_a_shared_task_uses_the_github_of_whoever_gave_the_instruction(
         await turn(kit, sid, ALICE)
         mine = await kit.run(sid, "github.comment", {"repo": REPO, "number": 1, "body": "From alice."})
         assert (mine.state, mine.actor_id) == ("succeeded", ALICE)
-        assert callers(github) == ["bob", "bob", "alice", "alice"]
+        assert callers(github) == ["bob", "bob", "bob", "alice", "alice", "alice"]
         assert await results(kit) == [(op_id, BOB), (mine.id, ALICE)]
         comments = [c for c in github.repo()["comments"] if c["body"] == "From alice."]
         assert [c["user"] for c in comments] == ["octo-user"]

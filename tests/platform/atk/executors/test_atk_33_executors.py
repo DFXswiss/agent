@@ -61,6 +61,8 @@ ALLOWED_BRANCHES = (
 )
 HOSTILE_TEXT = "$(id > /tmp/atk33) `id` ; id | id && id\n--upload-pack=/bin/sh\r\nX-Injected: 1 <script>"
 # REST routes per operation type (05-runner.md section 12.1), with the repository fixed; `{}` is one path segment.
+# Every type first checks that the identity's token is the account its record names (`GET /user`, ADR-076 section 4).
+ACCOUNT_CHECK = "GET /user"
 ROUTES = {
     "github.create_branch": ("GET /repos/{r}", "GET /repos/{r}/git/ref/heads/.+", "POST /repos/{r}/git/refs"),
     "github.create_pull_request": ("GET /repos/{r}", "GET /repos/{r}/pulls", "POST /repos/{r}/pulls"),
@@ -117,7 +119,8 @@ def no_exec(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
 
 def on_routes(journal: list[str], op_type: str) -> list[str]:
     """The journal lines outside the operation's REST routes (for the allowed repository only)."""
-    patterns = [re.compile(route.replace("{r}", re.escape(REPO))) for route in ROUTES[op_type]]
+    routes = (ACCOUNT_CHECK, *ROUTES[op_type])
+    patterns = [re.compile(route.replace("{r}", re.escape(REPO))) for route in routes]
     return [line for line in journal if not any(pattern.fullmatch(line) for pattern in patterns)]
 
 

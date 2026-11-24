@@ -11,6 +11,8 @@
 // there never sends the task. The device choice (ADR-075 section 6) goes into the request as `placement`;
 // "Automatic" while the workgroup has a default is applied to the created task afterwards (`PUT
 // /v1/tasks/{task}/placement`, best effort), since a request without `placement` takes the default.
+// When the user may choose a GitHub identity (ADR-076 section 3: own accounts, company accounts of the
+// organization), a choice "GitHub account" goes with the task (`github_identity`; default automatic).
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { loadGithub } from '../../core/github/connection';
@@ -24,6 +26,8 @@ import { useAppEnv } from '../shell/context';
 import { PreparingPanel } from '../countdown/PreparingPanel';
 import { useAboveKeyboard } from '../responsive/keyboard';
 import { GithubConnect } from '../settings/sections/github/Connect';
+import { useDirectory } from '../screens/tasks/hooks';
+import { AUTOMATIC, IdentityChoice } from './IdentityChoice';
 
 /** Failures after which the same request (same IDs) is sent again: the hub may not have seen it or may succeed later. */
 export const RETRYABLE: ReadonlySet<string> = new Set(['unavailable', 'rate_limited', 'seq_conflict']);
@@ -52,6 +56,8 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
   const [text, setText] = useState('');
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const [github, setGithub] = useState(false);
+  const [identity, setIdentity] = useState(AUTOMATIC);
+  const directory = useDirectory(org, false);
   const prepared = useRef<PreparedTask | null>(null);
   const { devices, choice, setChoice } = useDeviceChoice(wg);
   const hasDefault = devices !== null && devices.placement !== null;
@@ -83,9 +89,16 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
         known.org === org &&
         known.wg === wg &&
         known.prompt === text &&
-        samePlacement(known.placement, choice)
+        samePlacement(known.placement, choice) &&
+        (known.body.github_identity ?? AUTOMATIC) === identity
           ? known
-          : await prepareTask(app.tasks, { org, wg, prompt: text, placement: choice });
+          : await prepareTask(app.tasks, {
+              org,
+              wg,
+              prompt: text,
+              placement: choice,
+              ...(identity !== AUTOMATIC && { githubIdentity: identity }),
+            });
       prepared.current = task;
       const sent = await sendTask(app.tasks, task, {
         onAssigning: () => setStatus({ kind: 'sending', startedAt, assigning: true }),
@@ -166,6 +179,14 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
             disabled={sending}
           />
         )}
+        <IdentityChoice
+          org={org}
+          orgName={directory.orgName}
+          value={identity}
+          onChange={setIdentity}
+          disabled={sending}
+          testId="composer.identity"
+        />
         <div className="flex items-center gap-3">
           <button
             type="submit"

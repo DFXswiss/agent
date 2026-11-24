@@ -41,6 +41,28 @@
           "type": "null"
         }
       ]
+    },
+    "github_identity": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "the GitHub identity of the operation (KOR-47); missing on rows written before"
+    },
+    "triggered_by": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "the human the operation followed (KOR-47); missing on rows written before"
     }
   },
   "required": [

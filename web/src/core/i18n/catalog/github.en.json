@@ -90,5 +90,7 @@
   "waiting.access.link.approve_app": "Request the approval of {owner}",
   "waiting.access.link.authorize_sso": "Authorise for {owner}",
   "waiting.access.link.new_token": "Create a token for {owner}",
-  "waiting.access.link.check_access": "Open the repository at GitHub"
+  "waiting.access.link.check_access": "Open the repository at GitHub",
+  "source.operator": "Operator account of the platform",
+  "scopes.none.operator": "Permissions: those of the operator account."
 }

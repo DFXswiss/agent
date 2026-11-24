@@ -237,6 +237,11 @@ def test_doctor_checks_the_operators_github_token_file_without_naming_it(case: C
     assert check_map(out)["operator_github"] == [("ok", "usable", None)]
     assert secret not in out
     assert "01a1ee56" not in out
+    org = "01a1ee56-5e00-7aaa-8ec3-2c90dd7ae999"
+    case.env["AGENT_RUNNER_OPERATOR_GITHUB_ORG"] = org  # KOR-47: the organization is named, the users never
+    _code, out, _err = case.cli("doctor")
+    assert check_map(out)["operator_github"] == [("ok", "usable", org)]
+    assert "01a1ee56-5e00-7359-8ec3-2c90dd7ae358" not in out
 
 
 def test_doctor_names_why_the_operators_github_is_refused_for_a_second_user(case: Case, tmp_path: Path) -> None:
