@@ -45,7 +45,7 @@ Producer: the hub; consumers: the web and the user's agent (`agent-platform`).
 
 - New endpoints (`api/INDEX.json`, owner KOR-46, `tests/platform/contracts/spec/endpoints-kor46.json`):
   `GET /v1/tasks/{task}/queue` (`task-queue`, `task:read`, read resource `task.queue`) → `{task_id, prompts:
-  [queue_prompt]}`, and `POST /v1/tasks/{task}/prompts/{event}/withdraw` (`prompt-withdraw`, `task:write`, only the
+  [queue_prompt], withdrawals: [{event_id, state: withdrawn|withdrawing|too_late, requested_at}]}`, and `POST /v1/tasks/{task}/prompts/{event}/withdraw` (`prompt-withdraw`, `task:write`, only the
   prompt's author) → `{state: withdrawn|withdrawing}`. New `api/objects.json` definitions `queue_prompt`
   `{event_id, author_id, via_agent, scope_seq, received_at, session_id, device_id, state:
   waiting|waiting_for_device|withdrawing}` and `charge_person`.

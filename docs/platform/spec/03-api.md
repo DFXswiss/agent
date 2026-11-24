@@ -596,7 +596,7 @@ all others → `{}`.
 `{operation_id,session_id,task_id,wg_id,type,requested_at,local_check:"passed"|"rejected",error_code?,dedupe:{epoch,tag}|null,params_event,github_identity?,triggered_by?}`
 → `{state:"accepted"|"duplicate"|"denied"|"rejected",error_code?,duplicate_of?,original:{state,result_event_id?}?,child_session_id?}`.
 Hub checks in this order: H1 session belongs to device and is not stopped; H2 actor (task owner) has `wg:write`
-now, and so has `triggered_by` (null, or the author of a prompt of the task - otherwise H2 fails too; KOR-46); H3 type known and enabled; H4 type-specific limits (subagents: depth, parallel, total; budget); H5 duplicate:
+now, and so has `triggered_by` (KOR-46: null, or the author of a prompt of the task - any other person is `400 request_invalid` and nothing is stored; an author without `wg:write` now fails H2); H3 type known and enabled; H4 type-specific limits (subagents: depth, parallel, total; budget); H5 duplicate:
 `dedupe_slot` (`wg_id`,`epoch`,`tag`) held by an operation in `accepted|executing|succeeded` whose slot has not
 expired → `duplicate`; H6 accept: take the slot with `expires_at = now + window`. `local_check:"rejected"` is
 stored as `rejected` without H2–H6 (still audited). Every outcome writes `operation` + transition + audit.

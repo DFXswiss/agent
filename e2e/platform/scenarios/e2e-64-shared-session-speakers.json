@@ -5,7 +5,7 @@
     {
       "id": "ada-first",
       "expect": {
-        "user_text_contains": "agent.dfx.swiss instruction from: \"Ada kz56-name-a1\" (member ",
+        "user_text_contains": "E2E56-ADA-FIRST",
         "has_tool_result": false
       },
       "reply": {
@@ -15,7 +15,7 @@
     {
       "id": "wendy",
       "expect": {
-        "user_text_contains": "agent.dfx.swiss instruction from: \"Wendy kz56-name-w4\" (member ",
+        "user_text_contains": "E2E56-WENDY kz56-prompt-w-u2b6",
         "has_tool_result": false,
         "min_messages": 3,
         "tools_include": ["mcp__platform__request_operation", "mcp__platform__get_operation"]

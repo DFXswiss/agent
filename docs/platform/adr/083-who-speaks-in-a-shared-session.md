@@ -95,7 +95,8 @@ stays traceable internally), [Idee 46](../KONZEPT.md#k-idee-46) (consumption ass
   that person and the card asks only them to connect (E-05). The choice among several accounts is KOR-47.
 - **Interface for reading across workgroups (KOR-45).** `triggered_by` of `hub.operation`/`hub.session` at the hub
   and `acting.stamp` at the runner are the person whose rights KOR-45 intersects with the task owner's
-  ([A11](../KONZEPT.md#a-11)); null means "only the task owner's rights".
+  ([A11](../KONZEPT.md#a-11)). Null never widens anything: when a turn had several authors or none, KOR-45 applies
+  the intersection with every author involved, or denies.
 - The model access of a session stays the one chosen at its start; its consumption is attributed per person as
   above (ADR-070 "Consequences").
 - **Old runners** send no `triggered_by`: the hub stores null (shown as "not attributed"). The runner sends the new
@@ -145,6 +146,10 @@ session and charge views of the tool show `triggered_by`.
   requests (04-crypto.md §7). The sender line exists only inside the device.
 - A person who withdraws a prompt while its device is offline waits for the device (the device may already be
   delivering it); the queue shows "withdrawing".
+- With an older golden the runner registers prompts without the line (log `speaker_unsupported`, reported once per
+  VM); such a session learns no sender until its VM runs the new golden.
+- `get_task_messages` leaves out the prompts this device withdrew; a prompt the hub withdrew at once for a session
+  without device was never routed to any device and is still listed there as an event (it never reached a session).
 - The "previous person" sentence relies on what this device knows; on another device the first prompt after a move
   carries the sender line without it.
 - After a compaction the sender of the current turn survives only in the conversation's own summary; the next
