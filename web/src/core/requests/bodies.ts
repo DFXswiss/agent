@@ -24,6 +24,7 @@ export const FAILURE_CODES = [
   'token_refused',
   'scope_missing',
   'sso_required',
+  'flow_unavailable',
 ] as const;
 export type FailureCode = (typeof FAILURE_CODES)[number];
 /** Client code of a request the hub failed (device no longer eligible, or replaced by a newer one of its kind). */

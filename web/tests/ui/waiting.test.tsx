@@ -271,4 +271,69 @@ describe('waiting card', () => {
     expect(screen.getByTestId('waiting.card')).toHaveAttribute('data-status', 'open');
     expect(t.store.getState().github.status).toBe('unknown');
   });
+
+  describe('github_access (KOR-65)', () => {
+    const access = (next: Record<string, unknown> | undefined, overrides: Record<string, unknown> = {}) =>
+      waiting({ waiting_for: 'github_access', repo: 'third-org/app', ...(next ? { next } : {}), ...overrides });
+
+    it('names the one step with a link that opens GitHub', async () => {
+      const t = await page();
+      const url = 'https://github.com/settings/connections/applications/Ov23example';
+      put(t, entry(t, 'session.status', access({ action: 'approve_app', owner: 'third-org', url })));
+      const card = await screen.findByTestId('waiting.card');
+      expect(card).toHaveAttribute('data-reason', 'github_access');
+      expect(within(card).getByTestId('waiting.title')).toHaveTextContent('GitHub access needed for the repository');
+      const step = within(card).getByTestId('waiting.step');
+      expect(step).toHaveAttribute('data-action', 'approve_app');
+      expect(step).toHaveTextContent('The organisation third-org lets outside apps in only after an owner approved');
+      const link = within(card).getByTestId('waiting.step.link');
+      expect(link).toHaveTextContent('Request the approval of third-org');
+      expect(link).toHaveAttribute('href', url);
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+      expect(within(card).queryByTestId('github.ways')).toBeNull();
+      // a new connection does not settle it: the runner checks the repository again
+      connected(t, ago(0));
+      expect(screen.getByTestId('waiting.card')).toHaveAttribute('data-status', 'open');
+      act(() => putOperations(t.store, [row(t, OP1, 'accepted')]));
+      expect(screen.getByTestId('waiting.card')).toHaveTextContent('GitHub access is there – the task goes on.');
+    });
+
+    it('connects right in the card for "connect" and offers the token way for "new_token"', async () => {
+      const t = await page();
+      put(t, entry(t, 'session.status', access({ action: 'connect', owner: 'octo-user' })));
+      const card = await screen.findByTestId('waiting.card');
+      expect(within(card).queryByTestId('waiting.step.link')).toBeNull();
+      expect(within(card).getByTestId('github.connect')).toBeVisible();
+      const url = 'https://github.com/settings/personal-access-tokens/new?target_name=third-org';
+      put(
+        t,
+        entry(t, 'session.status', access({ action: 'new_token', owner: 'third-org', url }, { operation_id: OP2 })),
+      );
+      await waitFor(() => expect(screen.getByTestId('waiting.step')).toHaveAttribute('data-action', 'new_token'));
+      expect(screen.getByTestId('waiting.step.link')).toHaveTextContent('Create a token for third-org');
+      expect(screen.getByTestId('github.token')).toBeVisible();
+    });
+
+    it('shows others whom it waits for, without a step', async () => {
+      const t = await page({ member: true, owner: 'ada' });
+      put(t, entry(t, 'session.status', access({ action: 'connect', owner: 'octo-user' })));
+      expect(await screen.findByTestId('waiting.other')).toHaveTextContent(
+        'Waiting for the task owner to give GitHub access to the repository.',
+      );
+      expect(screen.queryByTestId('waiting.step')).toBeNull();
+    });
+
+    it('has no control without a step and says when it expired', async () => {
+      const t = await page();
+      put(t, entry(t, 'session.status', access(undefined)));
+      expect(await screen.findByTestId('waiting.card')).toHaveAttribute('data-owner', 'true');
+      expect(screen.queryByTestId('waiting.step')).toBeNull();
+      expect(screen.queryByTestId('github.ways')).toBeNull();
+      act(() => putOperations(t.store, [row(t, OP1, 'rejected')]));
+      expect(screen.getByTestId('waiting.card')).toHaveTextContent(
+        'Expired: GitHub access to the repository was not given in time.',
+      );
+    });
+  });
 });

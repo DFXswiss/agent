@@ -11,5 +11,6 @@
   "failure.request_failed": "The device could not take the request: it is no longer eligible, or a newer request of the same kind replaced it.",
   "failure.token_refused": "GitHub refused the token: it was revoked or does not exist.",
   "failure.scope_missing": "The token lacks the scope needed for repositories.",
-  "failure.sso_required": "An organisation requires SSO authorisation of the token."
+  "failure.sso_required": "An organisation requires SSO authorisation of the token.",
+  "failure.flow_unavailable": "The sign-in through GitHub is not set up on this execution device."
 }

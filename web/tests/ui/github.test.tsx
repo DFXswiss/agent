@@ -127,7 +127,7 @@ describe('GitHub section', () => {
 
   it('shows a connected account with its login and disconnects with the GitHub settings link', async () => {
     const t = await world();
-    connected(t, await record(t));
+    connected(t, await record(t, { source: 'token' }));
     t.client.on('DELETE /v1/me/credentials/github', () => ({}));
     page(t);
     expect(await screen.findByTestId('github.connected')).toHaveTextContent('Connected as octo-cat');
@@ -500,5 +500,68 @@ describe('composer GitHub offer', () => {
     expect(screen.getByTestId('github.scopes')).toHaveTextContent('Scopes: repo, read:org');
     expect(screen.getByTestId('github.scopes.classic')).toHaveTextContent('A fine-grained token is recommended.');
     expect(screen.queryByTestId('github.ways')).toBeNull();
+  });
+
+  describe('ways of the devices (KOR-65)', () => {
+    const item = (t: World, device: string, features: string[], online = true) => ({
+      device_id: device,
+      kind: 'org',
+      org_id: t.org,
+      wg_ids: [t.wg],
+      online,
+      last_seen_at: null,
+      features,
+    });
+
+    it('offers only the token, with a pre-filled link, when no device runs the sign-in', async () => {
+      const t = await world();
+      t.client.on('GET /v1/me/devices', () => ({ devices: [item(t, t.device.id, ['log.admit', 'github.ways'])] }));
+      page(t);
+      expect(await screen.findByTestId('github.ways.token-only')).toHaveTextContent(
+        'The sign-in through GitHub is not set up on your execution devices.',
+      );
+      expect(screen.queryByTestId('github.connect')).toBeNull();
+      fireEvent.click(screen.getByTestId('github.token'));
+      const link = await screen.findByTestId('github.token.create');
+      expect(link).toHaveAttribute(
+        'href',
+        'https://github.com/settings/tokens/new?scopes=repo,workflow&description=agent.dfx.swiss',
+      );
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+      // the token way offers the device that does not run the sign-in
+      expect(await screen.findByTestId('github.devices.select')).toHaveValue(t.device.id);
+    });
+
+    it('offers in the sign-in only the devices that run it', async () => {
+      const t = await world();
+      const stranger = '0190f000-0000-7000-8000-0000000000aa'; // not in the verified logs: never a choice
+      t.client.on('GET /v1/me/devices', () => ({
+        devices: [item(t, t.device.id, ['github.ways']), item(t, stranger, ['github.ways', 'github.device_flow'])],
+      }));
+      page(t);
+      fireEvent.click(await screen.findByTestId('github.connect'));
+      expect(await screen.findByTestId('github.ways.none')).toHaveTextContent(
+        'None of your execution devices runs the sign-in through GitHub.',
+      );
+      expect(screen.queryByTestId('github.devices.select')).toBeNull();
+      t.client.on('GET /v1/me/devices', () => ({
+        devices: [item(t, t.device.id, ['github.ways', 'github.device_flow'], false)],
+      }));
+      fireEvent.click(screen.getByTestId('github.flow.close'));
+      fireEvent.click(await screen.findByTestId('github.connect'));
+      expect(await screen.findByTestId('github.devices.none')).toBeVisible();
+    });
+
+    it('offers the sign-in while the ways cannot be read', async () => {
+      const t = await world();
+      t.client.on('GET /v1/me/devices', () => {
+        throw new HubError('unavailable', 503);
+      });
+      page(t);
+      expect(await screen.findByTestId('github.connect')).toBeVisible();
+      await waitFor(() => expect(t.client.of('GET /v1/me/devices').length).toBeGreaterThan(0));
+      expect(screen.getByTestId('github.connect')).toBeVisible();
+    });
   });
 });

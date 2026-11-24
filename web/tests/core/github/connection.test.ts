@@ -10,6 +10,8 @@ import {
   connectDevices,
   connectProgress,
   credentialKey,
+  githubWays,
+  offersSignIn,
   defaultWorkgroup,
   disconnectGithub,
   loadGithub,
@@ -85,7 +87,8 @@ describe('loadGithub', () => {
       source: 'device_flow',
       createdAt: BODY.created_at,
       version: 2,
-      revocable: false,
+      // an OAuth App token of the device flow (KOR-65): the devices revoke it on disconnect
+      revocable: true,
     });
     expect(t.store.getState().github).toEqual(connection);
     expect(JSON.stringify(t.store.getState().github)).not.toContain('gho_');
@@ -94,7 +97,15 @@ describe('loadGithub', () => {
   it('reads the source and the scopes of a stored token', async () => {
     const t = await world();
     serve(t, await record(t, t.device, { body: { ...BODY, scopes: ['repo', 'read:org'], source: 'token' } }));
-    expect(await loadGithub(t.context)).toMatchObject({ source: 'token', scopes: ['repo', 'read:org'] });
+    expect(await loadGithub(t.context)).toMatchObject({
+      source: 'token',
+      scopes: ['repo', 'read:org'],
+      revocable: false,
+    });
+    serve(t, await record(t, t.device, { body: { ...BODY, token: 'ghp_not_real' } }));
+    expect(await loadGithub(t.context)).toMatchObject({ source: 'device_flow', revocable: false });
+    serve(t, await record(t, t.device, { body: { ...BODY, token: 'ghu_not_real' } }));
+    expect(await loadGithub(t.context)).toMatchObject({ revocable: true });
     serve(t, await record(t, t.device, { body: { ...BODY, source: 'device_flow' } }));
     expect(await loadGithub(t.context)).toMatchObject({ source: 'device_flow', scopes: [] });
     serve(t, await record(t, t.device, { body: { ...BODY, source: 'paste' } }));
@@ -266,8 +277,8 @@ describe('connectDevices', () => {
     }));
     const found = await connectDevices(t.context);
     expect(found.devices).toEqual([
-      { device: t.device.id, kind: 'org', online: true, defaultWg: true },
-      { device: other.id, kind: 'org', online: false, defaultWg: true },
+      { device: t.device.id, kind: 'org', online: true, defaultWg: true, deviceFlow: true },
+      { device: other.id, kind: 'org', online: false, defaultWg: true, deviceFlow: true },
     ]);
     expect(found.preselected).toBe(t.device.id);
   });
@@ -412,5 +423,51 @@ describe('startConnect and connectProgress', () => {
     });
     expect(connectProgress({ ...base, state: 'expired' })).toEqual({ step: 'failed', code: 'timeout' });
     expect(connectProgress({ ...base, state: 'failed' })).toEqual({ step: 'failed', code: 'request_failed' });
+  });
+});
+
+describe('GitHub ways of the devices (KOR-65)', () => {
+  const item = (device: string, features?: string[]) => ({
+    device_id: device,
+    kind: 'org',
+    org_id: '0190f000-0000-7000-8000-00000000eeee',
+    wg_ids: ['0190f000-0000-7000-8000-00000000ffff'],
+    online: true,
+    last_seen_at: null,
+    ...(features === undefined ? {} : { features }),
+  });
+
+  it('knows which device runs a sign-in through GitHub', () => {
+    expect(offersSignIn(item('a'))).toBe(true); // an older hub or runner: as before
+    expect(offersSignIn(item('a', ['log.admit']))).toBe(true);
+    expect(offersSignIn(item('a', ['github.ways']))).toBe(false);
+    expect(offersSignIn(item('a', ['github.ways', 'github.device_flow']))).toBe(true);
+    expect(offersSignIn(item('a', ['github.ways', 'github.operator']))).toBe(true);
+  });
+
+  it('offers the sign-in when any device runs it, and does not know without a device', async () => {
+    const t = await world();
+    const lists = [
+      { devices: [] },
+      { devices: [item('a', ['github.ways']), item('b', ['github.ways', 'github.device_flow'])] },
+      { devices: [item('a', ['github.ways'])] },
+    ];
+    t.client.on('GET /v1/me/devices', () => lists.shift());
+    expect(await githubWays(t.context)).toBeNull();
+    expect(await githubWays(t.context)).toBe(true);
+    expect(await githubWays(t.context)).toBe(false);
+    t.client.on('GET /v1/me/devices', () => ({ devices: [{ ...item('a'), features: [1] }] }));
+    await expect(githubWays(t.context)).rejects.toThrow();
+  });
+
+  it('marks the choices that run a sign-in, also when only one item of a device announces it', async () => {
+    const t = await world();
+    const device = (features: string[]) => ({ ...item(t.device.id, features), org_id: t.org, wg_ids: [t.wg] });
+    t.client.on('GET /v1/me/devices', () => ({
+      devices: [device(['github.ways', 'github.device_flow']), { ...device(['github.ways']), org_id: 'x' }],
+    }));
+    expect((await connectDevices(t.context)).devices.map((d) => d.deviceFlow)).toEqual([true]);
+    t.client.on('GET /v1/me/devices', () => ({ devices: [device(['github.ways'])] }));
+    expect((await connectDevices(t.context)).devices.map((d) => d.deviceFlow)).toEqual([false]);
   });
 });

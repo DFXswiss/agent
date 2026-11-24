@@ -6,6 +6,7 @@ import type { TimelineItem } from '../../../src/core/chat/timeline';
 import {
   foldWaiting,
   isWaitingItem,
+  parseNext,
   parseWaiting,
   type WaitingCard,
   waitStatus,
@@ -36,6 +37,7 @@ describe('parseWaiting', () => {
       operationType: 'github.list_issues',
       repo: 'example-org/example-repo',
       forUser: null,
+      next: null,
       until: UNTIL_MS,
     });
     expect(parseWaiting({ ...BODY, for_user: BOB })).toMatchObject({ forUser: BOB });
@@ -120,6 +122,7 @@ describe('foldWaiting', () => {
       repo: 'example-org/example-repo',
       operationType: 'github.request_connection',
       forUser: null,
+      next: null,
       operations: [OP1, OP2, OP3],
       until: Date.parse('2026-11-23T09:50:00.000Z'),
       since: 9,
@@ -162,6 +165,7 @@ describe('waitStatus', () => {
     repo: null,
     operationType: 'github.list_issues',
     forUser: null,
+    next: null,
     operations: [OP1, OP2],
     until: UNTIL_MS,
     since,
@@ -180,6 +184,62 @@ describe('waitStatus', () => {
     expect(waitStatus(card, { ...base, rows: { [OP1]: row(OP1, 'rejected'), [OP2]: row(OP2, 'expired') } })).toBe(
       'expired',
     );
+    expect(waitStatus(card, { ...base, now: UNTIL_MS })).toBe('expired');
+  });
+});
+
+describe('github_access (KOR-65)', () => {
+  const STEP = { action: 'approve_app', owner: 'third-org', url: 'https://github.com/settings/applications' };
+  const ACCESS = { ...BODY, waiting_for: 'github_access', repo: 'third-org/app', for_user: BOB, next: STEP };
+
+  it('reads the next step exactly as the contract allows it', () => {
+    expect(parseWaiting(ACCESS)).toMatchObject({ reason: 'github_access', next: STEP });
+    expect(parseNext({ action: 'connect', owner: 'octo-user' })).toEqual({
+      action: 'connect',
+      owner: 'octo-user',
+      url: null,
+    });
+    expect(parseNext({ ...STEP, url: 'http://127.0.0.1:8080/apps/x/installations/new' })).not.toBeNull();
+    for (const bad of [
+      null,
+      'connect',
+      { action: 'connect' },
+      { owner: 'o' },
+      { ...STEP, extra: 1 },
+      { ...STEP, action: 'ask_somebody' },
+      { ...STEP, owner: 'bad owner' },
+      { ...STEP, owner: 7 },
+      { ...STEP, url: 'javascript:alert(1)' },
+      { ...STEP, url: 'http://evil.example/' },
+      { ...STEP, url: 7 },
+    ]) {
+      expect(parseNext(bad), JSON.stringify(bad)).toBeNull();
+      expect(parseWaiting({ ...ACCESS, next: bad }), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it('is a card of its own with the step of the newest item that named one', () => {
+    const connect = { action: 'connect', owner: 'third-org' };
+    const { next: _next, ...withoutStep } = ACCESS;
+    const folded = foldWaiting([
+      item(1, { ...BODY, for_user: BOB }),
+      item(2, { ...ACCESS, next: connect }),
+      item(3, { ...ACCESS, operation_id: OP2 }),
+      item(4, { ...withoutStep, operation_id: OP3 }),
+    ]);
+    expect(folded.map((entry) => [entry.key, entry.waiting?.reason])).toEqual([
+      ['e1', 'github_connection'],
+      ['e4', 'github_access'],
+    ]);
+    expect(folded[1]!.waiting).toMatchObject({ next: { ...STEP }, operations: [OP1, OP2, OP3] });
+    expect(foldWaiting([item(1, withoutStep)])[0]!.waiting).toMatchObject({ next: null });
+  });
+
+  it('is not settled by a new connection, only by the registered operations or the time', () => {
+    const card = foldWaiting([item(10, ACCESS)])[0]!.waiting!;
+    const base = { now: UNTIL_MS - 1, connectedAt: 11, rows: {} };
+    expect(waitStatus(card, base)).toBe('open');
+    expect(waitStatus(card, { ...base, rows: { [OP1]: row(OP1, 'accepted') } })).toBe('done');
     expect(waitStatus(card, { ...base, now: UNTIL_MS })).toBe('expired');
   });
 });

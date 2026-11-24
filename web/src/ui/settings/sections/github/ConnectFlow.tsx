@@ -4,7 +4,11 @@
 // expires, then the GitHub login or the error. Responses are pulled on `device_response` frames and on a timer
 // (`core/requests/watch.ts`); nothing confidential is shown (the token never reaches the browser UI).
 //
-// With `method="token"` (KOR-25, ADR-065) the same flow stores an existing token instead: next to the device choice
+// For the sign-in only devices that run one are offered (`DeviceChoice.deviceFlow`, KOR-65); when none does, the flow
+// says so instead of a choice that would fail (the token way still works).
+//
+// With `method="token"` (KOR-25, ADR-065) the same flow stores an existing token instead – with a link to create one
+// at GitHub, pre-filled with the scopes that reach every repository of the account (`TOKEN_URL`); next to the device choice
 // a password-like field (no autocomplete, no spell check, outside any form a password manager would offer to save).
 // Its value is read once when the user sends it, the field is emptied at once, and the token goes only into the request
 // sealed with HPKE to the device – never into the store, the URL, a log or the component state. The device checks it at
@@ -16,6 +20,7 @@ import {
   type ConnectProgress,
   type DeviceChoice,
   startConnect,
+  TOKEN_URL,
   tokenInput,
 } from '../../../../core/github/connection';
 import { type PreparedRequest, requestErrorCode, type RequestView } from '../../../../core/requests/client';
@@ -31,6 +36,7 @@ type Phase =
   | { readonly kind: 'devices' }
   | { readonly kind: 'choose'; readonly devices: readonly DeviceChoice[]; readonly selected: string }
   | { readonly kind: 'none' }
+  | { readonly kind: 'no_sign_in' }
   | { readonly kind: 'starting' }
   | { readonly kind: 'request'; readonly prepared: PreparedRequest }
   | { readonly kind: 'error'; readonly code: string };
@@ -222,15 +228,15 @@ export function ConnectFlow({
     if (phase.kind !== 'devices') return;
     // while the devices load the flow offers only "Close", which unmounts it: a late answer changes nothing
     connectDevices(app.tasks).then(
-      (found) =>
-        setPhase(
-          found.preselected === null
-            ? { kind: 'none' }
-            : { kind: 'choose', devices: found.devices, selected: found.preselected },
-        ),
+      (found) => {
+        const devices = method === 'token' ? found.devices : found.devices.filter((item) => item.deviceFlow);
+        const selected = devices.find((item) => item.online)?.device;
+        if (devices.length === 0 && found.devices.length > 0) setPhase({ kind: 'no_sign_in' });
+        else setPhase(selected === undefined ? { kind: 'none' } : { kind: 'choose', devices, selected });
+      },
       (error: unknown) => setPhase({ kind: 'error', code: requestErrorCode(error) }),
     );
-  }, [app, phase]);
+  }, [app, phase, method]);
   const start = async (device: string) => {
     let token: string | undefined;
     if (method === 'token') {
@@ -258,6 +264,15 @@ export function ConnectFlow({
           <p className="text-sm text-gray-700" data-testid="github.token.recommend">
             {t('github.token.recommend')}
           </p>
+          <a
+            className="self-start text-blue-800 underline"
+            href={TOKEN_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="github.token.create"
+          >
+            {t('github.token.create')}
+          </a>
         </>
       )}
       {(phase.kind === 'devices' || phase.kind === 'starting') && (
@@ -273,6 +288,7 @@ export function ConnectFlow({
           </button>
         </>
       )}
+      {phase.kind === 'no_sign_in' && <p data-testid="github.ways.none">{t('github.ways.none')}</p>}
       {phase.kind === 'error' && (
         <>
           <p role="alert" data-testid="github.failed" data-code={phase.code}>

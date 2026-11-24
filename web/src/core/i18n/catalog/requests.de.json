@@ -11,5 +11,6 @@
   "failure.request_failed": "Das Gerät konnte die Anfrage nicht übernehmen: Es ist nicht mehr berechtigt, oder eine neuere Anfrage derselben Art hat sie ersetzt.",
   "failure.token_refused": "GitHub hat das Token abgelehnt: Es wurde widerrufen oder existiert nicht.",
   "failure.scope_missing": "Dem Token fehlt der für Repositories nötige Scope.",
-  "failure.sso_required": "Eine Organisation verlangt die SSO-Freigabe des Tokens."
+  "failure.sso_required": "Eine Organisation verlangt die SSO-Freigabe des Tokens.",
+  "failure.flow_unavailable": "Die Anmeldung über GitHub ist auf diesem Ausführungsgerät nicht eingerichtet."
 }

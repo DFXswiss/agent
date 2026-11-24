@@ -6,13 +6,20 @@
 // runner could not use, so the card says "connect again". There is no approval card: a repository outside a
 // workgroup's optional list is refused as before (ADR-054).
 //
+// A `github_access` card (KOR-65, rule E-29): the connection does not reach the repository. It names the one next step
+// the runner found (`next`): "connect" offers the sign-in right in the card (it reaches every repository of the
+// account); "new_token" the link to create a token pre-filled for the owner plus the token way in the card; every
+// other step (install the GitHub App for the owner, request the organisation's approval, authorise SSO, open the
+// repository) is one link that opens GitHub in a new tab. Once the step is done at GitHub the runner sees it by itself
+// and the operation goes on; the card turns "done" when the operation is registered.
+//
 // Everybody else – the task owner too – sees "waiting for <name>" and no control. The card shows only the platform's own texts, the
 // operation type (its catalog label, a known type or the dotted type the contract's pattern checked) and the repository
 // name the contract's pattern checked – never text of the session. It turns into a short "done" row once GitHub is
 // connected or every operation of the card is registered, into "expired" after `until`.
 import { useEffect, useMemo } from 'react';
 import { loadGithub } from '../../../core/github/connection';
-import { waitStatus, type WaitingCard as Card } from '../../../core/github/waiting';
+import { type NextStep, waitStatus, type WaitingCard as Card } from '../../../core/github/waiting';
 import type { TimelineItem } from '../../../core/chat/timeline';
 import { ensureOperations } from '../../../core/operations/load';
 import type { TaskRow } from '../../../core/store/slices/tasks';
@@ -25,6 +32,24 @@ import { useAppEnv } from '../../shell/context';
 import { EventTime } from '../../task-tabs/chat/EventTime';
 import { useTypeLabel } from '../operation/Card';
 import { knownPersonName } from '../../names/names';
+
+const LINK = 'min-h-11 self-start rounded bg-blue-700 px-4 py-2.5 text-white';
+
+/** The one next step of an access card for its addressee (module comment). */
+function AccessStep({ step }: { readonly step: NextStep }) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-col gap-2" data-testid="waiting.step" data-action={step.action}>
+      <p className="text-sm">{t(`github.waiting.access.${step.action}`, { owner: step.owner })}</p>
+      {step.url !== null && (
+        <a className={LINK} href={step.url} target="_blank" rel="noopener noreferrer" data-testid="waiting.step.link">
+          {t(`github.waiting.access.link.${step.action}`, { owner: step.owner })}
+        </a>
+      )}
+      {(step.action === 'connect' || step.action === 'new_token') && <GithubConnect />}
+    </div>
+  );
+}
 
 function TaskCard({ item, card, task }: { readonly item: TimelineItem; readonly card: Card; readonly task: TaskRow }) {
   const { app } = useAppEnv();
@@ -49,6 +74,8 @@ function TaskCard({ item, card, task }: { readonly item: TimelineItem; readonly 
   const created = isOwner && github.status === 'connected' ? Date.parse(github.createdAt) : NaN;
   const connectedAt = Number.isNaN(created) ? null : created;
   const status = waitStatus(card, { now, connectedAt, rows });
+  const access = card.reason === 'github_access';
+  const kind = access ? 'access' : 'connection';
   if (status !== 'open')
     return (
       <p
@@ -58,7 +85,7 @@ function TaskCard({ item, card, task }: { readonly item: TimelineItem; readonly 
         data-reason={card.reason}
         data-status={status}
       >
-        {t(`github.waiting.${status}.connection`)} <EventTime at={item.at} />
+        {t(`github.waiting.${status}.${kind}`)} <EventTime at={item.at} />
       </p>
     );
   const ownerName =
@@ -75,13 +102,13 @@ function TaskCard({ item, card, task }: { readonly item: TimelineItem; readonly 
       data-owner={isOwner}
     >
       <h3 className="font-semibold" data-testid="waiting.title">
-        {t('github.waiting.connection.title')}
+        {t(`github.waiting.${kind}.title`)}
       </h3>
       {isOwner ? (
-        <p className="text-sm">{t('github.waiting.connection.body')}</p>
+        <p className="text-sm">{t(`github.waiting.${kind}.body`)}</p>
       ) : (
         <p className="text-sm" data-testid="waiting.other">
-          {t('github.waiting.other.connection', { owner: ownerName })}
+          {t(`github.waiting.other.${kind}`, { owner: ownerName })}
         </p>
       )}
       <dl className="grid grid-cols-[auto_1fr] gap-x-2 text-sm">
@@ -103,7 +130,8 @@ function TaskCard({ item, card, task }: { readonly item: TimelineItem; readonly 
         {t('github.waiting.until', { minutes: Math.max(1, Math.ceil((card.until - now) / 60_000)) })}{' '}
         <EventTime at={item.at} />
       </p>
-      {isOwner && (
+      {isOwner && access && card.next !== null && <AccessStep step={card.next} />}
+      {isOwner && !access && (
         <>
           {stale && (
             <p className="text-sm" data-testid="waiting.reconnect">

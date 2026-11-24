@@ -6,7 +6,8 @@
 //   04-crypto.md section 4.4), its signature checks with that author's key, and it opens with the user's `CK` of the
 //   record's epoch (the user's own self-wrap). Only the GitHub login, the scopes, the source (device flow or a stored
 //   token; records without it came from the device flow), the creation time and whether the token is one the platform
-//   minted (`revocable`: a GitHub App user token, `ghu_`, which the devices revoke at GitHub on disconnect; KOR-40)
+//   minted (`revocable`: a token of a device flow - the GitHub App's `ghu_` or the OAuth App's `gho_`, KOR-65 - which
+//   the devices revoke at GitHub on disconnect; KOR-40)
 //   leave this module – the token is never kept or shown. The result goes to the `github` slice (settings section,
 //   composer chip).
 // - `disconnectGithub`: `DELETE /v1/me/credentials/github` (a missing record, `404`, counts as done); a revocable token
@@ -15,7 +16,11 @@
 // - `connectDevices`: the devices a `github.connect` request may go to. If `GET /v1/me/devices` is empty (a fresh
 //   private org), the device auto-assignment of the first task (`ensureDevice`, 03-api.md section 4.6.1 step 1) runs
 //   for the default workgroup of the active org first. Devices the verified logs do not confirm are left out; online
-//   devices of the default workgroup come first and the first online one is preselected.
+//   devices of the default workgroup come first and the first online one is preselected. Each choice says whether the
+//   device runs a GitHub sign-in (`deviceFlow`, KOR-65: it announced `github.device_flow` or `github.operator`, or it
+//   is an older runner that announces no GitHub ways at all).
+// - `githubWays`: whether any eligible device runs a GitHub sign-in (null while unknown: no device yet) – "Connect
+//   GitHub" is offered only then; otherwise only the existing token (no dead button, rule E-05).
 // - `startConnect`: the sealed `github.connect` request (`core/requests`); with a token (the second way of KOR-25,
 //   ADR-065) the body is `{token}`, sealed with HPKE to the device that checks it – the token is not kept anywhere
 //   else in the browser. `connectProgress` reads the flow's state from the opened responses: waiting → device code
@@ -40,6 +45,7 @@ import type { TasksContext } from '../tasks/pull';
 import { isScopes, LOGIN_RE, REQUEST_FAILED, type Source, SOURCES, TOKEN_RE } from '../requests/bodies';
 import {
   deviceKeys,
+  type EligibleDevice,
   eligibleDevices,
   prepareRequest,
   type PreparedRequest,
@@ -50,8 +56,14 @@ import {
 } from '../requests/client';
 
 export const KIND = 'github';
-/** Tokens the platform minted (GitHub App user tokens of the device flow): the devices revoke them on disconnect. */
-export const REVOCABLE_PREFIX = 'ghu_';
+/** Tokens the platform mints through a device flow (GitHub App user tokens, OAuth App tokens; KOR-65): the devices
+ *  revoke them on disconnect. A token stored by its owner (`source: "token"`) is never revoked. */
+export const REVOCABLE_PREFIXES = ['ghu_', 'gho_'] as const;
+/** A classic token reaching every repository of the account, pre-filled at GitHub (scopes `repo`, `workflow`). */
+export const TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=repo,workflow&description=agent.dfx.swiss';
+/** Feature tokens of `GET /v1/me/devices` (KOR-65). */
+export const WAYS_FEATURE = 'github.ways';
+export const SIGN_IN_FEATURES: readonly string[] = ['github.device_flow', 'github.operator'];
 /** Where the user revokes the app authorization (06-web.md section 8.1). */
 export const GITHUB_SETTINGS_URL = 'https://github.com/settings/applications';
 
@@ -153,7 +165,9 @@ export async function openGithubRecord(context: RequestsContext, record: unknown
     source: body.source ?? 'device_flow',
     createdAt: body.created_at,
     version: checked.version as number,
-    revocable: body.token.startsWith(REVOCABLE_PREFIX),
+    revocable:
+      (body.source ?? 'device_flow') === 'device_flow' &&
+      REVOCABLE_PREFIXES.some((prefix) => body.token.startsWith(prefix)),
   };
 }
 
@@ -202,6 +216,20 @@ export interface DeviceChoice {
   readonly online: boolean;
   /** Assigned to the default workgroup of the active org. */
   readonly defaultWg: boolean;
+  /** The device runs a GitHub sign-in (module comment). */
+  readonly deviceFlow: boolean;
+}
+
+/** Whether a device item announces a GitHub sign-in, or announces no GitHub ways at all (an older runner). */
+export function offersSignIn(item: EligibleDevice): boolean {
+  const features = item.features ?? [];
+  return !features.includes(WAYS_FEATURE) || features.some((feature) => SIGN_IN_FEATURES.includes(feature));
+}
+
+/** Whether any eligible device runs a GitHub sign-in; null while no device is known (module comment). */
+export async function githubWays(context: RequestsContext): Promise<boolean | null> {
+  const listed = await eligibleDevices(context);
+  return listed.length === 0 ? null : listed.some(offersSignIn);
 }
 
 /** The active org and its default workgroup (from `GET /v1/me`). */
@@ -234,6 +262,7 @@ export async function connectDevices(
       kind: item.kind,
       online: item.online || (known?.online ?? false),
       defaultWg: inDefault || (known?.defaultWg ?? false),
+      deviceFlow: offersSignIn(item) || (known?.deviceFlow ?? false),
     });
   }
   const devices = [...byDevice.values()].sort(

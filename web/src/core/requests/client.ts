@@ -69,6 +69,8 @@ export interface EligibleDevice {
   readonly wg_ids: readonly string[];
   readonly online: boolean;
   readonly last_seen_at: string | null;
+  /** What the device announced on its live channel (KOR-65: the GitHub ways it runs); absent from older hubs. */
+  readonly features?: readonly string[];
 }
 
 const isEligible = (value: unknown): value is EligibleDevice =>
@@ -79,7 +81,9 @@ const isEligible = (value: unknown): value is EligibleDevice =>
   Array.isArray(value.wg_ids) &&
   value.wg_ids.every((wg) => typeof wg === 'string') &&
   typeof value.online === 'boolean' &&
-  (value.last_seen_at === null || typeof value.last_seen_at === 'string');
+  (value.last_seen_at === null || typeof value.last_seen_at === 'string') &&
+  (value.features === undefined ||
+    (Array.isArray(value.features) && value.features.every((item) => typeof item === 'string')));
 
 /** `GET /v1/me/devices`; a malformed answer is `unavailable`. */
 export async function eligibleDevices(context: RequestsContext): Promise<EligibleDevice[]> {
