@@ -213,6 +213,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/tasks/{task}/charges` | task-charges |
 | `POST /v1/tasks/{task}/close` | task-close |
 | `GET /v1/tasks/{task}/operations` | operations, session-workvm, task-waiting |
+| `PUT /v1/tasks/{task}/placement` | task-create, task-view |
 | `POST /v1/tasks/{task}/prompts` | task-prompt |
 | `GET /v1/users/lookup` | members-admit |
 | `GET /v1/users/{user}/identity` | members-admit |
@@ -220,6 +221,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/whiteboards/{entry}/history` | whiteboard-list |
 | `GET /v1/workgroups/{wg}` | task-create |
 | `GET /v1/workgroups/{wg}/device-candidates` | devices-assign, task-create |
+| `PUT /v1/workgroups/{wg}/placement` | wg-placement |
 | `GET /v1/workgroups/{wg}/tasks` | tasks-list, tasks-overview |
 | `GET /v1/wraps` | task-view, credential-list, key-catch-up |
 | `POST /v1/wraps` | devices-assign, key-catch-up, org-join |
