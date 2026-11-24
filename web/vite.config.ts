@@ -49,9 +49,10 @@ export default defineConfig((): UserConfig => {
       reportCompressedSize: false,
       rolldownOptions: {
         output: {
-          // Few, larger chunks for the first load (06-web.md section 12.2; decision WEB-13): the framework, the core
-          // and the UI modules shared by several chunks each go into one chunk, so a phone on a slow network does not
-          // wait for a cascade of small requests; screens, terminal, charts and Markdown stay lazy chunks of their own.
+          // Few, larger chunks for the first load (06-web.md section 12.2; decisions WEB-13 and HOT-16): the framework
+          // and the app modules of the first load (`$initial`: imported statically from the entry) each go into one
+          // chunk, so a phone on a slow network does not wait for a cascade of small requests. Screens, terminal,
+          // charts and Markdown are lazy chunks; what only they share stays out of the first load.
           codeSplitting: {
             groups: [
               {
@@ -59,8 +60,7 @@ export default defineConfig((): UserConfig => {
                 test: /node_modules[\\/](react|react-dom|react-router|react-router-dom|@remix-run|scheduler)[\\/]/,
                 priority: 30,
               },
-              { name: 'core', test: /[\\/]src[\\/]core[\\/]/, minShareCount: 2, priority: 20 },
-              { name: 'shared', test: /[\\/]src[\\/]ui[\\/]/, minShareCount: 2, priority: 10 },
+              { name: 'start', test: /[\\/]src[\\/]/, tags: ['$initial'], priority: 20 },
             ],
           },
           // Map sources relative to web/ (`src/main.tsx`), independent of the output location.

@@ -1,10 +1,11 @@
 // Performance budget of 06-web.md section 12.2 on the production build (minified, as released), on desktop and both
-// phones: the initial JavaScript is at most 300 KiB gzip, and the first screen (sign-in) is interactive within 3 s on a
-// mid-range phone profile – CPU throttled ×4 and the "Fast 3G" network of Chrome's DevTools. The build is served gzip
+// phones: the initial JavaScript fits the guard of the build (`INITIAL_JS_BUDGET`, 211 KiB gzip), and the first screen
+// (sign-in) is interactive within 3 s on a mid-range phone profile – CPU throttled ×4 and the "Fast 3G" network of
+// Chrome's DevTools. The build is served gzip
 // compressed with the hub's headers and `/v1/config` (`fixtures/server.ts`), as the edge in front of the hub delivers
 // it (decision WEB-13). This spec does not use the coverage fixture: the minified build is not the build under coverage.
 import { type BrowserContextOptions, expect, type Page, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -17,12 +18,6 @@ import { CSP_BINDING, type CspViolation } from './fixtures/test.ts';
 
 /** Time to interactive of 06-web.md section 12.2. */
 export const TTI_BUDGET_MS = 3000;
-/**
- * Temporary measurement tolerance of 06-web.md section 12.2 (HOT-16 stage 1, removed again in stage 2): the throttled
- * measurement varies by a few per cent between identical builds (2933 to 3109 ms on one test device), so the median
- * fails only above the budget plus 5 %; a median between the budget and that limit passes with a warning annotation.
- */
-export const TTI_TOLERANCE = 0.05;
 /** Chrome DevTools "Fast 3G": 1.6 Mbit/s down and 750 kbit/s up at 90 %, 150 ms latency × 3.75. */
 export const FAST_3G = {
   offline: false,
@@ -92,24 +87,27 @@ async function timeToInteractive(page: Page): Promise<number> {
   );
   const at = (await handle.jsonValue()) as number;
   // the configuration came from the preload of index.html: one request, started before the scripts arrived
-  const timing = await page.evaluate(() =>
-    performance
-      .getEntriesByType('resource')
-      .filter((entry) => entry.name.endsWith('/v1/config') || entry.name.includes('/assets/index-'))
-      .map((entry) => ({
-        name: entry.name,
-        start: entry.startTime,
-        end: (entry as PerformanceResourceTiming).responseEnd,
-      })),
+  const entry = /<script\b[^>]*\bsrc="([^"]+)"/.exec(readFileSync(join(dir, 'index.html'), 'utf8'))![1]!;
+  const timing = await page.evaluate(
+    (script) =>
+      performance
+        .getEntriesByType('resource')
+        .filter((entry) => entry.name.endsWith('/v1/config') || entry.name.endsWith(script))
+        .map((entry) => ({
+          name: entry.name,
+          start: entry.startTime,
+          end: (entry as PerformanceResourceTiming).responseEnd,
+        })),
+    entry,
   );
   const config = timing.filter((entry) => entry.name.endsWith('/v1/config'));
   expect(config).toHaveLength(1);
-  expect(config[0]!.start).toBeLessThan(timing.find((entry) => entry.name.includes('/assets/index-'))!.end);
+  expect(config[0]!.start).toBeLessThan(timing.find((resource) => resource.name.endsWith(entry))!.end);
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
   return Math.round(at);
 }
 
-test('the initial JavaScript of the production build fits 300 KiB gzip', () => {
+test('the initial JavaScript of the production build fits its guard', () => {
   expect(budgetProblems(dir)).toEqual([]);
   const total = initialScripts(dir).reduce((sum, script) => sum + script.gzip, 0);
   expect(total).toBeLessThanOrEqual(INITIAL_JS_BUDGET);
@@ -134,11 +132,5 @@ test('the first screen is interactive within 3 s with CPU ×4 and Fast 3G', asyn
   const description = `median ${median} ms of ${runs.join(', ')} ms`;
   info.annotations.push({ type: 'time to interactive', description });
   console.log(`time to interactive (${info.project.name}): ${description}`);
-  const limit = Math.round(TTI_BUDGET_MS * (1 + TTI_TOLERANCE));
-  if (median > TTI_BUDGET_MS && median <= limit) {
-    const over = `over budget within tolerance: ${median} ms > ${TTI_BUDGET_MS} ms (limit ${limit} ms)`;
-    info.annotations.push({ type: 'warning', description: over });
-    console.warn(`WARNING time to interactive (${info.project.name}): ${over}`);
-  }
-  expect(median).toBeLessThanOrEqual(limit);
+  expect(median).toBeLessThanOrEqual(TTI_BUDGET_MS);
 });
