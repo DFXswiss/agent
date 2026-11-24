@@ -307,7 +307,7 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | E-26 | [E-26](../KONZEPT.md#e-26) | AI agents are users like humans: operating the platform is simple and efficient for them. | offen | KOR-63 |
 | E-27 | [E-27](../KONZEPT.md#e-27) | An AI agent can do everything, also without a human (own account by invitation, own key). | gebaut | [ADR-071](../adr/071-agent-own-account.md) |
 | E-28 | [E-28](../KONZEPT.md#e-28) | Personal message of the requester wherever someone grants access. | offen | KOR-64 |
-| E-29 | [E-29](../KONZEPT.md#e-29) | GitHub works for every customer with every repository their GitHub account can access (own account, own or third-party organization, fork). | offen | KOR-65 |
+| E-29 | [E-29](../KONZEPT.md#e-29) | GitHub works for every customer with every repository their GitHub account can access (own account, own or third-party organization, fork). | gebaut | [ADR-073](../adr/073-github-every-repository.md) |
 
 ## R-P Assignment guardrails (`PROJECT.md`)
 

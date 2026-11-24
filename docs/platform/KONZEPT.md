@@ -728,7 +728,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   funktionieren, egal mit welchen repos er arbeitet“ (Antwort auf die Frage, ob auch mit eigenen Kopien unter dem
   persönlichen GitHub-Konto gearbeitet wird)
 - **Bezug:** ergänzt [§9](#k-9) und [E-05](#e-05).
-- **Umsetzung:** offen – KOR-65.
+- **Umsetzung:** gebaut – [ADR-073](adr/073-github-every-repository.md) (KOR-65).
 
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
@@ -853,7 +853,6 @@ Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-11](#e-11) übrige Freigaben | Freigabe von Team-Organisationen für DFX-Geräte, Freigabe der Betreiber-Abos je Organization, Plattform-Einladung nur mit eigener Rolle und die festen Betreiber-Listen sind noch Voraussetzungen | KOR-49 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
-| [E-29](#e-29) GitHub mit jedem Repository | „GitHub verbinden“ erreicht nur Repositories, bei deren Besitzer die GitHub App installiert ist; ein nicht erreichbares Repository endet mit `repo_not_accessible` ohne nächsten Schritt | KOR-65 |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |

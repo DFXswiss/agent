@@ -69,6 +69,8 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `CONTEXT_INTERVAL_SECONDS` / `CONTEXT_CACHE_MIB` / `CONTEXT_WORKSPACE_MIB` / `CONTEXT_TRANSCRIPT_MIB` | 600 / 20480 / 4096 / 4096 | context checkpoints (§6.6, KOR-33): interval while working (30–86400), local encrypted cache cap (every object; the newest of each task is always kept), workspace above the limit is left out, transcript above the limit cannot be checkpointed |
 | `CONTEXT_WAIT_SECONDS` | 180 | how long a restore waits for the final checkpoint of the session it continues and retries transient hub failures (0–3600, §6.6) |
 | `GITHUB_CLIENT_ID` | required for the device flow | public client ID of the GitHub App; users approved for the operator's GitHub account (§11.4) connect without it |
+| `GITHUB_OAUTH_CLIENT_ID` | empty | public client ID of the OAuth App (device flow enabled, no secret) whose device flow "Connect GitHub" prefers (scopes `repo workflow`; KOR-65, ADR-073); without it the GitHub App's |
+| `GITHUB_APP_SLUG` | empty | URL name of the GitHub App (`https://github.com/apps/<slug>`), for the install link of a held operation's next step (KOR-65) |
 | `GITHUB_API_URL` / `GITHUB_WEB_URL` | `https://api.github.com` / `https://github.com` | doubles in tests |
 | `MODEL_UPSTREAM_ANTHROPIC` / `MODEL_UPSTREAM_OPENROUTER` | `https://api.anthropic.com` / `https://openrouter.ai/api` | doubles in tests |
 | `ANTHROPIC_USAGE_URL` | `https://api.anthropic.com/api/oauth/usage` | quota polling |
@@ -844,6 +846,13 @@ double + auth-page double + mail double); live tests of logins are forbidden.
 
 ### 11.4 GitHub connect (ADR-015)
 
+Which device flow (KOR-65, ADR-073): `{}` runs the OAuth App's (`GITHUB_OAUTH_CLIENT_ID`, form field `scope=repo workflow`)
+when it is set up, else the GitHub App's (`GITHUB_CLIENT_ID`); `{app:"oauth_app"|"github_app"}` names one; one that is
+not set up ends `{step:"failed", code:"flow_unavailable"}`. Both tokens are remembered as minted and revoked on
+disconnect (KOR-40). The live channel's `Agent-Features` header names `github.ways` and, when set up,
+`github.device_flow` (a client ID) and `github.operator` (the operator's token file), which the hub lists in
+`GET /v1/me/devices` for the web.
+
 `github.connect` request → `POST <GITHUB_WEB_URL>/login/device/code` (`client_id`; a network error or `5xx` is
 tried again after 2 s and 8 s, three attempts, then `upstream_unreachable`: the request has no effect for the user, an
 unused device code expires; KOR-16) → response 1
@@ -925,7 +934,14 @@ Pipeline for every `request_operation`:
    (more are rejected at once as before) and at most one `waiting` event per session and reason per
    60 s. The registration expiry (10 min in `received`) counts for a held operation from the end of the hold.
    A held operation whose session ended meanwhile (`stopping`, `stopped`, `failed`; closing a task stops its sessions)
-   is rejected with `not_found` without running its checks. A credential GitHub refused is remembered by its record
+   is rejected with `not_found` without running its checks.
+   **Held for access (KOR-65, ADR-073).** A repository-level pre-check that GitHub refuses for access (`404`; `403`
+   for an organisation's OAuth App restriction, its ban of classic tokens, or SAML single sign-on) fails with
+   `repo_not_accessible` and the one next step (`github.reach`), and is held the same way with the reason
+   `github_access`; the `waiting` event carries `next {action, owner, url?}`. While the acting user's credential is
+   unchanged the access is checked again at most every 30 s (an installation, an approval or an authorisation at
+   GitHub reaches the runner only through a new check); a new credential is checked at once; a changed reason or step
+   is announced again. At `until` it is rejected with the timeout text followed by the step. A credential GitHub refused is remembered by its record
    version (`held_credential`): the pre-check asks GitHub again only when a new version arrives. A fourth held
    operation of a session is rejected at once with a fixed text saying that the person is already being asked.
    `github.request_connection` has no other check: its pre-check asks `GET /user` once; held while the acting user is not

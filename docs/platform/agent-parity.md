@@ -51,7 +51,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | quotas | settings/quotas | `quotas` | done |
 | github-status | settings/github | `github status` | done |
 | github-connect | settings/github | `github connect --device --request --wait` | done |
-| github-token | settings/github (an existing token, a GitHub CLI login or a personal access token, checked by the device, ADR-065) | `github connect --token --device --wait` | done |
+| github-token | settings/github (an existing token, a GitHub CLI login or a personal access token, checked by the device, ADR-065; the pre-filled link to create one, KOR-65) | `github connect --token --device --wait`, `github connect --from-gh` (this computer's GitHub CLI login, KOR-65) | done |
 | github-disconnect | settings/github | `github disconnect` | done |
 | passkey-list | settings/passkeys | `passkey list` | done |
 | passkey-add | settings/passkeys | `passkey add` (opens the settings page in the user's browser: a passkey needs the user's authenticator) | done |
@@ -117,7 +117,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | session-view | screens/session | `session show --session` | done |
 | session-workvm | screens/session (work VM panel and runtime, KOR-29) | `session workvm --session` | done |
 | task-workvm-items | screens/task (work VM runs and states in the chat) | `task show`, `task follow` | done |
-| task-waiting | screens/task (held operations: the waiting card that asks the owner to connect GitHub, ADR-066) | `task show`, `task follow`, `github connect` | done |
+| task-waiting | screens/task (held operations: the waiting card that asks the person who gave the instruction to connect GitHub, ADR-066, or to take the one step that gives the connection access to the repository, ADR-073) | `task show`, `task follow`, `github connect` | done |
 | task-guest-errors | screens/task (errors the guest reported, `session.error`, ADR-064) | `task show`, `task follow` | done |
 | task-runtime | screens/task (runtime of the task and its sessions, reachability of the session's device, KOR-40) | `task show`, `session show --session` | done |
 | session-terminal | screens/session (terminal) | `session terminal --session --after` | done |
@@ -259,8 +259,8 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | action:passkey-add | `status` (an account of an agent alone needs no passkey: the agent signs with its key) | built |
 | action:credential-claude-login | `claude connect` (the Claude Code login of this computer, read only), `credentials set-api-key`, `settings set --model-access` (the DFX model access); `claude setup-token` needs a person's click at claude.ai | outside |
 | action:credential-claude-relay | `claude connect`, `credentials set-api-key` (the relayed login needs a person at claude.ai) | outside |
-| action:task-waiting | `github connect --token` (the waiting card's next step `github connect` needs a person at GitHub's device page) | outside |
-| action:github-connect | `github connect --token` (an existing token, e.g. the token of the GitHub CLI login; the device page needs a person at GitHub) | outside |
+| action:task-waiting | `github connect --from-gh`, `github connect --token` (the waiting card's next step `github connect` needs a person at GitHub's device page; an access step at GitHub - install, approval, SSO - needs the account at GitHub) | outside |
+| action:github-connect | `github connect --from-gh` (the GitHub CLI login of this computer), `github connect --token` (any existing token; the device page needs a person at GitHub) | outside |
 | next:not_paired | `register --own-account`, `recover --hub` | built |
 | next:agent_revoked | `recover --hub` | built |
 | next:pairing_timeout | `register --own-account` (no pairing at all) | built |
@@ -277,7 +277,8 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | next:hub_too_old | `register --own-account` (no pairing at all) | built |
 | next:claude_login_missing | `claude connect` on a computer where Claude Code is logged in, `credentials set-api-key` | outside |
 | next:claude_login_expired | `claude sync`, `credentials set-api-key` | outside |
-| next:waiting.CONNECT | `github connect --token` (an existing token; the device page needs a person at GitHub) | outside |
+| next:waiting.CONNECT | `github connect --from-gh`, `github connect --token` (an existing token; the device page needs a person at GitHub) | outside |
+| next:github_login_missing | `github connect --token` (any existing token; `gh auth login` is the login at GitHub on this computer) | outside |
 | next:claude_missing | `claude connect`, `credentials set-api-key` | outside |
 | next:claude_expired | `claude sync`, `credentials set-api-key` | outside |
 | next:claude_unreadable | `claude connect` | outside |

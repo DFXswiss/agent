@@ -553,7 +553,8 @@ repository the acting user's GitHub connection reaches, ADR-054), `protected_bra
 `["main","master","develop","release/*"]`), `pr_draft_default` (true). Repository-level checks: `repo` in the
 allow-list when the list is not empty (`repo_not_allowed`) and accessible with the GitHub connection of the acting
 user - the person whose instruction started the session's turn, never the task owner as such (HOT-14, ADR-070,
-`05-runner.md` §12 step 3; `github_not_connected`, `repo_not_accessible`). `github.list_repositories` marks every entry `allowed` when the
+`05-runner.md` §12 step 3; `github_not_connected`, `repo_not_accessible` - the latter is held with one next step,
+below). `github.list_repositories` marks every entry `allowed` when the
 list is empty. Retry: retryable failures (network, GitHub 5xx, 429, secondary rate limit) are retried
 by the runner inside the same operation: 3 attempts, delays 2 s, 8 s, 30 s (respecting `Retry-After`); then
 `failed` with `retryable:true`, which releases the dedupe slot.
@@ -606,13 +607,22 @@ with `github_not_connected` ("The person who gave this instruction did not conne
 per session (more are rejected at once) and at most one `waiting` event per session per 60 s. `github.request_connection` lets a session ask for the connection without another type: held
 while the acting user is not connected, else `{login}` at once.
 
+Held for access (KOR-65, rule E-29, ADR-073): a repository-level pre-check that GitHub refuses for access - `404`, or
+a `403` for an organisation's OAuth App restriction, its ban of classic tokens or SAML single sign-on - is held the
+same way with `waiting_for:"github_access"` and `next {action, owner, url?}`: `connect` (a GitHub App token while the
+OAuth App is set up), `install_app`, `approve_app`, `authorize_sso`, `new_token` or `check_access` (the account itself
+has no access); the error message names the same step. The runner checks the access again every 30 s and at once
+when a new credential of the acting user arrives, so the operation goes on by itself once the step is done at GitHub;
+after 15 minutes it is rejected with `repo_not_accessible`, the timeout text and the step. Any other GitHub failure of
+a pre-check stays `upstream_error`.
+
 Compatibility while the parts are rolled out one by one (KOR-25): a type the hub does not know is `rejected` with
 `unknown_type` (H3) and a type a guest does not know is forwarded with `local_check:"rejected"` and `unknown_type`;
 neither is ever executed in part. A new type is therefore rolled out hub first, then runners, then goldens: a new
 runner beside an old hub would only see its new types refused, an old runner or guest beside a new hub never sends
 them. Old runners never write `session.status` `waiting`; their checks reject as before. A `github.connect` with `{token}` sent to an
 old runner is not understood there (it runs the device flow or fails without `GITHUB_CLIENT_ID`; the token is never
-stored): runners are therefore updated right after the hub. Web tabs still open with the previous bundle do not know
+stored), and an old runner answers `{app}` (KOR-65) with `upstream_error`: runners are therefore updated right after the hub. Web tabs still open with the previous bundle do not know
 the new `source`/`scopes` fields and show such a connection as unverifiable until they are reloaded.
 
 Result delivery: the runner writes `operation.result` (encrypted) via the outbox, then the
@@ -635,7 +645,7 @@ operation's result (decrypted from its `operation.result` event) with `status:"d
 | `whiteboard.delete` | `{base_event_id}` |
 | `settings.workgroup` | `{repositories,protected_branches,pr_draft_default}` (latest wins) |
 | `session.output` | journal body of `session.output` |
-| `session.tool` / `session.hook` / `session.file` / `session.terminal` / `session.status` | journal bodies (§7.2); `session.status` = `{state,reason,details?}` for errors and states, or `{state:"waiting",waiting_for,operation_id,operation_type,repo?,for_user?,until}` while the runner holds an operation of the session for the person who gave the instruction (§9, KOR-25, HOT-14): `waiting_for` `github_connection` (that person has no usable GitHub connection); `for_user` = that person, the acting user (05-runner.md §12 step 3; a body without it, from an older runner, means the task owner); `repo` is left out for types without one; `until` = receipt + 15 min; only platform-checked values, never text of the session |
+| `session.tool` / `session.hook` / `session.file` / `session.terminal` / `session.status` | journal bodies (§7.2); `session.status` = `{state,reason,details?}` for errors and states, or `{state:"waiting",waiting_for,operation_id,operation_type,repo?,for_user?,until}` while the runner holds an operation of the session for the person who gave the instruction (§9, KOR-25, HOT-14): `waiting_for` `github_connection` (that person has no usable GitHub connection) or `github_access` (that person's connection does not reach the repository, KOR-65: with `next {action, owner, url?}`, the one step, `url` built by the runner from its configured GitHub web URL); `for_user` = that person, the acting user (05-runner.md §12 step 3; a body without it, from an older runner, means the task owner); `repo` is left out for types without one; `until` = receipt + 15 min; only platform-checked values, never text of the session |
 | `operation.params` | `{operation_id,type,params,idempotency_key?}` |
 | `operation.result` | `{operation_id,status,connection_of?,result?,error?}`; `connection_of` = the user whose own personal connection (GitHub) the executed operation used - the acting user, never anybody else (HOT-14, ADR-070) |
 | `platform.read` | `{tool,arguments,result_count}` |

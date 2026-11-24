@@ -49,8 +49,15 @@ All settings are environment variables `AGENT_RUNNER_*` ([05 §1.3](../spec/05-r
 an unknown name or an invalid value stops the process with `config_invalid <NAME>` (the value is never echoed).
 Required for the daemon: `AGENT_RUNNER_HUB_URL` (`https://`), `AGENT_RUNNER_PLATFORM_ROOT_KEY`; connecting GitHub with the device flow
 needs `AGENT_RUNNER_GITHUB_CLIENT_ID` (the GitHub App of ADR-015 with the repository permissions Contents, Pull
-requests and Issues "Read and write" and Metadata "Read-only"); connecting with an existing GitHub token and every
-GitHub operation work without it ([05 §11.4](../spec/05-runner.md#114-github-connect-adr-015)). Platform devices may set `AGENT_RUNNER_OPENROUTER_KEY_FILE` (file 0600; refused on
+requests and Issues "Read and write" and Metadata "Read-only") and, so that one sign-in reaches every repository of
+the account (rule E-29, ADR-073), `AGENT_RUNNER_GITHUB_OAUTH_CLIENT_ID`: the public client ID of an OAuth App the
+operator registers once at GitHub (Settings → Developer settings → OAuth Apps → New OAuth App; any homepage and
+callback URL, the callback is not used; tick "Enable Device Flow"; no client secret is created or stored). With it
+"Connect GitHub" uses the OAuth App (scopes `repo workflow`), without it the GitHub App. `AGENT_RUNNER_GITHUB_APP_SLUG`
+(the URL name of the GitHub App, `https://github.com/apps/<slug>`) lets a held operation link the App's installation
+for an owner. Connecting with an existing GitHub token and every GitHub operation work without any of them
+([05 §11.4](../spec/05-runner.md#114-github-connect-adr-015)). After a change, restart the daemon: the web offers the
+sign-in only for devices that announce it. Platform devices may set `AGENT_RUNNER_OPENROUTER_KEY_FILE` (file 0600; refused on
 org devices) and the operator's subscriptions, `AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR` together with
 `AGENT_RUNNER_OPERATOR_SUBSCRIPTION_ORGS` ([operator-subscriptions.md](operator-subscriptions.md); refused on org
 devices). `AGENT_RUNNER_TEST_MODE` MUST be `0` in production. Home: `~/.local/share/agent-runner` (0700).

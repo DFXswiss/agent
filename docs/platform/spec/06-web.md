@@ -380,6 +380,10 @@ user).
     `<owner/name>` for this workgroup" with the allow action for users who may write the workgroup settings. It shows
     only platform text and the checked repository name, never text of the session, and disappears once the condition
     is met (GitHub connected, repository allowed), the operation is registered or `until` has passed.
+    `waiting_for` `github_access` (KOR-65, ADR-073): "GitHub access needed for the repository" with the one next step
+    of `next` – Connect right in the card (`connect`), a link that opens GitHub in a new tab (install the GitHub App
+    for the owner, request the organisation's approval, authorise SSO, open the repository), or the pre-filled token
+    link plus the token way (`new_token`); a new connection does not end it, the registered operation does.
   - Countdown summaries (§4.4).
 - Long prompts, messages and tool inputs/outputs show 20 000 characters at a time ("Show more"); a tool row renders its
   details only while expanded.
@@ -545,11 +549,15 @@ screen says so. Private organizations are only created from a platform invitatio
   the default workgroup)
   → device request `github.connect` (`POST /v1/device-requests`) → response 1 shows `user_code` large with copy
   and the verification link (opens in a new tab) and a countdown until code expiry → response 2 shows success with
-  the GitHub login, or the error. Hint to select repositories when installing the GitHub App.
+  the GitHub login, or the error. Hint to allow the organisations or repositories the agents need. "Connect GitHub"
+  is offered only while an eligible device announces a sign-in (`features` of `GET /v1/me/devices`: `github.device_flow`
+  or `github.operator`, or no GitHub ways at all from an older runner; KOR-65), and the flow lists only such devices;
+  otherwise the section says the sign-in is not set up and offers the token alone.
 - **Store an existing token (KOR-25):** paste field for an existing GitHub token (GitHub CLI login, personal access
   token); it leaves the browser only HPKE-encrypted to the device in the device request `github.connect` `{token}`;
   the device checks and stores it (`05-runner.md` §11.4). Afterwards "Connected as `<login>`" with the origin (device
-  flow / token) and the scopes; fine-grained tokens are recommended, not enforced.
+  flow / token) and the scopes; fine-grained tokens are recommended, not enforced. A link opens GitHub's form for a
+  classic token pre-filled with `repo,workflow` (KOR-65).
 - **Composer hint:** a prompt with an obvious GitHub reference (`owner/name`, a GitHub URL, "issue", "pull request")
   while GitHub is not connected offers Connect next to the composer; the task is sent anyway.
 - **Disconnect:** `DELETE /v1/me/credentials/github` + link to the GitHub settings page to revoke the app
