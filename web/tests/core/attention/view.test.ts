@@ -12,7 +12,7 @@ import {
   laterStart,
   reasonKey,
   REASONS,
-  selectEntryTasks,
+  selectTaskRows,
   selectNoTask,
   selectQuestion,
   STEP,
@@ -187,17 +187,10 @@ describe('window', () => {
 describe('selectors', () => {
   const T = { org: 'o', wg: 'w', me: { id: 'u' } } as never;
 
-  it('give the task rows of the loaded entries (the same array while nothing changed)', () => {
+  it('give the known task rows of the shown entries (the same array while the rows are unchanged)', () => {
     const store = createStore();
-    const select = selectEntryTasks('o');
+    const select = selectTaskRows(['a', 'b']);
     expect(select(store.getState())).toEqual([]);
-    groupPage(store, {
-      org: 'o',
-      category: 'blocked',
-      rows: [record('a', { category: 'blocked' }), record('b', { category: 'blocked' })],
-      nextBefore: null,
-      first: true,
-    });
     putTasks(store, [taskRow(T, { task_id: 'a' }) as TaskRow]);
     const rows = select(store.getState());
     expect(rows.map((row) => row.task_id)).toEqual(['a']);

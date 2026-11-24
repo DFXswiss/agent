@@ -158,18 +158,16 @@ export function earlierStart(ids: readonly string[], from: number): string | nul
 }
 
 /**
- * A selector of the task rows of every loaded entry of `org` (for their titles and owners); the same array while
- * the groups and the task rows are unchanged.
+ * A selector of the task rows of `ids` that are known (the shown entries, for their titles and owners); the same array
+ * while the task rows are unchanged.
  */
-export function selectEntryTasks(org: string): (state: StoreState) => readonly TaskRow[] {
-  let last: { groups: unknown; tasks: unknown; rows: readonly TaskRow[] } | null = null;
+export function selectTaskRows(ids: readonly string[]): (state: StoreState) => readonly TaskRow[] {
+  let last: { tasks: unknown; rows: readonly TaskRow[] } | null = null;
   return (state) => {
-    const { groups } = state.attention;
     const tasks = state.tasks.tasks;
-    if (last !== null && last.groups === groups && last.tasks === tasks) return last.rows;
-    const ids = CATEGORIES.flatMap((category) => attentionGroup(state.attention, org, category).ids);
+    if (last !== null && last.tasks === tasks) return last.rows;
     const rows = ids.flatMap((id) => (tasks[id] === undefined ? [] : [tasks[id]]));
-    last = { groups, tasks, rows };
+    last = { tasks, rows };
     return rows;
   };
 }

@@ -10,7 +10,7 @@
 // Live `attention` frames update the entries and the counters (batched in the store, counters at most once a second).
 import { useId, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { selectEntryTasks, selectNoTask } from '../../../core/attention/view';
+import { selectNoTask } from '../../../core/attention/view';
 import { CATEGORIES, type AttentionSummary } from '../../../core/store/slices/attention';
 import { formatNumber } from '../../../core/i18n';
 import { writableWorkgroups } from '../../../core/tasks/send';
@@ -19,7 +19,7 @@ import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { Composer } from '../../composer/Composer';
 import { useAppEnv } from '../../shell/context';
-import { useDirectory, useOrgView, useTitles } from '../tasks/hooks';
+import { useDirectory, useOrgView } from '../tasks/hooks';
 import { AttentionGroup } from './AttentionGroup';
 import { useSummary } from './hooks';
 
@@ -57,13 +57,6 @@ function Counters({ org }: { readonly org: string }) {
   );
 }
 
-/** Titles and owners of the loaded entries (one pull per workgroup, `useTitles`). */
-function useEntryTitles(org: string): void {
-  const { app } = useAppEnv();
-  const select = useMemo(() => selectEntryTasks(org), [org]);
-  useTitles(useStore(select, app.store));
-}
-
 export function HomeScreen() {
   const { org } = useParams() as { readonly org: string };
   const { t } = useI18n();
@@ -79,7 +72,6 @@ export function HomeScreen() {
   const now = useNow(true, 30_000);
   const [chosen, setChosen] = useState<string | null>(null);
   const [chips, setChips] = useState(false);
-  useEntryTitles(org);
   if (state === null || userId === null)
     return (
       <p className="p-4" data-testid="home.loading">
