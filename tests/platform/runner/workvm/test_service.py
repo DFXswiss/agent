@@ -562,3 +562,75 @@ def test_free_memory_counts_held_workgroup_vms_and_work_vms(
     empty, used = asyncio.run(run())
     assert empty == 65536 - 4096
     assert used == 65536 - 4096 - (8192 + 512 + 4096 + 1024) - (8192 + 4096)
+
+
+# -- test runs, log capture and credit (KOR-43) ----------------------------------------------------------------------
+
+
+def test_test_runs_are_built_once_over_the_work_vms(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    fake_service(monkeypatch)
+    ctx = context(tmp_path)
+    runs = service.testruns_for(ctx)
+    assert runs is not None
+    assert runs.workvms is service.existing(ctx)
+    assert service.testruns_for(ctx) is runs
+    assert isinstance(runs.capture, service.Capturer)
+    assert service.testruns_for(context(tmp_path, workvm_slots=0)) is None
+
+
+def test_credit_is_checked_only_on_a_platform_device(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    org = "0192f3a4-0000-7000-8000-0000000000aa"
+    desired = {"billing": {"api": 1, "active": True, "orgs": {org: {"exhausted": True}}}}
+    env = SimpleNamespace(db=None, wall=lambda: WALL, device_kind="platform", desired=desired)
+    monkeypatch.setattr(sessions_service, "service_for", lambda ctx: SimpleNamespace(env=env))
+    workvms = service.workvms_for(context(tmp_path))
+    assert workvms is not None
+    assert workvms.deps.exhausted(org) is True
+    assert workvms.deps.exhausted("0192f3a4-0000-7000-8000-0000000000bb") is False
+    env.device_kind = "org"
+    assert workvms.deps.exhausted(org) is False
+
+
+def test_the_capturer_stores_the_last_part_of_a_job_as_a_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import agent_runner.contexts.env as contexts_env  # noqa: PLC0415
+    import agent_runner.contexts.logs as contexts_logs  # noqa: PLC0415
+
+    stored: list[tuple[Any, ...]] = []
+
+    async def store_log(env: Any, owner: Any, *, ref: str, total: int, pieces: Any) -> dict[str, Any]:
+        stored.append((env, owner, ref, total, [piece async for piece in pieces]))
+        return {"object_id": "x"}
+
+    async def shell(argv: Sequence[str], **kwargs: Any) -> Any:
+        offset, limit = int(argv[5]), int(argv[6])
+        body = b"0123456789"[offset : offset + limit]
+        header = {
+            "state": "exited",
+            "exit_code": 0,
+            "output_bytes": 10,
+            "output_start": offset,
+            "body_bytes": len(body),
+            "duration_ms": 1,
+        }
+        return SimpleNamespace(returncode=0, stdout=(json_text(header) + "\n").encode() + body, truncated=False)
+
+    monkeypatch.setattr(contexts_logs, "store_log", store_log)
+    found: dict[str, Any] = {"env": None}
+    monkeypatch.setattr(contexts_env, "contexts_for", lambda ctx: found["env"])
+    ctx = SimpleNamespace(config=SimpleNamespace(log_max_mib=1))
+    capture = service.Capturer(ctx, lambda vm: shell)
+    vm: Any = SimpleNamespace(id="wvm-0000000a")
+    identity = Identity("o", "w", "t", "s")
+    assert asyncio.run(capture(vm, identity, "j-00000000000a", 10)) is None  # no context environment yet
+    found["env"] = "env"
+    assert asyncio.run(capture(vm, identity, "j-00000000000a", 10, "tr-00000000000a")) == {"object_id": "x"}
+    assert asyncio.run(capture(vm, identity, "j-00000000000b", 10)) == {"object_id": "x"}
+    (_env, owner, ref, total, pieces), (_e, _o, job_ref, _t, _p) = stored
+    assert (owner.session_id, ref, total, pieces) == ("s", "tr-00000000000a", 10, [b"0123456789"])
+    assert job_ref == "j-00000000000b"
+
+
+def json_text(value: Any) -> str:
+    import json  # noqa: PLC0415
+
+    return json.dumps(value)

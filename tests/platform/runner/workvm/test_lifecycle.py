@@ -359,3 +359,37 @@ def test_a_capture_of_a_vm_that_is_gone_records_the_run_without_a_log(world: Wor
     assert calls == []
     finals = [body for _i, kind, body in world.events if kind == "workvm.run" and body["state"] == "exited"]
     assert "log" not in finals[0]
+
+
+def test_a_request_starts_a_stopped_vm_again_and_pause_skips_a_vm_that_does_not_run(
+    world: World, active: dict[str, int]
+) -> None:
+    async def body(vms: WorkVms) -> tuple[dict[str, Any], list[str], list[str]]:
+        first = await vms.request(session(), {})
+        assert await vms.pause(session(), reason="session_paused") == [first["workvm_id"]]
+        again = await vms.pause(session(), reason="session_paused", when_idle=True)  # stopped: not busy, not running
+        resumed = await vms.request(session(), {})
+        return resumed, again, [first["workvm_id"]]
+
+    resumed, again, first = world.run(body)
+    assert again == []
+    assert (resumed["workvm_id"], resumed["created"]) == (first[0], False)
+
+
+def test_a_run_vm_from_the_pool_writes_no_work_vm_event(world: World) -> None:
+    world.settings = dataclasses.replace(world.settings, pool_size=1)
+
+    async def body(vms: WorkVms) -> WorkVm:
+        assert await vms.pool_pass() == 1
+        return await vms.obtain(session(), scope="run", size="standard")
+
+    vm = world.run(body)
+    assert vm.scope == "run"
+    assert states(world) == []
+    assert any("pooled=1" in line for line in world.logs)
+
+
+def test_the_default_credit_check_never_refuses() -> None:
+    from agent_runner.workvm import manager  # noqa: PLC0415
+
+    assert manager._never(ORG) is False

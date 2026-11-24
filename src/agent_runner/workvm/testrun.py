@@ -219,9 +219,8 @@ class TestRuns:
             try:
                 result = await self._run(ctx, active, exported, digest)
             except BaseException as error:
-                if not active.result.done():
-                    active.result.set_exception(error)
-                    active.result.exception()  # retrieved: a run nobody joined must not warn
+                active.result.set_exception(error)
+                active.result.exception()  # retrieved: a run nobody joined must not warn
                 raise
             finally:
                 self.active.pop(active.run_id, None)
@@ -285,7 +284,8 @@ class TestRuns:
                     limit=0,
                 )
             except WorkVmError:
-                outcome.end("error", reason="vm_lost")
+                stop = self._stop_reason(active)  # a closed task may have taken the VM before this poll saw it
+                outcome.end("error" if stop is None else "cancelled", reason=stop or "vm_lost")
                 return
             outcome.output_bytes, outcome.duration_ms = piece.output_bytes, piece.duration_ms
             if piece.state != "running":

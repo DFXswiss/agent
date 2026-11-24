@@ -482,3 +482,51 @@ def test_summaries_of_common_runners(tail: str, expected: tuple[int | None, ...]
     else:
         assert found is not None
         assert (found["passed"], found["failed"], found["skipped"], found["errors"]) == expected
+
+
+def test_a_run_whose_vm_a_closed_task_took_ends_cancelled(world: World) -> None:
+    world.scripts["forever"] = (b"", "running", None)
+
+    async def body(vms: WorkVms) -> dict[str, Any]:
+        runs = runs_for(vms)
+        original = vms.deps.shell_for
+
+        def shell_for(vm: WorkVm) -> Any:
+            call = original(vm)
+
+            async def wrapped(argv: Any, **kwargs: Any) -> ShellResult:
+                if argv[3] == "wait" and argv[6] == "0":
+                    runs.cancel(reason="task_closed", task_id=TASK)
+                    return ShellResult(255, b"", False)  # the VM is gone already
+                return await call(argv, **kwargs)
+
+            return wrapped
+
+        vms.deps.shell_for = shell_for
+        return await runs.execute(ctx({"kind": "unit", "command": "forever"}))
+
+    result = world.run(body)
+    assert (result["state"], result["reason"]) == ("cancelled", "cancelled")
+    assert vm_rows(world)[0]["delete_reason"] == "task_closed"
+
+
+def test_a_run_of_another_command_is_never_joined(world: World) -> None:
+    world.scripts["b"] = (b"b\n", "exited", 0)
+
+    async def body(vms: WorkVms) -> tuple[str, int]:
+        runs = runs_for(vms)
+        other = testrun.Active(
+            run_id="tr-00000000000f",
+            key=(SESSION, "unit", "a"),
+            session_id=SESSION,
+            task_id=TASK,
+            org_id=ORG,
+            result=asyncio.get_running_loop().create_future(),
+        )
+        runs.active[other.run_id] = other
+        result = await runs.execute(ctx({"kind": "unit", "command": "b"}))
+        return result["run_id"], len(runs.active)
+
+    run_id, left = world.run(body)
+    assert run_id != "tr-00000000000f"
+    assert left == 1
