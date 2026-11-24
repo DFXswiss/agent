@@ -1,5 +1,5 @@
 {
-  "name": "e2e-40-context-fallback",
+  "name": "e2e-46-context-fallback",
   "description": "E2E-40 (KOR-33, ADR-059 section 7): the reported emergency path. One turn that writes ledger.md and answers; after the stop the hub's checkpoint is damaged or gone and the device holds no copy, so the follow-up starts a NEW conversation (no earlier turn in the request; the spec checks the journal) that answers without tools.",
   "steps": [
     {

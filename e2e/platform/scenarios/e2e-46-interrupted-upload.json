@@ -1,6 +1,6 @@
 {
-  "name": "e2e-40-session-context-resume",
-  "description": "E2E-40 (KOR-33, ADR-059): one turn that writes ledger.md and answers; after the session ended (closed task, stop, failure, guest retention) a follow-up in a NEW main session that continues the SAME Claude Code conversation (--resume after a restore from the context checkpoint): the earlier turn is in the request (min_messages; the spec also reads the request from the journal) and the restored ledger.md is read from the new work directory. Canary texts for the plaintext scan.",
+  "name": "e2e-46-interrupted-upload",
+  "description": "E2E-40 (KOR-33, ADR-059 sections 4-5): session 1 writes ledger.md and is ended (its final checkpoint is complete); session 2 continues the conversation (restored) and writes second.md, then ends; the hub's checkpoints of session 2 are turned back into uploads without commit (an upload interrupted before its commit). The follow-up continues from session 1's complete checkpoint: the first turn is in the request, the second is not (the spec checks the journal), and ledger.md is read from the restored workspace.",
   "steps": [
     {
       "id": "work",
@@ -20,6 +20,24 @@
       "id": "worked",
       "expect": { "tool_result_is_error": false, "tool_result_contains": "ledger.md" },
       "reply": { "content": [{ "type": "text", "text": "The ledger is written kz40r-answer-g6t2m9x4." }] }
+    },
+    {
+      "id": "more",
+      "expect": { "user_text_contains": "E2E40-MORE", "has_tool_result": false, "min_messages": 5 },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": { "file_path": "${cwd}/second.md", "content": "kz40r-second-file-j2v7r4d9\n" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "more-done",
+      "expect": { "tool_result_is_error": false, "tool_result_contains": "second.md" },
+      "reply": { "content": [{ "type": "text", "text": "The second file is written kz40r-second-answer-u5e8h3w6." }] }
     },
     {
       "id": "follow-read",

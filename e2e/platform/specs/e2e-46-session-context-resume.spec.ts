@@ -1,4 +1,4 @@
-// E2E-40 session context resume (KOR-33; ADR-059; concept ideas 39, 40, 43): the original Claude Code session
+// E2E-46 session context resume (KOR-33; ADR-059; concept ideas 39, 40, 43): the original Claude Code session
 // continues with its whole conversation after the task's main session ended - "Close task" with the VM deleted
 // afterwards, "End session", a failure of the agent, and the guest's 7-day retention - in a NEW main session row that
 // runs `claude --resume <the same claude session id>` from the encrypted context checkpoint: the model double sees
@@ -34,9 +34,9 @@ import type { Page } from '@playwright/test';
 
 const load = (name: string): unknown =>
   JSON.parse(readFileSync(new URL(`../scenarios/${name}.json`, import.meta.url), 'utf8'));
-const RESUME = load('e2e-40-session-context-resume');
-const FALLBACK = load('e2e-40-context-fallback');
-const INTERRUPTED = load('e2e-40-interrupted-upload');
+const RESUME = load('e2e-46-session-context-resume');
+const FALLBACK = load('e2e-46-context-fallback');
+const INTERRUPTED = load('e2e-46-interrupted-upload');
 
 const PROMPT = 'E2E40-WORK kz40r-prompt-s4h8d2f6: start a ledger in ledger.md';
 const FOLLOW_UP = 'E2E40-AGAIN kz40r-follow-y3n7c5a1: what does the ledger hold?';
@@ -240,7 +240,7 @@ async function expectRestored(
 
 test.describe.configure({ mode: 'serial' });
 
-test('@E2E-40 @R-6.3 @needs-vm after "Close task" and the deletion of its VM a follow-up continues the original session on another VM', async ({
+test('@E2E-46 @R-6.3 @needs-vm after "Close task" and the deletion of its VM a follow-up continues the original session on another VM', async ({
   page,
   orchestrator,
   authenticator,
@@ -265,7 +265,7 @@ test('@E2E-40 @R-6.3 @needs-vm after "Close task" and the deletion of its VM a f
   await expectNoPlaintext(orchestrator, CANARIES);
 });
 
-test('@E2E-40 @R-6.3 @needs-vm after "End session" a follow-up continues the original session on the same VM', async ({
+test('@E2E-46 @R-6.3 @needs-vm after "End session" a follow-up continues the original session on the same VM', async ({
   page,
   orchestrator,
   authenticator,
@@ -282,7 +282,7 @@ test('@E2E-40 @R-6.3 @needs-vm after "End session" a follow-up continues the ori
   await expectNoPlaintext(orchestrator, CANARIES);
 });
 
-test('@E2E-40 @R-6.3 @needs-vm after the agent failed a follow-up continues the original session', async ({
+test('@E2E-46 @R-6.3 @needs-vm after the agent failed a follow-up continues the original session', async ({
   page,
   orchestrator,
   authenticator,
@@ -306,7 +306,7 @@ test('@E2E-40 @R-6.3 @needs-vm after the agent failed a follow-up continues the 
   await expectNoPlaintext(orchestrator, CANARIES);
 });
 
-test('@E2E-40 @R-6.3 @needs-vm after "8 days" (guest retention removed the session, no copy on the device) the hub checkpoint restores the session', async ({
+test('@E2E-46 @R-6.3 @needs-vm after "8 days" (guest retention removed the session, no copy on the device) the hub checkpoint restores the session', async ({
   page,
   orchestrator,
   authenticator,
@@ -342,7 +342,7 @@ for (const [action, reason, text] of [
   ['corrupt', 'context_invalid', 'the saved context was damaged or could not be verified'],
   ['delete', 'context_missing', 'no saved context existed for the earlier session'],
 ] as const) {
-  test(`@E2E-40 @R-6.3 @needs-vm a ${action === 'corrupt' ? 'damaged' : 'deleted'} hub checkpoint takes the reported emergency path (${reason})`, async ({
+  test(`@E2E-46 @R-6.3 @needs-vm a ${action === 'corrupt' ? 'damaged' : 'deleted'} hub checkpoint takes the reported emergency path (${reason})`, async ({
     page,
     orchestrator,
     authenticator,
@@ -392,7 +392,7 @@ for (const [action, reason, text] of [
   });
 }
 
-test('@E2E-40 @R-6.3 @needs-vm an upload interrupted before its commit is never restored; the complete older checkpoint is', async ({
+test('@E2E-46 @R-6.3 @needs-vm an upload interrupted before its commit is never restored; the complete older checkpoint is', async ({
   page,
   orchestrator,
   authenticator,
