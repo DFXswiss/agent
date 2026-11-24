@@ -28,6 +28,7 @@ from .test_executors import execute, fails, precheck_request, refused, result_ok
 QUIET = "octo-org/quiet"
 SSO_TOKEN = "double-sso-token"  # not a secret: the double only compares it
 LIST_QUERY = "state=open&sort=created&direction=desc&per_page=30&page=1"
+SCAN_QUERY = "state=open&sort=created&direction=desc&per_page=100&page=1"
 
 
 def world() -> dict[str, Any]:
@@ -108,53 +109,98 @@ def test_list_issues_lists_open_issues_newest_first_without_pull_requests(store_
         }
         assert (first["comments"], first["closed_at"]) == (2, None)
         assert first["url"] == f"https://github.example/{REPO}/issues/1"
-        assert gh.journal() == [f"GET /repos/{REPO}/issues?{LIST_QUERY}"]
+        assert gh.journal() == [f"GET /repos/{REPO}/issues?{SCAN_QUERY}"]
 
     with_env(store_dsn, gh, body)
 
 
 def test_the_newest_issue_pages_past_a_pull_request(store_dsn: str, gh: GitHub) -> None:
     async def body(env: Env) -> None:
-        # The newest item is pull request #4: the first page of one holds no issue, so the executor reads the next.
+        # The newest item is pull request #4: pages count issues, so the first page of one holds the newest issue.
         first = await execute(env, "github.list_issues", {"repo": REPO, "per_page": 1})
-        assert (numbers(first), first["next_page"], first["truncated"]) == ([3], 3, False)
-        assert gh.journal()[-2:] == [
-            f"GET /repos/{REPO}/issues?state=open&sort=created&direction=desc&per_page=1&page=1",
-            f"GET /repos/{REPO}/issues?state=open&sort=created&direction=desc&per_page=1&page=2",
-        ]
-        second = await execute(env, "github.list_issues", {"repo": REPO, "per_page": 1, "page": 3})
+        assert (numbers(first), first["next_page"], first["truncated"]) == ([3], 2, False)
+        assert gh.journal()[-1] == f"GET /repos/{REPO}/issues?{SCAN_QUERY}"
+        second = await execute(env, "github.list_issues", {"repo": REPO, "per_page": 1, "page": 2})
         assert (numbers(second), second["next_page"]) == ([1], None)
+        assert "note" not in second
+        beyond = await execute(env, "github.list_issues", {"repo": REPO, "per_page": 1, "page": 3})
+        assert (beyond["issues"], beyond["next_page"], beyond["truncated"]) == ([], None, False)
 
     with_env(store_dsn, gh, body)
 
 
-def test_pages_of_only_pull_requests_are_followed_at_most_five_times(store_dsn: str, gh: GitHub) -> None:
+def busy_world(busy: str, pulls: int, issues: int) -> dict[str, Any]:
+    """`busy`: `issues` old issues, then `pulls` newer pull requests (GitHub lists the pull requests first)."""
+    return {
+        "repositories": [
+            {
+                "full_name": busy,
+                "branches": [
+                    {"name": "main", "commits": [{"files": {"README.md": "x\n"}}]},
+                    *({"name": f"f{n}", "from": "main", "commits": [{}]} for n in range(pulls)),
+                ],
+                "issues": [{"title": f"Old issue {n}", "user": "octo-user"} for n in range(issues)],
+                "pulls": [
+                    {"title": f"Change {n}", "head": f"f{n}", "base": "main", "user": "octo-user"} for n in range(pulls)
+                ],
+            }
+        ],
+        "installations": [{"id": 32, "account": "octo-org", "repositories": [busy], "users": ["octo-user"]}],
+    }
+
+
+def test_a_first_page_lists_issues_even_when_the_newest_entries_are_pull_requests(
+    store_dsn: str, gh: GitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HOT-09: the newest entries of the repository are all pull requests; `per_page: 5` still lists five issues, and
+    paging lists every issue exactly once (GitHub pages of 4 entries here, so issues straddle GitHub's pages)."""
     busy = "octo-org/busy"
-    gh.double.seed(
-        {
-            "repositories": [
-                {
-                    "full_name": busy,
-                    "branches": [
-                        {"name": "main", "commits": [{"files": {"README.md": "x\n"}}]},
-                        *({"name": f"f{n}", "from": "main", "commits": [{}]} for n in range(6)),
-                    ],
-                    "issues": [{"title": "Old issue", "user": "octo-user"}],
-                    "pulls": [
-                        {"title": f"Change {n}", "head": f"f{n}", "base": "main", "user": "octo-user"} for n in range(6)
-                    ],
-                }
-            ],
-            "installations": [{"id": 32, "account": "octo-org", "repositories": [busy], "users": ["octo-user"]}],
-        }
-    )
+    gh.double.seed(busy_world(busy, pulls=12, issues=12))
+    monkeypatch.setattr(issues, "SCAN_PER_PAGE", 4)
 
     async def body(env: Env) -> None:
-        first = await execute(env, "github.list_issues", {"repo": busy, "per_page": 1})
-        assert (first["issues"], first["next_page"]) == ([], 6)
-        assert [line for line in gh.journal() if line.startswith(f"GET /repos/{busy}/issues")][-1].endswith("page=5")
-        last = await execute(env, "github.list_issues", {"repo": busy, "per_page": 1, "page": 6})
-        assert (numbers(last), last["next_page"]) == ([1], None)  # page 6 is pull request #2, page 7 issue #1
+        first = await execute(env, "github.list_issues", {"repo": busy, "per_page": 5})
+        assert (len(first["issues"]), first["next_page"], first["truncated"]) == (5, 2, False)
+        seen = numbers(first)
+        page: int | None = first["next_page"]
+        while page is not None:
+            result = await execute(env, "github.list_issues", {"repo": busy, "per_page": 5, "page": page})
+            assert result["issues"] != []
+            seen += numbers(result)
+            page = result["next_page"]
+        assert seen == list(range(12, 0, -1))
+        empty = await execute(env, "github.list_issues", {"repo": busy, "per_page": 5, "page": 4})
+        assert (empty["issues"], empty["next_page"], empty["truncated"]) == ([], None, False)
+
+    with_env(store_dsn, gh, body)
+
+
+def test_the_flood_limit_ends_the_reading_with_a_note(
+    store_dsn: str, gh: GitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    busy = "octo-org/flood"
+    gh.double.seed(busy_world(busy, pulls=7, issues=3))
+    monkeypatch.setattr(issues, "SCAN_PER_PAGE", 2)
+    monkeypatch.setattr(issues, "SCAN_PAGES", 3)
+
+    async def body(env: Env) -> None:
+        # GitHub pages of two: PR PR | PR PR | PR PR | PR issue | issue issue - three pages hold no issue at all.
+        start = len(gh.journal())
+        cut = await execute(env, "github.list_issues", {"repo": busy, "per_page": 2})
+        assert (cut["issues"], cut["next_page"], cut["truncated"]) == ([], None, True)
+        assert cut["note"] == issues.SCAN_NOTE.format(rows=6)
+        assert len(gh.journal()) - start == 3
+        # the other way round the issues come first; a complete page at the limit still names the next page
+        oldest = await execute(env, "github.list_issues", {"repo": busy, "per_page": 3, "direction": "asc"})
+        assert (len(oldest["issues"]), oldest["next_page"], oldest["truncated"]) == (3, 2, False)
+        # three issues only, but the limit ends the reading before the list does: that is not known to be all
+        short = await execute(env, "github.list_issues", {"repo": busy, "per_page": 6, "direction": "asc"})
+        assert (len(short["issues"]), short["next_page"], short["truncated"]) == (3, None, True)
+        assert "note" in short
+        monkeypatch.setattr(issues, "SCAN_PER_PAGE", 1)
+        monkeypatch.setattr(issues, "SCAN_PAGES", 2)
+        full = await execute(env, "github.list_issues", {"repo": busy, "per_page": 2, "direction": "asc"})
+        assert (len(full["issues"]), full["next_page"], full["truncated"], "note" in full) == (2, 2, False, False)
 
     with_env(store_dsn, gh, body)
 
@@ -172,7 +218,7 @@ def test_list_issues_filters_by_state_and_labels_and_sorts(store_dsn: str, gh: G
         )
         assert numbers(labelled) == [3]
         assert gh.journal()[-1] == (
-            f"GET /repos/{REPO}/issues?state=all&sort=created&direction=desc&per_page=30&page=1"
+            f"GET /repos/{REPO}/issues?state=all&sort=created&direction=desc&per_page=100&page=1"
             "&labels=bug%2Chelp+wanted"
         )
         everything = await execute(env, "github.list_issues", {"repo": REPO, "state": "all", "labels": []})
@@ -533,28 +579,38 @@ def test_list_issues_leaves_out_entries_outside_the_contract_and_cuts_texts(stor
         issue_item(13, pull_request={"url": "x"}),
         "not an object",
     ]
-    links = ['<https://api.mock/repos/o/r/issues?page=2&per_page=30>; rel="next"']
+    links = ['<https://api.mock/repos/o/r/issues?page=2&per_page=100>; rel="next"']
 
     def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.params["page"] != "1":
+            return httpx.Response(200, json=[issue_item(99)])
         return httpx.Response(200, json=page, headers={"link": links[0]} if links else {})
 
     async def main() -> None:
         async with mocked_env(store_dsn, handle) as env:
             result = await execute(env, "github.list_issues", {"repo": "o/r"})
-            assert numbers(result) == [1, 2, 3, 4, 5]
-            assert (result["next_page"], result["truncated"]) == (2, True)
+            assert numbers(result) == [1, 2, 3, 4, 5, 99]
+            assert (result["next_page"], result["truncated"]) == (None, True)
             by_number = {entry["number"]: entry for entry in result["issues"]}
             assert len(by_number[2]["title"]) == 1024
             assert by_number[3]["labels"] == ["ok", "plain"]
             assert by_number[4]["assignees"] == ["dependabot[bot]"]
             assert by_number[5]["state_reason"] is None
+            # entries left out still take their place: the page of four starts with #1 and ends before #6 (left out)
+            small = await execute(env, "github.list_issues", {"repo": "o/r", "per_page": 4, "page": 2})
+            assert (numbers(small), small["next_page"], small["truncated"]) == ([5], 3, True)
             page[:] = [issue_item(1)]
             links.clear()
             clean = await execute(env, "github.list_issues", {"repo": "o/r"})
             assert (numbers(clean), clean["next_page"], clean["truncated"]) == ([1], None, False)
             page[:] = [issue_item(n) for n in range(1, 106)]
-            many = await execute(env, "github.list_issues", {"repo": "o/r"})
-            assert (len(many["issues"]), many["truncated"]) == (100, True)
+            many = await execute(env, "github.list_issues", {"repo": "o/r", "per_page": 100, "page": 1000})
+            assert (many["issues"], many["next_page"], many["truncated"]) == ([], None, False)
+            last = await execute(env, "github.list_issues", {"repo": "o/r", "per_page": 100})
+            assert (len(last["issues"]), last["next_page"], last["truncated"]) == (100, 2, False)
+            page[:] = [issue_item(n) for n in range(1, 1002)]
+            deepest = await execute(env, "github.list_issues", {"repo": "o/r", "per_page": 1, "page": 1000})
+            assert (numbers(deepest), deepest["next_page"]) == ([1000], None)  # no page beyond the contract's range
             page[:] = [issue_item(1, labels=[{"name": f"l{n}"} for n in range(101)])]
             labelled = await execute(env, "github.list_issues", {"repo": "o/r"})
             assert (len(labelled["issues"][0]["labels"]), labelled["truncated"]) == (100, True)

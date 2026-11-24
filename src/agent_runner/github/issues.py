@@ -1,13 +1,17 @@
 """Executors of the issue operation types (KOR-25; 05-runner.md section 12.1, 03-api.md section 9,
 `contracts/ops/objects.json`): REST with the task owner's credential, one GitHub page per listing
-(`github.list_issues`: more only while the pages hold nothing but pull requests).
+(`github.list_issues`: as many as it takes to fill a page of issues, bounded).
 
-- `github.list_issues`: `GET /repos/{r}/issues?state&sort&direction&per_page&page[&labels]` (defaults `open`,
-  `created`, `desc`, 30, 1; labels joined by commas). GitHub lists pull requests among the issues: entries with a
-  `pull_request` key are left out, so a page may hold fewer than `per_page` issues while `next_page` is set. A page
-  that holds only pull requests is followed by the next one, up to `EMPTY_PAGES` GitHub pages, so asking for the
-  newest issue does not end empty because the newest entries are pull requests; `next_page` names the page after the
-  last one read.
+- `github.list_issues`: `per_page` and `page` count **issues** (HOT-09). GitHub lists pull requests among the issues
+  of `GET /repos/{r}/issues` and cannot leave them out, so the executor reads that list from its start in GitHub pages
+  of `SCAN_PER_PAGE` (`state`, `sort`, `direction`, `labels` passed on; defaults `open`, `created`, `desc`, 30, 1),
+  skips the entries with a `pull_request` key and answers the issues `(page-1)*per_page` up to `page*per_page` of
+  what is left. A page is empty only when there are no (further) issues; paging with `next_page` lists every issue
+  once (as long as the list does not change meanwhile). `next_page` is `page + 1` while another issue follows (it
+  reads on until it sees one or the list ends; a complete page at the flood limit names the next page as well). Flood
+  limit: at most `SCAN_PAGES` GitHub pages per operation; a page that needs more is answered with what was found,
+  `truncated: true`, `next_page: null` and a `note` that says how to go on (filter by labels or state, or turn the
+  order around with `direction`).
 - `github.get_issue`: `GET /repos/{r}/issues/{n}` and one page of `GET /repos/{r}/issues/{n}/comments` (oldest
   first; default 100 per page); `pull_request` tells that the number is a pull request, `comments_total` is GitHub's
   comment count. The result stays within 200 KiB of body JSON: the newest comments of the page, then the body, then the
@@ -23,7 +27,8 @@
 
 Every entry is built from the fields the contract allows: titles beyond 1024 and texts beyond 262144 characters are
 cut, labels and assignees that do not fit are left out, an unknown `state_reason` becomes `null` - each sets
-`truncated`; an issue of a list that does not fit at all is left out (`truncated`), the single issue of `get_issue`,
+`truncated`; an issue of a list that does not fit at all is left out (`truncated`, it still takes its place in the
+page count), the single issue of `get_issue`,
 `create_issue` and `update_issue` that does not fit is `upstream_error`. `404` is `not_found`, `410` (issues disabled
 in the repository) `not_found` with "Issues are disabled in this repository." (`ops.failure`).
 """
@@ -42,9 +47,14 @@ STATES = frozenset({"open", "closed"})
 STATE_REASONS = frozenset({"completed", "not_planned", "reopened", "duplicate"})
 MAX_LABELS = 100
 MAX_ASSIGNEES = 100
-MAX_ISSUES = 100
-EMPTY_PAGES = 5
-"""GitHub pages `github.list_issues` reads at most while they hold only pull requests (KOR-25)."""
+SCAN_PER_PAGE = 100
+"""GitHub's largest page: the executor reads the raw list in pages of this size."""
+SCAN_PAGES = 10
+"""GitHub pages `github.list_issues` reads at most per operation (flood limit, HOT-09)."""
+SCAN_NOTE = (
+    "Only the first {rows} entries of the list (issues and pull requests together) were read. To reach issues "
+    "beyond them, filter by labels or state, or turn the order around with direction."
+)
 MAX_COUNT = 9_007_199_254_740_991
 ANY_TEXT = re.compile(r"^.*$", re.S)
 UPDATE_FIELDS = ("state", "state_reason", "title", "body", "labels")
@@ -138,34 +148,50 @@ def _listed(item: object) -> tuple[dict[str, Any], bool] | None:
 
 async def list_issues(ctx: OperationContext, client: GitHubClient) -> dict[str, Any]:
     params = ctx.params
+    per_page, page = int(params.get("per_page", 30)), int(params.get("page", 1))
     query: dict[str, str | int] = {
         "state": str(params.get("state", "open")),
         "sort": str(params.get("sort", "created")),
         "direction": str(params.get("direction", "desc")),
-        "per_page": int(params.get("per_page", 30)),
-        "page": int(params.get("page", 1)),
+        "per_page": SCAN_PER_PAGE,
+        "page": 1,
     }
     if params.get("labels"):
         query["labels"] = ",".join(str(name) for name in params["labels"])
+    first, end = (page - 1) * per_page, page * per_page
     issues: list[dict[str, Any]] = []
     truncated = False
-    next_page: int | None = None
-    for _read in range(EMPTY_PAGES):
+    seen = 0  # issues of the list before the current entry
+    more: bool | None = None  # another issue follows the page (None: not known yet)
+    for _read in range(SCAN_PAGES):
         answer = await client.request("GET", f"/repos/{params['repo']}/issues", params=query)
         for item in pages.rows(answer):
             if isinstance(item, dict) and "pull_request" in item:
                 continue
+            index, seen = seen, seen + 1
+            if index >= end:
+                more = True
+                break
+            if index < first:
+                continue
             made = _listed(item)
-            if made is None or len(issues) >= MAX_ISSUES:
+            if made is None:
                 truncated = True
                 continue
             issues.append(made[0])
             truncated = truncated or made[1]
-        next_page = pages.next_page(answer.headers)
-        if issues or next_page is None:
+        following = pages.next_page(answer.headers)
+        if more or following is None:
+            more = bool(more)
             break
-        query["page"] = next_page
-    result = {"issues": issues, "next_page": next_page, "truncated": truncated}
+        query["page"] = following
+    result: dict[str, Any] = {"issues": issues, "next_page": None, "truncated": truncated}
+    if more is None and seen < end:
+        # the flood limit ended the reading before the page was complete
+        result["truncated"] = True
+        result["note"] = SCAN_NOTE.format(rows=SCAN_PAGES * SCAN_PER_PAGE)
+    elif more is not False and page < pages.MAX_PAGE:
+        result["next_page"] = page + 1
     pages.fit(result, "issues")
     return result
 

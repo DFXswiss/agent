@@ -201,12 +201,10 @@ const MATE = 'kz20-mate-c4n8';
 const tokenOf = (label: string): string => ['kz20', label, 'tok', 'w8e3r5t1y6u2'].join('-');
 const LIST_CALLS = 'GET /repos/{owner}/{repo}/issues';
 const CREATE_ISSUE = 'POST /repos/{owner}/{repo}/issues';
-/** The REST calls of the owner's task at the double: pre-check and three pages (two of only pull requests), then the
- * issue with its comments. */
+/** The REST calls of the owner's task at the double: pre-check and one list page (pull requests first, then the
+ * issues; HOT-09: the page counts issues), then the issue with its comments. */
 const NEWEST_ISSUE_SEQUENCE = [
   'GET /repos/{owner}/{repo}',
-  LIST_CALLS,
-  LIST_CALLS,
   LIST_CALLS,
   'GET /repos/{owner}/{repo}',
   'GET /repos/{owner}/{repo}/issues/{number}',
@@ -270,7 +268,7 @@ async function expectNewestIssueCards(page: Page): Promise<void> {
   await expect(content.locator('a').first()).toHaveAttribute('href', `${GITHUB_SITE}/${INTERN}/issues/2`);
 }
 
-/** The newest issue as the session got it: one page with issue #2 only (pull requests left out), the next page 4. */
+/** The newest issue as the session got it: one page with issue #2 only (pull requests left out), the next page 2. */
 async function expectNewestIssueResults(page: Page, orchestrator: Orchestrator, onboarded: Onboarded, task: string) {
   const operations = await hubOperations(orchestrator, task);
   expect(operations.map((op) => [op.type, op.state, op.params_event, op.result_event])).toEqual([
@@ -283,7 +281,7 @@ async function expectNewestIssueResults(page: Page, orchestrator: Orchestrator, 
   const byId = new Map(results.map((body) => [body.operation_id, body]));
   const listed = byId.get(operations[0]!.id) as { result: { issues: { number: number }[]; next_page: number } };
   expect(listed.result.issues.map((issue) => issue.number)).toEqual([2]);
-  expect(listed.result.next_page).toBe(4);
+  expect(listed.result.next_page).toBe(2);
   const read = byId.get(operations[1]!.id) as { result: Record<string, unknown> };
   expect(read.result).toMatchObject({
     number: 2,
@@ -346,10 +344,10 @@ test('@E2E-20 @R-9.1 @R-P.5 @needs-vm an existing token connects GitHub and the 
   await expectAnswerInChat(page, ANSWER);
   await expect.poll(async () => (await orchestrator.doubleState('model')).ok, { timeout: 60_000 }).toBe(true);
 
-  // GitHub: the pre-checks, three list pages (1 and 2 hold only pull requests), the issue and its comments - all with
-  // the stored token, no App endpoint.
+  // GitHub: the pre-checks, one list page of 100 entries (the two newest are pull requests), the issue and its
+  // comments - all with the stored token, no App endpoint.
   expect(await githubRoutes(orchestrator, connectCalls)).toEqual(NEWEST_ISSUE_SEQUENCE);
-  expect(await listPages(orchestrator, connectCalls)).toEqual(['1', '2', '3']);
+  expect(await listPages(orchestrator, connectCalls)).toEqual(['1']);
   const calls = await githubJournal(orchestrator);
   expect(calls.every((call) => !call.path.startsWith('/user/installations'))).toBe(true);
 

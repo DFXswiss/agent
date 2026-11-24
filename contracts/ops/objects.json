@@ -1033,7 +1033,7 @@
     },
     "result_github_list_issues": {
       "type": "object",
-      "description": "one page of the repository's issues; pull requests, which GitHub lists among the issues, are left out, so a page may hold fewer than per_page issues while next_page is set; truncated: entries that did not fit the contract were left out or titles were cut",
+      "description": "one page of the repository's issues; per_page and page count issues (pull requests, which GitHub lists among the issues, are left out and do not count), so a page is empty only when there are no further issues; truncated: entries that did not fit the contract were left out or titles were cut, or the flood limit ended the reading (then note says how to go on)",
       "properties": {
         "issues": {
           "type": "array",
@@ -1149,6 +1149,11 @@
         },
         "truncated": {
           "type": "boolean"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "present when the flood limit ended the reading before the page was complete: how to reach the issues beyond it"
         }
       },
       "required": [
