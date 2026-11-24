@@ -185,13 +185,22 @@ export async function connectGitHubToken(page: Page, token: string, login: strin
 }
 
 /** Saves the workgroup's repository allow-list on its settings screen (client-side navigation keeps the unlock). */
-export async function allowRepositories(page: Page, org: string, wg: string, repositories: readonly string[]) {
+export async function allowRepositories(
+  page: Page,
+  org: string,
+  wg: string,
+  repositories: readonly string[],
+  protectedBranches?: readonly string[],
+) {
   await page.evaluate((target) => {
     history.pushState({}, '', target);
     dispatchEvent(new PopStateEvent('popstate'));
   }, `/o/${org}/w/${wg}/settings`);
   await expect(page.getByTestId('wg-settings.repositories')).toBeVisible({ timeout: 30_000 });
   await page.getByTestId('wg-settings.repositories').fill(repositories.join('\n'));
+  // the platform protects no branch by default (ADR-077); a workgroup sets its own list
+  if (protectedBranches !== undefined)
+    await page.getByTestId('wg-settings.protected').fill(protectedBranches.join('\n'));
   await page.getByTestId('wg-settings.save').click();
   await expect(page.getByTestId('wg-settings.saved')).toBeVisible();
   await expect(page.getByTestId('wg-settings.repositories')).toHaveValue(repositories.join('\n').toLowerCase());

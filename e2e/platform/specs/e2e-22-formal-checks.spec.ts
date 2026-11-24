@@ -124,7 +124,7 @@ test('@E2E-22 @R-9.4 @R-10.9 @R-10.10 @R-11.1 @R-11.2 @R-11.3 @R-11.4 @R-11.5 @R
   const [org] = await orchestrator.hubQuery<{ default_wg: string }>(
     `SELECT default_wg FROM hub.org WHERE id = '${uuid(onboarded.org)}'`,
   );
-  await allowRepositories(page, onboarded.org, org!.default_wg, [HELLO, 'octo-org/hidden']);
+  await allowRepositories(page, onboarded.org, org!.default_wg, [HELLO, 'octo-org/hidden'], ['main', 'release/*']);
   // The first ref creation answers 502 once; the comments may reach GitHub twice (two distinct bodies) and no more.
   await armFaults(orchestrator, [{ route: CREATE_REF, repo: HELLO, kind: 'error', status: 502, times: 1 }]);
   await expectCalls(orchestrator, [{ route: COMMENTS, repo: HELLO, count: 2 }]);

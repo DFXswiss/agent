@@ -94,6 +94,7 @@ class Estate:
         platform = Platform(hub)
         platform.append("role_grant", subject=scene.writer.id, role="inviter")
         platform.append("org_platform_access", org=scene.org, granted=True)
+        platform.append("platform_policy", name="open_platform_invites", on=True)  # ADR-077
         platform.invite_user()
         enrolled = platform.enroll()
         platform.certify(enrolled)

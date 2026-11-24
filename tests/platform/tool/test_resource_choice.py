@@ -326,6 +326,13 @@ def test_an_admins_task_assigns_a_platform_device_first(tool: Tool, hub: HubFake
     # no candidate: the task is created and waits
     empty_wg = tool.run("wg", "create", "--org", team_org, "--name", "Ops")[1]["wg_id"]
     assert tool.run("task", "create", "--wg", empty_wg, "--text", "Wait")[1]["assigned_device"] is None
+    # a hub without a platform log yet answers `not_found`: nothing to assign either
+    missing = tool.run("wg", "create", "--org", team_org, "--name", "Missing")[1]["wg_id"]
+    hub.hooks[("GET", f"/v1/workgroups/{missing}/device-candidates")] = lambda body, request: (
+        404,
+        {"error": "not_found"},
+    )
+    assert tool.run("task", "create", "--wg", missing, "--text", "Wait")[1]["assigned_device"] is None
     # any other failure of the assignment is reported, the task is not sent
     broken = tool.run("wg", "create", "--org", team_org, "--name", "Broken")[1]["wg_id"]
     hub.hooks[("GET", f"/v1/workgroups/{broken}/device-candidates")] = lambda body, request: (200, {"candidates": 1})

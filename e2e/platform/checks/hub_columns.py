@@ -139,7 +139,7 @@ operation: operations | id:uuid org_id:uuid wg_id:uuid task_id:uuid session_id:u
   finished_at:time github_identity:uuid triggered_by:uuid
 operation_transition: operations | operation_id:uuid seq:number state:code error_code:code at:time by_id:uuid
 org: logs | id:uuid@ids private:flag platform_access:flag default_wg:uuid created_by:uuid created_at:time
-  log_head_seq:number log_head_hash:code rotation_pending:json
+  log_head_seq:number log_head_hash:code rotation_pending:json platform_access_grant:flag
 org_device: logs | org_id:uuid device_id:uuid assigned_seq:number unassigned_seq:number
 org_member: logs | org_id:uuid principal_id:uuid kind:code role:code joined_seq:number removed_seq:number
   consented:flag
@@ -148,6 +148,7 @@ outbox_receipt: events | device_id:uuid origin_seq:number item_kind:code item_sh
 passkey: auth | credential_id:bytes user_id:uuid@ids public_key:bytes sign_count:number transports:codes
   prf_seen:flag created_at:time last_used_at:time removed_at:time
 platform_entry: logs | seq:number entry_text:json entry_hash:code type:code subject_id:uuid received_at:time
+platform_policy: logs | name:code on:flag seq:number
 platform_role: logs | user_id:uuid role:code granted_seq:number revoked_seq:number
 pr_link: contexts | wg_id:uuid@ids epoch:number tag:code task_id:uuid@ids session_id:uuid@ids created_at:time
 principal: ids | id:uuid kind:code created_at:time disabled_at:time
