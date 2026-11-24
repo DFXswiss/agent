@@ -18,7 +18,7 @@ from collections.abc import Mapping, Sequence
 from importlib import resources
 from typing import Any, TextIO
 
-from agent_platform import __version__, claude, diagnose, membership, orgs, registry, remote, tasks, upkeep
+from agent_platform import __version__, alone, claude, diagnose, membership, orgs, registry, remote, tasks, upkeep
 from agent_platform.account import Account
 from agent_platform.commands import Context, Handler, Help, Parser, Tree, Work, text_argument, with_account
 from agent_platform.credentials import put_record, read_record
@@ -49,6 +49,19 @@ def cmd_register(args: argparse.Namespace, context: Context) -> dict[str, Any]:
     message = _message(args, context, stdin_taken=not from_env)
     link = from_env or context.read_stdin()
     if not link.strip():
+        raise PlatformError("invalid_argument")
+    if args.own_account:
+        if args.remote or args.replace_pending or message is not None:
+            raise PlatformError("invalid_argument")
+        return alone.register_own(
+            context.home,
+            invite=link,
+            display_name=args.display_name,
+            name=args.name,
+            host=args.host,
+            root_key=args.platform_root_key,
+        )
+    if args.platform_root_key is not None:
         raise PlatformError("invalid_argument")
     if args.remote:
         result = remote.start_register(
@@ -319,6 +332,8 @@ def _account_commands(tree: Tree) -> None:
     sub.add_argument("--remote", action="store_true", help="the agent runs on another computer than the browser")
     sub.add_argument("--replace-pending", action="store_true", help="delete a pending remote pairing first")
     sub.add_argument("--message", help=MESSAGE_HELP)
+    sub.add_argument("--own-account", action="store_true", help="an account of this agent alone: no user, no passkey")
+    sub.add_argument("--platform-root-key", help="with --own-account: platform root key (b64u) instead of the hub's")
     tree.add(tree.commands, "status", writing(cmd_status), "the account as the agent sees it")
     sub = tree.add(tree.commands, "api", with_account(cmd_api), "a signed request to any route")
     sub.add_argument("method")

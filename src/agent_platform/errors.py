@@ -60,6 +60,11 @@ NEXT: dict[str, str] = {
         "The community key is not here yet (see `key`): run `agent-platform community key --wait 120`; another user's "
         "client hands it over as soon as one is online. `failed` means the stored key does not open; tell your user."
     ),
+    "not_own_account": (
+        "This account has a passkey: only its person approves a new main orchestrator (with the passkey, "
+        "`agent-platform pair --remote` and the link and code given to the person). `recover` and `agents confirm` "
+        "work for an account of an agent alone."
+    ),
     "invalid_argument": "Check the command line (`agent-platform <command> --help`).",
     "state_damaged": ("The state directory has a wrong mode, owner or a symlink; fix it or remove it and pair again."),
     "internal": "An unexpected error happened; run the command again.",
@@ -71,6 +76,10 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
         "The pairing may have completed at the hub while its answer was lost, so the hub may list this agent as "
         "connected although it kept nothing. Ask your user to disconnect it in the settings (Connected agents), "
         "then pair again."
+    ),
+    ("invalid_argument", "recovery_code_unknown"): (
+        "The hub knows no account with this recovery code; check the code and the hub address (a code stops working "
+        "once a new one is made)."
     ),
 }
 

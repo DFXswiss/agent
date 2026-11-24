@@ -223,17 +223,21 @@ def invite_states(account: Account, org: str, state: OrgState) -> list[dict[str,
 
 
 def org_create(account: Account, name: str, given_display_name: str | None) -> dict[str, Any]:
-    org_name = display_name(name)
-    member_name = own_display_name(account, given_display_name)
+    return genesis(account, display_name(name), own_display_name(account, given_display_name))
+
+
+def genesis(account: Account, org_name: str, member_name: str, platform_invite: str | None = None) -> dict[str, Any]:
+    """A new organization with this user as its founder; with `platform_invite` the private organization of a
+    registration through that platform invitation (04-crypto.md section 5.3)."""
     names = PRIVATE_NAMES[locale(account)]
     org, wg = uuid7(), uuid7()
-    genesis = {"type": "genesis", "subject": account.user_id, "pub": account.identity.public(), "default_wg": wg}
+    first = {"type": "genesis", "subject": account.user_id, "pub": account.identity.public(), "default_wg": wg}
     built = build_batch(
         None,
         org=org,
         author=account.user_id,
         identity=account.identity,
-        fields=[{**genesis, "private": False}],
+        fields=[{**first, "private": platform_invite is not None}],
         ts=now_text(),
         held={},
     )
@@ -246,6 +250,8 @@ def org_create(account: Account, name: str, given_display_name: str | None) -> d
         ),
     ]
     body = {"genesis": built.entries[0], "wraps": built.wraps, "events": events}
+    if platform_invite is not None:
+        body["platform_invite_id"] = platform_invite
     answer = account.call("POST", "/v1/orgs", body)
     if answer.get("org_id") != org or answer.get("default_wg") != wg:
         raise unverified("response_invalid")

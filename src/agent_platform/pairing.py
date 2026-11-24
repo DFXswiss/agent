@@ -126,6 +126,20 @@ def open_browser(environ: Mapping[str, str], url: str, fallback: str = OPEN_YOUR
         print(fallback, file=sys.stderr)
 
 
+def hub_config(origin: str) -> tuple[dict[str, str], object]:
+    """The hub's response key `{id, public_key}` and the platform root key of `GET /v1/config` (as given)."""
+    config = anon_request(origin, "GET", "/v1/config")
+    hub_key = config.get("hub_key")
+    try:
+        if not isinstance(hub_key, dict):
+            raise CryptoError("header_invalid")
+        b64u_decode(hub_key.get("public_key"), 32)
+        pinned = {"id": str(hub_key.get("id")), "public_key": str(hub_key["public_key"])}
+    except CryptoError:
+        raise PlatformError("hub_refused", reason="response_invalid") from None
+    return pinned, config.get("platform_root_key")
+
+
 class _WrongSecret(Exception):
     """The hub refused the claim (`claim_invalid`): a wrong `r`, treated like any bad request."""
 
@@ -156,16 +170,7 @@ class Pairing:
         self.failure: PlatformError | None = None
 
     def register(self) -> None:
-        config = anon_request(self.origin, "GET", "/v1/config")
-        hub_key = config.get("hub_key")
-        try:
-            if not isinstance(hub_key, dict):
-                raise CryptoError("header_invalid")
-            b64u_decode(hub_key.get("public_key"), 32)
-            self.hub_key = {"id": str(hub_key.get("id")), "public_key": str(hub_key["public_key"])}
-        except CryptoError:
-            raise PlatformError("hub_refused", reason="response_invalid") from None
-        self.config_root = config.get("platform_root_key")
+        self.hub_key, self.config_root = hub_config(self.origin)
         body: dict[str, Any] = {
             "pairing_id": self.pairing_id,
             "pub": {"kem": self.agent.public()["kem"], "sig": self.agent.public()["sig"]},
