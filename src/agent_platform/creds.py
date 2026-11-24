@@ -365,10 +365,10 @@ def register(tree: Tree) -> None:
         group,
         "connect",
         _github_connect,
-        "connect GitHub through a device (opens the browser)",
+        "connect GitHub: this computer's GitHub CLI login (--from-gh, no browser), a token or the device page",
         writes=True,
-        example="agent-platform github connect",
-        words="verbinden anmelden repository zugriff token link login repo access",
+        example="agent-platform github connect --from-gh",
+        words="verbinden anmelden repository zugriff token link login repo access gh cli fork organization",
         then="agent-platform github connect --request <request_id> --wait 120",
     )
     sub.add_argument("--token", help="- : store an existing GitHub token read from stdin (checked by the device)")
