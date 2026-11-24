@@ -1,14 +1,18 @@
 // Screens loaded on first use (06-web.md section 12.2; HOT-16): a route's screen is a chunk of its own, so the start
 // bundle carries only what the sign-in page needs. While the chunk loads, the screen area shows its frame at once
-// (`screen.loading`, never an empty page); a chunk that cannot be loaded or fails its integrity check
-// (`core/assets/integrity.ts`) passes the error on to the route's error page with its reload button – a browser keeps
-// a failed module as failed until the page reloads, so nothing is retried.
+// (`screen.loading`, never an empty page). A chunk that cannot be loaded – the link to the hub is down, or the bytes
+// fail their integrity check (`core/assets/integrity.ts`, fail closed) – shows "page could not be loaded" with a reload
+// in place of the screen, inside the shell, so the connection banner stays (ACC-FINAL decision 11); a browser keeps a
+// failed module as failed until the page reloads, so nothing is retried. Any other error passes on to the route's
+// error page.
 import { type ComponentType, Suspense } from 'react';
 import { useI18n } from '../i18n';
+import { ERROR_BUTTON, ErrorLayout } from '../screens/errors/ErrorLayout';
+import { ChunkBoundary } from './ChunkBoundary';
 
 const loaders = new Set<() => Promise<void>>();
 
-/** Loads every lazy screen now (tests render screens synchronously after this). */
+/** Loads every lazy screen now (the UI tests render screens synchronously after this). */
 export async function preloadScreens(): Promise<void> {
   await Promise.all([...loaders].map((load) => load()));
 }
@@ -26,6 +30,24 @@ export function ScreenLoading() {
   );
 }
 
+/** In place of a screen whose chunk cannot be loaded. */
+export function ScreenUnavailable({ onReload = () => window.location.reload() }: { readonly onReload?: () => void }) {
+  const { t } = useI18n();
+  return (
+    <ErrorLayout
+      testId="screen.unavailable"
+      prefix="screen-unavailable"
+      title={t('app.screen-unavailable.title')}
+      body={<p>{t('app.screen-unavailable.body')}</p>}
+      action={t('app.screen-unavailable.action')}
+    >
+      <button type="button" className={ERROR_BUTTON} onClick={onReload} data-testid="error.reload">
+        {t('app.error.reload')}
+      </button>
+    </ErrorLayout>
+  );
+}
+
 /** The export `name` of the module `load` imports, as a component that loads it on first render. */
 export function lazyScreen<N extends string>(
   load: () => Promise<Readonly<Record<N, ComponentType>>>,
@@ -34,7 +56,7 @@ export function lazyScreen<N extends string>(
   let Screen: ComponentType | undefined;
   let failure: { readonly error: unknown } | undefined;
   let pending: Promise<void> | undefined;
-  const fetch = () =>
+  const request = () =>
     (pending ??= load().then(
       (module) => {
         Screen = module[name];
@@ -43,17 +65,19 @@ export function lazyScreen<N extends string>(
         failure = { error };
       },
     ));
-  loaders.add(fetch);
+  loaders.add(request);
   function Loaded() {
     if (Screen !== undefined) return <Screen />;
     if (failure !== undefined) throw failure.error;
-    throw fetch();
+    throw request();
   }
   return function LazyScreen() {
     return (
-      <Suspense fallback={<ScreenLoading />}>
-        <Loaded />
-      </Suspense>
+      <ChunkBoundary fallback={<ScreenUnavailable />}>
+        <Suspense fallback={<ScreenLoading />}>
+          <Loaded />
+        </Suspense>
+      </ChunkBoundary>
     );
   };
 }

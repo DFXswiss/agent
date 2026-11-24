@@ -5,5 +5,8 @@
   "error-unknown.action": "Lade die Seite neu. Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support.",
   "error.code": "Fehlercode: {code}",
   "error.reload": "Neu laden",
-  "loading": "Wird geladen…"
+  "loading": "Wird geladen…",
+  "screen-unavailable.title": "Diese Seite konnte nicht geladen werden",
+  "screen-unavailable.body": "Ihr Teil der App ist nicht angekommen: Die Verbindung zum Server war unterbrochen, oder der empfangene Code hat die Integritätsprüfung nicht bestanden und wurde abgelehnt.",
+  "screen-unavailable.action": "Lade die Seite neu, sobald die Verbindung wieder steht."
 }

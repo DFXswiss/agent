@@ -19,10 +19,10 @@ import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { NotAvailable } from '../errors/pages';
-import { useInviter } from './useInviter';
 import { useNow } from '../../countdown/useNow';
 import { BUTTON, PRIMARY } from '../members/ActionDialog';
 import { CopyButton, ExpirySelect } from '../devices/parts';
+import { useInviter } from './useInviter';
 
 function CreateForm(props: {
   readonly onCreated: (created: PreparedPlatformInvite) => void;

@@ -5,5 +5,8 @@
   "error-unknown.action": "Reload the page. If it happens again, contact support with the error code.",
   "error.code": "Error code: {code}",
   "error.reload": "Reload",
-  "loading": "Loading…"
+  "loading": "Loading…",
+  "screen-unavailable.title": "This page could not be loaded",
+  "screen-unavailable.body": "Its part of the app did not arrive: the connection to the server was interrupted, or the received code failed its integrity check and was refused.",
+  "screen-unavailable.action": "Reload the page once the connection is back."
 }
