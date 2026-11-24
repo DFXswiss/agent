@@ -80,7 +80,7 @@ via selectors.
 | Route | Screen | Right |
 |---|---|---|
 | `/` | redirect: unauthenticated → `/login`; else last org → `/o/:org` | – |
-| `/invite` (code in fragment `#…`) | invitation (§3.1); with agent pairing parameters after the code: new account through the user's agent (`11-agent-access.md` §5.2) | anon |
+| `/invite` (code in fragment `#…`) | invitation (§3.1), with the inviter's personal message of the package; with agent pairing parameters after the code: new account through the user's agent (`11-agent-access.md` §5.2), with the agent's request message (`t`) in the agent block | anon |
 | `/connect` (pairing in fragment `#…`) | confirm the pairing of the user's AI agent with one passkey gesture (`11-agent-access.md` §5.1); shows the agent's request message (`t`) as a quote | anon → user |
 | `/login` | login and unlock (§3.4) | anon |
 | `/recover` | recovery (§3.5) | anon |

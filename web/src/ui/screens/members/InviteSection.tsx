@@ -4,7 +4,6 @@
 // buttons and the warning to pass them on confidentially; "Done" forgets them. Open invitations (checked against the
 // verified log) can be revoked.
 import { useEffect, useId, useState } from 'react';
-import { MESSAGE_TEXT_MAX } from '../../../core/crypto/agent';
 import { type Access, type Role } from '../../../core/org/members';
 import {
   type CreatedInvite,
@@ -148,7 +147,6 @@ function InviteForm({ org, state, directory, onCreated, onCancel }: InviteFormPr
         type="text"
         className="min-h-11 rounded border border-gray-300 px-2"
         value={message}
-        maxLength={MESSAGE_TEXT_MAX}
         aria-describedby={ids.hint}
         onChange={(event) => setMessage(event.target.value)}
         data-testid="members.invite.message"
