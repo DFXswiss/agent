@@ -542,8 +542,8 @@ SPA routes (§2.4) and `/assets/…` statically.
   attributes in `index.html`, no `eval`/`new Function`, Tailwind compiled to a file, fonts self-hosted.
 - Every `<script>` and `<link rel="stylesheet">`/`modulepreload` in `index.html` carries `integrity="sha384-…"` and
   `crossorigin="anonymous"` (Vite plugin in-repo, tested).
-- **Every script the hub delivers is integrity-checked, including the lazily loaded chunks of §12.2** (terminal,
-  charts, markdown): the integrity of every chunk is fixed in `index.html`, so the browser refuses a chunk whose bytes
+- **Every script the hub delivers is integrity-checked, including the lazily loaded chunks of §12.2** (screens,
+  terminal, charts, markdown): the integrity of every chunk is fixed in `index.html`, so the browser refuses a chunk whose bytes
   differ. Built variant (KOR-04): `<meta name="asset-integrity">` in `index.html` holds the `sha384` of every script
   and stylesheet under `/assets/`; the in-repo preload helper (`web/src/core/assets/integrity.ts`) loads every file a
   dynamic `import()` needs through `modulepreload`/`stylesheet` links with `integrity` before the import, always
@@ -621,8 +621,8 @@ Run while signed in and unlocked; serialized per org; status visible in a small 
 
 ### 12.2 Performance budget
 
-Initial JS ≤ 300 KiB gzip (route-level code splitting: every screen except sign-in and not-found, the terminal, charts
-and Markdown load lazily); time to interactive ≤ 3 s on a mid-range phone profile (Playwright CPU throttling ×4,
+Initial JS ≤ 300 KiB gzip (route-level code splitting: every screen except sign-in, the start redirect and not-found,
+the terminal, charts and Markdown load lazily); time to interactive ≤ 3 s on a mid-range phone profile (Playwright CPU throttling ×4,
 "Fast 3G"); measured in the E2E suite (median of three loads, no tolerance).
 
 The build enforces a tighter guard than the ceiling: `INITIAL_JS_BUDGET` in `web/build/budget.ts` is the measured first
@@ -631,8 +631,10 @@ build:check`, the build tests and the E2E budget test), so growth of the first l
 is caused, not later as a narrow timing failure. It is raised only together with a reason in this section. The first
 load is three scripts: the framework, the app modules imported statically from the entry (chunk group `$initial`) and
 the bundler runtime; what only lazy chunks share stays out of it. While a screen's chunk loads, its frame is shown at
-once (`screen.loading`); a chunk that cannot be loaded or fails its integrity check leads to the route's error page
-with its reload button (section 10.2 integrity checks apply to every lazy chunk).
+once (`screen.loading`), also on the first switch to it. A chunk that cannot be loaded or fails its integrity check
+(section 10.2) shows "This page could not be loaded" with a reload in place of the screen, inside the shell, so the
+connection banner stays; other errors reach the route's error page. A direct link into a lazy screen waits for one more
+chunk after the first load.
 
 ### 12.3 Accessibility
 

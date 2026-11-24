@@ -11,17 +11,24 @@ decided every second run. Two stages: a temporary tolerance, then a smaller firs
    start redirect and not-found is its own chunk (`ui/lazy/screen.tsx`, `lazyScreen` in each `routes.tsx`). WEB-13
    gave two reasons against lazy screens, and both are now resolved:
    - SRI: every lazy chunk is integrity-checked since KOR-04.
-   - Coverage alignment of route chunks: the full Vitest suite and the merged gate run on this state.
+   - Coverage alignment of route chunks: decided by the merged coverage gate of this package's gate run (see the
+     report).
 
    The element of a route stays a component, so registrations and tests keep their shape. Vitest loads every lazy
-   screen before the tests (`tests/ui/setup.ts`), so screen tests still render synchronously.
-3. **Frame while loading, error page on failure.** The screen area shows `screen.loading` at once (a busy status with a
-   hidden "Loading…" and three placeholder bars, never an empty page). The header, navigation and footer of the shell
-   stay, because the layout is in the first load. On a client-side switch inside a transition React may keep the
-   previous screen until the chunk is there. Both outcomes avoid a blank screen. A chunk that cannot be fetched or
-   fails its integrity check (`ChunkUnavailable`) is thrown to the route's error page with its reload button. That is
-   the existing handling for whole screens (ChunkBoundary comment, ACC-FINAL decision 11). A browser keeps a failed
-   module as failed until reload, so the failure is cached and not retried.
+   screen before the tests (`tests/ui/setup.ts`, `preloadScreens`), so screen tests still render synchronously. The
+   small registry behind `preloadScreens` ships in the bundle; it costs a few bytes and keeps the tests off the module
+   internals.
+3. **Frame while loading, failure inside the shell.** The screen area shows `screen.loading` at once (a busy status
+   with a hidden "Loading…" and three placeholder bars, never an empty page). The header, navigation and footer of the
+   shell stay, because the layout is in the first load. This also holds on the first client-side switch to the screen
+   (Vitest test with navigation, Playwright `e2e/lazy-screen.spec.ts` with a held chunk). A chunk that cannot be
+   fetched or fails its integrity check (`ChunkUnavailable`) is caught by the existing `ChunkBoundary` (ACC-FINAL
+   decision 11). In place of the screen, it shows "This page could not be loaded" with a reload (`screen.unavailable`,
+   `error.reload`). The connection banner stays visible, instead of the generic `ui_error` page replacing the shell and
+   pointing to support. Other errors still reach the route's error page. A browser keeps a failed module as failed
+   until reload, so the failure is cached and nothing is retried. The security screen uses the same mechanism instead
+   of React Router's `route.lazy`, so all lazy screens behave the same. A direct link into a lazy screen now waits for
+   one more chunk after the first load; the first screen, sign-in, does not.
 4. **Chunk groups by reachability, not by share count.** The groups `core` and `shared` (`minShareCount: 2`) gathered
    every module that two chunks shared. With lazy screens, those were mostly modules shared between screens, so the
    whole group was loaded at start (231 KiB instead of 262 KiB, little gain). Without the groups the first load fell
