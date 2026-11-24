@@ -1,5 +1,7 @@
 // Recovery screen (06-web.md sections 2.4 and 3.5), route `/recover` (anonymous).
 import type { RouteObject } from 'react-router-dom';
-import { RecoverScreen } from './RecoverScreen';
+import { lazyScreen } from '../../lazy/screen';
+
+const RecoverScreen = lazyScreen(() => import('./RecoverScreen'), 'RecoverScreen');
 
 export const routes: RouteObject[] = [{ path: '/recover', element: <RecoverScreen /> }];

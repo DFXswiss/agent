@@ -4,5 +4,6 @@
   "error-unknown.body": "Etwas ist schiefgelaufen (Fehlercode {code}).",
   "error-unknown.action": "Lade die Seite neu. Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support.",
   "error.code": "Fehlercode: {code}",
-  "error.reload": "Neu laden"
+  "error.reload": "Neu laden",
+  "loading": "Wird geladen…"
 }

@@ -4,5 +4,6 @@
   "error-unknown.body": "Something went wrong (error code {code}).",
   "error-unknown.action": "Reload the page. If it happens again, contact support with the error code.",
   "error.code": "Error code: {code}",
-  "error.reload": "Reload"
+  "error.reload": "Reload",
+  "loading": "Loading…"
 }
