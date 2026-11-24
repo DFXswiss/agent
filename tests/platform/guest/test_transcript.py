@@ -571,22 +571,26 @@ def test_unreadable_transcripts_are_tolerated(
     assert follower.current == path.name
 
 
-def test_tui_up_moves_only_a_starting_session_and_never_an_unknown_one(
+def test_tui_up_never_moves_a_starting_session_and_only_names_its_claude_session(
     context: ControlContext, starting: Session
 ) -> None:
+    """HOT-09: only the delivery watcher moves a starting session on (after the platform tools arrived); the transcript
+    only names the Claude session, journaled again once the session is past ``agent_starting``."""
     state, log = context.state, context.journal
-    assert transcript.tui_up(log, state, "01a1ee56-5e00-7003-8f1b-340691d99fff") is False
-    assert transcript.tui_up(log, state, SID) is True
-    assert transcript.tui_up(log, state, SID) is False  # already prompt_delivering, no ID
-    assert transcript.tui_up(log, state, SID, CLAUDE) is True
+    assert transcript.tui_up(log, state, "01a1ee56-5e00-7003-8f1b-340691d99fff", CLAUDE) is False
+    assert transcript.tui_up(log, state, SID) is False  # no ID: nothing to do
+    assert transcript.tui_up(log, state, SID, CLAUDE) is True  # stored, the session stays agent_starting
+    current = context.state.session(SID)
+    assert current is not None
+    assert (current.state, current.claude_session_id) == ("agent_starting", CLAUDE)
+    assert journal(context, "session.state") == []
     assert transcript.tui_up(log, state, SID, CLAUDE) is False
+    context.state.save_session(replace(current, state="working"))
+    assert transcript.tui_up(log, state, SID, OTHER_CLAUDE) is True
     context.state.save_session(replace(starting, state="stopping"))
-    assert transcript.tui_up(log, state, SID, OTHER_CLAUDE) is False
+    assert transcript.tui_up(log, state, SID, CLAUDE) is False
     bodies = [record["body"] for record in journal(context, "session.state")]
-    assert [(body["state"], body.get("claude_session_id")) for body in bodies] == [
-        ("prompt_delivering", None),
-        ("prompt_delivering", CLAUDE),
-    ]
+    assert [(body["state"], body.get("claude_session_id")) for body in bodies] == [("working", OTHER_CLAUDE)]
 
 
 def test_the_follower_thread_polls_until_stopped(

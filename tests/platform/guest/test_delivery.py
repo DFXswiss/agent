@@ -1143,6 +1143,16 @@ def test_a_closing_journal_ends_the_watch_without_an_error(
     assert journal(context) == []
 
 
+def test_a_session_taken_over_between_the_checks_is_not_moved(
+    context: ControlContext, engine: delivery.Delivery, tui: FakeTui, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put(context, "agent_starting")
+    tools_listed(context)
+    monkeypatch.setattr(engine, "_delivering", lambda session_id: False)
+    monkeypatch.setattr(sessions, "deferred_prompt", lambda ctx, session_id: None)
+    assert not engine.watch_ready(SESSION_ID)
+
+
 def test_close_ends_the_watch(context: ControlContext, make: Callable[..., delivery.Delivery], tui: FakeTui) -> None:
     put(context, "agent_starting")
     tui.box = False

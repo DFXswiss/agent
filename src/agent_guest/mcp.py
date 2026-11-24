@@ -18,7 +18,7 @@ JSON-RPC 2.0 over HTTP POST with JSON responses (no SSE, no MCP session IDs):
   the others)
 
 Tools at the agent (HOT-09): a successful ``tools/list`` is the proof that the session's agent has the platform tools
-(Claude Code connects its MCP servers in the background, ADR-029 addendum); the server reports it to the control
+(Claude Code connects its MCP servers in the background, ADR-068); the server reports it to the control
 process (op ``session.tools_listed {session_id, tools}``, best effort), which holds the first prompt until then
 (``delivery.py``).
 

@@ -153,7 +153,9 @@ def start_units(tmp_path: Path, guest: Guest) -> Iterator[StartUnits]:
         rules.write_text(RULES)
         MCP_CONFIG.parent.mkdir(mode=0o755, exist_ok=True)
         MCP_CONFIG.write_text(
-            json.dumps({"mcpServers": {"platform": {"type": "http", "url": "http://127.0.0.1:7700/mcp"}}})
+            # the image's file (images/mcp.json): the API unit answers tools/list only with the session's token, and
+            # the first prompt waits for that listing (HOT-09)
+            (REPO / "images" / "mcp.json").read_text()
         )
         MCP_CONFIG.chmod(0o644)
         spec = {

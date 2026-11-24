@@ -1,4 +1,4 @@
-"""Whether a session's agent has the platform tools (HOT-09; 05-runner.md section 6.1 step 6, ADR-029 addendum).
+"""Whether a session's agent has the platform tools (HOT-09; 05-runner.md section 6.1 step 6, ADR-068).
 
 Claude Code connects its MCP servers in the background and starts a turn without waiting for them, so a prompt that
 arrives before the agent listed the platform tools runs a turn without them. The proof that the tools reached the

@@ -126,8 +126,9 @@ def test_a_session_run_is_captured_from_start_to_end(
     emit(context, "agent_starting")
     assert fake_tmux.subcommands() == ["pipe-pane"]
     pane(capture, b"\x1b[2J welcome")
-    until(lambda: journal(context, "session.state"))
-    assert [body["state"] for body in journal(context, "session.state")] == ["prompt_delivering"]
+    until(lambda: journal(context, "session.terminal"))
+    # HOT-09: the pane output moves nothing; prompt_delivering is the delivery watcher's (TUI and platform tools)
+    assert journal(context, "session.state") == []
     project = base / "home" / ".claude" / "projects" / transcript.cwd_key(f"{base}/work")
     project.mkdir(parents=True)
     entries = [
@@ -136,8 +137,8 @@ def test_a_session_run_is_captured_from_start_to_end(
                                                                                            "text": "Hello"}]}},
     ]  # fmt: skip
     (project / f"{CLAUDE}.jsonl").write_text("".join(json.dumps(entry) + "\n" for entry in entries))
-    until(lambda: len(journal(context, "session.state")) == 2)
-    assert journal(context, "session.state")[1]["claude_session_id"] == CLAUDE
+    until(lambda: getattr(context.state.session(SID), "claude_session_id", None) == CLAUDE)
+    assert journal(context, "session.state") == []  # named, still starting (the watcher's record will carry it)
     (base / "work" / "answer.md").write_text("42\n")
     until(lambda: journal(context, "session.file"))
     assert journal(context, "session.file")[0]["path"] == "answer.md"

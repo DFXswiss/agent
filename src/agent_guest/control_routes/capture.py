@@ -5,8 +5,9 @@ Attached through ``SESSION_EVENTS`` of GST-02 (``sessions.py``), no change to th
 * ``sandbox_ready`` - the workspace scanner starts (index file or baseline, ``scanner.py``) with its thread: every
   ``SCAN_SECONDS`` it checks the file hints of PostToolUse (``control_routes/hooks.py:FILE_HINTS``) and scans
 * ``agent_starting`` - the tmux session exists: terminal recorder (``recorder.py``) and transcript follower
-  (``transcript.py``) of this run start; the first pane output or the transcript file moves the session to
-  ``prompt_delivering`` (``transcript.tui_up``)
+  (``transcript.py``) of this run start; the transcript file names the Claude session (``transcript.tui_up``); the
+  move to ``prompt_delivering`` is the delivery watcher's alone (``delivery.py``: TUI up and platform tools listed,
+  HOT-09)
 * ``agent_ended`` - the pane command ended (exit, stop, suspend, failure): recorder and follower read and write what
   is left, the scanner makes a last pass; everything of the session stops
 
@@ -47,7 +48,7 @@ from agent_guest.policy import JS_WHITESPACE, lexical
 from agent_guest.recorder import FIFO_DIR, TerminalRecorder
 from agent_guest.scanner import SCAN_SECONDS, Survey, WorkspaceScanner
 from agent_guest.state import Session, StateError
-from agent_guest.transcript import POLL_SECONDS, TranscriptFollower, tui_up
+from agent_guest.transcript import POLL_SECONDS, TranscriptFollower
 
 RUNNING_STATES = frozenset({"agent_starting", "prompt_delivering", "working", "idle"})
 # States in which a session's workspace may change; any other state ends its capture.
@@ -188,7 +189,6 @@ class Capture:
                 self.run,
                 fifo_dir=self.fifo_dir,
                 monotonic=self.monotonic,
-                on_output=lambda: _logged("tui up", lambda: tui_up(journal, state, session_id)),
             )
             try:
                 recorder.start()

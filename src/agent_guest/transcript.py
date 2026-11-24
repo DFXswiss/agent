@@ -33,9 +33,9 @@ ID) is switched to after the old one was read to its end. Records already in the
 
 Work per poll is bounded (``MAX_READ`` bytes; text of one message beyond ``MAX_TEXT`` is not kept). When the Claude
 session ID - the name of the transcript file being followed - is first seen, the follower stores it in the session
-row and journals ``session.state`` with it: ``prompt_delivering`` while the session is still ``agent_starting`` (05
-section 6.1 step 6: the TUI is up; Claude Code 2.1.330 sends no ``SessionStart`` hook, ADR-029), otherwise the current
-state again. ``tui_up`` is shared with the recorder, whose first pane output is the other "TUI up" signal.
+row (``tui_up``); a session past ``agent_starting`` journals its current state again with the ID. A starting session
+is only stored: the move ``agent_starting`` -> ``prompt_delivering`` belongs to the watcher of ``delivery.py`` alone,
+which waits for the platform tools as well (HOT-09, ADR-068), and its record carries the stored ID.
 """
 
 from __future__ import annotations
@@ -341,25 +341,24 @@ def entries(lines: list[bytes]) -> list[dict[str, Any]]:
 
 
 def tui_up(journal: Journal, state: State, session_id: str, claude_session_id: str | None = None) -> bool:
-    """Journal ``prompt_delivering`` (while ``agent_starting``) and/or a new Claude session ID; ``True`` if written."""
+    """Store a new Claude session ID: journaled with the current state when the session is past ``agent_starting``,
+    only stored while it starts (module docstring); ``True`` if something was written."""
     with journal.transaction() as db:
         row = db.execute("SELECT state, claude_session_id FROM session WHERE id = ?", (session_id,)).fetchone()
         session = state.session(session_id)
         if row is None or session is None:
             return False
         current, known = row
-        new_id = claude_session_id is not None and claude_session_id != known
-        if current == "agent_starting":
-            target = "prompt_delivering"
-        elif new_id and current in REPEATABLE_STATES:
-            target = current
-        else:
+        if claude_session_id is None or claude_session_id == known:
             return False
-        stored = claude_session_id if new_id else known
+        if current == "agent_starting":
+            state.save_session(replace(session, claude_session_id=claude_session_id), db)
+            return True
+        if current not in REPEATABLE_STATES:
+            return False
+        target, stored = current, claude_session_id
         state.save_session(replace(session, state=target, claude_session_id=stored), db)
-        body: dict[str, Any] = {"state": target, "at": iso_ms(journal.clock.now())}
-        if stored is not None:
-            body["claude_session_id"] = stored
+        body: dict[str, Any] = {"state": target, "at": iso_ms(journal.clock.now()), "claude_session_id": stored}
         journal.insert(db, "session.state", body, session_id)
         return True
 

@@ -5,7 +5,8 @@
   trailing ``;`` at a chunk end, a mode character, Unicode and tabs must arrive exactly; ``Escape`` is the interrupt;
   the input box of the dummy is the TUI-ready signal.
 * Real agent: Claude Code 2.1.330 in a real session unit (GST-02's rig) against the model double, started without an
-  initial prompt: the pane watcher moves the session to ``prompt_delivering``, then a typed and a pasted multi-line
+  initial prompt: once Claude Code listed the tools of the rig's MCP stand-in and the TUI is up, the pane watcher
+  moves the session to ``prompt_delivering`` (HOT-09), then a typed and a pasted multi-line
   prompt are delivered and answered; the transcript holds the pasted text exactly.
 """
 
@@ -26,7 +27,7 @@ import pytest
 
 from agent_doubles.model import ModelDouble
 from agent_doubles.model.scenario import load_scenario
-from agent_guest import delivery, prompts, sessions, tmux
+from agent_guest import delivery, prompts, sessions, tmux, toolsready
 from agent_guest.clock import uuid7
 from agent_guest.config import load_config
 from agent_guest.control import ControlContext, ControlService
@@ -285,6 +286,7 @@ def test_interrupt_is_one_escape(dummy: DummyRig) -> None:
 
 def test_the_ready_watcher_sees_the_input_box(dummy: DummyRig) -> None:
     session_id = ready_session(dummy, "agent_starting")
+    toolsready.mark(dummy.context, session_id, 0)  # HOT-09: the agent listed the platform tools
     assert dummy.engine.watch_ready(session_id)
     assert states(dummy.context, session_id) == ["prompt_delivering"]
 

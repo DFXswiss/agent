@@ -33,19 +33,20 @@ import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
 import agent_guest
 from agent_doubles.model import ModelDouble, packaged_scenario
-from agent_guest import delivery, sessions, tmux
+from agent_guest import delivery, sessions, tmux, toolsready
 from agent_guest.clock import uuid7
 from agent_guest.config import load_config
 from agent_guest.control import ControlContext, ControlService, run_startup, startup_hooks
 from agent_guest.control_routes import capture
 from agent_guest.driver import ClaudeCodeDriver
 from agent_guest.sandbox import unit
+from agent_guest.state import StateError
 from tests.platform.guest.conftest import ControlClient
 from tests.platform.guest.sessions.conftest import request
 from tests.platform.guest_linux.conftest import LAUNCHER, SANDBOX_DIR, TEST_ROOT, Guest, ldd_paths
@@ -211,6 +212,7 @@ def make_rig(tmp_path: Path, guest: Guest) -> Iterator[Callable[[str, tuple[str,
         )
         sessions.install(context, manager)
         created.append((service, manager))
+        _Forward.contexts.append(context)
         return Rig(context, ControlClient(config.control_socket, CONTROL_TOKEN), manager, client_tmux)
 
     MCP_CONFIG.parent.mkdir(mode=0o755, exist_ok=True)
@@ -220,6 +222,7 @@ def make_rig(tmp_path: Path, guest: Guest) -> Iterator[Callable[[str, tuple[str,
     try:
         yield build
     finally:
+        _Forward.contexts.clear()
         for service, manager in created:
             for session in manager.context.state.sessions():
                 if session.state not in sessions.FINAL_STATES:
@@ -500,15 +503,59 @@ def claude_binary() -> str:
 
 
 class _Forward(http.server.BaseHTTPRequestHandler):
-    """``/model/<path>`` -> the model double ``/<path>`` (what the guest gateway does, without credentials)."""
+    """``/model/<path>`` -> the model double ``/<path>`` (what the guest gateway does, without credentials); ``/mcp``
+    stands in for the platform MCP server: ``initialize``, ``ping`` and an empty ``tools/list``, which marks the
+    starting sessions of the rigs as having their tools (HOT-09: the first prompt waits for them, ``toolsready.py``)."""
 
     protocol_version = "HTTP/1.1"
     upstream: tuple[str, int] = ("127.0.0.1", 0)
+    contexts: ClassVar[list[ControlContext]] = []
 
     def log_message(self, format: str, *args: Any) -> None:
         return
 
+    def _empty(self, status: int) -> None:
+        self.send_response(status)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _mcp(self) -> None:
+        if self.command != "POST":
+            self._empty(405)
+            return
+        length = int(self.headers.get("Content-Length") or "0")
+        message = json.loads(self.rfile.read(length) or b"{}")
+        if "id" not in message:
+            self._empty(202)
+            return
+        method = message.get("method")
+        answer: dict[str, Any] = {"jsonrpc": "2.0", "id": message["id"]}
+        if method == "initialize":
+            version = message.get("params", {}).get("protocolVersion", "2025-06-18")
+            answer["result"] = {"protocolVersion": version, "capabilities": {"tools": {"listChanged": False}},
+                                "serverInfo": {"name": "stand-in", "version": "0"}}  # fmt: skip
+        elif method == "tools/list":
+            answer["result"] = {"tools": []}
+            for context in self.contexts:
+                for session in context.state.sessions():
+                    if session.state == "agent_starting":
+                        with contextlib.suppress(StateError):
+                            toolsready.mark(context, session.id, 0)
+        elif method == "ping":
+            answer["result"] = {}
+        else:
+            answer["error"] = {"code": -32601, "message": "Method not found."}
+        body = json.dumps(answer).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _forward(self) -> None:
+        if self.path.split("?", 1)[0] == "/mcp":
+            self._mcp()
+            return
         if not self.path.startswith("/model/"):
             self.send_response(404)
             self.send_header("Content-Length", "0")

@@ -177,8 +177,8 @@ def test_the_transcript_of_the_owner_is_followed_and_planted_links_are_not(area:
     follower = transcript.TranscriptFollower(journal, state, SID, str(base), OWNER)
     assert follower.finish() == 1
     assert [body["text"] for body in records(journal, "session.output")] == ["Hello"]
-    assert records(journal, "session.state")[0] | {"at": ""} == {
-        "state": "prompt_delivering",
-        "claude_session_id": CLAUDE,
-        "at": "",
-    }
+    # HOT-09: the transcript names the Claude session; moving a starting session on is the delivery watcher's
+    assert records(journal, "session.state") == []
+    session = state.session(SID)
+    assert session is not None
+    assert (session.state, session.claude_session_id) == ("agent_starting", CLAUDE)
