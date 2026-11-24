@@ -2,9 +2,9 @@
 
 Status: Accepted (2026-11-24)
 
-Implements KONZEPT A15 (every instruction carries the verified person who gave it; GitHub actions run only with
-identities that person may use), Idee 36 (shared sessions, interventions attributed to each person) and E-19 (exclude
-the class, not the case). Amends ADR-015 (operations used the task owner's credential) and ADR-053.
+Implements KONZEPT [A15](../KONZEPT.md#a-15) (every instruction carries the verified person who gave it; GitHub
+actions run only with identities that person may use), [Idee 36](../KONZEPT.md#k-idee-36) (shared sessions,
+interventions attributed to each person) and [E-19](../KONZEPT.md#e-19) (exclude the class, not the case). Amends ADR-015 (operations used the task owner's credential) and ADR-053.
 
 ## Context
 - A personal connection must never be used on behalf of another person. Two ways allowed it:
