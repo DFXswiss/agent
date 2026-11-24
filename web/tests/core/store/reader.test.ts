@@ -1,6 +1,6 @@
 // The event reader: pending → locked → verified once log and keys are there, unverifiable entries with their code
 // (never dropped, never content), L10 refresh and fork, blocked orgs, retry, and entries evicted while being read.
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { utf8 } from '../../../src/core/encoding/bytes';
 import { newHeader, sealEvent } from '../../../src/core/crypto/event';
 import { JobRunner } from '../../../src/core/jobs';
@@ -10,7 +10,6 @@ import type { Store } from '../../../src/core/store';
 import { addKeys, orgEntry, setLog } from '../../../src/core/store/slices/orgs';
 import { actors, type Actor, idOf, TS } from '../log/world';
 import { JobHub, signedIn } from '../jobs/hub';
-import { settle } from '../net/stream';
 
 let alice: Actor, bob: Actor;
 let hub: JobHub;
@@ -30,6 +29,12 @@ beforeEach(async () => {
   reader = new EventReader(store, runner);
   current = reader;
 });
+
+/**
+ * Waits until the expectation holds: the jobs behind it verify signatures with WebCrypto, which settles after a varying
+ * number of event-loop turns (more on Linux than on macOS), so a fixed number of turns (`settle()`) is not enough.
+ */
+const eventually = (check: () => void) => vi.waitFor(check, { timeout: 5000, interval: 10 });
 
 /** Retries of failed log runs are not armed in these tests (the runner tests cover them). */
 const NO_TIMERS = { timers: { setTimeout: () => 0, clearTimeout: () => undefined } };
@@ -93,8 +98,7 @@ describe('event reader', () => {
     await hub.world.admitUser(alice, bob);
     await reader.ingest(hub.world.org, hub.world.defaultWg, [stored(1, await prompt('ahead', { lh }))]);
     expect(summary()).toEqual([[1, 'unverifiable', 'log_fork']]);
-    await settle();
-    expect(store.getState().jobs[hub.world.org]).toMatchObject({ running: null, waiting: 0 });
+    await eventually(() => expect(store.getState().jobs[hub.world.org]).toMatchObject({ running: null, waiting: 0 }));
   });
 
   it('writes nothing after a sign-out that happened while it read', async () => {
@@ -116,8 +120,7 @@ describe('event reader', () => {
     expect(entries()[0]!.header!.kind).toBe('prompt');
     expect(entries()[0]!.body).toBeNull();
     await runner.trigger('wraps', hub.world.org);
-    await settle();
-    expect(summary()).toEqual([[1, 'verified', null]]);
+    await eventually(() => expect(summary()).toEqual([[1, 'verified', null]]));
     expect(entries()[0]!.body).toEqual({ text: 'hello' });
     expect(entries()[0]!.receivedAt).toBe('2026-11-21T12:00:00.000Z');
   });
@@ -255,8 +258,7 @@ describe('event reader', () => {
     hub.fail.clear();
     // the retry of the log job (trigger `lh`, the org log unchanged) verifies the platform log
     await runner.trigger('lh', hub.world.org);
-    await settle();
-    expect(summary()).toEqual([[1, 'verified', null]]);
+    await eventually(() => expect(summary()).toEqual([[1, 'verified', null]]));
   });
 
   it('runs the log job once, not per event, when the hub has no platform log for an org with platform devices', async () => {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import sys
 import urllib.error
@@ -50,6 +51,9 @@ def make_package(tmp_path: Path, name: str, modules: dict[str, str]) -> str:
     (pkg / "__init__.py").write_text("")
     for module, text in modules.items():
         (pkg / f"{module}.py").write_text(text)
+    # The import system caches directory listings by modification time; on file systems with coarse timestamps (Linux
+    # in a VM) a package created within the same tick as the previous one stays invisible without this.
+    importlib.invalidate_caches()
     return name
 
 
