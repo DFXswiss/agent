@@ -1,4 +1,9 @@
-"""The OAuth device flow of the GitHub App (ADR-015, 05-runner.md §11.4) as GitHub answers it.
+"""The OAuth device flow of the GitHub App and of an OAuth App (ADR-015, 05-runner.md §11.4, KOR-65) as GitHub
+answers it.
+
+Two clients: ``client_id`` (the GitHub App; its tokens are GitHub App user tokens ``ghu_…``) and ``oauth_client_id``
+(an OAuth App; its tokens are OAuth tokens ``gho_…`` with the requested ``scope`` that reach every repository of the
+user, subject to the organisations' OAuth App restrictions). An unknown client ID is ``404`` as on GitHub.
 
 - ``POST /login/device/code`` (``client_id``, optional ``scope``) issues a device code and a user code
   (``XXXX-XXXX``) with ``verification_uri``, ``expires_in`` and ``interval``.
@@ -25,6 +30,7 @@ from typing import Any
 
 GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 DEFAULT_CLIENT_ID = "Iv1.0000double0000"
+DEFAULT_OAUTH_CLIENT_ID = "Ov23double00000000"
 ERROR_URI = "https://docs.github.com/developers/apps/authorizing-oauth-apps#error-codes-for-the-device-flow"
 SLOW_DOWN_STEP = 5
 DESCRIPTIONS = {
@@ -51,6 +57,7 @@ class Grant:
     device_code: str
     user_code: str
     scope: str
+    client_id: str
     issued: float
     expires_in: int
     interval: int
@@ -71,13 +78,17 @@ class DeviceFlow:
     """Device codes and their state. `issue_token(login)` creates and registers a token for a user."""
 
     def __init__(
-        self, clock: Callable[[], float], issue_token: Callable[[str], str], web_url: Callable[[], str]
+        self,
+        clock: Callable[[], float],
+        issue_token: Callable[[str, str, str], str],
+        web_url: Callable[[], str],
     ) -> None:
         self._lock = threading.Lock()
         self._clock = clock
         self._issue_token = issue_token
         self._web_url = web_url
         self.client_id = DEFAULT_CLIENT_ID
+        self.oauth_client_id = DEFAULT_OAUTH_CLIENT_ID
         self.interval = 5
         self.expires_in = 900
         self.enabled = True
@@ -85,15 +96,18 @@ class DeviceFlow:
         self._count = 0
 
     def configure(self, raw: Any) -> None:
-        """Apply ``device_flow`` seed settings: ``client_id``, ``interval``, ``expires_in``, ``enabled``."""
+        """Apply ``device_flow`` seed settings: ``client_id``, ``oauth_client_id``, ``interval``, ``expires_in``,
+        ``enabled``."""
         if not isinstance(raw, dict):
             raise DeviceFlowError("device_flow must be an object")
-        unknown = sorted(set(raw) - {"client_id", "interval", "expires_in", "enabled"})
+        unknown = sorted(set(raw) - {"client_id", "oauth_client_id", "interval", "expires_in", "enabled"})
         if unknown:
             raise DeviceFlowError(f"device_flow: unknown keys {unknown}")
         client_id = raw.get("client_id", self.client_id)
-        if not isinstance(client_id, str) or not client_id:
-            raise DeviceFlowError("device_flow.client_id must be a non-empty string")
+        oauth_client_id = raw.get("oauth_client_id", self.oauth_client_id)
+        for name, value in (("client_id", client_id), ("oauth_client_id", oauth_client_id)):
+            if not isinstance(value, str) or not value:
+                raise DeviceFlowError(f"device_flow.{name} must be a non-empty string")
         numbers = {}
         for key in ("interval", "expires_in"):
             value = raw.get(key, getattr(self, key))
@@ -104,7 +118,7 @@ class DeviceFlow:
         if not isinstance(enabled, bool):
             raise DeviceFlowError("device_flow.enabled must be a boolean")
         with self._lock:
-            self.client_id, self.enabled = client_id, enabled
+            self.client_id, self.oauth_client_id, self.enabled = client_id, oauth_client_id, enabled
             self.interval, self.expires_in = numbers["interval"], numbers["expires_in"]
 
     def reset(self) -> None:
@@ -113,13 +127,15 @@ class DeviceFlow:
             self._grants.clear()
             self._count = 0
             self.client_id, self.interval, self.expires_in, self.enabled = DEFAULT_CLIENT_ID, 5, 900, True
+            self.oauth_client_id = DEFAULT_OAUTH_CLIENT_ID
 
     # --- the two public endpoints --------------------------------------------------------------------
 
     def request_code(self, params: dict[str, str]) -> tuple[int, dict[str, Any]]:
         """``POST /login/device/code``: status and answer."""
         with self._lock:
-            if params.get("client_id") != self.client_id:
+            client_id = params.get("client_id")
+            if client_id not in (self.client_id, self.oauth_client_id):
                 return 404, {"error": "Not Found"}
             if not self.enabled:
                 return 400, error("device_flow_disabled")
@@ -127,7 +143,13 @@ class DeviceFlow:
             digest = hashlib.sha256(f"device-code-{self._count}".encode()).hexdigest()
             user_code = f"{digest[:4]}-{digest[4:8]}".upper()
             grant = Grant(
-                digest[:40], user_code, params.get("scope", ""), self._clock(), self.expires_in, self.interval
+                digest[:40],
+                user_code,
+                params.get("scope", "") if client_id == self.oauth_client_id else "",
+                str(client_id),
+                self._clock(),
+                self.expires_in,
+                self.interval,
             )
             self._grants[grant.device_code] = grant
             return 200, {
@@ -144,7 +166,9 @@ class DeviceFlow:
         extra: dict[str, Any] = {}
         with self._lock:
             grant = self._grants.get(params.get("device_code", ""))
-            if params.get("client_id") != self.client_id:
+            if params.get("client_id") not in (self.client_id, self.oauth_client_id) or (
+                grant is not None and params.get("client_id") != grant.client_id
+            ):
                 code = "incorrect_client_credentials"
             elif params.get("grant_type") != GRANT_TYPE:
                 code = "unsupported_grant_type"
@@ -156,9 +180,12 @@ class DeviceFlow:
                 return error(code, **extra)
             assert grant is not None
             grant.used = True
-            login, scope = grant.login, grant.scope
+            login, scope, client = grant.login, grant.scope, grant.client_id
+            kind = "oauth" if client == self.oauth_client_id else "app"
         assert login is not None
-        return {"access_token": self._issue_token(login), "token_type": "bearer", "scope": scope}
+        # GitHub names the granted scopes comma separated
+        granted = ",".join(scope.split())
+        return {"access_token": self._issue_token(login, kind, scope), "token_type": "bearer", "scope": granted}
 
     def _decide(self, grant: Grant) -> tuple[str | None, dict[str, Any]]:
         """The error code of a poll for `grant` (None when the token is due) and extra answer fields."""

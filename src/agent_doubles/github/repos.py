@@ -23,7 +23,9 @@ reset (``POST /_double/reset``) empties everything. Format (every key optional):
                        "pulls": [{"title": "...", "head": "feature", "base": "main", "draft": true,
                                   "user": "octo-user", "labels": ["bug"]}],
                        "comments": [{"number": 1, "body": "...", "user": "octo-user"}]}],
-     "device_flow": {"client_id": "...", "interval": 5, "expires_in": 900},
+     "organizations": [{"login": "third-org", "oauth_restricted": true, "oauth_approved": ["<client id>"],
+                        "classic_forbidden": false}],
+     "device_flow": {"client_id": "...", "oauth_client_id": "...", "interval": 5, "expires_in": 900},
      "faults": [...], "expectations": [...]}
 
 Issues and pull requests share one number sequence per repository, issues first. An issue is ``open`` by default; a
@@ -35,13 +37,20 @@ parent (``null`` deletes a path); a branch without ``from`` starts empty. An ins
 is not listed in ``users`` is visible to that user; repositories of an installation with
 ``repository_selection: "all"`` are all repositories of its account.
 
-A token is a string (a GitHub App user token, ``ghu_…``) or an object; only ``token`` is required. ``kind`` is
-``app`` (default), ``classic`` or ``fine_grained`` (personal access tokens); ``scopes`` are the OAuth scopes of a
-classic token; ``repositories`` limits a personal access token to these full names (default: every repository);
+A token is a string (a GitHub App user token, ``ghu_…``) or an object; only ``token`` is required. ``kind`` is ``app``
+(default), ``oauth`` (an OAuth App token such as the GitHub CLI's, ``gho_…``, of the OAuth App ``client``; it reaches
+the user's own repositories and those named in ``collaborator``, like GitHub's ``repo`` scope reaches everything the
+account can reach), ``classic`` or ``fine_grained`` (personal access tokens); ``scopes`` are the OAuth scopes of a
+classic or OAuth token; ``repositories`` limits a personal access token to these full names (default: every repository);
 ``revoked: true`` makes every request ``401 Bad credentials``; ``sso`` names organisations that enforce SAML single
 sign-on for which the token is not authorized. With an App token a repository is accessible when one of the
 installations visible to the token's user covers it; a personal access token reaches its repositories without an
-installation; anything else is ``404``.
+installation; anything else is ``404``. An organisation (``organizations``, KOR-65) may restrict OAuth Apps
+(``oauth_restricted``; GitHub's default for new organisations): an OAuth token of a client not in ``oauth_approved``
+gets ``403`` with GitHub's restriction message for a private repository of it and for every write; ``classic_forbidden``
+refuses classic tokens there with ``403`` (the organisation's personal access token policy). ``POST
+/_double/organizations`` changes an organisation later (an owner's approval). An organisation the seed does not name
+restricts nothing.
 ``personal_tokens`` (KOR-27) are short for classic tokens with the scope ``repo`` that reach the repositories the
 user owns and those named in ``collaborator`` (a name that is not seeded is simply not reachable).
 
@@ -82,7 +91,7 @@ ACCOUNT_TYPES = frozenset({"User", "Organization"})
 PULL_STATES = frozenset({"open", "closed"})
 ISSUE_STATES = PULL_STATES
 STATE_REASONS = frozenset({"completed", "not_planned", "reopened", "duplicate"})
-TOKEN_KINDS = frozenset({"app", "classic", "fine_grained"})
+TOKEN_KINDS = frozenset({"app", "oauth", "classic", "fine_grained"})
 LABEL_COLOR = "ededed"
 LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 REPO_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
@@ -193,7 +202,10 @@ class Token:
     revoked: bool = False
     sso: list[str] = field(default_factory=list)
     collaborator: list[str] | None = None
-    """Set for ``personal_tokens``: the token reaches only the user's own repositories and these (lower case)."""
+    """Set for ``personal_tokens`` and OAuth tokens: the token reaches only the user's own repositories and these
+    (lower case)."""
+    client: str | None = None
+    """The OAuth App of an ``oauth`` token (its client ID)."""
 
     def reaches(self, repo: Repo) -> bool:
         """Whether this personal access token names `repo`."""
@@ -207,6 +219,20 @@ class Token:
         if self.kind == "fine_grained":
             return True
         return "repo" in self.scopes or ("public_repo" in self.scopes and not repo.private)
+
+
+@dataclass
+class Organization:
+    """An organisation's access policies (KOR-65): OAuth App restrictions with the approved client IDs, and whether
+    classic personal access tokens are refused."""
+
+    login: str
+    oauth_restricted: bool = False
+    oauth_approved: list[str] = field(default_factory=list)
+    classic_forbidden: bool = False
+
+    def refuses_oauth(self, client: str | None) -> bool:
+        return self.oauth_restricted and client not in self.oauth_approved
 
 
 @dataclass
@@ -480,6 +506,7 @@ class World:
             self.tokens: dict[str, Token] = {}
             self.installations: dict[int, Installation] = {}
             self.repos: dict[str, Repo] = {}
+            self.organizations: dict[str, Organization] = {}
             self._tick = 0
             self._ids = 1000
 
@@ -502,9 +529,34 @@ class World:
         found = self.tokens.get(token)
         return self.users[found.login] if found is not None and not found.revoked else None
 
-    def add_token(self, login: str, token: str) -> None:
-        """Give user `login` (lower case) a GitHub App user token."""
+    def add_token(self, login: str, token: str, kind: str = "app", scopes: list[str] | None = None) -> None:
+        """Give user `login` (lower case) a GitHub App user token, or an OAuth token (`kind` ``oauth``) of the
+        double's OAuth App with `scopes` that reaches the user's own and collaborator repositories."""
+        if kind == "oauth":
+            reach = [name.lower() for name in self.users[login].collaborator]
+            self.tokens[token] = Token(token, login, kind, list(scopes or []), collaborator=reach)
+            return
         self.tokens[token] = Token(token, login)
+
+    def organization(self, login: str) -> Organization | None:
+        return self.organizations.get(login.lower())
+
+    def set_organization(self, raw: Any) -> Organization:
+        """Add or change an organisation's policies (seed item or ``POST /_double/organizations``)."""
+        data = _object(raw, "organization")
+        _check_keys(data, {"login", "oauth_restricted", "oauth_approved", "classic_forbidden"}, "organization")
+        login = _text(data, "login", "organization")
+        if not LOGIN_RE.match(login):
+            raise SeedError(f"invalid organization login {login!r}")
+        known = self.organizations.get(login.lower()) or Organization(login)
+        found = Organization(
+            login,
+            _bool(data, "oauth_restricted", "organization", known.oauth_restricted),
+            _names(data, "oauth_approved", "organization") if "oauth_approved" in data else known.oauth_approved,
+            _bool(data, "classic_forbidden", "organization", known.classic_forbidden),
+        )
+        self.organizations[login.lower()] = found
+        return found
 
     def revoke_token(self, token: str) -> bool:
         """Forget a token (``POST /credentials/revoke``); True when it was known."""
@@ -571,8 +623,13 @@ class World:
     def seed(self, payload: Any) -> None:
         """Add seed data (see the module docstring); device flow, faults and expectations are read by the server."""
         data = _object(payload, "seed")
-        _check_keys(data, {"users", "installations", "repositories", "device_flow", "faults", "expectations"}, "seed")
+        _check_keys(
+            data,
+            {"users", "installations", "repositories", "organizations", "device_flow", "faults", "expectations"},
+            "seed",
+        )
         saved = (dict(self.users), dict(self.tokens), dict(self.installations), dict(self.repos), self._tick, self._ids)
+        organizations = dict(self.organizations)
         try:
             for raw in _list(data.get("users", []), "users"):
                 self._seed_user(_object(raw, "user"))
@@ -580,9 +637,12 @@ class World:
                 self._seed_repo(_object(raw, "repository"))
             for raw in _list(data.get("installations", []), "installations"):
                 self._seed_installation(_object(raw, "installation"))
+            for raw in _list(data.get("organizations", []), "organizations"):
+                self.set_organization(raw)
         except SeedError:
             # A refused seed leaves nothing behind (seeding only adds new objects, so restoring the tables suffices).
             self.users, self.tokens, self.installations, self.repos, self._tick, self._ids = saved
+            self.organizations = organizations
             raise
 
     def _seed_user(self, data: dict[str, Any]) -> None:
@@ -611,6 +671,8 @@ class World:
             )
         for raw in _list(data.get("tokens", []), "user.tokens"):
             token = self._seed_token(user.login.lower(), raw)
+            if token.kind == "oauth":
+                token.collaborator = [name.lower() for name in user.collaborator]
             self._add_seeded(token)
 
     def _add_seeded(self, token: Token) -> None:
@@ -623,7 +685,7 @@ class World:
         if isinstance(raw, str):
             raw = {"token": raw}
         data = _object(raw, "token")
-        _check_keys(data, {"token", "kind", "scopes", "repositories", "revoked", "sso"}, "token")
+        _check_keys(data, {"token", "kind", "scopes", "repositories", "revoked", "sso", "client"}, "token")
         token = data.get("token")
         if not isinstance(token, str) or not token:
             raise SeedError("user.tokens must be non-empty strings")
@@ -643,6 +705,7 @@ class World:
             repositories,
             _bool(data, "revoked", "token", False),
             [org.lower() for org in _names(data, "sso", "token")],
+            client=_optional_text(data, "client", "token"),
         )
 
     def _seed_installation(self, data: dict[str, Any]) -> None:

@@ -27,7 +27,10 @@ without the installation permission ``403 Resource not accessible by integration
 (``403 Resource not accessible by personal access token``), and ``GET /user`` names its scopes in ``X-OAuth-Scopes``.
 ``personal_tokens`` of the seed
 (KOR-27) are classic tokens with the scope ``repo``. A repository of an organisation in the token's ``sso`` list is
-``403`` with ``X-GitHub-SSO`` (SAML enforcement). Unknown routes answer ``404``, are journaled and are
+``403`` with ``X-GitHub-SSO`` (SAML enforcement; the authorisation URL is on the double's own web origin). An OAuth
+token (``gho_``, the device flow of the OAuth App or a seeded one) reaches every repository of its user; an
+organisation's OAuth App restriction and classic-token policy answer ``403`` with GitHub's messages (KOR-65).
+Unknown routes answer ``404``, are journaled and are
 failures; so are invalid JSON bodies, forced ref updates (the runner never forces) and a codeload request that
 carries an ``Authorization`` header (a token forwarded across the redirect).
 
@@ -38,7 +41,8 @@ Control routes (not journaled, not counted): ``GET /_double/state``, ``GET /_dou
 ``POST /_double/reset`` (empties the world, the plan, the device grants, the failures and the journal in memory),
 ``POST /_double/seed`` (`agent_doubles.github.repos`), ``GET|POST /_double/faults`` (``{"faults": [...]}``),
 ``POST /_double/expect`` (``{"expectations": [...]}``), ``GET|POST /_double/device`` (grants; user decision),
-``POST /_double/clock`` (``{"advance": seconds}``), ``POST /_double/tokens`` (``{"revoke": "<token>"}``) and
+``POST /_double/clock`` (``{"advance": seconds}``), ``POST /_double/tokens`` (``{"revoke": "<token>"}``),
+``POST /_double/organizations`` (an organisation's OAuth App and classic-token policies, KOR-65) and
 ``GET /_double/repos/{owner}/{repo}`` (refs, issues, pull requests and comments for assertions).
 """
 
@@ -112,6 +116,17 @@ SAML_MESSAGE = (
     "organization."
 )
 SAML_DOCS = "https://docs.github.com/articles/authenticating-to-a-github-organization-with-saml-single-sign-on/"
+OAUTH_RESTRICTED_MESSAGE = (
+    "Although you appear to have the correct authorization credentials, the `{org}` organization has enabled OAuth App"
+    " access restrictions, meaning that data access to third-parties is limited. For more information on these"
+    " restrictions, including how to enable this app, visit"
+    " https://docs.github.com/articles/restricting-access-to-your-organization-s-data/"
+)
+OAUTH_DOCS = "https://docs.github.com/articles/restricting-access-to-your-organization-s-data/"
+CLASSIC_FORBIDDEN_MESSAGE = (
+    "`{org}` forbids access via a personal access token (classic). Please use a GitHub App, OAuth App, or a personal"
+    " access token with fine-grained permissions."
+)
 ISSUE_SORTS = frozenset({"created", "updated", "comments"})
 PULL_SORTS = frozenset({"created", "updated", "popularity", "long-running"})
 DEVICE_PAGE = (
@@ -403,12 +418,17 @@ class GitHubDouble:
             ("x-ratelimit-resource", "core"),
         ]
 
-    def _issue_token(self, login: str) -> str:
+    def _issue_token(self, login: str, kind: str = "app", scope: str = "") -> str:
+        """A new token of the device flow: a GitHub App user token (``ghu_``) or, of the OAuth App, an OAuth token
+        (``gho_``) with the requested scopes (KOR-65)."""
         with self.world.lock:
             self._token_count += 1
             digest = render.node_id("token", f"{login}:{self._token_count}")
-            token = "ghu_" + re.sub(r"[^A-Za-z0-9]", "", digest + "0" * 36)[:36]
-            self.world.add_token(login.lower(), token)
+            prefix = "gho_" if kind == "oauth" else "ghu_"
+            token = prefix + re.sub(r"[^A-Za-z0-9]", "", digest + "0" * 36)[:36]
+            self.world.add_token(login.lower(), token, kind, scope.split())
+            if kind == "oauth":
+                self.world.tokens[token].client = self.device.oauth_client_id
             return token
 
     def download_token(self, repo: Repo, sha: str) -> str:
@@ -746,10 +766,11 @@ class _Handler(DoubleHandler):
         token = call.the_token
         owner = call.params["owner"]
         if owner.lower() in token.sso:
-            sso = f"required; url=https://github.com/orgs/{owner}/sso?authorization_request=x"
+            sso = f"required; url={self.double.served_url}/orgs/{owner}/sso?authorization_request=x"
             raise Reply(403, render.error_body(403, SAML_MESSAGE, docs=SAML_DOCS), (("x-github-sso", sso),))
         call.repo = repo = world.repo(owner, call.params["repo"])
         needed = WRITE_PERMISSIONS.get(call.route.name)
+        self._check_policies(token, owner, repo, needed is not None)
         if token.kind != "app":
             if repo is None or not token.reaches(repo):
                 raise not_found()
@@ -761,6 +782,16 @@ class _Handler(DoubleHandler):
             raise not_found()
         if needed is not None and inst.permissions.get(needed) != "write":
             raise Reply(403, render.error_body(403, "Resource not accessible by integration"))
+
+    def _check_policies(self, token: Token, owner: str, repo: Repo | None, write: bool) -> None:
+        """An organisation's restriction of OAuth Apps and of classic tokens (KOR-65), as GitHub answers it."""
+        org = self.double.world.organization(owner)
+        if org is None or repo is None:
+            return
+        if token.kind == "oauth" and org.refuses_oauth(token.client) and (repo.private or write):
+            raise Reply(403, render.error_body(403, OAUTH_RESTRICTED_MESSAGE.format(org=org.login), docs=OAUTH_DOCS))
+        if token.kind == "classic" and org.classic_forbidden:
+            raise Reply(403, render.error_body(403, CLASSIC_FORBIDDEN_MESSAGE.format(org=org.login)))
 
     def _can_push(self, call: Call, repo: Repo) -> bool:
         """Whether the token may push to `repo` (``permissions.push`` of repository answers)."""
@@ -836,7 +867,7 @@ class _Handler(DoubleHandler):
         user = call.the_user
         token = call.the_token
         headers = []
-        if token.kind == "classic":
+        if token.kind in {"classic", "oauth"}:
             headers = [("x-oauth-scopes", ", ".join(token.scopes)), ("x-accepted-oauth-scopes", "")]
         return 200, render.authenticated_user(self.double.urls, user, self.double.world.base_time), headers
 
@@ -1304,6 +1335,7 @@ class _Handler(DoubleHandler):
             "/_double/device": ("GET", "POST"),
             "/_double/clock": ("POST",),
             "/_double/tokens": ("POST",),
+            "/_double/organizations": ("POST",),
         }
         inspect = re.match(r"^/_double/repos/([^/]+)/([^/]+)$", path)
         allowed = ("GET",) if inspect else routes.get(path)
@@ -1345,6 +1377,7 @@ class _Handler(DoubleHandler):
             ("POST", "/_double/device"): lambda: double.device.control(body, self._known_login),
             ("POST", "/_double/clock"): lambda: self._advance(body),
             ("POST", "/_double/tokens"): lambda: self._tokens(body),
+            ("POST", "/_double/organizations"): lambda: self._organizations(body),
         }
         return 200, actions[(self.command, path)]()
 
@@ -1382,6 +1415,18 @@ class _Handler(DoubleHandler):
         with self.double.world.lock:
             self.double.world.revoke(token)
         return self.double.state()
+
+    def _organizations(self, body: Any) -> dict[str, Any]:
+        """``POST /_double/organizations``: add or change an organisation's policies (KOR-65), e.g. an owner's
+        approval of the OAuth App: ``{"login": "third-org", "oauth_approved": ["<client id>"]}``."""
+        with self.double.world.lock:
+            found = self.double.world.set_organization(body)
+        return {
+            "login": found.login,
+            "oauth_restricted": found.oauth_restricted,
+            "oauth_approved": list(found.oauth_approved),
+            "classic_forbidden": found.classic_forbidden,
+        }
 
     def _known_login(self, login: str) -> str | None:
         world = self.double.world
