@@ -15,7 +15,8 @@
 
 Availability (`available`): slots configured, a ready work image, and the boundary check (`boundary_ok`, the host
 filter; always true in `TEST_MODE` self mode). Lima calls are synchronous and run in threads; one lock per VM
-serialises its start, stop and delete.
+serialises its start, stop and delete. A failed Lima call is logged with its code and Lima's last error line
+(`lima="..."`, at most `LIMA_REASON_LIMIT` characters), so the cause is in the runner log (HOT-18).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 import secrets
 import tempfile
 import time
@@ -58,6 +60,9 @@ CALL_MARGIN = 5.0
 # (`agent_guest.mcp_tools._forward`); the runner keeps `ANSWER_RESERVE` of that budget for its own answer.
 GUEST_MARGIN = 5.0
 GUEST_MAX = 33.0
+LIMA_REASON_LIMIT = 200
+_LIMA_MESSAGE = re.compile(r'\bmsg="((?:[^"\\]|\\.)*)"')
+_LIMA_PROBLEM = re.compile(r'^(?:time="[^"]*"\s+)?level=(?:fatal|error)\b')
 ANSWER_RESERVE = 3.0
 BROWSE_RESERVE = 8.0
 SYNC_TIMEOUT = 600.0
@@ -78,6 +83,25 @@ RUN_COMMAND_LIMIT = 4096
 RUN_OUTPUT_LIMIT = 65536
 BROWSE_COMMAND = "/usr/local/bin/workvm-browse"
 BROWSE_TIMEOUT = 120
+
+
+def lima_reason(detail: str) -> str:
+    """Lima's last error line of a failed call's stderr tail: the message of the last `level=fatal|error` line, else
+    the last line; one line of printable characters, at most `LIMA_REASON_LIMIT` characters. The tail may repeat
+    arguments of the call; those of the work VMs (instance names, `--set` sizes, port, resolvers) hold no secret."""
+    lines = [line.strip() for line in detail.splitlines() if line.strip()]
+    problems = [line for line in lines if _LIMA_PROBLEM.search(line)]
+    line = (problems or lines or [""])[-1]
+    if match := _LIMA_MESSAGE.search(line):
+        line = re.sub(r"\\(.)", r"\1", match.group(1))
+    line = " ".join("".join(char if char.isprintable() else " " for char in line).split())
+    return line if len(line) <= LIMA_REASON_LIMIT else line[: LIMA_REASON_LIMIT - 3] + "..."
+
+
+def failure(error: RunnerError) -> str:
+    """`code=<code>` of a failed work VM step, with Lima's last error line when Lima gave one."""
+    reason = lima_reason(error.detail) if isinstance(error, LimaError) else ""
+    return f"code={error.code}" + (f" lima={json.dumps(reason)}" if reason else "")
 
 
 @dataclass(frozen=True)
@@ -349,7 +373,7 @@ class WorkVms:
         try:
             await self._clone_and_start(vm, vm.size)
         except (LimaError, WorkVmError) as error:
-            self.deps.log(f"runner.workvm start_failed workvm_id={vm.id} code={error.code}")
+            self.deps.log(f"runner.workvm start_failed workvm_id={vm.id} {failure(error)}")
             await self._remove(vm, reason="failed")
             raise OperationFailed("upstream_error", retryable=True, message="The work VM did not start.") from None
         running = await records.update(self.deps.db, vm.id, state="running", last_used_at=self.deps.now())
@@ -460,7 +484,7 @@ class WorkVms:
         try:
             await self._clone_and_start(self._probe(entry), POOL_SIZE)
         except (LimaError, WorkVmError) as error:
-            self.deps.log(f"runner.workvm pool_failed slot={slot} code={error.code}")
+            self.deps.log(f"runner.workvm pool_failed slot={slot} {failure(error)}")
             await self._drop(entry)
             return 0
         if not await records.pool_ready(self.deps.db, entry.lima_name, self.deps.now()):
@@ -481,7 +505,7 @@ class WorkVms:
         try:
             await asyncio.to_thread(self.deps.lima_for(entry.slot).delete, entry.lima_name)
         except LimaError as error:
-            self.deps.log(f"runner.workvm pool_delete_failed slot={entry.slot} code={error.code}")
+            self.deps.log(f"runner.workvm pool_delete_failed slot={entry.slot} {failure(error)}")
 
     async def _disk_fits(self, disk_gib: int) -> bool:
         """The disk of a new VM fits the volume quota (always when no quota is configured)."""
@@ -551,7 +575,7 @@ class WorkVms:
         try:
             await asyncio.to_thread(lima.delete, vm.lima_name)
         except LimaError as error:
-            self.deps.log(f"runner.workvm delete_failed workvm_id={vm.id} code={error.code}")
+            self.deps.log(f"runner.workvm delete_failed workvm_id={vm.id} {failure(error)}")
         await records.update(self.deps.db, vm.id, state="deleted", deleted_at=self.deps.now(), delete_reason=reason)
         self.last_call.pop(vm.id, None)
         for job_id in [job_id for job_id, run in self.runs.items() if run.workvm_id == vm.id]:

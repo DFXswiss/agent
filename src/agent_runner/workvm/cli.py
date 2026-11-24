@@ -12,10 +12,11 @@
 
 `install` (root) builds everything from the pure functions of `accounts` and `firewall`: the APFS volume
 `accounts.VOLUME_NAME` at `accounts.HOME_ROOT` (skipped when that path is already a mount point), the slot group and
-the slot accounts `<prefix>wvm00` ... (skipped when present; new IDs are the smallest free UID/GID from `dscl`), the
-`limactl` wrapper (0755), the sudoers rule (0440, checked by `visudo` before it is written) and the host filter
-(`firewall.install_plan` / `firewall.apply`: anchor files, the root egress watcher and its LaunchDaemon, the
-fail-closed anchor `com.apple/000.agent.workvm` loaded alone - the main ruleset and `/etc/pf.conf` are never touched).
+the slot accounts `<prefix>wvm00` ... (when present, only their `lima/_config` is given back to them; new IDs are
+the smallest free UID/GID from `dscl`), the `limactl` wrapper (0755), the sudoers rule (0440, checked by `visudo`
+before it is written) and the host filter (`firewall.install_plan` / `firewall.apply`: anchor files, the root egress
+watcher and its LaunchDaemon, the fail-closed anchor `com.apple/000.agent.workvm` loaded alone - the main ruleset and
+`/etc/pf.conf` are never touched).
 `install` and `install --plan` first run `firewall.preflight`: without Apple's hook in the running main ruleset the
 installation is refused (`workvm_firewall_unhooked`). Egress is the device's own Cloudflare client (see `firewall`).
 Every written file belongs to root:wheel. One fact per step: `runner.workvm.install step=<step> ...`, then
@@ -126,6 +127,7 @@ class Machine:
     remove_file: firewall.RemoveFile
     exists: Callable[[str], bool]
     remove_dir: Callable[[str], None]
+    give_lima_config: Callable[[str, int, int], str]
 
 
 def default_machine() -> Machine:
@@ -139,6 +141,7 @@ def default_machine() -> Machine:
         remove_file=remove_file,
         exists=os.path.lexists,
         remove_dir=remove_empty_dir,
+        give_lima_config=accounts.give_lima_config,
     )
 
 
@@ -321,17 +324,22 @@ def _install_group(run: firewall.Run, prefix: str, used: set[int]) -> tuple[str,
 
 
 def _install_accounts(
-    run: firewall.Run, planned: Sequence[tuple[int, str, int]], group: str, gid: int, used: set[int]
+    machine: Machine, planned: Sequence[tuple[int, str, int]], group: str, gid: int, used: set[int]
 ) -> tuple[list[firewall.Slot], int]:
-    """The slots (present accounts kept, missing ones created) and the number created."""
+    """The slots (present accounts kept, missing ones created) and the number created. A present account's
+    `lima/_config` is given to the account again (`accounts.give_lima_config`, installations before HOT-18)."""
+    run = machine.run
     slots: list[firewall.Slot] = []
     created = 0
     for index, account, port in planned:
         uid = _uid(run, account)
+        home = f"{accounts.HOME_ROOT}/{account}"
         if uid is None:
             uid = accounts.free_uid(used)
-            _run_all(run, accounts.create_commands(account, uid, gid, group, f"{accounts.HOME_ROOT}/{account}"))
+            _run_all(run, accounts.create_commands(account, uid, gid, group, home))
             created += 1
+        else:
+            machine.give_lima_config(home, uid, gid)
         used.add(uid)
         slots.append(firewall.Slot(index=index, account=account, uid=uid, ssh_port=port))
     return slots, created
@@ -425,7 +433,7 @@ def cmd_install(args: argparse.Namespace, ctx: Any) -> int:
     used.add(gid)
     out.fact("workvm.install", {"step": "group", "action": action, "name": group, "gid": gid})
 
-    slots, created = _install_accounts(run, planned, group, gid, used)
+    slots, created = _install_accounts(machine, planned, group, gid, used)
     out.fact("workvm.install", {"step": "accounts", "count": len(slots), "created": created})
 
     machine.write_file(accounts.WRAPPER_PATH, accounts.wrapper_script(names), 0o755)

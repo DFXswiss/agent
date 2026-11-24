@@ -70,7 +70,10 @@ sudo AGENT_RUNNER=<path>/agent-runner images/workvm/host-rehearsal.sh \
 
 7. After a restart of the device (and once after the installation, as a baseline):
    `sudo images/workvm/after-reboot-check.sh --accounts <n> --prefix <prefix>`. It checks the volume mount, the
-   homes, the watcher, the anchor and the hook; exit 0 only when all pass.
+   homes and that each `lima/_config` belongs to its slot account (0700), the watcher, the anchor and the hook; exit 0
+   only when all pass. A `lima_config_…` failure (an installation before HOT-18): run `workvm install` again. It gives
+   `_config` to the slot accounts and creates a missing one. It refuses (`name=lima_config`) when `lima/` or `_config`
+   is a symbolic link; remove the link by hand and run it again.
 
 Sizing: a standard work VM holds 8 GiB RAM and up to 50 GiB disk, `large` 16 GiB/100 GiB. Work VMs share the RAM
 budget with the workgroup VMs. Quota = slots × 100 GiB + 50 GiB. Start with few slots (e.g. 4) and raise the count

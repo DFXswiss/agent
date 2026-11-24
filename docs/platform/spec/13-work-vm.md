@@ -124,8 +124,9 @@ against a closed schema and treats any other answer as `unavailable`.
 - `AGENT_RUNNER_WORKVM_SLOTS` (default 0 = no work VMs; production e.g. 24) macOS accounts `<prefix>wvm00` …,
   created by `agent-runner workvm install` (root): no login shell, hidden, own home `/var/agent-workvm/<account>`
   (0700) holding the Lima home `lima/` (short socket paths), on the APFS volume `AgentWorkVM` with a quota
-  (`WORKVM_VOLUME_QUOTA_GIB`) so work VMs can never fill the device's main volume. `_config/` of each Lima home is
-  root-owned and read-only (no `override.yaml` by a compromised host agent).
+  (`WORKVM_VOLUME_QUOTA_GIB`) so work VMs can never fill the device's main volume. `_config/` of each Lima home
+  belongs to the slot account (0700) like in any Lima home: Lima writes `_config/networks.yaml` at the first start
+  (decision HOT-18, replacing the root-owned `_config` of KOR-29 M3).
 - The runner runs `limactl` for a slot only as `sudo -n -u <account> /usr/local/libexec/agent-runner-workvm-limactl
   …`: the root-owned wrapper refuses every other account and sets `HOME`, `LIMA_HOME` and `PATH` itself;
   `/etc/sudoers.d/agent-runner-workvm` allows exactly that wrapper as the slot accounts and, as root, the five

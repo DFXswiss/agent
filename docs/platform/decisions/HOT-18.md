@@ -31,3 +31,30 @@ as root.
    work-package gates always run the Linux part and GitHub CI has no VM.
 4. **Not checked: processor architecture.** Both sides of the gate are arm64. A build on x86-64 is not compared,
    because no test device has one. The bundler's output on the two architectures has not been seen to differ.
+
+## Part 2 – the Lima home of a slot account
+
+5. **`_config` belongs to the slot account (replaces KOR-29 M3, spec 13-work-vm.md section 6.1).** Measured with Lima
+   2.3.0 on a test device, as the test account in its own `LIMA_HOME`: with `_config` read-only (0555, user key
+   present), `limactl create` works, but `limactl start` fails with `open …/_config/networks.yaml: permission
+   denied`. That is the production failure. With `_config` writable, the first start writes only
+   `_config/networks.yaml` (0644) and the instance directory. `limactl list` writes nothing. So a root-owned `_config`
+   breaks the start. `install` now creates
+   `lima/_config` owned by the slot account with mode 0700, like any Lima home. The package orders it, and E-25 puts
+   use first. What is given up: a compromised host agent of a slot could now write an `override.yaml` for that one
+   slot's later work VMs. Each slot is its own account, and the host packet filter stays the boundary.
+6. **Installed devices are repaired by `workvm install`.** For a present slot account, `install` gives
+   `lima/_config` to the account with mode 0700, and creates it when it is missing (`accounts.give_lima_config`).
+   Root works inside a home that the slot account controls. So `lima` and `_config` are opened with `O_NOFOLLOW` and
+   changed only through their descriptors (`fchown`, `fchmod`). A `chown -h` would protect only the last path
+   component: a slot could point its `lima/` at another slot's `lima/`, and root would give that `_config` away
+   (review finding). A planted link fails the installation with `workvm_install_failed name=lima_config`.
+   `after-reboot-check.sh` reports `lima_config_<account>`. It passes only for owner = slot account and mode 0700,
+   and the home check fails when `lima/` is a link. The threat model now records the accepted rest: a host-agent
+   compromise can leave an `override.yaml` for that slot.
+7. **Lima's reason is in the runner log.** `start_failed`, `pool_failed`, `pool_delete_failed` and `delete_failed`
+   of the work VMs carry `lima="<last error line>"` after the code. That is the message of Lima's last
+   `level=fatal|error` line, else its last line, made printable and cut to 200 characters. It is added only when Lima
+   wrote something. Only a line that starts with Lima's `level=` field counts as an error line. The tail can repeat
+   the call's arguments. For work VMs these are the instance name, the sizes, the SSH port and the resolvers, none of
+   them secret. The session VM pool (`vm/pool.py`) logs Lima's operation without the text and is unchanged.

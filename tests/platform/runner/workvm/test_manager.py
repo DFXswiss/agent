@@ -22,6 +22,7 @@ from agent_runner.github import snapshot
 from agent_runner.guestlink.errors import GuestRefused, GuestUnreachable
 from agent_runner.operations.extensions import OperationFailed
 from agent_runner.store.migrate import migrate
+from agent_runner.vm.lima import LimaError
 from agent_runner.workvm import firewall, records
 from agent_runner.workvm import manager as manager_module
 from agent_runner.workvm.jobs import ShellResult, WorkVmError
@@ -1031,6 +1032,43 @@ def test_a_pool_entry_that_does_not_start_is_dropped(world: World) -> None:
     assert pool_rows(world) == []
     assert any("pool_failed" in line for line in world.logs)
     assert any("pool_delete_failed" in line for line in world.logs)
+
+
+def test_a_failed_pool_start_logs_the_last_lima_error(world: World) -> None:
+    pooled(world)
+    world.fail.add("start")
+    world.lima_stderr = (
+        'time="2026-11-24T14:18:00+01:00" level=info msg="Starting the instance"\n'
+        'time="2026-11-24T14:18:01+01:00" level=fatal msg="open /private/var/agent-workvm/wvm00/lima/_config/'
+        'networks.yaml: permission denied"\n'
+    )
+    assert world.run(lambda vms: vms.pool_pass()) == 0
+    assert (
+        'runner.workvm pool_failed slot=0 code=lima_failed lima="open /private/var/agent-workvm/wvm00/lima/_config/'
+        'networks.yaml: permission denied"'
+    ) in world.logs
+
+
+@pytest.mark.parametrize(
+    ("detail", "reason"),
+    [
+        ("", ""),
+        ("plain failure\n\n", "plain failure"),
+        ('level=error msg="first"\nlevel=warning msg="later"\n', "first"),
+        ('time="t" level=error msg="real"\ntime="t" level=info msg="saw level=error"\n', "real"),
+        ('level=fatal msg="quoted \\"name\\" and \\\\ path"', 'quoted "name" and \\ path'),
+        ("level=fatal without message\x1b[0m", "level=fatal without message [0m"),
+        ("x" * 300, "x" * (manager_module.LIMA_REASON_LIMIT - 3) + "..."),
+    ],
+)
+def test_lima_reason(detail: str, reason: str) -> None:
+    assert manager_module.lima_reason(detail) == reason
+
+
+def test_failure_names_lima_only_for_lima_errors() -> None:
+    assert manager_module.failure(LimaError("lima_failed", "start", detail="boom\n")) == 'code=lima_failed lima="boom"'
+    assert manager_module.failure(LimaError("lima_failed", "start")) == "code=lima_failed"
+    assert manager_module.failure(WorkVmError("workvm_unavailable", "x")) == "code=workvm_unavailable"
 
 
 def test_entries_of_another_image_or_without_an_offer_go(world: World) -> None:

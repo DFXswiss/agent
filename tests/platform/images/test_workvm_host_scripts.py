@@ -82,6 +82,10 @@ def test_after_reboot_check_is_read_only_and_refuses_without_root() -> None:
     text = REBOOT.read_text(encoding="utf-8")
     for name in ("volume_mounted", "volume_name", "watcher_state", "anchor_first", "hook"):
         assert f"report {name} " in text
+    # Lima cannot start with a root-owned _config (HOT-18): the check names the owner and the mode
+    assert """[ "$config" = "$account 700" ]""" in text
+    assert 'report "lima_config_$account" ' in text
+    assert '[ ! -L "$home/lima" ]' in text  # a slot account could point its lima/ at another slot's
     assert "after-reboot-check.sh" in REHEARSAL.read_text(encoding="utf-8")
     done = subprocess.run(["/bin/sh", str(REBOOT), "--accounts", "x"], capture_output=True, text=True, check=False)
     assert (done.returncode, done.stderr) == (2, "after-reboot-check: --accounts needs a number\n")

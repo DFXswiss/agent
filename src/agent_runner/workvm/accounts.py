@@ -18,14 +18,17 @@ macOS facts (verified = read in the man pages of macOS 27 on the build device; a
 - verified (visudo(8)): `visudo -c -f -` checks a sudoers text read from standard input.
 - assumed: the `dscl . -create` attribute names (`UserShell`, `RealName`, `UniqueID`, `PrimaryGroupID`,
   `NFSHomeDirectory`, `IsHidden`, `Password`) of the local directory node; short names with hyphens are valid.
-- assumed: Lima keeps its user key in `$LIMA_HOME/_config/user` (ed25519); the root-owned `_config` therefore gets
-  that key generated at installation, owned by the slot account.
+- verified (Lima 2.3.0, test device): Lima keeps its user key in `$LIMA_HOME/_config/user` (ed25519), and the first
+  `limactl start` writes `$LIMA_HOME/_config/networks.yaml` (0644) - with a read-only `_config` it fails with `open
+  .../_config/networks.yaml: permission denied`. Besides `_config` it writes only the instance directory. `_config`
+  therefore belongs to the slot account like in any Lima home (decision HOT-18); the key is generated at installation.
 - assumed: a custom mount point of `addVolume` does not persist across reboots; an `/etc/fstab` entry by volume UUID
   is still needed (open point).
 """
 
 from __future__ import annotations
 
+import os
 import plistlib
 import re
 import subprocess
@@ -126,8 +129,8 @@ def group_commands(prefix: str, gid: int) -> list[list[str]]:
 def create_commands(account: str, uid: int, gid: int, group: str, home: str) -> list[list[str]]:
     """Commands creating one hidden slot account without login and its home with the Lima home.
 
-    The home (0700) and `lima/` belong to the account; `lima/_config` is root-owned and read-only for it, holding the
-    Lima user key generated here (owned by the account, 0600), so the host agent cannot add an `override.yaml`.
+    The home, `lima/` and `lima/_config` (0700 each) belong to the account, as in any Lima home: Lima writes
+    `_config/networks.yaml` at the first start. `_config` holds the Lima user key generated here (0600).
     """
     record = f"/Users/{_account(account)}"
     _account(group)
@@ -148,11 +151,44 @@ def create_commands(account: str, uid: int, gid: int, group: str, home: str) -> 
         [DSCL, ".", "-create", record, "Password", "*"],
         ["/usr/bin/install", "-d", "-o", account, "-g", group, "-m", "0700", home],
         ["/usr/bin/install", "-d", "-o", account, "-g", group, "-m", "0700", lima],
-        ["/usr/bin/install", "-d", "-o", "root", "-g", "wheel", "-m", "0755", config],
+        ["/usr/bin/install", "-d", "-o", account, "-g", group, "-m", "0700", config],
         ["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "lima", "-f", f"{config}/user"],
         ["/usr/sbin/chown", owner, f"{config}/user", f"{config}/user.pub"],
         ["/bin/chmod", "0600", f"{config}/user"],
     ]
+
+
+LIMA_CONFIG_MODE = 0o700
+
+
+def give_lima_config(home: str, uid: int, gid: int) -> str:
+    """Gives `<home>/lima/_config` of a present slot account to the account (`uid`, `gid`, 0700) and creates it when
+    it is missing: installations before HOT-18 made it root-owned, and Lima cannot start there. Returns "present" or
+    "created".
+
+    Root runs this inside a home the slot account controls, so `lima` and `_config` are opened with `O_NOFOLLOW` and
+    changed through their descriptors: a symbolic link planted there (for example to another slot's `lima`) is
+    refused (`workvm_install_failed`, `lima_config`) instead of being followed."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fds: list[int] = []
+    try:
+        fds.append(os.open(_path(home, "home"), flags))
+        fds.append(os.open("lima", flags, dir_fd=fds[-1]))
+        state = "present"
+        try:
+            fds.append(os.open("_config", flags, dir_fd=fds[-1]))
+        except FileNotFoundError:
+            os.mkdir("_config", LIMA_CONFIG_MODE, dir_fd=fds[-1])
+            fds.append(os.open("_config", flags, dir_fd=fds[-1]))
+            state = "created"
+        os.fchown(fds[-1], _id(uid, "uid"), _id(gid, "gid"))
+        os.fchmod(fds[-1], LIMA_CONFIG_MODE)
+    except OSError:
+        raise RunnerError("workvm_install_failed", "lima_config") from None
+    finally:
+        for fd in fds:
+            os.close(fd)
+    return state
 
 
 def delete_command(account: str) -> list[str]:

@@ -32,7 +32,7 @@ manipulated. The attacker fully controls the VM's kernel, network stack, Lima gu
 | VM traffic reaches internal resources through the device's Cloudflare identity (private routes of the organization's tunnels, Access policies admitting enrolled devices) | Private and CGNAT ranges (incl. Cloudflare's private hostname range) are in the blocked table; Access policies must not admit the device token or "any enrolled device" (operator check) | WVM-03, report |
 | Abuse towards third parties from Cloudflare's addresses | Port 25 refused (host filter); per-slot state and connection-rate caps; no bandwidth shaping yet (decisions #20); no content inspection, no destination logging (addendum 1) | firewall tests |
 | Data exfiltration of what the session put into the VM | **Not preventable by design** (free internet is required); leaves through Cloudflare | documented (ADR-059) |
-| Escape from the VM to the host (hypervisor bug) | Out of scope of the platform; Apple Virtualization framework; a host-agent compromise yields only that slot account (no other slot's disk, no runner secret, `_config` root-owned) | — |
+| Escape from the VM to the host (hypervisor bug) | Out of scope of the platform; Apple Virtualization framework; a host-agent compromise yields only that slot account (no other slot's disk, no runner secret); since HOT-18 `_config` belongs to the slot account (Lima writes it at start), so such a compromise can also leave an `override.yaml` for that slot's later work VMs | — |
 
 ## Residual risks
 - **Accepted risk (decision of the operator, 2026-11-24, decisions #35): the host filter matches a slot by `user`,

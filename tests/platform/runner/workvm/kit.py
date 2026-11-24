@@ -73,7 +73,7 @@ class FakeLima:
     def _check(self, operation: str) -> None:
         self.world.calls.append((operation, self.slot))
         if operation in self.world.fail:
-            raise LimaError("lima_failed", operation)
+            raise LimaError("lima_failed", operation, returncode=1, detail=self.world.lima_stderr)
 
     def clone(self, source: str, name: str, *, sets: Sequence[str] = ()) -> None:
         self._check("clone")
@@ -265,6 +265,8 @@ class World:
     sets: dict[str, list[str]] = field(default_factory=dict)
     calls: list[tuple[str, int]] = field(default_factory=list)
     fail: set[str] = field(default_factory=set)
+    lima_stderr: str = ""
+    """Lima's stderr tail of a failing operation (`LimaError.detail`)."""
     shell_calls: list[tuple[str, str]] = field(default_factory=list)
     helper_fail: dict[str, ShellResult] = field(default_factory=dict)
     started: list[dict[str, Any]] = field(default_factory=list)

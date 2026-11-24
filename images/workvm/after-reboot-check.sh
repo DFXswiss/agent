@@ -7,7 +7,7 @@
 #
 # Checks: the APFS volume `AgentWorkVM` is mounted at /var/agent-workvm (a custom mount point of `diskutil apfs
 # addVolume` may not persist across a restart - the open assumption of `accounts.py`), owned by root, the slot homes
-# and their Lima homes exist with their owners, the image directory exists, the watcher's LaunchDaemon runs, its
+# and their Lima homes exist with their owners, `lima/_config` belongs to the slot account (0700), the image directory exists, the watcher's LaunchDaemon runs, its
 # state is `ok …`, our anchor is loaded and the first child of `com.apple`, and `anchor "com.apple/*"` is the first
 # anchor line of the main ruleset. One line per check `check=<name> result=pass|fail detail=...`; exit 0 only when
 # every check passed. When only the mount fails: `diskutil mount -mountPoint /var/agent-workvm AgentWorkVM` mounts it
@@ -51,10 +51,17 @@ i=0
 while [ "$i" -lt "$count" ]; do
   account=$(printf '%swvm%02d' "$prefix" "$i")
   home="$root/$account"
-  if [ "$(stat -f '%Su' "$home" 2>/dev/null)" = "$account" ] && [ -d "$home/lima/_config" ]; then
+  if [ "$(stat -f '%Su' "$home" 2>/dev/null)" = "$account" ] && [ ! -L "$home/lima" ] && [ -d "$home/lima/_config" ]; then
     report "home_$account" pass "$home"
   else
-    report "home_$account" fail "home or Lima home missing"
+    report "home_$account" fail "home or Lima home missing (or lima/ is a link)"
+  fi
+  # Lima writes _config/networks.yaml at the first start: the slot account owns it (0700), as in any Lima home (HOT-18)
+  config=$(stat -f '%Su %Lp' "$home/lima/_config" 2>/dev/null)
+  if [ "$config" = "$account 700" ]; then
+    report "lima_config_$account" pass "$account 0700"
+  else
+    report "lima_config_$account" fail "owner and mode ${config:-none} (fix: workvm install)"
   fi
   i=$((i + 1))
 done

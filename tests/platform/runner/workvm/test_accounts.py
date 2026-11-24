@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import os
 import plistlib
 import shutil
+import stat
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -88,8 +90,78 @@ def test_create_commands() -> None:
     ]
     home = "/var/agent-workvm/agent-wvm00"
     assert commands[8] == ["/usr/bin/install", "-d", "-o", "agent-wvm00", "-g", "agent-workvm", "-m", "0700", home]
-    assert commands[10] == ["/usr/bin/install", "-d", "-o", "root", "-g", "wheel", "-m", "0755", f"{home}/lima/_config"]
+    owner = ["-o", "agent-wvm00", "-g", "agent-workvm", "-m", "0700"]
+    # Lima writes _config/networks.yaml at the first start: the whole Lima home belongs to the account (HOT-18)
+    assert commands[9] == ["/usr/bin/install", "-d", *owner, f"{home}/lima"]
+    assert commands[10] == ["/usr/bin/install", "-d", *owner, f"{home}/lima/_config"]
     assert commands[-1] == ["/bin/chmod", "0600", f"{home}/lima/_config/user"]
+    assert not any("root" in argv for argv in commands)
+
+
+@pytest.fixture
+def chowned(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, int, int]]:
+    """`os.fchown` calls (descriptor, uid, gid): a test account cannot give a directory to another account."""
+    calls: list[tuple[int, int, int]] = []
+    monkeypatch.setattr(os, "fchown", lambda fd, uid, gid: calls.append((fd, uid, gid)))
+    return calls
+
+
+def lima_home(root: Path, config: bool = True) -> Path:
+    home = root / "wvm00"
+    (home / "lima").mkdir(parents=True)
+    if config:
+        (home / "lima" / "_config").mkdir()
+        (home / "lima" / "_config").chmod(0o755)
+    return home
+
+
+def test_give_lima_config_gives_a_root_owned_config_to_the_account(
+    tmp_path: Path, chowned: list[tuple[int, int, int]]
+) -> None:
+    home = lima_home(tmp_path)
+    assert accounts.give_lima_config(str(home), 602, 601) == "present"
+    assert [(uid, gid) for _, uid, gid in chowned] == [(602, 601)]
+    assert stat.S_IMODE((home / "lima" / "_config").stat().st_mode) == 0o700
+
+
+def test_give_lima_config_creates_a_missing_config(tmp_path: Path, chowned: list[tuple[int, int, int]]) -> None:
+    home = lima_home(tmp_path, config=False)
+    assert accounts.give_lima_config(str(home), 602, 601) == "created"
+    assert stat.S_IMODE((home / "lima" / "_config").stat().st_mode) == 0o700
+    assert len(chowned) == 1
+
+
+@pytest.mark.parametrize("planted", ["lima", "_config"])
+def test_give_lima_config_follows_no_symbolic_link(
+    tmp_path: Path, chowned: list[tuple[int, int, int]], planted: str
+) -> None:
+    other = lima_home(tmp_path / "other")  # another slot's home
+    home = tmp_path / "wvm00"
+    if planted == "lima":
+        home.mkdir()
+        (home / "lima").symlink_to(other / "lima")
+    else:
+        (home / "lima").mkdir(parents=True)
+        (home / "lima" / "_config").symlink_to(other / "lima" / "_config")
+    with pytest.raises(RunnerError, match="lima_config") as caught:
+        accounts.give_lima_config(str(home), 602, 601)
+    assert caught.value.code == "workvm_install_failed"
+    assert chowned == []
+    assert stat.S_IMODE((other / "lima" / "_config").stat().st_mode) == 0o755
+
+
+def test_give_lima_config_refuses_a_missing_lima_home_and_bad_values(
+    tmp_path: Path, chowned: list[tuple[int, int, int]]
+) -> None:
+    (tmp_path / "wvm00").mkdir()
+    with pytest.raises(RunnerError, match="lima_config"):
+        accounts.give_lima_config(str(tmp_path / "wvm00"), 602, 601)
+    home = lima_home(tmp_path / "x")
+    with pytest.raises(RunnerError, match="uid"):
+        accounts.give_lima_config(str(home), 0, 601)
+    with pytest.raises(RunnerError, match="home"):
+        accounts.give_lima_config("relative/home", 602, 601)
+    assert chowned == []
 
 
 @pytest.mark.parametrize(

@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from agent_runner.cli import run_cli
+from agent_runner.errors import RunnerError
 from agent_runner.vm.lima import Lima
 from agent_runner.workvm import accounts, firewall
 from agent_runner.workvm import cli as workvm_cli
@@ -47,6 +48,9 @@ class FakeMachine:
     main: str = HOOKED_MAIN
     flushed: bool = False
     removed: list[str] = field(default_factory=list)
+    given: list[tuple[str, int, int]] = field(default_factory=list)
+    """`give_lima_config` calls (home, uid, gid); `give_fails` makes it refuse like a planted link."""
+    give_fails: bool = False
 
     def live(self, argv: tuple[str, ...]) -> tuple[int, str]:
         slots = [
@@ -135,7 +139,14 @@ class FakeMachine:
             remove_file=self.remove_file,
             exists=self.exists,
             remove_dir=self.remove_dir,
+            give_lima_config=self.give_lima_config,
         )
+
+    def give_lima_config(self, home: str, uid: int, gid: int) -> str:
+        self.given.append((home, uid, gid))
+        if self.give_fails:
+            raise RunnerError("workvm_install_failed", "lima_config")
+        return "present"
 
 
 @pytest.fixture
@@ -203,6 +214,8 @@ def test_install_keeps_what_exists(fake: FakeMachine, cli: Callable[..., tuple[i
     ]
     assert not any(call[:3] == (accounts.DSCL, ".", "-create") for call in fake.calls)
     assert not any(call[0] == accounts.DISKUTIL for call in fake.calls)
+    # an installation before HOT-18 left _config root-owned: install gives it to the slot accounts
+    assert fake.given == [(f"{accounts.HOME_ROOT}/wvm00", 700, 650), (f"{accounts.HOME_ROOT}/wvm01", 701, 650)]
     slots = [firewall.Slot(0, "wvm00", 700, 47200), firewall.Slot(1, "wvm01", 701, 47201)]
     assert fake.files[firewall.ANCHOR_PATH][0] == firewall.render(slots, None, 100)
 
@@ -213,6 +226,16 @@ def test_install_one_account_missing(fake: FakeMachine, cli: Callable[..., tuple
     assert code == 0
     assert "runner.workvm.install step=accounts count=2 created=1" in out.splitlines()
     assert (accounts.DSCL, ".", "-create", f"{DS_USERS}/wvm01", "UniqueID", "603") in fake.calls
+    assert fake.given == [(f"{accounts.HOME_ROOT}/wvm00", 602, 601)]
+
+
+def test_install_refuses_a_lima_config_it_cannot_give(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]
+) -> None:
+    fake.uids.update({"wvm00": 700, "wvm01": 701})
+    fake.give_fails = True
+    code, _, err = cli(*INSTALL)
+    assert (code, err) == (1, "runner.error code=workvm_install_failed name=lima_config\n")
 
 
 @pytest.mark.parametrize(
