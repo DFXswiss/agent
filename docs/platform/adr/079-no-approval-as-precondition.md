@@ -73,7 +73,7 @@ operator's own key – never the hub's word) and `waiting` (now also organizatio
   there is one, else the switch `open_platform_access`. With the switch on, every organization without an explicit
   entry may assign platform devices; an explicit `granted:false` stays the way to exclude one organization. The hub
   keeps the latest explicit entry per org (`org.platform_access_grant`) and the switches (`hub.platform_policy`, both
-  migration `0022_no_approval`) and recomputes `org.platform_access` of every organization when the switch changes;
+  migration `0023_no_approval`) and recomputes `org.platform_access` of every organization when the switch changes;
   the projection rebuild does the same. Turning the switch **off** again takes access from every organization without
   an explicit grant at once (new assignments are refused; existing ones stay until an admin removes them, as ADR-026).
 - **Invitations (f).** With `open_platform_invites` on, every user may create platform invitations

@@ -1,4 +1,4 @@
--- 0022_no_approval: switches of the platform log, the platform role `operator` and the requests to operators and admins
+-- 0023_no_approval: switches of the platform log, the platform role `operator` and the requests to operators and admins
 -- (KOR-49, ADR-079; 02-data-model.md sections 2.1, 2.2 and 2.6).
 --
 -- `platform_policy` projects the latest `platform_policy` entry of each switch (`agent_hub.platform.projection`); a

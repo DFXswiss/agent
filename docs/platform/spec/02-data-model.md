@@ -49,7 +49,7 @@ The community tables (`community_*`, migration 0014) are specified in `14-commun
 
 | Table | Columns | Notes |
 |---|---|---|
-| `org` | `id` PK, `private` bool, `platform_access` bool [P] (true for private orgs created from a platform invitation; else from the latest `org_platform_access` platform-log entry, ADR-026, and without one from the switch `open_platform_access`, ADR-079), `platform_access_grant` bool NULL [P] (the latest `org_platform_access` of the org; migration 0022), `default_wg` uuid, `created_by`, `created_at`, `log_head_seq` int, `log_head_hash` text, `rotation_pending` jsonb (list of `{scope,scope_id}`) | |
+| `org` | `id` PK, `private` bool, `platform_access` bool [P] (true for private orgs created from a platform invitation; else from the latest `org_platform_access` platform-log entry, ADR-026, and without one from the switch `open_platform_access`, ADR-079), `platform_access_grant` bool NULL [P] (the latest `org_platform_access` of the org; migration 0023), `default_wg` uuid, `created_by`, `created_at`, `log_head_seq` int, `log_head_hash` text, `rotation_pending` jsonb (list of `{scope,scope_id}`) | |
 | `membership_entry` [AO] | (`org_id`,`seq`) PK, `entry_text` text (canonical JSON of the entry), `entry_hash` text UNIQUE, `type`, `by_id`, `subject_id` NULL, `received_at` | appended under `SELECT … FOR UPDATE` of `org` row |
 | `platform_entry` [AO] | `seq` PK, `entry_text`, `entry_hash` UNIQUE, `type`, `subject_id` NULL, `received_at` | |
 | `org_member` [P] | (`org_id`,`principal_id`) PK, `kind`, `role` CHECK in (`admin`,`member`,`device`), `joined_seq`, `removed_seq` NULL, `consented` bool default true | `consented` false for a user that entered by `admit` (ADR-060): the org's devices are not eligible for its `CK` |
@@ -59,7 +59,7 @@ The community tables (`community_*`, migration 0014) are specified in `14-commun
 | `org_device` [P] **(new, ADR-075)** | (`org_id`,`device_id`) PK, `assigned_seq`, `unassigned_seq` NULL | assignments to the whole organization |
 | `wg_placement` **(new, ADR-075)** | `wg_id` PK, `device_id`, `vm_id` NULL, `set_by`, `set_at` | the workgroup's default device and VM for new tasks |
 | `platform_role` [P] | (`user_id`,`role`) PK, `granted_seq`, `revoked_seq` NULL | role `inviter` or `operator` (ADR-079) |
-| `platform_policy` [P] | `name` PK (`open_platform_access`, `open_platform_invites`), `on` bool, `seq` | the switches of the platform log (ADR-079, migration 0022); a switch without a row is off |
+| `platform_policy` [P] | `name` PK (`open_platform_access`, `open_platform_invites`), `on` bool, `seq` | the switches of the platform log (ADR-079, migration 0023); a switch without a row is off |
 | `scope_epoch` | (`scope`,`scope_id`,`epoch`) PK, `created_at`, `created_seq` NULL | scope ∈ `org`,`wg`,`cred`; current = max epoch |
 | `key_wrap` | (`scope`,`scope_id`,`epoch`,`recipient_id`) PK, `wrap` bytea, `wrapped_by`, `sig` bytea, `created_at` | insert-only by convention; `org`/`wg` wraps are deleted when the recipient is removed from the org, `cred` wraps are kept (the browser rotates `CK` away from holders it does not entitle, `06-web.md` §11 job 5, KOR-04) |
 
