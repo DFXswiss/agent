@@ -1,6 +1,6 @@
 {
   "name": "e2e-46-interrupted-upload",
-  "description": "E2E-40 (KOR-33, ADR-059 sections 4-5): session 1 writes ledger.md and is ended (its final checkpoint is complete); session 2 continues the conversation (restored) and writes second.md, then ends; the hub's checkpoints of session 2 are turned back into uploads without commit (an upload interrupted before its commit). The follow-up continues from session 1's complete checkpoint: the first turn is in the request, the second is not (the spec checks the journal), and ledger.md is read from the restored workspace.",
+  "description": "E2E-46 (KOR-33, ADR-059 sections 4-5): session 1 writes ledger.md and is ended (its final checkpoint is complete); session 2 continues the conversation (restored) and writes second.md, then ends; the hub's checkpoints of session 2 are turned back into uploads without commit (an upload interrupted before its commit). The follow-up continues from session 1's complete checkpoint: the first turn is in the request, the second is not (the spec checks the journal), and ledger.md is read from the restored workspace.",
   "steps": [
     {
       "id": "work",

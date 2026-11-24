@@ -1,6 +1,6 @@
 {
   "name": "e2e-46-session-context-resume",
-  "description": "E2E-40 (KOR-33, ADR-059): one turn that writes ledger.md and answers; after the session ended (closed task, stop, failure, guest retention) a follow-up in a NEW main session that continues the SAME Claude Code conversation (--resume after a restore from the context checkpoint): the earlier turn is in the request (min_messages; the spec also reads the request from the journal) and the restored ledger.md is read from the new work directory. Canary texts for the plaintext scan.",
+  "description": "E2E-46 (KOR-33, ADR-059): one turn that writes ledger.md and answers; after the session ended (closed task, stop, failure, guest retention) a follow-up in a NEW main session that continues the SAME Claude Code conversation (--resume after a restore from the context checkpoint): the earlier turn is in the request (min_messages; the spec also reads the request from the journal) and the restored ledger.md is read from the new work directory. Canary texts for the plaintext scan.",
   "steps": [
     {
       "id": "work",

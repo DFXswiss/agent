@@ -1,4 +1,4 @@
-"""Test hooks of the session-context scenarios (KOR-33, ADR-059; E2E-40 `session-context-resume`). Only for specs,
+"""Test hooks of the session-context scenarios (KOR-33, ADR-059; E2E-46 `session-context-resume`). Only for specs,
 never a product path; VM commands through `orchestrator/guestvm.py`, store reads like `runner_store.py`.
 
 - `POST /vms/{vm}/delete`: the VM disappears under its runner (deleted by hand, lost with its disk). The runner whose
