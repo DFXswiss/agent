@@ -47,3 +47,16 @@ visible. Architecture in [ADR-083](../adr/083-who-speaks-in-a-shared-session.md)
     the person whose rights KOR-45 intersects with the task owner's ([A11](../KONZEPT.md#a-11)); null means the
     task owner's rights alone.
 11. **E2E-64 in T1.** Two people, one device; the offline case cuts the runner's link to the hub.
+12. **Independent review of the diff** (fresh context): no high finding. Fixed: a withdrawal report counts only while
+    the reporting device still holds the prompt undelivered; the KOR-45 interface never reads null as "the owner
+    alone"; consumption counts for a person only when that person wrote a prompt of the task; look-alike lines are
+    matched after removing format characters and collapsing white space and punctuation; the platform's own
+    continuation after a credit carries a platform line; an older guest is reported once per VM (`runner.alert
+    speaker_unsupported`); parentheses in names become brackets; RULES.md says where the real line appears.
+    Recorded, not changed: `get_task_messages` hides only the prompts this device withdrew; a person's line after a
+    compaction comes back with the next prompt.
+13. **Work VMs.** A work VM keeps the person whose turn requested it (`triggered_by` on its record); work VMs produce
+    no `runtime` items yet, so their runtime is not attributed until such metering exists.
+14. **Queue in the browser under load.** The queue reloads from the prompt count of the chat's own timeline and the
+    task's session entries (compared by reference), never by scanning events, so a burst of thousands of events
+    costs nothing extra (chat-volume spec: 31-40 % busy against the 50 % limit).
