@@ -587,22 +587,6 @@
       "source": "11-agent-access \u00a74"
     },
     {
-      "code": "handover_required",
-      "statuses": [
-        400
-      ],
-      "origin": "hub",
-      "source": "11-agent-access \u00a74"
-    },
-    {
-      "code": "handover_unexpected",
-      "statuses": [
-        400
-      ],
-      "origin": "hub",
-      "source": "11-agent-access \u00a74"
-    },
-    {
       "code": "login_automation_failed",
       "statuses": [],
       "origin": "client",
@@ -661,6 +645,22 @@
       ],
       "origin": "hub",
       "source": "ADR-060"
+    },
+    {
+      "code": "handover_required",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "11-agent-access \u00a74"
+    },
+    {
+      "code": "handover_unexpected",
+      "statuses": [
+        400
+      ],
+      "origin": "hub",
+      "source": "11-agent-access \u00a74"
     }
   ]
 }

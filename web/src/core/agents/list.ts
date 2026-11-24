@@ -7,11 +7,16 @@
 //   not remote).
 // - `revokeAgent`: `DELETE /v1/me/agents/{id}`; `revokeAllAgents`: `DELETE /v1/me/agents` (→ the number revoked).
 //   Both take effect at once at the hub; the list is loaded again afterwards.
+// - `agentChanges`: how many notifications say that the user's agents changed elsewhere (`agent_paired_remote`, a
+//   remote pairing confirmed in another client; `agent_revoked`); a new one makes the shell load the list again, so
+//   the banner of a remote main orchestrator (ADR-062 section 4.4) appears in every open client, not only after the
+//   next sign-in.
 import { openLabel } from '../crypto/agent';
 import { isUuid7 } from '../encoding/ids';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import { RequestError, requestErrorCode } from '../requests/client';
+import { ACCOUNT_KIND, type NotificationRow } from '../store/slices/notifications';
 import {
   type AgentEntry,
   AGENT_STATES,
@@ -23,6 +28,16 @@ import {
 import type { TasksContext } from '../tasks/pull';
 
 type Context = Pick<TasksContext, 'store' | 'client'>;
+
+/** The `agent.account_change` actions after which the agent list is loaded again. */
+export const LIST_CHANGES: readonly string[] = ['agent_paired_remote', 'agent_revoked'];
+
+/** The number of notification rows that report a change of the user's agents (module comment). */
+export function agentChanges(rows: Readonly<Record<string, NotificationRow>>): number {
+  return Object.values(rows).filter(
+    (row) => row.kind === ACCOUNT_KIND && LIST_CHANGES.includes(String(row.ref).split(':')[0]!),
+  ).length;
+}
 
 const isTime = (value: unknown): value is string => typeof value === 'string' && !Number.isNaN(Date.parse(value));
 const isTimeOrNull = (value: unknown): value is string | null => value === null || isTime(value);

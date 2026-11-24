@@ -2,7 +2,7 @@
 // label does not open), the agent each one replaced, the main orchestrator, malformed rows left out, failures with
 // their code, revoking one and all.
 import { describe, expect, it } from 'vitest';
-import { loadAgents, revokeAgent, revokeAllAgents } from '../../../src/core/agents/list';
+import { agentChanges, loadAgents, revokeAgent, revokeAllAgents } from '../../../src/core/agents/list';
 import { sealLabel } from '../../../src/core/crypto/agent';
 import { Identity } from '../../../src/core/crypto/keys';
 import { HubError } from '../../../src/core/net/signedFetch';
@@ -118,5 +118,30 @@ describe('revoking', () => {
       'DELETE /v1/me/agents',
       'GET /v1/me/agents',
     ]);
+  });
+});
+
+describe('agentChanges', () => {
+  const note = (id: string, kind: string, ref: string | null) => ({
+    notification_id: id,
+    kind,
+    org_id: null,
+    wg_id: null,
+    task_id: null,
+    ref,
+    created_at: T,
+    read_at: null,
+  });
+
+  it('counts the notifications of a remote pairing or a revoked agent (ADR-062 section 4.4)', () => {
+    expect(agentChanges({})).toBe(0);
+    const rows = {
+      a: note('a', 'agent.account_change', `agent_paired_remote::${AGENT}`),
+      b: note('b', 'agent.account_change', `agent_revoked:${OTHER}:${AGENT}`),
+      c: note('c', 'agent.account_change', `passkey_removed:${OTHER}:x`),
+      d: note('d', 'agent.account_change', null),
+      e: note('e', 'whiteboard.entry', 'agent_paired_remote::x'),
+    };
+    expect(agentChanges(rows)).toBe(2);
   });
 });

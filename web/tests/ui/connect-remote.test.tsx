@@ -4,7 +4,7 @@
 // derived from the same `r` and waits for the claim; a mode that link and hub disagree on is refused both ways; the
 // invitation asks for the code before the passkey is created and `/connect` resumes without asking again; the shell
 // banner of a remote main orchestrator (not for a loopback one) with "Disconnect"; the settings marker.
-import { configure, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, configure, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { preparePrivateOrg } from '../../src/core/account/genesis';
 import { signIn } from '../../src/core/account/login';
@@ -13,6 +13,7 @@ import { agentCode, fingerprint, formatCode, openHandover, returnCode } from '..
 import { Identity } from '../../src/core/crypto/keys';
 import { b64uDecode } from '../../src/core/encoding/b64u';
 import { formatTime } from '../../src/core/encoding/time';
+import { receive } from '../../src/core/store/slices/notifications';
 import { forgetFragment } from '../../src/ui/screens/invite/fragment';
 import { FakeAuthenticator } from '../core/account/authenticator';
 import { HubFailure, ORIGIN, SimHub } from '../core/account/hub';
@@ -233,6 +234,35 @@ describe('the banner of a main orchestrator on another computer', () => {
     fireEvent.click(screen.getByTestId('shell.remote-agent.disconnect'));
     await waitFor(() => expect(screen.queryByTestId('shell.remote-agent')).toBeNull());
     expect(revoked).toBe(1);
+  });
+
+  it('appears in an open client once the notification of a remote pairing arrives', async () => {
+    const w = await world();
+    let loads = 0;
+    w.hub.override.set('GET /v1/me/agents', () => {
+      loads += 1;
+      return { agents: w.agents };
+    });
+    const made = await account(w, '/settings', true);
+    expect(await screen.findByTestId('agents.empty')).toBeInTheDocument();
+    const before = loads;
+    expect(screen.queryByTestId('shell.remote-agent')).toBeNull();
+    // the pairing is confirmed in another client: the hub now lists it and notifies this one
+    w.agents = [row(PAIRING, 'confirmed', true)];
+    act(() =>
+      receive(made.app.store, {
+        notification_id: 'n1',
+        kind: 'agent.account_change',
+        org_id: null,
+        wg_id: null,
+        task_id: null,
+        ref: `agent_paired_remote::${PAIRING}`,
+        created_at: T,
+        read_at: null,
+      }),
+    );
+    expect(await screen.findByTestId('shell.remote-agent')).toHaveAttribute('data-agent', PAIRING);
+    expect(loads).toBeGreaterThan(before);
   });
 
   it('reports a failed disconnect and shows nothing for a loopback main orchestrator', async () => {

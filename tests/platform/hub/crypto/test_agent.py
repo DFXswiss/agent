@@ -226,7 +226,7 @@ def test_the_remote_handover_and_return_code_open_with_independent_code() -> Non
     assert agent.format_code(remote["return_code"]) == remote["return_code_shown"]
     assert agent.return_code_matches(secret, bot["id"], user["id"], remote["return_code_shown"].lower())
     assert not agent.return_code_matches(secret, bot["id"], user["id"], "0000-0000")
-    assert not agent.return_code_matches(secret, bot["id"], user["id"], "not a code")
+    assert not agent.return_code_matches(secret, bot["id"], user["id"], "not a code!")
 
 
 @pytest.mark.parametrize("case", DATA["remote"]["typed"], ids=lambda case: case["text"])

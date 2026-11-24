@@ -2,9 +2,11 @@
 // (the newest confirmed or active agent) was paired from another computer, every signed-in page shows "Your main
 // orchestrator runs on another computer (<host>), connected <time>" with "Disconnect". It comes from the agent list
 // (`GET /v1/me/agents`, loaded once the identity is unlocked), never from a notification's read state, so an agent
-// that marks its notification read cannot hide it. "Disconnect" revokes the agent at once and reloads the list.
+// that marks its notification read cannot hide it. A new notification of a remote pairing (or of a revoked agent)
+// loads the list again, so the banner also appears in a client that was open while the pairing was confirmed
+// elsewhere. "Disconnect" revokes the agent at once and reloads the list.
 import { useEffect, useState } from 'react';
-import { loadAgents, revokeAgent } from '../../core/agents/list';
+import { agentChanges, loadAgents, revokeAgent } from '../../core/agents/list';
 import { formatEventTime } from '../../core/i18n';
 import { requestErrorCode } from '../../core/requests/client';
 import { remoteOrchestrator } from '../../core/store/slices/agents';
@@ -20,7 +22,8 @@ export function RemoteAgentBanner() {
   const [busy, setBusy] = useState(false);
   const now = useNow(false);
   const [failure, setFailure] = useState<string | null>(null);
-  useEffect(() => void loadAgents(app.tasks), [app]);
+  const changes = useStore((state) => agentChanges(state.notifications.rows), app.store);
+  useEffect(() => void loadAgents(app.tasks), [app, changes]);
   if (remote === null) return null;
   const disconnect = async () => {
     setBusy(true);
