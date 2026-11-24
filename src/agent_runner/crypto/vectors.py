@@ -957,6 +957,13 @@ def build_invite() -> Json:
     bad_sealed = b64u_encode(
         aead.seal_blob(secrets.package_key, encoding.body_json(bad), invite.package_aad(secrets.invite_id), nonce)
     )
+    with_message = {**package, "message": "Hallo Bob \u2013 <b>komm</b> zu uns: https://example.com/join"}
+    sealed_message = invite.seal_package(secrets, with_message, nonce)
+
+    def bad_message(message: object) -> str:
+        body = encoding.body_json({**package, "message": message})
+        return b64u_encode(aead.seal_blob(secrets.package_key, body, invite.package_aad(secrets.invite_id), nonce))
+
     text = invite.format_code(code)
     challenge, user = fixed("register-challenge"), ACTORS["alice"]
     register = {
@@ -983,6 +990,7 @@ def build_invite() -> Json:
         "package_aad": b64u_encode(invite.package_aad(secrets.invite_id)),
         "nonce": b64u_encode(nonce),
         "sealed": sealed,
+        "with_message": {"package": with_message, "sealed": sealed_message},
         "register": {**register, "text": b64u_encode(invite.register_text(user, challenge))},
         "invalid": [
             negative("code_25_chars", "parse_code", {"text": text[:-1]}, "invite_code_length"),
@@ -1011,6 +1019,19 @@ def build_invite() -> Json:
             ),
             negative(
                 "package_version_2", "open_package", {"code": b64u_encode(code), "sealed": bad_sealed}, "header_invalid"
+            ),
+            *(
+                negative(
+                    name, "open_package", {"code": b64u_encode(code), "sealed": bad_message(message)}, "header_invalid"
+                )
+                for name, message in (
+                    ("package_message_empty", ""),
+                    ("package_message_501_chars", "x" * 501),
+                    ("package_message_line_break", "Hallo\nBob"),
+                    ("package_message_bidi_override", "Hallo \u202eBob"),
+                    ("package_message_leading_space", " Hallo"),
+                    ("package_message_not_text", 7),
+                )
             ),
             negative(
                 "register_other_challenge",

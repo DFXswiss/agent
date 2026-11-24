@@ -17,6 +17,9 @@ Delegated agent access (11-agent-access.md section 3, ADR-056).
   agent accept an identity of its own choosing.
 - `seal_label`/`open_label`: the label `{"host", "name"}` (body JSON) sealed with HPKE to the user's identity X25519
   key, `info = P || "agent-label\\0" || canonical({"agent", "user"})`.
+- `check_message`: the personal message of a request for access (rule E-28, KOR-64): 1-500 characters under the
+  character rules of the label; it travels where the request's other texts travel (the pairing link, the sealed
+  invitation package) and is shown only as plain text.
 
 Pairing from another computer (ADR-067, 11-agent-access.md sections 3 and 5.4):
 
@@ -82,6 +85,7 @@ _HANDOVER_KEYS = frozenset({"k", "r"})
 FINGERPRINT_BYTES = 16
 SECRET_BYTES = 32
 LABEL_TEXT_MAX = 64
+MESSAGE_TEXT_MAX = 500
 _LABEL_KEYS = frozenset({"host", "name"})
 # Unicode categories a label must not contain: controls, format characters (bidi overrides, zero-width), line and
 # paragraph separators, surrogates, private use and unassigned code points.
@@ -169,10 +173,10 @@ def open_identity(agent_kem: X25519PrivateKey, secret: bytes, agent_id: str, use
     return parse_bundle_plaintext(aead.open_blob(bundle_key(secret, agent_id, user_id), inner, info))
 
 
-def _label_text_valid(text: object) -> bool:
+def _label_text_valid(text: object, maximum: int = LABEL_TEXT_MAX) -> bool:
     return (
         isinstance(text, str)
-        and 1 <= len(text) <= LABEL_TEXT_MAX
+        and 1 <= len(text) <= maximum
         and text == text.strip()
         and not any(unicodedata.category(char) in _LABEL_REFUSED_CATEGORIES for char in text)
     )
@@ -185,6 +189,13 @@ def check_label(value: object) -> dict[str, str]:
     if not all(_label_text_valid(label[key]) for key in _LABEL_KEYS):
         fail("header_invalid")
     return {"host": str(label["host"]), "name": str(label["name"])}
+
+
+def check_message(value: object) -> str:
+    """The personal message of a request: 1-500 characters under the label rules (`header_invalid`)."""
+    if not _label_text_valid(value, MESSAGE_TEXT_MAX):
+        fail("header_invalid")
+    return str(value)
 
 
 def seal_label(

@@ -5,7 +5,9 @@ formats (04-crypto.md sections 3, 4.1-4.6, 4.10, 5.5, 6.4 E1/E2/E4/E8)."""
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -34,6 +36,8 @@ from agent_runner.crypto import (
 from agent_runner.crypto.encoding import P, b64u_decode, b64u_encode, canonical
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.keys import Identity
+
+VECTORS = Path(__file__).resolve().parents[4] / "contracts" / "vectors"
 
 SUITE = pyca_hpke.Suite(pyca_hpke.KEM.X25519, pyca_hpke.KDF.HKDF_SHA256, pyca_hpke.AEAD.AES_256_GCM)
 TS = "2026-11-21T12:00:00.000Z"
@@ -572,6 +576,24 @@ def test_package_rules() -> None:
     bad = aead.seal_blob(secrets.package_key, b"[]", invite.package_aad(secrets.invite_id))
     with refused("header_invalid"):
         invite.open_package(secrets, b64u_encode(bad))
+
+
+def test_a_package_may_carry_the_inviters_message() -> None:
+    secrets = invite.invite_secrets(invite.generate_code())
+    package = _package(message="Hallo \u2013 <b>komm</b> https://example.com")
+    assert invite.open_package(secrets, invite.seal_package(secrets, package)) == package
+    assert invite.check_package(_package(message="x" * 500))["message"] == "x" * 500
+    for message in ("", "x" * 501, "a\nb", "\u200bx", " x", None):
+        with refused("header_invalid"):
+            invite.check_package(_package(message=message))
+
+
+def test_the_shared_vectors_hold_a_package_with_a_message() -> None:
+    data = json.loads((VECTORS / "invite.json").read_text())
+    secrets = invite.invite_secrets(b64u_decode(data["code"]))
+    case = data["with_message"]
+    assert invite.seal_package(secrets, case["package"], b64u_decode(data["nonce"])) == case["sealed"]
+    assert invite.open_package(secrets, case["sealed"]) == case["package"]
 
 
 # --- recovery (3, 5.5) ---
