@@ -1,0 +1,72 @@
+{
+  "name": "e2e-52-first-turn-tools",
+  "description": "E2E-52 (HOT-09): the first turn of a new task on a pool VM needs the platform tools at once. The first request must already list them (tools_include) and the reply calls get_context and the operation task.set_title in that same first turn; a request without the tools is a mismatch, answered with an error that ends the turn.",
+  "steps": [
+    {
+      "id": "first",
+      "expect": {
+        "user_text_contains": "E2E48-FIRST",
+        "has_tool_result": false,
+        "tools_include": [
+          "mcp__platform__get_context",
+          "mcp__platform__request_operation",
+          "mcp__platform__get_operation"
+        ]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Reading the platform."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_context",
+            "input": {}
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "task.set_title",
+              "params": {
+                "title": "First turn kz48-title-p4m8"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "\"api_version\":1"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Platform answered kz48-answer-v2c7."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "First turn"
+          }
+        ]
+      }
+    }
+  ]
+}
