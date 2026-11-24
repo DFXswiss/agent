@@ -38,6 +38,8 @@ class FakeLimactl:
     fail: dict[str, tuple[int, str]] = field(default_factory=dict)
     vanish_on: str | None = None
     sock: str = "dir"
+    disk: str | None = "disk"
+    """The disk file a new instance gets: `disk` (Lima 2.x), `diffdisk` (older Lima) or none."""
     calls: list[list[str]] = field(default_factory=list)
     bundle: list[str] = field(default_factory=list)
     modes: dict[str, int] = field(default_factory=dict)
@@ -76,7 +78,8 @@ class FakeLimactl:
                 (directory / "sock").chmod(0o000)
             elif self.sock == "link":
                 (directory / "sock").symlink_to(self.home)
-            (directory / "diffdisk").write_bytes(DISK)
+            if self.disk is not None:
+                (directory / self.disk).write_bytes(DISK)
             self.instances[name] = "Stopped"
         elif op == "start":
             self.instances[argv[-1]] = "Running"
@@ -199,7 +202,9 @@ def test_build_in_self_mode(rig: Rig) -> None:
     assert list(rig.exports.iterdir()) == []
 
 
-def test_build_with_slot_accounts_exports_the_disk(rig: Rig) -> None:
+@pytest.mark.parametrize("disk", ["disk", "diffdisk"])
+def test_build_with_slot_accounts_exports_the_disk(rig: Rig, disk: str) -> None:
+    rig.fake.disk = disk
     built = rig.builder(export=True).build("v1")
     assert built.name == f"{PREFIX}wimg-v1"
     assert built.export == rig.exports / f"{PREFIX}wimg-v1.img"
@@ -277,8 +282,22 @@ def test_failed_export_removes_the_partial_copy(rig: Rig) -> None:
         target.write_bytes(b"partial")
         raise OSError("disk full")
 
-    with pytest.raises(OSError, match="disk full"):
+    with pytest.raises(RunnerError) as caught:
         rig.builder(export=True, copy_disk=broken).build("v1")
+    assert (caught.value.code, caught.value.name) == ("workvm_image_failed", "export")
+    assert str(caught.value.__cause__) == "disk full"
+    assert rig.facts[-1] == ("workvm.image.failed", {"step": "export", "name": f"{PREFIX}wimg-v1"})
+    assert list(rig.exports.iterdir()) == []
+    assert rig.fake.instances == {}
+
+
+def test_missing_disk_fails_the_export_with_its_path(rig: Rig) -> None:
+    rig.fake.disk = None
+    with pytest.raises(RunnerError) as caught:
+        rig.builder(export=True).build("v1")
+    assert (caught.value.code, caught.value.name) == ("workvm_image_failed", "export")
+    path = str(rig.fake.home / f"{PREFIX}wimg-v1" / "disk")
+    assert rig.facts[-1] == ("workvm.image.failed", {"step": "export", "name": f"{PREFIX}wimg-v1", "path": path})
     assert list(rig.exports.iterdir()) == []
     assert rig.fake.instances == {}
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import os
 import shutil
 import subprocess
@@ -135,6 +136,15 @@ async def _feed(process: asyncio.subprocess.Process, stdin: bytes | Path | None)
         return
 
 
+DISK_NAMES = ("disk", "diffdisk")
+"""The writable disk of an instance directory, first match wins: Lima 2.x keeps one `disk` (raw for `vz`, checked
+with Lima 2.3.0), older Lima a `diffdisk` beside the `basedisk` of the image."""
+
+
 def disk_path(lima_dir: str) -> str:
-    """The writable disk of an instance directory (Lima's `diffdisk`)."""
-    return os.path.join(lima_dir, "diffdisk")
+    """The writable disk of an instance directory (`DISK_NAMES`); `FileNotFoundError` naming `disk` without one."""
+    for name in DISK_NAMES:
+        path = os.path.join(lima_dir, name)
+        if os.path.isfile(path):
+            return path
+    raise FileNotFoundError(errno.ENOENT, "no disk in the Lima instance directory", os.path.join(lima_dir, "disk"))

@@ -10,15 +10,17 @@ into a stopped Lima instance in the runner's own Lima home:
 4. `smoke`: `python3 --version`, `node --version`, `workvm-job selftest`; `seal`: bundle removed, `sync`.
 5. `stop`, the empty mode-000 `sock/` directory Lima leaves behind removed (it makes `limactl clone` fail),
    `rename` to the final name.
-6. `export` (slot accounts only, `export_dir` set): the instance's writable disk (`diffdisk`) copied sparsely to
-   `<export_dir>/<name>.img` (0644), the disk each slot account creates its base `wbase-<hash>` from
-   (`service.Bases`). In self mode the stopped instance itself is the clone base and nothing is exported.
+6. `export` (slot accounts only, `export_dir` set): the instance's writable disk (`shell.disk_path`: `disk` with
+   Lima 2.x, `diffdisk` with older Lima) copied sparsely to `<export_dir>/<name>.img` (0644), the disk each slot
+   account creates its base `wbase-<hash>` from (`service.Bases`). In self mode the stopped instance itself is the
+   clone base and nothing is exported.
 7. `register`: the injected callable records the image (`runner.workvm_image` `ready`).
 
 Every step is announced as `workvm.image step=<step> name=<instance> seconds=<s>`. Any failure announces
-`workvm.image.failed step=<step> name=<instance>`, passes Lima's stderr tail to `log`, deletes the instance and the
-partial export and re-raises. `list_images` reads the registry. All effects are injected (Lima, clock, now, random
-source, disk copy, registration), so the tests need neither Lima nor root.
+`workvm.image.failed step=<step> name=<instance>` (plus `path=<path>` when a file operation names one), passes Lima's
+stderr tail to `log`, deletes the instance and the partial export and re-raises; a failed file operation (`OSError`)
+becomes `workvm_image_failed <step>` instead of an internal error. `list_images` reads the registry. All effects are
+injected (Lima, clock, now, random source, disk copy, registration), so the tests need neither Lima nor root.
 """
 
 from __future__ import annotations
@@ -125,9 +127,14 @@ class Builder:
         try:
             yield
         except BaseException as exc:
-            self.announce("workvm.image.failed", {"step": step, "name": name})
+            fields: dict[str, str | int | bool] = {"step": step, "name": name}
+            if isinstance(exc, OSError) and isinstance(exc.filename, str):
+                fields["path"] = exc.filename
+            self.announce("workvm.image.failed", fields)
             if isinstance(exc, LimaError) and exc.detail:
                 self.log(f"workvm image step {step}: limactl {exc.operation} exit {exc.returncode}\n{exc.detail}\n")
+            if isinstance(exc, OSError):
+                raise RunnerError("workvm_image_failed", step) from exc
             raise
         self.announce("workvm.image", {"step": step, "name": name, "seconds": f"{self.clock() - start:.3f}"})
 

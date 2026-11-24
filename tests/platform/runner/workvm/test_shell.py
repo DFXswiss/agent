@@ -148,5 +148,20 @@ def test_vm_shell_times_out(limactl: Path) -> None:
     assert call(vm(limactl), ["sleep"], stdin=b"in", timeout=0.3) == ShellResult(EXIT_TIMEOUT, b"", False)
 
 
-def test_disk_path() -> None:
-    assert shell.disk_path("/lima/wvm-0a1b2c3d") == "/lima/wvm-0a1b2c3d/diffdisk"
+@pytest.mark.parametrize(
+    ("files", "found"),
+    [(("disk",), "disk"), (("basedisk", "diffdisk"), "diffdisk"), (("disk", "diffdisk"), "disk")],
+)
+def test_disk_path(tmp_path: Path, files: tuple[str, ...], found: str) -> None:
+    """Lima 2.x keeps one `disk`; older instances a `diffdisk` (beside `basedisk`): the one present wins."""
+    for name in files:
+        (tmp_path / name).write_bytes(b"x")
+    assert shell.disk_path(str(tmp_path)) == str(tmp_path / found)
+
+
+def test_disk_path_of_an_instance_without_disk(tmp_path: Path) -> None:
+    (tmp_path / "basedisk").write_bytes(b"x")
+    (tmp_path / "diffdisk").mkdir()
+    with pytest.raises(FileNotFoundError) as caught:
+        shell.disk_path(str(tmp_path))
+    assert caught.value.filename == str(tmp_path / "disk")
