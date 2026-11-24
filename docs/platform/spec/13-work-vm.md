@@ -214,6 +214,15 @@ refused address-independently; private ranges are in the table.
 - `TEST_MODE` (hermetic tests and the build device): slots may be the runner's own account (`WORKVM_SLOTS_SELF=1`),
   no pf, internet through Lima's user network directly – refused by the runner outside `TEST_MODE`.
 
+### 6.6 Known limit of the per-account filter
+Known limit of the per-account filter (rehearsal of 2026-11-24, decisions #34/#35): pf matches a slot by the
+account of the packet's socket and does not attribute every packet; a packet it does not attribute matches none of
+the anchor's rules and passes. A continuous prober reached, intermittently and in every client state, a listening
+port of the device over its loopback and over its site address. A program in a work VM can therefore reach, with
+single connections, the device's loopback services, the site network and - while the Cloudflare client is
+disconnected - the internet with the site's address. The operator decided on 2026-11-24 to run work VMs on this
+filter all the same; a boundary by interface is left to a later package.
+
 ### 6.5 Template settings
 `mounts: []`, no port forwards (`portForwards` ignore all; `guestIPMustBeZero: false`), `ssh.overVsock: true`,
 `ssh.loadDotSSHPubKeys: false`, `forwardAgent: false`, `propagateProxyEnv: false`, `hostResolver.enabled: false`,

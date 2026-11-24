@@ -5,10 +5,15 @@ anything. Inside, everything is allowed. Outside, the runner device keeps them t
 egress only through the device's Cloudflare client. This runbook covers setting them up, operating them, handling
 faults and removing them. Devices are named by role only.
 
-> **Do not enable work VMs on any device for now** (decisions #34): the rehearsal showed that the per-account pf
-> boundary lets some connections of a slot account through. Keep `AGENT_RUNNER_WORKVM_SLOTS=0` until a new boundary
-> has passed a rehearsal whose continuous prober (`images/workvm/continuous-probe.sh`) ran ten minutes through every
-> phase with zero hits.
+## Known limit of the per-account filter
+
+Known limit of the per-account filter (rehearsal of 2026-11-24, decisions #34/#35): pf matches a slot by the
+account of the packet's socket and does not attribute every packet; a packet it does not attribute matches none of
+the anchor's rules and passes. A continuous prober reached, intermittently and in every client state, a listening
+port of the device over its loopback and over its site address. A program in a work VM can therefore reach, with
+single connections, the device's loopback services, the site network and - while the Cloudflare client is
+disconnected - the internet with the site's address. The operator decided on 2026-11-24 to run work VMs on this
+filter all the same; a boundary by interface is left to a later package.
 
 ## 1. Preconditions
 - Runner at a version with work VMs, `AGENT_RUNNER_WORKVM_SLOTS=0` (the default: nothing changes).

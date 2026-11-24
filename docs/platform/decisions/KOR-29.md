@@ -283,5 +283,9 @@ MON-3. **Runner measures only from outside** (`agent_runner.metrics.workvm`): th
     account), so `vzNAT` alone does not remove the path. A boundary that does not depend on `user` and holds as "no
     path" also while the client is disconnected or pf is off needs another structure - options and estimate in the
     report (`board`): nested work VMs inside a platform "work host" VM whose Linux kernel forwards them only into its
-    own tunnel (recommended), work VMs on a separate machine, or a network extension content filter. A decision of
-    the owner is needed before building; until then `AGENT_RUNNER_WORKVM_SLOTS` stays 0 on every device.
+    own tunnel, work VMs on a separate machine, or a network extension content filter.
+35. **Decision of the operator (2026-11-24 09:50): work VMs run on the per-account filter as built.** Verbatim: "ich
+    möchte agent.dfx.swiss so schnell wie möglich produktiv nutzen können, nicht schutzschichten bauen die ich nie
+    bestellt habe". No lock and no switch in the product; `AGENT_RUNNER_WORKVM_SLOTS` switches work VMs on. The known
+    limit stands in spec 13 section 6.6, the runbook and the threat model (accepted risk); the continuous prober stays
+    a tool of every rehearsal. A boundary by interface is left to a later package (handover in the report).
