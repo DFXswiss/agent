@@ -44,6 +44,18 @@ alone cannot do). Alternatives in a command are written `a\|b` (an escaped bar, 
 | agents-revoke | settings/agents | `agents revoke [--all]` | api |
 | org-list | shell (org switcher) | `org list` | done |
 | org-create | screens/home | `org create` | done |
+| attention-view | screens/home | `status --attention --org` | done |
+| attention-list | screens/home | `task list --org --state --mine --limit` | done |
+| attention-answer | screens/home | `task prompt --task --text` | done |
+| attention-approve | screens/home | `task prompt --task --approve --text` | done |
+| attention-decline | screens/home | `task prompt --task --decline --text` | done |
+| attention-retry | screens/home | `task prompt --task --text` (a follow-up prompt starts a new main session) | done |
+| attention-continue | screens/home | `task prompt --task --text` (once the operator set the balance) | done |
+| attention-tree | screens/home | `api GET /v1/tasks/{task}` | api |
+| attention-connect-github | screens/home | `github connect` | api |
+| attention-assign-device | screens/home | `device assign --wg` | done |
+| attention-model-settings | screens/home | `settings set --model-access --model` | done |
+| attention-open-task | screens/home | `task show --task` | done |
 | org-join | screens/invite (existing user) | `org join` | done |
 | members-list | screens/members | `member list` | api |
 | members-invite | screens/members | `org invite --role admin\|member` | done |

@@ -143,8 +143,8 @@ task out of `needs_decision` in the same transaction that stores the prompt.
   ([E-14](../KONZEPT.md#e-14)) and offers "Continue" once it is set.
 
 ## Consequences
-- The organization's home is the situation view; the prompt field stays one tap away ("New task") and the task
-  overview (KOR-32) stays; both use the same row building blocks.
+- The organization's home is the situation view; a compact prompt field with the workgroup selector stays at its top
+  (reachable, no longer the main content) and the task overview (KOR-32) stays; both use the same row building blocks.
 - Later packages add reasons (KOR-31 credit stop, KOR-41 "waits for a device", KOR-25 GitHub start) by a row in the
   enum and a rule in `derive`; their own areas stay theirs.
 - Rollout order: hub first (migration, endpoints, backfill job), then the runner (operation types), then the golden
